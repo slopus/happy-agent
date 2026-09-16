@@ -18,6 +18,7 @@ import {
 } from "../../sources/collaboration/index.js";
 import { ComputeModule } from "../../sources/compute/index.js";
 import { SecretsModule } from "../../sources/secrets/index.js";
+import { HistoryModule } from "../../sources/history/index.js";
 import { testConfig } from "../support/computeModule.js";
 import { temporaryTestConfig } from "../support/configModule.js";
 import { resolveModuleHooks } from "../support/moduleHooks.js";
@@ -158,12 +159,20 @@ class Collection {
 async function started(
     collection: Collection,
     config = testConfig,
-): Promise<{ module: CollaborationModule; hooks: AgentModuleHooks; ctx: Context }> {
+): Promise<{
+    module: CollaborationModule;
+    hooks: AgentModuleHooks;
+    ctx: Context;
+    history: HistoryModule;
+}> {
     const abort = abortModule();
     vi.spyOn(abort, "abort").mockImplementation(
         async (ctx, agentId) => await collection.abort(ctx, agentId),
     );
-    const module = new CollaborationModule(config, abort);
+    const history = new HistoryModule();
+    vi.spyOn(history, "toolSpawnPresentation").mockResolvedValue(undefined);
+    vi.spyOn(history, "recordToolSpawnPresentation").mockResolvedValue(undefined);
+    const module = new CollaborationModule(config, abort, history);
     const ctx = withAgentConfig(createRootContext().named("collaboration-test"), {
         environment: {
             osVersion: "test",
@@ -175,7 +184,7 @@ async function started(
         metadata: { title: "Parent agent" },
     });
     const hooks = await resolveModuleHooks(ctx, module, collection.asRef());
-    return { module, hooks, ctx };
+    return { module, hooks, ctx, history };
 }
 
 function abortModule(): AbortModule {
@@ -239,6 +248,74 @@ describe("collaboration", () => {
         await module.createAgent(ctx, "parent", TASK, "child");
 
         expect(collection.configs.get("child")?.metadata).toEqual({ title: "Reviewer" });
+    });
+
+    it("persists resolved model identity before creating the child and adds its ID only after delivery", async () => {
+        const collection = new Collection();
+        const { module, ctx, history } = await started(collection);
+        const writes: unknown[] = [];
+        vi.mocked(history.recordToolSpawnPresentation).mockImplementation(
+            async (_ctx, agentId, callId, presentation) => {
+                expect(agentId).toBe("parent");
+                expect(callId).toBe("child");
+                if (presentation.agentId === undefined) {
+                    expect(collection.created).toEqual([]);
+                    expect(collection.delivered).toEqual([]);
+                } else {
+                    expect(collection.created).toHaveLength(1);
+                    expect(collection.delivered).toHaveLength(1);
+                }
+                writes.push(presentation);
+            },
+        );
+        await module.createToolAgent(
+            ctx,
+            "parent",
+            { ...TASK, title: "Definitely not a model name" },
+            "child",
+        );
+        const model = { modelId: "gpt-5.6-sol", providerId: "codex", name: "GPT-5.6 Sol" };
+        expect(writes).toEqual([
+            { type: "agent_spawn", model },
+            { type: "agent_spawn", model, agentId: "child" },
+        ]);
+        expect(collection.delivered[0]?.options.provider).toBe(model.providerId);
+    });
+
+    it("retains the original catalog name on retry and never confirms failed initial delivery", async () => {
+        const collection = new Collection();
+        collection.seed("child", "parent");
+        collection.sendFailure = new Error("Initial delivery failed");
+        const { module, ctx, history } = await started(collection);
+        const model = {
+            modelId: "gpt-5.6-sol",
+            providerId: "codex",
+            name: "Original catalog name",
+        };
+        vi.mocked(history.toolSpawnPresentation).mockResolvedValue({ type: "agent_spawn", model });
+        await expect(module.createToolAgent(ctx, "parent", TASK, "child")).rejects.toThrow(
+            "Initial delivery failed",
+        );
+        expect(history.recordToolSpawnPresentation).toHaveBeenCalledExactlyOnceWith(
+            ctx,
+            "parent",
+            "child",
+            { type: "agent_spawn", model },
+        );
+        expect(collection.created).toEqual([]);
+    });
+
+    it("does not fabricate resolved identity for unavailable or ambiguous models", async () => {
+        const collection = new Collection();
+        const { module, ctx, history } = await started(collection);
+        await expect(
+            module.createToolAgent(ctx, "parent", { ...TASK, model: "unknown" }, "child"),
+        ).rejects.toThrow("not available");
+        await expect(
+            module.createToolAgent(ctx, "parent", { ...TASK, model: "opus-5" }, "child"),
+        ).rejects.toThrow("Provider is required");
+        expect(history.recordToolSpawnPresentation).not.toHaveBeenCalled();
+        expect(collection.created).toEqual([]);
     });
 
     it("gives a collaborator the machine its creator works on", async () => {
@@ -1175,7 +1252,7 @@ describe("collaboration", () => {
     });
 
     it("describes the offered model/provider pairs without a dynamic capacity lookup", () => {
-        const module = new CollaborationModule(testConfig, abortModule());
+        const module = new CollaborationModule(testConfig, abortModule(), new HistoryModule());
         const create = createAgentTool(module, "parent", "codex", MODELS, 5, 3);
         const empty = createAgentTool(module, "parent", "codex", [], 5, 3);
 
@@ -1252,7 +1329,9 @@ describe("collaboration", () => {
         // applied migrations to remain a prefix of the declared ones — drop one of these and
         // every database that ran an earlier build refuses to open.
         expect(
-            new CollaborationModule(testConfig, abortModule()).migrations.map(([key]) => key),
+            new CollaborationModule(testConfig, abortModule(), new HistoryModule()).migrations.map(
+                ([key]) => key,
+            ),
         ).toEqual([
             "001-collaboration",
             "002-drop-collaboration-receipts",
@@ -1262,7 +1341,7 @@ describe("collaboration", () => {
     });
 
     it("refuses to work before the agent collection is available", async () => {
-        const module = new CollaborationModule(testConfig, abortModule());
+        const module = new CollaborationModule(testConfig, abortModule(), new HistoryModule());
         const ctx = createRootContext().named("unstarted");
 
         await expect(module.createAgent(ctx, "parent", TASK, "child")).rejects.toThrow(

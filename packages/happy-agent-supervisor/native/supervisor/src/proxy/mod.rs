@@ -19,9 +19,9 @@ mod socks;
 
 pub(crate) use protocol::MAX_HOST_BYTES;
 
+use crate::SupervisorResult;
 use crate::exec::EnvironmentOverride;
 use crate::policy::{OutgoingProxyPolicy, ProxyFrontEnd};
-use crate::SupervisorResult;
 use credential::ProxyCredential;
 use mux::Mux;
 use std::ffi::OsString;
@@ -71,7 +71,10 @@ impl OutgoingProxy {
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub(crate) fn front_end_ports(&self) -> SupervisorResult<Vec<u16>> {
         let mut ports = Vec::new();
-        for listener in [self.http.as_ref(), self.socks.as_ref()].into_iter().flatten() {
+        for listener in [self.http.as_ref(), self.socks.as_ref()]
+            .into_iter()
+            .flatten()
+        {
             ports.push(listener.local_addr()?.port());
         }
         Ok(ports)
@@ -80,20 +83,34 @@ impl OutgoingProxy {
     /// Starts one accept loop per bound front-end. Each loop owns its listener until the process
     /// ends with the workload.
     pub(crate) fn serve(self) -> SupervisorResult<()> {
+        self.serve_with_limit(usize::MAX)
+    }
+
+    pub(crate) fn serve_with_limit(self, max_connections: usize) -> SupervisorResult<()> {
         self.mux.start_reader()?;
         if let Some(listener) = self.http {
             let mux = Arc::clone(&self.mux);
             let credential = Arc::clone(&self.credential);
-            spawn_accept_loop("supervisor-proxy-http", listener, move |stream| {
-                http::serve(&mux, &credential, stream);
-            })?;
+            spawn_accept_loop(
+                "supervisor-proxy-http",
+                listener,
+                max_connections,
+                move |stream| {
+                    http::serve(&mux, &credential, stream);
+                },
+            )?;
         }
         if let Some(listener) = self.socks {
             let mux = Arc::clone(&self.mux);
             let credential = Arc::clone(&self.credential);
-            spawn_accept_loop("supervisor-proxy-socks", listener, move |stream| {
-                socks::serve(&mux, &credential, stream);
-            })?;
+            spawn_accept_loop(
+                "supervisor-proxy-socks",
+                listener,
+                max_connections,
+                move |stream| {
+                    socks::serve(&mux, &credential, stream);
+                },
+            )?;
         }
         Ok(())
     }
@@ -102,6 +119,7 @@ impl OutgoingProxy {
 fn spawn_accept_loop(
     name: &str,
     listener: TcpListener,
+    max_connections: usize,
     handle: impl Fn(std::net::TcpStream) + Send + Sync + 'static,
 ) -> SupervisorResult<()> {
     let handle = Arc::new(handle);
@@ -109,17 +127,29 @@ fn spawn_accept_loop(
     std::thread::Builder::new()
         .name(name.to_string())
         .spawn(move || {
+            use std::sync::atomic::{AtomicUsize, Ordering};
+            let active = Arc::new(AtomicUsize::new(0));
             loop {
                 let Ok((stream, _)) = listener.accept() else {
                     // A listener that stops accepting cannot be repaired from inside the sandbox,
                     // and every front-end refusing is the safe end state.
                     return;
                 };
+                if active.fetch_add(1, Ordering::AcqRel) >= max_connections {
+                    active.fetch_sub(1, Ordering::AcqRel);
+                    drop(stream);
+                    continue;
+                }
+                let count = Arc::clone(&active);
                 let handle = Arc::clone(&handle);
                 let spawned = std::thread::Builder::new()
                     .name(connection_name.clone())
-                    .spawn(move || handle(stream));
+                    .spawn(move || {
+                        handle(stream);
+                        count.fetch_sub(1, Ordering::AcqRel);
+                    });
                 if spawned.is_err() {
+                    active.fetch_sub(1, Ordering::AcqRel);
                     return;
                 }
             }
@@ -162,10 +192,7 @@ fn proxy_environment(
         None => None,
     };
     for name in HTTP_PROXY_VARIABLES {
-        environment.push((
-            OsString::from(name),
-            http_url.as_ref().map(OsString::from),
-        ));
+        environment.push((OsString::from(name), http_url.as_ref().map(OsString::from)));
     }
     environment.push((
         OsString::from("NODE_USE_ENV_PROXY"),
@@ -180,10 +207,7 @@ fn proxy_environment(
         None => None,
     };
     for name in SOCKS_PROXY_VARIABLES {
-        environment.push((
-            OsString::from(name),
-            socks_url.as_ref().map(OsString::from),
-        ));
+        environment.push((OsString::from(name), socks_url.as_ref().map(OsString::from)));
     }
     // An inherited exemption list would carve a hole straight through the policy, so it is always
     // replaced rather than left alone.

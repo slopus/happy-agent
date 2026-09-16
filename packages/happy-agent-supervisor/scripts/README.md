@@ -1,5 +1,19 @@
 # Packaging scripts
 
+`test-services.sh <rust-target>` is a CI-only, privileged resource-delegation fixture. It creates
+one temporary cgroup, moves only its test shell into a leaf, and runs the real native service
+isolation tests with the memory/pids controllers enabled. It restores that shell and removes
+empty test groups afterward. It never changes daemon startup or production service settings.
+The Linux supervisor publication gate runs it explicitly; missing delegation cannot silently
+skip these security checks during publication.
+
+`allow-published-test-namespaces.sh` permits namespace setup only at the installed native
+artifact's exact host path on disposable hosted Linux CI. `test-container-namespaces.sh`, after
+building the compute fixture image, first proves that the same artifact fails closed at its
+read-only container mount path. It then installs a named, explicitly selected test-container
+profile and proves startup succeeds. Both retain Ubuntu's global AppArmor user-namespace restriction;
+neither script is part of daemon startup or changes a developer's machine.
+
 `package.mjs` follows the native npm layout used by Rig Code Mode: platform
 packages carry one binary and checksum, while the root package carries the
 TypeScript API and optional dependencies selecting all five variants. Windows

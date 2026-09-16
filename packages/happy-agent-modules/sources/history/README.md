@@ -9,7 +9,7 @@ entirely and loses none of its history.
 The module writes as the agent works: every accepted user message, every completed provider
 inference as its own assistant message, every tool result, and every failed inference, from inside
 the transactions that commit that work, so the record and the thing recorded become durable
-together. Completed messages are append-only. A tool result and its permission review are the
+together. Completed messages are append-only. A tool result, its permission review, and its spawn identity are the
 narrow exceptions: the tool-call index updates the inference message that owns the matching call
 ID.
 
@@ -117,6 +117,11 @@ tool calls, and tool results), let the model size what it did and did not see wi
   receives a private clone only after the outer transaction that stores the pending row and offers
   it to Agent Base commits. API projection uses this so submissions from non-HTTP producers are
   visible immediately while they wait.
+- `toolSpawnPresentation(ctx, agentId, callId)` reads the creation identity retained on the original
+  indexed call. `recordToolSpawnPresentation` atomically adds its resolved model or successful child
+  ID; identical writes are harmless and conflicting recorded identities are rejected.
+- `onToolSpawn(listener): () => void` observes those already-committed message updates, separately
+  from appends. The API uses the same message projection as history reads.
 
 The module also implements the `AgentModule` lifecycle hooks that do the recording:
 `beforeInferenceTransact` (retains the inference identity until its message commits),
@@ -149,6 +154,10 @@ the run-scoped Agent KV that Agent Base lends the module, under these keys:
 Per-call presentation state uses that call's scoped `scope.runKV` instead: `tool_name` is written by
 `beforeToolCallTransact`, and `tool_presentation` is written after successful execution. Both are
 read by `afterToolCallTransact`; the run store clears them when the agent settles.
+
+Sub-agent creation is different: its resolved identity must exist before execution creates the
+child, not only with a successful result. Its bounded `spawnPresentation` stays on the original
+durable tool-call block through success, failure, and restart; it never depends on run-KV lifetime.
 
 The pending blocks are cleared in the same transaction that appends their message, so a crash
 cannot commit only one side. Base retires that interrupted response's inference identity before it

@@ -30,6 +30,14 @@ must never turn into a passing assertion.
 
 ## Happy Agent parity audit
 
+The strict service lane is separate: build compute, then run `test:live:services` with
+`HAPPY_SERVICE_TEST_CGROUP_PARENT` set to an existing test delegation. Missing prerequisites fail
+when this lane is enabled. CI uses `packages/happy-agent-supervisor/scripts/test-services.sh
+--command ...` to create and remove an isolated delegation on disposable hosted runners only.
+The service cases exercise pipe and PTY input, independent output readers, live input edits,
+private scratch, bridge credential consumption, native admission, and abrupt controller death
+followed by verified cleanup. They use the published native artifact, not a local Rust build.
+
 Status meanings:
 
 - **Present**: compute exercises the same observable contract at an equal or stronger boundary.

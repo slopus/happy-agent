@@ -24,6 +24,7 @@ export { waitForProcessExit } from "./impl/waitForProcessExit.js";
 export type {
     ManagedProcessStatus,
     ProcessKillOptions,
+    ProcessOutputDelta,
     ProcessRunOptions,
     ProcessRunResult,
     ProcessSnapshot,

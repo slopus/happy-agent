@@ -211,6 +211,62 @@ would be enforcing the list. A host list with egress disabled is already enforce
 by the isolated network namespace. No TLS is terminated anywhere, so the boundary
 is which host may be reached rather than what is sent to it.
 
+## Strict workspace services
+
+The optional `service` policy selects a separate mandatory boundary. It currently requires
+Linux with working user/mount/PID/network namespaces and a delegated cgroup v2 parent with
+`memory` and `pids` enabled. The daemon must already run inside that delegation (normally in
+a sibling leaf cgroup). Startup never changes service privileges, host cgroup delegation,
+AppArmor, or global sysctls. macOS and Windows service launches fail closed; their ordinary
+shell behavior is unchanged.
+
+Service input mounts also require recursive `mount_setattr` device denial (Linux 5.12 or
+newer). Selected inputs remain live and read-only; host edits are intentional. Linux named
+pipes in those selected inputs retain their IPC semantics, an accepted first-version edge
+case, while device-file access and Unix socket creation are blocked.
+
+The trusted controller supplies an empty private root, explicit read-only input mounts,
+private scratch paths, an execution identity, resource limits, and a private bridge socket.
+`controllerPid` must identify the direct launching process. Before creating runtime resources,
+the supervisor records its PID and kernel start time in `process.json` beside the bridge.
+Recovery must check that identity as well as cgroup emptiness; an absent cgroup alone does not
+prove that a supervisor still setting up its sandbox has exited.
+Before namespace setup can continue, the supervisor atomically records `executionReady: true`
+and the stable identities of its namespace-init and optional egress children. Recovery must
+also confirm those native owners have exited: they can still hold mounts or bridges after
+the workload cgroup becomes empty. A missing or incomplete startup record is ambiguous after
+controller loss; retain the workspace and report blocked cleanup instead of guessing.
+The private `started` file is empty before command admission, `1` once the sandboxed command
+is admitted, and `E` if exec itself fails. This distinguishes sandbox startup failure from
+an application's nonzero exit without interpreting untrusted command output.
+Pass service policies through a controller-owned, mode-0600 `--policy-file` beneath the
+daemon's protected private storage, not through command-line JSON: process listings must
+not reveal the bridge credential. The controller owns that file's lifecycle too.
+The service sees a fixed system runtime, selected files below `/workspace`, a private home,
+and private temporary storage. It receives a clean environment. Pathname Unix sockets are
+blocked even if a socket is subsequently inserted into an input directory. Overlapping
+scratch paths need an existing mount point inside the read-only input; no host directory is
+created for that purpose.
+
+Service IPC is namespaced too. The service syscall boundary prevents creating replacement
+namespaces, remounting resource controls, or using io_uring to bypass socket restrictions.
+Unix socketpairs are unavailable as well, since reconnectable datagram pairs would bypass
+pathname-socket denial. Commands that require Unix-socket IPC need a different runtime design;
+service startup never relaxes this boundary automatically. Pipes and inherited stdin/stdout work.
+
+The controller authenticates to the bridge using the execution's 64-byte hex token. The
+bridge returns one byte (`1` for a connected endpoint, `0` for an unreachable endpoint),
+then relays with bounded buffers to the single declared loopback port. This is private native
+transport, not the HTTP API: the daemon additionally enforces API authorization and HTTP-only
+forwarding. Never expose the socket, token, or native policy to page JavaScript or tool results.
+Outbound service grants match exact hostname/port pairs and never permit private IPs.
+
+The workload enters its cgroup before executing. Its descendants remain subject to the same
+memory/process limits, including detached children. The supervisor follows its owner's death;
+namespace-init death kills the workload tree. Normal completion checks that the cgroup is empty
+before removing it. After abrupt supervisor death, the controller must independently confirm
+the retained cgroup is empty and all runtime handles are closed before deleting workspace files.
+
 ## Process hardening
 
 The supervisor runs as the same user as the workload and holds the workload's

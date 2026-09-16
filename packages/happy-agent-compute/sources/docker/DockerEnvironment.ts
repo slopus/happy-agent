@@ -15,6 +15,7 @@ const DEFAULT_DOCKER_SOCKET = "/var/run/docker.sock";
 
 interface ManagedContainerOwnership {
     container: Promise<Dockerode.Container>;
+    apparmorProfile: string;
     owners: number;
     removal?: Promise<void>;
 }
@@ -161,8 +162,17 @@ export class DockerEnvironment {
                 }
                 continue;
             }
+            if (
+                activeOwnership !== undefined &&
+                activeOwnership.apparmorProfile !== (this.config.apparmorProfile ?? "unconfined")
+            ) {
+                throw new Error(
+                    "The managed container's AppArmor profile does not match the requested profile.",
+                );
+            }
             const ownership = activeOwnership ?? {
                 container: this.#resolveManagedContainer(image, name),
+                apparmorProfile: this.config.apparmorProfile ?? "unconfined",
                 owners: 0,
             };
             if (activeOwnership === undefined) {
@@ -193,6 +203,14 @@ export class DockerEnvironment {
             ) {
                 throw new Error(
                     `Docker container name '${name}' is already in use by another container. Choose a different Docker container name.`,
+                );
+            }
+            if (
+                this.config.apparmorProfile !== undefined &&
+                details.AppArmorProfile !== this.config.apparmorProfile
+            ) {
+                throw new Error(
+                    "The managed container's AppArmor profile does not match the requested profile.",
                 );
             }
             if (!details.State.Running) await existing.start();
@@ -249,7 +267,10 @@ export class DockerEnvironment {
                     // and protected system paths otherwise block setup before the supervisor can
                     // apply its narrower filter and mounts. The Docker CLI's
                     // `systempaths=unconfined` shorthand maps to these two empty path arrays.
-                    SecurityOpt: ["seccomp=unconfined", "apparmor=unconfined"],
+                    SecurityOpt: [
+                        "seccomp=unconfined",
+                        `apparmor=${this.config.apparmorProfile ?? "unconfined"}`,
+                    ],
                     MaskedPaths: [],
                     ReadonlyPaths: [],
                 },

@@ -77,10 +77,21 @@ creation may set `isAdmin`, while bot-driven creation cannot grant it. Every dir
 throws for a non-admin bot. The error names every admin bot when one exists and says so plainly
 when none exist. Human-owned agents are not bots and remain unrestricted.
 
-Authorization belongs in this specific tool because administration currently controls only bot
-creation. The acting agent ID is captured from the tool's module scope rather than accepted as a
-model argument, so a caller cannot claim another bot's identity. The `isAdmin` input is also absent
+Creation authorization belongs in this specific tool. The acting agent ID is captured from the
+tool's module scope rather than accepted as a model argument, so a caller cannot claim another
+bot's identity. The `isAdmin` input is also absent
 from the tool, ensuring an allowed bot-driven creation always produces a non-admin bot.
+
+## Admin bots manage roster avatars through tools
+
+Avatar selection previously targeted only the acting bot, and the roster text hid whether a bot
+had a picture. `set_bot_avatar` now accepts an optional target bot ID: active admin bots may set
+any bot's picture, including an archived bot, while non-admin bots may still set only their own.
+Omitting the ID preserves self-selection. The acting identity is captured from the tool scope,
+authority is checked before reading the image and again in the write transaction, and image paths
+remain confined to the acting bot's folder, including resolved symlinks. `list_bots` shows avatar
+status and accepts `hasAvatar: false` to find missing pictures. These are model-tool changes, not
+HTTP API or client changes.
 
 ## The module holds no lock; one transaction is the whole guarantee
 

@@ -94,20 +94,25 @@ jobs:
                   node-version: "24"
                   package-manager-cache: false
 
-            - name: Enable Linux user namespaces
-              if: runner.os == 'Linux'
-              run: |
-                  # The native supervisor enters an unprivileged user namespace before applying
-                  # its mount and PID boundaries. Ubuntu's AppArmor sysctl disables that by default.
-                  if [[ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]]; then
-                      sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-                  fi
-
             - name: Install dependencies
               run: pnpm install --frozen-lockfile
 
+            - name: Allow only the installed supervisor to enter Linux namespaces
+              if: runner.os == 'Linux'
+              run: bash packages/happy-agent-supervisor/scripts/allow-published-test-namespaces.sh
+
             - name: Run type checks
               run: pnpm --filter @slopus/happy-agent-compute check
+
+            - name: Build the SDK used by the controller-death fixture
+              if: runner.os == 'Linux'
+              run: pnpm --filter @slopus/happy-agent-compute build
+
+            - name: Prove service I/O, endpoint transport, and controller-death cleanup
+              if: runner.os == 'Linux'
+              run: >-
+                  bash packages/happy-agent-supervisor/scripts/test-services.sh --command
+                  pnpm --filter @slopus/happy-agent-compute test:live:services
 
             - name: Run unit tests
               env:
@@ -136,7 +141,11 @@ jobs:
               # GitHub's macOS runners have no Docker daemon, so the container backend is proven on
               # Linux only.
               if: matrix.docker
-              run: pnpm --filter @slopus/happy-agent-compute test:live:docker
+              env:
+                  HAPPY_AGENT_COMPUTE_DOCKER_APPARMOR_PROFILE: happy-compute-container-tests
+              run: |
+                  bash packages/happy-agent-supervisor/scripts/test-container-namespaces.sh
+                  pnpm --filter @slopus/happy-agent-compute test:live:docker
 
     publish:
         name: Publish @slopus/happy-agent-compute
@@ -152,7 +161,7 @@ jobs:
             id-token: write
         env:
             RELEASE_PACKAGE: happy-agent-compute
-            RELEASE_DIST_TAG: ${{ contains(inputs.release_tag || github.ref_name, '-beta.') && 'beta' || '' }}
+            RELEASE_DIST_TAG: ${{ contains(inputs.release_tag || github.ref_name, '-preview.') && 'preview' || contains(inputs.release_tag || github.ref_name, '-nightly.') && 'nightly' || contains(inputs.release_tag || github.ref_name, '-beta.') && 'beta' || '' }}
 
         steps:
             - name: Check out the release
@@ -201,6 +210,10 @@ jobs:
                   package="@slopus/happy-agent-compute"
                   version="$(node -p "require('./packages/happy-agent-compute/package.json').version")"
                   distribution_tag="${RELEASE_DIST_TAG:-latest}"
+                  if [[ "$version" == *-* && "$distribution_tag" == latest ]]; then
+                      echo "A prerelease must use an explicit non-latest distribution tag." >&2
+                      exit 1
+                  fi
                   if node "${NPM_CLI}" view "${package}@${version}" version --registry https://registry.npmjs.org/ >/dev/null 2>&1; then
                       echo "${package}@${version} is already published."
                   else

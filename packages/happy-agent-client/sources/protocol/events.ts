@@ -40,6 +40,7 @@ import type { Workspace } from "./workspaces.js";
 import type { SlashCommand } from "./slashCommands.js";
 import { connectionListResponseSchema } from "./connections.js";
 import type { SkillsUpdatedPayload } from "./skills.js";
+import type { WorkspaceServiceCreatedPayload, WorkspaceServiceUpdatedPayload } from "./services.js";
 
 /**
  * What every `*.updated` payload carries beside the resource's own ID.
@@ -307,6 +308,8 @@ export type HappyAgentEvent =
     | EventEnvelope<"bot.updated", BotUpdatedPayload>
     | EventEnvelope<"terminal.created", TerminalCreatedPayload>
     | EventEnvelope<"terminal.updated", TerminalUpdatedPayload>
+    | EventEnvelope<"service.created", WorkspaceServiceCreatedPayload>
+    | EventEnvelope<"service.updated", WorkspaceServiceUpdatedPayload>
     | EventEnvelope<"git.updated", GitUpdatedPayload>
     | EventEnvelope<"files.updated", FilesUpdatedPayload>
     | EventEnvelope<"skills.updated", SkillsUpdatedPayload>

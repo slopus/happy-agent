@@ -13,7 +13,7 @@
 ## Authorization lifecycle
 
 - PKCE verifiers and callback URLs are process-local secrets. A durable pending marker exists only
-  so restart can settle the public attempt as expired. Authorization expiry is Cloud's sole Durable
+  so restart can settle the public attempt as expired. Authorization expiry is a Durable
   Function, committed with the pending state and cancelled transactionally when the attempt settles.
   It waits again after clock rollback and retries failed expiry persistence with a bounded delay.
 - Redirect URIs are application-owned. Bind the exact URI to the attempt and require the callback's
@@ -29,6 +29,14 @@
   action or background cleanup can delay the next authorization.
 
 ## Rotation and verification
+
+- On-demand refresh alone allowed an otherwise connected installation to reach WorkOS's inactivity
+  timeout. Cloud now owns one durable hourly refresh for the main session, never organization-scoped
+  token warming. It uses the same credential lock, saves rotated credentials before verification,
+  and discards the access token. The next deadline is checkpointed before the external attempt so
+  restart cannot repeatedly run an overdue refresh. Sign-out and credential rejection cancel the
+  schedule in their transaction; rollback preserves it. This only prevents inactivity while the
+  daemon can run and reach WorkOS, not absolute session expiry or revocation.
 
 - Admin-bot direct access uses a separate short-lived organization mint operation. WorkOS, not
   the refresh call, configures access-token duration. After the ordinary serialized rotation and

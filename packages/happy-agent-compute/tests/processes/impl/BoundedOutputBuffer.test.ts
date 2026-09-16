@@ -32,4 +32,16 @@ describe("BoundedOutputBuffer", () => {
         buffer.append(Buffer.from("second"));
         expect(buffer.snapshot().toString("utf8")).toBe("second");
     });
+
+    it("can hold an incomplete UTF-8 sequence for independent live readers", () => {
+        const buffer = new BoundedOutputBuffer(4096);
+        buffer.append(Buffer.from([0xf0, 0x9f]));
+        const pending = buffer.snapshotFromOffset(0, false);
+        expect(pending.buffer).toEqual(Buffer.alloc(0));
+        expect(pending.totalBytes).toBe(0);
+        buffer.append(Buffer.from([0x98, 0x80]));
+        const completed = buffer.snapshotFromOffset(0, false);
+        expect(completed.buffer.toString("utf8")).toBe("😀");
+        expect(completed.totalBytes).toBe(4);
+    });
 });

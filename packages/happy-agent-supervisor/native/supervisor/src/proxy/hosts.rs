@@ -15,6 +15,7 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 pub(crate) struct HostPolicy {
     names: Vec<HostPattern>,
     literals: Vec<IpAddr>,
+    service_destinations: Option<Vec<(String, u16)>>,
 }
 
 enum HostPattern {
@@ -44,7 +45,40 @@ impl HostPolicy {
                 None => names.push(HostPattern::Exact(host)),
             }
         }
-        Self { names, literals }
+        Self {
+            names,
+            literals,
+            service_destinations: None,
+        }
+    }
+
+    #[cfg(any(target_os = "linux", test))]
+    pub(crate) fn for_service(destinations: &[crate::service_policy::ServiceDestination]) -> Self {
+        let mut policy = Self::new(
+            &destinations
+                .iter()
+                .map(|destination| destination.hostname.clone())
+                .collect::<Vec<_>>(),
+        );
+        policy.service_destinations = Some(
+            destinations
+                .iter()
+                .map(|destination| (normalize_name(&destination.hostname), destination.port))
+                .collect(),
+        );
+        policy
+    }
+
+    pub(crate) fn permits_destination(&self, host: &str, port: u16) -> bool {
+        self.permits_name(host)
+            && self
+                .service_destinations
+                .as_ref()
+                .is_none_or(|destinations| {
+                    destinations.iter().any(|(name, allowed_port)| {
+                        *name == normalize_name(host) && *allowed_port == port
+                    })
+                })
     }
 
     /// Whether the command named this destination.
@@ -65,7 +99,21 @@ impl HostPolicy {
     /// which is the one case where the caller has already said what it meant.
     pub(crate) fn permits_address(&self, address: IpAddr) -> bool {
         let address = normalize_address(address);
-        self.names_address(address) || !is_private_address(address)
+        if self.service_destinations.is_some()
+            && let IpAddr::V6(address) = address
+        {
+            let segments = address.segments();
+            // Service egress uses ordinary global IPv6 only. Translation and tunnel
+            // prefixes can encode a private IPv4 destination behind an apparently public IP.
+            if segments[0] & 0xe000 != 0x2000
+                || segments[0] == 0x2002
+                || (segments[0] == 0x2001 && segments[1] < 0x0200)
+            {
+                return false;
+            }
+        }
+        (self.service_destinations.is_none() && self.names_address(address))
+            || !is_private_address(address)
     }
 
     fn names_address(&self, address: IpAddr) -> bool {
@@ -142,7 +190,12 @@ mod tests {
     use super::{HostPolicy, is_private_address};
 
     fn policy(hosts: &[&str]) -> HostPolicy {
-        HostPolicy::new(&hosts.iter().map(|host| (*host).to_string()).collect::<Vec<_>>())
+        HostPolicy::new(
+            &hosts
+                .iter()
+                .map(|host| (*host).to_string())
+                .collect::<Vec<_>>(),
+        )
     }
 
     #[test]
@@ -159,6 +212,44 @@ mod tests {
     }
 
     #[test]
+    fn services_require_exact_ports_and_never_allow_private_literals() {
+        use crate::service_policy::ServiceDestination;
+        let policy = HostPolicy::for_service(&[
+            ServiceDestination {
+                hostname: "example.com".into(),
+                port: 443,
+            },
+            ServiceDestination {
+                hostname: "127.0.0.1".into(),
+                port: 80,
+            },
+        ]);
+        assert!(policy.permits_destination("EXAMPLE.COM.", 443));
+        assert!(!policy.permits_destination("example.com", 80));
+        assert!(!policy.permits_destination("other.example.com", 443));
+        for address in [
+            "127.0.0.1",
+            "::ffff:127.0.0.1",
+            "10.0.0.1",
+            "169.254.169.254",
+            "64:ff9b::a00:1",
+            "2002:a00:1::",
+            "2001::1",
+        ] {
+            assert!(
+                !policy.permits_address(address.parse().unwrap_or_else(|error| panic!("{error}")))
+            );
+        }
+        assert!(
+            policy.permits_address(
+                "2606:4700:4700::1111"
+                    .parse()
+                    .unwrap_or_else(|error| panic!("{error}"))
+            )
+        );
+    }
+
+    #[test]
     fn an_empty_list_reaches_nothing_and_a_bare_wildcard_is_not_a_list() {
         assert!(!policy(&[]).permits_name("example.com"));
         assert!(!policy(&["*"]).permits_name("example.com"));
@@ -169,18 +260,38 @@ mod tests {
     fn addresses_inside_the_host_are_refused_unless_the_policy_named_them() {
         let named = policy(&["127.0.0.1"]);
         assert!(named.permits_name("127.0.0.1"));
-        assert!(named.permits_address("127.0.0.1".parse().unwrap_or_else(|error| panic!("{error}"))));
+        assert!(
+            named.permits_address(
+                "127.0.0.1"
+                    .parse()
+                    .unwrap_or_else(|error| panic!("{error}"))
+            )
+        );
 
         let by_name = policy(&["localhost", "metadata.internal"]);
         assert!(by_name.permits_name("localhost"));
-        for address in ["127.0.0.1", "::1", "169.254.169.254", "10.0.0.5", "::ffff:127.0.0.1"] {
-            let address = address.parse().unwrap_or_else(|error| panic!("{address}: {error}"));
+        for address in [
+            "127.0.0.1",
+            "::1",
+            "169.254.169.254",
+            "10.0.0.5",
+            "::ffff:127.0.0.1",
+        ] {
+            let address = address
+                .parse()
+                .unwrap_or_else(|error| panic!("{address}: {error}"));
             assert!(
                 !by_name.permits_address(address),
                 "a name the policy allows must not reach {address}"
             );
         }
-        assert!(by_name.permits_address("93.184.216.34".parse().unwrap_or_else(|error| panic!("{error}"))));
+        assert!(
+            by_name.permits_address(
+                "93.184.216.34"
+                    .parse()
+                    .unwrap_or_else(|error| panic!("{error}"))
+            )
+        );
     }
 
     #[test]
@@ -207,11 +318,15 @@ mod tests {
             "ff02::1",
             "2001:db8::1",
         ] {
-            let parsed = address.parse().unwrap_or_else(|error| panic!("{address}: {error}"));
+            let parsed = address
+                .parse()
+                .unwrap_or_else(|error| panic!("{address}: {error}"));
             assert!(is_private_address(parsed), "{address} should be private");
         }
         for address in ["1.1.1.1", "93.184.216.34", "2606:4700::1111"] {
-            let parsed = address.parse().unwrap_or_else(|error| panic!("{address}: {error}"));
+            let parsed = address
+                .parse()
+                .unwrap_or_else(|error| panic!("{address}: {error}"));
             assert!(!is_private_address(parsed), "{address} should be public");
         }
     }

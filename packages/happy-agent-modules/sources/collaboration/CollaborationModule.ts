@@ -17,6 +17,7 @@ import { Value } from "@sinclair/typebox/value";
 import type { Context } from "@steve.kite/stdlib";
 
 import { AbortModule } from "../abort/index.js";
+import { HistoryModule } from "../history/index.js";
 import type { ConfigModule } from "../config/index.js";
 import { senderAgentIdMetadata } from "../impl/messageOrigin.js";
 import {
@@ -60,13 +61,15 @@ export class CollaborationModule implements AgentModule {
 
     readonly #abort: AbortModule;
     readonly #config: ConfigModule;
+    readonly #history: HistoryModule;
     readonly #crossWorkspace: boolean;
     #agents: AgentSystemRef | undefined;
     #toolCreationTail: Promise<void> = Promise.resolve();
 
-    constructor(config: ConfigModule, abort: AbortModule) {
+    constructor(config: ConfigModule, abort: AbortModule, history: HistoryModule) {
         this.#config = config;
         this.#abort = abort;
+        this.#history = history;
         this.#crossWorkspace = config.configuration.values.features.crossWorkspace;
     }
 
@@ -106,14 +109,57 @@ export class CollaborationModule implements AgentModule {
         this.#assert(collaborationAgentIdSchema, agentId, "collaborator ID");
         this.#assert(collaborationCreateInputSchema, input, "create agent");
         const agents = this.#requireAgents();
-        const selection = this.#validateSelection(this.#availableModels(), input);
+        const retained = await this.#history.toolSpawnPresentation(ctx, actingAgentId, agentId);
+        if (retained?.model !== undefined && retained.model.modelId !== input.model) {
+            throw new Error("The spawning tool call already selected another model.");
+        }
+        const models = this.#availableModels();
+        const selection = this.#validateSelection(
+            models,
+            retained?.model === undefined
+                ? input
+                : {
+                      ...input,
+                      provider: retained.model.providerId,
+                  },
+        );
+        const model = models.find(
+            (candidate) =>
+                candidate.id === selection.model &&
+                (selection.provider === undefined || candidate.providerId === selection.provider) &&
+                candidate.effortLevels.includes(selection.effort) &&
+                (selection.serviceTier === undefined ||
+                    candidate.serviceTiers?.includes(selection.serviceTier) === true),
+        );
+        if (model === undefined) throw new Error("The resolved collaborator model is unavailable.");
+        const presentation = {
+            type: "agent_spawn" as const,
+            model: retained?.model ?? {
+                modelId: model.id,
+                providerId: model.providerId,
+                name: model.name,
+            },
+        };
+        await this.#history.recordToolSpawnPresentation(ctx, actingAgentId, agentId, presentation);
 
         return await this.#serializeToolCreation(async () => {
             const existing = await agents.config(ctx, agentId);
             if (existing === undefined) {
                 await this.#assertToolCreationCapacity(ctx, actingAgentId);
             }
-            return await this.#createAgent(ctx, actingAgentId, input, agentId, {}, selection);
+            const result = await this.#createAgent(
+                ctx,
+                actingAgentId,
+                input,
+                agentId,
+                {},
+                { ...selection, provider: model.providerId },
+            );
+            await this.#history.recordToolSpawnPresentation(ctx, actingAgentId, agentId, {
+                ...presentation,
+                agentId: result.agentId,
+            });
+            return result;
         });
     }
 

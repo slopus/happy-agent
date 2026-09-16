@@ -15,12 +15,23 @@ session; only WorkOS's definitive refresh rejection clears it. Status, bootstrap
 events contain the token-free Cloud snapshot: status, environment, user, authorization, error,
 version, and update time.
 
+While connected, one durable hourly procedure refreshes the main WorkOS session without an
+organization ID. It shares the credential lock and refresh-and-verify path with ordinary minting,
+discards the resulting access token, and never enumerates teams or fills their token caches.
+The first refresh is due one hour after sign-in (or startup for an existing unscheduled login).
+Each attempt checkpoints its next hourly deadline before contacting WorkOS. Restarts preserve
+that deadline and run overdue work once, not once per missed hour. Temporary authentication or
+verification failures leave the next attempt scheduled; scheduling storage failures retry after
+five seconds without consuming a credential. The daemon must be running and online, and this
+does not extend WorkOS's maximum session lifetime or revive rejected credentials.
+
 Disconnect is a local transaction that removes the session and refresh token, cancels pending
-authorization expiry, and publishes the disconnected snapshot after commit. It composes with the
-caller's transaction, requires no network or background cleanup, and permits immediate subsequent
-authorization. A clean sign-out is idempotent. Cloud has no other Durable Functions or background
-connections. Historical database migrations remain immutable; the final scope-reduction migration
-removes retired account data while retaining connected WorkOS sessions and version high-water marks.
+authorization expiry and hourly session refresh, and publishes the disconnected snapshot after
+commit. It composes with the caller's transaction, requires no network or background cleanup, and
+permits immediate subsequent authorization. A clean sign-out is idempotent. Rollback preserves the hourly schedule, and
+definitive credential rejection cancels it. Historical database migrations remain immutable; the
+final scope-reduction migration removes retired account data while retaining connected WorkOS
+sessions and version high-water marks.
 
 Standalone deployments expose `listOrganizations`, `createOrganization`, and `deleteOrganization`
 through the same serialized refresh-and-verify boundary. Public organization objects contain only

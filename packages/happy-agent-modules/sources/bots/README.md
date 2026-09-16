@@ -11,6 +11,12 @@ an explanation that names the admin bots on the installation when any exist. The
 expose `isAdmin` in its input, so an admin bot can create only non-admin bots. Human-owned root
 agents remain unrestricted.
 
+`set_bot_avatar` defaults to the acting bot's picture. Active admin bots may pass `botId` to set
+any bot's picture, including an archived bot; other bots may target only themselves. Images must
+always come from the acting bot's own folder. Authorization is rechecked in the avatar write
+transaction. `list_bots` shows whether each bot has an avatar and accepts optional `hasAvatar`
+to filter the roster (`false` finds bots without pictures).
+
 On first startup, the module creates one admin bot named `Chief of Staff` with an ordinary generated
 ID, the bundled Chief of Staff avatar, and the internal system key `chief_of_staff`. The bot row,
 normalized avatar asset, agent, workspace, folder, and creation event are one initial creation, so

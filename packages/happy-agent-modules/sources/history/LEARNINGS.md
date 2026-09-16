@@ -1,5 +1,14 @@
 # History learnings
 
+## Spawn identity belongs to the durable call before its result
+
+Result-only presentations arrive too late to name a sub-agent while it is being created. History
+now retains a typed `spawnPresentation` on the indexed original call and emits its update only
+after commit. Repeated identical writes are harmless; conflicting model or child identities are
+rejected. Results, failures, and restart keep that original identity. API live and history
+projections share it, and spawn calls retain raw data on compact history loads so older clients
+can fall back when they do not recognize the new presentation.
+
 ## Human authorship belongs to the submitted message
 
 Team-mode submissions capture the authenticated local user ID in daemon-owned message metadata.

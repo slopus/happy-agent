@@ -13,6 +13,7 @@ import {
     timestampSchema,
 } from "./common.js";
 import { agentSchema } from "./agents.js";
+import { workspaceServiceCleanupSchema } from "./services.js";
 
 /** What the workspace was created from. */
 export const workspaceBaseSchema = Type.Object({
@@ -55,6 +56,8 @@ export const workspaceSchema = Type.Object({
     parentId: Nullable(cuid2Schema),
     /** The root of this workspace's tree; `null` on a bot workspace. */
     projectId: Nullable(cuid2Schema),
+    /** Service shutdown barrier during archival; absent on older daemons. */
+    serviceCleanup: Type.Optional(Nullable(workspaceServiceCleanupSchema)),
     /** `"archiving"` is the window where the decision is durable but cleanup runs. */
     status: Type.Union([
         Type.Literal("active"),

@@ -114,7 +114,7 @@ export class BotsModule implements AgentModule {
                 createBotTool(this, scope.agent.id),
                 sendBotMessageTool(this, scope.agent.id),
             ];
-            // A bot is a peer of every other bot, and additionally manages its own picture.
+            // Bots manage their own picture; admin bots may also manage other bots' pictures.
             if ((await readBotByAgent(ctx, scope.agent.id)) !== undefined) {
                 return [...roster, setBotAvatarTool(this, scope.agent.id)];
             }
@@ -526,19 +526,29 @@ export class BotsModule implements AgentModule {
     }
 
     /**
-     * Lets a bot choose its own picture. The caller is identified by its agent, and the write
-     * ignores versioning because the bot is not racing another device's view of itself.
+     * Lets an active bot choose its own picture, or an admin choose any bot's picture.
+     * Recheck the acting identity and authority in the transaction that writes the target.
      */
-    async setOwnAvatar(ctx: Context, agentId: string, bytes: Uint8Array): Promise<BotRecord> {
+    async setAvatarForAgent(
+        ctx: Context,
+        agentId: string,
+        bytes: Uint8Array,
+        botId?: string,
+    ): Promise<BotRecord> {
         const asset = await normalizeBotAvatar(bytes);
         return await ctx.inTx(async (txCtx) => {
-            const current = await readBotByAgent(txCtx, agentId);
-            if (current === undefined) {
+            const acting = await readBotByAgent(txCtx, agentId);
+            if (acting === undefined) {
                 throw new BotNotFoundError("Only a bot can set its own avatar.");
             }
-            if (current.status === "archived") {
-                throw new BotConflictError("An archived bot cannot change its avatar.");
+            if (acting.status === "archived") {
+                throw new BotConflictError("An archived bot cannot change avatars.");
             }
+            const targetId = botId ?? acting.id;
+            if (targetId !== acting.id && !acting.isAdmin) {
+                throw new BotConflictError("Only an admin bot can set another bot's avatar.");
+            }
+            const current = targetId === acting.id ? acting : await this.#required(txCtx, targetId);
             return await this.#writeAvatar(txCtx, current, asset, "generated");
         });
     }

@@ -28,13 +28,52 @@ pub(crate) fn exec_target(
     command: &[OsString],
     environment_overrides: &[EnvironmentOverride],
 ) -> SupervisorResult<()> {
+    exec_with_environment(command, merge_environment(environment_overrides))
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn exec_service_target(
+    command: &[OsString],
+    overrides: &[EnvironmentOverride],
+) -> SupervisorResult<()> {
+    if !Path::new(&command[0]).is_absolute() {
+        return Err(invalid_input(
+            "service executables must be absolute paths in the private filesystem",
+        )
+        .into());
+    }
+    let mut environment: Vec<(OsString, OsString)> = [
+        ("PATH", "/usr/bin:/bin"),
+        ("HOME", "/home/service"),
+        ("TMPDIR", "/tmp"),
+        ("TERM", "dumb"),
+        ("NO_COLOR", "1"),
+        ("PAGER", "cat"),
+        ("LANG", "C.UTF-8"),
+    ]
+    .into_iter()
+    .map(|(key, value)| (key.into(), value.into()))
+    .collect();
+    for (key, value) in overrides {
+        environment.retain(|(name, _)| name != key);
+        if let Some(value) = value {
+            environment.push((key.clone(), value.clone()));
+        }
+    }
+    exec_with_environment(command, environment)
+}
+
+fn exec_with_environment(
+    command: &[OsString],
+    environment: Vec<(OsString, OsString)>,
+) -> SupervisorResult<()> {
     let executable = resolve_executable(&command[0])?;
     let executable = c_string(executable.as_os_str(), "target executable")?;
     let arguments = command
         .iter()
         .map(|argument| c_string(argument, "target argument"))
         .collect::<SupervisorResult<Vec<_>>>()?;
-    let environment = merge_environment(environment_overrides)
+    let environment = environment
         .into_iter()
         .map(|(key, value)| {
             let mut entry = key;

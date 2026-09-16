@@ -145,7 +145,12 @@ async function createFixture(teamMode = false) {
         passive as never,
         passive as never,
         passive as never,
-        { onPending: subscribe, onAppend: subscribe, runningRun: async () => undefined } as never,
+        {
+            onPending: subscribe,
+            onAppend: subscribe,
+            onToolSpawn: subscribe,
+            runningRun: async () => undefined,
+        } as never,
         passive as never,
         { onEvent: subscribe, listPage: async () => ({ requests: [] }) } as never,
         passive as never,

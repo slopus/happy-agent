@@ -39,6 +39,18 @@ export interface ProcessSnapshot {
     stderrOmittedBytes?: number;
 }
 
+/** Only newly requested output, without copying a process's complete retained snapshot. */
+export interface ProcessOutputDelta {
+    stderrDelta: string;
+    stderrDeltaBytes: number;
+    stderrDeltaOmittedBytes: number;
+    stderrOffset: number;
+    stdoutDelta: string;
+    stdoutDeltaBytes: number;
+    stdoutDeltaOmittedBytes: number;
+    stdoutOffset: number;
+}
+
 export interface ProcessRunResult extends ProcessSnapshot {
     exitCode: number | null;
     signal: NodeJS.Signals | null;

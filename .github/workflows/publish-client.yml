@@ -39,7 +39,7 @@ jobs:
             contents: read
             id-token: write
         env:
-            RELEASE_DIST_TAG: ${{ contains(inputs.release_tag || github.ref_name, '-beta.') && 'beta' || '' }}
+            RELEASE_DIST_TAG: ${{ contains(inputs.release_tag || github.ref_name, '-preview.') && 'preview' || contains(inputs.release_tag || github.ref_name, '-nightly.') && 'nightly' || contains(inputs.release_tag || github.ref_name, '-beta.') && 'beta' || '' }}
 
         steps:
             - name: Check out the release
@@ -94,6 +94,10 @@ jobs:
                   package="@slopus/happy-agent-client"
                   version="$(node -p "require('./packages/happy-agent-client/package.json').version")"
                   distribution_tag="${RELEASE_DIST_TAG:-latest}"
+                  if [[ "$version" == *-* && "$distribution_tag" == latest ]]; then
+                      echo "A prerelease must use an explicit non-latest distribution tag." >&2
+                      exit 1
+                  fi
                   if node "${NPM_CLI}" view "${package}@${version}" version --registry https://registry.npmjs.org/ >/dev/null 2>&1; then
                       echo "${package}@${version} is already published."
                   else

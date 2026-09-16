@@ -2,6 +2,24 @@
 
 export { type Compute, type ComputeKind } from "./Compute.js";
 export {
+    computeServiceExecutionSchema,
+    computeServicePathSchema,
+    computeServiceSandboxSchema,
+    computeServiceStartSchema,
+    type ComputeService,
+    type ComputeServiceExecution,
+    type ComputeServiceExit,
+    type ComputeServiceOutput,
+    type ComputeServiceOutputPosition,
+    type ComputeServiceSandbox,
+    type ComputeServices,
+    type ComputeServiceStartOptions,
+} from "./ComputeServices.js";
+export {
+    ServiceEndpointUnavailableError,
+    ServiceTeardownError,
+} from "./services/ServiceRuntimeErrors.js";
+export {
     computeHostPolicySchema,
     EMPTY_COMPUTE_HOST_POLICY,
     type ComputeHostPolicy,

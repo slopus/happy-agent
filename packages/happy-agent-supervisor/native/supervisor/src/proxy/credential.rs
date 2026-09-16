@@ -156,7 +156,8 @@ mod tests {
     #[test]
     fn each_invocation_generates_its_own_secret() {
         let first = ProxyCredential::generate().unwrap_or_else(|error| panic!("generate: {error}"));
-        let second = ProxyCredential::generate().unwrap_or_else(|error| panic!("generate: {error}"));
+        let second =
+            ProxyCredential::generate().unwrap_or_else(|error| panic!("generate: {error}"));
         assert_ne!(first.url_user_information(), second.url_user_information());
     }
 }

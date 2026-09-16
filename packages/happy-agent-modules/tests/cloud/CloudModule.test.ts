@@ -179,6 +179,285 @@ function deferred<T>() {
 }
 
 describe("CloudModule", () => {
+    it("refreshes only the main session every hour without exposing tokens or changing the snapshot", async () => {
+        vi.useFakeTimers();
+        const { database, module } = await fixture("cloud-hourly-main-session");
+        await vi.advanceTimersByTimeAsync(3_600_000);
+        expect(workos.refresh).not.toHaveBeenCalled();
+        const connected = await connect(module, database);
+        const events: unknown[] = [];
+        module.onUpdated((_ctx, cloud) => events.push(cloud));
+
+        await vi.advanceTimersByTimeAsync(3_599_999);
+        expect(workos.refresh).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(1);
+        expect(workos.refresh.mock.calls).toEqual([[{ refreshToken: "refresh-a" }]]);
+        expect((await createCloudDatabase().read(database.context))?.session?.refreshToken).toBe(
+            "refresh-b",
+        );
+        expect(module.status(database.context)).toEqual(connected);
+        expect(events).toEqual([]);
+        expect(await pendingDurableCallCount(database)).toBe(1);
+
+        await vi.advanceTimersByTimeAsync(3_600_000);
+        expect(workos.refresh.mock.calls).toEqual([
+            [{ refreshToken: "refresh-a" }],
+            [{ refreshToken: "refresh-b" }],
+        ]);
+        await module.disconnect(database.context);
+        expect(await pendingDurableCallCount(database)).toBe(0);
+        await vi.advanceTimersByTimeAsync(7_200_000);
+        expect(workos.refresh).toHaveBeenCalledTimes(2);
+    });
+
+    it("recovers an overdue main-session refresh once after restart and retains the next deadline", async () => {
+        vi.useFakeTimers();
+        const { database, module, durableFunctions } = await fixture("cloud-hourly-restart");
+        await connect(module, database);
+        await vi.advanceTimersByTimeAsync(1_800_000);
+        await module.stop();
+        durableFunctions.stop();
+        await vi.advanceTimersByTimeAsync(10_800_000);
+        expect(workos.refresh).not.toHaveBeenCalled();
+
+        const restartedDurableFunctions = new DurableFunctionsModule();
+        const restarted = new CloudModule(restartedDurableFunctions);
+        modules.push({ cloud: restarted, durableFunctions: restartedDurableFunctions });
+        await resolveModuleHooks(database.context, restarted);
+        const hooks = await resolveModuleHooks(database.context, restartedDurableFunctions);
+        await hooks.afterStart?.(database.context, {} as never);
+        await vi.advanceTimersByTimeAsync(0);
+        expect(workos.refresh).toHaveBeenCalledTimes(1);
+        expect(await pendingDurableCallCount(database)).toBe(1);
+
+        await vi.advanceTimersByTimeAsync(1_800_000);
+        await restarted.stop();
+        restartedDurableFunctions.stop();
+        const thirdDurableFunctions = new DurableFunctionsModule();
+        const third = new CloudModule(thirdDurableFunctions);
+        modules.push({ cloud: third, durableFunctions: thirdDurableFunctions });
+        await resolveModuleHooks(database.context, third);
+        const thirdHooks = await resolveModuleHooks(database.context, thirdDurableFunctions);
+        await thirdHooks.afterStart?.(database.context, {} as never);
+        await vi.advanceTimersByTimeAsync(1_799_999);
+        expect(workos.refresh).toHaveBeenCalledTimes(1);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(workos.refresh).toHaveBeenCalledTimes(2);
+        expect(workos.refresh).toHaveBeenLastCalledWith({ refreshToken: "refresh-b" });
+    });
+
+    it("preserves hourly refresh after rolled-back sign-out and cancels it on definitive rejection", async () => {
+        vi.useFakeTimers();
+        const { database, module } = await fixture("cloud-hourly-rollback-rejection");
+        await connect(module, database);
+        await expect(
+            database.context.inTx(async (ctx) => {
+                await module.disconnect(ctx);
+                throw new Error("rollback");
+            }),
+        ).rejects.toThrow("rollback");
+        expect(await pendingDurableCallCount(database)).toBe(1);
+        workos.refresh.mockRejectedValueOnce(
+            new OauthException(400, "request-id", "invalid_grant", "revoked", {}),
+        );
+        const events: unknown[] = [];
+        module.onUpdated((_ctx, cloud) => events.push(cloud));
+        await vi.advanceTimersByTimeAsync(3_600_000);
+        expect(module.status(database.context)).toMatchObject({
+            status: "disconnected",
+            error: { code: "credentials_rejected" },
+        });
+        expect(events).toHaveLength(1);
+        expect(await pendingDurableCallCount(database)).toBe(0);
+        await vi.advanceTimersByTimeAsync(7_200_000);
+        expect(workos.refresh).toHaveBeenCalledTimes(1);
+    });
+
+    it("schedules hourly refresh for an existing connected installation without doing network work during startup", async () => {
+        vi.useFakeTimers();
+        const { database, module, durableFunctions } = await fixture("cloud-hourly-existing-login");
+        const connected = await connect(module, database);
+        await durableFunctions.cancel(database.context, "cloud.session-refresh");
+        await module.stop();
+        durableFunctions.stop();
+        expect(await pendingDurableCallCount(database)).toBe(0);
+        const restartedDurableFunctions = new DurableFunctionsModule();
+        const restarted = new CloudModule(restartedDurableFunctions);
+        modules.push({ cloud: restarted, durableFunctions: restartedDurableFunctions });
+        await resolveModuleHooks(database.context, restarted);
+        const hooks = await resolveModuleHooks(database.context, restartedDurableFunctions);
+        await hooks.afterStart?.(database.context, {} as never);
+        expect(restarted.status(database.context)).toEqual(connected);
+        expect(workos.refresh).not.toHaveBeenCalled();
+        expect(await pendingDurableCallCount(database)).toBe(1);
+        await vi.advanceTimersByTimeAsync(3_600_000);
+        expect(workos.refresh).toHaveBeenCalledTimes(1);
+    });
+
+    it("preserves overdue work when Cloud stops before the durable scheduler during shutdown", async () => {
+        vi.useFakeTimers();
+        const { database, module, durableFunctions } = await fixture("cloud-hourly-shutdown-order");
+        await connect(module, database);
+        await vi.advanceTimersByTimeAsync(0);
+        await module.stop();
+        await vi.advanceTimersByTimeAsync(3_600_000);
+        expect(workos.refresh).not.toHaveBeenCalled();
+        expect(await pendingDurableCallCount(database)).toBe(1);
+        durableFunctions.stop();
+
+        const restartedDurableFunctions = new DurableFunctionsModule();
+        const restarted = new CloudModule(restartedDurableFunctions);
+        modules.push({ cloud: restarted, durableFunctions: restartedDurableFunctions });
+        await resolveModuleHooks(database.context, restarted);
+        const hooks = await resolveModuleHooks(database.context, restartedDurableFunctions);
+        await hooks.afterStart?.(database.context, {} as never);
+        await vi.advanceTimersByTimeAsync(0);
+        expect(workos.refresh).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps scheduling after transient refresh and verification failures using the latest stored token", async () => {
+        vi.useFakeTimers();
+        const { database, module } = await fixture("cloud-hourly-unavailable");
+        const connected = await connect(module, database);
+        workos.refresh.mockRejectedValueOnce(new Error("offline"));
+        await vi.advanceTimersByTimeAsync(3_600_000);
+        expect(module.status(database.context)).toEqual(connected);
+        expect(workos.refresh).toHaveBeenCalledTimes(1);
+
+        vi.mocked(fetch).mockResolvedValueOnce(new Response(null, { status: 503 }));
+        await vi.advanceTimersByTimeAsync(3_600_000);
+        expect(workos.refresh).toHaveBeenCalledTimes(2);
+        expect(module.status(database.context)).toEqual(connected);
+        expect((await createCloudDatabase().read(database.context))?.session?.refreshToken).toBe(
+            "refresh-b",
+        );
+
+        await vi.advanceTimersByTimeAsync(3_600_000);
+        expect(workos.refresh).toHaveBeenCalledTimes(3);
+        expect(workos.refresh).toHaveBeenLastCalledWith({ refreshToken: "refresh-b" });
+        expect(await pendingDurableCallCount(database)).toBe(1);
+    });
+
+    it("serializes hourly main refresh behind organization minting and then signs out without restoring credentials", async () => {
+        vi.useFakeTimers();
+        const { database, module } = await fixture("cloud-hourly-serialization");
+        await connect(module, database);
+        const refresh = deferred<{
+            accessToken: string;
+            refreshToken: string;
+            user: typeof user;
+        }>();
+        workos.refresh.mockImplementationOnce(() => refresh.promise);
+        const minting = module.mintForOrganization(database.context, "org_target");
+        await vi.advanceTimersByTimeAsync(0);
+        expect(workos.refresh).toHaveBeenCalledTimes(1);
+        expect(workos.refresh).toHaveBeenLastCalledWith({
+            organizationId: "org_target",
+            refreshToken: "refresh-a",
+        });
+        await vi.advanceTimersByTimeAsync(3_600_000);
+        expect(workos.refresh).toHaveBeenCalledTimes(1);
+        refresh.resolve({
+            accessToken: teamToken("org_target"),
+            refreshToken: "refresh-org",
+            user,
+        });
+        await minting;
+        await vi.advanceTimersByTimeAsync(0);
+        expect(workos.refresh).toHaveBeenCalledTimes(2);
+        expect(workos.refresh).toHaveBeenLastCalledWith({ refreshToken: "refresh-org" });
+        await module.disconnect(database.context);
+        await vi.advanceTimersByTimeAsync(3_600_000);
+        expect(workos.refresh).toHaveBeenCalledTimes(2);
+        expect((await createCloudDatabase().read(database.context))?.session).toBeNull();
+    });
+
+    it("does not refresh early after clock rollback and does not accumulate missed hours after a clock jump", async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(10_000);
+        const { database, module } = await fixture("cloud-hourly-clock");
+        await connect(module, database);
+        await vi.advanceTimersByTimeAsync(0);
+        vi.setSystemTime(0);
+        await vi.advanceTimersByTimeAsync(3_600_000);
+        expect(workos.refresh).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(10_000);
+        expect(workos.refresh).toHaveBeenCalledTimes(1);
+        vi.setSystemTime(Date.now() + 10 * 3_600_000);
+        await vi.advanceTimersByTimeAsync(3_600_000);
+        expect(workos.refresh).toHaveBeenCalledTimes(2);
+        expect(await pendingDurableCallCount(database)).toBe(1);
+    });
+
+    it("cancels a queued hourly refresh before sign-out and cannot apply it to a later login", async () => {
+        vi.useFakeTimers();
+        const { database, module } = await fixture("cloud-hourly-signout-race");
+        await connect(module, database);
+        const refresh = deferred<{
+            accessToken: string;
+            refreshToken: string;
+            user: typeof user;
+        }>();
+        workos.refresh.mockImplementationOnce(() => refresh.promise);
+        const minting = module.mint(database.context);
+        await vi.advanceTimersByTimeAsync(0);
+        const disconnecting = module.disconnect(database.context);
+        await vi.advanceTimersByTimeAsync(3_600_000);
+        expect(workos.refresh).toHaveBeenCalledTimes(1);
+        refresh.resolve({ accessToken: "access-last", refreshToken: "refresh-last", user });
+        await minting;
+        await disconnecting;
+        await connect(module, database);
+        await vi.advanceTimersByTimeAsync(0);
+        expect(workos.refresh).toHaveBeenCalledTimes(1);
+        expect(await pendingDurableCallCount(database)).toBe(1);
+        await vi.advanceTimersByTimeAsync(3_600_000);
+        expect(workos.refresh).toHaveBeenCalledTimes(2);
+        expect(workos.refresh).toHaveBeenLastCalledWith({ refreshToken: "refresh-a" });
+    });
+
+    it("publishes verified user changes from hourly refresh without duplicating its schedule", async () => {
+        vi.useFakeTimers();
+        const { database, module } = await fixture("cloud-hourly-user-update");
+        await connect(module, database);
+        const events: Parameters<CloudUpdatedListener>[1][] = [];
+        module.onUpdated((_ctx, cloud) => events.push(cloud));
+        workos.refresh.mockResolvedValue({
+            accessToken: "access-updated",
+            refreshToken: "refresh-updated",
+            user: { ...user, firstName: "Grace" },
+        });
+        await vi.advanceTimersByTimeAsync(3_600_000);
+        expect(events).toHaveLength(1);
+        expect(events[0]).toMatchObject({ status: "connected", user: { firstName: "Grace" } });
+        expect(JSON.stringify(events)).not.toMatch(/access-updated|refresh-updated/);
+        expect(await pendingDurableCallCount(database)).toBe(1);
+        await vi.advanceTimersByTimeAsync(3_600_000);
+        expect(workos.refresh).toHaveBeenCalledTimes(2);
+        expect(events).toHaveLength(1);
+    });
+
+    it("does not consume a refresh token until its next hourly attempt is durably scheduled", async () => {
+        vi.useFakeTimers();
+        const { database, module } = await fixture("cloud-hourly-schedule-storage");
+        await connect(module, database);
+        await vi.advanceTimersByTimeAsync(0);
+        await agentDatabaseRun(
+            database.context.db,
+            sql.raw(`CREATE TRIGGER fail_cloud_schedule
+            BEFORE INSERT ON durable_function_kv
+            BEGIN SELECT RAISE(FAIL, 'temporary'); END`),
+        );
+        await vi.advanceTimersByTimeAsync(3_600_000);
+        expect(workos.refresh).not.toHaveBeenCalled();
+        expect(await pendingDurableCallCount(database)).toBe(1);
+        await agentDatabaseRun(database.context.db, sql.raw("DROP TRIGGER fail_cloud_schedule"));
+        await vi.advanceTimersByTimeAsync(5_000);
+        expect(workos.refresh).toHaveBeenCalledTimes(1);
+        await vi.advanceTimersByTimeAsync(3_600_000);
+        expect(workos.refresh).toHaveBeenCalledTimes(2);
+    });
+
     it.each([
         [
             "disconnected",
@@ -747,7 +1026,7 @@ describe("CloudModule", () => {
         expect(JSON.stringify(connected)).not.toContain("access-a");
         expect(connected).not.toHaveProperty("enrollment");
         expect(connected).not.toHaveProperty("keys");
-        expect(await pendingDurableCallCount(database)).toBe(0);
+        expect(await pendingDurableCallCount(database)).toBe(1);
 
         const minted = await module.mint(database.context);
         expect(minted.accessToken).toBe("access-b");

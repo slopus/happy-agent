@@ -2,6 +2,7 @@ import type { Context } from "@steve.kite/stdlib";
 
 import type { ComputeFileSystem } from "./ComputeFileSystem.js";
 import type { ComputeShell } from "./ComputeShell.js";
+import type { ComputeServices } from "./ComputeServices.js";
 
 /**
  * What sort of machine a compute is, as opposed to which provider built it.
@@ -44,6 +45,8 @@ export interface Compute {
     readonly fs: ComputeFileSystem;
     /** The shell. */
     readonly shell: ComputeShell;
+    /** Mandatory isolated services, when this backend can enforce that separate boundary. */
+    readonly services?: ComputeServices;
     /** Stop everything this compute started and release what it holds. */
     dispose(ctx: Context): Promise<void>;
 }

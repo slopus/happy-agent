@@ -247,7 +247,7 @@ async function createFixture() {
         passive as never,
         passive as never,
         passive as never,
-        { onPending: subscribe, onAppend: subscribe, runningRun } as never,
+        { onPending: subscribe, onAppend: subscribe, onToolSpawn: subscribe, runningRun } as never,
         passive as never,
         { onEvent: subscribe, listPage: questions } as never,
         passive as never,

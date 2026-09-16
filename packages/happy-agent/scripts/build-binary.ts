@@ -497,7 +497,7 @@ function buildMenuBarApp(modulesRoot: string, target: BinaryTarget): string | un
     return join(modulesRoot, "dist", "menuBar", "bin", `happy-menu-bar-${target.key}`);
 }
 
-function resolveSourceAdapters(target: BinaryTarget): Map<string, SourceAdapter> {
+export function resolveSourceAdapters(target: BinaryTarget): Map<string, SourceAdapter> {
     const adapters = new Map<string, SourceAdapter>();
     const modulesRoot = directPackageRoot("@slopus/happy-agent-modules");
     const libsqlRoot = packageDependencyRoot(
@@ -620,10 +620,19 @@ export function binaryExists() { return true; }
 export function findBinary() { return getFffLibraryPath(); }
 `,
     });
-    addAdapter(adapters, join(supervisorRoot, "dist", "impl", "resolveBinaryForTarget.js"), {
-        name: "supervisor binary resolver",
-        required: true,
-        adapt: () => `import { existsSync } from "node:fs";
+    // The CLI and published compute package can pin distinct supervisor copies.
+    // Both must resolve the same embedded helper, including Windows setup.
+    for (const root of new Set([
+        supervisorRoot,
+        directPackageRoot("@slopus/happy-agent-supervisor"),
+    ])) {
+        addAdapter(adapters, join(root, "dist", "impl", "resolveBinaryForTarget.js"), {
+            name:
+                root === supervisorRoot
+                    ? "supervisor binary resolver"
+                    : "CLI supervisor binary resolver",
+            required: true,
+            adapt: () => `import { existsSync } from "node:fs";
 import path from "node:path";
 import { getSupervisorBinary } from ${JSON.stringify(VIRTUAL_ASSETS_MODULE)};
 export function resolveBinaryForTarget(key, binaryPath) {
@@ -637,7 +646,8 @@ export function resolveBinaryForTarget(key, binaryPath) {
     return getSupervisorBinary(key);
 }
 `,
-    });
+        });
+    }
     addAdapter(
         adapters,
         join(computeRoot, "dist", "supervisor", "resolveSupervisorProtectedPaths.js"),
@@ -1043,4 +1053,4 @@ function variableSuffix(key: BinaryTarget["key"]): string {
         .join("");
 }
 
-void main();
+if (import.meta.main) void main();

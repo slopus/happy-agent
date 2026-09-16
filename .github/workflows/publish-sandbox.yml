@@ -98,6 +98,11 @@ jobs:
             - name: Lint
               run: cargo clippy --locked --all-targets --target "${{ matrix.target }}" -- -D warnings
 
+            - name: Verify strict service isolation with delegated resource controls
+              if: runner.os == 'Linux'
+              # Missing delegation cannot silently skip these checks before publication.
+              run: bash ../scripts/test-services.sh "${{ matrix.target }}"
+
             - name: Upload the binary
               uses: actions/upload-artifact@v4
               with:
@@ -239,7 +244,10 @@ jobs:
                   tarball="slopus-happy-agent-supervisor-${version}.tgz"
                   distribution_tag=latest
                   case "${version}" in
+                      *-preview.*) distribution_tag=preview ;;
+                      *-nightly.*) distribution_tag=nightly ;;
                       *-beta.*) distribution_tag=beta ;;
+                      *-*) echo "An unrecognized prerelease cannot publish to latest." >&2; exit 1 ;;
                   esac
                   echo "Publishing ${tarball} as ${distribution_tag}..."
                   node "${NPM_CLI}" publish "${tarball}" --access public --tag "${distribution_tag}" --provenance

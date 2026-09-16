@@ -1,5 +1,5 @@
-import { rm, stat } from "node:fs/promises";
-import { dirname } from "node:path";
+import { rm, stat, symlink, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 
 import {
     agentDatabaseRows,
@@ -17,6 +17,8 @@ import sharp from "sharp";
 import { describe, expect, it, vi } from "vitest";
 
 import { AbortModule } from "../../sources/abort/index.js";
+import { listBotsTool } from "../../sources/bots/tools/list_bots.js";
+import { setBotAvatarTool } from "../../sources/bots/tools/set_bot_avatar.js";
 import {
     botMigrations,
     BOTS_TABLE,
@@ -495,7 +497,7 @@ describe("BotsModule", () => {
             const created = await fixture.bots.create(fixture.database.context, {
                 name: "Self Portrait",
             });
-            const updated = await fixture.bots.setOwnAvatar(
+            const updated = await fixture.bots.setAvatarForAgent(
                 fixture.database.context,
                 created.agentId,
                 await png(10, 200, 90),
@@ -511,7 +513,7 @@ describe("BotsModule", () => {
 
             // Only the bot's own agent may set it, and an archived bot may not.
             await expect(
-                fixture.bots.setOwnAvatar(
+                fixture.bots.setAvatarForAgent(
                     fixture.database.context,
                     "notabotagentid",
                     await png(1, 2, 3),
@@ -523,12 +525,124 @@ describe("BotsModule", () => {
                 updated.version,
             );
             await expect(
-                fixture.bots.setOwnAvatar(
+                fixture.bots.setAvatarForAgent(
                     fixture.database.context,
                     archived.agentId,
                     await png(4, 5, 6),
                 ),
             ).rejects.toBeInstanceOf(BotConflictError);
+        } finally {
+            await fixture.close();
+        }
+    });
+
+    it("lets admins set any bot's avatar while keeping ordinary bots self-only", async () => {
+        const fixture = await started("bots-admin-avatar", true);
+        const ctx = fixture.database.context;
+        try {
+            const admin = await fixture.bots.create(ctx, { name: "Admin", isAdmin: true });
+            const ordinary = await fixture.bots.create(ctx, { name: "Ordinary" });
+            const target = await fixture.bots.create(ctx, { name: "Target" });
+            const bytes = await png(10, 20, 30);
+            await writeFile(join(admin.path, "picture.png"), bytes);
+            await writeFile(join(ordinary.path, "picture.png"), bytes);
+            const adminTool = setBotAvatarTool(fixture.bots, admin.agentId);
+            const ordinaryTool = setBotAvatarTool(fixture.bots, ordinary.agentId);
+            expect(
+                adminTool.shouldReviewInAutoMode({ path: "picture.png", botId: target.id }, ctx),
+            ).toBe(false);
+            expect(adminTool.shouldRunInFullAccessInAutoMode).toBeUndefined();
+            await expect(
+                ordinaryTool.execute(ctx, { path: "missing.png", botId: target.id }, {} as never),
+            ).rejects.toThrow("Only an admin bot can set another bot's avatar.");
+            await expect(
+                fixture.bots.setAvatarForAgent(ctx, ordinary.agentId, bytes, target.id),
+            ).rejects.toThrow("Only an admin bot can set another bot's avatar.");
+            expect((await fixture.bots.get(ctx, target.id))?.avatar).toBeUndefined();
+            await ordinaryTool.execute(
+                ctx,
+                { path: "picture.png", botId: ordinary.id },
+                {} as never,
+            );
+            expect((await fixture.bots.get(ctx, ordinary.id))?.avatar?.source).toBe("generated");
+
+            await adminTool.execute(ctx, { path: "picture.png", botId: target.id }, {} as never);
+            const updated = await fixture.bots.get(ctx, target.id);
+            expect(updated).toMatchObject({
+                version: target.version + 1,
+                avatar: { source: "generated" },
+            });
+            expect((await fixture.bots.get(ctx, admin.id))?.avatar).toBeUndefined();
+            const archived = await fixture.bots.archive(ctx, target.id, updated!.version);
+            await adminTool.execute(ctx, { path: "picture.png", botId: target.id }, {} as never);
+            expect(await fixture.bots.get(ctx, target.id)).toMatchObject({
+                status: "archived",
+                version: archived.version + 1,
+            });
+            await expect(
+                adminTool.execute(ctx, { path: "picture.png", botId: "missingbot" }, {} as never),
+            ).rejects.toBeInstanceOf(BotNotFoundError);
+            await fixture.bots.archive(ctx, admin.id, admin.version);
+            await expect(
+                adminTool.execute(ctx, { path: "picture.png", botId: target.id }, {} as never),
+            ).rejects.toThrow("An archived bot cannot change avatars.");
+            await expect(
+                fixture.bots.setAvatarForAgent(ctx, admin.agentId, bytes, target.id),
+            ).rejects.toBeInstanceOf(BotConflictError);
+        } finally {
+            await fixture.close();
+        }
+    });
+
+    it("keeps admin avatar images inside the acting bot's folder", async () => {
+        const fixture = await started("bots-avatar-paths", true);
+        const ctx = fixture.database.context;
+        try {
+            const admin = await fixture.bots.create(ctx, { name: "Admin", isAdmin: true });
+            const target = await fixture.bots.create(ctx, { name: "Target" });
+            const outside = join(target.path, "picture.png");
+            await writeFile(outside, await png(10, 20, 30));
+            await symlink(outside, join(admin.path, "escape.png"));
+            const tool = setBotAvatarTool(fixture.bots, admin.agentId);
+            for (const path of [outside, "escape.png", "../target/picture.png"]) {
+                await expect(
+                    tool.execute(ctx, { path, botId: target.id }, {} as never),
+                ).rejects.toThrow("The avatar image must live inside your own folder.");
+            }
+            expect((await fixture.bots.get(ctx, target.id))?.avatar).toBeUndefined();
+        } finally {
+            await fixture.close();
+        }
+    });
+
+    it("shows and filters avatar presence, including archived bots", async () => {
+        const fixture = await started("bots-avatar-list", true);
+        const ctx = fixture.database.context;
+        try {
+            const missing = await fixture.bots.create(ctx, { name: "Missing" });
+            const pictured = await fixture.bots.create(ctx, { name: "Pictured" });
+            await fixture.bots.setAvatarForAgent(ctx, pictured.agentId, await png(10, 20, 30));
+            await fixture.bots.archive(ctx, missing.id, missing.version);
+            const tool = listBotsTool(fixture.bots);
+            const all = await tool.execute(ctx, {}, {} as never);
+            expect(all.bots.map((bot) => bot.id)).toEqual([missing.id, pictured.id]);
+            expect(tool.toLLM(all)).toEqual([
+                { type: "text", text: expect.stringContaining("no avatar") },
+            ]);
+            expect(tool.toLLM(all)).toEqual([
+                { type: "text", text: expect.stringContaining("has avatar") },
+            ]);
+            expect(
+                (await tool.execute(ctx, { hasAvatar: false }, {} as never)).bots.map(
+                    (bot) => bot.id,
+                ),
+            ).toEqual([missing.id]);
+            expect(
+                (await tool.execute(ctx, { hasAvatar: true }, {} as never)).bots.map(
+                    (bot) => bot.id,
+                ),
+            ).toEqual([pictured.id]);
+            expect(tool.toLLM({ bots: [] })).toEqual([{ type: "text", text: "No bots found." }]);
         } finally {
             await fixture.close();
         }

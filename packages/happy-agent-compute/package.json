@@ -1,6 +1,6 @@
 {
     "name": "@slopus/happy-agent-compute",
-    "version": "0.1.15",
+    "version": "0.1.19",
     "description": "Filesystems, shells, sandboxes, and containers for Happy agents.",
     "license": "MIT",
     "repository": {
@@ -30,12 +30,13 @@
         "test:live": "HAPPY_AGENT_COMPUTE_LIVE_TEST=1 vitest run tests/live",
         "test:live:docker": "HAPPY_AGENT_COMPUTE_LIVE_TEST=1 vitest run tests/live/dockerBackend.live.test.ts",
         "test:live:host": "HAPPY_AGENT_COMPUTE_LIVE_TEST=1 vitest run tests/live/hostSandbox.live.test.ts",
+        "test:live:services": "HAPPY_AGENT_COMPUTE_SERVICE_LIVE_TEST=1 vitest run tests/live/serviceRuntime.live.test.ts",
         "test:live:just-bash": "HAPPY_AGENT_COMPUTE_LIVE_TEST=1 vitest run tests/live/justBashPermissions.live.test.ts"
     },
     "dependencies": {
         "@lydell/node-pty": "1.2.0-beta.15",
         "@sinclair/typebox": "^0.34.49",
-        "@slopus/happy-agent-supervisor": "0.0.9",
+        "@slopus/happy-agent-supervisor": "0.0.13-preview.1",
         "@steve.kite/stdlib": "0.0.12",
         "dockerode": "^5.0.1",
         "just-bash": "^3.0.2"
@@ -47,11 +48,11 @@
         "vitest": "^3.2.4"
     },
     "optionalDependencies": {
-        "@slopus/happy-agent-supervisor-darwin-arm64": "npm:@slopus/happy-agent-supervisor@0.0.9-darwin-arm64",
-        "@slopus/happy-agent-supervisor-darwin-x64": "npm:@slopus/happy-agent-supervisor@0.0.9-darwin-x64",
-        "@slopus/happy-agent-supervisor-linux-arm64": "npm:@slopus/happy-agent-supervisor@0.0.9-linux-arm64",
-        "@slopus/happy-agent-supervisor-linux-x64": "npm:@slopus/happy-agent-supervisor@0.0.9-linux-x64",
-        "@slopus/happy-agent-supervisor-win32-x64": "npm:@slopus/happy-agent-supervisor@0.0.9-win32-x64"
+        "@slopus/happy-agent-supervisor-darwin-arm64": "npm:@slopus/happy-agent-supervisor@0.0.13-preview.1-darwin-arm64",
+        "@slopus/happy-agent-supervisor-darwin-x64": "npm:@slopus/happy-agent-supervisor@0.0.13-preview.1-darwin-x64",
+        "@slopus/happy-agent-supervisor-linux-arm64": "npm:@slopus/happy-agent-supervisor@0.0.13-preview.1-linux-arm64",
+        "@slopus/happy-agent-supervisor-linux-x64": "npm:@slopus/happy-agent-supervisor@0.0.13-preview.1-linux-x64",
+        "@slopus/happy-agent-supervisor-win32-x64": "npm:@slopus/happy-agent-supervisor@0.0.13-preview.1-win32-x64"
     },
     "engines": {
         "node": ">=22.19.0"

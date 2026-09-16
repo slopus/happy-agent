@@ -23,6 +23,28 @@ afterEach(async () => {
 });
 
 describe("NativeProcessManager", () => {
+    it("reads independent deltas without copying the full retained output snapshot", async () => {
+        const cwd = await makeTemporaryDirectory();
+        const manager = createManager();
+        const managed = await manager.start(ctx, {
+            command: process.execPath,
+            args: ["-e", "process.stdout.write('retained output'); process.stdin.resume();"],
+            cwd,
+        });
+        await vi.waitFor(() => expect(managed.snapshot().stdout).toBe("retained output"));
+        const snapshot = vi.spyOn(managed, "snapshot");
+        const first = managed.readOutputDelta(0, 0, false, true);
+        expect(first.stdoutDelta).toBe("retained output");
+        expect(first.stdoutOffset).toBe(15);
+        expect(
+            managed.readOutputDelta(first.stdoutOffset, first.stderrOffset, false, true)
+                .stdoutDelta,
+        ).toBe("");
+        expect(snapshot).not.toHaveBeenCalled();
+        expect(first).not.toHaveProperty("stdout");
+        expect(managed.readOutputDelta(0, 0, false, true).stdoutDelta).toBe("retained output");
+        snapshot.mockRestore();
+    });
     it("runs a command with an explicit cwd and captures stdout and stderr", async () => {
         const cwd = await makeTemporaryDirectory();
         const manager = createManager();
@@ -101,6 +123,31 @@ describe("NativeProcessManager", () => {
             exitCode: 0,
             stdout: "startup\nlater\n",
         });
+    });
+
+    it("does not advance independent readers through an incomplete UTF-8 character", async () => {
+        const cwd = await makeTemporaryDirectory();
+        const manager = createManager();
+        const managed = await manager.start(ctx, {
+            command: process.execPath,
+            args: [
+                "-e",
+                "process.stdout.write(Buffer.from([0xf0,0x9f])); process.stderr.write('ready'); process.stdin.once('data', () => { process.stdout.write(Buffer.from([0x98,0x80])); process.exit(0); });",
+            ],
+            cwd,
+        });
+        await vi.waitFor(() =>
+            expect(managed.readOutput(0, 0, false, true).stderrDelta).toBe("ready"),
+        );
+        const first = managed.readOutput(0, 0, false, true);
+        expect(first.stdoutDelta).toBe("");
+        expect(first.stdoutOffset).toBe(0);
+        await managed.writeStdin(ctx, "continue");
+        await managed.wait(ctx);
+        const second = managed.readOutput(first.stdoutOffset, first.stderrOffset, false, true);
+        expect(second.stdoutDelta).toBe("😀");
+        expect(second.stdoutOffset).toBe(4);
+        expect(managed.readOutput(0, 0, false, true).stdoutDelta).toBe("😀");
     });
 
     it("accepts trusted startup input larger than the pipe high-water mark", async () => {

@@ -12,6 +12,7 @@ import {
     toolResultPresentations,
 } from "../../sources/api/ApiMessageProjection.js";
 import { toolCallResource } from "../../sources/api/ApiToolPresentation.js";
+import type { HistoryMessage } from "../../sources/history/index.js";
 
 describe("apiResourceVersion", () => {
     it("projects a numeric module version into a deterministic ordered UUIDv7", () => {
@@ -60,6 +61,86 @@ describe("messageHiddenFromUser", () => {
 });
 
 describe("messageResource", () => {
+    it.each(["running", "completed", "failed"] as const)(
+        "shares durable spawn identity between live and compact history (%s)",
+        (status) => {
+            const presentation = {
+                type: "agent_spawn" as const,
+                model: { modelId: "xai/grok-4.6", providerId: "grok", name: "Grok 4.6" },
+                ...(status === "completed" ? { agentId: "callspawn" } : {}),
+            };
+            const args = { title: "Task title has no model identity", model: "xai/grok-4.6" };
+            const history: HistoryMessage = {
+                recordId: "inference-spawn",
+                role: "assistant",
+                blocks: [
+                    {
+                        type: "tool_call",
+                        callId: "callspawn",
+                        name: "create_agent",
+                        arguments: args,
+                        spawnPresentation: presentation,
+                    },
+                    ...(status === "running"
+                        ? []
+                        : [
+                              {
+                                  type: "tool_result" as const,
+                                  callId: "callspawn",
+                                  toolName: "create_agent",
+                                  output: "Result",
+                                  isError: status === "failed",
+                              },
+                          ]),
+                ],
+            };
+            const live = providerMessageContent(
+                [
+                    { type: "toolCall", id: "callspawn", name: "create_agent", arguments: args },
+                    ...(status === "running"
+                        ? []
+                        : [
+                              {
+                                  type: "tool_result",
+                                  toolCallId: "callspawn",
+                                  rendered: [{ type: "text", text: "Result" }],
+                                  isError: status === "failed",
+                              },
+                          ]),
+                ],
+                reviewedToolCalls(history),
+                toolResultPresentations(history),
+            );
+            expect(live).toEqual(messageResource(history, { omitToolData: true }).content);
+            expect(live?.[0]).toMatchObject({ status, presentation, arguments: args });
+            expect(Value.Check(toolPresentationSchema, live?.[0]?.presentation)).toBe(true);
+            if (status !== "running") expect(live?.[0]?.result).toEqual({ output: "Result" });
+        },
+    );
+
+    it("renders unresolved creation generically without inferring identity from arguments or output", () => {
+        expect(
+            toolCallResource(
+                {
+                    id: "callspawn",
+                    name: "create_agent",
+                    status: "failed",
+                    arguments: { title: "Grok 4.6", model: "unavailable" },
+                    output: '{"model":"grok"}',
+                },
+                { omitToolData: true },
+            ),
+        ).toEqual({
+            type: "tool_call",
+            id: "callspawn",
+            name: "create_agent",
+            status: "failed",
+            arguments: { title: "Grok 4.6", model: "unavailable" },
+            result: { output: '{"model":"grok"}' },
+            presentation: { type: "agent_spawn" },
+        });
+    });
+
     it("exposes user authorship separately from client data without changing content", () => {
         const message = {
             at: 100,

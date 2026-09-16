@@ -3,6 +3,32 @@ import { describe, expect, it } from "vitest";
 import { validateDockerExecutionConfig } from "../../../sources/docker/impl/validateDockerExecutionConfig.js";
 
 describe("validateDockerExecutionConfig", () => {
+    it("accepts an administrator-installed AppArmor profile only for managed containers", () => {
+        expect(() =>
+            validateDockerExecutionConfig({
+                image: "dev:local",
+                workingDirectory: "/workspace",
+                apparmorProfile: "happy-compute-tests",
+            }),
+        ).not.toThrow();
+        for (const apparmorProfile of ["", "bad\nprofile", "a".repeat(129)]) {
+            expect(() =>
+                validateDockerExecutionConfig({
+                    image: "dev:local",
+                    workingDirectory: "/workspace",
+                    apparmorProfile,
+                }),
+            ).toThrow("Docker environment settings are not valid");
+        }
+        expect(() =>
+            validateDockerExecutionConfig({
+                container: "dev",
+                workingDirectory: "/workspace",
+                apparmorProfile: "happy-compute-tests",
+            }),
+        ).toThrow("Docker environment settings are not valid");
+    });
+
     it("requires exactly one of a container or an image", () => {
         expect(() => validateDockerExecutionConfig({ workingDirectory: "/workspace" })).toThrow(
             "Docker environment settings are not valid",

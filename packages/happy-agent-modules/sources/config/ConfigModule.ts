@@ -1,4 +1,10 @@
-import { localAgentSocketPath, ensurePrivateDirectory } from "@slopus/happy-agent-compute";
+import {
+    localAgentSocketPath,
+    ensurePrivateDirectory,
+    toManagedNetworkPolicy,
+    type ManagedNetworkPolicy,
+    type ComputeServiceExecution,
+} from "@slopus/happy-agent-compute";
 import { randomUUID } from "node:crypto";
 import { chmod, mkdir, open, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -1306,6 +1312,45 @@ export class ConfigModule implements AgentModule {
             throw new Error("The agent ID cannot name a Code Mode state folder.");
         }
         return join(this.configuration.paths.agentHome, "state", agentId, "snapshot.bin");
+    }
+
+    /** A strict service's private native controls never live in the workspace it serves. */
+    serviceExecution(serviceId: string): ComputeServiceExecution {
+        if (process.platform !== "linux")
+            throw new Error(
+                "Sandboxed workspace services require a Linux compute with native namespace and cgroup support.",
+            );
+        if (!Value.Check(cuid2Schema, serviceId) || serviceId.length < 16) {
+            throw new Error("The service ID cannot name an execution folder.");
+        }
+        const directory = join(this.configuration.paths.agentHome, "services", serviceId);
+        if (Buffer.byteLength(join(directory, "bridge"), "utf8") > 100) {
+            throw new Error(
+                "The Happy Agent private home is too long for a secure service socket. Use a shorter private home path.",
+            );
+        }
+        return { id: serviceId, directory };
+    }
+
+    /** Prepare only the private parent; the supervisor SDK exclusively creates each execution. */
+    async prepareServiceControls(): Promise<void> {
+        await ensurePrivateDirectory(join(this.configuration.paths.agentHome, "services"));
+    }
+
+    /** Re-read the target workspace's root policy, never another agent's startup directory. */
+    async serviceNetworkPolicy(workspacePath: string): Promise<ManagedNetworkPolicy | undefined> {
+        if (!Value.Check(pathSchema, workspacePath))
+            throw new Error("The service workspace path is invalid.");
+        const [global, local] = await Promise.all([
+            readConfigSource(this.configuration.paths.globalConfigPath, "global"),
+            readConfigSource(join(workspacePath, "happy.toml"), "local"),
+        ]);
+        const values = mergeValues(
+            global.values,
+            withoutProjectMachineSettings(local.values),
+            this.#runtimeValues,
+        );
+        return toManagedNetworkPolicy(values.network);
     }
 
     /** One immutable bot folder below the configuration-owned bot root. */

@@ -60,10 +60,26 @@ pub(crate) struct SupervisorPolicy {
     #[serde(default)]
     pub(crate) denied_write_paths: Vec<PathBuf>,
     pub(crate) network: NetworkPolicy,
+    #[serde(default)]
+    pub(crate) service: Option<crate::service_policy::ServicePolicy>,
 }
 
 impl SupervisorPolicy {
     pub(crate) fn validate(&self) -> SupervisorResult<()> {
+        if let Some(service) = &self.service {
+            service.validate()?;
+            if self.mode != PermissionMode::ReadOnly
+                || !self.network.local_binding
+                || !self.allowed_read_paths.is_empty()
+                || !self.allowed_write_paths.is_empty()
+                || !self.denied_read_paths.is_empty()
+                || !self.denied_write_paths.is_empty()
+                || self.network.egress == service.outbound.is_empty()
+                || self.network.outgoing_proxy.is_some() != self.network.egress
+            {
+                return Err(invalid_input("services require their mandatory isolation policy, not ordinary shell overrides").into());
+            }
+        }
         for path in self
             .allowed_read_paths
             .iter()
@@ -206,6 +222,48 @@ mod tests {
     use super::{PermissionMode, ProxyFrontEnd, SupervisorPolicy};
 
     #[test]
+    fn service_policy_cannot_relax_the_mandatory_boundary() {
+        let valid = serde_json::json!({
+            "mode": "read_only", "network": { "egress": false, "localBinding": true },
+            "service": {
+                "root": "/private/execution/root", "cwd": ".",
+                "inputs": [{ "source": "/workspace/src", "destination": "src" }], "scratch": [],
+                "cgroupParent": "/sys/fs/cgroup/delegated", "executionId": "abcdefghijklmnop",
+                "controllerPid": 42,
+                "bridgeSocket": "/private/execution/bridge", "bridgeToken": "a".repeat(64),
+                "port": 4187, "memoryMiB": 1024, "processes": 64, "outbound": []
+            }
+        });
+        let parse = |value| {
+            serde_json::from_value::<SupervisorPolicy>(value)
+                .unwrap_or_else(|error| panic!("{error}"))
+        };
+        assert!(parse(valid.clone()).validate().is_ok());
+        for (pointer, value) in [
+            ("/mode", serde_json::json!("full_access")),
+            ("/network/egress", serde_json::json!(true)),
+            ("/network/localBinding", serde_json::json!(false)),
+            ("/service/root", serde_json::json!("/")),
+            (
+                "/service/bridgeSocket",
+                serde_json::json!("/private/execution/root/bridge"),
+            ),
+            ("/service/memoryMiB", serde_json::json!(1025)),
+            ("/service/processes", serde_json::json!(0)),
+            (
+                "/service/inputs/0/destination",
+                serde_json::json!("../private"),
+            ),
+        ] {
+            let mut policy = valid.clone();
+            *policy
+                .pointer_mut(pointer)
+                .unwrap_or_else(|| panic!("missing {pointer}")) = value;
+            assert!(parse(policy).validate().is_err(), "{pointer}");
+        }
+    }
+
+    #[test]
     fn parses_compute_permission_names() {
         let policy: SupervisorPolicy = serde_json::from_str(
             r#"{
@@ -316,9 +374,18 @@ mod tests {
     #[test]
     fn proxy_policies_fail_closed_on_unusable_input() {
         let cases = [
-            (r#""allowedHosts": [], "outgoingProxy": {"frontEnds": []}"#, "frontEnds"),
-            (r#""allowedHosts": [""], "outgoingProxy": {"frontEnds": ["http"]}"#, "empty host"),
-            (r#""allowedHosts": ["*"], "outgoingProxy": {"frontEnds": ["http"]}"#, "*.suffix"),
+            (
+                r#""allowedHosts": [], "outgoingProxy": {"frontEnds": []}"#,
+                "frontEnds",
+            ),
+            (
+                r#""allowedHosts": [""], "outgoingProxy": {"frontEnds": ["http"]}"#,
+                "empty host",
+            ),
+            (
+                r#""allowedHosts": ["*"], "outgoingProxy": {"frontEnds": ["http"]}"#,
+                "*.suffix",
+            ),
             (
                 r#""allowedHosts": ["*.*.example.com"], "outgoingProxy": {"frontEnds": ["http"]}"#,
                 "*.suffix",

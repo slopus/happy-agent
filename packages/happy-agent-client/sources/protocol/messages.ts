@@ -134,6 +134,29 @@ export const searchPresentationSchema = Type.Object({
 /** A web or X search; `sources` arrives on completion. */
 export type SearchPresentation = Static<typeof searchPresentationSchema>;
 
+/** The exact model/provider pair resolved by the sub-agent creation path. */
+export const agentSpawnModelSchema = Type.Object({
+    modelId: Type.String({ minLength: 1, maxLength: 256 }),
+    providerId: Type.String({ minLength: 1, maxLength: 256 }),
+    /** Human-readable catalog name, captured before creation and retained in history. */
+    name: Type.String({ minLength: 1, maxLength: 256 }),
+});
+
+/** The exact model/provider pair resolved by the sub-agent creation path. */
+export type AgentSpawnModel = Static<typeof agentSpawnModelSchema>;
+
+/** Sub-agent creation; the enclosing tool status owns its lifecycle. */
+export const agentSpawnPresentationSchema = Type.Object({
+    type: Type.Literal("agent_spawn"),
+    /** Absent until the creation path has resolved and validated the complete identity. */
+    model: Type.Optional(agentSpawnModelSchema),
+    /** The child identity, supplied only after creation and initial-task delivery succeed. */
+    agentId: Type.Optional(cuid2Schema),
+});
+
+/** Sub-agent creation; the enclosing tool status owns its lifecycle. */
+export type AgentSpawnPresentation = Static<typeof agentSpawnPresentationSchema>;
+
 /** Every display-ready tool-call presentation the client understands. */
 export const toolPresentationSchema = Type.Union([
     explorationPresentationSchema,
@@ -141,6 +164,7 @@ export const toolPresentationSchema = Type.Union([
     backgroundTerminalInteractionPresentationSchema,
     fileDiffPresentationSchema,
     searchPresentationSchema,
+    agentSpawnPresentationSchema,
 ]);
 
 /** Every display-ready tool-call presentation the client understands. */
@@ -451,7 +475,7 @@ export interface MessageHistoryQuery {
      * contains whole runs and may overflow well past it.
      */
     limit?: number;
-    /** Drop `arguments` and `result` from tool calls that carry a presentation. */
+    /** Drop raw data for presented calls, except `agent_spawn` keeps older-client fallback. */
     omitToolData?: boolean;
 }
 

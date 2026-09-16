@@ -35,7 +35,10 @@ import {
 import { Value } from "@sinclair/typebox/value";
 import type { LibSQLDatabase } from "drizzle-orm/libsql";
 
-import { DurableFunctionsModule } from "../durableFunctions/index.js";
+import {
+    DurableFunctionsModule,
+    type DurableFunctionExecution,
+} from "../durableFunctions/index.js";
 
 import {
     cloudSession,
@@ -50,6 +53,12 @@ import {
     cloudAuthorizationExpiryArgumentsSchema,
     cloudAuthorizationExpiryResultSchema,
     type CloudAuthorizationExpiryArguments,
+    CLOUD_SESSION_REFRESH_FUNCTION,
+    CLOUD_SESSION_REFRESH_OPERATION,
+    CLOUD_SESSION_REFRESH_INTERVAL_MS,
+    cloudSessionRefreshArgumentsSchema,
+    cloudSessionRefreshResultSchema,
+    type CloudSessionRefreshArguments,
 } from "./CloudDurableFunctions.js";
 import {
     CloudCredentialsRejectedError,
@@ -82,6 +91,7 @@ import {
 
 const AUTHORIZATION_LIFETIME_MS = 10 * 60 * 1_000;
 const AUTHORIZATION_EXPIRY_RETRY_MS = 5_000;
+const SESSION_REFRESH_STORAGE_RETRY_MS = 5_000;
 const ORGANIZATION_TOKEN_CACHE_LIMIT = 100;
 const ORGANIZATION_TOKEN_REFRESH_AHEAD_MS = 60_000;
 const ORGANIZATION_TOKEN_REFRESH_RETRY_MS = 5_000;
@@ -184,6 +194,15 @@ export class CloudModule implements AgentModule {
             resultSchema: cloudAuthorizationExpiryResultSchema,
             executor: async (ctx, call) => {
                 await this.#executeAuthorizationExpiry(ctx, call.arguments);
+                return null;
+            },
+        });
+        durableFunctions.register({
+            name: CLOUD_SESSION_REFRESH_FUNCTION,
+            argumentsSchema: cloudSessionRefreshArgumentsSchema,
+            resultSchema: cloudSessionRefreshResultSchema,
+            executor: async (ctx, call) => {
+                await this.#executeSessionRefresh(ctx, call);
                 return null;
             },
         });
@@ -1021,6 +1040,67 @@ export class CloudModule implements AgentModule {
             });
         }
         this.#cloud = project(stored);
+        if (stored.session !== null) await this.#scheduleSessionRefresh(ctx);
+    }
+
+    async #scheduleSessionRefresh(ctx: Context): Promise<void> {
+        await this.#durableFunctions.invoke(ctx, {
+            function: CLOUD_SESSION_REFRESH_FUNCTION,
+            arguments: { refreshAt: Date.now() + CLOUD_SESSION_REFRESH_INTERVAL_MS },
+            operationId: CLOUD_SESSION_REFRESH_OPERATION,
+        });
+    }
+
+    async #executeSessionRefresh(
+        ctx: Context,
+        call: DurableFunctionExecution<CloudSessionRefreshArguments>,
+    ): Promise<void> {
+        for (;;) {
+            ctx.lifetime?.throwIfAborted();
+            if (this.#stopping) {
+                // Only Durable Functions owns shutdown cancellation. Returning here would
+                // settle the call successfully and erase the deadline owed after restart.
+                await delay(ctx, CLOUD_SESSION_REFRESH_INTERVAL_MS);
+                continue;
+            }
+            try {
+                const schedule = await call.kv.getOrCreate(ctx, "schedule", () => call.arguments);
+                if (!Value.Check(cloudSessionRefreshArgumentsSchema, schedule)) {
+                    throw new Error("The Cloud session refresh schedule is invalid.");
+                }
+                const remaining = schedule.refreshAt - Date.now();
+                if (remaining > 0) {
+                    await delay(ctx, remaining);
+                    continue;
+                }
+                const connected = await this.#lock.runInLock(ctx, async () => {
+                    ctx.lifetime?.throwIfAborted();
+                    if (this.#stopping || this.#cloud.status !== "connected") return false;
+                    // Checkpoint before external work. A restart resumes the next scheduled
+                    // attempt rather than immediately replaying an ambiguous refresh.
+                    await call.kv.write(ctx, "schedule", {
+                        refreshAt: Date.now() + CLOUD_SESSION_REFRESH_INTERVAL_MS,
+                    });
+                    ctx.lifetime?.throwIfAborted();
+                    const environment = this.#cloud.environment;
+                    try {
+                        // No organization ID, no team enumeration or cache population. Once
+                        // started, finish rotation on Cloud's lifetime even during shutdown.
+                        await this.#mintInLock(this.#ownedContext(), true);
+                    } catch (error: unknown) {
+                        logCloudFailure(ctx, "token", environment, "session-refresh", error);
+                    }
+                    return this.#cloud.status === "connected";
+                });
+                if (!connected && !this.#stopping) return;
+            } catch {
+                ctx.lifetime?.throwIfAborted();
+                if (this.#stopping) continue;
+                // Never log storage errors: database adapters may include private SQL values.
+                ctx.log.warn("Cloud session refresh scheduling is temporarily unavailable.");
+                await delay(ctx, SESSION_REFRESH_STORAGE_RETRY_MS);
+            }
+        }
     }
 
     async #beginAttempt(ctx: Context, draft: CloudAttemptDraft): Promise<Cloud> {
@@ -1058,6 +1138,11 @@ export class CloudModule implements AgentModule {
                 await this.#durableFunctions.cancel(txCtx, CLOUD_AUTHORIZATION_EXPIRY_OPERATION);
             }
             const stored = await this.#database.replace(txCtx, value);
+            if (stored.session === null) {
+                await this.#durableFunctions.cancel(txCtx, CLOUD_SESSION_REFRESH_OPERATION);
+            } else {
+                await this.#scheduleSessionRefresh(txCtx);
+            }
             const cloud = project(stored, options.attempt);
             afterCommit(txCtx, (postCommitCtx) => {
                 if (

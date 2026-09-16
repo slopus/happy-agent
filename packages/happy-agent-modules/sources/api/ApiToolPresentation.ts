@@ -1,5 +1,9 @@
 import { Type, type Static, type TSchema } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
+import {
+    agentSpawnPresentationSchema,
+    type AgentSpawnPresentation,
+} from "@slopus/happy-agent-client";
 
 import {
     historyToolPresentationSchema,
@@ -35,6 +39,7 @@ const explorationOperationSchema = Type.Union([
 ]);
 
 const toolPresentationSchema = Type.Union([
+    agentSpawnPresentationSchema,
     Type.Object(
         {
             type: Type.Literal("exploration"),
@@ -75,7 +80,7 @@ export interface ToolCallProjection {
     readonly status: ToolCallStatus;
     readonly arguments?: unknown;
     readonly output?: string;
-    readonly presentation?: HistoryToolPresentation;
+    readonly presentation?: HistoryToolPresentation | AgentSpawnPresentation;
     readonly elevated?: boolean;
     readonly review?: ToolPermissionReview;
 }
@@ -122,7 +127,10 @@ export function toolCallResource(
     options: MessageResourceOptions = {},
 ): Record<string, unknown> {
     const presentation = presentationForToolCall(call);
-    const omitRaw = options.omitToolData === true && presentation !== undefined;
+    const omitRaw =
+        options.omitToolData === true &&
+        presentation !== undefined &&
+        presentation.type !== "agent_spawn";
     return {
         type: "tool_call",
         id: call.id,
@@ -138,6 +146,9 @@ export function toolCallResource(
 }
 
 function presentationForToolCall(call: ToolCallProjection): ToolPresentation | undefined {
+    if (call.name === "create_agent") {
+        return checked(agentSpawnPresentationSchema, call.presentation) ?? { type: "agent_spawn" };
+    }
     if (call.status === "completed" && call.presentation !== undefined) {
         const presentation = checked(historyToolPresentationSchema, call.presentation);
         if (presentation !== undefined) return presentation;

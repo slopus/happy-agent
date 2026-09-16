@@ -111,6 +111,66 @@ describe("DockerEnvironment", () => {
         expect(attached.remove).not.toHaveBeenCalled();
     });
 
+    it("passes a configured AppArmor profile to Docker without installing it", async () => {
+        const created = { start: vi.fn(), remove: vi.fn() };
+        created.start.mockResolvedValue(undefined);
+        created.remove.mockResolvedValue(undefined);
+        const createContainer = vi.fn().mockResolvedValue(created);
+        const environment = new DockerEnvironment(
+            {
+                image: "compute-dev:latest",
+                name: "managed-apparmor-test",
+                workingDirectory: "/workspace",
+                apparmorProfile: "happy-compute-tests",
+            },
+            "session-apparmor",
+            {
+                createContainer,
+                getContainer: vi.fn(() => ({
+                    inspect: vi.fn().mockRejectedValue({ statusCode: 404 }),
+                })),
+            } as unknown as Dockerode,
+        );
+        try {
+            await environment.container();
+            expect(createContainer).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    HostConfig: expect.objectContaining({
+                        SecurityOpt: ["seccomp=unconfined", "apparmor=happy-compute-tests"],
+                    }),
+                }),
+            );
+        } finally {
+            await environment.release();
+        }
+    });
+
+    it("refuses to reuse a managed container with a different requested AppArmor profile", async () => {
+        const start = vi.fn();
+        const environment = new DockerEnvironment(
+            {
+                image: "compute-dev:latest",
+                name: "managed-apparmor-mismatch-test",
+                workingDirectory: "/workspace",
+                apparmorProfile: "happy-compute-tests",
+            },
+            "session-apparmor-mismatch",
+            {
+                getContainer: vi.fn(() => ({
+                    inspect: vi.fn().mockResolvedValue({
+                        Config: { Labels: { "dev.agent-compute.managed": "true" } },
+                        State: { Running: false },
+                        AppArmorProfile: "unconfined",
+                    }),
+                    start,
+                })),
+            } as unknown as Dockerode,
+        );
+        await expect(environment.container()).rejects.toThrow("AppArmor profile does not match");
+        expect(start).not.toHaveBeenCalled();
+        await expect(environment.release()).resolves.toBeUndefined();
+    });
+
     it("fails closed for an attached container without the read-only supervisor mount", async () => {
         const attached = {
             inspect: vi.fn().mockResolvedValue({
