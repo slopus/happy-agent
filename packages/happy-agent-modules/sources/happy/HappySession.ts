@@ -31,6 +31,8 @@ export interface HappyGitSummary {
 
 /** One session, in the terms Happy publishes it. */
 export interface HappySessionSnapshot {
+    /** Local bot catalog revision, used only to schedule image sync; never session metadata. */
+    readonly avatarVersion?: number;
     readonly bot?: Pick<BotRecord, "id" | "name" | "username" | "workspaceId" | "orderKey">;
     readonly agentId: string;
     readonly archived: boolean;

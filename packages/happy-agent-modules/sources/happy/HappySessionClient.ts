@@ -1,4 +1,6 @@
 import { Type } from "@sinclair/typebox";
+import type { BotAvatarAsset } from "../bots/index.js";
+import { HappySessionAvatarClient, happySessionAvatarSchema } from "./HappySessionAvatar.js";
 import { Value } from "@sinclair/typebox/value";
 import type { Context } from "@steve.kite/stdlib";
 import type { ProviderUsage } from "@slopus/happy-providers";
@@ -72,6 +74,11 @@ export interface HappySocket {
  * wire handling here be exercised on its own, without a daemon behind it.
  */
 export interface HappySessionOperations {
+    /** Undefined for project sessions; null explicitly removes a bot's picture. */
+    sessionAvatarAsset?: (
+        ctx: Context,
+        agentId: string,
+    ) => Promise<BotAvatarAsset | null | undefined>;
     /** Stops whatever the agent is doing. */
     abort: (ctx: Context, agentId: string) => Promise<void>;
 
@@ -144,6 +151,7 @@ const remoteSessionSchema = Type.Object(
             {
                 agentState: Type.Optional(Type.Union([Type.String(), Type.Null()])),
                 agentStateVersion: Type.Optional(Type.Number()),
+                avatar: Type.Optional(Type.Unknown()),
                 id: Type.String({ minLength: 1 }),
                 metadata: Type.Optional(Type.String()),
                 metadataVersion: Type.Number(),
@@ -196,6 +204,12 @@ export class HappySessionClient {
     readonly #questionFirstSeen = new Map<string, number>();
     readonly #pendingAttachments = new Map<string, Promise<HappyInboundImage | undefined>>();
     #agentStateVersion: number | undefined;
+    #avatarClient: HappySessionAvatarClient | undefined;
+    #avatarSync: Promise<void> | undefined;
+    #avatarRequestedVersion = -1;
+    #avatarCompletedVersion = -1;
+    #avatarFailures = 0;
+    #avatarRetryTimer: NodeJS.Timeout | undefined;
     #archiving = false;
     #closed = false;
     // A new session is created with no agent state, so nothing is owed until a question arrives.
@@ -241,6 +255,7 @@ export class HappySessionClient {
     async settle(): Promise<void> {
         this.kick();
         await this.#syncPromise;
+        await this.#avatarSync;
     }
 
     /** Tells Happy the session has ended, and stops. */
@@ -248,8 +263,10 @@ export class HappySessionClient {
         if (this.#closed || this.#archiving) return;
         this.#archiving = true;
         this.#clearRetry();
+        this.#clearAvatarRetry();
         try {
-            await this.settle();
+            this.kick();
+            await this.#syncPromise;
             await this.#sendSessionEnd();
             const remoteSessionId = await this.#remoteSessionId();
             if (remoteSessionId !== undefined) {
@@ -271,11 +288,13 @@ export class HappySessionClient {
         if (this.#closed) return;
         this.#closed = true;
         this.#clearRetry();
+        this.#clearAvatarRetry();
         await this.#sendSessionEnd().catch(() => undefined);
         this.#closeController.abort();
         this.#socket?.disconnect();
         this.#socket = undefined;
         await this.#syncPromise?.catch(() => undefined);
+        await this.#avatarSync?.catch(() => undefined);
     }
 
     async #runSyncLoop(): Promise<void> {
@@ -291,12 +310,89 @@ export class HappySessionClient {
                 await this.#syncMetadata(state, snapshot);
                 this.#sendKeepAlive(state.remoteSessionId, snapshot);
                 await this.#syncAgentState(state, snapshot);
+                this.#kickAvatar(snapshot);
             } catch (error) {
                 this.#options.context.log.debug("Happy synchronization will retry.", {}, error);
                 this.#scheduleRetry();
                 return;
             }
         } while (this.#needsAnotherSync && !this.#closed);
+    }
+
+    #kickAvatar(snapshot: HappySessionSnapshot): void {
+        const read = this.#options.operations.sessionAvatarAsset;
+        const client = this.#avatarClient;
+        if (
+            this.#closed ||
+            this.#archiving ||
+            snapshot.bot === undefined ||
+            snapshot.avatarVersion === undefined ||
+            client === undefined ||
+            read === undefined
+        )
+            return;
+        if (this.#avatarRequestedVersion !== snapshot.avatarVersion) {
+            this.#avatarRequestedVersion = snapshot.avatarVersion;
+            this.#avatarFailures = 0;
+            this.#clearAvatarRetry();
+        }
+        if (
+            this.#avatarSync !== undefined ||
+            this.#avatarRetryTimer !== undefined ||
+            this.#avatarFailures > 5 ||
+            this.#avatarCompletedVersion === this.#avatarRequestedVersion
+        )
+            return;
+        // Image HTTP never holds up message delivery, keepalives, questions, or metadata.
+        this.#avatarSync = (async () => {
+            while (!this.#closed && this.#avatarCompletedVersion !== this.#avatarRequestedVersion) {
+                const activeClient = this.#avatarClient;
+                if (this.#archiving || activeClient === undefined) return;
+                const version = this.#avatarRequestedVersion;
+                const asset = await read.call(
+                    this.#options.operations,
+                    this.#options.context,
+                    this.#options.agentId,
+                );
+                if (this.#closed) return;
+                await activeClient.sync(asset);
+                if (this.#avatarClient !== activeClient) continue;
+                this.#avatarCompletedVersion = version;
+                this.#avatarFailures = 0;
+            }
+        })()
+            .catch((error: unknown) => {
+                if (!this.#closed && !this.#archiving) {
+                    this.#options.context.log.debug(
+                        "Happy could not synchronize the session picture.",
+                        {},
+                        error,
+                    );
+                    // Optional artwork has its own finite backoff. It never polls chat.
+                    this.#avatarFailures++;
+                    if (this.#avatarFailures <= 5) {
+                        this.#avatarRetryTimer = setTimeout(
+                            () => {
+                                this.#avatarRetryTimer = undefined;
+                                this.#kickAvatar({
+                                    ...snapshot,
+                                    avatarVersion: this.#avatarRequestedVersion,
+                                });
+                            },
+                            2_000 * 2 ** (this.#avatarFailures - 1),
+                        );
+                        this.#avatarRetryTimer.unref();
+                    }
+                }
+            })
+            .finally(() => {
+                this.#avatarSync = undefined;
+            });
+    }
+
+    #clearAvatarRetry(): void {
+        if (this.#avatarRetryTimer !== undefined) clearTimeout(this.#avatarRetryTimer);
+        this.#avatarRetryTimer = undefined;
     }
 
     async #ensureRemoteSession(): Promise<HappySyncSession | undefined> {
@@ -342,6 +438,18 @@ export class HappySessionClient {
             throw new Error("Happy returned a session Happy Agent could not read.");
         }
         const remote = body.session;
+        // Old relays omit avatar entirely. Missing/invalid optional artwork must not break chat.
+        if (remote.avatar === null || Value.Check(happySessionAvatarSchema, remote.avatar)) {
+            this.#avatarClient = new HappySessionAvatarClient({
+                configuration: this.#options.configuration,
+                state: { ...current, remoteSessionId: remote.id },
+                remote: remote.avatar,
+                ...(this.#options.fetch === undefined ? {} : { fetch: this.#options.fetch }),
+                signal: this.#closeController.signal,
+                version: this.#options.version,
+            });
+            this.#avatarCompletedVersion = -1;
+        }
         this.#metadataVersion = remote.metadataVersion;
         this.#projectIdSent = projectId;
         this.#agentStateVersion = remote.agentStateVersion ?? 0;

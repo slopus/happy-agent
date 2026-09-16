@@ -1,5 +1,23 @@
 # Happy
 
+## Session pictures
+
+Bots publish their existing WebP image through the relay's optional session-avatar
+API. Project sessions leave their own avatar unset and inherit project artwork on
+mobile. No synthetic project, new local avatar store, or direct Agent API field is
+introduced. A relay that omits `session.avatar` continues syncing without image
+requests until the connection is recreated against an upgraded relay.
+
+`HappySessionAvatarClient` encrypts bytes with the existing session blob key and
+the preview with the session payload key. Its private preview includes the content
+hash, allowing a restart to recognize an already-published image. Upload activation
+retries reuse the uploaded reference; clearing the bot picture explicitly removes
+the relay avatar. Network work is bounded, cancelled with the connection, and kept
+off message delivery. External upload origins never receive the Happy bearer token.
+Failures retry independently of chat, at 2, 4, 8, 16 and 32 seconds, then wait for a
+new bot revision or a recreated session client (for example, after a daemon restart).
+A socket reconnect alone does not reset the budget. Archival does not wait for image synchronization.
+
 This module connects an agent to Happy, the mobile app. A session running here
 shows up on the phone, streams as it works, and can be driven from there.
 
