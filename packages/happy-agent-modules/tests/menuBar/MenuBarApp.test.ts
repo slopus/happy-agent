@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -21,9 +21,11 @@ async function temporaryRoot(): Promise<string> {
 
 /** A stand-in for the real app, so supervision is exercised against actual child processes. */
 async function fakeApp(root: string, body: string): Promise<string> {
-    const app = join(root, "fake-menu-bar");
-    await writeFile(app, `#!/bin/sh\n${body}\n`);
-    await chmod(app, 0o755);
+    const app = join(root, "fake-menu-bar.mjs");
+    await writeFile(
+        app,
+        `import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';\n${body}\n`,
+    );
     return app;
 }
 
@@ -46,12 +48,12 @@ describe("MenuBarApp", () => {
         const counter = join(root, "runs");
         const app = await fakeApp(
             root,
-            `printf x >> "${counter}"\necho "no login session" >&2\nexit 0`,
+            `appendFileSync(${JSON.stringify(counter)}, 'x'); console.error('no login session');`,
         );
 
-        const outcome = await new MenuBarApp(app, [], { restartDelayMs: 1 }).supervise(
-            context("menu-bar-unavailable"),
-        );
+        const outcome = await new MenuBarApp(process.execPath, [app], {
+            restartDelayMs: 1,
+        }).supervise(context("menu-bar-unavailable"));
 
         expect(outcome).toBe("unavailable");
         expect(await readFile(counter, "utf8")).toBe("x");
@@ -60,9 +62,12 @@ describe("MenuBarApp", () => {
     it("gives up after the app fails to start repeatedly", async () => {
         const root = await temporaryRoot();
         const counter = join(root, "runs");
-        const app = await fakeApp(root, `printf x >> "${counter}"\nexit 3`);
+        const app = await fakeApp(
+            root,
+            `appendFileSync(${JSON.stringify(counter)}, 'x'); process.exit(3);`,
+        );
 
-        const outcome = await new MenuBarApp(app, [], {
+        const outcome = await new MenuBarApp(process.execPath, [app], {
             maxFailedStarts: 3,
             restartDelayMs: 1,
         }).supervise(context("menu-bar-abandoned"));
@@ -78,10 +83,10 @@ describe("MenuBarApp", () => {
         // is a fresh first failure, so the app is restarted rather than abandoned.
         const app = await fakeApp(
             root,
-            `printf x >> "${counter}"\nif [ "$(wc -c < "${counter}")" -le 1 ]; then sleep 0.2; fi\nexit 3`,
+            `appendFileSync(${JSON.stringify(counter)}, 'x'); if (readFileSync(${JSON.stringify(counter)}).length === 1) await new Promise(r => setTimeout(r, 300)); process.exit(3);`,
         );
 
-        const outcome = await new MenuBarApp(app, [], {
+        const outcome = await new MenuBarApp(process.execPath, [app], {
             maxFailedStarts: 1,
             restartDelayMs: 1,
             startupWindowMs: 100,
@@ -94,11 +99,18 @@ describe("MenuBarApp", () => {
     it("passes its arguments to the app", async () => {
         const root = await temporaryRoot();
         const seen = join(root, "arguments");
-        const app = await fakeApp(root, `echo "$@" > "${seen}"\nexit 0`);
+        const app = await fakeApp(
+            root,
+            `writeFileSync(${JSON.stringify(seen)}, process.argv.slice(2).join(' '));`,
+        );
 
-        await new MenuBarApp(app, ["--socket", "/tmp/h.sock", "--token-file", "/tmp/t"], {
-            restartDelayMs: 1,
-        }).supervise(context("menu-bar-arguments"));
+        await new MenuBarApp(
+            process.execPath,
+            [app, "--socket", "/tmp/h.sock", "--token-file", "/tmp/t"],
+            {
+                restartDelayMs: 1,
+            },
+        ).supervise(context("menu-bar-arguments"));
 
         expect((await readFile(seen, "utf8")).trim()).toBe(
             "--socket /tmp/h.sock --token-file /tmp/t",
@@ -108,8 +120,14 @@ describe("MenuBarApp", () => {
     it("stops a running app and does not start it again", async () => {
         const root = await temporaryRoot();
         const counter = join(root, "runs");
-        const app = await fakeApp(root, `printf x >> "${counter}"\nsleep 30`);
-        const menuBar = new MenuBarApp(app, [], { restartDelayMs: 1, stopGraceMs: 50 });
+        const app = await fakeApp(
+            root,
+            `appendFileSync(${JSON.stringify(counter)}, 'x'); setTimeout(() => {}, 30_000);`,
+        );
+        const menuBar = new MenuBarApp(process.execPath, [app], {
+            restartDelayMs: 1,
+            stopGraceMs: 50,
+        });
 
         const supervising = menuBar.supervise(context("menu-bar-stop"));
         await waitFor(async () => (await readFile(counter, "utf8")) === "x");

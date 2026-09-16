@@ -42,7 +42,7 @@ interface BinaryAssets {
     ghosttyVariable: string;
     justBashWorkerGroups: Record<JustBashWorker, JustBashWorkerGroup>;
     libsqlRelativePath: string;
-    /** The macOS menu bar app, absent on the platforms that have no menu bar. */
+    /** The native status app, available on macOS and Windows. */
     menuBarRelativePath?: string;
     montyNativeRelativePath: string;
     montyWorkerRelativePath: string;
@@ -437,8 +437,9 @@ export const { getQuickJS } = QJS;
     }
 
     const menuBarApp = buildMenuBarApp(modulesRoot, target);
+    const menuBarRelativePath = `${MENU_BAR_RELATIVE_PATH}${executableSuffix}`;
     if (menuBarApp !== undefined) {
-        assets.push(asset("menuBarAsset", menuBarApp, MENU_BAR_RELATIVE_PATH, true));
+        assets.push(asset("menuBarAsset", menuBarApp, menuBarRelativePath, true));
     }
 
     return {
@@ -464,7 +465,7 @@ export const { getQuickJS } = QJS;
             },
         },
         libsqlRelativePath: "index.node",
-        ...(menuBarApp === undefined ? {} : { menuBarRelativePath: MENU_BAR_RELATIVE_PATH }),
+        ...(menuBarApp === undefined ? {} : { menuBarRelativePath }),
         montyNativeRelativePath: basename(montySource),
         montyWorkerRelativePath: `monty${executableSuffix}`,
         montyWorkerVariables:
@@ -482,9 +483,9 @@ export const { getQuickJS } = QJS;
  * another macOS architecture embeds an app for that architecture.
  */
 function buildMenuBarApp(modulesRoot: string, target: BinaryTarget): string | undefined {
-    if (target.platform !== "darwin") return undefined;
-    if (process.platform !== "darwin") {
-        throw new Error("Compiling a macOS Happy Agent binary requires a macOS host.");
+    if (target.platform !== "darwin" && target.platform !== "win32") return undefined;
+    if (process.platform !== target.platform) {
+        throw new Error(`Compiling the ${target.platform} status app requires that platform.`);
     }
     const built = Bun.spawnSync({
         cmd: ["node", join("scripts", "build-menu-bar.mjs"), target.key],
@@ -494,7 +495,13 @@ function buildMenuBarApp(modulesRoot: string, target: BinaryTarget): string | un
     if (!built.success) {
         throw new Error(`Failed to build the menu bar app for ${target.key}.`);
     }
-    return join(modulesRoot, "dist", "menuBar", "bin", `happy-menu-bar-${target.key}`);
+    return join(
+        modulesRoot,
+        "dist",
+        "menuBar",
+        "bin",
+        `happy-menu-bar-${target.key}${target.platform === "win32" ? ".exe" : ""}`,
+    );
 }
 
 export function resolveSourceAdapters(target: BinaryTarget): Map<string, SourceAdapter> {
@@ -695,12 +702,12 @@ export function resolveBinaryForTarget(key, binaryPath) {
                 `import { loadGhosttyWasm } from ${JSON.stringify(VIRTUAL_ASSETS_MODULE)};\nexport async function loadBundledWasm() { return loadGhosttyWasm(); }\n`,
         },
     );
-    if (target.platform === "darwin") {
+    if (target.platform === "darwin" || target.platform === "win32") {
         addAdapter(adapters, join(modulesRoot, "dist", "menuBar", "impl", "resolveMenuBarApp.js"), {
             name: "menu bar app resolver",
             required: true,
             adapt: () =>
-                `export const MENU_BAR_TARGETS = ["darwin-arm64", "darwin-x64"];\nexport { getMenuBarApp as resolveMenuBarApp } from ${JSON.stringify(VIRTUAL_ASSETS_MODULE)};\n`,
+                `export const MENU_BAR_TARGETS = ["darwin-arm64", "darwin-x64", "win32-x64"];\nexport { getMenuBarApp as resolveMenuBarApp } from ${JSON.stringify(VIRTUAL_ASSETS_MODULE)};\n`,
         });
     }
     addDocumentationAdapter(adapters);

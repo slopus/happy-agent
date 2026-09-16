@@ -1,5 +1,5 @@
 /** The platforms a menu bar app is built for; everything else simply has no menu bar. */
-export const MENU_BAR_TARGETS = ["darwin-arm64", "darwin-x64"] as const;
+export const MENU_BAR_TARGETS = ["darwin-arm64", "darwin-x64", "win32-x64"] as const;
 
 export type MenuBarTarget = (typeof MENU_BAR_TARGETS)[number];
 

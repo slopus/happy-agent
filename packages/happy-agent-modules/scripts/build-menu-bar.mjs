@@ -1,9 +1,9 @@
 #!/usr/bin/env node
-// Compiles the macOS menu bar app the menuBar module starts.
+// Compiles the native status app the menuBar module starts.
 //
 // The app is a plain Swift executable rather than an application bundle: it never opens a window,
-// so it needs no Info.plist, and a single file is what the Happy Agent binary can embed. Targets
-// other than macOS have no menu bar to join and produce nothing at all.
+// so it needs no Info.plist, and a single file is what the Happy Agent binary can embed.
+// Windows uses a WinForms notification icon, also embedded as a single windowless executable.
 
 import { spawnSync } from "node:child_process";
 import { mkdirSync, readdirSync } from "node:fs";
@@ -21,6 +21,38 @@ const nativeRoot = join(packageRoot, "sources", "menuBar", "native");
 
 function main() {
     const requested = process.argv[2] ?? `${process.platform}-${process.arch}`;
+    if (requested === "win32-x64") {
+        if (process.platform !== "win32")
+            throw new Error("Building the Windows tray requires Windows.");
+        const outputRoot = join(packageRoot, "dist", "menuBar", "bin");
+        mkdirSync(outputRoot, { recursive: true });
+        const compiler = join(
+            process.env.SystemRoot ?? "C:\\Windows",
+            "Microsoft.NET",
+            "Framework64",
+            "v4.0.30319",
+            "csc.exe",
+        );
+        const result = spawnSync(
+            compiler,
+            [
+                "/nologo",
+                "/target:winexe",
+                "/optimize+",
+                "/platform:x64",
+                `/out:${join(outputRoot, `happy-menu-bar-${requested}.exe`)}`,
+                "/reference:System.Windows.Forms.dll",
+                "/reference:System.Drawing.dll",
+                "/reference:System.Runtime.Serialization.dll",
+                join(nativeRoot, "windows", "DaemonClient.cs"),
+                join(nativeRoot, "windows", "WindowsTray.cs"),
+            ],
+            { stdio: "inherit", windowsHide: true },
+        );
+        if (result.error !== undefined) throw result.error;
+        if (result.status !== 0) throw new Error("The Windows tray build failed.");
+        return;
+    }
     if (process.platform !== "darwin") {
         console.log("Skipping the Happy Agent menu bar app: it is built on macOS only.");
         return;

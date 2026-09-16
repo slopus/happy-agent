@@ -95,7 +95,10 @@ export class MenuBarApp {
     }> {
         // Standard input stays open and carries nothing: closing it is how the app learns the
         // daemon is gone even when the daemon had no chance to stop it.
-        const child = spawn(this.#app, [...this.#args], { stdio: ["pipe", "ignore", "pipe"] });
+        const child = spawn(this.#app, [...this.#args], {
+            stdio: ["pipe", "ignore", "pipe"],
+            windowsHide: true,
+        });
         this.#child = child;
         ctx.log.debug(`menu-bar:started pid=${String(child.pid ?? 0)}`);
         let stderr = "";

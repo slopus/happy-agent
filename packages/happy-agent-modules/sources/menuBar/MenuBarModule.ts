@@ -16,9 +16,8 @@ import { resolveMenuBarApp } from "./impl/resolveMenuBarApp.js";
  * Only a released Happy Agent binary carries the app, so a daemon run from a checkout — during
  * development, or from a test — has no menu bar to start and says nothing about it.
  *
- * The app is a reader. It talks to the daemon's ordinary HTTP API over the same private socket
- * every other client uses, so it can show nothing the person could not already see and can change
- * nothing at all.
+ * Both native apps read the ordinary private API. The Windows tray also lets the person stop
+ * the daemon, and offers a force stop if graceful shutdown cannot finish.
  */
 export class MenuBarModule implements AgentModule {
     readonly name = "menuBar";
@@ -42,13 +41,20 @@ export class MenuBarModule implements AgentModule {
             paths.socketPath,
             "--token-file",
             paths.tokenPath,
+            ...(process.platform === "win32" ? ["--parent-pid", String(process.pid)] : []),
         ]);
         // The app outlives the call that starts it, so it gets a lifetime of its own rather than
         // borrowing the startup pass's.
         this.#supervising = this.#app.supervise(detach(ctx).named("menu-bar"));
     };
 
-    /** Stops the app and waits for it to leave. Starting again afterwards is not supported. */
+    /** Starts status-app shutdown while preserving the Windows stop control until finalization. */
+    async beginShutdown(): Promise<void> {
+        // Windows keeps its Stop/Force stop control available until runtime finalization.
+        if (process.platform !== "win32") await this.close();
+    }
+
+    /** Releases the status app after the rest of the runtime has finished shutting down. */
     async close(): Promise<void> {
         this.#app?.stop();
         await this.#supervising;

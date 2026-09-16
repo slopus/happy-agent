@@ -1,10 +1,12 @@
 # Menu bar learnings
 
-## The menu bar is macOS only, and deliberately so
+## Native status controls on macOS and Windows
 
-Linux has no dependable cross-desktop tray standard worth carrying, so the app is a Swift AppKit
-executable and nothing is built for Linux. Do not add a cross-platform tray implementation or a
-second rendering path to "finish" the feature.
+macOS uses Swift AppKit. Windows now has a native notification-area app, requested to make a
+background daemon visible and stoppable. It uses Windows Forms from the system .NET Framework,
+with no Electron runtime. Linux still has no status app. The Windows icon is stationary and
+resource/usage refreshes run only while its menu is open; parent-exit and stdin EOF notifications
+end its lifetime without a process-table polling loop.
 
 ## Only a released binary has a menu bar
 
@@ -17,7 +19,7 @@ bar; build the binary and run that instead.
 
 ## It is on by default, and turned off in configuration
 
-Within a release the module starts the app whenever the daemon runs on macOS. There is no opt-in
+Within a release the module starts the app whenever the daemon runs on macOS or Windows. There is no opt-in
 flag; `menu_bar = false` under `[settings]` is the way off. The app itself decides whether a machine
 actually has a menu bar, by checking for a login session, and exits cleanly when there is none — a
 daemon started over SSH must not look like a failure.
@@ -33,7 +35,7 @@ open, and the exit of the parent process itself through a dispatch process sourc
 alone was the original mechanism and is not sufficient, because anything else holding that pipe open
 keeps the app alive after the daemon is gone.
 
-## The status item shows no count and the menu has no footer
+## The macOS status item shows no count and the menu has no footer
 
 The bar carries the glyph alone: no number, no badge. The menu ends after the token totals — there
 is no version line, no ready/draining state, and no Quit item. A Quit item would be a lie, because
@@ -72,12 +74,12 @@ tints and inverts a template image, so anything less than full strength is wrong
 A provider ID is whatever someone called their account, so `bulka_happy_codex` is shown as
 "Bulka Happy Codex". Never render a raw ID.
 
-## The app is a reader
+## The existing private API is the boundary
 
-It speaks the ordinary HTTP API over the daemon's private socket with the same bearer token as any
-other client. It performs no mutation, and it must not gain one. The event stream is a change
-signal only: every snapshot the menu draws is re-read, so an unfamiliar or missed event cannot
-leave stale state on screen.
+Both apps use the ordinary HTTP API over the daemon's private socket with its bearer token.
+macOS remains read-only and uses events as refresh hints. Windows uses the existing shutdown
+endpoint for its explicit Stop action; if shutdown stalls, Force stop terminates the retained
+parent process and its tree. No new server endpoint, public listener, or token exposure is needed.
 
 ## Supervision waits for exit, not for the streams to close
 

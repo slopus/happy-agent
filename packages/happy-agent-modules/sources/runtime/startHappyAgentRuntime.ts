@@ -230,6 +230,7 @@ export async function startHappyAgentRuntime(
     const registerShutdown = (name: string, handler: ShutdownHandler): RuntimeShutdownTask =>
         registerRuntimeShutdownTask(coordinator, shutdownTasks, name, handler);
     let api: ApiModule | undefined;
+    let menuBar: MenuBarModule | undefined;
     let auto: AutoModule | undefined;
     let system: AgentSystemLocal<LibSQLDatabase> | undefined;
     let closed = false;
@@ -297,6 +298,11 @@ export async function startHappyAgentRuntime(
             const failures = report.failed.map(({ error }) => error);
             try {
                 await api?.close();
+            } catch (error) {
+                failures.push(error);
+            }
+            try {
+                await menuBar?.close();
             } catch (error) {
                 failures.push(error);
             }
@@ -504,8 +510,9 @@ export async function startHappyAgentRuntime(
         const goal = new GoalModule();
         const gemini = new GeminiModule(config, compute.computeModule);
         const imageGeneration = new ImageGenerationModule(config);
-        const menuBar = new MenuBarModule(config);
-        registerShutdown("menu-bar", async () => await menuBar.close());
+        menuBar = new MenuBarModule(config);
+        const statusApp = menuBar;
+        registerShutdown("menu-bar", async () => await statusApp.beginShutdown());
         const modelSwitch = new ModelSwitchModule(history);
         const toolDiscovery = new ToolDiscoveryModule(config);
         const search = new SearchModule(config);

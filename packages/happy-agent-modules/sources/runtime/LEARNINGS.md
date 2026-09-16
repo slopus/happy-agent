@@ -1,5 +1,11 @@
 # Runtime learnings
 
+## Windows shutdown controls survive graceful cleanup
+
+Closing the tray with the first shutdown handlers removed the user's only Force stop control
+while other handlers could still be stuck. Windows now retains its tray through graceful
+shutdown and closes it during finalization. Its parent-exit observer also handles abrupt death.
+
 ## Module loading belongs in distributed traces
 
 Module timing logs alone did not reveal startup and restoration in the trace viewer. The shared
