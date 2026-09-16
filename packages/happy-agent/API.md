@@ -90,6 +90,12 @@ Subtasks are additive and do not increment the protocol version. The agent's opt
 boolean defaults to `false` when absent; the workspace's optional `subtaskAgentId` defaults to
 `null`. Clients use the explicit capability flags for interaction, not ancestry alone.
 
+By explicit product decision, the unused managed-root creation option is removed from both the
+client and daemon as a one-off exception to additive compatibility. `POST /v0/agents` rejects
+`parentAgentId` as an unknown request field with `400 invalid_request`; it creates only
+user-controlled roots. Agent response parent relationships, ordinary subagents, and subtasks
+remain unchanged. Existing stored agents are not deleted or rewritten.
+
 ### Requests and responses
 
 - Request and response bodies are JSON, `content-type: application/json; charset=utf-8`.
@@ -2995,16 +3001,12 @@ managed by another agent. Ordinarily that makes it a hidden **subagent**: it has
 project or workspace list, no mutable draft, no archival, and cannot be sent messages by the user.
 It remains readable through `GET`, activity, and events.
 
-An agent may create a root agent in a workspace different
-from its own while remaining that new agent's Agent Base parent. The child is explicitly attached
-to the destination workspace's ordered root-agent series and is visible there, but it remains
-managed by its parent and still cannot receive user messages. The parent must belong to another
-workspace; without the subtask distinction, a same-workspace child remains an ordinary hidden
-subagent.
+The ordinary agent creation API creates only parentless, user-controlled roots. Parent-managed
+delegation is created by the agent tools: ordinary hidden subagents or user-interactive subtasks.
 
 A **subtask** is a distinct user-visible, parent-managed agent, identified by `subtask: true`.
 Only an active bot's own agent or an active subtask can create one, through the `create_subtask`
-tool. An ordinary root, hidden subagent, or non-subtask managed root cannot create subtasks.
+tool. An ordinary root or hidden subagent cannot create subtasks.
 There may be at most two subtask levels below the bot; this is a depth limit, not a sibling limit.
 The ordinary `parentAgentId` links each subtask to its coordinator.
 
@@ -3023,7 +3025,7 @@ shared-filesystem subtask returns `409` on `reorder`. Archived subtasks accept n
 child creation. Archiving a subtask keeps its history and does not archive its workspace.
 Subtask creation is asynchronous delegation: it never waits for completion. Existing agent
 messaging tools deliver follow-ups; there is no subtask wait or archive tool. Ordinary subagents
-and non-subtask managed roots retain their existing restrictions.
+retain their existing restrictions.
 
 Every agent therefore reports three independent capability facts: `userVisible`,
 `managedByAnotherAgent`, and `canSendMessages`. New protocol-22 daemons always emit all three;
@@ -3031,7 +3033,7 @@ the fields are optional on the wire so clients remain compatible with older prot
 When omitted, clients may use the old behavior as a fallback: `parentAgentId === null` was visible
 and sendable, while a non-null parent was hidden and not sendable. `send`, `reorder`, `archive`,
 `unarchive`, `read`, and `PUT draft` on any non-subtask agent managed by another agent answer
-`409`, including a user-visible managed root.
+`409`.
 
 Agents accept the optional `mutationId` from the basics — except `send`, whose message is
 named by the client-supplied `id` instead — and carry a `version` like every
@@ -3073,19 +3075,19 @@ Fields:
   and its file edits land. A bot's agent is no exception: it runs in the bot's dedicated
   workspace, and this field names that real workspace; see the bots chapter.
 - `parentAgentId` — `null` when no agent manages this one; otherwise the agent that spawned and
-  manages it. A user-visible managed root and an ordinary hidden subagent both retain this
+  manages it. A subtask and an ordinary hidden subagent both retain this
   ancestry.
 - `subtask` — optional additive boolean, always emitted by current daemons; absent means `false`.
   `true` identifies a user-interactive subtask, whether sharing its parent's filesystem or rooted
   in its own project workspace. The parent relationship remains `parentAgentId`.
 - `userVisible` — optional additive flag, always emitted by current daemons. `true` when the agent
   is a subtask, a bot's own agent, or explicitly attached to a project or workspace root-agent
-  series. Ordinary subagents are `false`; a managed root in another workspace is `true`.
+  series. Ordinary subagents are `false`; subtasks are `true`.
 - `managedByAnotherAgent` — optional additive flag, always emitted by current daemons. `true` when
   `parentAgentId` is non-null.
 - `canSendMessages` — optional additive flag, always emitted by current daemons. `true` exactly
   when the user-facing `send` route accepts a message for this agent. It is `false` for ordinary
-  subagents, non-subtask user-visible managed roots, and archived agents. Active subtasks are
+  non-subtask agents with a parent, and archived agents. Active subtasks are
   sendable despite their non-null parent.
 - `title`, `titleStatus` — a generated human-readable title for the conversation.
   `titleStatus` is `"idle"` while none has been generated yet and `"ready"` once one has.
@@ -3129,34 +3131,28 @@ Request:
 ```json
 {
     "workspaceId": "k2h4j5l6",
-    "parentAgentId": "p9q8r7s6",
     "title": "Fix the login redirect loop",
     "id": "a1b2c3d4"
 }
 ```
 
 - `workspaceId` — required; the workspace the agent will run in. Must be active.
-- `parentAgentId` — optional additive field. When omitted, creation makes an ordinary
-  user-controlled root agent. When present, it must name an existing agent in a different
-  workspace. Creation retains that Agent Base parent while attaching the new agent as a
-  user-visible managed root in `workspaceId`; its `canSendMessages` is `false`.
 - `title` — optional. A titled agent keeps it: `titleStatus` is `"ready"` from birth and the
   daemon never generates one over it. Untitled, the daemon generates a title from the
   conversation once there is enough to summarize.
 - `id` — optional client-supplied ID. Creating with the ID of an agent that already exists
   returns that agent unchanged, making creation safely retryable.
 
-Creation always makes a user-visible root in the destination workspace. Without `parentAgentId`
-it is also a root in Agent Base ancestry. With `parentAgentId` it is the exceptional managed root
-whose parent belongs to another workspace. Ordinary hidden subagents are still spawned by their
+Creation always makes a user-controlled, parentless root in the destination workspace. There is
+no parent-selection option: a request containing `parentAgentId` returns `400 invalid_request`,
+even when its supplied `id` already exists. Ordinary hidden subagents are spawned by their
 parents rather than through this endpoint. Bot agents are not created here either — a bot's one
 agent is born with the bot through `POST /v0/bots`, and creating another agent in a bot's
 workspace is refused with `409`: a bot has exactly one primary session. Subtasks are created
 only through `create_subtask`, not this endpoint.
 
 Response — `201`: `{ "agent": { ... }, "profiles": [ ... ], "slashCommands": [ ... ] }`.
-Creation is complete when it answers: the agent exists, is `"idle"`, and is ready for work. A
-user-controlled root may receive a user message; a managed root receives work from its parent. The
+Creation is complete when it answers: the agent exists, is `"idle"`, and is ready for a user message. The
 owning project and its same-ID root workspace, or the owning child workspace, also advance and emit
 their update with the new ordered `agents` series.
 

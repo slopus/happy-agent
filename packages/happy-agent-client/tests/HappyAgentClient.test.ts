@@ -1,8 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
 
 import { HappyAgentApiError } from "../sources/HappyAgentApiError.js";
 import { HappyAgentClient } from "../sources/HappyAgentClient.js";
 import type { DaemonUsageResponse } from "../sources/protocol/usage.js";
+import type { CreateAgentRequest } from "../sources/protocol/agents.js";
 
 interface RecordedRequest {
     url: string;
@@ -389,22 +390,21 @@ describe("HappyAgentClient", () => {
         );
     });
 
-    it("creates a user-visible agent with a different-workspace managing parent", async () => {
+    it("creates a user-controlled workspace root without a parent-selection option", async () => {
+        expectTypeOf<CreateAgentRequest>().not.toHaveProperty("parentAgentId");
         const { fetch, requests } = stubFetch(() => json({ agent: {}, slashCommands: [] }, 201));
         const client = new HappyAgentClient({ endpoint: "http://agent.local", token: "t", fetch });
 
         await client.createAgent({
-            id: "managedroot1",
-            parentAgentId: "parentagent1",
-            title: "Managed root",
+            id: "rootagent1",
+            title: "Workspace root",
             workspaceId: "workspace2",
         });
 
         expect(requests[0]?.body).toBe(
             JSON.stringify({
-                id: "managedroot1",
-                parentAgentId: "parentagent1",
-                title: "Managed root",
+                id: "rootagent1",
+                title: "Workspace root",
                 workspaceId: "workspace2",
             }),
         );

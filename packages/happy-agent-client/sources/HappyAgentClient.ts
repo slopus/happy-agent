@@ -1461,7 +1461,7 @@ export class HappyAgentClient {
 
     // Agents
 
-    /** `POST /v0/agents` — creation always makes a user-visible workspace root. */
+    /** `POST /v0/agents` — creates a parentless, user-controlled workspace root. */
     async createAgent(
         request: CreateAgentRequest,
         options: RequestOptions = {},

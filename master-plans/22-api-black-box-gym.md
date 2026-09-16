@@ -34,11 +34,9 @@ own their own ordered series of user-visible root agents in the same way. A
 project ID is its root-workspace ID; a child workspace owns a separate series.
 There is no global agent-list endpoint. Workspace parent and child relationships
 describe files, checkouts, and branches only. Subagent ancestry belongs only to
-Agent Base. Ordinary subagents occur in no owner series. A root agent explicitly
-created in a workspace different from its parent agent's workspace is the one
-exception: it remains a child in Agent Base ancestry while appearing as a
-user-visible, agent-managed root in the destination workspace's series, and the
-user cannot send it messages. Visibility, agent management, and user messaging
+Agent Base. Ordinary subagents occur in no owner series. The agent creation API
+creates only user-controlled roots and rejects the removed `parentAgentId`
+request field. Visibility, agent management, and user messaging
 capability are separate explicit agent facts. Every accepted steering transition
 that durably closes a predecessor as `aborted/steering` and starts its successor
 emits `run.boundary`, including collaboration and system steering. Queued
@@ -51,7 +49,8 @@ visible through parent activity without an owner-series entry; workspace-bound
 subtasks also belong to their workspace's series, whose workspace identifies
 the resident `subtaskAgentId`. Only bots and subtasks create them, with at most
 two subtask levels below a bot and no two-sibling limit. Prove these rules
-without changing ordinary subagent or existing managed-root behavior.
+without changing ordinary subagent behavior. Workspace-bound subtasks are the
+only parent-managed agents created into a workspace's owner series.
 
 The gym must prove both ordinary success and deliberate failure. A project is
 registered or cloned, workspaces are created and nested, ordering and archival
@@ -159,11 +158,11 @@ After every action, including every rejection, the gym proves:
 - IDs are unique; project ID equals root-workspace ID.
 - The workspace graph is rooted, acyclic, and project-local; workspace
   hierarchy and agent ancestry remain independent. An ancestry edge crosses
-  workspaces only for a user-visible managed root.
+  workspaces only for a workspace-bound subtask.
 - Every active user-visible root agent occurs in exactly one owner-local
-  ordered series. Ordinary subagents occur in none. A visible managed root may
-  have a parent only when that parent belongs to another workspace, and its
-  visibility, management, and user-messaging flags describe that state.
+  ordered series. Ordinary subagents and shared-filesystem subtasks occur in
+  none. Workspace-bound subtasks retain their parents and expose their explicit
+  visibility, management, and user-messaging flags.
 - Successful mutations agree across response, ordered events, mutation echo,
   resource versions, fresh reads, and real effects.
 - Rejections change no version, event replica, bytes, catalog, process, or
@@ -259,9 +258,9 @@ leaked resources. Source-text counting is not evidence.
   limit, and invalid-operation family has deterministic failure coverage.
 - Projects and workspaces expose their own ordered user-visible-root-agent
   series while workspace nesting remains purely the file and checkout
-  hierarchy. Ordinary subagents stay hidden; a root managed from another
-  workspace remains visible in its destination owner series and explicitly
-  refuses user messages.
+  hierarchy. Ordinary subagents stay hidden; workspace-bound subtasks remain
+  visible and user-messageable. The client and daemon expose no managed-root
+  creation option on the ordinary agent API.
 - Project registration, workspace creation, file access, Git watching,
   terminals, processes, messages, steering, and both levels of network proxy
   are proven by their real observable effects.

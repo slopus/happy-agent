@@ -164,12 +164,10 @@ export interface AgentActivityResponse {
     processes: BackgroundProcess[];
 }
 
-/** `POST /v0/agents` — creation always makes a user-visible workspace root. */
+/** `POST /v0/agents` — creates a parentless, user-controlled workspace root. */
 export interface CreateAgentRequest {
     /** The workspace the agent will run in. Must be active. */
     workspaceId: Cuid2;
-    /** Retains this different-workspace parent while creating a visible managed root. */
-    parentAgentId?: Cuid2;
     /** A titled agent keeps its title; the daemon never generates one over it. */
     title?: string;
     /** Optional client-supplied ID, which makes creation safely retryable. */

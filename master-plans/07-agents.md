@@ -25,13 +25,9 @@ Subagents are spawned and driven by another agent rather than by a person in a
 UI. Ordinarily they are not human-visible and do not occur in a project or
 workspace's agent list.
 
-There is one deliberate exception. An agent may create a workspace and then
-create an agent rooted in that other workspace while retaining Agent Base
-ancestry. That agent is a user-visible root of the new workspace, even though
-its `parentAgentId` records that another agent manages it. The parent must be in
-a different workspace. It appears in the new workspace's agent list, is marked
-as user-visible and managed by another agent, and does not accept messages from
-the user. Ordinary subagents remain hidden exactly as before.
+The API creates only user-controlled root agents. It does not accept a
+`parentAgentId` creation option or create read-only managed workspace roots.
+Parent-managed, user-visible delegation belongs to subtasks instead.
 
 User visibility, management by another agent, and whether the user may send a
 message are separate explicit facts. A UI must not infer one from another or
@@ -59,7 +55,7 @@ messaging tools, archival uses the existing agent API, and there is no waiting
 for a subtask. Shared-filesystem subtasks are visible through parent activity;
 workspace-bound subtasks also appear in their workspace's agent series.
 Subtasks are the exception to the managed-agent restriction on user messages;
-ordinary subagents and existing managed roots keep their current behavior.
+ordinary subagents keep their current behavior.
 
 ## Model
 
@@ -75,10 +71,9 @@ models.
   continues with its full context.
 - Agents can reach each other by unguessable Agent ID, shared by the user by
   hand — with Rig able to find the IDs in its own database when needed.
-- Ordinary subagents remain absent from project and workspace agent lists. A
-  managed root whose parent belongs to another workspace is visible in its own
-  workspace, reports that it is user-visible and agent-managed, and reports
-  that the user cannot send it messages.
+- Ordinary subagents remain absent from project and workspace agent lists.
+  Neither the client nor the daemon exposes managed-root creation through the
+  agent API; ordinary API-created agents have no parent.
 - Subtasks remain parent-managed while accepting user interaction, retain their
   identity and workspace association, and enforce the two-level bot-rooted
   hierarchy without limiting sibling count to two.
