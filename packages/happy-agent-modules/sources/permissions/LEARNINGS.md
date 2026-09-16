@@ -1,5 +1,12 @@
 # Permissions module learnings
 
+## File content needs a larger per-string review budget
+
+The 8,192-character argument-string limit rejected ordinary long file writes before a reviewer
+could see them. The limit is now 32,768 characters, allowing larger content to reach review without
+truncation. The separate 65,536-byte total argument limit, nesting and collection limits, and
+normal permission decisions remain unchanged; increasing the string budget does not grant access.
+
 ## A critical-risk label is not a runtime veto
 
 The runtime rejected every critical-risk action even when the reviewer explicitly allowed it

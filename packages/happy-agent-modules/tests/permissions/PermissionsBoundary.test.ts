@@ -628,6 +628,25 @@ describe("permissions boundary contracts", () => {
         }
     });
 
+    it("accepts 32,768-character write content for review without truncating it", () => {
+        const args = {
+            file_path: "/workspace/AGENTS.md",
+            dangerouslyDisableSandbox: true,
+            content: "x".repeat(32_768),
+        };
+        expect(Value.Check(reviewArgumentsSchema, args)).toBe(true);
+        expect(snapshotPermissionArguments(args)).toEqual(args);
+    });
+
+    it("rejects strings above 32,768 characters while retaining the total byte limit", () => {
+        const oversized = { content: "x".repeat(32_769) };
+        expect(Value.Check(reviewArgumentsSchema, oversized)).toBe(false);
+        expect(() => snapshotPermissionArguments(oversized)).toThrow("oversized string");
+        const oversizedBytes = { content: "é".repeat(32_768) };
+        expect(Value.Check(reviewArgumentsSchema, oversizedBytes)).toBe(true);
+        expect(() => snapshotPermissionArguments(oversizedBytes)).toThrow("reviewer size limit");
+    });
+
     it("detaches nested reviewer arguments and rejects unsupported or unbounded shapes", () => {
         const nested = {
             object: { list: [{ key: "value" }] },
