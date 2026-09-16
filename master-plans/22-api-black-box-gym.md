@@ -44,6 +44,15 @@ that durably closes a predecessor as `aborted/steering` and starts its successor
 emits `run.boundary`, including collaboration and system steering. Queued
 messages, notifications, and compaction do not.
 
+Subtasks are the explicit exception to the managed-agent user-messaging rules
+in this plan. They are user-visible and user-messageable, retain their parent
+agent, and report the additive `subtask` flag. Shared-filesystem subtasks are
+visible through parent activity without an owner-series entry; workspace-bound
+subtasks also belong to their workspace's series, whose workspace identifies
+the resident `subtaskAgentId`. Only bots and subtasks create them, with at most
+two subtask levels below a bot and no two-sibling limit. Prove these rules
+without changing ordinary subagent or existing managed-root behavior.
+
 The gym must prove both ordinary success and deliberate failure. A project is
 registered or cloned, workspaces are created and nested, ordering and archival
 are durable, and invalid paths, impossible workspace operations, stale

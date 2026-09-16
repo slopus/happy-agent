@@ -86,6 +86,10 @@ The model definition's `autoCompactWindow` is additive and does not increment th
 version. Older daemons omit it; a client that shows remaining context counts down to
 `contextWindow` when the field is absent.
 
+Subtasks are additive and do not increment the protocol version. The agent's optional `subtask`
+boolean defaults to `false` when absent; the workspace's optional `subtaskAgentId` defaults to
+`null`. Clients use the explicit capability flags for interaction, not ancestry alone.
+
 ### Requests and responses
 
 - Request and response bodies are JSON, `content-type: application/json; charset=utf-8`.
@@ -2361,6 +2365,7 @@ workspace route.
     },
     "botId": null,
     "creatorAgentId": "a1b2c3d4",
+    "subtaskAgentId": null,
     "agents": [
         /* active user-visible root agents owned by this workspace, in order */
     ],
@@ -2400,6 +2405,10 @@ Fields:
   for how bot workspaces behave.
 - `creatorAgentId` — the agent that created this workspace, when one did; `null` when a
   person created it directly.
+- `subtaskAgentId` — optional additive field, always emitted by current daemons. The resident
+  workspace-bound subtask's ID, or `null` for an ordinary, project-root, or bot workspace. The
+  resident agent's `parentAgentId` identifies its coordinator. The association survives archival;
+  a shared-filesystem subtask does not change it.
 - `agents` — active user-visible root agents owned by this workspace, in `orderKey` order. The
   root workspace exposes the project-owned root-agent series; every child workspace has its own
   independent series. Archived agents and ordinary hidden subagents are excluded. A user-visible
@@ -2986,19 +2995,43 @@ managed by another agent. Ordinarily that makes it a hidden **subagent**: it has
 project or workspace list, no mutable draft, no archival, and cannot be sent messages by the user.
 It remains readable through `GET`, activity, and events.
 
-There is one user-visible managed form. An agent may create a root agent in a workspace different
+An agent may create a root agent in a workspace different
 from its own while remaining that new agent's Agent Base parent. The child is explicitly attached
 to the destination workspace's ordered root-agent series and is visible there, but it remains
 managed by its parent and still cannot receive user messages. The parent must belong to another
-workspace; a same-workspace child remains an ordinary hidden subagent.
+workspace; without the subtask distinction, a same-workspace child remains an ordinary hidden
+subagent.
+
+A **subtask** is a distinct user-visible, parent-managed agent, identified by `subtask: true`.
+Only an active bot's own agent or an active subtask can create one, through the `create_subtask`
+tool. An ordinary root, hidden subagent, or non-subtask managed root cannot create subtasks.
+There may be at most two subtask levels below the bot; this is a depth limit, not a sibling limit.
+The ordinary `parentAgentId` links each subtask to its coordinator.
+
+A shared-filesystem subtask runs in its parent's workspace. It appears in parent activity and
+focused agent reads, but not in the workspace's ordered agent series; its `orderKey` is `null`.
+A workspace-bound subtask runs in a newly created ordinary project workspace, appears in that
+workspace's ordered agent series, and is identified by the workspace's `subtaskAgentId`. A bot
+may create either form directly; a subtask may create either form within the depth limit. Several
+workspace-bound siblings may target different projects. Workspace hierarchy still describes only
+files and checkouts, independently of agent ancestry.
+
+Subtasks accept user messages, drafts, read markers, archival, and unarchival through the existing
+agent routes. They report `userVisible: true` and `managedByAnotherAgent: true`, and
+`canSendMessages: true` while active. Reordering requires an owner-series entry, so a
+shared-filesystem subtask returns `409` on `reorder`. Archived subtasks accept no new messages or
+child creation. Archiving a subtask keeps its history and does not archive its workspace.
+Subtask creation is asynchronous delegation: it never waits for completion. Existing agent
+messaging tools deliver follow-ups; there is no subtask wait or archive tool. Ordinary subagents
+and non-subtask managed roots retain their existing restrictions.
 
 Every agent therefore reports three independent capability facts: `userVisible`,
 `managedByAnotherAgent`, and `canSendMessages`. New protocol-22 daemons always emit all three;
 the fields are optional on the wire so clients remain compatible with older protocol-22 daemons.
 When omitted, clients may use the old behavior as a fallback: `parentAgentId === null` was visible
 and sendable, while a non-null parent was hidden and not sendable. `send`, `reorder`, `archive`,
-`unarchive`, `read`, and `PUT draft` on any agent managed by another agent answer `409`, including
-a user-visible managed root.
+`unarchive`, `read`, and `PUT draft` on any non-subtask agent managed by another agent answer
+`409`, including a user-visible managed root.
 
 Agents accept the optional `mutationId` from the basics — except `send`, whose message is
 named by the client-supplied `id` instead — and carry a `version` like every
@@ -3013,6 +3046,7 @@ guarding the whole row. The version exists for event chaining and newer-copy com
     "id": "a1b2c3d4",
     "workspaceId": "k2h4j5l6",
     "parentAgentId": null,
+    "subtask": false,
     "userVisible": true,
     "managedByAnotherAgent": false,
     "canSendMessages": true,
@@ -3041,14 +3075,18 @@ Fields:
 - `parentAgentId` — `null` when no agent manages this one; otherwise the agent that spawned and
   manages it. A user-visible managed root and an ordinary hidden subagent both retain this
   ancestry.
+- `subtask` — optional additive boolean, always emitted by current daemons; absent means `false`.
+  `true` identifies a user-interactive subtask, whether sharing its parent's filesystem or rooted
+  in its own project workspace. The parent relationship remains `parentAgentId`.
 - `userVisible` — optional additive flag, always emitted by current daemons. `true` when the agent
-  is explicitly attached to a project or workspace root-agent series. Ordinary subagents are
-  `false`; a managed root in another workspace is `true`.
+  is a subtask, a bot's own agent, or explicitly attached to a project or workspace root-agent
+  series. Ordinary subagents are `false`; a managed root in another workspace is `true`.
 - `managedByAnotherAgent` — optional additive flag, always emitted by current daemons. `true` when
   `parentAgentId` is non-null.
 - `canSendMessages` — optional additive flag, always emitted by current daemons. `true` exactly
   when the user-facing `send` route accepts a message for this agent. It is `false` for ordinary
-  subagents, user-visible managed roots, and archived agents.
+  subagents, non-subtask user-visible managed roots, and archived agents. Active subtasks are
+  sendable despite their non-null parent.
 - `title`, `titleStatus` — a generated human-readable title for the conversation.
   `titleStatus` is `"idle"` while none has been generated yet and `"ready"` once one has.
 - `status` — what the agent is doing right now, granularly:
@@ -3064,7 +3102,7 @@ Fields:
     compaction only from the typed compaction block in history.
     Status is orthogonal to archival, which is `archivedAt`.
 
-- `subagents` — how many subagents this agent has spawned over its life (`total`) and how many
+- `subagents` — how many child agents, including subtasks, this agent has spawned over its life (`total`) and how many
   are running right now (`running`). Changes to either count are `agent.updated` events. The
   subagents themselves are listed by `GET /v0/agents/:agentId/activity`.
 - `processes` — how many background processes started by this agent are running right now.
@@ -3075,7 +3113,8 @@ Fields:
   since when. `null` when there is nothing unread. Cleared by `POST /v0/agents/:agentId/read`.
 - `orderKey` — an opaque owner-local sort key, as on projects and workspaces; the list order is
   manual and moved with `reorder`. It is non-null for every user-visible root, including one
-  managed from another workspace, and `null` for an ordinary hidden subagent.
+  managed from another workspace, and `null` for an ordinary hidden subagent or shared-filesystem
+  subtask.
 - `lastCursor` — the newest event cursor for this agent, so a client can open an event stream
   from exactly where the snapshot left off.
 - `createdAt`, `updatedAt`, `archivedAt` — lifecycle timestamps; `archivedAt` is `null` while
@@ -3112,7 +3151,8 @@ it is also a root in Agent Base ancestry. With `parentAgentId` it is the excepti
 whose parent belongs to another workspace. Ordinary hidden subagents are still spawned by their
 parents rather than through this endpoint. Bot agents are not created here either — a bot's one
 agent is born with the bot through `POST /v0/bots`, and creating another agent in a bot's
-workspace is refused with `409`: a bot has exactly one session.
+workspace is refused with `409`: a bot has exactly one primary session. Subtasks are created
+only through `create_subtask`, not this endpoint.
 
 Response — `201`: `{ "agent": { ... }, "profiles": [ ... ], "slashCommands": [ ... ] }`.
 Creation is complete when it answers: the agent exists, is `"idle"`, and is ready for work. A
@@ -4314,7 +4354,8 @@ Response — `200`:
 ```
 
 - `subagents` — full agent objects (with `parentAgentId` set to this agent), including
-  finished ones; their `status` tells which are still running.
+  finished and archived ones; their `status` tells which are still running. This includes
+  subtasks, distinguished by `subtask: true`, and is how shared-filesystem subtasks are discovered.
 - `processes` — full process objects, including exited ones.
 
 `404` when no such agent exists. On a subagent the endpoint works normally — subagents can
@@ -4478,8 +4519,9 @@ workspace. The differences are ownership and lifecycle, not behavior:
 - The agent's lifecycle belongs to the bot. Agent `archive`, `unarchive`, and `reorder` on a
   bot's agent answer `409`; archiving and unarchiving happen through the bot routes below, and
   the agent follows.
-- It is the workspace's only agent, forever: `POST /v0/agents` refuses a bot workspace with
-  `409`, and the bot workspace's `agents` array always contains exactly this one agent.
+- It is the workspace's only primary conversation: `POST /v0/agents` refuses a bot workspace
+  with `409`, and the bot workspace's `agents` array always contains exactly this one agent.
+  Shared-filesystem subtasks may also run there and are discovered through parent activity.
 
 Bot agents and bot workspaces appear in no project or workspace listing; they are discovered
 only through bot objects. A client that does not know about bots therefore never encounters

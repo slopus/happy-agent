@@ -101,6 +101,8 @@ export const agentSchema = Type.Object({
     status: agentStatusSchema,
     /** How many subagents this agent spawned over its life, and how many run now. */
     subagents: Type.Object({ running: Type.Integer(), total: Type.Integer() }),
+    /** A user-interactive, parent-managed subtask. Absent means false on older daemons. */
+    subtask: Type.Optional(Type.Boolean()),
     title: Nullable(Type.String()),
     /** `"idle"` while no title has been generated yet. */
     titleStatus: Type.Union([Type.Literal("idle"), Type.Literal("ready")]),

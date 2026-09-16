@@ -64,6 +64,8 @@ export const workspaceSchema = Type.Object({
         Type.Literal("archiving"),
         Type.Literal("archived"),
     ]),
+    /** The resident workspace-bound subtask; absent or null on other workspaces. */
+    subtaskAgentId: Type.Optional(Nullable(cuid2Schema)),
     updatedAt: timestampSchema,
     version: resourceVersionSchema,
 });

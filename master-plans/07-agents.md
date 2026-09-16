@@ -37,6 +37,30 @@ User visibility, management by another agent, and whether the user may send a
 message are separate explicit facts. A UI must not infer one from another or
 from list membership.
 
+## Subtasks
+
+A subtask is a parent-managed agent that the user can see and interact with.
+It is distinct from an ordinary hidden subagent. Every API agent reports a
+`subtask` boolean, optional for compatibility with older daemons, and uses the
+ordinary parent-agent relationship for its coordinator.
+
+Only a bot or another subtask may create a subtask. There are at most two
+subtask levels below a bot: bot, main subtask, internal subtask. This limits
+depth, not the number of siblings; a main subtask may coordinate several
+workspace subtasks for different projects.
+
+A subtask may share its parent's filesystem or run in its own ordinary project
+workspace. That workspace identifies its resident subtask agent; the agent's
+parent identifies its coordinator. A bot may create a workspace-bound subtask
+directly, and that subtask may create a shared-filesystem subtask.
+
+Add one creation tool, `create_subtask`. Messaging uses the existing agent
+messaging tools, archival uses the existing agent API, and there is no waiting
+for a subtask. Shared-filesystem subtasks are visible through parent activity;
+workspace-bound subtasks also appear in their workspace's agent series.
+Subtasks are the exception to the managed-agent restriction on user messages;
+ordinary subagents and existing managed roots keep their current behavior.
+
 ## Model
 
 Agents always have a fixed model. This is not very convenient when the model
@@ -55,3 +79,6 @@ models.
   managed root whose parent belongs to another workspace is visible in its own
   workspace, reports that it is user-visible and agent-managed, and reports
   that the user cannot send it messages.
+- Subtasks remain parent-managed while accepting user interaction, retain their
+  identity and workspace association, and enforce the two-level bot-rooted
+  hierarchy without limiting sibling count to two.
