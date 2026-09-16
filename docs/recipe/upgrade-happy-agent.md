@@ -252,9 +252,13 @@ Then check:
    `{ "level": "inference" }` reports `status: "passed"` for each provider the user relies on.
    These small requests may incur charges. Do not treat an HTTP 200 failure result as success or
    silently switch provider accounts to make the check pass.
-4. A follow-up in an existing remote agent produces a reply and performs a harmless shell/file
-   check inside the agreed workspace. Use a unique disposable file and remove only that file.
-   Check pending work before sending another task; do not replay mutations already completed.
+4. Follow [Testing a deployed node](README.md#testing-a-deployed-node): create a new temporary
+   project, workspace, and agent on the upgraded node, whether team or standalone. Never reuse
+   an existing project or agent for tests. Run a small inference task and a harmless shell/file
+   check there through the real client connection. Before each test action and after reconnecting,
+   check whether the user archived the temporary project; if so, stop without restoring or
+   replacing it. Archive the project when verification finishes or fails, confirm its archived
+   state, and report incomplete cleanup. Leave an already archived project archived.
 5. If GitHub was configured, noninteractive repository access still works as the service user,
    `gh api user --jq .login` is the expected account, and effective Git name/email remain correct.
    Do not push a test commit or replace Git credentials unless separately authorized.

@@ -558,14 +558,23 @@ Perform checks against the **remote**, through the connection the user will actu
    Do not write it through the profile API. Verify the initial project is registered and onboarding
    reports its actual prerequisites satisfied; do not mark incomplete setup as finished merely to
    hide missing steps.
-3. Open an agent in that remote project through Happy. Send a small task that checks its working
-   directory, runs a harmless shell command, and creates/reads a disposable file inside the agreed
-   workspace. Confirm model inference, tool execution, writable storage, and the user-visible
-   response all work. Clean up only that test file. Test every provider the user expects to use.
+3. Follow [Testing a deployed node](README.md#testing-a-deployed-node): create a new temporary
+   project on the remote with its own disposable workspace and agent, separate from the initial
+   project. Never reuse an existing project for tests. Through Happy, send a small task that
+   checks its working directory, runs a harmless shell command, and creates/reads a disposable
+   file inside the temporary workspace. Confirm model inference, tool execution, writable
+   storage, and the user-visible response all work. Test every provider the user expects to use.
+   Before each test action, check whether the user archived the temporary project; if so, stop
+   without restoring or replacing it.
 4. With no active work, restart the remote service. Confirm systemd is enabled, authenticated
-   health returns, the Tailcat endpoint is unchanged, the primary reconnects, the same project and
-   agent remain available, and a follow-up agent task succeeds. Recheck noninteractive Git access
-   as the service user if GitHub was enabled. A reboot test requires the user's approval.
+   health returns, the Tailcat endpoint is unchanged, and the primary reconnects. Recheck the
+   temporary project's archival state before sending a follow-up task to its test agent; stop if
+   the user archived it. Inspect the initial project's preserved state read-only. Recheck
+   noninteractive Git access as the service user if GitHub was enabled. A reboot test requires
+   the user's approval.
+5. Archive the temporary project after verification, including when checks fail, and confirm its
+   archived state. If the user already archived it, leave it archived. Report any unfinished
+   checks or cleanup; do not archive the initial project or other existing projects.
 
 Give a concise handoff: machine and connection name, installed version, service/config/project
 locations, verified providers and default model, profile and Git identity, GitHub account/setup

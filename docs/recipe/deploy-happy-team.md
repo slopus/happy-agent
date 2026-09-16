@@ -193,12 +193,17 @@ Social sign-in, organization membership, and the exact WorkOS configuration. If 
 startup and onboarding status. Never disable authentication or substitute a standalone token to
 make a failed check pass.
 
-Then verify the experience through that local connection in Happy: open the team server, complete
-any owner profile onboarding, and run a small agent task using an authorized project and configured
-provider. Confirm a response and working tools; health alone does not verify model inference or
-shell sandbox startup. Coordinate a service restart when no work is active, and recheck connection
-health to confirm persistence and recovery. If an interactive step requires the user, ask for it
-and resume verification afterward; do not mark an untested step as passed.
+Then verify the experience through that local connection in Happy: open the team server and
+complete any owner profile onboarding. Follow [Testing a deployed node](README.md#testing-a-deployed-node):
+create a new temporary project, workspace, and agent, never reuse an existing project, and run a
+small inference task with a harmless shell/file check using the configured provider. Confirm a
+response and working tools; health alone does not verify model inference or shell sandbox startup.
+Coordinate a service restart when no work is active, and recheck connection health to confirm
+persistence and recovery. Check whether the user archived the temporary project before each test
+action and after the restart; if so, stop without restoring or replacing it. Archive the project
+after verification (including failed checks) and confirm its archived state. If an interactive
+step requires the user, ask for it and resume verification afterward; do not mark an untested step
+as passed.
 
 ## 6. Ask whom to invite
 

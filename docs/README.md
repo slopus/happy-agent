@@ -107,6 +107,11 @@ That is an explicitly supported goal. The short version:
 
 ## Ground rules worth internalizing
 
+- **Test deployed nodes in fresh temporary projects.** On both team and standalone nodes,
+  never reuse existing projects for test commands or inference smoke tests. Create a temporary
+  project, run the checks there, then archive it. Always check whether the user has already
+  archived it and stop if they have; never restore or replace it automatically. Follow
+  [Testing a deployed node](recipe/README.md#testing-a-deployed-node) for the full lifecycle.
 - **One permission model everywhere.** No provider, tool name, or clever
   command phrasing widens what you may do. Escalation is per-action, reviewed,
   and scoped to that one execution.
