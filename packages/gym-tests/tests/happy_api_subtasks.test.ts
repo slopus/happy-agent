@@ -11,15 +11,18 @@ afterEach(async () => {
 });
 
 async function harness() {
-    const commands = new Map<string, GymTurn>();
+    const commands = new Map<string, { callId: string; turn: GymTurn }>();
     const gym = await createAgentGym({
         files: { "marker.txt": "a workspace fixture\n", "second/marker.txt": "another project\n" },
         timeoutMs: 20_000,
         inference: (request) => {
             const command = commands.get(request.sessionId);
-            if (command !== undefined) {
+            if (
+                command !== undefined &&
+                JSON.stringify(request.messages).includes(command.callId)
+            ) {
                 commands.delete(request.sessionId);
-                return command;
+                return command.turn;
             }
             return { content: [{ type: "text", text: "Subtask work settled." }] };
         },
@@ -32,11 +35,18 @@ async function harness() {
         name: string,
         args: Record<string, unknown>,
         fromAgentId?: string,
+        permissionMode: "auto" | "full_access" = "auto",
     ) {
         const callId = `subtask_test_${++callIndex}`;
-        commands.set(agentId, { content: [{ type: "tool_call", name, arguments: args, callId }] });
+        commands.set(agentId, {
+            callId,
+            turn: { content: [{ type: "tool_call", name, arguments: args, callId }] },
+        });
         if (fromAgentId === undefined) {
-            await gym.send(`Please execute ${name}, request ${callId}.`, { sessionId: agentId });
+            await gym.send(`Please execute ${name}, request ${callId}.`, {
+                sessionId: agentId,
+                permissionMode,
+            });
         } else {
             await call(fromAgentId, "send_agent_message", {
                 toAgentId: agentId,
@@ -68,10 +78,205 @@ async function harness() {
         expect(agent).toBeDefined();
         return agent!;
     }
-    return { gym, bot, call, create };
+    return { gym, bot, call, create, commands };
 }
 
 describe("user-interactive subtasks", () => {
+    it("lets a subtask archive its active direct child and stop that child's inference", async () => {
+        const { gym, bot, create, call, commands } = await harness();
+        const main = await create(bot.agent.id, "Active coordinator");
+        const child = await create(main.id, "Active internal task");
+        const marker = "Hold this child inference for archival";
+        commands.set(child.id, {
+            callId: marker,
+            turn: { delayMs: 30_000, content: [{ type: "text", text: "Must not complete" }] },
+        });
+        const accepted = await gym.send(marker, { sessionId: child.id, wait: false });
+        await gym.waitUntil(
+            async () =>
+                gym.inference.requests.some(
+                    (request) =>
+                        request.sessionId === child.id &&
+                        JSON.stringify(request.messages).includes(marker),
+                )
+                    ? true
+                    : undefined,
+            "the child's in-flight inference",
+        );
+        expect(
+            (
+                await call(
+                    main.id,
+                    "archive_subtask",
+                    { agentId: child.id },
+                    undefined,
+                    "full_access",
+                )
+            ).text,
+        ).toContain("Archived subtask");
+        expect(await gym.waitForRun(accepted.runId)).toMatchObject({
+            type: "run.finished",
+            payload: { run: { status: "aborted" } },
+        });
+        expect((await gym.client.getAgent(child.id)).agent).toMatchObject({
+            archivedAt: expect.any(Number),
+            status: "idle",
+            canSendMessages: false,
+        });
+        expect((await gym.client.getAgent(main.id)).agent).toMatchObject({
+            archivedAt: null,
+            subtasks: [],
+        });
+        expect(gym.errors).toEqual([]);
+    }, 60_000);
+
+    it("includes the complete active subtask tree in bootstrap and every full agent read", async () => {
+        const { gym, bot, create, call } = await harness();
+        const project = (await gym.client.listProjects()).projects.find((item) =>
+            item.agents.some((agent) => agent.id === gym.defaultSessionId),
+        )!;
+        const main = await create(bot.agent.id, "Main tree task");
+        const internal = await create(main.id, "Workspace tree task", {
+            projectId: project.id,
+            name: "Tree workspace",
+        });
+        const sibling = await create(bot.agent.id, "Shared sibling");
+        await call(bot.agent.id, "create_agent", {
+            title: "Hidden researcher",
+            text: "Research internally",
+            model: gym.selection.modelId,
+            effort: gym.selection.effort,
+            provider: gym.selection.providerId,
+        });
+        const bootstrap = await gym.client.getDesktopBootstrap();
+        const root = bootstrap.bots!.find((item) => item.id === bot.id)!.agent;
+        expect(root.subtasks?.map((item) => item.id)).toEqual([sibling.id, main.id]);
+        expect(root.subtasks?.[1]?.subtasks).toEqual([
+            expect.objectContaining({
+                id: internal.id,
+                parentAgentId: main.id,
+                workspaceId: internal.workspaceId,
+                subtasks: [],
+            }),
+        ]);
+        expect(
+            (await gym.client.getAgentBootstrap(bot.agent.id)).agent.subtasks?.map(
+                (item) => item.id,
+            ),
+        ).toEqual([sibling.id, main.id]);
+        expect(
+            (await gym.client.getWorkspace(internal.workspaceId)).workspace.agents[0],
+        ).toMatchObject({ id: internal.id, subtasks: [] });
+        expect((await gym.client.getAgentActivity(bot.agent.id)).subagents).toContainEqual(
+            expect.objectContaining({ title: "Hidden researcher", subtask: false, subtasks: [] }),
+        );
+        await gym.client.archiveAgent(main.id);
+        expect(
+            (await gym.client.getAgent(bot.agent.id)).agent.subtasks?.map((item) => item.id),
+        ).toEqual([sibling.id]);
+        expect((await gym.client.getAgent(internal.id)).agent.archivedAt).toBeNull();
+        await gym.client.unarchiveAgent(main.id);
+        await gym.restart();
+        expect(
+            (await gym.client.getDesktopBootstrap()).bots!.find((item) => item.id === bot.id)?.agent
+                .subtasks?.[1]?.subtasks?.[0]?.id,
+        ).toBe(internal.id);
+        expect(gym.errors).toEqual([]);
+    }, 60_000);
+
+    it("lets only the direct coordinator archive a subtask without deleting its workspace or descendants", async () => {
+        const { gym, bot, create, call } = await harness();
+        const project = (await gym.client.listProjects()).projects.find((item) =>
+            item.agents.some((agent) => agent.id === gym.defaultSessionId),
+        )!;
+        const task = await create(bot.agent.id, "Archivable task", {
+            projectId: project.id,
+            name: "Keep task workspace",
+        });
+        await gym.waitUntil(
+            async () =>
+                (await gym.client.getWorkspace(task.workspaceId)).workspace.initialization
+                    .status === "ready"
+                    ? true
+                    : undefined,
+            "task workspace readiness",
+        );
+        const internal = await create(task.id, "Independent child");
+        const other = (await gym.client.createBot({ name: "Other coordinator" })).bot;
+        for (const actorId of [gym.defaultSessionId, other.agent.id, task.id]) {
+            expect(
+                (
+                    await call(
+                        actorId,
+                        "archive_subtask",
+                        { agentId: task.id },
+                        undefined,
+                        "full_access",
+                    )
+                ).text,
+            ).not.toContain("Archived subtask");
+            expect((await gym.client.getAgent(task.id)).agent.archivedAt).toBeNull();
+        }
+        expect(
+            (
+                await call(
+                    bot.agent.id,
+                    "archive_subtask",
+                    { agentId: task.id },
+                    undefined,
+                    "full_access",
+                )
+            ).text,
+        ).toContain("Archived subtask");
+        const archived = (await gym.client.getAgent(task.id)).agent;
+        expect(archived).toMatchObject({ canSendMessages: false, archivedAt: expect.any(Number) });
+        expect((await gym.client.getAgent(bot.agent.id)).agent.subtasks).toEqual([]);
+        expect((await gym.client.getAgent(internal.id)).agent.archivedAt).toBeNull();
+        expect((await gym.client.getWorkspace(task.workspaceId)).workspace).toMatchObject({
+            status: "active",
+            subtaskAgentId: task.id,
+            agents: [],
+        });
+        await expect(gym.send("Not while archived", { sessionId: task.id })).rejects.toMatchObject({
+            status: 409,
+        });
+        expect(
+            (
+                await call(
+                    bot.agent.id,
+                    "archive_subtask",
+                    { agentId: task.id },
+                    undefined,
+                    "full_access",
+                )
+            ).text,
+        ).toContain("Archived subtask");
+        expect((await gym.client.getAgent(task.id)).agent.archivedAt).toBe(archived.archivedAt);
+        await gym.restart();
+        expect((await gym.client.getAgent(task.id)).agent.archivedAt).toBe(archived.archivedAt);
+        await gym.client.unarchiveAgent(task.id);
+        await gym.send("Continue after restoration", { sessionId: task.id });
+        expect((await gym.client.getAgent(bot.agent.id)).agent.subtasks?.[0]?.id).toBe(task.id);
+        expect(gym.errors).toEqual([]);
+    }, 60_000);
+
+    it("guides bots and subtasks to prefer interactive delegation and honor explicit requests", async () => {
+        const { gym, bot, create } = await harness();
+        const task = await create(bot.agent.id, "Prompt task");
+        await gym.send("Review your delegation guidance", { sessionId: task.id });
+        for (const id of [bot.agent.id, task.id]) {
+            const instructions = gym.inference.requests.find(
+                (request) => request.sessionId === id,
+            )!.instructions;
+            expect(instructions).toContain("Prefer create_subtask by default");
+            expect(instructions).toContain(
+                "If the user explicitly asks for a subtask, use create_subtask",
+            );
+            expect(instructions).toContain("internal research");
+            expect(instructions).toContain("archive_subtask");
+        }
+    }, 60_000);
+
     it("runs file tools in the selected workspace and shares that filesystem with an internal subtask", async () => {
         const { gym, bot, create, call } = await harness();
         const project = (await gym.client.listProjects()).projects.find((item) =>

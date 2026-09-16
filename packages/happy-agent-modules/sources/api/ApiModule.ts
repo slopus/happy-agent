@@ -2791,27 +2791,6 @@ export class ApiModule implements AgentModule {
                     "A bot workspace already has its one permanent agent.",
                 );
             }
-            const managedByAnotherAgent = body.parentAgentId !== undefined;
-            if (body.parentAgentId !== undefined) {
-                if ((await agents.config(ctx, body.parentAgentId)) === undefined) {
-                    throw notFound("The managing agent was not found.");
-                }
-                const parentWorkspaceId = await this.#workspaceIdForAgent(ctx, body.parentAgentId);
-                if (parentWorkspaceId === undefined) {
-                    throw new ApiError(
-                        409,
-                        "conflict",
-                        "The managing agent does not belong to a workspace.",
-                    );
-                }
-                if (parentWorkspaceId === body.workspaceId) {
-                    throw new ApiError(
-                        409,
-                        "conflict",
-                        "A managed root agent must run in a different workspace from its parent.",
-                    );
-                }
-            }
             const baseEnvironment = currentAgentEnvironment();
             const now = Date.now();
             const config: AgentConfig = {
@@ -2841,28 +2820,10 @@ export class ApiModule implements AgentModule {
                     await ctx.inTx(async (txCtx) => {
                         const agent = await agents.create(txCtx, config, {
                             ...(body.id === undefined ? {} : { id: body.id }),
-                            parent: body.parentAgentId ?? null,
+                            parent: null,
                         });
                         if (ownership.childWorkspaceId === undefined) {
-                            if (managedByAnotherAgent) {
-                                await this.#projects.attachManagedRootAgent(
-                                    txCtx,
-                                    ownership.projectId,
-                                    agent.id,
-                                );
-                            } else {
-                                await this.#projects.attachAgent(
-                                    txCtx,
-                                    ownership.projectId,
-                                    agent.id,
-                                );
-                            }
-                        } else if (managedByAnotherAgent) {
-                            await this.#workspaces.attachManagedRootAgent(
-                                txCtx,
-                                ownership.childWorkspaceId,
-                                agent.id,
-                            );
+                            await this.#projects.attachAgent(txCtx, ownership.projectId, agent.id);
                         } else {
                             await this.#workspaces.attachAgent(
                                 txCtx,
@@ -3619,6 +3580,7 @@ export class ApiModule implements AgentModule {
             readonly activeOnly?: boolean;
             readonly config?: AgentConfig;
             readonly userVisible?: boolean;
+            readonly subtaskDepth?: number;
         } = {},
     ): Promise<Record<string, unknown> | undefined> {
         const config = options.config ?? (await this.#agentSystem().config(ctx, agentId));
@@ -3632,7 +3594,7 @@ export class ApiModule implements AgentModule {
             (options.userVisible ??
                 (orderKey != null || (await this.#bots.forAgent(ctx, agentId)) !== undefined));
         const children = await this.#agentSystem().childOf(ctx, agentId);
-        const [processes, questions, runningSubagents, activeRunId] = await Promise.all([
+        const [processes, questions, runningSubagents, activeRunId, subtasks] = await Promise.all([
             this.#compute.listProcesses(ctx, agentId),
             this.#userInput.listPage(ctx, agentId, {
                 askingAgentId: agentId,
@@ -3643,6 +3605,7 @@ export class ApiModule implements AgentModule {
                 children.map(async (childId) => await this.#activeRunId(ctx, childId)),
             ).then((runIds) => runIds.filter((runId) => runId !== undefined).length),
             this.#activeRunId(ctx, agentId),
+            this.#subtaskResources(ctx, children, options.subtaskDepth ?? 0),
         ]);
         return await agentResource(ctx, this.#agentSystem(), this.#events, agentId, workspaceId, {
             config,
@@ -3650,11 +3613,53 @@ export class ApiModule implements AgentModule {
             ...(orderKey === undefined ? {} : { orderKey }),
             userVisible,
             subtask: this.#subtasks?.isSubtask(config) ?? false,
+            subtasks,
             pendingQuestionId: questions.requests[0]?.id ?? null,
             runningProcesses: processes.filter((process) => process.status === "running").length,
             runningSubagents,
             working: activeRunId !== undefined,
         });
+    }
+
+    async #subtaskResources(
+        ctx: Context,
+        children: readonly string[],
+        depth: number,
+    ): Promise<Record<string, unknown>[]> {
+        if (this.#subtasks === undefined || depth >= 2) return [];
+        const active: { id: string; config: AgentConfig }[] = [];
+        for (const id of children) {
+            const config = await this.#agentSystem().config(ctx, id);
+            if (
+                config !== undefined &&
+                this.#subtasks.isSubtask(config) &&
+                agentArchivedAt(config) === null
+            ) {
+                active.push({ id, config });
+            }
+        }
+        active.sort(
+            (a, b) =>
+                (b.config.provenance?.createdAt ?? 0) - (a.config.provenance?.createdAt ?? 0) ||
+                (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+        );
+        return await Promise.all(
+            active.map(async ({ id, config }) => {
+                const workspaceId = await this.#workspaceIdForAgent(ctx, id);
+                if (workspaceId === undefined)
+                    throw notFound("The subtask workspace was not found.");
+                return (await this.#buildAgentResource(
+                    ctx,
+                    id,
+                    workspaceId,
+                    await this.#agentOrderKey(ctx, id),
+                    {
+                        config,
+                        subtaskDepth: depth + 1,
+                    },
+                ))!;
+            }),
+        );
     }
 
     async #agentOrderKey(ctx: Context, agentId: string): Promise<string | null> {

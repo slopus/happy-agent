@@ -457,6 +457,7 @@ export async function startHappyAgentRuntime(
             workspaces,
             durableFunctions,
             abort,
+            compute.computeModule,
         );
         const scheduling = new SchedulingModule();
         const userInput = new UserInputModule(presence);

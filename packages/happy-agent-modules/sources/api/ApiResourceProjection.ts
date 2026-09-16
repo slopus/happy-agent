@@ -348,6 +348,7 @@ export async function agentResource(
         readonly working?: boolean;
         readonly userVisible?: boolean;
         readonly subtask?: boolean;
+        readonly subtasks?: readonly Record<string, unknown>[];
     } = {},
 ): Promise<Record<string, unknown> | undefined> {
     const config = state.config ?? (await agents.config(ctx, agentId));
@@ -371,6 +372,7 @@ export async function agentResource(
         workspaceId,
         parentAgentId,
         subtask: state.subtask ?? false,
+        subtasks: state.subtasks ?? [],
         userVisible: state.userVisible ?? state.orderKey != null,
         managedByAnotherAgent,
         canSendMessages: (!managedByAnotherAgent || state.subtask === true) && archivedAt === null,

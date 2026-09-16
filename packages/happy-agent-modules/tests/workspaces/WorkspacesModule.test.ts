@@ -304,33 +304,41 @@ describe("WorkspacesModule", () => {
         }
     });
 
-    it("attaches a managed catalog root only through the explicit managed boundary", async () => {
+    it("attaches only the parent-managed subtask reserved for the workspace", async () => {
         const { workspaces } = await temporaryWorkspacesCatalog();
         const database = workspaceDatabase("workspace-managed-root-agent-test");
         await database.ready;
         try {
             workspaces.beforeStart(database.context, {
                 parentOf: async (_ctx: unknown, agentId: string) =>
-                    agentId === "managed-agent" ? "parent-agent" : null,
+                    agentId === "root-agent" ? null : "parent-agent",
             } as never);
             const workspace = await workspaces.reserve(database.context, {
                 id: "workspace-1",
                 projectRef: "acme",
                 name: "Managed root agent",
+                subtaskAgentId: "managed-agent",
             });
 
             await expect(
                 workspaces.attachAgent(database.context, workspace.workspace.id, "managed-agent"),
             ).rejects.toThrow("Only a top-level agent can be attached to a workspace.");
             await expect(
-                workspaces.attachManagedRootAgent(
+                workspaces.attachSubtaskAgent(
                     database.context,
                     workspace.workspace.id,
                     "root-agent",
                 ),
-            ).rejects.toThrow("Only an agent managed by another agent");
+            ).rejects.toThrow("A workspace subtask must have a parent agent.");
+            await expect(
+                workspaces.attachSubtaskAgent(
+                    database.context,
+                    workspace.workspace.id,
+                    "other-agent",
+                ),
+            ).rejects.toThrow("This workspace is not reserved for that subtask.");
 
-            await workspaces.attachManagedRootAgent(
+            await workspaces.attachSubtaskAgent(
                 database.context,
                 workspace.workspace.id,
                 "managed-agent",

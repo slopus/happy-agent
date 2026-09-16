@@ -1,5 +1,12 @@
 # Bots — learnings
 
+## Bots prefer user-interactive subtasks for delegated work
+
+Bot identity prompts previously left delegation entirely to generic subagent guidance. They now
+prefer `create_subtask` for work the user may collaborate on, honor explicit subtask requests,
+and reserve hidden subagents for internal pieces such as research. Bots coordinate through
+existing messages and archive direct subtasks with `archive_subtask`, without awaiting them.
+
 ## Windows bots coordinate WSL as a separate remote installation
 
 WSL projects use the existing remote Happy Agent connection rather than switching a Windows

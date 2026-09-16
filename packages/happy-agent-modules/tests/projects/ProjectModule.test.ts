@@ -388,7 +388,7 @@ describe("ProjectsModule", () => {
         }
     });
 
-    it("attaches a managed catalog root only through the explicit managed boundary", async () => {
+    it("attaches only parentless roots to a project", async () => {
         const database = await migratedProjectDatabase("projects-managed-root-agent-test");
         try {
             const projects = await projectsModule();
@@ -404,13 +404,9 @@ describe("ProjectsModule", () => {
             await expect(
                 projects.attachAgent(database.context, project.id, "managed-agent"),
             ).rejects.toThrow("Only a root agent can be attached to a project.");
-            await expect(
-                projects.attachManagedRootAgent(database.context, project.id, "root-agent"),
-            ).rejects.toThrow("Only an agent managed by another agent");
-
-            await projects.attachManagedRootAgent(database.context, project.id, "managed-agent");
+            await projects.attachAgent(database.context, project.id, "root-agent");
             expect(await projects.listAgentIds(database.context, project.id)).toEqual([
-                "managed-agent",
+                "root-agent",
             ]);
         } finally {
             database.close();

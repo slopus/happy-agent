@@ -13,10 +13,15 @@ import { backoff, type Context } from "@steve.kite/stdlib";
 import { BotsModule } from "../bots/index.js";
 import { AbortModule } from "../abort/index.js";
 import { CollaborationModule } from "../collaboration/index.js";
+import { ComputeModule } from "../compute/index.js";
 import { DurableFunctionsModule } from "../durableFunctions/index.js";
 import { WorkspacesModule } from "../workspaces/index.js";
 import {
     archivedMetadataSchema,
+    archiveSubtaskInputSchema,
+    restoredMetadataSchema,
+    versionedMetadataSchema,
+    SUBTASK_ARCHIVE_FUNCTION,
     createSubtaskInputSchema,
     SUBTASK_START_FUNCTION,
     subtaskIdSchema,
@@ -25,10 +30,12 @@ import {
     SubtaskInputError,
     workspaceSubtaskMetadataSchema,
     type CreateSubtaskInput,
+    type ArchiveSubtaskInput,
     type SubtaskResult,
     type SubtaskStart,
 } from "./Subtask.js";
 import { createSubtaskTool } from "./tools/create_subtask.js";
+import { archiveSubtaskTool } from "./tools/archive_subtask.js";
 
 /** User-interactive delegation, with ordinary Agent Base ancestry and durable initial delivery. */
 export class SubtasksModule implements AgentModule {
@@ -36,6 +43,7 @@ export class SubtasksModule implements AgentModule {
     readonly #bots: BotsModule;
     readonly #abort: AbortModule;
     readonly #collaboration: CollaborationModule;
+    readonly #compute: ComputeModule;
     readonly #durableFunctions: DurableFunctionsModule;
     readonly #workspaces: WorkspacesModule;
     #agents: AgentSystemRef | undefined;
@@ -46,12 +54,31 @@ export class SubtasksModule implements AgentModule {
         workspaces: WorkspacesModule,
         durableFunctions: DurableFunctionsModule,
         abort: AbortModule,
+        compute: ComputeModule,
     ) {
         this.#bots = bots;
         this.#abort = abort;
+        this.#compute = compute;
         this.#collaboration = collaboration;
         this.#workspaces = workspaces;
         this.#durableFunctions = durableFunctions;
+        durableFunctions.register({
+            name: SUBTASK_ARCHIVE_FUNCTION,
+            argumentsSchema: archiveSubtaskInputSchema,
+            resultSchema: Type.Null(),
+            executor: async (ctx, call) => {
+                await backoff(ctx, async (attemptCtx) => {
+                    const config = await this.#requireAgents().config(
+                        attemptCtx,
+                        call.arguments.agentId,
+                    );
+                    if (Value.Check(archivedMetadataSchema, config?.metadata)) {
+                        await this.#compute.archiveAgent(attemptCtx, call.arguments.agentId);
+                    }
+                });
+                return null;
+            },
+        });
         durableFunctions.register({
             name: SUBTASK_START_FUNCTION,
             argumentsSchema: subtaskStartSchema,
@@ -166,7 +193,7 @@ export class SubtasksModule implements AgentModule {
             };
             await agents.create(txCtx, config, { id: agentId, parent: parentAgentId });
             if (workspace !== undefined) {
-                await this.#workspaces.attachManagedRootAgent(txCtx, workspace.id, agentId);
+                await this.#workspaces.attachSubtaskAgent(txCtx, workspace.id, agentId);
             }
             await this.#durableFunctions.invoke(txCtx, {
                 function: SUBTASK_START_FUNCTION,
@@ -183,6 +210,47 @@ export class SubtasksModule implements AgentModule {
         });
     }
 
+    async archive(
+        ctx: Context,
+        actingAgentId: string,
+        agentId: string,
+    ): Promise<ArchiveSubtaskInput> {
+        if (
+            !Value.Check(subtaskIdSchema, actingAgentId) ||
+            !Value.Check(subtaskIdSchema, agentId)
+        ) {
+            throw new SubtaskInputError("The subtask archival request is invalid.");
+        }
+        const agents = this.#requireAgents();
+        return await ctx.inTx(async (txCtx) => {
+            const actor = await agents.config(txCtx, actingAgentId);
+            const bot = await this.#bots.forAgent(txCtx, actingAgentId);
+            const target = await agents.config(txCtx, agentId);
+            if (
+                actor === undefined ||
+                Value.Check(archivedMetadataSchema, actor.metadata) ||
+                (!this.isSubtask(actor) && bot?.status !== "active") ||
+                !this.isSubtask(target) ||
+                (await agents.parentOf(txCtx, agentId)) !== actingAgentId
+            ) {
+                throw new SubtaskInputError(
+                    "Only a subtask's direct coordinating bot or subtask may archive it.",
+                );
+            }
+            if (Value.Check(archivedMetadataSchema, target?.metadata)) return { agentId };
+            const now = Date.now();
+            const version = Value.Check(versionedMetadataSchema, target?.metadata)
+                ? target.metadata.version
+                : 1;
+            await agents.updateMetadata(txCtx, agentId, {
+                archivedAt: now,
+                updatedAt: now,
+                version: version + 1,
+            });
+            return { agentId };
+        });
+    }
+
     readonly beforeStart = (_ctx: Context, agents: AgentSystemRef): AgentModuleHooks => {
         this.#agents = agents;
         return {
@@ -193,6 +261,17 @@ export class SubtasksModule implements AgentModule {
                 ) {
                     await this.#durableFunctions.cancel(ctx, `subtask-start:${scope.agent.id}`);
                     await this.#abort.abort(ctx, scope.agent.id);
+                    await this.#durableFunctions.invoke(ctx, {
+                        function: SUBTASK_ARCHIVE_FUNCTION,
+                        arguments: { agentId: scope.agent.id },
+                        operationId: `subtask-archive:${scope.agent.id}`,
+                        lockKeys: [`subtask:${scope.agent.id}`],
+                    });
+                } else if (
+                    this.isSubtask(scope.agent) &&
+                    Value.Check(restoredMetadataSchema, change.update)
+                ) {
+                    await this.#durableFunctions.cancel(ctx, `subtask-archive:${scope.agent.id}`);
                 }
             },
             beforeAgentLoop: async (ctx, scope) => {
@@ -230,13 +309,14 @@ export class SubtasksModule implements AgentModule {
             },
             tools: (_toolCtx, scope) => [
                 createSubtaskTool(this, scope.agent.id, scope.agent.provider),
+                archiveSubtaskTool(this, scope.agent.id),
             ],
             instructions: async (ctx, scope) => {
                 if (this.isSubtask(await agents.config(ctx, scope.agent.id))) {
-                    return "You are a subtask: a user-visible agent managed by your parent agent. The user may also talk to you directly. Coordinate through send_agent_message. You may create another subtask only within the two-level limit below your bot. Subtasks cannot be awaited; the user can archive them through the agent API.";
+                    return "You are a subtask: a user-visible agent managed by your parent agent. The user may also talk to you directly. Prefer create_subtask by default when delegating work the user may collaborate on. If the user explicitly asks for a subtask, use create_subtask within the two-level limit below your bot; explain if that limit prevents creation. Use ordinary create_agent subagents for internal work that needs no user collaboration, such as internal research. Coordinate through send_agent_message, and use archive_subtask to archive your direct subtasks when appropriate. Subtasks cannot be awaited. Archival stops the selected task and its descendants but archives only the selected task; it preserves their history and workspace.";
                 }
                 if ((await this.#bots.forAgent(ctx, scope.agent.id)) !== undefined) {
-                    return "Use create_subtask to delegate a task the user may open and interact with. Subtasks can share your folder or use new workspaces in different projects. Coordinate with send_agent_message; do not wait for subtasks.";
+                    return "Subtasks can share your folder or use new workspaces in different projects. Only bots and subtasks create them, with at most two subtask levels below a bot and no two-sibling limit. Coordinate with send_agent_message; do not wait for subtasks. Use archive_subtask for your direct subtasks when appropriate; it archives only the selected task, stops its current work and descendants, and preserves history and workspace.";
                 }
                 return "";
             },

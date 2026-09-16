@@ -1,7 +1,8 @@
 # Subtasks
 
-User-visible, parent-managed conversations. One `create_subtask` tool creates them; existing
-collaboration messaging and the agent API handle interaction and archival.
+User-visible, parent-managed conversations. `create_subtask` creates them and `archive_subtask`
+lets their direct coordinator archive them. Existing collaboration messaging and the agent API
+handle interaction; users may also archive and restore through the API.
 
 ```text
 Bot
@@ -13,5 +14,7 @@ Bot
 The two-level limit counts ancestry, not siblings. Ordinary agents cannot create subtasks.
 Creation commits the agent, optional workspace association, and Durable Functions startup intent
 together. Initial delivery waits for workspace readiness and uses the agent ID as its durable
-message identity. Shared-folder subtasks appear in parent activity; workspace-bound subtasks also
-appear in the workspace's ordered agent series. Agent Base remains unchanged.
+message identity. Every full API agent includes its active direct subtasks recursively, including
+in bootstrap. Workspace-bound subtasks also appear in the workspace's ordered agent series.
+Archival stops the target and descendants but marks only the target archived, preserving its
+workspace and history. Durable Functions owns post-commit compute cleanup. Agent Base remains unchanged.

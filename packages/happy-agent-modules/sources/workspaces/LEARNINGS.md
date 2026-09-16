@@ -84,13 +84,12 @@ logs the setup error and marks the workspace ready so the person or agent can in
 Failures that prevent the folder or checkout from existing remain initialization failures, and
 archive or shutdown cancellation still stops setup without marking the workspace ready.
 
-## A catalog root can still have an Agent Base parent
+## Parented attachment is restricted to the reserved subtask
 
-An agent managing work in another workspace needs a top-level row in that destination's catalog
-without losing the Agent Base ancestry that lets its parent supervise it. The ordinary attachment
-method still accepts only parentless agents, so ordinary subagents cannot become visible by
-accident. Cross-workspace managed roots use a separate explicit attachment method after the API
-has verified that the parent belongs to a different workspace.
+The general managed-root attachment path could make any parented agent a workspace catalog root.
+It is now `attachSubtaskAgent`, which requires a parent and an exact match with the workspace's
+reserved `subtaskAgentId`. Ordinary attachment still accepts only parentless agents. The removed
+API parent-selection option cannot create new managed roots; existing associations are not rewritten.
 
 ## Child creation follows the caller's workspace
 

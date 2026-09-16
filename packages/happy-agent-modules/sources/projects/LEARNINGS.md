@@ -174,10 +174,9 @@ no-op reorder leave both the association and owner untouched. Agent archival kee
 association and its fractional key, but it does change the active embedded list, so archive and
 unarchive advance the owner and emit the same exact version chain.
 
-## A catalog root can still have an Agent Base parent
+## Project-root agents are parentless
 
-An agent managing work in another workspace needs a top-level row in that destination's catalog
-without losing the Agent Base ancestry that lets its parent supervise it. The ordinary attachment
-method still accepts only parentless agents, so ordinary subagents cannot become visible by
-accident. Cross-workspace managed roots use a separate explicit attachment method after the API
-has verified that the parent belongs to a different workspace.
+The unused managed-root API previously allowed a parent-managed agent in a project's root series.
+That creation path and its project attachment method are removed. Project attachment accepts only
+parentless agents; user-interactive delegation uses subtasks and their dedicated child workspaces.
+Existing stored associations remain readable and are not rewritten.

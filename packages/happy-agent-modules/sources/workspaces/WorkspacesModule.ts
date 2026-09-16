@@ -1960,8 +1960,8 @@ export class WorkspacesModule implements AgentModule {
         return await this.#attachAgent(ctx, workspaceId, agentId, false);
     }
 
-    /** Permanently places one agent whose Agent Base parent belongs to another workspace. */
-    async attachManagedRootAgent(
+    /** Attaches only the parent-managed subtask reserved for this workspace. */
+    async attachSubtaskAgent(
         ctx: Context,
         workspaceId: string,
         agentId: string,
@@ -1973,7 +1973,7 @@ export class WorkspacesModule implements AgentModule {
         ctx: Context,
         workspaceId: string,
         agentId: string,
-        managedByAnotherAgent: boolean,
+        subtask: boolean,
     ): Promise<WorkspaceAgentAssociation> {
         this.#assertEnabled();
         const input = { workspaceId, agentId };
@@ -1989,13 +1989,11 @@ export class WorkspacesModule implements AgentModule {
             );
         }
         const parentAgentId = await agents.parentOf(ctx, agentId);
-        if (!managedByAnotherAgent && parentAgentId !== null) {
+        if (!subtask && parentAgentId !== null) {
             throw new Error("Only a top-level agent can be attached to a workspace.");
         }
-        if (managedByAnotherAgent && parentAgentId === null) {
-            throw new Error(
-                "Only an agent managed by another agent can be attached as a managed workspace root.",
-            );
+        if (subtask && parentAgentId === null) {
+            throw new Error("A workspace subtask must have a parent agent.");
         }
         return await this.#agentAssociationLocks.runInLock(
             ctx,
@@ -2016,6 +2014,9 @@ export class WorkspacesModule implements AgentModule {
                                 txCtx,
                                 input.workspaceId,
                             );
+                            if (subtask && targetBefore.subtaskAgentId !== agentId) {
+                                throw new Error("This workspace is not reserved for that subtask.");
+                            }
                             // Archiving cancels the agents it can see, in its own transaction. An
                             // attachment that commits after that one would put an agent in a folder
                             // the decision has already scanned past, leaving it running in a

@@ -63,7 +63,15 @@ export const workspaceSubtaskMetadataSchema = Type.Object({
     subtaskWorkspaceId: subtaskIdSchema,
 });
 export const archivedMetadataSchema = Type.Object({ archivedAt: Type.Number() });
+export const restoredMetadataSchema = Type.Object({ archivedAt: Type.Null() });
+export const versionedMetadataSchema = Type.Object({ version: Type.Integer({ minimum: 1 }) });
+export const archiveSubtaskInputSchema = Type.Object(
+    { agentId: subtaskIdSchema },
+    { additionalProperties: false },
+);
+export type ArchiveSubtaskInput = Static<typeof archiveSubtaskInputSchema>;
 
 export const SUBTASK_START_FUNCTION = "subtasks.start";
+export const SUBTASK_ARCHIVE_FUNCTION = "subtasks.archive";
 
 export class SubtaskInputError extends Error {}

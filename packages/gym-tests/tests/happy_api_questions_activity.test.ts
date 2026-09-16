@@ -305,7 +305,16 @@ describe("public questions and activity API", () => {
         await gym.send("Create a collaborator for this inspection.");
         const activity = await gym.waitUntil(async () => {
             const candidate = await gym.client.getAgentActivity(parentId);
-            return candidate.subagents.length === 1 && candidate.subagents[0]?.status === "idle"
+            const child = candidate.subagents[0];
+            // A reserved collaborator is briefly idle before its initial delivery starts it.
+            // Require the completed run, not that pre-start snapshot.
+            const completed =
+                child === undefined
+                    ? false
+                    : (await gym.client.getMessages(child.id)).runs.some(
+                          (run) => run.status === "completed",
+                      );
+            return candidate.subagents.length === 1 && child?.status === "idle" && completed
                 ? candidate
                 : undefined;
         }, "the collaborator activity snapshot");

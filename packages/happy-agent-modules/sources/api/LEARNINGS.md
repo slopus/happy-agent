@@ -1,5 +1,21 @@
 # API module learnings
 
+## Bootstrap carries independently versioned subtask trees
+
+Activity-only discovery required a separate read for every coordinator and hid delegated work on
+initial load. Every full agent now includes its active direct subtasks recursively, including
+empty leaves, in newest-first order with ID ties. Hidden children stay out; an archived child
+prunes its branch without flattening or archiving descendants. Each nested record keeps its own
+version and workspace, so clients reconcile duplicate tree/workspace records by ID and child
+events rather than relying on ancestor version changes.
+
+## Ordinary creation no longer accepts a managing parent
+
+The unused managed-root creation option conflated catalog ownership with delegation. The agent
+creation request now rejects `parentAgentId` before processing even an existing requested ID,
+and creates only parentless roots. Subtasks are the explicit user-interactive delegation path;
+response ancestry and existing stored agents remain unchanged.
+
 ## Subtask interaction does not require owner-series membership
 
 Parent ancestry previously made every managed agent read-only, and archival assumed that every
