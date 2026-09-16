@@ -406,6 +406,9 @@ export class WorkspacesModule implements AgentModule {
                         ...(normalized.creatorSessionId === undefined
                             ? {}
                             : { creatorSessionId: normalized.creatorSessionId }),
+                        ...(normalized.subtaskAgentId === undefined
+                            ? {}
+                            : { subtaskAgentId: normalized.subtaskAgentId }),
                         ...(normalized.storageKeySeed === undefined
                             ? {}
                             : { storageKeySeed: normalized.storageKeySeed }),
@@ -1002,6 +1005,9 @@ export class WorkspacesModule implements AgentModule {
                         : { nameConfigured: normalized.nameConfigured }),
                     ...(baseRef === undefined ? {} : { baseRef }),
                     ...(creatorSessionId === undefined ? {} : { creatorSessionId }),
+                    ...(options.subtaskAgentId === undefined
+                        ? {}
+                        : { subtaskAgentId: options.subtaskAgentId }),
                     ...(gitRefs.complete ? {} : { storageKeySeed: fallbackStorageKey }),
                 },
                 {

@@ -128,6 +128,7 @@ export async function reserveWorkspace(
             ...(input.creatorSessionId === undefined
                 ? {}
                 : { creatorSessionId: input.creatorSessionId }),
+            ...(input.subtaskAgentId === undefined ? {} : { subtaskAgentId: input.subtaskAgentId }),
             gitAhead: 0,
             gitBehind: 0,
             gitDetached: false,
@@ -173,6 +174,9 @@ export function assertReservationStillMeans(
 ): void {
     if (existing.projectRef !== input.projectRef) {
         throw new Error("That workspace ID already names a workspace in another project.");
+    }
+    if (existing.subtaskAgentId !== input.subtaskAgentId) {
+        throw new Error("That workspace ID belongs to another subtask.");
     }
     if (existing.parentId !== input.parentId) {
         throw new Error("That workspace ID already names a workspace under another parent.");

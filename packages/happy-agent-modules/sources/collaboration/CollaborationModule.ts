@@ -12,7 +12,7 @@ import {
     type AgentSystemRef,
     type AnyAgentTool,
 } from "@slopus/happy-agent-base";
-import { type TSchema } from "@sinclair/typebox";
+import { Type, type TSchema } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import type { Context } from "@steve.kite/stdlib";
 
@@ -71,6 +71,39 @@ export class CollaborationModule implements AgentModule {
         this.#abort = abort;
         this.#history = history;
         this.#crossWorkspace = config.configuration.values.features.crossWorkspace;
+    }
+
+    /** The same curated choices serve ordinary collaborators and interactive subtasks. */
+    availableModels(): readonly AgentModel[] {
+        return this.#availableModels();
+    }
+
+    selectModel(
+        input: CollaborationCreateInput,
+        currentProviderId?: string,
+    ): CollaborationAgentSelection {
+        this.#assert(collaborationCreateInputSchema, input, "create agent");
+        const models = this.#availableModels();
+        const provider =
+            input.provider ??
+            (models.some(
+                (model) => model.id === input.model && model.providerId === currentProviderId,
+            )
+                ? currentProviderId
+                : undefined);
+        const selection = this.#validateSelection(models, {
+            ...input,
+            ...(provider === undefined ? {} : { provider }),
+        });
+        const selected = models.find(
+            (model) =>
+                model.id === selection.model &&
+                (selection.provider === undefined || model.providerId === selection.provider) &&
+                model.effortLevels.includes(selection.effort),
+        );
+        if (selected === undefined)
+            throw new Error("The selected collaborator model is unavailable.");
+        return { ...selection, provider: selected.providerId };
     }
 
     /**
@@ -349,6 +382,8 @@ export class CollaborationModule implements AgentModule {
         const agents = this.#requireAgents();
         const parent = await agents.parentOf(ctx, scope.agent.id);
         if (parent === null) return;
+        if (Value.Check(archivedAgentMetadataSchema, (await agents.config(ctx, parent))?.metadata))
+            return;
         if ((await scope.runKV.read(ctx, INTERRUPTED_KEY)) === true) return;
         const said = await scope.runKV.read(ctx, LAST_TEXT_KEY);
         // Whitespace is not an answer. The note is written trimmed, so a blank one can only come
@@ -406,6 +441,14 @@ export class CollaborationModule implements AgentModule {
         selection: CollaborationAgentSelection | undefined,
     ): Promise<void> {
         const agents = this.#requireAgents();
+        if (
+            Value.Check(
+                archivedAgentMetadataSchema,
+                (await agents.config(ctx, toAgentId))?.metadata,
+            )
+        ) {
+            throw new Error("The agent is archived and cannot receive messages.");
+        }
         const message = {
             role: "agent" as const,
             author: { id: fromAgentId, description: `Agent ${fromAgentId}` },
@@ -630,6 +673,8 @@ const LAST_TEXT_KEY = "lastText";
 
 /** Marks a run whose creator deliberately interrupted it, suppressing its automatic report. */
 const INTERRUPTED_KEY = "interrupted";
+
+const archivedAgentMetadataSchema = Type.Object({ archivedAt: Type.Number() });
 
 /** How a collaborator's answer reaches its creator. */
 function answerReport(agentId: string, answer: string): string {

@@ -2,6 +2,14 @@
 
 Feedback and decisions gathered while building this module.
 
+## A subtask workspace names the resident agent, not its coordinator
+
+Workspace-bound delegation needs an explicit association without conflating workspace hierarchy
+with agent ancestry. `subtaskAgentId` is stored at reservation and names the agent running in that
+workspace; that agent's parent names the coordinator. The binding is immutable through retries,
+renames, and archival. A shared-filesystem subtask does not replace its parent's workspace binding
+or add an entry to the workspace's agent series.
+
 ## Optimistic archival does not authorize early file removal
 
 Service admission closes in the archive transaction, which records the bounded service IDs and

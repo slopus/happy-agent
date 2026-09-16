@@ -1,5 +1,12 @@
 # Collaboration learnings
 
+## Subtasks reuse messaging and model selection
+
+Interactive subtasks are a separate creation surface, but use collaboration's same curated model
+selection and message delivery. Archived agents refuse further collaboration messages, and a
+settling child does not reactivate an archived parent with its automatic report. Model-tool
+messaging runs transactionally so checking archival and admitting the message share a snapshot.
+
 ## Spawn rows describe resolved execution, not task titles
 
 A creation row cannot infer its model from the task name or wait for an arbitrary result string.

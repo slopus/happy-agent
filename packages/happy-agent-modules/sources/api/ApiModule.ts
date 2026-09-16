@@ -208,6 +208,7 @@ import {
     workspaceCreateBodySchema,
 } from "./ApiSchemas.js";
 import { WorkspaceProxy } from "./WorkspaceProxy.js";
+import { SubtasksModule } from "../subtasks/index.js";
 
 const API_PROTOCOL_VERSION = 25;
 const MAX_JSON_BODY_BYTES = 48 * 1024 * 1024;
@@ -300,6 +301,7 @@ export class ApiModule implements AgentModule {
     readonly #cloud: CloudModule;
     readonly #compactions: CompactionsModule;
     readonly #bots: BotsModule;
+    readonly #subtasks: SubtasksModule | undefined;
     readonly #projects: ProjectsModule;
     readonly #workspaces: WorkspacesModule;
     readonly #terminals: TerminalsModule;
@@ -406,6 +408,7 @@ export class ApiModule implements AgentModule {
         node: NodeModule,
         globalSkills?: GlobalSkillsModule,
         services?: ServicesModule,
+        subtasks?: SubtasksModule,
     ) {
         this.#abort = abort;
         this.#config = config;
@@ -434,6 +437,7 @@ export class ApiModule implements AgentModule {
         this.#node = node;
         this.#globalSkills = globalSkills;
         this.#services = services;
+        this.#subtasks = subtasks;
     }
 
     readonly beforeStart = async (
@@ -2179,7 +2183,9 @@ export class ApiModule implements AgentModule {
                 );
             }
             const canSendMessages = Object.hasOwn(update, "archivedAt")
-                ? (await this.#agentSystem().parentOf(ctx, agentId)) === null &&
+                ? ((await this.#agentSystem().parentOf(ctx, agentId)) === null ||
+                      this.#subtasks?.isSubtask(await this.#agentSystem().config(ctx, agentId)) ===
+                          true) &&
                   update["archivedAt"] === null
                 : undefined;
             await this.#appendAgentUpdate(
@@ -3032,6 +3038,13 @@ export class ApiModule implements AgentModule {
                 await this.#assertUserControlledAgent(ctx, agentId);
                 const body = await bodyAs(request, reorderBodySchema, "agent reorder");
                 const before = await this.#requireAgentResource(ctx, agentId);
+                if (before["orderKey"] === null) {
+                    throw new ApiError(
+                        409,
+                        "conflict",
+                        "This agent does not belong to an ordered workspace list.",
+                    );
+                }
                 const workspaceId = this.#config.configuration.values.features.workspaces
                     ? await this.#workspaces.workspaceForAgent(ctx, agentId)
                     : undefined;
@@ -3385,6 +3398,7 @@ export class ApiModule implements AgentModule {
             }
             try {
                 await ctx.inTx(async (txCtx) => {
+                    await this.#assertUserControlledAgent(txCtx, agentId);
                     await this.#history.queuePending(txCtx, pending);
                     if (delivery === "steer") {
                         await agents.steer(txCtx, agentId, { role: "user", content }, options);
@@ -3614,8 +3628,9 @@ export class ApiModule implements AgentModule {
         // Owner-series entries and bot projections already establish visibility. Only an
         // unscoped resource needs a bot lookup; never infer ancestry from owner membership.
         const userVisible =
-            options.userVisible ??
-            (orderKey != null || (await this.#bots.forAgent(ctx, agentId)) !== undefined);
+            this.#subtasks?.isSubtask(config) === true ||
+            (options.userVisible ??
+                (orderKey != null || (await this.#bots.forAgent(ctx, agentId)) !== undefined));
         const children = await this.#agentSystem().childOf(ctx, agentId);
         const [processes, questions, runningSubagents, activeRunId] = await Promise.all([
             this.#compute.listProcesses(ctx, agentId),
@@ -3634,6 +3649,7 @@ export class ApiModule implements AgentModule {
             children,
             ...(orderKey === undefined ? {} : { orderKey }),
             userVisible,
+            subtask: this.#subtasks?.isSubtask(config) ?? false,
             pendingQuestionId: questions.requests[0]?.id ?? null,
             runningProcesses: processes.filter((process) => process.status === "running").length,
             runningSubagents,
@@ -3686,17 +3702,17 @@ export class ApiModule implements AgentModule {
         allowArchived = false,
     ): Promise<void> {
         const agents = this.#agentSystem();
-        if ((await agents.config(ctx, agentId)) === undefined) {
+        const config = await agents.config(ctx, agentId);
+        if (config === undefined) {
             throw notFound("The agent was not found.");
         }
-        if ((await agents.parentOf(ctx, agentId)) !== null) {
+        if ((await agents.parentOf(ctx, agentId)) !== null && !this.#subtasks?.isSubtask(config)) {
             throw new ApiError(
                 409,
                 "conflict",
                 "Agents managed by another agent are read-only through this API.",
             );
         }
-        const config = await agents.config(ctx, agentId);
         if (!allowArchived && typeof config?.metadata?.["archivedAt"] === "number") {
             throw new ApiError(409, "conflict", "The agent is archived.");
         }
@@ -4504,6 +4520,13 @@ export class ApiModule implements AgentModule {
             return;
         }
         const project = await this.#projects.projectForAgent(ctx, agentId);
+        if (
+            project === undefined &&
+            this.#subtasks?.isSubtask(await this.#agentSystem().config(ctx, agentId))
+        ) {
+            // Shared-filesystem subtasks have no owner-series membership to change.
+            return;
+        }
         if (project === undefined) throw notFound("The agent owner was not found.");
         await this.#projects.refreshAgentVisibility(ctx, project.id, agentId, visible);
     }

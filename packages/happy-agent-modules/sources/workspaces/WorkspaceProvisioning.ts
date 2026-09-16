@@ -4,6 +4,7 @@ import { projectCreatorSchema } from "../git/index.js";
 
 import {
     workspaceBaseRefSchema,
+    workspaceAgentIdSchema,
     workspaceIdSchema,
     workspaceNameSchema,
     workspaceOperationIdSchema,
@@ -34,6 +35,8 @@ export const workspaceCreatorOptionsSchema = Type.Object(
         githubToken: Type.Optional(Type.String({ minLength: 1, maxLength: 16_384 })),
         /** Durable internal identity for a retried caller operation, such as an agent tool call. */
         operationId: Type.Optional(workspaceOperationIdSchema),
+        /** Resident subtask, set only by the subtask creation operation. */
+        subtaskAgentId: Type.Optional(workspaceAgentIdSchema),
     },
     { additionalProperties: false },
 );

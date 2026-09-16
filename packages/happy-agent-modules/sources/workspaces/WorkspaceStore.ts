@@ -86,6 +86,7 @@ export const workspaceStoreReserveInputSchema = Type.Object(
         baseCommit: Type.Optional(workspaceCommitSchema),
         gitCommonDir: Type.Optional(workspaceGitCommonDirSchema),
         creatorSessionId: Type.Optional(workspaceSessionIdSchema),
+        subtaskAgentId: Type.Optional(workspaceSessionIdSchema),
         storageKeySeed: Type.Optional(workspaceStorageKeySchema),
     },
     { additionalProperties: false },

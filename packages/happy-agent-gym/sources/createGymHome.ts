@@ -47,7 +47,10 @@ const MAX_SOCKET_PATH = 100;
  * own to exhaust that bound.
  */
 export async function createGymHome(options: GymHomeOptions = {}): Promise<GymHome> {
-    const scratch = resolve(import.meta.dirname, "../../../.local");
+    const scratch =
+        process.env.HAPPY_AGENT_GYM_SCRATCH_DIRECTORY === undefined
+            ? resolve(import.meta.dirname, "../../../.local")
+            : resolve(process.env.HAPPY_AGENT_GYM_SCRATCH_DIRECTORY);
     await mkdir(scratch, { recursive: true });
     const runRoot = await mkdtemp(join(scratch, "r"));
     const root = await mkdtemp(join(runRoot, "i"));

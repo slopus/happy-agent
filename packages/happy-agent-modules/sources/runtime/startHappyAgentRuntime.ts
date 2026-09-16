@@ -30,6 +30,7 @@ import { ApiModule } from "../api/index.js";
 import { AutoModule } from "../auto/index.js";
 import { BotsModule } from "../bots/index.js";
 import { CollaborationModule } from "../collaboration/index.js";
+import { SubtasksModule } from "../subtasks/index.js";
 import { CompactionsModule } from "../compactions/index.js";
 import { CloudModule } from "../cloud/index.js";
 import { CodeModeModule } from "../codeMode/index.js";
@@ -131,6 +132,7 @@ export interface HappyAgentRuntimeModules {
     readonly auto: AutoModule;
     readonly bots: BotsModule;
     readonly collaboration: CollaborationModule;
+    readonly subtasks: SubtasksModule;
     readonly cloud: CloudModule;
     readonly codeMode: CodeModeModule;
     readonly compactions: CompactionsModule;
@@ -449,6 +451,13 @@ export async function startHappyAgentRuntime(
         const profile = new ProfileModule<LibSQLDatabase>(config, bots);
         const team = new TeamModule<LibSQLDatabase>(config, profile);
         const collaboration = new CollaborationModule(config, abort, history);
+        const subtasks = new SubtasksModule(
+            bots,
+            collaboration,
+            workspaces,
+            durableFunctions,
+            abort,
+        );
         const scheduling = new SchedulingModule();
         const userInput = new UserInputModule(presence);
         const mcp = new McpModule(config, userInput, workspaces);
@@ -538,6 +547,7 @@ export async function startHappyAgentRuntime(
             node,
             globalSkills,
             services,
+            subtasks,
         );
         api = apiModule;
 
@@ -547,6 +557,7 @@ export async function startHappyAgentRuntime(
             auto: autoModule,
             bots,
             collaboration,
+            subtasks,
             cloud,
             codeMode,
             compactions,
@@ -633,6 +644,7 @@ export async function startHappyAgentRuntime(
             files,
             secrets,
             collaboration,
+            subtasks,
             workflows,
             scheduling,
             userInput,

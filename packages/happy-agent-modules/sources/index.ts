@@ -449,6 +449,7 @@ export * from "./abort/index.js";
 
 // Collaboration: create agents, exchange asynchronous messages, and interrupt delegated work.
 export * from "./collaboration/index.js";
+export * from "./subtasks/index.js";
 
 // Workflows: host-managed durable workflow runs, scoped to the calling agent.
 export * from "./workflows/index.js";

@@ -24,6 +24,7 @@ type WorkspaceRow = {
     readonly order_key: string;
     readonly version: number | string;
     readonly creator_session_id: string | null;
+    readonly subtask_agent_id: string | null;
     readonly git_ahead: number | string;
     readonly git_behind: number | string;
     readonly git_detached: number;
@@ -184,7 +185,7 @@ export async function insertWorkspace(
             kind, path, base_ref, base_commit, git_common_dir, presence, status, order_key,
             version, creator_session_id, git_ahead, git_behind, git_detached, git_head,
             git_upstream, initialization_attempt, initialization_error, created_at, updated_at,
-            archived_at, service_cleanup
+            archived_at, service_cleanup, subtask_agent_id
         ) VALUES (
             ${workspace.id}, ${workspace.projectRef}, ${workspace.parentId}, ${workspace.name},
             ${workspaceNameKey(workspace.name)}, ${workspace.nameConfigured ? 1 : 0},
@@ -196,7 +197,8 @@ export async function insertWorkspace(
             ${workspace.gitHead ?? null}, ${workspace.gitUpstream ?? null},
             ${workspace.initializationAttempt}, ${workspace.initializationError ?? null},
             ${workspace.createdAt}, ${workspace.updatedAt}, ${workspace.archivedAt ?? null},
-            ${workspace.serviceCleanup === undefined ? null : JSON.stringify(workspace.serviceCleanup)}
+            ${workspace.serviceCleanup === undefined ? null : JSON.stringify(workspace.serviceCleanup)},
+            ${workspace.subtaskAgentId ?? null}
         )`,
     );
 }
@@ -233,6 +235,7 @@ export async function writeWorkspace(
                 order_key = ${workspace.orderKey},
                 version = ${workspace.version},
                 creator_session_id = ${workspace.creatorSessionId ?? null},
+                subtask_agent_id = ${workspace.subtaskAgentId ?? null},
                 git_ahead = ${workspace.gitAhead},
                 git_behind = ${workspace.gitBehind},
                 git_detached = ${workspace.gitDetached ? 1 : 0},
@@ -306,6 +309,7 @@ function workspaceFromRow(row: WorkspaceRow): Workspace {
         orderKey: row.order_key,
         version: Number(row.version),
         ...(row.creator_session_id === null ? {} : { creatorSessionId: row.creator_session_id }),
+        ...(row.subtask_agent_id === null ? {} : { subtaskAgentId: row.subtask_agent_id }),
         gitAhead: Number(row.git_ahead),
         gitBehind: Number(row.git_behind),
         gitDetached: Number(row.git_detached) !== 0,

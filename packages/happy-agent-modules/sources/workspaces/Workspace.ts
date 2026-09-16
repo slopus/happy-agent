@@ -255,6 +255,7 @@ export const workspaceSchema = Type.Object(
         orderKey: workspaceOrderKeySchema,
         version: workspaceVersionSchema,
         creatorSessionId: Type.Optional(workspaceSessionIdSchema),
+        subtaskAgentId: Type.Optional(workspaceAgentIdSchema),
         gitAhead: workspaceDivergenceSchema,
         gitBehind: workspaceDivergenceSchema,
         gitDetached: Type.Boolean(),
@@ -293,6 +294,7 @@ export const workspaceReserveInputSchema = Type.Object(
         baseCommit: Type.Optional(workspaceCommitSchema),
         gitCommonDir: Type.Optional(workspaceGitCommonDirSchema),
         creatorSessionId: Type.Optional(workspaceSessionIdSchema),
+        subtaskAgentId: Type.Optional(workspaceAgentIdSchema),
         /**
          * Names both the storage key and the branch when Git's refs could not be read in full. It
          * carries the workspace's own identity, so an unreadable ref store cannot hide a branch

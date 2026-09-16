@@ -46,6 +46,7 @@ import {
 import { resolveTerminalTheme } from "./resolveTerminalTheme.js";
 import { HappyTerminalProcessTerminal } from "./HappyTerminalProcessTerminal.js";
 import { StartupStatusApp } from "./StartupStatusApp.js";
+import { ensureAgentCanOpen } from "./ensureAgentCanOpen.js";
 
 const INITIAL_TUI_MESSAGE_LIMIT = 30;
 
@@ -147,11 +148,7 @@ export async function runApp(ctx: Context, options: RunAppOptions = {}): Promise
                           ).id,
                       })
                     : await localServer.client.getAgent(agentId);
-            if (agentResponse.agent.parentAgentId !== null) {
-                throw new Error(
-                    "Subagents are driven by their parent and cannot be opened as an interactive Happy Terminal agent.",
-                );
-            }
+            ensureAgentCanOpen(agentResponse.agent);
             const [bootstrap, configResponse, history, pendingQuestion, workspaceResponse] =
                 await Promise.all([
                     localServer.client.getAgentBootstrap(agentResponse.agent.id),

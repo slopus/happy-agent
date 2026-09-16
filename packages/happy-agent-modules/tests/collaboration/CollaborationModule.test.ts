@@ -231,6 +231,49 @@ const TASK = {
 const NO_CROSS_WORKSPACE_TOML = "[features]\ncross_workspace = false\n";
 
 describe("collaboration", () => {
+    it("resolves a subtask's provider once using the same curated collaborator models", async () => {
+        const { module } = await started(new Collection());
+        expect(module.selectModel(TASK)).toEqual({
+            model: TASK.model,
+            effort: TASK.effort,
+            provider: "codex",
+        });
+        expect(module.selectModel({ ...TASK, model: "opus-5" }, "claude")).toMatchObject({
+            provider: "claude",
+        });
+        expect(() => module.selectModel({ ...TASK, model: "opus-5" })).toThrow(
+            "Provider is required",
+        );
+        expect(() => module.selectModel({ ...TASK, model: "unavailable" })).toThrow(
+            "not available",
+        );
+    });
+
+    it("checks archival through the real transactional messaging tool", async () => {
+        const collection = new Collection();
+        collection.seed("parent", null);
+        collection.seed("child", "parent", { metadata: { subtask: true, archivedAt: 1 } });
+        const { module, ctx } = await started(collection);
+        const tool = sendMessageTool(module, "parent", true);
+        expect(tool.transactional).toBe(true);
+        expect(
+            await tool.shouldReviewInAutoMode({ toAgentId: "child", text: "Follow up" }, ctx),
+        ).toBe(false);
+        await expect(
+            tool.execute(ctx, { toAgentId: "child", text: "Follow up" }, toolCall("message")),
+        ).rejects.toThrow("archived");
+        expect(collection.steered).toEqual([]);
+    });
+
+    it("does not revive an archived parent with a settlement report", async () => {
+        const collection = new Collection();
+        collection.seed("parent", null, { metadata: { archivedAt: 1 } });
+        collection.seed("child", "parent");
+        const { hooks, ctx } = await started(collection);
+        await hooks.afterAgentSettledTransact?.(ctx, runScope("child"), settlement("done"));
+        expect(collection.steered).toEqual([]);
+    });
+
     it("creates a collaborator as a child of its creator", async () => {
         const collection = new Collection();
         const { module, hooks, ctx } = await started(collection);

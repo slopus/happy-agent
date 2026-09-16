@@ -146,6 +146,7 @@ export function workspaceResource(
               }
             : null,
         creatorAgentId: workspace.creatorSessionId ?? null,
+        subtaskAgentId: workspace.subtaskAgentId ?? null,
         orderKey: workspace.orderKey,
         version: apiResourceVersion(workspace.updatedAt, workspace.version, workspace.id),
         createdAt: workspace.createdAt,
@@ -205,11 +206,13 @@ export function botWorkspaceResource(
         updatedAt: bot.workspaceUpdatedAt,
         archivedAt: bot.archivedAt ?? null,
         agents: [agent],
+        subtaskAgentId: null,
     };
 }
 
 export function rootWorkspaceResource(project: Project): Record<string, unknown> {
     return {
+        subtaskAgentId: null,
         id: project.id,
         projectId: project.id,
         parentId: null,
@@ -344,6 +347,7 @@ export async function agentResource(
         readonly runningSubagents?: number;
         readonly working?: boolean;
         readonly userVisible?: boolean;
+        readonly subtask?: boolean;
     } = {},
 ): Promise<Record<string, unknown> | undefined> {
     const config = state.config ?? (await agents.config(ctx, agentId));
@@ -366,9 +370,10 @@ export async function agentResource(
         id: agentId,
         workspaceId,
         parentAgentId,
+        subtask: state.subtask ?? false,
         userVisible: state.userVisible ?? state.orderKey != null,
         managedByAnotherAgent,
-        canSendMessages: !managedByAnotherAgent && archivedAt === null,
+        canSendMessages: (!managedByAnotherAgent || state.subtask === true) && archivedAt === null,
         title: typeof metadata.title === "string" ? metadata.title : null,
         titleStatus: typeof metadata.title === "string" ? "ready" : "idle",
         status: state.working === true ? "working" : "idle",

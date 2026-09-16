@@ -6,6 +6,8 @@
 # repositories, bug screenshots, investigation files, and draft notes.
 /.local/
 .context/
+# Short socket paths for API gyms in deeply nested worktrees.
+/.g/
 # The Happy home `pnpm dev` runs the daemon against, holding its databases and token.
 .happy-terminal-dev/
 .rig-dev/

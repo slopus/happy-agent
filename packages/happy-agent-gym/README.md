@@ -42,6 +42,10 @@ One file at a time:
 pnpm --filter @slopus/happy-agent-gym exec vitest run tests/agent_answers_a_user_message.test.ts
 ```
 
+On a deeply nested checkout, set `HAPPY_AGENT_GYM_SCRATCH_DIRECTORY` to a shorter ignored
+directory inside the checkout. The default remains `.local`; socket-length checks and fixture
+isolation are unchanged. For example, an ignored `.g` directory saves four socket-path bytes.
+
 ## Basic scenario
 
 ```ts

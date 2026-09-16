@@ -1,5 +1,14 @@
 # API module learnings
 
+## Subtask interaction does not require owner-series membership
+
+Parent ancestry previously made every managed agent read-only, and archival assumed that every
+user-controlled agent belonged to a project or workspace list. Subtasks are explicitly visible
+and user-messageable while retaining their parent. Shared-filesystem subtasks are discovered
+through parent activity and have no list membership to update on archive; workspace-bound
+subtasks retain ordinary owner-series ordering. Capability flags, focused reads, and archival
+events use the same distinction. Ordinary subagents and non-subtask managed roots remain read-only.
+
 ## Service attachments are HTTP endpoints, not workspace forward proxies
 
 Each service CONNECT authenticates both the normal caller and a short-lived credential for the

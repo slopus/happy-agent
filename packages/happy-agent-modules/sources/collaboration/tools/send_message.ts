@@ -36,6 +36,7 @@ export function sendMessageTool(
         parameters: collaborationSendInputSchema,
         returnType: Type.Void(),
         durable: true,
+        transactional: true,
         shouldReviewInAutoMode: () => false,
         execute: async (ctx, input: CollaborationSendInput, call) => {
             await collaboration.sendMessage(ctx, actingAgentId, input, call.id);
