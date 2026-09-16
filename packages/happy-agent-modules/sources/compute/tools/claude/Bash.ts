@@ -20,7 +20,7 @@ const MAX_TIMEOUT_MS = 600_000;
 
 const exact = { additionalProperties: false } as const;
 
-const CLAUDE_BASH_DESCRIPTION = `Executes a bash command in the current working directory and returns its output.
+const CLAUDE_BASH_DESCRIPTION = `Executes a command using the shell listed in the environment and returns its output. On native Windows this is Windows PowerShell, even though the tool is named Bash.
 
 - Every Bash call starts in the primary working directory. A directory change affects only that call.
 - Environment variables and shell functions do not carry over between commands.

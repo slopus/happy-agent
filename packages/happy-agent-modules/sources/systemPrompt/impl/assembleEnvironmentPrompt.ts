@@ -26,7 +26,12 @@ export function assembleEnvironmentPrompt(options: {
     documentationPath: string;
 }): string {
     const { currentModel, currentProvider, environment } = options;
-    const shell = environment.shell.trim();
+    // Native Compute always selects Windows PowerShell, independent of SHELL. Older agent
+    // configurations captured an empty value or Git Bash from the launching terminal instead.
+    const shell =
+        environment.platform === "win32"
+            ? "Windows PowerShell 5.1 (powershell.exe)"
+            : environment.shell.trim();
     const catalogEntry =
         currentModel === undefined
             ? undefined
@@ -47,7 +52,9 @@ export function assembleEnvironmentPrompt(options: {
         `- OS version: ${environment.osVersion}`,
         ...(environment.platform === "win32"
             ? [
-                  "- Commands run on native Windows. Use the listed shell’s syntax and Windows paths; the bash tool name does not imply a Linux shell. Use PowerShell LiteralPath arguments for file operations.",
+                  "- Commands run on native Windows in the listed shell, including calls named Bash. Use native Windows tools and paths. WSL and Git Bash are separate environments; use them only when the task calls for them.",
+                  "- Use PowerShell syntax: $env:NAME = 'value' for environment variables; & 'C:\\Program Files\\tool.exe' for a quoted executable; -LiteralPath for file operations. Separate commands with newlines. PowerShell 5.1 does not support &&, ||, export, or Bash heredocs. Check $LASTEXITCODE after native programs before continuing dependent work.",
+                  "- Start background helpers with Start-Process -WindowStyle Hidden unless the user needs a visible window. Keep filesystem operations in one shell and verify the resolved target before recursive deletion or moving files.",
               ]
             : []),
         ...(currentModelLine === undefined ? [] : [currentModelLine]),

@@ -1,5 +1,11 @@
 # Compute module learnings
 
+## Shell descriptions follow the execution environment
+
+Claude's Bash tool used to promise a Bash interpreter on native Windows while Compute ran
+PowerShell. Its description now names the environment's shell and the Windows default explicitly.
+The tool name and arguments remain vendor-shaped; they do not imply a different execution path.
+
 ## Services share the process catalog, not ordinary shell completion shortcuts
 
 A service's public process ID refers to its actual strict SDK execution. Stopping that process
