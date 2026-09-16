@@ -240,6 +240,47 @@ describe("HappyReducer agent synchronization", () => {
         reducer.stop();
     });
 
+    it("removes only the pending message named by message.withdrawn", async () => {
+        const harness = new AgentReducerHarness();
+        const reducer = new HappyReducer(harness.client);
+        const first = userMessage("message-first", MODE_A);
+        const second = userMessage("message-second", MODE_B);
+        reducer.agentVisible(AGENT_A);
+        reducer.start();
+        harness.connect();
+        await vi.waitFor(() => expect(harness.startedAgentIds).toEqual([AGENT_A]));
+        harness.completeBootstrap(
+            AGENT_A,
+            agentBootstrap(AGENT_A, {
+                pending: [first, second],
+                processes: [],
+                subagents: [],
+            }),
+        );
+        await vi.waitFor(() =>
+            expect(reducer.getState().agents[AGENT_A]?.pending).toEqual([first, second]),
+        );
+
+        harness.stream.push(
+            eventUpdate({
+                cursor: CURSOR_2,
+                occurredAt: 2,
+                payload: {
+                    agentId: AGENT_A,
+                    messageId: second.id,
+                    mutationId: "mutation-withdraw-second",
+                },
+                type: "message.withdrawn",
+            }),
+        );
+
+        await vi.waitFor(() =>
+            expect(reducer.getState().agents[AGENT_A]?.pending).toEqual([first]),
+        );
+
+        reducer.stop();
+    });
+
     it("applies agent SSE updates with structural sharing", async () => {
         const harness = new AgentReducerHarness();
         const reducer = new HappyReducer(harness.client);

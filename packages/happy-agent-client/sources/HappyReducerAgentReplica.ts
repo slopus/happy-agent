@@ -244,6 +244,13 @@ export function reduceHappyReducerAgentEvent(
             fieldCursors = withFieldCursor(fieldCursors, "pending", event.cursor);
         }
     } else if (
+        event.type === "message.withdrawn" &&
+        event.payload.agentId === agent.id &&
+        event.cursor > fieldCursors.pending
+    ) {
+        state = withPending(state, removePending(state.pending, [event.payload.messageId]));
+        fieldCursors = withFieldCursor(fieldCursors, "pending", event.cursor);
+    } else if (
         (event.type === "run.started" || event.type === "run.boundary") &&
         event.payload.agentId === agent.id &&
         event.cursor > fieldCursors.pending
