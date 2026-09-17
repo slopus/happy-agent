@@ -663,12 +663,12 @@ export class EventsModule implements AgentModule<AnyAgentTool> {
             throw new Error("The Happy agent event is invalid.");
         }
         await saveOriginCursor(database, this.#originCursor);
-        await insertEvent(database, event, this.capacity());
+        const removedThrough = await insertEvent(database, event, this.capacity());
         if (this.#moduleListener?.onEventTransactional !== undefined) {
             await this.#moduleListener.onEventTransactional(ctx, event);
         }
         afterCommit(ctx, async (postCommitCtx) => {
-            this.publish(event);
+            this.publish(event, removedThrough);
             if (this.#moduleListener?.onEvent === undefined) return;
             try {
                 await this.#moduleListener.onEvent(postCommitCtx, event);
@@ -679,11 +679,15 @@ export class EventsModule implements AgentModule<AnyAgentTool> {
         return event;
     }
 
-    private publish(event: AgentEvent): void {
+    private publish(event: AgentEvent, removedThrough?: string): void {
         if (this.#entries.some((candidate) => candidate.id === event.id)) return;
         this.#occurredAt = Math.max(this.#occurredAt, event.occurredAt);
         this.#entries.push(event);
-        while (this.#entries.length > this.capacity()) {
+        while (
+            this.#entries.length > 0 &&
+            (this.#entries.length > this.capacity() ||
+                (removedThrough !== undefined && this.#entries[0]!.id <= removedThrough))
+        ) {
             const removed = this.#entries.shift();
             if (removed !== undefined) this.#originCursor = removed.id;
         }

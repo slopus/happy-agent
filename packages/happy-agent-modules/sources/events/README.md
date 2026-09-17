@@ -11,8 +11,9 @@ const events = new EventsModule();
 const agent = await Agent.create(ctx, { ...options, modules: [events] });
 ```
 
-The module takes nothing. The live window holds `EVENTS_CAPACITY` (10,000) events — a property of
-the journal rather than something a caller tunes — and the module reads the wall clock itself.
+The module takes nothing. The live window holds at most `EVENTS_CAPACITY` (10,000) events and
+32 MiB of encoded payloads. These bounds belong to the journal; canonical conversation history
+is independent. The module reads the wall clock itself.
 
 ## Public surface
 
@@ -76,6 +77,10 @@ The module owns migrations for its event journal, origin cursor, and active prov
 projection. It reloads the retained window before agents restore. If a process dies during a
 provider block, restoration emits a durable `block_reset` and continues the same run identity.
 
-The bounded journal deletes its oldest durable prefix once capacity is reached;
+The bounded journal deletes its oldest durable prefix once either capacity is reached;
 `originCursor()` advances to the last removed identifier so replays can express “from the
 beginning of what remains.”
+
+An indexed payload byte count lets startup select the retained suffix before loading any JSON.
+The migration computes sizes for existing records once. A transaction publishes its retention
+boundary only after commit, so a rollback cannot expire live cursors.

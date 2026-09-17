@@ -88,7 +88,7 @@ async function createSharedDatabase(): Promise<SharedDatabaseFixture> {
             result = { rows: statement.all(...params) };
         }
 
-        if (interleave && query.includes("FROM happy_agent_events ORDER BY event_id DESC")) {
+        if (interleave && query.includes("sum(payload_bytes) AS bytes")) {
             interleave = false;
             interleaved = true;
             writer

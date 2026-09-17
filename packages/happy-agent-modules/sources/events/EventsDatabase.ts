@@ -17,6 +17,8 @@ import {
 } from "./types.js";
 
 const MAX_EVENT_PAYLOAD_BYTES = 5 * 1_024 * 1_024;
+/** Replay is expendable; canonical conversation history lives in History. */
+export const EVENTS_PAYLOAD_BYTE_CAPACITY = 32 * 1_024 * 1_024;
 
 /**
  * A structured clone keeps a key whose value is `undefined`; JSON drops it. Payloads are recorded
@@ -95,6 +97,26 @@ export const eventsMigrations: readonly AgentModuleMigration[] = [
             );
         },
     ],
+    [
+        "003-event-payload-bytes",
+        async (_ctx, database) => {
+            await agentDatabaseRun(
+                database,
+                sql`ALTER TABLE happy_agent_events
+                ADD COLUMN payload_bytes INTEGER NOT NULL DEFAULT 0`,
+            );
+            await agentDatabaseRun(
+                database,
+                sql`UPDATE happy_agent_events
+                SET payload_bytes = length(CAST(payload_json AS BLOB))`,
+            );
+            await agentDatabaseRun(
+                database,
+                sql`CREATE INDEX happy_agent_events_retention
+                ON happy_agent_events(event_id DESC, payload_bytes)`,
+            );
+        },
+    ],
 ];
 
 export async function loadEventState(
@@ -104,10 +126,12 @@ export async function loadEventState(
     readonly events: readonly AgentEvent[];
     readonly originCursor?: string;
 }> {
+    const boundary = await eventRetentionBoundary(database, capacity);
     const rows = await agentDatabaseRows<EventRow>(
         database,
         sql`SELECT event_id, agent_id, occurred_at, type, payload_json
-            FROM happy_agent_events ORDER BY event_id DESC LIMIT ${capacity}`,
+            FROM happy_agent_events WHERE event_id > ${boundary ?? ""}
+            ORDER BY event_id DESC LIMIT ${capacity}`,
     );
     const state = await agentDatabaseRows<StateRow>(
         database,
@@ -240,7 +264,7 @@ export async function insertEvent(
     database: AgentDatabase,
     event: AgentEvent,
     capacity: number,
-): Promise<void> {
+): Promise<string | undefined> {
     const payload = serializePayload(event.payload);
     const previous =
         event.agentId === undefined
@@ -257,9 +281,10 @@ export async function insertEvent(
     await agentDatabaseRun(
         database,
         sql`INSERT INTO happy_agent_events (
-                event_id, agent_id, occurred_at, type, payload_json
+                event_id, agent_id, occurred_at, type, payload_json, payload_bytes
             ) VALUES (
-                ${event.id}, ${event.agentId ?? null}, ${event.occurredAt}, ${event.type}, ${payload}
+                ${event.id}, ${event.agentId ?? null}, ${event.occurredAt}, ${event.type}, ${payload},
+                ${Buffer.byteLength(payload, "utf8")}
             )`,
     );
     if (event.agentId !== undefined) {
@@ -276,18 +301,39 @@ export async function insertEvent(
                     previous_event_id = excluded.previous_event_id`,
         );
     }
-    const removed = await agentDatabaseRows<{ event_id: string }>(
-        database,
-        sql`SELECT event_id FROM happy_agent_events
-            ORDER BY event_id DESC LIMIT -1 OFFSET ${capacity}`,
-    );
-    const through = removed[0]?.event_id;
+    const through = await eventRetentionBoundary(database, capacity);
     if (through === undefined) return;
     await agentDatabaseRun(
         database,
         sql`DELETE FROM happy_agent_events WHERE event_id <= ${through}`,
     );
     await saveState(database, "origin_cursor", through);
+    return through;
+}
+
+/** Inspect only the covering size index, never deserialize the discarded transcript payloads. */
+async function eventRetentionBoundary(
+    database: AgentDatabase,
+    capacity: number,
+): Promise<string | undefined> {
+    const totals = await agentDatabaseRows<{ count: number; bytes: number | null }>(
+        database,
+        sql`SELECT count(*) AS count, sum(payload_bytes) AS bytes FROM happy_agent_events`,
+    );
+    if (totals[0]!.count <= capacity && (totals[0]!.bytes ?? 0) <= EVENTS_PAYLOAD_BYTE_CAPACITY)
+        return undefined;
+    const rows = await agentDatabaseRows<{ event_id: string }>(
+        database,
+        sql`
+        SELECT event_id FROM (
+            SELECT event_id,
+                row_number() OVER (ORDER BY event_id DESC) AS position,
+                sum(payload_bytes) OVER (ORDER BY event_id DESC) AS bytes
+            FROM happy_agent_events
+        ) WHERE position > ${capacity} OR bytes > ${EVENTS_PAYLOAD_BYTE_CAPACITY}
+        ORDER BY event_id DESC LIMIT 1`,
+    );
+    return rows[0]?.event_id;
 }
 
 export async function trimEvents(

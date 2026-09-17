@@ -3,6 +3,7 @@ import { agentDatabaseRows, agentDatabaseRun } from "@slopus/happy-agent-base";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { EVENTS_CAPACITY, EventsModule } from "../../sources/events/EventsModule.js";
+import { EVENTS_PAYLOAD_BYTE_CAPACITY } from "../../sources/events/EventsDatabase.js";
 import { moduleDatabase } from "../support/moduleDatabase.js";
 import { resolveModuleHooks } from "../support/moduleHooks.js";
 
@@ -46,6 +47,87 @@ function systemScope() {
 describe("EventsModule", () => {
     afterEach(() => {
         vi.useRealTimers();
+    });
+
+    it("bounds replay bytes across commits, rollback, and restart without losing the head", async () => {
+        const events = new EventsModule();
+        const database = moduleDatabase(events.migrations, "events-byte-retention");
+        await database.ready;
+        try {
+            await events.beforeStart(database.context);
+            const origin = events.originCursor();
+            // UTF-8 size, not JavaScript string length, must determine retention.
+            const payload = { text: "é".repeat(2 * 1_024 * 1_024) };
+            const ids: string[] = [];
+            for (let index = 0; index < 8; index += 1) {
+                ids.push(
+                    (await events.record(database.context, { type: "test.large", payload })).id,
+                );
+            }
+            expect(events.replay(origin)).toBeUndefined();
+            expect(events.originCursor()).toBe(ids[0]);
+            expect(events.replay(events.originCursor())?.events.map((event) => event.id)).toEqual(
+                ids.slice(1),
+            );
+            const head = events.cursor();
+            await expect(
+                database.context.inTx(async (ctx) => {
+                    await events.record(ctx, { type: "test.rollback", payload });
+                    throw new Error("rollback");
+                }),
+            ).rejects.toThrow("rollback");
+            expect(events.cursor()).toBe(head);
+            expect(events.originCursor()).toBe(ids[0]);
+            const rows = await agentDatabaseRows<{ bytes: number }>(
+                database.database,
+                sql`SELECT sum(payload_bytes) AS bytes FROM happy_agent_events`,
+            );
+            expect(rows[0]!.bytes).toBeLessThanOrEqual(EVENTS_PAYLOAD_BYTE_CAPACITY);
+            const restarted = new EventsModule();
+            await restarted.beforeStart(database.context);
+            expect(restarted.cursor()).toBe(head);
+            expect(restarted.originCursor()).toBe(ids[0]);
+            expect(
+                restarted.replay(restarted.originCursor())?.events.map((event) => event.id),
+            ).toEqual(ids.slice(1));
+        } finally {
+            database.close();
+        }
+    });
+
+    it("migrates an oversized legacy window and reads only its bounded suffix on startup", async () => {
+        const events = new EventsModule();
+        const database = moduleDatabase(events.migrations.slice(0, -1), "events-legacy-bytes");
+        await database.ready;
+        try {
+            const payload = JSON.stringify({ text: "x".repeat(4 * 1_024 * 1_024) });
+            const origin = "00000000-0000-7000-8000-000000000000";
+            const ids = Array.from(
+                { length: 8 },
+                (_, i) => `00000000-0000-7000-8000-${String(i + 1).padStart(12, "0")}`,
+            );
+            await agentDatabaseRun(
+                database.database,
+                sql`INSERT INTO happy_agent_event_state VALUES ('origin_cursor', ${origin})`,
+            );
+            for (const id of ids)
+                await agentDatabaseRun(
+                    database.database,
+                    sql`
+                INSERT INTO happy_agent_events (event_id, occurred_at, type, payload_json)
+                VALUES (${id}, 1, 'test.legacy', ${payload})`,
+                );
+            await events.migrations.at(-1)![1](database.context, database.database);
+            await events.beforeStart(database.context);
+            expect(events.replay(origin)).toBeUndefined();
+            expect(events.originCursor()).toBe(ids[0]);
+            expect(events.replay(events.originCursor())?.events.map((event) => event.id)).toEqual(
+                ids.slice(1),
+            );
+            expect(events.cursor()).toBe(ids.at(-1));
+        } finally {
+            database.close();
+        }
     });
 
     it("starts at a stable origin and supports bounded replay from every cursor", async () => {
