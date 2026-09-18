@@ -14,14 +14,14 @@ const MAX_TIMEOUT_MS = 30_000;
 
 const exact = { additionalProperties: false } as const;
 
-const CLAUDE_BASH_INPUT_DESCRIPTION = `Type into a background shell command started by Bash and read what it prints back.
+const CLAUDE_BASH_INPUT_DESCRIPTION = `Type into a background shell command and read what it prints back.
 
 Use it to answer a prompt, drive a REPL, or interrupt with Ctrl-C ("\\u0003"). End a line with a newline, the way you would when typing. Only the output that arrived since your last read comes back.`;
 
 /** Claude's `BashInput`: type into a background shell command. */
-export function claudeBashInputTool(compute: Compute) {
+export function claudeBashInputTool(compute: Compute, shellName: "Bash" | "PowerShell" = "Bash") {
     return defineAgentTool({
-        name: "BashInput",
+        name: `${shellName}Input`,
         defer: false,
         capabilities: [
             "Read and modify files, run shell commands, inspect images, and manage background processes.",

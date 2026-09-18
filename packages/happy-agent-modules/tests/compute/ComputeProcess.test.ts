@@ -9,6 +9,8 @@ import { resolveModuleHooks } from "../support/moduleHooks.js";
 import { FakeCompute } from "./support/FakeCompute.js";
 import { computeToolset } from "./support/computeTools.js";
 
+const CLAUDE_SHELL = process.platform === "win32" ? "PowerShell" : "Bash";
+
 const ctx = createRootContext().named("happy-agent-modules-compute-processes");
 const AGENT_ID = "compute-agent";
 
@@ -28,7 +30,11 @@ describe("ComputeModule process lifecycle", () => {
             throw new Error("observer failed");
         });
 
-        await tool("Bash").execute(ctx, { command: "pnpm dev", run_in_background: true }, call);
+        await tool(`${CLAUDE_SHELL}`).execute(
+            ctx,
+            { command: "pnpm dev", run_in_background: true },
+            call,
+        );
 
         const [running] = await module.listProcesses(ctx, AGENT_ID);
         expect(running).toMatchObject({
@@ -100,14 +106,14 @@ describe("ComputeModule process lifecycle", () => {
             events.push(event);
         });
 
-        await tool("Bash").execute(ctx, { command: "quick" });
+        await tool(`${CLAUDE_SHELL}`).execute(ctx, { command: "quick" });
         await expect(module.listProcesses(ctx, AGENT_ID)).resolves.toEqual([]);
 
-        await tool("Bash").execute(ctx, { command: "build", run_in_background: true });
+        await tool(`${CLAUDE_SHELL}`).execute(ctx, { command: "build", run_in_background: true });
         build.keepRunning = false;
         await module.readCommand(AGENT_ID, 2);
         // A later active-session notification must not rediscover the completed backend session.
-        await tool("Bash").execute(ctx, { command: "server", run_in_background: true });
+        await tool(`${CLAUDE_SHELL}`).execute(ctx, { command: "server", run_in_background: true });
 
         await vi.waitFor(async () => {
             const processes = await module.listProcesses(ctx, AGENT_ID);
@@ -134,8 +140,8 @@ describe("ComputeModule process lifecycle", () => {
             events.push(event);
         });
 
-        await tool("Bash").execute(ctx, { command: "first", run_in_background: true });
-        await tool("Bash").execute(ctx, { command: "second", run_in_background: true });
+        await tool(`${CLAUDE_SHELL}`).execute(ctx, { command: "first", run_in_background: true });
+        await tool(`${CLAUDE_SHELL}`).execute(ctx, { command: "second", run_in_background: true });
         const first = (await module.listProcesses(ctx, AGENT_ID)).find(
             (process) => process.command === "first",
         );
@@ -167,10 +173,14 @@ describe("ComputeModule process lifecycle", () => {
             events.push(event);
         });
 
-        await tool("Bash").execute(ctx, { command: "quick" }, call);
+        await tool(`${CLAUDE_SHELL}`).execute(ctx, { command: "quick" }, call);
         await expect(module.listProcesses(ctx, AGENT_ID)).resolves.toEqual([]);
 
-        await tool("Bash").execute(ctx, { command: "watch", run_in_background: true }, call);
+        await tool(`${CLAUDE_SHELL}`).execute(
+            ctx,
+            { command: "watch", run_in_background: true },
+            call,
+        );
 
         const [running] = await module.listProcesses(ctx, AGENT_ID);
         expect(running).toMatchObject({
@@ -216,7 +226,10 @@ describe("ComputeModule process lifecycle", () => {
         });
 
         for (let index = 0; index <= MAX_RETAINED_EXITED_PROCESSES_PER_AGENT; index += 1) {
-            await tool("Bash").execute(ctx, { command: "done", run_in_background: true });
+            await tool(`${CLAUDE_SHELL}`).execute(ctx, {
+                command: "done",
+                run_in_background: true,
+            });
             const process = (await module.listProcesses(ctx, AGENT_ID))[0];
             await module.stopProcess(ctx, AGENT_ID, process!.id);
         }
@@ -229,7 +242,7 @@ describe("ComputeModule process lifecycle", () => {
             (await module.listProcesses(ctx, AGENT_ID)).some(({ id }) => id === startedIds[0]),
         ).toBe(false);
 
-        await tool("Bash").execute(ctx, { command: "watch", run_in_background: true });
+        await tool(`${CLAUDE_SHELL}`).execute(ctx, { command: "watch", run_in_background: true });
         const running = (await module.listProcesses(ctx, AGENT_ID))[0];
         expect(running).toMatchObject({ command: "watch", status: "running" });
 

@@ -6,6 +6,15 @@ import {
 } from "../../sources/happy/normalizeHappyToolCall.js";
 
 describe("Happy mobile tool-call normalization", () => {
+    it("preserves the native PowerShell tool and its command purpose on mobile", () => {
+        const input = { command: "Get-Location", description: "Check the working directory" };
+        const normalized = normalizeHappyToolCall("PowerShell", input);
+        expect(normalized).toEqual({ name: "PowerShell", args: input });
+        expect(happyToolCallPresentation("PowerShell", normalized)).toEqual({
+            title: "PowerShell",
+            description: "Check the working directory",
+        });
+    });
     it.each([
         {
             source: "exec_command",

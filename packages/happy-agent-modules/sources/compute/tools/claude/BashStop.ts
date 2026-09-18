@@ -7,14 +7,14 @@ import { parseClaudeBashId } from "./impl/parseClaudeBashId.js";
 
 const exact = { additionalProperties: false } as const;
 
-const CLAUDE_BASH_STOP_DESCRIPTION = `Stop a background shell command started by Bash, along with everything it started.
+const CLAUDE_BASH_STOP_DESCRIPTION = `Stop a background shell command, along with everything it started.
 
 The command is asked to stop first and forced a moment later. Stopping one that had already ended is not an error; you are simply told it had ended.`;
 
 /** Claude's `BashStop`: end a background shell command and everything it started. */
-export function claudeBashStopTool(compute: Compute) {
+export function claudeBashStopTool(compute: Compute, shellName: "Bash" | "PowerShell" = "Bash") {
     return defineAgentTool({
-        name: "BashStop",
+        name: `${shellName}Stop`,
         defer: false,
         capabilities: [
             "Read and modify files, run shell commands, inspect images, and manage background processes.",

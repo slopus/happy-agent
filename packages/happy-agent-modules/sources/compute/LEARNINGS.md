@@ -3,8 +3,12 @@
 ## Shell descriptions follow the execution environment
 
 Claude's Bash tool used to promise a Bash interpreter on native Windows while Compute ran
-PowerShell. Its description now names the environment's shell and the Windows default explicitly.
-The tool name and arguments remain vendor-shaped; they do not imply a different execution path.
+PowerShell. Native Windows now exposes PowerShell and PowerShellInput/Output/Stop to the agent;
+the reviewer's existing subset uses the same names. Unix and WSL keep Bash. No Git Bash support
+is added on Windows.
+The fixed tool array and instructions use the same selection. Background handles retain the
+existing opaque `bash_id` field; names do not change execution, permissions, or process ownership.
+Codex keeps its neutral exec_command name and receives the actual shell in environment guidance.
 
 ## Services share the process catalog, not ordinary shell completion shortcuts
 

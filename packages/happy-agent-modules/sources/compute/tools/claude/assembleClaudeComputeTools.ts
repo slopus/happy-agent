@@ -11,26 +11,28 @@ import { claudeGlobTool } from "./Glob.js";
 import { claudeGrepTool } from "./Grep.js";
 import { claudeReadTool } from "./Read.js";
 import { claudeWriteTool } from "./Write.js";
+import { claudeShellName } from "./impl/claudeShellName.js";
 
 /**
  * The machine as a Claude model expects to find it.
  *
  * The array is fixed and written in Claude's own order, because the order a model was trained to
- * see its tools in is part of that surface. Nothing here filters, detects, or reorders.
+ * see its tools in is part of that surface. Only the shell's platform-specific name varies.
  */
 export function assembleClaudeComputeTools(
     compute: Compute,
     reads: FileReadLog,
 ): readonly AnyAgentTool[] {
+    const shellName = claudeShellName(compute);
     return [
-        claudeBashOutputTool(compute),
-        claudeBashTool(compute),
+        claudeBashOutputTool(compute, shellName),
+        claudeBashTool(compute, shellName),
         claudeReadTool(compute, reads),
         claudeEditTool(compute, reads),
         claudeWriteTool(compute, reads),
         claudeGlobTool(compute),
         claudeGrepTool(compute),
-        claudeBashStopTool(compute),
-        claudeBashInputTool(compute),
+        claudeBashStopTool(compute, shellName),
+        claudeBashInputTool(compute, shellName),
     ];
 }

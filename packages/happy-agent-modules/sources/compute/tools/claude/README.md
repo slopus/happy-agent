@@ -4,6 +4,11 @@ The machine as a Claude model expects to find it: `Read`, `Write`, `Edit`, `Glob
 `BashOutput`, `BashInput`, and `BashStop`, with Claude's own names, argument names, wording, and
 defaults. `assembleClaudeComputeTools` returns them as one fixed array in Claude's own order.
 
+On native Windows the shell family is `PowerShell`, `PowerShellOutput`, `PowerShellInput`, and
+`PowerShellStop`, including the reviewer's subset. Unix and WSL keep `Bash`; native Windows does
+not offer Git Bash. Both names execute through the same Compute and permission paths. The opaque
+background handle still uses `bash_id`, so its schema and existing process handles do not change.
+
 ## Why nothing here is shared
 
 A vendor tool is the provider's own surface, not a Happy Agent abstraction wearing a vendor's name. Claude's

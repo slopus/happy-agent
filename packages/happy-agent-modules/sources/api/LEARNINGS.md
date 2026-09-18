@@ -1,5 +1,11 @@
 # API module learnings
 
+## Shell names preserve command presentation
+
+Claude uses PowerShell on native Windows. Its calls use the same existing command presentation
+as Bash and exec_command, so live and loaded desktop history keep terminal rendering without
+changing the public API schema. Preserve the actual PowerShell tool name in the resource.
+
 ## Bootstrap carries independently versioned subtask trees
 
 Activity-only discovery required a separate read for every coordinator and hid delegated work on

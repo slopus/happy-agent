@@ -48,9 +48,10 @@ describe("AutoReviewComputeModule", () => {
         const module = new AutoReviewComputeModule(world.compute, context);
         const hooks = await resolveModuleHooks(context, module);
 
+        const claudeShell = process.platform === "win32" ? "PowerShell" : "Bash";
         expect(
             (await hooks.tools?.(context, scope("anthropic/opus-5")))?.map((t) => t.name),
-        ).toEqual(["Bash", "Read", "Glob", "Grep", "BashInput"]);
+        ).toEqual([claudeShell, "Read", "Glob", "Grep", `${claudeShell}Input`]);
         expect((await hooks.tools?.(context, scope("xai/grok-4.5")))?.map((t) => t.name)).toEqual([
             "run_terminal_command",
             "read_file",

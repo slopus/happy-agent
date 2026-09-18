@@ -288,7 +288,10 @@ export function happyToolCallPresentation(
         };
     }
 
-    if (Value.Check(commandArgumentsSchema, args) && (name === "Bash" || name === "CodexBash")) {
+    if (
+        Value.Check(commandArgumentsSchema, args) &&
+        (name === "Bash" || name === "PowerShell" || name === "CodexBash")
+    ) {
         const purpose = concise(displayArgs?.description);
         return { title, description: purpose ?? `Running ${name}` };
     }
@@ -339,14 +342,17 @@ function exactToolDescription(
 ): string | undefined {
     switch (name) {
         case "BashInput":
+        case "PowerShellInput":
             return args.bash_id === undefined
                 ? "Sending input to a background shell"
                 : `Sending input to shell ${args.bash_id}`;
         case "BashOutput":
+        case "PowerShellOutput":
             return args.bash_id === undefined
                 ? "Reading background shell output"
                 : `Reading output from shell ${args.bash_id}`;
         case "BashStop":
+        case "PowerShellStop":
             return args.bash_id === undefined
                 ? "Stopping a background shell"
                 : `Stopping shell ${args.bash_id}`;
@@ -527,6 +533,8 @@ function formatScalar(value: string | number | undefined): string | undefined {
 
 function titleForCanonicalTool(name: string): string {
     switch (name) {
+        case "PowerShell":
+            return "PowerShell";
         case "Bash":
         case "CodexBash":
             return "Terminal";

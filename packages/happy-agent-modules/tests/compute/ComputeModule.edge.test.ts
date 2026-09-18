@@ -7,6 +7,8 @@ import { testConfig } from "../support/computeModule.js";
 import { resolveModuleHooks } from "../support/moduleHooks.js";
 import { FakeCompute } from "./support/FakeCompute.js";
 
+const CLAUDE_SHELL = process.platform === "win32" ? "PowerShell" : "Bash";
+
 const ctx = createRootContext().named("happy-agent-modules-compute-module-edge");
 
 function configured(cwd: string, providerId?: string) {
@@ -108,11 +110,11 @@ describe("ComputeModule edge behavior", () => {
             kv: undefined,
         } as never;
         expect((await module.reviewerTools(ctx, scope)).map((tool) => tool.name)).toEqual([
-            "Bash",
+            `${CLAUDE_SHELL}`,
             "Read",
             "Glob",
             "Grep",
-            "BashInput",
+            `${CLAUDE_SHELL}Input`,
         ]);
         expect(
             (

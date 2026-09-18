@@ -1,4 +1,6 @@
 import type { ComputeToolVendor } from "../ComputeToolVendor.js";
+import type { Compute } from "../Compute.js";
+import { claudeShellName } from "../tools/claude/impl/claudeShellName.js";
 
 /**
  * What the agent is told about the machine, in the names its own tools actually have.
@@ -8,7 +10,13 @@ import type { ComputeToolVendor } from "../ComputeToolVendor.js";
  * that names a tool the model does not have is worse than no rule at all, so each vendor is told
  * them in its own vocabulary.
  */
-export function computeInstructionsForVendor(vendor: ComputeToolVendor): string {
+export function computeInstructionsForVendor(vendor: ComputeToolVendor, compute: Compute): string {
+    if (vendor === "claude") {
+        return instructionsByVendor.claude.replaceAll(
+            "BashOutput",
+            `${claudeShellName(compute)}Output`,
+        );
+    }
     return instructionsByVendor[vendor];
 }
 

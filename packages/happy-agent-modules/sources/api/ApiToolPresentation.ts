@@ -157,7 +157,11 @@ function presentationForToolCall(call: ToolCallProjection): ToolPresentation | u
         const args = checked(codexExecArgumentsSchema, call.arguments);
         if (args !== undefined) return execPresentation(args.cmd, call);
     }
-    if (call.name === "Bash" || call.name === "run_terminal_command") {
+    if (
+        call.name === "Bash" ||
+        call.name === "PowerShell" ||
+        call.name === "run_terminal_command"
+    ) {
         const args = checked(commandArgumentsSchema, call.arguments);
         if (args !== undefined) return execPresentation(args.command, call);
     }

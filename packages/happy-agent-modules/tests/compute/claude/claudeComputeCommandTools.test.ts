@@ -7,6 +7,8 @@ import { computeToolset } from "../support/computeTools.js";
 /** A Claude model, so the module hands this agent Claude's own tools. */
 const CLAUDE_MODEL = "anthropic/opus-5";
 
+const CLAUDE_SHELL = process.platform === "win32" ? "PowerShell" : "Bash";
+
 const ctx = createRootContext().named("happy-agent-modules-claude-compute-commands");
 
 /** A machine with a scripted shell, and Claude's tools over it. */
@@ -29,43 +31,51 @@ describe("Claude's Bash", () => {
         const { compute, tool, call } = await machine();
         compute.script("pnpm test", { chunks: ["12 tests passed\n"], exitCode: 0 });
 
-        const result = await tool("Bash").execute(ctx, { command: "pnpm test" }, call);
+        const result = await tool(`${CLAUDE_SHELL}`).execute(ctx, { command: "pnpm test" }, call);
 
         expect(result.stdout).toBe("12 tests passed\n");
         expect(result.exitCode).toBe(0);
         expect(result.bash_id).toBeUndefined();
         expect(compute.startedOptions[0]?.maxOutputBytes).toBe(512_000);
-        expect(tool("Bash").isError?.(result)).toBe(false);
+        expect(tool(`${CLAUDE_SHELL}`).isError?.(result)).toBe(false);
     });
 
     it("reports a command that failed as an error", async () => {
         const { compute, tool, call } = await machine();
         compute.script("pnpm build", { chunks: ["it did not build\n"], exitCode: 1 });
 
-        const result = await tool("Bash").execute(ctx, { command: "pnpm build" }, call);
+        const result = await tool(`${CLAUDE_SHELL}`).execute(ctx, { command: "pnpm build" }, call);
 
-        expect(tool("Bash").isError?.(result)).toBe(true);
-        expect(modelText(tool("Bash"), result)).toContain("The command exited with code 1.");
+        expect(tool(`${CLAUDE_SHELL}`).isError?.(result)).toBe(true);
+        expect(modelText(tool(`${CLAUDE_SHELL}`), result)).toContain(
+            "The command exited with code 1.",
+        );
     });
 
     it("hands back a task instead of killing a command that outlives the wait", async () => {
         const { compute, tool, call } = await machine();
         compute.script("pnpm dev", { chunks: ["listening on 3000\n"], keepRunning: true });
 
-        const result = await tool("Bash").execute(ctx, { command: "pnpm dev", timeout: 10 }, call);
+        const result = await tool(`${CLAUDE_SHELL}`).execute(
+            ctx,
+            { command: "pnpm dev", timeout: 10 },
+            call,
+        );
 
         expect(result.bash_id).toBe("1");
         expect(result.exitCode).toBeUndefined();
         // Handing back a task means the command is meant to outlive the call.
         expect(compute.detached.has(1)).toBe(true);
-        expect(modelText(tool("Bash"), result)).toContain("still running as background shell 1");
+        expect(modelText(tool(`${CLAUDE_SHELL}`), result)).toContain(
+            "still running as background shell 1",
+        );
     });
 
     it("passes the terminal request through to the machine", async () => {
         const { compute, tool, call } = await machine();
         compute.script("top", { chunks: ["cpu\n"], keepRunning: true });
 
-        await tool("Bash").execute(
+        await tool(`${CLAUDE_SHELL}`).execute(
             ctx,
             { command: "top", run_in_background: true, tty: true },
             call,
@@ -78,7 +88,7 @@ describe("Claude's Bash", () => {
         const { compute, tool, call } = await machine();
         compute.script("printenv TOKEN", { chunks: ["set\n"], exitCode: 0 });
 
-        await tool("Bash").execute(
+        await tool(`${CLAUDE_SHELL}`).execute(
             ctx,
             { command: "printenv TOKEN", secrets: ["deployment"] },
             call,
@@ -94,7 +104,7 @@ describe("Claude's Bash", () => {
             exitCode: 0,
         });
 
-        const result = await tool("Bash").execute(ctx, { command: "pnpm noisy" }, call);
+        const result = await tool(`${CLAUDE_SHELL}`).execute(ctx, { command: "pnpm noisy" }, call);
 
         expect(result.truncated).toBe(true);
         expect(result.stdout.startsWith("[Earlier output was truncated")).toBe(true);
@@ -103,7 +113,7 @@ describe("Claude's Bash", () => {
 
     it("is sandboxed by default and elevated only when it says so", async () => {
         const { tool } = await machine();
-        const bash = tool("Bash");
+        const bash = tool(`${CLAUDE_SHELL}`);
 
         expect(await bash.shouldReviewInAutoMode({ command: "ls" }, ctx)).toBe(false);
         expect(await bash.shouldRunInFullAccessInAutoMode?.({ command: "ls" }, ctx)).toBe(false);
@@ -162,14 +172,14 @@ describe("Claude's background shell tools", () => {
             chunks: ["listening on 3000\n", "compiled a change\n"],
             keepRunning: true,
         });
-        const started = await tool("Bash").execute(
+        const started = await tool(`${CLAUDE_SHELL}`).execute(
             ctx,
             { command: "pnpm dev", run_in_background: true },
             call,
         );
         expect(started.stdout).toBe("listening on 3000\n");
 
-        const again = await tool("BashOutput").execute(
+        const again = await tool(`${CLAUDE_SHELL}Output`).execute(
             ctx,
             { bash_id: started.bash_id, block: false },
             call,
@@ -179,7 +189,9 @@ describe("Claude's background shell tools", () => {
         expect(again.output).toBe("compiled a change\n");
         expect(again.status).toBe("running");
         expect(again.retrieval_status).toBe("not_ready");
-        expect(await tool("BashOutput").shouldReviewInAutoMode({ bash_id: "1" }, ctx)).toBe(false);
+        expect(
+            await tool(`${CLAUDE_SHELL}Output`).shouldReviewInAutoMode({ bash_id: "1" }, ctx),
+        ).toBe(false);
     });
 
     it("types into a running task and reads what that produced", async () => {
@@ -189,13 +201,13 @@ describe("Claude's background shell tools", () => {
             keepRunning: true,
             answer: (input) => `${input.trim()} = 4\n`,
         });
-        const started = await tool("Bash").execute(
+        const started = await tool(`${CLAUDE_SHELL}`).execute(
             ctx,
             { command: "node --interactive", run_in_background: true },
             call,
         );
 
-        const answered = await tool("BashInput").execute(
+        const answered = await tool(`${CLAUDE_SHELL}Input`).execute(
             ctx,
             { bash_id: started.bash_id, input: "2 + 2\n", timeout: 0 },
             call,
@@ -207,7 +219,7 @@ describe("Claude's background shell tools", () => {
 
     it("asks about typing into a live program without widening an ordinary session", async () => {
         const { tool } = await machine();
-        const bashInput = tool("BashInput");
+        const bashInput = tool(`${CLAUDE_SHELL}Input`);
 
         expect(await bashInput.shouldReviewInAutoMode({ bash_id: "1", input: "" }, ctx)).toBe(
             false,
@@ -224,15 +236,15 @@ describe("Claude's background shell tools", () => {
     it("keeps input to a secret-bearing shell under its existing boundary", async () => {
         const { compute, tool, call } = await machine();
         compute.script("secret repl", { keepRunning: true });
-        const started = await tool("Bash").execute(
+        const started = await tool(`${CLAUDE_SHELL}`).execute(
             ctx,
             { command: "secret repl", run_in_background: true, secrets: ["deployment"] },
             call,
         );
 
-        expect(tool("BashInput").shouldRunInFullAccessInAutoMode).toBeUndefined();
+        expect(tool(`${CLAUDE_SHELL}Input`).shouldRunInFullAccessInAutoMode).toBeUndefined();
         expect(
-            tool("BashInput").describeAutoPermissionAction?.(
+            tool(`${CLAUDE_SHELL}Input`).describeAutoPermissionAction?.(
                 { bash_id: started.bash_id, input: "next\n" },
                 ctx,
             ),
@@ -242,18 +254,26 @@ describe("Claude's background shell tools", () => {
     it("stops a running shell, and says plainly when there was nothing left to stop", async () => {
         const { compute, tool, call } = await machine();
         compute.script("pnpm dev", { chunks: ["listening\n"], keepRunning: true });
-        const started = await tool("Bash").execute(
+        const started = await tool(`${CLAUDE_SHELL}`).execute(
             ctx,
             { command: "pnpm dev", run_in_background: true },
             call,
         );
 
-        const stopped = await tool("BashStop").execute(ctx, { bash_id: started.bash_id }, call);
+        const stopped = await tool(`${CLAUDE_SHELL}Stop`).execute(
+            ctx,
+            { bash_id: started.bash_id },
+            call,
+        );
         expect(stopped).toEqual({ bash_id: "1", command: "pnpm dev", stopped: true });
 
-        const again = await tool("BashStop").execute(ctx, { bash_id: started.bash_id }, call);
+        const again = await tool(`${CLAUDE_SHELL}Stop`).execute(
+            ctx,
+            { bash_id: started.bash_id },
+            call,
+        );
         expect(again.stopped).toBe(false);
-        expect(modelText(tool("BashStop"), again)).toBe(
+        expect(modelText(tool(`${CLAUDE_SHELL}Stop`), again)).toBe(
             "Background shell 1 had already ended: pnpm dev",
         );
     });
@@ -263,14 +283,14 @@ describe("Claude's background shell tools", () => {
 
         for (const bash_id of ["abc", "0", "-1", "1.5", ""]) {
             await expect(
-                tool("BashOutput").execute(ctx, { bash_id, block: false }, call),
+                tool(`${CLAUDE_SHELL}Output`).execute(ctx, { bash_id, block: false }, call),
             ).rejects.toThrow(/not a background shell identifier/);
         }
-        await expect(tool("BashStop").execute(ctx, { bash_id: "nope" }, call)).rejects.toThrow(
-            /not a background shell identifier/,
-        );
         await expect(
-            tool("BashInput").execute(ctx, { bash_id: "nope", input: "x" }, call),
+            tool(`${CLAUDE_SHELL}Stop`).execute(ctx, { bash_id: "nope" }, call),
+        ).rejects.toThrow(/not a background shell identifier/);
+        await expect(
+            tool(`${CLAUDE_SHELL}Input`).execute(ctx, { bash_id: "nope", input: "x" }, call),
         ).rejects.toThrow(/not a background shell identifier/);
     });
 
@@ -278,7 +298,7 @@ describe("Claude's background shell tools", () => {
         const { tool, call } = await machine();
 
         await expect(
-            tool("BashOutput").execute(ctx, { bash_id: "99", block: false }, call),
+            tool(`${CLAUDE_SHELL}Output`).execute(ctx, { bash_id: "99", block: false }, call),
         ).rejects.toThrow(/no command 99/);
     });
 });

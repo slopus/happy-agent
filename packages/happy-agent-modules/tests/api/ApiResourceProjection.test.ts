@@ -15,6 +15,22 @@ import { toolCallResource } from "../../sources/api/ApiToolPresentation.js";
 import type { HistoryMessage } from "../../sources/history/index.js";
 
 describe("apiResourceVersion", () => {
+    it("renders a PowerShell command through the existing terminal presentation", () => {
+        const call = {
+            id: "ps-call",
+            status: "completed" as const,
+            arguments: { command: "Get-Location" },
+            output: "C:\\Projects",
+        };
+        const windows = toolCallResource({ ...call, name: "PowerShell" });
+        const unix = toolCallResource({ ...call, name: "Bash" });
+        expect(windows.presentation).toEqual(unix.presentation);
+        expect(windows.presentation).toMatchObject({
+            type: "exec_command",
+            command: "Get-Location",
+        });
+        expect(windows.name).toBe("PowerShell");
+    });
     it("projects a numeric module version into a deterministic ordered UUIDv7", () => {
         const first = apiResourceVersion(1_755_400_000_000, 7, "project-a");
         const repeated = apiResourceVersion(1_755_400_000_000, 7, "project-a");

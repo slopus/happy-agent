@@ -52,7 +52,7 @@ export function assembleEnvironmentPrompt(options: {
         `- OS version: ${environment.osVersion}`,
         ...(environment.platform === "win32"
             ? [
-                  "- Commands run on native Windows in the listed shell, including calls named Bash. Use native Windows tools and paths. WSL and Git Bash are separate environments; use them only when the task calls for them.",
+                  "- Commands run on native Windows in PowerShell. Use native Windows tools and paths. Bash is available only in a Linux environment such as WSL, not in this native Windows session; do not use Git Bash.",
                   "- Use PowerShell syntax: $env:NAME = 'value' for environment variables; & 'C:\\Program Files\\tool.exe' for a quoted executable; -LiteralPath for file operations. Separate commands with newlines. PowerShell 5.1 does not support &&, ||, export, or Bash heredocs. Check $LASTEXITCODE after native programs before continuing dependent work.",
                   "- Start background helpers with Start-Process -WindowStyle Hidden unless the user needs a visible window. Keep filesystem operations in one shell and verify the resolved target before recursive deletion or moving files.",
               ]

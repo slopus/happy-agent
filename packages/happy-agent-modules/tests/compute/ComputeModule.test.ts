@@ -14,6 +14,8 @@ import { resolveModuleHooks } from "../support/moduleHooks.js";
 import { FakeCompute } from "./support/FakeCompute.js";
 import { computeToolset } from "./support/computeTools.js";
 
+const CLAUDE_SHELL = process.platform === "win32" ? "PowerShell" : "Bash";
+
 const ctx = createRootContext().named("happy-agent-modules-compute");
 
 const CLAUDE_MODEL = "anthropic/opus-5";
@@ -115,15 +117,15 @@ describe("ComputeModule", () => {
     it("hands each model its own vendor's tools", async () => {
         const claude = await computeToolset(ctx, new FakeCompute(), { model: CLAUDE_MODEL });
         expect(claude.tools.map((tool) => tool.name)).toEqual([
-            "BashOutput",
-            "Bash",
+            `${CLAUDE_SHELL}Output`,
+            `${CLAUDE_SHELL}`,
             "Read",
             "Edit",
             "Write",
             "Glob",
             "Grep",
-            "BashStop",
-            "BashInput",
+            `${CLAUDE_SHELL}Stop`,
+            `${CLAUDE_SHELL}Input`,
         ]);
 
         const codex = await computeToolset(ctx, new FakeCompute(), {
@@ -322,7 +324,7 @@ describe("ComputeModule", () => {
 
     it("leaves an ordinary command sandboxed and asks about one that wants out", async () => {
         const { tool } = await computeToolset(ctx, new FakeCompute(), { model: CLAUDE_MODEL });
-        const bash = tool("Bash");
+        const bash = tool(`${CLAUDE_SHELL}`);
 
         expect(await bash.shouldReviewInAutoMode({ command: "pnpm test" }, ctx)).toBe(false);
         expect(
@@ -351,7 +353,7 @@ describe("ComputeModule", () => {
 
     it("asks about typing into a live command without letting it out of the sandbox", async () => {
         const { tool } = await computeToolset(ctx, new FakeCompute(), { model: CLAUDE_MODEL });
-        const bashInput = tool("BashInput");
+        const bashInput = tool(`${CLAUDE_SHELL}Input`);
 
         expect(await bashInput.shouldReviewInAutoMode({ bash_id: "1", input: "yes\n" }, ctx)).toBe(
             true,
@@ -363,7 +365,11 @@ describe("ComputeModule", () => {
         const compute = new FakeCompute();
         compute.script("pnpm dev", { chunks: ["listening\n"], keepRunning: true });
         const { module, tool, call } = await computeToolset(ctx, compute, { model: CLAUDE_MODEL });
-        await tool("Bash").execute(ctx, { command: "pnpm dev", run_in_background: true }, call);
+        await tool(`${CLAUDE_SHELL}`).execute(
+            ctx,
+            { command: "pnpm dev", run_in_background: true },
+            call,
+        );
 
         expect(await module.runningCommands("compute-agent")).toEqual([
             { command: "pnpm dev", cwd: "/workspace", sessionId: 1, status: "running" },

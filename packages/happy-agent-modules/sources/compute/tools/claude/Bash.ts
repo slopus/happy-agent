@@ -20,14 +20,15 @@ const MAX_TIMEOUT_MS = 600_000;
 
 const exact = { additionalProperties: false } as const;
 
-const CLAUDE_BASH_DESCRIPTION = `Executes a command using the shell listed in the environment and returns its output. On native Windows this is Windows PowerShell, even though the tool is named Bash.
+function shellDescription(shellName: "Bash" | "PowerShell"): string {
+    return `Executes a command using ${shellName === "PowerShell" ? "Windows PowerShell 5.1 (powershell.exe) on native Windows" : "the Unix shell listed in the environment"} and returns its output.
 
-- Every Bash call starts in the primary working directory. A directory change affects only that call.
+- Every ${shellName} call starts in the primary working directory. A directory change affects only that call.
 - Environment variables and shell functions do not carry over between commands.
 - Prefer the dedicated file and search tools over shell equivalents when one fits.
 - \`timeout\` is in milliseconds: default ${String(DEFAULT_TIMEOUT_MS)}, max ${String(MAX_TIMEOUT_MS)}. It is how long you wait, not how long the command may live: a command still running when the wait ends keeps running in the background and comes back with a shell ID.
 - \`run_in_background\` starts the command in the background right away, waiting about ${String(COMPUTE_BACKGROUND_GRACE_MS / 1_000)} seconds to see that it did not fall over. Use it for dev servers and watchers. No \`&\` needed.
-- Read a background shell with \`BashOutput\`, type into it with \`BashInput\`, and stop it with \`BashStop\`.
+- Read a background shell with \`${shellName}Output\`, type into it with \`${shellName}Input\`, and stop it with \`${shellName}Stop\`.
 
 # Git
 - Interactive flags such as \`git rebase -i\` and \`git add -i\` are not supported.
@@ -37,16 +38,17 @@ const CLAUDE_BASH_DESCRIPTION = `Executes a command using the shell listed in th
 Happy Agent extensions: \`dangerouslyDisableSandbox\` requests one reviewed Full-access execution in Auto mode; it never bypasses Read only or Workspace write mode. \`secrets\` selects attached secret bundles to expose to this command as environment variables. Secret selection is reviewed separately and stays sandboxed unless \`dangerouslyDisableSandbox\` is also true.
 
 Output is truncated to the last ${String(MAX_CLAUDE_SHELL_OUTPUT_CHARACTERS)} characters.`;
+}
 
 /** Claude's `Bash`: run a command, and hand back a task when it outlives the wait. */
-export function claudeBashTool(compute: Compute) {
+export function claudeBashTool(compute: Compute, shellName: "Bash" | "PowerShell" = "Bash") {
     return defineAgentTool({
-        name: "Bash",
+        name: shellName,
         defer: false,
         capabilities: [
             "Read and modify files, run shell commands, inspect images, and manage background processes.",
         ],
-        description: CLAUDE_BASH_DESCRIPTION,
+        description: shellDescription(shellName),
         parameters: Type.Object(
             {
                 command: Type.String({ description: "The command to execute" }),
@@ -105,8 +107,7 @@ export function claudeBashTool(compute: Compute) {
         ),
         // Running a command again runs it again, which is rarely the same thing twice.
         durable: false,
-        autoPermissionInstructions:
-            "For Bash, request full-access execution with dangerouslyDisableSandbox: true only when the workspace sandbox blocks necessary work. Commands without it remain sandboxed. Put only the attached secret IDs this exact command needs in secrets. Secret provisioning is reviewed separately and does not change the sandbox; secrets and escalation may be used independently or together.",
+        autoPermissionInstructions: `For ${shellName}, request full-access execution with dangerouslyDisableSandbox: true only when the workspace sandbox blocks necessary work. Commands without it remain sandboxed. Put only the attached secret IDs this exact command needs in secrets. Secret provisioning is reviewed separately and does not change the sandbox; secrets and escalation may be used independently or together.`,
         describeAutoPermissionAction: ({
             command,
             dangerouslyDisableSandbox,
@@ -158,7 +159,7 @@ export function claudeBashTool(compute: Compute) {
             if (result.stderr.length > 0) parts.push(result.stderr);
             if (result.bash_id !== undefined) {
                 parts.push(
-                    `The command is still running as background shell ${result.bash_id}. Read its new output with BashOutput, type into it with BashInput, and stop it with BashStop.`,
+                    `The command is still running as background shell ${result.bash_id}. Read its new output with ${shellName}Output, type into it with ${shellName}Input, and stop it with ${shellName}Stop.`,
                 );
             } else if (result.exitCode === null) {
                 parts.push("The command was stopped before it could exit.");

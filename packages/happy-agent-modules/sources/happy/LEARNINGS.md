@@ -45,6 +45,9 @@ one message it cannot carry.
 
 ## Mobile tool wire normalization
 
+- Native Windows PowerShell calls retain their real name, command purpose, and background-shell
+  descriptions. Do not relabel them Bash just to reuse a mobile renderer.
+
 - Normalize tool calls at the Happy sync boundary only when the mobile app already owns the same
   semantic renderer and argument contract. Preserve every other real tool name and send a precise
   activity description through the generic canonical tool-call envelope; a familiar but false

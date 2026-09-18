@@ -19,6 +19,9 @@ describe("native Windows command guidance", () => {
                 documentationPath: "C:\\Happy\\README.md",
             });
             expect(prompt).toContain("- Shell: Windows PowerShell 5.1 (powershell.exe)");
+            expect(prompt).toContain("Commands run on native Windows in PowerShell");
+            expect(prompt).toContain("do not use Git Bash");
+            expect(prompt).not.toContain("including calls named Bash");
             expect(prompt).toContain("-LiteralPath");
             expect(prompt).toContain("&&");
             expect(prompt).toContain("$env:NAME");

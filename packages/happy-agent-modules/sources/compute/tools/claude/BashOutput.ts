@@ -14,14 +14,14 @@ const MAX_TIMEOUT_MS = 600_000;
 
 const exact = { additionalProperties: false } as const;
 
-const CLAUDE_BASH_OUTPUT_DESCRIPTION = `Read output from a background shell command started by Bash.
+const CLAUDE_BASH_OUTPUT_DESCRIPTION = `Read output from a background shell command.
 
 Only what the command has produced since your last read comes back; you already have everything before that. Set block to false to look without waiting.`;
 
 /** Claude's `BashOutput`: what a background shell command has said since it was last read. */
-export function claudeBashOutputTool(compute: Compute) {
+export function claudeBashOutputTool(compute: Compute, shellName: "Bash" | "PowerShell" = "Bash") {
     return defineAgentTool({
-        name: "BashOutput",
+        name: `${shellName}Output`,
         defer: false,
         capabilities: [
             "Read and modify files, run shell commands, inspect images, and manage background processes.",

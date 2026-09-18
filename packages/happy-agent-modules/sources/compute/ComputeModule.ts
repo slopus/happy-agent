@@ -744,7 +744,7 @@ export class ComputeModule implements AgentModule {
                 this.#promptedAbortNotices.set(scope.agent.id, parsed.id);
                 notice = formatAbortNotice(parsed);
             }
-            return [notice, computeInstructionsForVendor(vendorFor(scope))]
+            return [notice, computeInstructionsForVendor(vendorFor(scope), compute)]
                 .filter((part) => part.length > 0)
                 .join("\n\n");
         },

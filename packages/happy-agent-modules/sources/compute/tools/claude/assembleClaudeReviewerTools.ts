@@ -7,6 +7,7 @@ import { claudeBashInputTool } from "./BashInput.js";
 import { claudeGlobTool } from "./Glob.js";
 import { claudeGrepTool } from "./Grep.js";
 import { claudeReadTool } from "./Read.js";
+import { claudeShellName } from "./impl/claudeShellName.js";
 
 /**
  * The read-only slice of Claude's machine the automatic permission reviewer is trusted with.
@@ -25,11 +26,12 @@ export function assembleClaudeReviewerTools(
     compute: Compute,
     reads: FileReadLog,
 ): readonly AnyAgentTool[] {
+    const shellName = claudeShellName(compute);
     return [
-        claudeBashTool(compute),
+        claudeBashTool(compute, shellName),
         claudeReadTool(compute, reads),
         claudeGlobTool(compute),
         claudeGrepTool(compute),
-        claudeBashInputTool(compute),
+        claudeBashInputTool(compute, shellName),
     ];
 }

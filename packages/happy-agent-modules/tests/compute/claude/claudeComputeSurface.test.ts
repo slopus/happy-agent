@@ -5,6 +5,8 @@ import { describe, expect, it } from "vitest";
 import { FakeCompute } from "../support/FakeCompute.js";
 import { computeToolset } from "../support/computeTools.js";
 
+const CLAUDE_SHELL = process.platform === "win32" ? "PowerShell" : "Bash";
+
 const ctx = createRootContext().named("happy-agent-modules-compute-claude-surface");
 
 /** A Claude model, so the module hands this agent Claude's own tools. */
@@ -49,7 +51,7 @@ const VENDOR_ARGUMENTS: Readonly<
     },
     // Every Bash argument is the vendor's, plus Happy Agent's own terminal, elevation, and
     // host-owned secret-environment extensions.
-    Bash: {
+    [CLAUDE_SHELL]: {
         required: ["command"],
         optional: [
             "timeout",
@@ -60,9 +62,9 @@ const VENDOR_ARGUMENTS: Readonly<
             "secrets",
         ],
     },
-    BashOutput: { required: ["bash_id"], optional: ["block", "timeout"] },
-    BashInput: { required: ["bash_id", "input"], optional: ["timeout"] },
-    BashStop: { required: ["bash_id"], optional: [] },
+    [`${CLAUDE_SHELL}Output`]: { required: ["bash_id"], optional: ["block", "timeout"] },
+    [`${CLAUDE_SHELL}Input`]: { required: ["bash_id", "input"], optional: ["timeout"] },
+    [`${CLAUDE_SHELL}Stop`]: { required: ["bash_id"], optional: [] },
 };
 
 async function claudeTools() {
@@ -75,15 +77,15 @@ describe("Claude compute surface", () => {
         const { tools } = await claudeTools();
 
         expect(tools.map((tool) => tool.name)).toEqual([
-            "BashOutput",
-            "Bash",
+            `${CLAUDE_SHELL}Output`,
+            `${CLAUDE_SHELL}`,
             "Read",
             "Edit",
             "Write",
             "Glob",
             "Grep",
-            "BashStop",
-            "BashInput",
+            `${CLAUDE_SHELL}Stop`,
+            `${CLAUDE_SHELL}Input`,
         ]);
     });
 
@@ -99,8 +101,8 @@ describe("Claude compute surface", () => {
     it("tells Claude that each Bash call starts from the primary working directory", async () => {
         const { tool } = await claudeTools();
 
-        expect(tool("Bash").description).toContain(
-            "Every Bash call starts in the primary working directory. A directory change affects only that call.",
+        expect(tool(`${CLAUDE_SHELL}`).description).toContain(
+            `Every ${CLAUDE_SHELL} call starts in the primary working directory. A directory change affects only that call.`,
         );
     });
 
@@ -127,12 +129,14 @@ describe("Claude compute surface", () => {
         // Codex and Grok escalate with `sandbox_permissions`; on Claude's surface that is simply
         // not an argument, and the schema is what says so.
         expect(
-            Value.Check(tool("Bash").parameters!, {
+            Value.Check(tool(`${CLAUDE_SHELL}`).parameters!, {
                 command: "ls",
                 sandbox_permissions: "require_escalated",
             }),
         ).toBe(false);
-        expect(Value.Check(tool("Bash").parameters!, { command: "ls", secrets: [] })).toBe(true);
+        expect(
+            Value.Check(tool(`${CLAUDE_SHELL}`).parameters!, { command: "ls", secrets: [] }),
+        ).toBe(true);
         // Grok reads with `target_file`, Claude with `file_path`.
         expect(Value.Check(tool("Read").parameters!, { target_file: "a.ts" })).toBe(false);
         expect(Value.Check(tool("Read").parameters!, { file_path: "a.ts" })).toBe(true);
@@ -151,7 +155,15 @@ describe("Claude compute surface", () => {
 
     it("describes the action wherever a review can happen", async () => {
         const { tool, tools } = await claudeTools();
-        const reviewable = ["Read", "Write", "Edit", "Glob", "Grep", "Bash", "BashInput"];
+        const reviewable = [
+            "Read",
+            "Write",
+            "Edit",
+            "Glob",
+            "Grep",
+            `${CLAUDE_SHELL}`,
+            `${CLAUDE_SHELL}Input`,
+        ];
 
         for (const candidate of tools) {
             if (reviewable.includes(candidate.name)) {
@@ -161,8 +173,8 @@ describe("Claude compute surface", () => {
             }
         }
         // Reading and stopping work Happy Agent itself started is never reviewed, so neither needs one.
-        expect(tool("BashOutput").describeAutoPermissionAction).toBeUndefined();
-        expect(tool("BashStop").describeAutoPermissionAction).toBeUndefined();
+        expect(tool(`${CLAUDE_SHELL}Output`).describeAutoPermissionAction).toBeUndefined();
+        expect(tool(`${CLAUDE_SHELL}Stop`).describeAutoPermissionAction).toBeUndefined();
     });
 
     it("marks only the pure reads durable, and commits a recorded read with its result", async () => {
@@ -177,7 +189,14 @@ describe("Claude compute surface", () => {
         expect(tool("Grep").durable).toBe(true);
         expect(tool("Grep").reloadable).toBe(true);
         // Everything that changes the machine or consumes command output cannot simply be replayed.
-        for (const name of ["Write", "Edit", "Bash", "BashOutput", "BashInput", "BashStop"]) {
+        for (const name of [
+            "Write",
+            "Edit",
+            `${CLAUDE_SHELL}`,
+            `${CLAUDE_SHELL}Output`,
+            `${CLAUDE_SHELL}Input`,
+            `${CLAUDE_SHELL}Stop`,
+        ]) {
             expect(tool(name).durable, name).toBe(false);
             expect(tool(name).reloadable, name).not.toBe(true);
         }
