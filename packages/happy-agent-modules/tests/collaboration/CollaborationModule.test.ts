@@ -1304,6 +1304,12 @@ describe("collaboration", () => {
         expect(create.description).toContain("tiers: priority");
         expect(create.description).toContain("at most 5 ordinary collaborators");
         expect(create.description).toContain("maximum depth is 3 agents including the root");
+        expect(create.description).toContain("substantial, distinct workstreams");
+        expect(create.description).toContain("changes across projects");
+        expect(create.description).toContain("small steps inline");
+        expect(create.description).toContain(
+            "Usually create second-level subtasks only on explicit user request.",
+        );
         expect(empty.description).not.toContain("Available model/provider pairs:");
     });
 

@@ -17,10 +17,16 @@ durable compute-cleanup intent commit together; cleanup starts after commit and 
 pending cleanup. A workspace identifies its resident subtask, whose parent identifies the coordinator.
 Sharing the parent's filesystem does not add a second workspace association.
 
-## Interactive delegation is the default for eligible agents
+## Subtasks are substantial workstreams, not small steps
 
-Generic collaboration guidance did not distinguish human-collaborative tasks from hidden internal
-work. Bots and subtasks now prefer subtasks for delegated work the user may collaborate on and
-honor explicit subtask requests. Ordinary subagents remain appropriate for internal research and
-other parts that need no human collaboration. This does not allow ordinary agents to create
-subtasks or extend the two-level hierarchy.
+Broadly preferring interactive delegation encouraged unnecessary task splitting and nesting.
+Compact prompts now reserve subtasks for substantial, distinct workstreams, such as changes across
+projects, while small steps stay inline and hidden subagents handle internal research. Explicit
+subtask requests are honored within eligibility and depth limits. Second-level subtasks should
+usually be explicitly requested by the user. These are prompt defaults, not new runtime restrictions.
+
+## Titles are short sidebar labels
+
+Subtask session titles were too long for the sidebar. The creation tool now asks for 2–3 words,
+with 4 at most and only as a last resort, and directs task details into the message text. This is
+loose prompt guidance, not a runtime word-count limit or automatic truncation.

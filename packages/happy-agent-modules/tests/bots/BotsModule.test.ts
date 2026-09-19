@@ -710,7 +710,7 @@ describe("BotsModule", () => {
                     "- Bot ID: `identitybot`",
                     "- Username: `research_assistant`",
                     "",
-                    "Prefer create_subtask by default when delegating work the user may collaborate on. If the user explicitly asks for a subtask, use create_subtask. Use ordinary create_agent subagents for internal parts of the work that need no user collaboration, such as internal research. Keep coordinating through send_agent_message and archive your direct subtasks with archive_subtask when appropriate. Subtasks cannot be awaited.",
+                    "Prefer create_subtask by default only for substantial, distinct workstreams, such as changes across projects; handle small steps inline. Usually create second-level subtasks only on explicit user request. If the user explicitly asks for a subtask, use create_subtask. Use create_agent for internal research. Coordinate via send_agent_message and archive_subtask; do not wait for subtasks.",
                 ].join("\n"),
             );
 

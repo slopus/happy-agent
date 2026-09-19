@@ -7,9 +7,11 @@ selection and message delivery. Archived agents refuse further collaboration mes
 settling child does not reactivate an archived parent with its automatic report. Model-tool
 messaging runs transactionally so checking archival and admitting the message share a snapshot.
 
-Creation guidance now distinguishes hidden internal work, such as research, from user-interactive
-delegation. Eligible bots and subtasks prefer `create_subtask` for the latter, especially when the
-user names subtasks explicitly; ordinary `create_agent` retains its hidden collaborator role.
+Broad creation guidance encouraged user-visible subtasks for small steps. Compact guidance now
+reserves `create_subtask` for substantial, distinct workstreams, such as changes across projects,
+or explicit subtask requests. Small steps stay inline; ordinary `create_agent` handles hidden
+internal work such as research. Second-level subtasks should usually be explicitly requested by
+the user. Eligibility and depth enforcement are unchanged.
 
 ## Spawn rows describe resolved execution, not task titles
 

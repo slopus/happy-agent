@@ -71,7 +71,7 @@ function createAgentDescription(
             })`,
     );
     return [
-        "Create a hidden collaborator for an internal part of the work that needs no user collaboration, such as research. For bots and subtasks, prefer create_subtask by default for delegated work the user may collaborate on; an explicit request for a subtask must use create_subtask within its eligibility and depth limits.",
+        "Create a hidden collaborator for internal work, such as research. Bots and subtasks use create_subtask only for substantial, distinct workstreams (e.g. changes across projects) or explicit subtask requests, within eligibility and depth limits. Handle small steps inline. Usually create second-level subtasks only on explicit user request.",
         "",
         "The collaborator works on its own. This call returns as soon as the task is delivered, and anything the collaborator has to say arrives later as a message — nothing here waits for it.",
         `One root agent tree may contain at most ${maxCollaborators} ordinary collaborators. Reuse one with send_agent_message after reaching the limit. The maximum depth is ${maxCollaborationDepth} agents including the root.`,

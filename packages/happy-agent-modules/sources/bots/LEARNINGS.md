@@ -1,11 +1,13 @@
 # Bots — learnings
 
-## Bots prefer user-interactive subtasks for delegated work
+## Bots reserve subtasks for substantial workstreams
 
-Bot identity prompts previously left delegation entirely to generic subagent guidance. They now
-prefer `create_subtask` for work the user may collaborate on, honor explicit subtask requests,
-and reserve hidden subagents for internal pieces such as research. Bots coordinate through
-existing messages and archive direct subtasks with `archive_subtask`, without awaiting them.
+Broad delegation guidance encouraged too many small or nested subtasks. Compact bot prompts now
+reserve `create_subtask` for substantial, distinct workstreams, such as changes across projects,
+and honor explicit subtask requests. Small steps stay inline; hidden subagents handle internal
+research. Second-level subtasks should usually be explicitly requested by the user. These are
+prompt defaults, not runtime restrictions. Bots coordinate through existing messages and archive
+direct subtasks with `archive_subtask`, without awaiting them.
 
 ## Windows bots coordinate WSL as a separate remote installation
 
