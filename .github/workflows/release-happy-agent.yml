@@ -32,6 +32,9 @@ env:
 
 jobs:
     windows:
+        permissions:
+            contents: read
+            id-token: write
         needs: verify
         uses: ./.github/workflows/build-windows.yml
         with:

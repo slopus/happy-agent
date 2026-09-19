@@ -64,6 +64,9 @@ jobs:
               run: pnpm --filter @slopus/happy-agent-compute test:live:docker
 
     windows:
+        permissions:
+            contents: read
+            id-token: write
         if: ${{ !inputs.services_only }}
         uses: ./.github/workflows/build-windows.yml
         with:

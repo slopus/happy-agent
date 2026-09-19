@@ -1,7 +1,8 @@
 import { existsSync, readFileSync, realpathSync, readdirSync } from "node:fs";
-import { mkdir } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
 import { createRequire, type Require } from "node:module";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, extname, join, resolve } from "node:path";
 
 import { resolveBinaryVersion } from "./resolveBinaryVersion.js";
 import { resolveTailcatBinaryAsset } from "./resolveTailcatBinaryAsset.js";
@@ -110,6 +111,9 @@ async function main(): Promise<void> {
 async function buildTarget(target: BinaryTarget): Promise<void> {
     const tailcatSource = resolveTailcatBinaryAsset(happyAgentRoot, target);
     const assets = resolveBinaryAssets(target, tailcatSource);
+    if (target.platform === "win32" && process.env.HAPPY_WINDOWS_SIGNING_ENABLED === "true") {
+        await signWindowsAssets(assets.assets);
+    }
     const adapters = resolveSourceAdapters(target);
     const appliedAdapters = new Set<string>();
     const outfile = join(
@@ -172,6 +176,36 @@ async function buildTarget(target: BinaryTarget): Promise<void> {
         throw new Error(`The ${target.key} build did not apply adapters: ${missing.join(", ")}.`);
     }
     console.log(`Created ${outfile}`);
+}
+
+async function signWindowsAssets(assets: EmbeddedAsset[]): Promise<void> {
+    if (process.platform !== "win32") throw new Error("Windows signing requires a Windows host.");
+    // Stage private copies: never change dependencies, build caches, or vendor signatures.
+    const staging = await mkdtemp(join(happyAgentRoot, "dist", "windows-signing-"));
+    for (const [index, entry] of assets.entries()) {
+        if (
+            !entry.source ||
+            ![".exe", ".dll", ".node"].includes(extname(entry.source).toLowerCase())
+        ) {
+            continue;
+        }
+        const destination = join(staging, `${index}-${basename(entry.source)}`);
+        await copyFile(entry.source, destination);
+        entry.source = destination;
+    }
+    execFileSync(
+        "pwsh.exe",
+        [
+            "-NoProfile",
+            "-NonInteractive",
+            "-File",
+            join(happyAgentRoot, "..", "..", "scripts", "sign-windows-files.ps1"),
+            "-Directory",
+            staging,
+            "-PreserveExistingSignatures",
+        ],
+        { stdio: "inherit", windowsHide: true },
+    );
 }
 
 function selectTargets(arguments_: readonly string[]): readonly BinaryTarget[] {
