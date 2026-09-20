@@ -32,7 +32,11 @@ export async function serviceApiHarness() {
         inert,
         inert,
         inert,
-        { enabled: false, onProfileUpdated: () => () => {} } as never,
+        {
+            enabled: false,
+            onProfileUpdated: () => () => {},
+            onDraftUpdated: () => () => {},
+        } as never,
         inert,
         inert,
         undefined,

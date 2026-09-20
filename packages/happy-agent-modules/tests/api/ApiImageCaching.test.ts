@@ -108,6 +108,7 @@ async function createFixture(teamMode = false) {
     const team = {
         enabled: teamMode,
         onProfileUpdated: subscribe,
+        onDraftUpdated: subscribe,
         getCurrentUserPhoto: async () => asset(),
         authenticate: async (ctx: Context, authorization: string) => {
             if (authorization !== `Bearer ${token}`) throw new TeamAuthenticationError();

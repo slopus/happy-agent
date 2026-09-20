@@ -7,7 +7,6 @@ import type { Socket } from "node:net";
 import { dirname, join } from "node:path";
 import { ConnectionsModule, RemoteConnectionError } from "../connections/index.js";
 import { GlobalSkillsModule, GlobalSkillsError } from "../skills/index.js";
-import { queryTeamDraft, saveTeamDraft } from "./persistence/teamDraft.js";
 import { teamDraftMigration } from "./persistence/migrations/001-team-drafts.js";
 
 import { createId } from "@paralleldrive/cuid2";
@@ -1679,6 +1678,14 @@ export class ApiModule implements AgentModule {
                 // out of the shared journal while identifying exactly which user became stale.
                 this.#journal.append("profile.updated", { userId: event.user.id });
             }),
+            this.#team.onDraftUpdated((_eventCtx, event) => {
+                this.#journal.append(
+                    "agent.draft.updated",
+                    { agentId: event.agentId, draft: event.draft },
+                    Date.now(),
+                    event.userId,
+                );
+            }),
             this.#cloud.onUpdated((_eventCtx, cloud) => {
                 this.#journal.append("cloud.updated", { cloud }, cloud.updatedAt);
             }),
@@ -3057,40 +3064,38 @@ export class ApiModule implements AgentModule {
                     const draft = await this.#withMutationId(
                         body.mutationId,
                         async () =>
-                            await ctx.inTx(async (txCtx) => {
-                                const saved = await saveTeamDraft(txCtx, agentId, userId, body);
-                                if (saved.changed) {
-                                    afterCommit(txCtx, () => {
-                                        this.#journal.append(
-                                            "agent.draft.updated",
-                                            { agentId, draft: saved.draft },
-                                            Date.now(),
-                                            userId,
-                                        );
-                                    });
-                                }
-                                return saved.draft;
-                            }),
+                            (
+                                await this.#team.saveDraft(ctx, agentId, userId, {
+                                    draft: body.draft,
+                                    ...(body.updatedAt === undefined
+                                        ? {}
+                                        : { updatedAt: body.updatedAt }),
+                                })
+                            ).draft,
                     );
                     sendJson(response, 200, { draft });
                     return true;
                 }
-                const config = await this.#agentSystem().config(ctx, agentId);
-                if (config === undefined) throw notFound("The agent was not found.");
-                const storedAt =
-                    typeof config.metadata?.["draftUpdatedAt"] === "number"
-                        ? config.metadata["draftUpdatedAt"]
-                        : -1;
-                if (body.updatedAt === undefined || body.updatedAt >= storedAt) {
-                    await this.#withMutationId(
-                        body.mutationId,
-                        async () =>
-                            await this.#updateAgentMetadata(ctx, agentId, {
+                // Happy writes these same two fields from its own socket, so rejecting a stale
+                // write and performing it — including the version bump's own read — is one
+                // decision.
+                await this.#withMutationId(
+                    body.mutationId,
+                    async () =>
+                        await ctx.inTx(async (txCtx) => {
+                            const config = await this.#agentSystem().config(txCtx, agentId);
+                            if (config === undefined) throw notFound("The agent was not found.");
+                            const storedAt =
+                                typeof config.metadata?.["draftUpdatedAt"] === "number"
+                                    ? config.metadata["draftUpdatedAt"]
+                                    : -1;
+                            if (body.updatedAt !== undefined && body.updatedAt < storedAt) return;
+                            await this.#updateAgentMetadata(txCtx, agentId, {
                                 draft: body.draft,
                                 draftUpdatedAt: body.updatedAt ?? Date.now(),
-                            }),
-                    );
-                }
+                            });
+                        }),
+                );
                 sendJson(response, 200, { draft: await this.#agentDraft(ctx, agentId) });
                 return true;
             }
@@ -3448,7 +3453,7 @@ export class ApiModule implements AgentModule {
         if (this.#team.enabled) {
             const userId = teamUser(ctx)?.id;
             if (userId === undefined) throw new ApiError(401, "unauthorized", "Unauthorized");
-            return await queryTeamDraft(ctx, agentId, userId);
+            return await this.#team.draft(ctx, agentId, userId);
         }
         const value = config.metadata?.["draft"] ?? null;
         const updatedAt = config.metadata?.["draftUpdatedAt"];

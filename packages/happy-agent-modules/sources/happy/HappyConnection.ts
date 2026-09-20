@@ -5,10 +5,13 @@ import { basename, resolve } from "node:path";
 import { createId } from "@paralleldrive/cuid2";
 import { Type, type Static } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
-import type { HappyIntegration, HappyIntegrationError } from "@slopus/happy-agent-client";
+import type {
+    AgentDraftSnapshot,
+    HappyIntegration,
+    HappyIntegrationError,
+} from "@slopus/happy-agent-client";
 import {
     agentDatabase,
-    agentPermissionModeSchema,
     currentAgentEnvironment,
     withAgentDatabase,
     type AgentBaseMessageOptions,
@@ -70,6 +73,12 @@ import {
     type HappySpawnRequest,
 } from "./HappySession.js";
 import { HappySessionClient, type HappySessionOperations } from "./HappySessionClient.js";
+import {
+    happyComposerDraftFromConfig,
+    happyComposerDraftSnapshotSchema,
+    happyComposerModeSchema,
+    happyLastModeFromConfig,
+} from "./HappyComposerDraft.js";
 import { createHappySyncDatabase } from "./HappySyncDatabase.js";
 import { createHappyProjectSyncDatabase } from "./HappyProjectSyncDatabase.js";
 import { HappyMessageMapper } from "./mapHappyMessages.js";
@@ -102,10 +111,8 @@ const GIT_TRACK_RENEWAL_MS = 60_000;
 
 const happySelectionSchema = Type.Object(
     {
-        effort: Type.String({ minLength: 1, maxLength: 64 }),
-        modelId: Type.String({ minLength: 1, maxLength: 256 }),
-        permissionMode: agentPermissionModeSchema,
-        providerId: Type.String({ minLength: 1, maxLength: 256 }),
+        ...happyComposerModeSchema.properties,
+        serviceTier: Type.Optional(happyComposerModeSchema.properties.serviceTier),
     },
     { additionalProperties: false },
 );
@@ -129,12 +136,8 @@ interface HappySelectionModel {
     readonly effortLevels: readonly string[];
     readonly id: string;
     readonly providerId: string;
+    readonly serviceTiers?: readonly string[];
 }
-
-const happyMetadataSchema = Type.Object(
-    { happy: happySelectionSchema },
-    { additionalProperties: true },
-);
 
 interface ConnectedAgent {
     readonly client: HappySessionClient;
@@ -191,6 +194,8 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
     readonly #connectionOwner: TeamUser | undefined;
     readonly #team: TeamModule | undefined;
     readonly #integrationListeners = new Set<HappyIntegrationListener>();
+    /** Releases this connection's interest in its own user's drafts when it stops. */
+    #unsubscribeDrafts: (() => void) | undefined;
     readonly #served = new Map<string, HappySpawnResult>();
     readonly #tasks = new Set<Promise<void>>();
     readonly #archivingAgents = new Map<string, Promise<void>>();
@@ -340,6 +345,15 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
             this.#context = this.#team.connectionContext(this.#context, this.#connectionOwner);
         }
         this.#agentSystem = agents;
+        const draftOwner = this.#draftOwner();
+        if (draftOwner !== undefined) {
+            // Another of this person's devices editing the same draft is a change this session
+            // has to republish. Somebody else's draft is not ours to see, so it is ignored here.
+            this.#unsubscribeDrafts = draftOwner.team.onDraftUpdated((_ctx, updated) => {
+                if (updated.userId !== draftOwner.userId) return;
+                this.#agents.get(updated.agentId)?.client.kick();
+            });
+        }
         return { afterStart: async (startedCtx) => await this.#connect(startedCtx) };
     }
 
@@ -484,6 +498,8 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
     /** Stops talking to Happy, which the daemon does as it shuts down. */
     async stop(): Promise<void> {
         this.#stopping = true;
+        this.#unsubscribeDrafts?.();
+        this.#unsubscribeDrafts = undefined;
         this.#pairingGeneration += 1;
         this.#integrationStart = undefined;
         const pairing = this.#pairing;
@@ -1104,6 +1120,57 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
         return await this.#snapshot(ctx, agentId, config);
     }
 
+    /**
+     * The composer draft this connection speaks for. A personal connection sees only its own
+     * user's draft, which is private to them; a standalone connection sees the one the desktop
+     * API keeps in the agent's configuration.
+     */
+    async #draft(ctx: Context, agentId: string, config: AgentConfig): Promise<AgentDraftSnapshot> {
+        const owner = this.#draftOwner();
+        if (owner === undefined) return happyComposerDraftFromConfig(config);
+        return await owner.team.draft(ctx, agentId, owner.userId);
+    }
+
+    /** The user whose private drafts this connection reads and writes, when there is one. */
+    #draftOwner(): { readonly team: TeamModule; readonly userId: string } | undefined {
+        if (this.#team === undefined || this.#connectionOwner === undefined) return undefined;
+        return { team: this.#team, userId: this.#connectionOwner.id };
+    }
+
+    /** Makes a Happy-side composer edit part of Happy Agent's authoritative draft. */
+    async saveDraft(ctx: Context, agentId: string, draft: AgentDraftSnapshot): Promise<void> {
+        if (!Value.Check(happyComposerDraftSnapshotSchema, draft) || draft.updatedAt === null) {
+            ctx.log.debug("Happy ignored a composer draft it could not read.", {
+                agentId,
+                updatedAt: draft.updatedAt,
+            });
+            return;
+        }
+        const updatedAt = draft.updatedAt;
+        const owner = this.#draftOwner();
+        if (owner !== undefined) {
+            await owner.team.saveDraft(ctx, agentId, owner.userId, {
+                draft: draft.value,
+                updatedAt,
+            });
+            return;
+        }
+        const system = this.#system();
+        // The desktop API writes these same two fields, so comparing and writing has to be one
+        // decision: otherwise a newer draft landing in between is compared against and then lost.
+        await ctx.inTx(async (txCtx) => {
+            const config = await system.config(txCtx, agentId);
+            if (config === undefined) return;
+            const current = happyComposerDraftFromConfig(config);
+            if (current.updatedAt !== null && updatedAt < current.updatedAt) return;
+            if (Value.Equal(draft, current)) return;
+            await system.updateMetadata(txCtx, agentId, {
+                draft: draft.value as never,
+                draftUpdatedAt: updatedAt,
+            });
+        });
+    }
+
     /** Delivers what a person said on the phone, and what they chose to say it with. */
     async submit(ctx: Context, agentId: string, message: HappyInboundMessage): Promise<void> {
         const system = this.#system();
@@ -1111,14 +1178,25 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
         if (config === undefined) {
             throw new Error(`No agent exists for Happy session "${agentId}".`);
         }
-        const current = selectionFromConfig(config, this.#defaultSelection());
+        const current = selectionFrom(
+            await this.#draft(ctx, agentId, config),
+            config,
+            this.#defaultSelection(),
+        );
         let next: HappySelection;
         try {
+            const requestedServiceTier =
+                message.selection.serviceTier === undefined
+                    ? current.serviceTier
+                    : message.selection.serviceTier;
             next = checkedSelection(this.#config.models, {
                 effort: message.selection.effort ?? current.effort,
                 modelId: message.selection.modelId ?? current.modelId,
                 permissionMode: message.selection.permissionMode ?? current.permissionMode,
                 providerId: message.selection.providerId ?? current.providerId,
+                ...(requestedServiceTier === undefined
+                    ? {}
+                    : { serviceTier: requestedServiceTier }),
             });
         } catch (cause) {
             throw new HappyMessageRefused(
@@ -1167,7 +1245,11 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
             throw new Error("Happy Agent rejected the phone's message.", { cause });
         }
         this.#scheduling.interruptWaits(ctx, agentId);
-        await system.updateMetadata(ctx, agentId, { happy: next });
+        // Only an accepted message writes the last sent mode, and it stays with the agent rather
+        // than the sender: it is what every composer opened on this session falls back to.
+        await system.updateMetadata(ctx, agentId, {
+            lastMode: modeForSelection(next) as never,
+        });
     }
 
     /** Stops whatever the agent is doing. */
@@ -1267,10 +1349,19 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
         // refusal must leave no agent behind: an existing configuration is what a later retry reads
         // to decide the session is already made.
         if (existing === undefined) {
+            const draftOwner = this.#draftOwner();
             await ctx.inTx(async (txCtx) => {
-                await system.create(txCtx, agentConfigFor(cwd, selection, owner), {
-                    id: request.sessionId,
-                });
+                await system.create(
+                    txCtx,
+                    agentConfigFor(cwd, selection, owner, draftOwner === undefined),
+                    { id: request.sessionId },
+                );
+                if (draftOwner !== undefined) {
+                    await draftOwner.team.saveDraft(txCtx, request.sessionId, draftOwner.userId, {
+                        draft: { ...modeForSelection(selection), text: "" },
+                        updatedAt: Date.now(),
+                    });
+                }
                 await this.#attachSpawnOwner(txCtx, request.sessionId, owner);
             });
         } else if (typeof existing.metadata?.archivedAt === "number") {
@@ -1812,7 +1903,8 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
         if (cwd === undefined) {
             throw new Error(`Agent "${agentId}" has no working directory.`);
         }
-        const selection = selectionFromConfig(config, this.#defaultSelection());
+        const draft = await this.#draft(ctx, agentId, config);
+        const selection = selectionFrom(draft, config, this.#defaultSelection());
         const owner = await this.#owner(ctx, agentId);
         const git =
             owner.project === undefined
@@ -1855,6 +1947,8 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
             ...(owner.avatarVersion === undefined ? {} : { avatarVersion: owner.avatarVersion }),
             archived: typeof config.metadata?.archivedAt === "number",
             cwd,
+            draft,
+            lastMode: happyLastModeFromConfig(config),
             effort: selection.effort,
             ...(git === undefined ? {} : { git }),
             ...(owner.gitBranch === undefined ? {} : { gitBranch: owner.gitBranch }),
@@ -2015,10 +2109,16 @@ function agentConfigFor(
     cwd: string,
     selection: HappySelection,
     owner: { readonly projectId: string; readonly workspaceId?: string },
+    seedDraft: boolean,
 ): AgentConfig {
     return {
         environment: { ...currentAgentEnvironment(), workingDirectory: cwd },
-        metadata: { happy: selection },
+        // The choices made on the creation screen are kept as an ordinary empty-text draft, so
+        // they survive through the same path every later edit takes. A personal connection keeps
+        // that seed in its own user's private draft instead of here.
+        metadata: seedDraft
+            ? { draft: { ...modeForSelection(selection), text: "" }, draftUpdatedAt: Date.now() }
+            : {},
         modules: {
             compute: {
                 cwd,
@@ -2086,6 +2186,13 @@ function checkedSelection(
     if (!model.effortLevels.includes(selection.effort)) {
         throw new Error("That reasoning level is not available for this model.");
     }
+    if (
+        selection.serviceTier !== undefined &&
+        selection.serviceTier !== null &&
+        !(model.serviceTiers ?? []).includes(selection.serviceTier)
+    ) {
+        throw new Error("That service tier is not available for this model.");
+    }
     return selection;
 }
 
@@ -2152,9 +2259,9 @@ function messageOptionsFor(selection: HappySelection): AgentBaseMessageOptions {
         model: selection.modelId,
         permissionMode: selection.permissionMode,
         provider: selection.providerId,
-        // The phone has no tier selector, and the stamped mode above says null. Send the explicit
-        // clear so a stale persisted tier cannot outlive the mode the message claims to run with.
-        serviceTier: null,
+        // Always stated, never omitted: an omitted option tells Agent Base to keep whatever tier
+        // was persisted before, which would outlive the mode this message claims to run with.
+        serviceTier: (selection.serviceTier ?? null) as never,
     };
 }
 
@@ -2164,12 +2271,22 @@ function modeForSelection(selection: HappySelection): HistoryMessageMode {
         modelId: selection.modelId,
         permissionMode: selection.permissionMode,
         providerId: selection.providerId,
-        serviceTier: null,
+        serviceTier: selection.serviceTier ?? null,
     };
 }
 
-function selectionFromConfig(config: AgentConfig, fallback: HappySelection): HappySelection {
-    const metadata = config.metadata;
-    if (!Value.Check(happyMetadataSchema, metadata)) return fallback;
-    return metadata.happy;
+/**
+ * The composer selection a session runs with: the draft the person is looking at, then the mode
+ * their last accepted message ran with, then this connection's defaults.
+ */
+function selectionFrom(
+    draft: AgentDraftSnapshot,
+    config: AgentConfig,
+    fallback: HappySelection,
+): HappySelection {
+    if (draft.value !== null) {
+        const { text: _text, ...mode } = draft.value;
+        return mode;
+    }
+    return happyLastModeFromConfig(config) ?? fallback;
 }

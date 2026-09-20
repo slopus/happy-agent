@@ -107,6 +107,7 @@ describe("reading a message from Happy", () => {
                     model: "gpt-5.6-sol",
                     modelProviderId: "codex",
                     permissionMode: "read_only",
+                    serviceTier: "priority",
                     thinkingLevel: "high",
                 },
                 role: "user",
@@ -118,6 +119,7 @@ describe("reading a message from Happy", () => {
                 modelId: "gpt-5.6-sol",
                 permissionMode: "read_only",
                 providerId: "codex",
+                serviceTier: "priority",
             },
             text: "go",
         });

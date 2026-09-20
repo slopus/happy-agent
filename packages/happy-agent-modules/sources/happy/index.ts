@@ -52,6 +52,7 @@ export { HappyMessageMapper } from "./mapHappyMessages.js";
 export { readHappyRemoteInput } from "./readHappyRemoteInput.js";
 export { resolveHappyUserInputAnswers } from "./resolveHappyUserInputAnswers.js";
 export { describeHappyProvider, type HappyProviderDescriptor } from "./describeHappyProvider.js";
+export type { HappyComposerDraft } from "./HappyComposerDraft.js";
 export { HAPPY_PERMISSION_MODES, type HappyPermissionModeKind } from "./happyPermissionModes.js";
 export {
     HappyMessageRefused,

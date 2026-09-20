@@ -232,6 +232,88 @@ Failures are `{ success: false, code, error }`; codes are `invalid`, `forbidden`
 `too_large`, `unavailable`, or `unsupported`. Only a ready comparison with zero changed files means
 “No changes.” A genuine zero-byte file succeeds; absence or failure does not. This adds no HTTP route.
 
+## Composer synchronization
+
+Encrypted Happy session metadata uses the same composer fields as Happy Agent's local storage:
+
+```ts
+type HappyComposerDraft = {
+    text: string;
+    providerId: string;
+    modelId: string;
+    effort: string;
+    serviceTier: string | null;
+    permissionMode: "read_only" | "workspace_write" | "auto" | "full_access";
+};
+
+// Composer fields alongside the session's identity, catalogs, and other metadata.
+type HappyComposerState = {
+    draft: HappyComposerDraft | null;
+    draftUpdatedAt: number | null;
+    lastMode: Omit<HappyComposerDraft, "text"> | null;
+};
+```
+
+Happy Agent owns the durable state. Mobile updates `draft` and `draftUpdatedAt` together through
+Happy's existing encrypted `update-metadata` compare-and-swap. The adapter receives `update-session`
+broadcasts, applies newer drafts to the same storage the desktop API reads, and republishes local
+changes. Older timestamps are ignored; equal timestamps have the API's last-write-wins behavior.
+In team mode, that storage belongs to the authenticated connection owner: another member's text,
+clear timestamp, and draft notifications are never included in their session. The Team module owns
+the private storage shared by the API and Happy connections; standalone agents use agent metadata.
+`lastMode` is read-only to metadata clients: it changes only when Happy Agent accepts a message.
+Metadata comparisons use content, not JSON key order, so parsing on the phone does not trigger
+an identical daemon write-back. Each connection still forces its initial compare-and-swap.
+
+Mobile implementation rules:
+
+- Update the mobile metadata schema to accept the flat composer fields and stop requiring removed
+  selection fields, including `session.permissionMode`. Older phone builds still parse and display
+  the current mode through the deprecated read-only mirrors; they cannot write the composer.
+- Initialize an opened composer from `draft`, then `lastMode`, then defaults. Preserve active local
+  edits while their writes are pending; metadata echoes must not reset typing.
+- Save the entire draft, preserving whitespace and fields the UI does not expose. Debounce typing
+  by 250 ms, matching the desktop; picker changes and empty-text edits save immediately. Generate a
+  monotonic timestamp with `Math.max(Date.now(), (lastSeenUpdatedAt ?? 0) + 1)` at the edit, not when
+  its timer fires.
+- Persist the pending draft locally as well as to the server, so a typed-while-offline draft survives
+  restart. On cold start, keep whichever of the local and remote drafts has the newer stamp; if the
+  local one wins, write it when the session connects. Store each session separately so typing does
+  not rewrite every session's draft. Do not persist `lastMode`.
+- Serialize writes per session. On a metadata version conflict, merge onto the newest metadata;
+  adopt a remote draft with an equal or newer timestamp rather than resending stale local text.
+  Equal timestamps are not proof of an echo: different devices can choose the same timestamp.
+- Retry failed writes while connected, backing off from one second to at most 30 seconds using
+  the same per-session timer. Each retry reads the latest draft and stops if it has caught up,
+  the session was removed, or the connection is down. New edits keep their normal save timing;
+  reconnect sends any locally-ahead draft.
+- An empty-text draft keeps the picker state. A deliberate send/discard uses `draft: null` with a
+  new `draftUpdatedAt`. Cancel pending typing writes before clearing. On send, capture the full mode
+  before clearing and include it in message metadata (`model`, `modelProviderId`, `thinkingLevel`,
+  `permissionMode`, `serviceTier`). Clear only the composer revision that was sent; a picker edit
+  during an upload counts as a newer edit even if the text is unchanged. Failures before local
+  send acceptance leave the draft intact.
+- Retain the captured mode locally through the clear's echo, then refresh it when `lastMode`
+  changes. A reopened composer uses the current session selection. Remote updates and clears
+  are not local edits: React cleanup must flush only genuinely pending typing. Attachments stay
+  local; they are not part of the desktop draft contract.
+
+Every edit or clear must carry a nonnegative integer `draftUpdatedAt`; `null` means never edited.
+Text may contain up to 1,000,000 characters. Supporting that limit through encrypted base64 metadata
+requires Happy Server's Socket.IO packet limit to accommodate it (8 MiB covers the worst case).
+
+Picker writes in the old `modelMode`, `effortLevel`, and `permissionMode` keys are not accepted;
+the daemon deletes them on every republish. The read-only display mirrors `currentModelCode`,
+`currentModelProviderId`, `currentThoughtLevelCode`, `currentOperatingModeCode`, `permissionMode`,
+`session.permissionMode`, and `provider` are still published, marked deprecated in code, so older
+phone builds keep parsing the session and showing the provider icon. They are removed once the
+phone reads the composer fields. Available choices remain in `models`, `providers`, and
+`operatingModes`.
+The public Happy Agent API response shape is unchanged: its draft responses wrap the same state as
+`{ draft: { value, updatedAt } }`. Happy-created agents start with an empty-text draft containing
+the creation-screen mode and a creation timestamp; `lastMode` remains null until the first accepted
+message. Other fresh agents and subagents start with a null draft and timestamp.
+
 ## Machine identity
 
 Each daemon owns a machine identity so Happy can tell two daemons on one

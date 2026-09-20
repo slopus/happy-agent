@@ -1,8 +1,10 @@
-import { Type } from "@sinclair/typebox";
+import { Type, type Static } from "@sinclair/typebox";
 import type { BotAvatarAsset } from "../bots/index.js";
 import { HappySessionAvatarClient, happySessionAvatarSchema } from "./HappySessionAvatar.js";
 import { Value } from "@sinclair/typebox/value";
 import type { Context } from "@steve.kite/stdlib";
+import type { AgentDraftSnapshot } from "@slopus/happy-agent-client";
+import { isAgentPermissionMode } from "@slopus/happy-agent-base";
 import type { ProviderUsage } from "@slopus/happy-providers";
 
 import type { UserInputRequest } from "../userInput/index.js";
@@ -41,7 +43,6 @@ import {
 import type { HappySyncSession } from "./HappySync.js";
 import type { HappySyncDatabase } from "./HappySyncDatabase.js";
 import { readHappyRemoteInput } from "./readHappyRemoteInput.js";
-import { isAgentPermissionMode } from "@slopus/happy-agent-base";
 import {
     HAPPY_RPC_MAX_JSON_BYTES,
     happyReadFailure,
@@ -51,6 +52,7 @@ import {
     type HappyReadFileAtRevisionRequest,
     type HappyReadFileAtRevisionResponse,
 } from "./HappyWorkspaceRead.js";
+import { happyComposerDraftSnapshotSchema } from "./HappyComposerDraft.js";
 
 const HTTP_TIMEOUT_MS = 15_000;
 const RETRY_DELAY_MS = 2_000;
@@ -125,6 +127,9 @@ export interface HappySessionOperations {
     /** One session as Happy needs to describe it, or nothing when it is gone. */
     session: (ctx: Context, agentId: string) => Promise<HappySessionSnapshot | undefined>;
 
+    /** Makes a Happy-side composer edit part of Happy Agent's authoritative draft. */
+    saveDraft: (ctx: Context, agentId: string, draft: AgentDraftSnapshot) => Promise<void>;
+
     /** Delivers what a person said on the phone, and what they chose to say it with. */
     submit: (ctx: Context, agentId: string, message: HappyInboundMessage) => Promise<void>;
 }
@@ -176,6 +181,30 @@ const acknowledgementSchema = Type.Object(
     { additionalProperties: true },
 );
 
+const encryptedMetadataUpdateSchema = Type.Object(
+    {
+        value: Type.String(),
+        version: Type.Integer({ minimum: 0 }),
+    },
+    { additionalProperties: true },
+);
+
+type EncryptedMetadataUpdate = Static<typeof encryptedMetadataUpdateSchema>;
+
+const sessionMetadataUpdateSchema = Type.Object(
+    {
+        body: Type.Object(
+            {
+                id: Type.String({ minLength: 1 }),
+                metadata: Type.Optional(Type.Union([Type.Null(), encryptedMetadataUpdateSchema])),
+                t: Type.Literal("update-session"),
+            },
+            { additionalProperties: true },
+        ),
+    },
+    { additionalProperties: true },
+);
+
 const downloadSchema = Type.Object(
     { downloadUrl: Type.String({ minLength: 1 }) },
     { additionalProperties: true },
@@ -215,11 +244,17 @@ export class HappySessionClient {
     #closed = false;
     // A new session is created with no agent state, so nothing is owed until a question arrives.
     #lastAgentState: string | undefined = "null";
-    #lastMetadata: string | undefined;
+    /**
+     * The metadata Happy is known to hold, compared by content rather than bytes: the phone
+     * re-serializes the whole object through its own schema, so its copy of the same facts comes
+     * back with keys in another order, and that must not read as a change to publish.
+     */
+    #lastMetadata: Record<string, unknown> | undefined;
     #metadataBase: Record<string, unknown> = {};
     #metadataVersion: number | undefined;
     #projectIdSent: string | undefined;
     #needsAnotherSync = false;
+    #pendingMetadataUpdate: EncryptedMetadataUpdate | undefined;
     #retryTimer: NodeJS.Timeout | undefined;
     #sentSessionEnd = false;
     #socket: HappySocket | undefined;
@@ -307,6 +342,7 @@ export class HappySessionClient {
                 this.#ensureSocket(state.remoteSessionId);
                 await this.#flushOutbox(state);
                 if (!this.#archiving) await this.#fetchIncoming(state);
+                await this.#applyPendingMetadata(state);
                 const snapshot = await this.#session();
                 await this.#syncMetadata(state, snapshot);
                 this.#sendKeepAlive(state.remoteSessionId, snapshot);
@@ -460,10 +496,13 @@ export class HappySessionClient {
             remote.agentState === undefined || remote.agentState === null ? "null" : undefined;
         if (remote.metadata !== undefined) {
             const decoded = this.#decode(current, remote.metadata);
-            if (Value.Check(recordSchema, decoded)) this.#metadataBase = decoded;
+            if (Value.Check(recordSchema, decoded)) {
+                await this.#applyRemoteComposerState(decoded);
+                this.#metadataBase = decoded;
+            }
         }
         if (remote.metadata === encoded) {
-            this.#lastMetadata = JSON.stringify(metadata);
+            this.#lastMetadata = metadata;
             this.#metadataBase = { ...metadata };
         }
         await ctx.inTx(async (txCtx) => {
@@ -496,12 +535,25 @@ export class HappySessionClient {
             },
         );
         socket.on("connect", () => {
+            // Happy does not replay missed updates, including edits between HTTP hydration and
+            // the first connection. A forced CAS retrieves them through a version conflict.
+            this.#lastMetadata = undefined;
             for (const method of HAPPY_SESSION_RPC_METHODS) {
                 socket.emit("rpc-register", { method: `${remoteSessionId}:${method}` });
             }
             this.kick();
         });
-        socket.on("update", () => {
+        socket.on("update", (value: unknown) => {
+            if (
+                Value.Check(sessionMetadataUpdateSchema, value) &&
+                value.body.id === remoteSessionId &&
+                value.body.metadata !== undefined &&
+                value.body.metadata !== null &&
+                (this.#pendingMetadataUpdate === undefined ||
+                    value.body.metadata.version > this.#pendingMetadataUpdate.version)
+            ) {
+                this.#pendingMetadataUpdate = value.body.metadata;
+            }
             this.kick();
         });
         socket.on("rpc-request", (request: unknown, callback: (response: string) => void) => {
@@ -630,6 +682,9 @@ export class HappySessionClient {
                     ...(incoming.selection.providerId === undefined
                         ? {}
                         : { providerId: incoming.selection.providerId }),
+                    ...(incoming.selection.serviceTier === undefined
+                        ? {}
+                        : { serviceTier: incoming.selection.serviceTier }),
                 },
                 text: incoming.text,
                 ...(incoming.content === undefined ? {} : { content: incoming.content }),
@@ -828,13 +883,9 @@ export class HappySessionClient {
 
     async #syncMetadata(state: HappySyncSession, snapshot: HappySessionSnapshot): Promise<void> {
         if (this.#socket?.connected === false || this.#metadataVersion === undefined) return;
-        const rigMetadata = this.#metadataFor(snapshot);
-        // `activity` is dropped rather than merged forward: an older Happy Agent wrote a shape the
-        // phone reserves for its own counters, and one key of the wrong shape fails the phone's
-        // whole metadata parse.
+        let rigMetadata = this.#metadataFor(snapshot);
         let metadata = composeSessionMetadata(this.#metadataBase, rigMetadata);
-        let serialized = JSON.stringify(metadata);
-        if (serialized === this.#lastMetadata) return;
+        if (this.#lastMetadata !== undefined && Value.Equal(metadata, this.#lastMetadata)) return;
         for (let attempt = 0; attempt < 3; attempt += 1) {
             const answer = await this.#emitWithAck("update-metadata", {
                 expectedVersion: this.#metadataVersion,
@@ -846,7 +897,7 @@ export class HappySessionClient {
             }
             if (answer.result === "success" && answer.version !== undefined) {
                 this.#metadataVersion = answer.version;
-                this.#lastMetadata = serialized;
+                this.#lastMetadata = metadata;
                 this.#metadataBase = metadata;
                 return;
             }
@@ -860,15 +911,49 @@ export class HappySessionClient {
                 if (!Value.Check(recordSchema, latest)) {
                     throw new Error("Happy returned metadata Happy Agent could not read.");
                 }
+                await this.#applyRemoteComposerState(latest);
                 this.#metadataVersion = answer.version;
                 this.#metadataBase = latest;
+                rigMetadata = this.#metadataFor(await this.#session());
                 metadata = composeSessionMetadata(latest, rigMetadata);
-                serialized = JSON.stringify(metadata);
                 continue;
             }
             throw new Error("Happy refused the metadata update.");
         }
         throw new Error("Happy metadata kept changing underneath Happy Agent.");
+    }
+
+    /** Takes the newest metadata broadcast before this daemon writes its own projection back. */
+    async #applyPendingMetadata(state: HappySyncSession): Promise<void> {
+        const pending = this.#pendingMetadataUpdate;
+        if (pending === undefined) return;
+        this.#pendingMetadataUpdate = undefined;
+        if (this.#metadataVersion !== undefined && pending.version <= this.#metadataVersion) return;
+        const latest = this.#decode(state, pending.value);
+        if (!Value.Check(recordSchema, latest)) {
+            throw new Error("Happy returned metadata Happy Agent could not read.");
+        }
+        await this.#applyRemoteComposerState(latest);
+        this.#metadataVersion = pending.version;
+        this.#metadataBase = latest;
+        this.#lastMetadata = latest;
+    }
+
+    /** Only drafts are client-writable; lastMode is derived from accepted messages. */
+    async #applyRemoteComposerState(latest: Record<string, unknown>): Promise<void> {
+        const draft = { value: latest.draft, updatedAt: latest.draftUpdatedAt };
+        if (!Value.Check(happyComposerDraftSnapshotSchema, draft) || draft.updatedAt === null) {
+            this.#options.context.log.debug("Happy ignored a composer draft it could not read.", {
+                agentId: this.#options.agentId,
+                updatedAt: draft.updatedAt,
+            });
+            return;
+        }
+        await this.#options.operations.saveDraft(
+            this.#options.context,
+            this.#options.agentId,
+            draft,
+        );
     }
 
     /**
@@ -1091,10 +1176,7 @@ function composeSessionMetadata(
     base: Record<string, unknown>,
     rigMetadata: Record<string, unknown>,
 ): Record<string, unknown> {
-    const kept = { ...base };
-    delete kept.activity;
-    delete kept.lastUserOrAgentTextMessageAt;
-    const composed = { ...kept, ...rigMetadata };
+    const composed = { ...base, ...rigMetadata };
     if (rigMetadata.bot !== undefined) {
         delete composed.project;
         delete composed.workspace;
@@ -1106,6 +1188,22 @@ function composeSessionMetadata(
             delete composed.lifecycleStateSince;
         }
     }
+    // `activity` and its timestamp are dropped rather than merged forward: an older Happy Agent
+    // wrote a shape the phone reserves for its own counters, and one key of the wrong shape fails
+    // the phone's whole metadata parse. The rest are picker writes from older phone builds and
+    // fields Happy Agent no longer publishes; the deprecated display mirrors it still publishes
+    // are overwritten by `rigMetadata` above.
+    for (const key of [
+        "activity",
+        "lastUserOrAgentTextMessageAt",
+        "happy",
+        "modelMode",
+        "effortLevel",
+        "model",
+        "reasoning",
+        "thoughtLevels",
+    ])
+        delete composed[key];
     if (rigMetadata.git === undefined) delete composed.git;
     if (rigMetadata.lastMeaningfulMessageAt === undefined) {
         delete composed.lastMeaningfulMessageAt;

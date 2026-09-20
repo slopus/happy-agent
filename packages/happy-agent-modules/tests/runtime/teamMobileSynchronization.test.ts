@@ -170,6 +170,73 @@ describe("parallel personal mobile synchronization", () => {
                 },
                 { timeout: 10_000 },
             );
+            // Composer drafts are private per member: each phone mirrors only its owner's.
+            const draft = (text: string) => ({
+                text,
+                providerId: "gym",
+                modelId: "gym/model",
+                effort: "medium",
+                serviceTier: null,
+                permissionMode: "full_access" as const,
+            });
+            const agentId = bot.agent.id;
+            const cursor = (await bob.getEvents()).latestCursor;
+            expect((await bob.getAgentDraft(agentId)).draft).toEqual({
+                value: null,
+                updatedAt: null,
+            });
+            await alice.saveAgentDraft(agentId, { draft: draft("Alice desktop"), updatedAt: 200 });
+            await vi.waitFor(() =>
+                expect(relay.metadata("alice-mobile", bot.id)).toMatchObject({
+                    draft: draft("Alice desktop"),
+                    draftUpdatedAt: 200,
+                }),
+            );
+            expect(relay.metadata("bob-mobile", bot.id).draftUpdatedAt).toBeNull();
+            expect((await bob.getAgentDraft(agentId)).draft).toEqual({
+                value: null,
+                updatedAt: null,
+            });
+            relay.updateMetadata("bob-mobile", bot.id, {
+                draft: draft("Bob phone"),
+                draftUpdatedAt: 300,
+            });
+            await vi.waitFor(async () =>
+                expect((await bob.getAgentDraft(agentId)).draft).toEqual({
+                    value: draft("Bob phone"),
+                    updatedAt: 300,
+                }),
+            );
+            expect((await alice.getAgentDraft(agentId)).draft).toEqual({
+                value: draft("Alice desktop"),
+                updatedAt: 200,
+            });
+            expect(relay.metadata("alice-mobile", bot.id).draftUpdatedAt).toBe(200);
+            // A stale phone write is corrected back over the relay; a newer clear is adopted.
+            relay.updateMetadata("bob-mobile", bot.id, {
+                draft: draft("Bob stale"),
+                draftUpdatedAt: 250,
+            });
+            await vi.waitFor(() =>
+                expect(relay.metadata("bob-mobile", bot.id)).toMatchObject({
+                    draft: draft("Bob phone"),
+                    draftUpdatedAt: 300,
+                }),
+            );
+            relay.updateMetadata("alice-mobile", bot.id, { draft: null, draftUpdatedAt: 400 });
+            await vi.waitFor(async () =>
+                expect((await alice.getAgentDraft(agentId)).draft).toEqual({
+                    value: null,
+                    updatedAt: 400,
+                }),
+            );
+            expect((await bob.getAgentDraft(agentId)).draft).toEqual({
+                value: draft("Bob phone"),
+                updatedAt: 300,
+            });
+            const bobEvents = JSON.stringify((await bob.getEvents({ after: cursor })).events);
+            expect(bobEvents).toContain("Bob phone");
+            expect(bobEvents).not.toContain("Alice desktop");
             const identities = new Map(relay.machines);
             await runtime!.close();
             runtime = undefined;
@@ -188,6 +255,14 @@ describe("parallel personal mobile synchronization", () => {
             expect(
                 [...relay.sessions.values()].filter((session) => session.botId === bot.id),
             ).toHaveLength(2);
+            expect((await alice.getAgentDraft(agentId)).draft).toEqual({
+                value: null,
+                updatedAt: 400,
+            });
+            expect((await bob.getAgentDraft(agentId)).draft).toEqual({
+                value: draft("Bob phone"),
+                updatedAt: 300,
+            });
             relay.rejected.add("alice-mobile");
             await runtime!.close();
             runtime = undefined;

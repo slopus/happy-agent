@@ -499,6 +499,7 @@ async function apiFixture(
                   authenticateIdentity: vi.fn(async (ctx: Context) => ctx),
                   enabled: true,
                   onProfileUpdated: () => () => undefined,
+                  onDraftUpdated: () => () => undefined,
               }
             : undefined;
     const api = createApi(cloud, config, subscriptions, team);
@@ -568,7 +569,11 @@ function createApi(
     cloud: unknown,
     config: unknown,
     subscriptions: unknown,
-    team: unknown = { enabled: false, onProfileUpdated: () => () => undefined },
+    team: unknown = {
+        enabled: false,
+        onProfileUpdated: () => () => undefined,
+        onDraftUpdated: () => () => undefined,
+    },
 ): ApiModule {
     return new ApiModule(
         subscriptions as never,

@@ -19,6 +19,7 @@ it("lets team members read global skills but only the owner change enablement", 
     const team = {
         enabled: true,
         onProfileUpdated: subscribe,
+        onDraftUpdated: subscribe,
         authenticate: async (context: Context, authorization: string) => {
             if (authorization !== "Bearer owner" && authorization !== "Bearer member")
                 throw new TeamAuthenticationError();

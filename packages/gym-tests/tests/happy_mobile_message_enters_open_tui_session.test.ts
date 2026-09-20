@@ -115,11 +115,15 @@ describe("Happy mobile input", () => {
             content: [{ text: "Continue from Happy mobile.", type: "text" }],
             role: "user",
         });
-        // The session publishes with its creation-time mode: the terminal's own mode
-        // selection travels with each message it sends, not with the agent object.
+        // A fresh session has no sent mode. The deprecated display mirrors still carry the
+        // effective default for phone builds that predate the composer fields.
         expect(publishedMetadata).toMatchObject({
             capabilities: { permissionModeSelection: true },
             currentOperatingModeCode: "auto",
+            draft: null,
+            draftUpdatedAt: null,
+            lastMode: null,
+            permissionMode: "auto",
             operatingModes: [
                 { code: "auto", kind: "safe-yolo", value: "Auto" },
                 {
@@ -130,7 +134,6 @@ describe("Happy mobile input", () => {
                 { code: "read_only", kind: "read-only", value: "Read only" },
                 { code: "full_access", kind: "yolo", value: "Full access" },
             ],
-            permissionMode: "auto",
         });
         const stored = await gym.runInContainer("node", [
             "-e",

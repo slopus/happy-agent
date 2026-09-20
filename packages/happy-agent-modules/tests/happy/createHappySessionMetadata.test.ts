@@ -44,6 +44,8 @@ function snapshot(overrides: Partial<HappySessionSnapshot> = {}): HappySessionSn
         agentId: "agent-1",
         archived: false,
         cwd: "/home/steve/projects/rig",
+        draft: { updatedAt: null, value: null },
+        lastMode: null,
         effort: "high",
         modelId: "gpt-5.6-sol",
         permissionMode: "auto",
@@ -84,15 +86,42 @@ describe("describing a Happy Agent session in Happy's own terms", () => {
         expect(published).not.toHaveProperty("workspace");
     });
 
-    it("says what the session is running on", () => {
-        const published = metadata();
-        expect(published.currentModelCode).toBe("gpt-5.6-sol");
-        expect(published.currentModelProviderId).toBe("codex");
-        expect(published.currentThoughtLevelCode).toBe("high");
-        expect(published.model).toEqual({ id: "gpt-5.6-sol", providerId: "codex" });
-        expect(published.reasoning).toEqual({
-            current: "high",
-            levels: ["low", "medium", "high"],
+    it("mirrors stored composer state without picker aliases, including a clear", () => {
+        const draft = {
+            updatedAt: 12_345,
+            value: {
+                effort: "high",
+                modelId: "gpt-5.6-sol",
+                permissionMode: "auto" as const,
+                providerId: "codex",
+                serviceTier: "priority" as const,
+                text: "Finish this on my phone",
+            },
+        };
+        const lastMode = { ...draft.value, serviceTier: null };
+        const { text: _text, ...mode } = lastMode;
+        const published = metadata(snapshot({ draft, lastMode: mode }));
+        expect(published).toMatchObject({
+            draft: draft.value,
+            draftUpdatedAt: draft.updatedAt,
+            lastMode: mode,
+        });
+        expect(
+            metadata(snapshot({ draft: { updatedAt: 12_346, value: null }, lastMode: mode })),
+        ).toMatchObject({ draft: null, draftUpdatedAt: 12_346, lastMode: mode });
+        expect(metadata()).toMatchObject({ draft: null, draftUpdatedAt: null, lastMode: null });
+        for (const key of ["happy", "modelMode", "effortLevel", "model", "reasoning"]) {
+            expect(published).not.toHaveProperty(key);
+        }
+        // Deprecated display mirrors stay until the phone reads the composer fields.
+        expect(published).toMatchObject({
+            currentModelCode: "gpt-5.6-sol",
+            currentModelProviderId: "codex",
+            currentOperatingModeCode: "auto",
+            currentThoughtLevelCode: "high",
+            permissionMode: "auto",
+            provider: { id: "codex", kind: "codex", name: "OpenAI Codex" },
+            session: { modelLocked: false, permissionMode: "auto", status: "running" },
         });
     });
 
@@ -236,7 +265,6 @@ describe("describing a Happy Agent session in Happy's own terms", () => {
     it("does not offer a reasoning choice for a model with none", () => {
         const published = metadata(snapshot({ modelId: "unknown-model" }));
         expect(published.capabilities.reasoningSelection).toBe(false);
-        expect(published.reasoning.levels).toEqual([]);
     });
 
     it("names the session and the folder it works in", () => {
@@ -257,11 +285,5 @@ describe("describing a Happy Agent session in Happy's own terms", () => {
         expect(published.happyHomeDir).toBe("/home/steve/.rig/happy");
         expect(published.startedBy).toBe("daemon");
         expect(published.rigMetadataVersion).toBe(1);
-    });
-
-    it("leaves out a reasoning level the session does not have", () => {
-        const { effort: _effort, ...rest } = snapshot();
-        expect(metadata(rest as HappySessionSnapshot).currentThoughtLevelCode).toBeUndefined();
-        expect(metadata(rest as HappySessionSnapshot).reasoning.current).toBeNull();
     });
 });

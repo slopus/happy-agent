@@ -18,6 +18,7 @@ const metaSchema = Type.Object(
         providerId: Type.Optional(Type.String()),
         reasoning: Type.Optional(Type.String()),
         sentFrom: Type.Optional(Type.String()),
+        serviceTier: Type.Optional(Type.Union([Type.String(), Type.Null()])),
         thinkingLevel: Type.Optional(Type.String()),
     },
     { additionalProperties: true },
@@ -136,17 +137,20 @@ function readSelection(meta: Record<string, unknown> | undefined): {
     modelId?: string;
     permissionMode?: string;
     providerId?: string;
+    serviceTier?: string | null;
 } {
     if (meta === undefined) return {};
     const effort = firstString(meta.effort, meta.reasoning, meta.thinkingLevel);
     const modelId = firstString(meta.model);
     const permissionMode = firstString(meta.permissionMode);
     const providerId = firstString(meta.modelProviderId, meta.providerId);
+    const serviceTier = meta.serviceTier === null ? null : firstString(meta.serviceTier);
     return {
         ...(effort === undefined ? {} : { effort }),
         ...(modelId === undefined ? {} : { modelId }),
         ...(permissionMode === undefined ? {} : { permissionMode }),
         ...(providerId === undefined ? {} : { providerId }),
+        ...(serviceTier === undefined ? {} : { serviceTier }),
     };
 }
 

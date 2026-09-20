@@ -36,12 +36,15 @@ import {
     type UpdateTeamProfileInput,
 } from "./TeamUser.js";
 import { WorkOSAccessTokenVerifier } from "./WorkOSAccessTokenVerifier.js";
+import { teamDraftInputSchema, type TeamDraft, type TeamDraftInput } from "./TeamDraft.js";
 import { queryTeamUsers } from "./persistence/queryTeamUsers.js";
+import { TEAM_DRAFTS_TABLE, queryTeamDraft, saveTeamDraft } from "./persistence/teamDrafts.js";
 import { teamSenderNotifications } from "./impl/teamSenderNotifications.js";
 
 export const TEAM_USERS_MIGRATION_KEY = "001-users";
 export const TEAM_USER_PHOTOS_MIGRATION_KEY = "002-user-photos";
 export const TEAM_USER_PROFILE_FIELDS_MIGRATION_KEY = "003-profile-fields";
+export const TEAM_DRAFTS_MIGRATION_KEY = "004-drafts";
 /** Stable optimistic version exposed before an organization member has a durable local user. */
 export const TEAM_ONBOARDING_PROFILE_VERSION = "00000000-0000-7000-8000-00000020eab6";
 
@@ -68,6 +71,17 @@ export interface TeamUserProfileChangedEvent {
 export type TeamUserProfileChangedListener = (
     ctx: Context,
     event: TeamUserProfileChangedEvent,
+) => void | Promise<void>;
+
+export interface TeamDraftUpdatedEvent {
+    readonly agentId: string;
+    readonly draft: TeamDraft;
+    readonly userId: string;
+}
+
+export type TeamDraftUpdatedListener = (
+    ctx: Context,
+    event: TeamDraftUpdatedEvent,
 ) => void | Promise<void>;
 
 /** Team deployment identity, membership, WorkOS authentication, and durable user storage. */
@@ -147,9 +161,41 @@ export class TeamModule<Database extends AgentDatabase = AgentDatabase> implemen
                 }
             },
         ],
+        [
+            TEAM_DRAFTS_MIGRATION_KEY,
+            async (_ctx, database) => {
+                await agentDatabaseRun(
+                    database,
+                    sql`CREATE TABLE IF NOT EXISTS ${sql.raw(TEAM_DRAFTS_TABLE)} (
+                        agent_id TEXT NOT NULL,
+                        user_id TEXT NOT NULL,
+                        draft_json TEXT NOT NULL,
+                        PRIMARY KEY (agent_id, user_id)
+                    )`,
+                );
+                // The API module owned these rows first. Adopt them with plain SQL so unsent
+                // drafts survive the move without deserializing a single payload; the runner's
+                // per-migration transaction makes creation and copy one atomic step. The retired
+                // table keeps its rows.
+                const legacy = await agentDatabaseRows<unknown>(
+                    database,
+                    sql`SELECT name FROM sqlite_master
+                        WHERE type = 'table' AND name = 'happy_agent_api_team_drafts'`,
+                );
+                if (legacy.length === 0) return;
+                await agentDatabaseRun(
+                    database,
+                    sql`INSERT INTO ${sql.raw(TEAM_DRAFTS_TABLE)} (agent_id, user_id, draft_json)
+                        SELECT agent_id, user_id, draft_json
+                        FROM happy_agent_api_team_drafts WHERE true
+                        ON CONFLICT (agent_id, user_id) DO NOTHING`,
+                );
+            },
+        ],
     ] as readonly AgentModuleMigration<Database>[];
 
     readonly #config: ConfigModule;
+    readonly #draftListeners = new Set<TeamDraftUpdatedListener>();
     readonly #listeners = new Set<TeamUserProfileChangedListener>();
     readonly #ownerWorkOSUserId: string | undefined;
     readonly #profile: ProfileModule;
@@ -331,6 +377,38 @@ export class TeamModule<Database extends AgentDatabase = AgentDatabase> implemen
             this.#publish(txCtx, { previousVersion: current.version, user: updated });
             return updated;
         });
+    }
+
+    /** One member's current composer draft on one agent, including the timestamp of a clear. */
+    async draft(ctx: Context, agentId: string, userId: string): Promise<TeamDraft> {
+        return await queryTeamDraft(ctx, agentId, userId);
+    }
+
+    /** Keep the newest of the stored and offered drafts, telling subscribers only of real change. */
+    async saveDraft(
+        ctx: Context,
+        agentId: string,
+        userId: string,
+        input: TeamDraftInput,
+    ): Promise<{ readonly draft: TeamDraft; readonly changed: boolean }> {
+        if (!Value.Check(teamDraftInputSchema, input)) {
+            throw new Error("The team draft is not valid.");
+        }
+        return await ctx.inTx(async (txCtx) => {
+            const result = await saveTeamDraft(txCtx, agentId, userId, input);
+            if (result.changed) {
+                this.#publishDraft(txCtx, { agentId, draft: result.draft, userId });
+            }
+            return result;
+        });
+    }
+
+    /** Watch per-user draft changes after their transaction commits. */
+    onDraftUpdated(listener: TeamDraftUpdatedListener): () => void {
+        this.#draftListeners.add(listener);
+        return () => {
+            this.#draftListeners.delete(listener);
+        };
     }
 
     async getUser(ctx: Context, userId: string): Promise<TeamUser | undefined> {
@@ -558,6 +636,23 @@ export class TeamModule<Database extends AgentDatabase = AgentDatabase> implemen
             throw new Error("The team owner WorkOS user ID is not configured.");
         }
         return this.#ownerWorkOSUserId;
+    }
+
+    #publishDraft(ctx: Context, event: TeamDraftUpdatedEvent): void {
+        const frozen = deepFreeze(structuredClone(event)) as TeamDraftUpdatedEvent;
+        afterCommit(ctx, async (eventCtx) => {
+            for (const listener of Array.from(this.#draftListeners)) {
+                try {
+                    await listener(eventCtx, frozen);
+                } catch (error: unknown) {
+                    eventCtx.log.error(
+                        "A team draft subscriber failed.",
+                        { agentId: frozen.agentId, userId: frozen.userId },
+                        error,
+                    );
+                }
+            }
+        });
     }
 
     #publish(ctx: Context, event: TeamUserProfileChangedEvent): void {

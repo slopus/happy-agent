@@ -131,9 +131,12 @@ export type HappyRemoteMessage = Static<typeof happyRemoteMessageSchema>;
 export const happyRemoteSelectionSchema = Type.Object(
     {
         effort: Type.Optional(Type.String({ maxLength: 64 })),
-        modelId: Type.Optional(Type.String({ maxLength: 256 })),
+        modelId: Type.Optional(Type.String({ maxLength: 512 })),
         permissionMode: Type.Optional(Type.String({ maxLength: 64 })),
         providerId: Type.Optional(Type.String({ maxLength: 128 })),
+        serviceTier: Type.Optional(
+            Type.Union([Type.Null(), Type.String({ minLength: 1, maxLength: 64 })]),
+        ),
     },
     { additionalProperties: false },
 );

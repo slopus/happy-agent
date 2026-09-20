@@ -651,6 +651,134 @@ describe("Happy integration API", () => {
         ).toEqual(new Set([published.tag]));
     }, 60_000);
 
+    it("syncs flat composer metadata with the public draft API in both directions", async () => {
+        const happy = await startProtocolHappyServer({ authorizePairing: true });
+        const gym = await createAgentGym({
+            environment: { HAPPY_AGENT_HAPPY_SERVER_URL: happy.url },
+            inference: [{ content: [{ text: "Sent from desktop.", type: "text" }] }],
+            timeoutMs: 15_000,
+        });
+        gyms.add(gym);
+        await gym.client.startHappyIntegration();
+        await waitForIntegration(gym, "connected");
+        const session = await gym.waitUntil(
+            () => happy.sessions.find((item) => item.metadata.path === gym.workspacePath),
+            "the workspace session",
+        );
+        await gym.waitUntil(
+            () => happy.hasRpc(`${session.id}:abort`) || undefined,
+            "the Happy session socket",
+        );
+        const remote = () => happy.metadata.get(session.id);
+
+        const draft = {
+            ...gym.selection,
+            permissionMode: "auto" as const,
+            text: "  Written on desktop\n",
+        };
+        const at = Date.now();
+        await gym.client.saveAgentDraft(gym.defaultSessionId, { draft, updatedAt: at });
+        await gym.waitUntil(
+            () => (remote()?.draftUpdatedAt === at ? true : undefined),
+            "the desktop draft on Happy",
+        );
+        expect(remote()).toMatchObject({ draft, draftUpdatedAt: at, lastMode: null });
+        expect(remote()).not.toHaveProperty("modelMode");
+        const settled = happy.metadataVersion(session.id);
+
+        const stream = gym.stream();
+        try {
+            await stream.opened();
+            const phoneDraft = {
+                ...draft,
+                text: "  Finished on phone\n",
+            };
+            happy.updateMetadata(
+                session.id,
+                { draft: phoneDraft, draftUpdatedAt: at + 1 },
+                inAnotherKeyOrder,
+            );
+            await stream.waitFor((frame) => {
+                const event = clientFrameEvent(frame);
+                return (
+                    event?.type === "agent.draft.updated" &&
+                    event.payload.draft.updatedAt === at + 1
+                );
+            }, "the phone draft on the desktop event stream");
+            await expect(gym.client.getAgentDraft(gym.defaultSessionId)).resolves.toEqual({
+                draft: { value: phoneDraft, updatedAt: at + 1 },
+            });
+
+            // A real edit publishes once; parsing the phone's key order must not add a write-back.
+            const desktopDraft = {
+                ...phoneDraft,
+                permissionMode: "workspace_write" as const,
+                text: "Back on desktop",
+            };
+            await gym.client.saveAgentDraft(gym.defaultSessionId, {
+                draft: desktopDraft,
+                updatedAt: at + 2,
+            });
+            await gym.waitUntil(
+                () => (remote()?.draftUpdatedAt === at + 2 ? true : undefined),
+                "the continued desktop draft on Happy",
+            );
+            expect(happy.metadataVersion(session.id)).toBe(settled + 2);
+
+            happy.updateMetadata(session.id, { lastMode: gym.selection });
+            await gym.waitUntil(
+                () => (remote()?.lastMode === null ? true : undefined),
+                "Happy Agent to reject a client-written lastMode",
+            );
+
+            const version = happy.metadataVersion(session.id);
+            happy.updateMetadata(session.id, { draft, draftUpdatedAt: at });
+            await gym.waitUntil(
+                () => (happy.metadataVersion(session.id) > version + 1 ? true : undefined),
+                "a stale phone draft to be corrected",
+            );
+            expect(remote()).toMatchObject({ draft: desktopDraft, draftUpdatedAt: at + 2 });
+
+            happy.updateMetadata(session.id, { draft: null, draftUpdatedAt: at + 3 });
+            await gym.waitUntil(async () => {
+                const current = (await gym.client.getAgentDraft(gym.defaultSessionId)).draft;
+                return current.updatedAt === at + 3 ? current : undefined;
+            }, "the phone clear on desktop");
+            await expect(gym.client.getAgentDraft(gym.defaultSessionId)).resolves.toEqual({
+                draft: { value: null, updatedAt: at + 3 },
+            });
+            await gym.client.saveAgentDraft(gym.defaultSessionId, {
+                draft: null,
+                updatedAt: at + 4,
+            });
+            await gym.waitUntil(
+                () => (remote()?.draftUpdatedAt === at + 4 ? true : undefined),
+                "the desktop clear on Happy",
+            );
+
+            await gym.send("Keep this mode after sending.", { permissionMode: "read_only" });
+            const lastMode = (await gym.client.getAgentMode(gym.defaultSessionId)).mode;
+            await gym.waitUntil(
+                () =>
+                    JSON.stringify(remote()?.lastMode) === JSON.stringify(lastMode)
+                        ? true
+                        : undefined,
+                "the last sent mode on Happy",
+            );
+            expect(lastMode?.permissionMode).toBe("read_only");
+            await gym.restart();
+            await expect(gym.client.getAgentDraft(gym.defaultSessionId)).resolves.toEqual({
+                draft: { value: null, updatedAt: at + 4 },
+            });
+            await expect(gym.client.getAgentMode(gym.defaultSessionId)).resolves.toEqual({
+                mode: lastMode,
+            });
+            expect(gym.errors).toEqual([]);
+        } finally {
+            stream.close();
+        }
+    }, 45_000);
+
     it("returns pairing data and streams complete pairing and failure snapshots", async () => {
         let requests = 0;
         const serverUrl = await startHappyServer((_request, response) => {
@@ -996,6 +1124,13 @@ interface ProtocolHappyServer {
     hasRpc(method: string): boolean;
     rpc(sessionId: string, method: string, params: unknown): Promise<unknown>;
     readonly metadata: ReadonlyMap<string, Record<string, unknown>>;
+    metadataVersion(sessionId: string): number;
+    /** Writes merged metadata as a phone would; `shape` may re-serialize it the way another client would. */
+    updateMetadata(
+        sessionId: string,
+        patch: Record<string, unknown>,
+        shape?: (metadata: Record<string, unknown>) => Record<string, unknown>,
+    ): void;
     readonly outgoing: ReadonlyMap<string, readonly unknown[]>;
     deliver(sessionId: string, message: unknown): void;
     readonly sessions: readonly {
@@ -1030,6 +1165,7 @@ async function startProtocolHappyServer(options: {
     }[] = [];
     const sessionIds = new Map<string, string>();
     const metadata = new Map<string, Record<string, unknown>>();
+    const metadataVersions = new Map<string, number>();
     const outgoing = new Map<string, unknown[]>();
     const incoming = new Map<
         string,
@@ -1107,7 +1243,7 @@ async function startProtocolHappyServer(options: {
                             agentStateVersion: 0,
                             id,
                             metadata: metadata.has(id) ? encode(metadata.get(id)) : parsed.metadata,
-                            metadataVersion: 0,
+                            metadataVersion: metadataVersions.get(id) ?? 0,
                         },
                     });
                     return;
@@ -1192,14 +1328,24 @@ async function startProtocolHappyServer(options: {
                 ];
                 if (event === "rpc-register" && payload.method)
                     rpcSockets.set(payload.method, socket);
+                let answer: Record<string, unknown> = {
+                    result: "success",
+                    version: (payload.expectedVersion ?? 0) + 1,
+                };
                 if (event === "update-metadata" && payload.sid && payload.metadata) {
-                    const decoded = decode(payload.metadata);
-                    if (decoded !== undefined) metadata.set(payload.sid, decoded);
+                    // Compare-and-set like the real relay: a phone write in between conflicts.
+                    const version = metadataVersions.get(payload.sid) ?? 0;
+                    const current = metadata.get(payload.sid);
+                    if (current !== undefined && payload.expectedVersion !== version) {
+                        answer = { result: "version-mismatch", metadata: encode(current), version };
+                    } else {
+                        const decoded = decode(payload.metadata);
+                        if (decoded !== undefined) metadata.set(payload.sid, decoded);
+                        metadataVersions.set(payload.sid, version + 1);
+                        answer = { result: "success", version: version + 1 };
+                    }
                 }
-                if (eventMatch[1])
-                    socket.send(
-                        `43${eventMatch[1]}${JSON.stringify([{ result: "success", version: (payload.expectedVersion ?? 0) + 1 }])}`,
-                    );
+                if (eventMatch[1]) socket.send(`43${eventMatch[1]}${JSON.stringify([answer])}`);
                 return;
             }
             if (!packet.startsWith("40")) return;
@@ -1235,6 +1381,22 @@ async function startProtocolHappyServer(options: {
             });
         },
         metadata,
+        metadataVersion: (sessionId) => metadataVersions.get(sessionId) ?? 0,
+        updateMetadata: (sessionId, patch, shape = (merged) => merged) => {
+            const merged = shape({ ...metadata.get(sessionId), ...patch });
+            const version = (metadataVersions.get(sessionId) ?? 0) + 1;
+            metadata.set(sessionId, merged);
+            metadataVersions.set(sessionId, version);
+            const update = {
+                body: {
+                    t: "update-session",
+                    id: sessionId,
+                    metadata: { value: encode(merged), version },
+                },
+            };
+            for (const socket of webSockets.clients)
+                socket.send(`42${JSON.stringify(["update", update])}`);
+        },
         outgoing,
         deliver: (sessionId, message) => {
             const messages = incoming.get(sessionId) ?? [];
@@ -1265,6 +1427,20 @@ async function startProtocolHappyServer(options: {
         },
         url: `http://127.0.0.1:${String(address.port)}`,
     };
+}
+
+/** The same value with every object's keys in reverse order, as another client would write it. */
+function inAnotherKeyOrder(value: Record<string, unknown>): Record<string, unknown> {
+    const reorder = (one: unknown): unknown => {
+        if (Array.isArray(one)) return one.map(reorder);
+        if (one === null || typeof one !== "object") return one;
+        return Object.fromEntries(
+            Object.entries(one)
+                .reverse()
+                .map(([key, entry]) => [key, reorder(entry)]),
+        );
+    };
+    return reorder(value) as Record<string, unknown>;
 }
 
 function sealHappyAuthorization(secret: Uint8Array, publicKeyBase64: string): string {

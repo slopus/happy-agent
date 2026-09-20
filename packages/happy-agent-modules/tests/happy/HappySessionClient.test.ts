@@ -45,7 +45,24 @@ const MODELS: readonly HappyModel[] = [
         providerId: "codex",
         serviceTiers: [],
     },
+    {
+        defaultEffort: "high",
+        effortLevels: ["high"],
+        id: "anthropic/opus-5",
+        name: "Opus 5",
+        providerId: "claude",
+        serviceTiers: [],
+    },
 ];
+
+/** The mode a composer edit made on the phone carries. */
+const PHONE_MODE = {
+    effort: "high",
+    modelId: "anthropic/opus-5",
+    permissionMode: "read_only" as const,
+    providerId: "claude",
+    serviceTier: null,
+};
 
 function encode(value: unknown): string {
     return Buffer.from(
@@ -58,6 +75,17 @@ function decode(value: string): unknown {
         new Uint8Array(Buffer.from(KEY, "base64")),
         "legacy",
         new Uint8Array(Buffer.from(value, "base64")),
+    );
+}
+
+/** The same value with every object's keys in reverse order, as another client would write it. */
+function inAnotherKeyOrder(value: unknown): unknown {
+    if (Array.isArray(value)) return value.map(inAnotherKeyOrder);
+    if (value === null || typeof value !== "object") return value;
+    return Object.fromEntries(
+        Object.entries(value)
+            .reverse()
+            .map(([key, entry]) => [key, inAnotherKeyOrder(entry)]),
     );
 }
 
@@ -75,6 +103,11 @@ class FakeSocket implements HappySocket {
 
     disconnect(): void {
         this.connected = false;
+    }
+
+    reconnect(): void {
+        this.connected = true;
+        this.#listeners.get("connect")?.();
     }
 
     emit(event: string, ...values: unknown[]): void {
@@ -103,8 +136,8 @@ class FakeSocket implements HappySocket {
     }
 
     /** Plays the server saying there is something new. */
-    update(): void {
-        this.#listeners.get("update")?.();
+    update(value?: unknown): void {
+        this.#listeners.get("update")?.(value);
     }
 
     emittedValues(event: string): unknown[] {
@@ -129,6 +162,8 @@ function fakeOperations(overrides: Partial<HappySessionOperations> = {}): {
         agentId: AGENT_ID,
         archived: false,
         cwd: "/home/steve/projects/rig",
+        draft: { updatedAt: null, value: null },
+        lastMode: null,
         modelId: "gpt-5.6-sol",
         permissionMode: "auto",
         projectName: "rig",
@@ -168,6 +203,12 @@ function fakeOperations(overrides: Partial<HappySessionOperations> = {}): {
         models: () => MODELS,
         pendingQuestions: async () => pending,
         providerUsage: () => null,
+        saveDraft: async (_ctx, _agentId, draft) => {
+            calls.push({ detail: draft, kind: "saveDraft" });
+            if (draft.updatedAt !== null && draft.updatedAt >= (snapshot.draft.updatedAt ?? -1)) {
+                Object.assign(snapshot, { draft });
+            }
+        },
         session: async () => snapshot,
         submit: async (_ctx, _agentId, message) => {
             calls.push({ detail: message, kind: "submit" });
@@ -777,6 +818,143 @@ describe("keeping one session in step with Happy", () => {
         await session.close();
     });
 
+    it("republishes the composer mode the session reports once a message is delivered", async () => {
+        const server = fakeServer();
+        const socket = new FakeSocket();
+        const base = fakeOperations();
+        server.deliver([
+            remoteMessage(7, "remote-message-1", {
+                content: { text: "use Opus", type: "text" },
+                meta: { model: "anthropic/opus-5", modelProviderId: "claude" },
+                role: "user",
+            }),
+        ]);
+        const session = client({
+            operations: {
+                ...base.operations,
+                submit: async (_ctx, _agentId, message) => {
+                    Object.assign(base.snapshot, {
+                        lastMode: { ...PHONE_MODE, ...message.selection },
+                    });
+                },
+            },
+            server,
+            socket,
+        });
+        await session.settle();
+
+        const published = socket.emittedValues("update-metadata").at(-1) as { metadata: string };
+        expect(decode(published.metadata)).toMatchObject({
+            lastMode: { modelId: "anthropic/opus-5", providerId: "claude" },
+        });
+        await session.close();
+    });
+
+    it("adopts a newer remote draft, republishes only real changes, and reconciles on reconnect", async () => {
+        const server = fakeServer();
+        const socket = new FakeSocket();
+        socket.acknowledgements = [{ result: "success", version: 5 }];
+        const base = fakeOperations();
+        const session = client({ operations: base.operations, server, socket });
+        await session.settle();
+        const latest = () =>
+            decode(
+                (socket.emittedValues("update-metadata").at(-1) as { metadata: string }).metadata,
+            ) as Record<string, unknown>;
+        const phoneDraft = {
+            updatedAt: 12_345,
+            value: { ...PHONE_MODE, text: "Typed on the phone" },
+        };
+
+        // The phone re-serializes the whole metadata through its own schema, which writes keys in
+        // its order rather than Happy Agent's, at every nesting level.
+        const adopted = { ...latest(), draft: phoneDraft.value, draftUpdatedAt: 12_345 };
+        socket.update({
+            body: {
+                id: "remote-1",
+                metadata: { value: encode(inAnotherKeyOrder(adopted)), version: 6 },
+                t: "update-session",
+            },
+        });
+        await session.settle();
+        expect(base.calls.find((call) => call.kind === "saveDraft")?.detail).toEqual(phoneDraft);
+        expect(base.snapshot.draft).toEqual(phoneDraft);
+        expect(socket.emittedValues("update-metadata")).toHaveLength(1);
+
+        // Something that really changed is still published, on top of the phone's version.
+        socket.acknowledgements = [{ result: "success", version: 7 }];
+        await base.operations.saveDraft(store.context, AGENT_ID, {
+            value: { ...PHONE_MODE, text: "Finished on desktop" },
+            updatedAt: 12_346,
+        });
+        await session.settle();
+        const published = socket.emittedValues("update-metadata") as {
+            expectedVersion: number;
+            metadata: string;
+        }[];
+        expect(published).toHaveLength(2);
+        expect(published[1]?.expectedVersion).toBe(6);
+        expect(decode(published[1]!.metadata)).toMatchObject({
+            draft: { ...PHONE_MODE, text: "Finished on desktop" },
+            draftUpdatedAt: 12_346,
+        });
+
+        // A reconnect forces one compare-and-swap, which is what retrieves an edit made while the
+        // socket was down: the mismatch carries it, and it is adopted and republished.
+        const offlineDraft = {
+            updatedAt: 20_000,
+            value: { ...PHONE_MODE, text: "Written while offline" },
+        };
+        socket.acknowledgements = [
+            {
+                metadata: encode({
+                    ...latest(),
+                    draft: offlineDraft.value,
+                    draftUpdatedAt: offlineDraft.updatedAt,
+                }),
+                result: "version-mismatch",
+                version: 8,
+            },
+            { result: "success", version: 9 },
+        ];
+        socket.disconnect();
+        socket.reconnect();
+        await session.settle();
+
+        expect(base.calls.filter((call) => call.kind === "saveDraft").at(-1)?.detail).toEqual(
+            offlineDraft,
+        );
+        expect(socket.emittedValues("update-metadata")).toHaveLength(4);
+        expect(latest()).toMatchObject({
+            draft: offlineDraft.value,
+            draftUpdatedAt: offlineDraft.updatedAt,
+        });
+        await session.close();
+    });
+
+    it("reconciles edits between HTTP hydration and the first socket connection", async () => {
+        const server = fakeServer();
+        const socket = new FakeSocket();
+        const base = fakeOperations();
+        const fetch = server.fetch;
+        server.fetch = (async (input, init) => {
+            if (String(input).endsWith("/v1/sessions")) {
+                const { metadata } = JSON.parse(String(init?.body));
+                const latest = { ...(decode(metadata) as object), draft: null, draftUpdatedAt: 42 };
+                socket.acknowledgements = [
+                    { metadata: encode(latest), result: "version-mismatch", version: 5 },
+                    { result: "success", version: 6 },
+                ];
+                return Response.json({ session: { id: "remote-1", metadata, metadataVersion: 4 } });
+            }
+            return fetch(input, init);
+        }) as typeof fetch;
+        const session = client({ operations: base.operations, server, socket });
+        await session.settle();
+        expect(base.snapshot.draft).toEqual({ value: null, updatedAt: 42 });
+        await session.close();
+    });
+
     it("says nothing to the agent about Happy Agent's own message coming back", async () => {
         const server = fakeServer();
         const { calls, operations } = fakeOperations();
@@ -894,7 +1072,9 @@ describe("keeping one session in step with Happy", () => {
         expect(published.expectedVersion).toBe(4);
         expect(decode(published.metadata)).toMatchObject({
             client: { id: "rig", name: "Happy Agent", version: "1.2.3" },
-            currentModelCode: "gpt-5.6-sol",
+            draft: null,
+            draftUpdatedAt: null,
+            lastMode: null,
         });
         await session.close();
     });
@@ -983,7 +1163,9 @@ describe("keeping one session in step with Happy", () => {
         const attempts = socket.emittedValues("update-metadata") as { metadata: string }[];
         expect(attempts).toHaveLength(2);
         expect(decode(attempts[1]?.metadata ?? "")).toMatchObject({
-            currentModelCode: "gpt-5.6-sol",
+            draft: null,
+            draftUpdatedAt: null,
+            lastMode: null,
             theirs: "kept",
         });
         await session.close();

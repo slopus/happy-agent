@@ -1,5 +1,8 @@
 import { homedir, hostname, platform, release } from "node:os";
 
+import type { MessageMode } from "@slopus/happy-agent-client";
+import type { HappyComposerDraft } from "./HappyComposerDraft.js";
+
 import { describeHappyProvider, type HappyProviderDescriptor } from "./describeHappyProvider.js";
 import { HAPPY_PERMISSION_MODES, type HappyPermissionModeKind } from "./happyPermissionModes.js";
 import { HAPPY_SESSION_RPC_METHODS } from "./handleHappySessionRpc.js";
@@ -45,10 +48,29 @@ export interface HappySessionMetadata {
         steering: boolean;
     };
     client: { id: "rig"; name: "Happy Agent"; version: string };
+    /** The same composer fields Happy Agent stores locally; clears retain their timestamp. */
+    draft: HappyComposerDraft | null;
+    draftUpdatedAt: number | null;
+    /** Written by Happy Agent after accepting a message, never by a picker change. */
+    lastMode: MessageMode | null;
+    /**
+     * @deprecated Read-only mirrors of the effective selection for phone builds that predate
+     * `draft` and `lastMode`. Never read back. Remove once the phone reads the composer fields.
+     */
     currentModelCode: string;
+    /** @deprecated See `currentModelCode`. */
     currentModelProviderId: string;
+    /** @deprecated See `currentModelCode`. */
     currentOperatingModeCode: string;
+    /** @deprecated See `currentModelCode`. */
     currentThoughtLevelCode?: string;
+    /** @deprecated See `currentModelCode`. */
+    permissionMode: string;
+    /**
+     * @deprecated Selected-provider descriptor for phone builds that read
+     * `metadata.provider.kind` for the session-list icon. See `currentModelCode`.
+     */
+    provider: HappyProviderDescriptor;
     flavor: string;
     happyHomeDir: string;
     homeDir: string;
@@ -67,7 +89,6 @@ export interface HappySessionMetadata {
      */
     lastMeaningfulMessageAt?: number;
     machineId?: string;
-    model: { id: string; providerId: string };
     models: readonly HappyPublishedModel[];
     name?: string;
     operatingModes: readonly {
@@ -78,7 +99,6 @@ export interface HappySessionMetadata {
     }[];
     os: string;
     path: string;
-    permissionMode: string;
     /**
      * What the phone groups this session under.
      *
@@ -87,15 +107,19 @@ export interface HappySessionMetadata {
      */
     project?: { id: string; kind: "home" | "regular"; name: string };
     bot?: HappySessionSnapshot["bot"];
-    provider: HappyProviderDescriptor;
     providers: readonly HappyProviderDescriptor[];
-    reasoning: { current: string | null; levels: readonly string[] };
     rigMetadataVersion: 1;
-    session: { modelLocked: false; permissionMode: string; serviceTier?: string; status: string };
+    session: {
+        modelLocked: false;
+        /** @deprecated Required by older phone schemas; see `currentModelCode`. */
+        permissionMode: string;
+        /** @deprecated See `currentModelCode`. */
+        serviceTier?: string;
+        status: string;
+    };
     startedBy: "daemon";
     startedFromDaemon: true;
     summary?: { text: string; updatedAt: number };
-    thoughtLevels: readonly { code: string; value: string }[];
     tools: readonly string[];
     /** The branch this checkout is on, which legacy sessions report too. */
     gitBranch?: string;
@@ -130,7 +154,6 @@ export function createHappySessionMetadata(options: {
     const providers = (providerIds.length === 0 ? [session.providerId] : providerIds).map(
         describeHappyProvider,
     );
-    const provider = describeHappyProvider(session.providerId);
     const efforts = selected?.effortLevels ?? [];
     const title = session.bot?.name ?? session.title;
     return {
@@ -157,10 +180,16 @@ export function createHappySessionMetadata(options: {
             steering: true,
         },
         client: { id: "rig", name: "Happy Agent", version: options.version },
+        draft: session.draft.value === null ? null : { ...session.draft.value },
+        draftUpdatedAt: session.draft.updatedAt,
+        lastMode: session.lastMode === null ? null : { ...session.lastMode },
+        // Deprecated mirrors for phone builds that predate the composer fields.
         currentModelCode: session.modelId,
         currentModelProviderId: session.providerId,
         currentOperatingModeCode: session.permissionMode,
         ...(session.effort === undefined ? {} : { currentThoughtLevelCode: session.effort }),
+        permissionMode: session.permissionMode,
+        provider: describeHappyProvider(session.providerId),
         flavor: session.providerId,
         happyHomeDir: configuration.happyHome,
         homeDir: homedir(),
@@ -171,13 +200,11 @@ export function createHappySessionMetadata(options: {
             ? {}
             : { lastMeaningfulMessageAt: session.lastMeaningfulMessageAt }),
         ...(configuration.machineId === undefined ? {} : { machineId: configuration.machineId }),
-        model: { id: session.modelId, providerId: session.providerId },
         models: models.map(publishModel),
         ...(title === undefined ? {} : { name: title }),
         operatingModes: HAPPY_PERMISSION_MODES.map((mode) => ({ ...mode })),
         os: `${platform()} ${release()}`,
         path: session.cwd,
-        permissionMode: session.permissionMode,
         // Falls back to the session's own identity only when this daemon keeps no project for it.
         // A per-session id groups nothing, which is the right answer for a session that belongs
         // to nothing, and the wrong one for every session that does.
@@ -198,9 +225,7 @@ export function createHappySessionMetadata(options: {
               }
             : {}),
         ...(session.bot === undefined ? {} : { bot: { ...session.bot } }),
-        provider,
         providers,
-        reasoning: { current: session.effort ?? null, levels: [...efforts] },
         rigMetadataVersion: 1,
         session: {
             modelLocked: false,
@@ -213,7 +238,6 @@ export function createHappySessionMetadata(options: {
         ...(title === undefined
             ? {}
             : { summary: { text: title, updatedAt: options.summaryUpdatedAt } }),
-        thoughtLevels: efforts.map((level) => ({ code: level, value: level })),
         tools: [...session.tools],
         ...(session.gitBranch === undefined ? {} : { gitBranch: session.gitBranch }),
         ...(session.workspace === undefined || session.bot !== undefined

@@ -1,6 +1,7 @@
 import type { AgentPermissionMode } from "@slopus/happy-agent-base";
 import type { HappyInputContent } from "./HappyProtocol.js";
 import type { BotRecord } from "../bots/index.js";
+import type { AgentDraftSnapshot, MessageMode } from "@slopus/happy-agent-client";
 
 /**
  * The vocabulary Happy describes a session in.
@@ -37,6 +38,9 @@ export interface HappySessionSnapshot {
     readonly agentId: string;
     readonly archived: boolean;
     readonly cwd: string;
+    /** Happy Agent's authoritative, per-session composer state. */
+    readonly draft: AgentDraftSnapshot;
+    readonly lastMode: MessageMode | null;
     readonly effort?: string;
     /** The project/worktree line delta Rig already computes for its native Git surface. */
     readonly git?: HappyGitSummary;
@@ -108,6 +112,7 @@ export interface HappyInboundMessage {
         readonly modelId?: string;
         readonly permissionMode?: AgentPermissionMode;
         readonly providerId?: string;
+        readonly serviceTier?: string | null;
     };
     readonly text: string;
 }

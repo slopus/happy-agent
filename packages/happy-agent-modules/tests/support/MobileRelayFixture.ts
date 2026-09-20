@@ -13,7 +13,14 @@ export async function createMobileRelayFixture() {
     const sockets = new Map<WebSocket, { token: string; clientType: string }>();
     const sessions = new Map<
         string,
-        { id: string; token: string; tag: string; metadata: string; botId?: string }
+        {
+            id: string;
+            token: string;
+            tag: string;
+            metadata: string;
+            version: number;
+            botId?: string;
+        }
     >();
     const incoming = new Map<string, object[]>();
     const outgoing = new Map<string, unknown[]>();
@@ -67,12 +74,18 @@ export async function createMobileRelayFixture() {
                     token,
                     tag: body.tag,
                     metadata: body.metadata,
+                    version: 0,
                     ...(metadata.bot === undefined ? {} : { botId: metadata.bot.id }),
                 };
                 sessions.set(key, session);
             }
             json(response, {
-                session: { ...session, agentState: null, agentStateVersion: 0, metadataVersion: 0 },
+                session: {
+                    ...session,
+                    agentState: null,
+                    agentStateVersion: 0,
+                    metadataVersion: session.version,
+                },
             });
         } else if (/^\/v3\/sessions\/[^/]+\/messages$/.test(url.pathname)) {
             const id = url.pathname.split("/")[3]!;
@@ -124,13 +137,39 @@ export async function createMobileRelayFixture() {
             }
             const match = /^42(\d*)(\[.*)$/s.exec(packet);
             if (match?.[1]) {
-                const [, payload] = JSON.parse(match[2]!);
-                socket.send(
-                    `43${match[1]}${JSON.stringify([{ result: "success", version: (payload.expectedVersion ?? 0) + 1 }])}`,
-                );
+                const [event, payload] = JSON.parse(match[2]!);
+                const session =
+                    event === "update-metadata"
+                        ? [...sessions.values()].find((session) => session.id === payload.sid)
+                        : undefined;
+                let answer: unknown = {
+                    result: "success",
+                    version: (payload.expectedVersion ?? 0) + 1,
+                };
+                // Metadata is compared and set like the real relay, so a phone write in
+                // between conflicts and the daemon must merge onto it.
+                if (session !== undefined && payload.expectedVersion !== session.version) {
+                    answer = {
+                        result: "version-mismatch",
+                        metadata: session.metadata,
+                        version: session.version,
+                    };
+                } else if (session !== undefined) {
+                    session.metadata = payload.metadata;
+                    session.version += 1;
+                    answer = { result: "success", version: session.version };
+                }
+                socket.send(`43${match[1]}${JSON.stringify([answer])}`);
             }
         });
     });
+    const sessionOf = (token: string, botId: string) => {
+        const session = [...sessions.values()].find(
+            (session) => session.token === token && session.botId === botId,
+        );
+        if (session === undefined) throw new Error("The account has no session.");
+        return session;
+    };
     await new Promise<void>((resolve, reject) => {
         server.once("error", reject);
         server.listen(0, "127.0.0.1", resolve);
@@ -169,11 +208,28 @@ export async function createMobileRelayFixture() {
             ]).toString("base64");
             approvals.set(publicKey.toString("base64"), { token, response });
         },
+        /** The account's current session metadata as its phone would decrypt it. */
+        metadata(token: string, botId: string) {
+            return decode(token, sessionOf(token, botId).metadata) as Record<string, unknown>;
+        },
+        /** A phone-side metadata write: merged, versioned, and broadcast only to that account. */
+        updateMetadata(token: string, botId: string, patch: Record<string, unknown>) {
+            const session = sessionOf(token, botId);
+            const current = decode(token, session.metadata) as Record<string, unknown>;
+            session.metadata = encode(token, { ...current, ...patch });
+            session.version += 1;
+            const update = {
+                body: {
+                    t: "update-session",
+                    id: session.id,
+                    metadata: { value: session.metadata, version: session.version },
+                },
+            };
+            for (const [socket, auth] of sockets)
+                if (auth.token === token) socket.send(`42${JSON.stringify(["update", update])}`);
+        },
         deliver(token: string, botId: string, text: string) {
-            const session = [...sessions.values()].find(
-                (session) => session.token === token && session.botId === botId,
-            );
-            if (session === undefined) throw new Error("The account has no session.");
+            const session = sessionOf(token, botId);
             const messages = incoming.get(session.id) ?? [];
             const seq = messages.length + 1;
             messages.push({

@@ -239,7 +239,11 @@ async function secretsApiFixture() {
         subscriptions as never,
         subscriptions as never,
         secrets,
-        { enabled: false, onProfileUpdated: () => () => undefined } as never,
+        {
+            enabled: false,
+            onProfileUpdated: () => () => undefined,
+            onDraftUpdated: () => () => undefined,
+        } as never,
         { list: () => [], onUpdated: () => () => {} } as never,
         { onUpdated: () => () => {} } as never,
     );

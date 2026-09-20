@@ -87,6 +87,7 @@ describe("installation display configuration", () => {
         const team = {
             enabled: true,
             onProfileUpdated: () => () => undefined,
+            onDraftUpdated: () => () => undefined,
             authenticate: async (ctx: Context) => withTeamUser(ctx, { isOwner } as TeamUser),
         };
         const api = new ApiModule(

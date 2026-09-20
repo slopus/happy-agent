@@ -4227,7 +4227,10 @@ Response — `200`:
 ```
 
 A fresh agent, and every subagent, returns
-`{ "draft": { "value": null, "updatedAt": null } }`.
+`{ "draft": { "value": null, "updatedAt": null } }` by default. An agent created through Happy
+with a composer mode selected starts with a draft containing that mode and `text: ""`, with
+`updatedAt` set to its creation time. This preserves the phone's initial picker choices through the
+ordinary draft contract. Its last submitted mode remains `null` until a message is accepted.
 
 ### `PUT /v0/agents/:agentId/draft`
 

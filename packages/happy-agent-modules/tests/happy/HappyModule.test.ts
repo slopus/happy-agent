@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import type { AgentConfig, AgentPermissionMode } from "@slopus/happy-agent-base";
+import { ensureAgentDatabaseConnection, inTx } from "@slopus/happy-agent-base";
 import type { Context } from "@steve.kite/stdlib";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -70,6 +71,27 @@ afterEach(async () => {
     vi.unstubAllGlobals();
 });
 
+const OPUS_MODE = {
+    effort: "high",
+    modelId: "anthropic/opus-5",
+    permissionMode: "read_only" as AgentPermissionMode,
+    providerId: "claude",
+    serviceTier: null,
+};
+
+/** A stored agent whose only interesting part is its metadata. */
+function storedAgent(metadata: Record<string, unknown>): AgentConfig {
+    return {
+        environment: {
+            osVersion: "test",
+            platform: "darwin",
+            shell: "/bin/zsh",
+            workingDirectory: "/projects/rig",
+        },
+        metadata,
+    } as AgentConfig;
+}
+
 function targetRequest(
     target: Exclude<HappySpawnRequest, { cwd: string }>["target"],
 ): HappySpawnRequest {
@@ -88,12 +110,17 @@ async function fixture() {
     );
     databases.push(database);
     await database.ready;
+    // Agent Base runs every root statement and root transaction through one connection FIFO, and
+    // the stored configurations below are reached through it too.
+    ensureAgentDatabaseConnection(database.database);
 
     const configs = new Map<string, AgentConfig>();
     const bots = new Map<string, BotRecord>();
     const archivedBots: string[] = [];
     let botReadContext: Context | undefined;
     const botArchiveScopes: { read: Context | undefined; write: Context }[] = [];
+    /** Suspends one write where Agent Base resolves the agent, before the write joins. */
+    let heldWrite: Promise<void> | undefined;
     const aborted: string[] = [];
     const archivedCompute: string[] = [];
     const activity: { questionAt?: number; textMessageAt?: number; working?: boolean } = {};
@@ -105,6 +132,7 @@ async function fixture() {
     const pendingMessages: Record<string, unknown>[] = [];
     const steered: {
         agentId: string;
+        config: AgentConfig | undefined;
         message: Record<string, unknown>;
         options: Record<string, unknown>;
     }[] = [];
@@ -147,7 +175,10 @@ async function fixture() {
         abort: async (_ctx: unknown, agentId: string) => {
             aborted.push(agentId);
         },
-        config: async (_ctx: unknown, agentId: string) => configs.get(agentId),
+        // Storage below takes the boundary Agent Base's own takes: inside a caller's transaction
+        // it joins that transaction, and outside one it queues on the connection.
+        config: async (ctx: Context, agentId: string) =>
+            await inTx(ctx, async () => configs.get(agentId)),
         create: async (_ctx: unknown, config: AgentConfig, options: { id: string }) => {
             configs.set(options.id, config);
             return options.id;
@@ -158,20 +189,27 @@ async function fixture() {
             message: Record<string, unknown>,
             options: Record<string, unknown>,
         ) => {
-            steered.push({ agentId, message, options });
+            // The configuration as it stood when the message landed, so a test can tell what was
+            // written before the message from what was written after it.
+            steered.push({ agentId, config: configs.get(agentId), message, options });
             return { accepted: "created", delivery: "steer", id: options.id };
         },
         updateMetadata: async (
-            _ctx: unknown,
+            ctx: Context,
             agentId: string,
             metadata: Record<string, unknown>,
         ) => {
-            const current = configs.get(agentId);
-            if (current === undefined) throw new Error("Missing agent config.");
-            configs.set(agentId, {
-                ...current,
-                metadata: { ...current.metadata, ...metadata },
-            } as AgentConfig);
+            const gate = heldWrite;
+            heldWrite = undefined;
+            if (gate !== undefined) await gate;
+            await inTx(ctx, async () => {
+                const current = configs.get(agentId);
+                if (current === undefined) throw new Error("Missing agent config.");
+                configs.set(agentId, {
+                    ...current,
+                    metadata: { ...current.metadata, ...metadata },
+                } as AgentConfig);
+            });
         },
     };
     const projectModule = {
@@ -228,6 +266,14 @@ async function fixture() {
                     id: "gpt-5.6-sol",
                     name: "GPT-5.6 Sol",
                     providerId: "codex",
+                    serviceTiers: ["priority"],
+                },
+                {
+                    defaultEffort: "high",
+                    effortLevels: ["high"],
+                    id: "anthropic/opus-5",
+                    name: "Opus 5",
+                    providerId: "claude",
                 },
             ],
         } as never,
@@ -301,6 +347,8 @@ async function fixture() {
     modules.push(module);
     module.beforeStart(database.context, agents as never);
 
+    let releaseWrite: (() => void) | undefined;
+
     return {
         activity,
         aborted,
@@ -312,10 +360,17 @@ async function fixture() {
         configs,
         createdWorkspaces,
         gitState,
+        /** Suspend the next metadata write just before it joins the connection. */
+        holdNextWrite: () => {
+            heldWrite = new Promise<void>((resolve) => {
+                releaseWrite = resolve;
+            });
+        },
         module,
         pendingMessages,
         projectAgents,
         projects,
+        releaseHeldWrite: () => releaseWrite?.(),
         steered,
         workspaceAgents,
         workspaces,
@@ -457,6 +512,13 @@ describe("HappyModule spawn ownership", () => {
             "/projects/rig",
         );
         expect(test.projectAgents.get("happy-session")).toBe("project-1");
+        expect(test.configs.get("happy-session")?.metadata).toEqual({
+            draft: { ...SELECTION, serviceTier: null, text: "" },
+            draftUpdatedAt: expect.any(Number),
+        });
+        await expect(
+            test.module.session(databases.at(-1)!.context, "happy-session"),
+        ).resolves.toMatchObject({ lastMode: null });
     });
 
     it("starts in a ready workspace and attaches there", async () => {
@@ -523,6 +585,162 @@ describe("HappyModule spawn ownership", () => {
 });
 
 describe("Happy session activity metadata", () => {
+    it("keeps the newest shared draft, ignoring an older stamp and accepting an equal one", async () => {
+        const test = await fixture();
+        const context = databases.at(-1)!.context;
+        test.configs.set("agent-draft", storedAgent({}));
+        const newest = { updatedAt: 2_000, value: { ...OPUS_MODE, text: "Continue elsewhere" } };
+
+        await test.module.saveDraft(context, "agent-draft", newest);
+        await test.module.saveDraft(context, "agent-draft", {
+            updatedAt: 1_000,
+            value: { ...OPUS_MODE, text: "stale" },
+        });
+        expect(test.configs.get("agent-draft")?.metadata).toMatchObject({
+            draft: newest.value,
+            draftUpdatedAt: 2_000,
+        });
+
+        // The desktop API applies an equal stamp, so Happy must too.
+        await test.module.saveDraft(context, "agent-draft", {
+            updatedAt: 2_000,
+            value: { ...OPUS_MODE, text: "Typed at the same moment" },
+        });
+
+        await expect(test.module.session(context, "agent-draft")).resolves.toMatchObject({
+            draft: { updatedAt: 2_000, value: { text: "Typed at the same moment" } },
+            effort: "high",
+            modelId: "anthropic/opus-5",
+            permissionMode: "read_only",
+            providerId: "claude",
+        });
+    });
+
+    it("never overwrites a newer draft the desktop API stored while it was reading", async () => {
+        const test = await fixture();
+        const context = databases.at(-1)!.context;
+        test.configs.set(
+            "agent-race",
+            storedAgent({ draft: { ...OPUS_MODE, text: "one hundred" }, draftUpdatedAt: 100 }),
+        );
+
+        // Happy adopts a remote draft stamped 200. Its write is suspended after the decision to
+        // write and before the write reaches the store.
+        test.holdNextWrite();
+        const happy = test.module.saveDraft(context, "agent-race", {
+            updatedAt: 200,
+            value: { ...OPUS_MODE, text: "two hundred" },
+        });
+        // PUT /v0/agents/:id/draft compares against the stored stamp and writes a newer draft,
+        // which is what Happy must not be able to overwrite with what it read beforehand.
+        const desktop = (async () => {
+            const config = await test.agents.config(context, "agent-race");
+            const storedAt = config?.metadata?.["draftUpdatedAt"];
+            if (typeof storedAt === "number" && 300 < storedAt) return;
+            await test.agents.updateMetadata(context, "agent-race", {
+                draft: { ...OPUS_MODE, text: "three hundred" },
+                draftUpdatedAt: 300,
+            });
+        })();
+        // Every step this fixture takes is a microtask, so one macrotask turn is the boundary
+        // after which the desktop write has either landed or is queued behind a held connection.
+        await new Promise((resolve) => setImmediate(resolve));
+        test.releaseHeldWrite();
+        await Promise.all([happy, desktop]);
+
+        expect(test.configs.get("agent-race")?.metadata).toMatchObject({
+            draft: { text: "three hundred" },
+            draftUpdatedAt: 300,
+        });
+    });
+
+    it("keeps draft text even when its previously selected model is no longer offered", async () => {
+        const test = await fixture();
+        const context = databases.at(-1)!.context;
+        test.configs.set("agent-obsolete-draft", storedAgent({}));
+
+        await test.module.saveDraft(context, "agent-obsolete-draft", {
+            updatedAt: 2_000,
+            value: {
+                effort: "high",
+                modelId: "retired-model",
+                permissionMode: "auto",
+                providerId: "retired-provider",
+                serviceTier: null,
+                text: "Do not lose this text",
+            },
+        });
+
+        await expect(test.module.session(context, "agent-obsolete-draft")).resolves.toMatchObject({
+            draft: { value: { text: "Do not lose this text" } },
+            modelId: "retired-model",
+            providerId: "retired-provider",
+        });
+    });
+
+    it("makes an accepted message's mode the selection an emptied composer falls back to", async () => {
+        const test = await fixture();
+        const context = databases.at(-1)!.context;
+        test.configs.set("agent-selection", storedAgent({}));
+
+        await test.module.submit(context, "agent-selection", {
+            images: [],
+            remoteMessageId: "happy:message-1",
+            selection: { effort: "high", modelId: "anthropic/opus-5", providerId: "claude" },
+            text: "Use Opus",
+        });
+
+        // Only an accepted message writes lastMode, and it is written after the message lands.
+        expect(test.steered[0]?.config?.metadata?.lastMode).toBeUndefined();
+        expect(test.configs.get("agent-selection")?.metadata?.lastMode).toEqual({
+            ...OPUS_MODE,
+            permissionMode: "auto",
+        });
+        expect(test.configs.get("agent-selection")?.metadata).not.toHaveProperty("happy");
+
+        // Sending clears the draft, and a composer opened afterwards selects from lastMode.
+        await test.module.saveDraft(context, "agent-selection", { updatedAt: 3_000, value: null });
+
+        await expect(test.module.session(context, "agent-selection")).resolves.toMatchObject({
+            draft: { updatedAt: 3_000, value: null },
+            effort: "high",
+            modelId: "anthropic/opus-5",
+            permissionMode: "auto",
+            providerId: "claude",
+        });
+    });
+
+    it("sends with the complete selection from a mode-only shared draft", async () => {
+        const test = await fixture();
+        const mode = {
+            effort: "high",
+            modelId: "gpt-5.6-sol",
+            permissionMode: "workspace_write",
+            providerId: "codex",
+            serviceTier: "priority",
+        };
+        test.configs.set(
+            "agent-draft-selection",
+            storedAgent({ draft: { ...mode, text: "" }, draftUpdatedAt: 2_000 }),
+        );
+
+        await test.module.submit(databases.at(-1)!.context, "agent-draft-selection", {
+            images: [],
+            remoteMessageId: "happy:message-2",
+            selection: {},
+            text: "Use the draft selection",
+        });
+
+        expect(test.steered[0]?.options).toMatchObject({
+            effort: "high",
+            metadata: { mode },
+            model: "gpt-5.6-sol",
+            permissionMode: "workspace_write",
+            provider: "codex",
+            serviceTier: "priority",
+        });
+    });
+
     it("marks the session working exactly while its durable run is active", async () => {
         const test = await fixture();
         test.configs.set("agent-activity", {

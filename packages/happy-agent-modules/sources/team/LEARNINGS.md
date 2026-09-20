@@ -52,3 +52,10 @@ saving the member's profile is enough for the combined onboarding state to becom
 Team profile updates are visible to every connected organization member through the server-wide
 event journal. Their payload carries only the changed Happy Agent user ID, never another member's
 name, email, or photo metadata.
+
+## Composer drafts belong to their author
+
+Keeping private drafts inside the API prevented a member's Happy connection from sharing the same
+storage. Team now owns drafts keyed by agent and user; the API and each personal Happy connection
+use that seam. Draft updates publish only after commit and must be delivered only to the author.
+The storage move copies existing rows atomically so unsent text and clear timestamps survive.
