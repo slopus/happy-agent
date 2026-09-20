@@ -237,7 +237,9 @@ function fakeServer(options: { avatars?: boolean } = {}) {
             return Response.json({ downloadUrl: `${SERVER}/download/${encodeURIComponent(ref)}` });
         }
         if (url.includes("/download/")) {
-            const ref = decodeURIComponent(url.slice(url.indexOf("/download/") + "/download/".length));
+            const ref = decodeURIComponent(
+                url.slice(url.indexOf("/download/") + "/download/".length),
+            );
             const bytes = attachments.get(ref);
             if (bytes === undefined) return new Response(null, { status: 404 });
             return new Response(bytes);
@@ -671,6 +673,58 @@ describe("keeping one session in step with Happy", () => {
             expect(worn).toEqual([{ agentId: AGENT_ID, bytes: face, contentType: "image/png" }]);
             // The download goes through the same request an attachment for a message uses.
             expect(server.posted("/attachments/request-download")).toHaveLength(1);
+        } finally {
+            await session.close();
+        }
+    });
+
+    // The operations object in production is the connection itself, so every
+    // operation is a method that reaches the connection's own private fields.
+    // Lifting one off the object drops the receiver, and the phone was handed
+    // the resulting TypeError verbatim: "undefined is not an object
+    // (evaluating 'this.#i')". A plain function stands in for the method
+    // everywhere else in this file, which is why nothing here ever noticed.
+    it("calls the avatar operation on its owner rather than lifting it off", async () => {
+        const socket = new FakeSocket();
+        const server = fakeServer({ avatars: true });
+        class ConnectionShaped {
+            #worn: { agentId: string; contentType: string }[] = [];
+            async setSessionAvatar(
+                _ctx: unknown,
+                agentId: string,
+                _bytes: Uint8Array,
+                contentType: "image/jpeg" | "image/png" | "image/webp",
+            ): Promise<void> {
+                this.#worn.push({ agentId, contentType });
+            }
+            seen(): { agentId: string; contentType: string }[] {
+                return this.#worn;
+            }
+        }
+        const owner = new ConnectionShaped();
+        const { operations: base } = fakeOperations({});
+        for (const [key, value] of Object.entries(base)) {
+            if (key !== "setSessionAvatar") {
+                (owner as unknown as Record<string, unknown>)[key] = value;
+            }
+        }
+        const face = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 5, 6, 7, 8]);
+        server.attach("sessions/remote-1/attachments/face.png", face);
+        const session = client({
+            operations: owner as unknown as typeof base,
+            server,
+            socket,
+        });
+        try {
+            await session.settle();
+            expect(
+                await socket.rpc("remote-1:setAvatar", {
+                    mimeType: "image/png",
+                    ref: "sessions/remote-1/attachments/face.png",
+                    size: face.length,
+                }),
+            ).toEqual({ success: true });
+            expect(owner.seen()).toEqual([{ agentId: AGENT_ID, contentType: "image/png" }]);
         } finally {
             await session.close();
         }

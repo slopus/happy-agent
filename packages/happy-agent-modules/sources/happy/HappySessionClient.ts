@@ -806,13 +806,18 @@ export class HappySessionClient {
      * phone is waiting to know whether the bot has its face.
      */
     async #setAvatar(state: HappySyncSession, request: HappySetAvatarRequest): Promise<void> {
-        const setSessionAvatar = this.#options.operations.setSessionAvatar;
-        if (setSessionAvatar === undefined) {
+        // Called on `operations`, never lifted off it. Every operation here is a
+        // method of the connection and reaches its own private fields, so a bare
+        // call has no receiver: the phone was told "undefined is not an object
+        // (evaluating 'this.#i')" — the minified name of the bot catalog — for
+        // every face it ever tried to put on a bot.
+        const operations = this.#options.operations;
+        if (operations.setSessionAvatar === undefined) {
             throw new Error("This session cannot be given a picture.");
         }
         const bytes = await this.#downloadAttachmentBytes(state, request);
         if (bytes === undefined) throw new Error("Happy Agent could not read that picture.");
-        await setSessionAvatar(
+        await operations.setSessionAvatar(
             this.#options.context,
             this.#options.agentId,
             bytes,
