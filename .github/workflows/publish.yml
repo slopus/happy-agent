@@ -47,7 +47,9 @@ jobs:
             - name: Set up Bun
               uses: oven-sh/setup-bun@v2
               with:
-                  bun-version: "1.4.0"
+                  # The same file the build scripts read, so CI and a laptop
+                  # cannot drift onto different runtimes.
+                  bun-version-file: .bun-version
 
             - name: Install Linux sandbox dependencies
               if: ${{ !contains(github.ref_name, '-beta.') }}
