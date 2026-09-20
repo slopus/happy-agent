@@ -254,6 +254,7 @@ describe("describing a Happy Agent session in Happy's own terms", () => {
             "gitState",
             "readFile",
             "readFileAtRevision",
+            "setAvatar",
         ]);
         expect(capabilities.attachments).toEqual({
             enabled: true,

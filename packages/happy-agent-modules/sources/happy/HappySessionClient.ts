@@ -25,7 +25,11 @@ import {
     wrapHappyDataKey,
 } from "./crypto/happyEncryption.js";
 import { connectHappySocket } from "./connectHappySocket.js";
-import { HAPPY_SESSION_RPC_METHODS, handleHappySessionRpc } from "./handleHappySessionRpc.js";
+import {
+    HAPPY_SESSION_RPC_METHODS,
+    handleHappySessionRpc,
+    type HappySetAvatarRequest,
+} from "./handleHappySessionRpc.js";
 import type { HappyConnectionConfiguration } from "./HappyCredentials.js";
 import {
     HappyMessageRefused,
@@ -81,6 +85,13 @@ export interface HappySessionOperations {
         ctx: Context,
         agentId: string,
     ) => Promise<BotAvatarAsset | null | undefined>;
+    /** Puts a picture the phone chose on this session's bot; throws for a session with none. */
+    setSessionAvatar?: (
+        ctx: Context,
+        agentId: string,
+        bytes: Uint8Array,
+        contentType: "image/jpeg" | "image/png" | "image/webp",
+    ) => Promise<void>;
     /** Stops whatever the agent is doing. */
     abort: (ctx: Context, agentId: string) => Promise<void>;
 
@@ -728,6 +739,23 @@ export class HappySessionClient {
         state: HappySyncSession,
         attachment: { mimeType?: string; ref: string; size: number },
     ): Promise<HappyInboundImage | undefined> {
+        const mimeType = attachment.mimeType ?? "image/jpeg";
+        // Happy Agent can put a picture in front of a model; it cannot do that with a spreadsheet.
+        if (!mimeType.startsWith("image/")) return undefined;
+        const decrypted = await this.#downloadAttachmentBytes(state, attachment);
+        if (decrypted === undefined) return undefined;
+        return { data: Buffer.from(decrypted).toString("base64"), mimeType };
+    }
+
+    /**
+     * Reads one attachment the phone put in this session's store, and decrypts it with the
+     * session's own key. A picture travelling with a message and a picture meant for the bot's
+     * face are stored the same way, so both are read here.
+     */
+    async #downloadAttachmentBytes(
+        state: HappySyncSession,
+        attachment: { ref: string; size: number },
+    ): Promise<Uint8Array | undefined> {
         if (attachment.size < 0 || attachment.size > MAX_HAPPY_ATTACHMENT_BYTES) return undefined;
         const remoteSessionId = state.remoteSessionId;
         if (remoteSessionId === undefined) return undefined;
@@ -751,6 +779,12 @@ export class HappySessionClient {
             signal: this.#signal(),
         });
         if (!download.ok) return undefined;
+        // The body is refused by its declared length before it is read, so a store answering
+        // with something far larger than any attachment is not buffered whole to be measured.
+        const declared = Number(download.headers.get("content-length") ?? "0");
+        if (Number.isFinite(declared) && declared > MAX_HAPPY_ATTACHMENT_BYTES + 64) {
+            return undefined;
+        }
         const encrypted = new Uint8Array(await download.arrayBuffer());
         if (encrypted.length > MAX_HAPPY_ATTACHMENT_BYTES + 64) return undefined;
         const decrypted = decryptHappyBlob({
@@ -761,10 +795,30 @@ export class HappySessionClient {
         if (decrypted === undefined || decrypted.length > MAX_HAPPY_ATTACHMENT_BYTES) {
             return undefined;
         }
-        const mimeType = attachment.mimeType ?? "image/jpeg";
-        // Happy Agent can put a picture in front of a model; it cannot do that with a spreadsheet.
-        if (!mimeType.startsWith("image/")) return undefined;
-        return { data: Buffer.from(decrypted).toString("base64"), mimeType };
+        return decrypted;
+    }
+
+    /**
+     * Puts a picture the phone uploaded onto this session's bot.
+     *
+     * The phone uploads the face it painted the same way it uploads a picture for a message, then
+     * asks for it to be worn. A download that comes back empty is said so, not swallowed: the
+     * phone is waiting to know whether the bot has its face.
+     */
+    async #setAvatar(state: HappySyncSession, request: HappySetAvatarRequest): Promise<void> {
+        const setSessionAvatar = this.#options.operations.setSessionAvatar;
+        if (setSessionAvatar === undefined) {
+            throw new Error("This session cannot be given a picture.");
+        }
+        const bytes = await this.#downloadAttachmentBytes(state, request);
+        if (bytes === undefined) throw new Error("Happy Agent could not read that picture.");
+        await setSessionAvatar(
+            this.#options.context,
+            this.#options.agentId,
+            bytes,
+            request.mimeType,
+        );
+        this.kick();
     }
 
     async #handleRpcRequest(
@@ -806,6 +860,7 @@ export class HappySessionClient {
                           readFile: (input) => operations.readFile(context, agentId, input),
                           readFileAtRevision: (input) =>
                               operations.readFileAtRevision(context, agentId, input),
+                          setAvatar: (input) => this.#setAvatar(state, input),
                           method: request.method.slice(prefix.length),
                           params,
                       })

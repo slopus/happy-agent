@@ -5,10 +5,11 @@ import { resolve } from "node:path";
 import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import { isAgentPermissionMode, type AgentPermissionMode } from "@slopus/happy-agent-base";
+import { botNameSchema } from "@slopus/happy-agent-client";
 import type { Context } from "@steve.kite/stdlib";
 
 import { createHappySpawnSessionId } from "./createHappySpawnSessionId.js";
-import type { HappyModel, HappySpawnRequest } from "./HappySession.js";
+import type { HappyModel, HappySpawnRequest, HappySpawnTarget } from "./HappySession.js";
 
 /** How long the phone should wait before asking again about a session it is still owed. */
 export const HAPPY_SPAWN_RETRY_MS = 2_000;
@@ -44,8 +45,7 @@ export type HappySpawnResult =
           readonly retryAfterMs: number;
       }
     | { readonly type: "requestToApproveDirectoryCreation"; readonly directory: string }
-    | { readonly type: "error"; readonly errorMessage: string }
-    | { readonly type: "error"; readonly message: string };
+    | { readonly type: "error"; readonly errorMessage: string };
 
 const directorySpawnRequestSchema = Type.Object(
     {
@@ -96,6 +96,12 @@ const happyAgentSpawnTargetSchema = Type.Union([
         },
         { additionalProperties: false },
     ),
+    // A bot is always given its name here. The phone has the person type one before anything is
+    // made, so the daemon never has to invent one and the folder is named from the start.
+    Type.Object(
+        { kind: Type.Literal("bot"), name: botNameSchema },
+        { additionalProperties: false },
+    ),
 ]);
 
 const happyAgentSpawnRequestSchema = Type.Object(
@@ -140,7 +146,7 @@ export async function handleHappySpawnSession(options: {
         if (cached !== undefined) return cached;
         if (!Value.Check(happyAgentSpawnRequestSchema, options.params)) {
             return rememberTerminal(options.operations, options.params.clientRequestId, {
-                message: "Happy asked for a session Happy Agent does not know how to start.",
+                errorMessage: "Happy asked for a session Happy Agent does not know how to start.",
                 type: "error",
             });
         }
@@ -244,10 +250,18 @@ async function handleHappyAgentSpawn(
             options.machineId,
             `${request.clientRequestId}:workspace`,
         );
-        const target =
+        const target: HappySpawnTarget =
             request.target.kind === "projectFolder"
                 ? { ...request.target, projectPath: resolveDirectory(request.target.projectPath) }
-                : request.target;
+                : request.target.kind === "bot"
+                  ? {
+                        ...request.target,
+                        id: createHappySpawnSessionId(
+                            options.machineId,
+                            `${request.clientRequestId}:bot`,
+                        ),
+                    }
+                  : request.target;
         options.signal?.throwIfAborted();
         const started = await options.operations.spawnSession(options.ctx, {
             effort,
@@ -279,7 +293,7 @@ async function handleHappyAgentSpawn(
         });
     } catch (error) {
         return rememberTerminal(options.operations, request.clientRequestId, {
-            message:
+            errorMessage:
                 error instanceof Error
                     ? error.message
                     : "Happy Agent could not start that session.",

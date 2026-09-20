@@ -26,6 +26,9 @@ function recorder() {
             cancelQuestion: async (requestId: string) => {
                 calls.push(`cancel:${requestId}`);
             },
+            setAvatar: async (request: { mimeType: string; ref: string; size: number }) => {
+                calls.push(`avatar:${request.ref}:${request.mimeType}:${request.size}`);
+            },
         },
     };
 }
@@ -108,6 +111,30 @@ describe("carrying out what the phone asked", () => {
                 params: "nonsense",
             }),
         ).toEqual({ error: "Happy sent an answer Happy Agent could not read." });
+    });
+
+    it("puts an uploaded picture on the bot", async () => {
+        const { calls, options } = recorder();
+        expect(
+            await handleHappySessionRpc({
+                ...options,
+                method: "setAvatar",
+                params: { mimeType: "image/png", ref: "att-1", size: 1234 },
+            }),
+        ).toEqual({ success: true });
+        expect(calls).toEqual(["avatar:att-1:image/png:1234"]);
+    });
+
+    it("refuses a picture in an encoding the bot catalog does not keep", async () => {
+        const { calls, options } = recorder();
+        expect(
+            await handleHappySessionRpc({
+                ...options,
+                method: "setAvatar",
+                params: { mimeType: "image/svg+xml", ref: "att-1", size: 1234 },
+            }),
+        ).toEqual({ error: "Happy sent a picture Happy Agent could not read." });
+        expect(calls).toEqual([]);
     });
 
     it("refuses a method it does not have", async () => {

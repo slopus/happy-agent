@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
     createHappySyncDatabase,
+    encryptHappyBlob,
     encryptHappyPayload,
     decryptHappyPayload,
     happySessionTag,
@@ -222,11 +223,25 @@ function fakeOperations(overrides: Partial<HappySessionOperations> = {}): {
 function fakeServer(options: { avatars?: boolean } = {}) {
     const requests: { body: unknown; method: string; url: string }[] = [];
     let remoteMessages: unknown[] = [];
+    /** Encrypted attachments the phone has put in the session's store, by ref. */
+    const attachments = new Map<string, Uint8Array>();
     const handler = async (input: string | URL, init: RequestInit = {}): Promise<Response> => {
         const url = typeof input === "string" ? input : input.toString();
         const method = init.method ?? "GET";
         const body = typeof init.body === "string" ? JSON.parse(init.body) : init.body;
         requests.push({ body, method, url });
+        if (url.endsWith("/attachments/request-download") && method === "POST") {
+            // Happy hands out a download address for any ref; the store answers for whether the
+            // bytes are there.
+            const ref = (body as { ref: string }).ref;
+            return Response.json({ downloadUrl: `${SERVER}/download/${encodeURIComponent(ref)}` });
+        }
+        if (url.includes("/download/")) {
+            const ref = decodeURIComponent(url.slice(url.indexOf("/download/") + "/download/".length));
+            const bytes = attachments.get(ref);
+            if (bytes === undefined) return new Response(null, { status: 404 });
+            return new Response(bytes);
+        }
         if (url.endsWith("/v1/sessions") && method === "POST") {
             return Response.json({
                 session: {
@@ -258,6 +273,17 @@ function fakeServer(options: { avatars?: boolean } = {}) {
     return {
         fetch: handler as unknown as typeof fetch,
         requests,
+        /** Plays the phone having uploaded one attachment, encrypted with the session's key. */
+        attach: (ref: string, bytes: Uint8Array) => {
+            attachments.set(
+                ref,
+                encryptHappyBlob({
+                    bytes,
+                    encryptionKey: new Uint8Array(Buffer.from(KEY, "base64")),
+                    encryptionVariant: "legacy",
+                }),
+            );
+        },
         deliver: (messages: unknown[]) => {
             remoteMessages = messages;
         },
@@ -616,8 +642,83 @@ describe("keeping one session in step with Happy", () => {
             { method: "remote-1:gitState" },
             { method: "remote-1:readFile" },
             { method: "remote-1:readFileAtRevision" },
+            { method: "remote-1:setAvatar" },
         ]);
         await session.close();
+    });
+
+    it("puts a picture the phone uploaded onto the bot behind this session", async () => {
+        const socket = new FakeSocket();
+        const server = fakeServer({ avatars: true });
+        const worn: { agentId: string; bytes: Uint8Array; contentType: string }[] = [];
+        const { operations } = fakeOperations({
+            setSessionAvatar: async (_ctx, agentId, bytes, contentType) => {
+                worn.push({ agentId, bytes, contentType });
+            },
+        });
+        const face = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3, 4]);
+        server.attach("sessions/remote-1/attachments/face.png", face);
+        const session = client({ operations, server, socket });
+        try {
+            await session.settle();
+            expect(
+                await socket.rpc("remote-1:setAvatar", {
+                    mimeType: "image/png",
+                    ref: "sessions/remote-1/attachments/face.png",
+                    size: face.length,
+                }),
+            ).toEqual({ success: true });
+            expect(worn).toEqual([{ agentId: AGENT_ID, bytes: face, contentType: "image/png" }]);
+            // The download goes through the same request an attachment for a message uses.
+            expect(server.posted("/attachments/request-download")).toHaveLength(1);
+        } finally {
+            await session.close();
+        }
+    });
+
+    it("says so when the picture the phone named is not there", async () => {
+        const socket = new FakeSocket();
+        const server = fakeServer({ avatars: true });
+        const worn: unknown[] = [];
+        const { operations } = fakeOperations({
+            setSessionAvatar: async (...call) => {
+                worn.push(call);
+            },
+        });
+        const session = client({ operations, server, socket });
+        try {
+            await session.settle();
+            expect(
+                await socket.rpc("remote-1:setAvatar", {
+                    mimeType: "image/png",
+                    ref: "sessions/remote-1/attachments/missing.png",
+                    size: 8,
+                }),
+            ).toEqual({ error: "Happy Agent could not read that picture." });
+            expect(worn).toEqual([]);
+        } finally {
+            await session.close();
+        }
+    });
+
+    it("refuses a picture for a session that has no bot to wear it", async () => {
+        const socket = new FakeSocket();
+        const server = fakeServer();
+        server.attach("sessions/remote-1/attachments/face.png", new Uint8Array([1, 2, 3]));
+        const session = client({ operations: fakeOperations().operations, server, socket });
+        try {
+            await session.settle();
+            expect(
+                await socket.rpc("remote-1:setAvatar", {
+                    mimeType: "image/png",
+                    ref: "sessions/remote-1/attachments/face.png",
+                    size: 3,
+                }),
+            ).toEqual({ error: "This session cannot be given a picture." });
+            expect(server.posted("/attachments/request-download")).toHaveLength(0);
+        } finally {
+            await session.close();
+        }
     });
 
     it("binds encrypted reads to the attached agent and ignores caller-supplied authority", async () => {

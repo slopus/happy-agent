@@ -170,6 +170,9 @@ async function fixture() {
         ],
     ]);
     const createdWorkspaces: unknown[] = [];
+    const createdBots: unknown[] = [];
+    const wornAvatars: { botId: string; bytes: Uint8Array; contentType: string; version: number }[] =
+        [];
 
     const agents = {
         abort: async (_ctx: unknown, agentId: string) => {
@@ -324,6 +327,52 @@ async function fixture() {
                 expect(version).toBe(bot.version);
                 archivedBots.push(botId);
             },
+            createWithResult: async (
+                _ctx: Context,
+                input: { agentId: string; id: string; name: string; workspaceId: string },
+            ) => {
+                createdBots.push(input);
+                const existing = bots.get(input.id);
+                if (existing !== undefined) return { bot: existing, created: false };
+                const bot = {
+                    id: input.id,
+                    agentId: input.agentId,
+                    createdAt: 1,
+                    isAdmin: false,
+                    name: input.name,
+                    nameConfigured: true,
+                    orderKey: "1",
+                    path: `/bots/${input.name.toLowerCase().replace(/\W+/g, "_")}`,
+                    status: "active" as const,
+                    updatedAt: 1,
+                    username: input.name.toLowerCase().replace(/\W+/g, "_"),
+                    version: 1,
+                    workspaceId: input.workspaceId,
+                    workspaceUpdatedAt: 1,
+                    workspaceVersion: 1,
+                } satisfies BotRecord;
+                bots.set(bot.id, bot);
+                configs.set(bot.agentId, {
+                    environment: {
+                        osVersion: "test",
+                        platform: "darwin",
+                        shell: "/bin/zsh",
+                        workingDirectory: bot.path,
+                    },
+                    metadata: { title: bot.name, updatedAt: 1, version: 1 },
+                } as AgentConfig);
+                return { bot, created: true };
+            },
+            setAvatar: async (
+                _ctx: Context,
+                botId: string,
+                bytes: Uint8Array,
+                contentType: string,
+                version: number,
+            ) => {
+                wornAvatars.push({ botId, bytes, contentType, version });
+                return bots.get(botId);
+            },
         } as never,
         { enabled: false } as never,
         {
@@ -358,6 +407,7 @@ async function fixture() {
         botArchiveScopes,
         bots,
         configs,
+        createdBots,
         createdWorkspaces,
         gitState,
         /** Suspend the next metadata write just before it joins the connection. */
@@ -372,6 +422,7 @@ async function fixture() {
         projects,
         releaseHeldWrite: () => releaseWrite?.(),
         steered,
+        wornAvatars,
         workspaceAgents,
         workspaces,
     };
@@ -567,6 +618,52 @@ describe("HappyModule spawn ownership", () => {
         expect(test.workspaceAgents.get("happy-session")).toBe("happy-workspace");
     });
 
+    it("makes a bot with the identities the request derived, once, and seeds its draft", async () => {
+        const test = await fixture();
+        const request = targetRequest({ id: "happy-bot", kind: "bot", name: "Release Captain" });
+
+        await expect(test.module.spawnSession(databases.at(-1)!.context, request)).resolves.toEqual(
+            { agentId: "happy-session", type: "ready" },
+        );
+        expect(test.createdBots).toEqual([
+            {
+                agentId: "happy-session",
+                id: "happy-bot",
+                name: "Release Captain",
+                workspaceId: "happy-workspace",
+            },
+        ]);
+        // A bot lives in its own folder, not in any project or workspace of the catalog.
+        expect(test.projectAgents.has("happy-session")).toBe(false);
+        expect(test.workspaceAgents.has("happy-session")).toBe(false);
+        expect(test.configs.get("happy-session")?.metadata).toMatchObject({
+            draft: { ...SELECTION, serviceTier: null, text: "" },
+            draftUpdatedAt: expect.any(Number),
+            title: "Release Captain",
+        });
+
+        // The phone asking again gets the same bot back, with nothing made or written twice.
+        const draftUpdatedAt = test.configs.get("happy-session")?.metadata?.["draftUpdatedAt"];
+        await expect(test.module.spawnSession(databases.at(-1)!.context, request)).resolves.toEqual(
+            { agentId: "happy-session", type: "ready" },
+        );
+        expect(test.bots.size).toBe(1);
+        expect(test.configs.get("happy-session")?.metadata?.["draftUpdatedAt"]).toBe(
+            draftUpdatedAt,
+        );
+    });
+
+    it("refuses a bot spawn on a model this daemon does not have, before anything is made", async () => {
+        const test = await fixture();
+        await expect(
+            test.module.spawnSession(databases.at(-1)!.context, {
+                ...targetRequest({ id: "happy-bot", kind: "bot", name: "Release Captain" }),
+                modelId: "nope",
+            }),
+        ).rejects.toThrow("That model is not available in this Happy Agent.");
+        expect(test.createdBots).toEqual([]);
+    });
+
     it("creates a missing project folder silently before resolving it", async () => {
         const test = await fixture();
         const root = await mkdtemp(join(tmpdir(), "happy-project-folder-"));
@@ -581,6 +678,35 @@ describe("HappyModule spawn ownership", () => {
         expect((await stat(projectPath)).isDirectory()).toBe(true);
         expect(test.configs.get("happy-session")?.environment?.workingDirectory).toBe(projectPath);
         expect(test.projectAgents.get("happy-session")).toBe("project-1");
+    });
+});
+
+describe("Happy bot pictures from the phone", () => {
+    it("puts the picture on the bot behind the session, at the version it read", async () => {
+        const test = await fixture();
+        const ctx = databases.at(-1)!.context;
+        await test.module.spawnSession(
+            ctx,
+            targetRequest({ id: "happy-bot", kind: "bot", name: "Release Captain" }),
+        );
+        const face = new Uint8Array([1, 2, 3]);
+
+        await test.module.setSessionAvatar(ctx, "happy-session", face, "image/png");
+
+        expect(test.wornAvatars).toEqual([
+            { botId: "happy-bot", bytes: face, contentType: "image/png", version: 1 },
+        ]);
+    });
+
+    it("refuses a picture for a project session, which shows its project instead", async () => {
+        const test = await fixture();
+        const ctx = databases.at(-1)!.context;
+        await test.module.spawnSession(ctx, targetRequest({ id: "project-1", kind: "project" }));
+
+        await expect(
+            test.module.setSessionAvatar(ctx, "happy-session", new Uint8Array([1]), "image/png"),
+        ).rejects.toThrow("Only a bot can be given a picture.");
+        expect(test.wornAvatars).toEqual([]);
     });
 });
 

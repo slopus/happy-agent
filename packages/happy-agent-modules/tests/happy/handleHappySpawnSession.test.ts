@@ -291,6 +291,63 @@ describe("starting a catalog-owned Happy Agent session", () => {
         ]);
     });
 
+    it("gives a new bot an identity derived from the request, beside its session's", async () => {
+        const spawn = spawner("remote-1");
+
+        await expect(
+            handleHappySpawnSession({
+                ctx,
+                operations: spawn.operations,
+                machineId: "machine-1",
+                models: MODELS,
+                params: agentRequest({ target: { kind: "bot", name: "Release Captain" } }),
+                remoteSessionId: spawn.remoteSessionId,
+            }),
+        ).resolves.toEqual({ sessionId: "remote-1", type: "success" });
+
+        const sessionId = createHappySpawnSessionId("machine-1", "phone-1");
+        const botId = createHappySpawnSessionId("machine-1", "phone-1:bot");
+        const workspaceId = createHappySpawnSessionId("machine-1", "phone-1:workspace");
+        expect(spawn.started).toEqual([
+            {
+                effort: "medium",
+                modelId: "gpt-5.6-sol",
+                permissionMode: "auto",
+                providerId: "codex",
+                sessionId,
+                target: { id: botId, kind: "bot", name: "Release Captain" },
+                workspaceId,
+            },
+        ]);
+        // The catalog refuses a bot whose three identities are not distinct.
+        expect(new Set([sessionId, botId, workspaceId]).size).toBe(3);
+    });
+
+    it("refuses a bot with no name, or a name nobody could read", async () => {
+        for (const target of [
+            { kind: "bot" },
+            { kind: "bot", name: "" },
+            { kind: "bot", name: "   " },
+            { kind: "bot", name: "line\nbreak" },
+        ]) {
+            const spawn = spawner("remote-1");
+            await expect(
+                handleHappySpawnSession({
+                    ctx,
+                    operations: spawn.operations,
+                    machineId: "machine-1",
+                    models: MODELS,
+                    params: agentRequest({ target }),
+                    remoteSessionId: spawn.remoteSessionId,
+                }),
+            ).resolves.toEqual({
+                errorMessage: "Happy asked for a session Happy Agent does not know how to start.",
+                type: "error",
+            });
+            expect(spawn.started).toEqual([]);
+        }
+    });
+
     it("fills every omitted agent setting from daemon defaults", async () => {
         const spawn = spawner("remote-1");
         spawn.operations.defaultSpawnPermissionMode = () => "read_only";
@@ -324,7 +381,7 @@ describe("starting a catalog-owned Happy Agent session", () => {
                 remoteSessionId: outer.remoteSessionId,
             }),
         ).resolves.toEqual({
-            message: "Happy asked for a session Happy Agent does not know how to start.",
+            errorMessage: "Happy asked for a session Happy Agent does not know how to start.",
             type: "error",
         });
         expect(outer.started).toEqual([]);
@@ -342,7 +399,7 @@ describe("starting a catalog-owned Happy Agent session", () => {
                 remoteSessionId: nested.remoteSessionId,
             }),
         ).resolves.toEqual({
-            message: "Happy asked for a session Happy Agent does not know how to start.",
+            errorMessage: "Happy asked for a session Happy Agent does not know how to start.",
             type: "error",
         });
         expect(nested.started).toEqual([]);

@@ -71,6 +71,8 @@ import {
     type HappyModel,
     type HappySessionSnapshot,
     type HappySpawnRequest,
+    type HappySpawnTarget,
+    type HappyTargetSpawnRequest,
 } from "./HappySession.js";
 import { HappySessionClient, type HappySessionOperations } from "./HappySessionClient.js";
 import {
@@ -1333,6 +1335,9 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
 
     /** Starts the deterministic local agent behind either Happy spawn request. */
     async spawnSession(ctx: Context, request: HappySpawnRequest): Promise<HappySpawnStartResult> {
+        if ("target" in request && request.target.kind === "bot") {
+            return await this.#spawnBot(ctx, request, request.target);
+        }
         const system = this.#system();
         const owner = await this.#resolveSpawnOwner(ctx, request);
         if (owner === undefined) return { type: "pending" };
@@ -1371,6 +1376,70 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
         }
         await this.#attach(ctx, request.sessionId);
         return { agentId: request.sessionId, type: "ready" };
+    }
+
+    /**
+     * Makes a bot because somebody asked for one from their phone.
+     *
+     * The bot, its workspace and its agent all take identities derived from the request, so a
+     * retry the phone sends after losing the first answer finds the bot already made rather than
+     * making a second one. The phone's composer choices are seeded as the bot's draft the way a
+     * project session's are, so the first message runs on what the person was looking at.
+     */
+    async #spawnBot(
+        ctx: Context,
+        request: HappyTargetSpawnRequest,
+        target: Extract<HappySpawnTarget, { kind: "bot" }>,
+    ): Promise<HappySpawnStartResult> {
+        const selection = checkedSelection(this.#config.models, {
+            effort: request.effort,
+            modelId: request.modelId,
+            permissionMode: request.permissionMode,
+            providerId: request.providerId,
+        });
+        const creation = await ctx.inTx(async (txCtx) => {
+            const made = await this.#bots.createWithResult(txCtx, {
+                agentId: request.sessionId,
+                id: target.id,
+                name: target.name,
+                workspaceId: request.workspaceId,
+            });
+            if (made.created) {
+                await this.saveDraft(txCtx, made.bot.agentId, {
+                    updatedAt: Date.now(),
+                    value: { ...modeForSelection(selection), text: "" },
+                });
+            }
+            return made;
+        });
+        if (creation.bot.status === "archived") throw new Error("That bot was archived.");
+        // The catalog event attaches the bot too, but only after the network catches up, and the
+        // phone is waiting on this answer now. Both go through the same lock, so whichever comes
+        // second finds the client the first one made rather than making another.
+        const agentId = creation.bot.agentId;
+        await this.#botUpdates.runInLock(ctx, agentId, async () => {
+            await this.#attach(ctx, agentId);
+        });
+        return { agentId, type: "ready" };
+    }
+
+    /**
+     * Puts the picture a person chose on their phone onto a bot.
+     *
+     * Only a bot has a picture: a project session shows its project. The version read here is
+     * the one the catalog is asked to write against, so a rename, archive or picture set from the
+     * desktop in between makes this write conflict rather than paint over it.
+     */
+    async setSessionAvatar(
+        ctx: Context,
+        agentId: string,
+        bytes: Uint8Array,
+        contentType: "image/jpeg" | "image/png" | "image/webp",
+    ): Promise<void> {
+        const bot = await this.#bots.forAgent(ctx, agentId);
+        if (bot === undefined) throw new Error("Only a bot can be given a picture.");
+        if (bot.status === "archived") throw new Error("That bot is archived.");
+        await this.#bots.setAvatar(ctx, bot.id, bytes, contentType, bot.version);
     }
 
     async #resolveSpawnOwner(
@@ -1464,6 +1533,8 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
             };
         }
 
+        // A bot has no project or workspace owner; `spawnSession` makes it before coming here.
+        if (target.kind === "bot") throw new Error("A bot is not started in a project.");
         const project = await this.#projects.get(ctx, target.projectId);
         if (project === undefined || project.status === "archived") {
             throw new Error("That project is not available in Happy Agent.");

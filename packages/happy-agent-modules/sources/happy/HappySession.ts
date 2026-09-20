@@ -122,7 +122,12 @@ export type HappySpawnTarget =
     | { readonly kind: "project"; readonly id: string }
     | { readonly kind: "workspace"; readonly id: string }
     | { readonly kind: "newWorkspace"; readonly projectId: string }
-    | { readonly kind: "projectFolder"; readonly projectPath: string };
+    | { readonly kind: "projectFolder"; readonly projectPath: string }
+    /**
+     * A bot to make, whose one continuous conversation becomes the session. The id is derived
+     * from the request, like the session id, so a retried request finds the bot it already made.
+     */
+    | { readonly kind: "bot"; readonly id: string; readonly name: string };
 
 interface HappySpawnSelection {
     readonly effort: string;
@@ -141,7 +146,7 @@ export interface HappyDirectorySpawnRequest extends HappySpawnSelection {
 /** A Happy Agent catalog spawn, once its wire request and model choice have been checked. */
 export interface HappyTargetSpawnRequest extends HappySpawnSelection {
     readonly target: HappySpawnTarget;
-    /** The deterministic workspace identity used only by `newWorkspace`. */
+    /** The deterministic workspace identity used only by `newWorkspace` and `bot`. */
     readonly workspaceId: string;
 }
 

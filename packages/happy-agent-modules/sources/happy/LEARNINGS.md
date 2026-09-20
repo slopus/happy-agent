@@ -108,6 +108,24 @@ one message it cannot carry.
 - Bots are discovered through `BotsModule`, not project/workspace membership. Each bot projects
   its existing agent into one Happy session, with optional encrypted `bot` identity and no synthetic
   project or worktree. Startup includes idle bots; catalog events attach new bots and refresh names.
+- A bot can be made from the phone through the same `spawn-happy-session` machine RPC as a
+  project session, as a `bot` target that always carries its name. The phone has the person type
+  the name first, so the daemon never invents one and the folder is named from birth. The bot,
+  workspace and agent ids are all derived from `clientRequestId` (`:bot`, `:workspace`, and the
+  session id itself), so a retry finds the bot it already made through `createWithResult` instead of
+  making another; the phone's composer choices are seeded as the bot's draft exactly as they are for
+  a project session. The machine advertises `capabilities.bots` so an older phone offers nothing.
+- A spawn is durable before the phone hears back: a bot exists locally while the answer is still
+  `pending`. A Stop pressed in that window leaves it, and the next press makes another; that
+  duplicate is accepted rather than served by a cancel RPC, which would be a second machine method
+  for one narrow window. Machine RPC failures answer `{ type: "error", errorMessage }` everywhere;
+  the phone reads only that field, and a `message` variant was shown as an empty alert.
+- The picture a person picks for a new bot reaches the daemon as a session attachment, not as
+  bytes in the spawn request. The phone uploads the painted face the way it uploads an image for a
+  message, then asks the session's `setAvatar` RPC to wear it by `ref`, `size` and `mimeType`. That
+  reuses the one encrypted attachment download, keeps the spawn answer small and retryable, and
+  lets the catalog's `setAvatar` do its usual version check. Only a bot's session accepts it; a
+  project session shows its project.
 - Bot lifecycle stays in the bot catalog. Phone archival calls `BotsModule.archive`; late messages
   to archived bots and attempts to create a second conversation in their exact folder are refused
   (subdirectories remain ordinary session locations). Resolve and archive the bot in one transaction

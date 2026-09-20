@@ -17,7 +17,11 @@ import type { HappyPublishedModel } from "./createHappySessionMetadata.js";
  * themselves instead, which it already receives one at a time.
  */
 export interface HappyMachineMetadata {
-    capabilities: { newSession: boolean; resume: false; worktrees: false };
+    /**
+     * `bots` says a session may be started as a new bot, named and given a face from the phone.
+     * A phone reading an older daemon finds it absent and offers no such thing.
+     */
+    capabilities: { bots: true; newSession: boolean; resume: false; worktrees: false };
     client: { id: "rig"; name: "Happy Agent"; version: string };
     defaults: { effort: string; modelId: string; permissionMode: "auto"; providerId: string };
     displayName: string;
@@ -77,7 +81,7 @@ export function createHappyMachineMetadata(options: {
         throw new Error("This Happy Agent has no model to offer Happy.");
     const host = hostname();
     return {
-        capabilities: { newSession: true, resume: false, worktrees: false },
+        capabilities: { bots: true, newSession: true, resume: false, worktrees: false },
         client: { id: "rig", name: "Happy Agent", version: options.version },
         defaults: {
             effort: defaultModel.defaultEffort,

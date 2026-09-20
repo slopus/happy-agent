@@ -20,6 +20,7 @@ export const HAPPY_SESSION_RPC_METHODS = [
     "gitState",
     "readFile",
     "readFileAtRevision",
+    "setAvatar",
 ] as const;
 
 const communicationSchema = Type.Object(
@@ -30,6 +31,25 @@ const communicationSchema = Type.Object(
     },
     { additionalProperties: true },
 );
+
+/**
+ * A picture the phone has already put in this session's attachment store, named the way an
+ * attachment travelling with a message is named, so the same download reads both.
+ */
+export const happySetAvatarRequestSchema = Type.Object(
+    {
+        mimeType: Type.Union([
+            Type.Literal("image/jpeg"),
+            Type.Literal("image/png"),
+            Type.Literal("image/webp"),
+        ]),
+        ref: Type.String({ minLength: 1, maxLength: 4_096 }),
+        size: Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
+    },
+    { additionalProperties: true },
+);
+
+export type HappySetAvatarRequest = typeof happySetAvatarRequestSchema.static;
 
 /**
  * Carries out one thing the phone asked of this session.
@@ -48,9 +68,23 @@ export async function handleHappySessionRpc(options: {
     readFileAtRevision: (
         request: HappyReadFileAtRevisionRequest,
     ) => Promise<HappyReadFileAtRevisionResponse>;
+    /** Puts an uploaded picture on this session's bot; throws when it cannot. */
+    setAvatar: (request: HappySetAvatarRequest) => Promise<void>;
     method: string;
     params: unknown;
 }): Promise<unknown> {
+    if (options.method === "setAvatar") {
+        const request = options.params;
+        if (!Value.Check(happySetAvatarRequestSchema, request)) {
+            return { error: "Happy sent a picture Happy Agent could not read." };
+        }
+        await options.setAvatar({
+            mimeType: request.mimeType,
+            ref: request.ref,
+            size: request.size,
+        });
+        return { success: true };
+    }
     if (options.method === "gitState") {
         if (!Value.Check(happyGitStateRequestSchema, options.params)) return invalidRead();
         return await options.gitState();
