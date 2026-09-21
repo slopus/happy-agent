@@ -20,7 +20,9 @@ afterEach(async () => {
 async function fixture() {
     const root = await mkdtemp(join(tmpdir(), "project-creation-tools-"));
     cleanups.push(() => rm(root, { force: true, recursive: true }));
-    const config = await testConfigRootedAt(root);
+    const config = await testConfigRootedAt(root, undefined, {
+        environment: { HOME: root, PATH: "", GITHUB_TOKEN: undefined, GH_TOKEN: undefined },
+    });
     const projects = projectsModuleFor(config);
     projects.open("test-installation");
     const database = moduleDatabase(

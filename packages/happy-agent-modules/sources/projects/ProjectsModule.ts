@@ -1538,8 +1538,10 @@ export class ProjectsModule implements AgentModule {
         const path = this.#git.normalizeFuturePath(join(this.managedProjectsDirectory, name));
         const githubToken =
             options.githubToken ??
-            (request.secret?.kind === "github" && creator.instanceId === this.#localInstanceId
-                ? this.#config.githubToken
+            (request.secret?.kind === "github" &&
+            creator.instanceId === this.#localInstanceId &&
+            creator.profileId === LOCAL_PROFILE_ID
+                ? await this.#config.resolveGithubTokenForImport()
                 : undefined);
         if (githubToken !== undefined && request.source.kind !== "github") {
             throw new ProjectRegistrationError(

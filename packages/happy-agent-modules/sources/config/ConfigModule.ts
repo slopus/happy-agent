@@ -36,6 +36,7 @@ import {
     type ConfiguredAgentModel,
 } from "./impl/agentCatalog.js";
 import { loadConfiguredProviderUsage } from "./impl/loadConfiguredProviderUsage.js";
+import { discoverGithubCliToken, githubTokenSchema } from "./impl/discoverGithubCliToken.js";
 import { ProviderEnablement, providerRegistryUntil } from "./impl/providerRegistryUntil.js";
 import { readGlobalInstructions } from "./impl/readGlobalInstructions.js";
 import { HAPPY_TOML_TEMPLATE, MCP_TOML_TEMPLATE } from "./impl/userConfigurationTemplate.js";
@@ -1967,19 +1968,29 @@ export class ConfigModule implements AgentModule {
     /**
      * The GitHub token this installation acts with, when its environment carries one.
      *
-     * Cloning a private repository needs a credential, and the only one a local installation has is
-     * whatever the person's own tooling already exported — `GITHUB_TOKEN`, or `GH_TOKEN` under the
-     * name the GitHub CLI uses. It is read here because configuration is what owns credentials, and
-     * on every call, so a token exported after startup reaches the next clone. Blank, whitespace, or
-     * longer than any other configured string, and this installation has no GitHub token at all.
+     * Explicit environment credentials win in order, even when blank or invalid. Background
+     * recovery uses only this getter; it must never discover the host's GitHub CLI account.
      */
     get githubToken(): string | undefined {
         for (const name of ["GITHUB_TOKEN", "GH_TOKEN"] as const) {
             const value = this.#environmentValue(name)?.trim();
-            if (value === undefined || value.length === 0) continue;
-            return value.length > MAX_CONFIG_STRING_LENGTH ? undefined : value;
+            if (value === undefined) continue;
+            return Value.Check(githubTokenSchema, value) ? value : undefined;
         }
         return undefined;
+    }
+
+    /** Explicit standalone-owner imports may reuse an existing GitHub CLI login. */
+    async resolveGithubTokenForImport(): Promise<string | undefined> {
+        if (
+            ["GITHUB_TOKEN", "GH_TOKEN"].some(
+                (name) => this.#environmentValue(name) !== undefined,
+            ) ||
+            this.configuration.values.feature.team.enabled
+        )
+            return this.githubToken;
+        const environment = { ...process.env, ...this.#environment };
+        return await discoverGithubCliToken(environment, environment.HOME?.trim() || homedir());
     }
 
     /**

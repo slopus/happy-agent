@@ -1,5 +1,13 @@
 # Config module learnings
 
+## GitHub CLI discovery is request-bound
+
+Imports previously saw only exported tokens. An explicit standalone-owner import can now read
+an existing `gh` login with bounded time/output and trusted installation paths. Present environment
+tokens win even when blank or invalid; discovery never switches accounts, logs diagnostics, or
+persists tokens. Tokens go only to the project-scoped in-memory broker. Team and foreign creators
+cannot discover the host login, and background recovery after restart never performs CLI lookup.
+
 ## Node display identity is not P2P identity
 
 Reusing `p2p.name` for the daemon's display name conflates separate identities. The Happy Agent
