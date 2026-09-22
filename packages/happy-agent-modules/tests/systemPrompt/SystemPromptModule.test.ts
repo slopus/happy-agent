@@ -440,5 +440,13 @@ describe("SystemPromptModule", () => {
         expect(systemPromptForModel({ model: "anthropic/fable-5-1" })).toContain(
             "Knowledge cutoff: June 2026.",
         );
+        // Claude Code gives Opus 5.5 the short Opus prompt plus the pronoun guidance; the Fable
+        // identity paragraph and the knowledge cutoff never appear in it.
+        const opus55 = systemPromptForModel({ model: "anthropic/opus-5-5" });
+        expect(opus55).toContain("When you use a pronoun for someone");
+        expect(opus55).toContain("Before deleting or overwriting, look at the target. Report");
+        expect(opus55).not.toContain("This iteration of Claude is");
+        expect(opus55).not.toContain("Knowledge cutoff");
+        expect(opus55).not.toContain("# Reporting outcomes");
     });
 });

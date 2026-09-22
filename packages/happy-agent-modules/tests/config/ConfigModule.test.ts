@@ -511,6 +511,46 @@ describe("ConfigModule", () => {
         });
     });
 
+    it("offers Opus 5.5 through Claude and Bedrock, without the off effort it rejects", async () => {
+        const root = await mkdtemp(join(tmpdir(), "happy-agent-opus-5-5-catalog-"));
+        temporaryDirectories.push(root);
+        await mkdir(join(root, process.platform === "darwin" ? "Happy/Config" : "happy/config"), {
+            recursive: true,
+        });
+        await writeFile(
+            join(
+                root,
+                process.platform === "darwin" ? "Happy/Config" : "happy/config",
+                "happy.toml",
+            ),
+            "[providers.claude]\nenabled = true\n\n[providers.bedrock]\nenabled = true\n",
+        );
+
+        const module = await ConfigModule.load(join(root, ".happy"));
+
+        const claudeModels = module.catalog.filter((model) => model.providerId === "claude");
+        expect(claudeModels[0]).toMatchObject({
+            autoCompactWindow: 400_000,
+            contextWindow: 1_000_000,
+            defaultEffort: "medium",
+            effortLevels: ["low", "medium", "high", "xhigh", "max"],
+            enabled: true,
+            id: "anthropic/opus-5-5",
+            name: "Opus 5.5 1M",
+        });
+        expect(
+            module.catalog.find(
+                (model) => model.providerId === "bedrock" && model.id === "anthropic/opus-5-5",
+            ),
+        ).toMatchObject({
+            autoCompactWindow: 400_000,
+            contextWindow: 1_000_000,
+            effortLevels: ["low", "medium", "high", "xhigh", "max"],
+            enabled: true,
+            name: "Opus 5.5 1M",
+        });
+    });
+
     it("compacts 1M Claude models at the Claude Code team's recommended 400k", async () => {
         const root = await mkdtemp(join(tmpdir(), "happy-agent-claude-compaction-"));
         temporaryDirectories.push(root);
@@ -535,6 +575,7 @@ describe("ConfigModule", () => {
             "anthropic/fable-5-1",
             "anthropic/fable-5",
             "anthropic/opus-4-8",
+            "anthropic/opus-5-5",
             "anthropic/opus-5",
             "anthropic/sonnet-5",
         ]) {
@@ -644,6 +685,46 @@ describe("ConfigModule", () => {
             name: "GPT-6 Astra",
         });
         expect(module.modelContext("bedrock", "openai/gpt-6-astra")).toEqual({
+            contextWindow: 272_000,
+            autoCompactWindow: 244_800,
+        });
+    });
+
+    it.each([
+        ["openai/gpt-6-sol", "GPT-6 Sol", "high"],
+        ["openai/gpt-6-luna", "GPT-6 Luna", "medium"],
+    ] as const)("offers %s through Codex and Bedrock", async (id, name, defaultEffort) => {
+        const root = await mkdtemp(join(tmpdir(), "happy-agent-gpt-6-catalog-"));
+        temporaryDirectories.push(root);
+        const configDirectory = process.platform === "darwin" ? "Happy/Config" : "happy/config";
+        await mkdir(join(root, configDirectory), { recursive: true });
+        await writeFile(
+            join(root, configDirectory, "happy.toml"),
+            "[providers.codex]\nenabled = true\n\n[providers.bedrock]\nenabled = true\n",
+        );
+
+        const module = await ConfigModule.load(join(root, ".happy"));
+
+        expect(
+            module.catalog.find((model) => model.providerId === "codex" && model.id === id),
+        ).toMatchObject({
+            contextWindow: 272_000,
+            defaultEffort,
+            effortLevels: ["low", "medium", "high", "xhigh", "max"],
+            enabled: true,
+            name,
+            serviceTiers: ["priority"],
+        });
+        expect(
+            module.catalog.find((model) => model.providerId === "bedrock" && model.id === id),
+        ).toMatchObject({
+            contextWindow: 272_000,
+            defaultEffort,
+            effortLevels: ["low", "medium", "high", "xhigh", "max"],
+            enabled: true,
+            name,
+        });
+        expect(module.modelContext("bedrock", id)).toEqual({
             contextWindow: 272_000,
             autoCompactWindow: 244_800,
         });

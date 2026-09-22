@@ -23,7 +23,7 @@ import { ClaudeSession } from "@/vendors/claude/ClaudeSession.js";
  */
 describe("Claude session recreation cache", () => {
     it("preserves the complete cache prefix including signed reasoning after recreation", async () => {
-        await withServer(async (harness) => {
+        await withServer("anthropic/opus-4-8", async (harness) => {
             const liveSession = harness.session();
             const first = await harness.run(liveSession, [user("Refactor the parser.")]);
             const replayed = replayContext(first.events);
@@ -46,6 +46,41 @@ describe("Claude session recreation cache", () => {
             expect(replayed).toEqual(originalHistory);
         });
     }, 15_000);
+
+    // Claude Code renders the model's marketing name and knowledge cutoff into the environment
+    // message after the first prompt. A rebuilt session only keeps the cache prefix when Rig's
+    // copy of that identity matches the CLI's for the model in use.
+    it.each([
+        "anthropic/opus-5-5",
+        "anthropic/opus-5",
+        "anthropic/sonnet-5",
+        "anthropic/fable-5-1",
+        "anthropic/fable-5",
+    ])(
+        "reproduces the environment message the CLI writes for %s",
+        async (model) => {
+            await withServer(model, async (harness) => {
+                const liveSession = harness.session();
+                const first = await harness.run(liveSession, [user("Refactor the parser.")]);
+                const replayed = replayContext(first.events);
+                const continued = await harness.run(liveSession, [
+                    ...replayed,
+                    user("Now update the tests."),
+                ]);
+                liveSession.destroy();
+                const recreated = await harness.run(harness.session(), [
+                    ...replayed,
+                    user("Now update the tests."),
+                ]);
+
+                const environment = continued.request.messages[1];
+                expect(environment?.role).toBe("system");
+                expect(JSON.stringify(environment)).toContain("You are powered by the model named");
+                expect(cachePrefix(recreated.request)).toEqual(cachePrefix(continued.request));
+            });
+        },
+        15_000,
+    );
 });
 
 function user(content: string): SessionMessage {
@@ -89,6 +124,7 @@ function isReasoningBlock(value: unknown): boolean {
 }
 
 async function withServer(
+    model: string,
     scenario: (harness: {
         run: (
             session: ClaudeSession,
@@ -154,7 +190,7 @@ async function withServer(
                     instructions: "You are a careful engineer.",
                     credential,
                     env,
-                    model: "anthropic/opus-4-8",
+                    model,
                     query: claudeSdkQuery,
                     tools: [],
                 });

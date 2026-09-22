@@ -16,6 +16,10 @@ import { assistantMessageFromEvents } from "@/core/SessionAssistantMessageAccumu
 import type { SessionEvent } from "@/core/SessionEvent.js";
 import { ClaudeAuthTokenCredential } from "@/vendors/claude/ClaudeAuthTokenCredential.js";
 import { ClaudeSession } from "@/vendors/claude/ClaudeSession.js";
+import {
+    claudeSessionAttachments,
+    type ClaudeSessionAttachment,
+} from "@/vendors/claude/impl/claudeSessionAttachments.js";
 import { resolveClaudeModelId } from "@/vendors/claude/impl/resolveClaudeModelId.js";
 import { resolveClaudeTools } from "@/vendors/claude/impl/resolveClaudeTools.js";
 import { createClaudeTestInstructions } from "./createClaudeTestInstructions.js";
@@ -256,6 +260,52 @@ describe("Claude provider golden", () => {
                         signature: "<SIGNATURE>",
                     });
                 }
+                // The capture also predates Claude Code 2.1.280, which no longer folds the
+                // current-date reminder into the first user turn. It records environment,
+                // model, session-context, and date attachments after the first prompt and
+                // renders them as one system message directly after that turn: merged plain
+                // text for Opus 4.8, three reminders for Sonnet 5. The first user turn becomes
+                // a bare string and the first cache breakpoint moves onto the system message.
+                // Rig's replay reproduces the same attachments so a rebuilt session sends the
+                // same bytes; the recreation-cache test proves that against the live query.
+                // Keep the capture unchanged and require these exact shapes.
+                const model =
+                    index < 3 ? golden.scenario.initialModel : golden.scenario.switchedModel;
+                const environmentText = renderClaudeEnvironmentMessage(
+                    claudeSessionAttachments({
+                        cwd: process.cwd(),
+                        env: providerEnv,
+                        model: resolveClaudeModelId(model),
+                    }),
+                    index >= 3,
+                );
+                const firstTurn = expectedBody.messages[0];
+                expect(firstTurn.content[0].text).toContain("# currentDate");
+                firstTurn.content.shift();
+                if (index === 5) {
+                    // A replayed native compaction summary now gains a trailing newline and
+                    // Claude Code's own continuation block.
+                    firstTurn.content[0].text += "\n";
+                    firstTurn.content.push({
+                        type: "text",
+                        text: "Continue from where you left off.",
+                    });
+                }
+                const breakpointOnFirstTurn = firstTurn.content[0].cache_control !== undefined;
+                delete firstTurn.content[0].cache_control;
+                if (firstTurn.content.length === 1) firstTurn.content = firstTurn.content[0].text;
+                expectedBody.messages.splice(1, 0, {
+                    role: "system",
+                    content: breakpointOnFirstTurn
+                        ? [
+                              {
+                                  type: "text",
+                                  text: environmentText,
+                                  cache_control: { type: "ephemeral" },
+                              },
+                          ]
+                        : environmentText,
+                });
                 // Claude Code ignores its date override for the generated current-date
                 // reminder. Its recovery pass can also attach post-tool assistant text
                 // either side of the tool-result message; normalize that equivalent
@@ -495,4 +545,46 @@ function normalizeRecoveredToolText(messages: any[]): any[] {
         normalized.splice(index + 2, 1);
     }
     return normalized;
+}
+
+/**
+ * How Claude Code 2.1.280 renders its first-prompt attachments into the system message that
+ * follows the first user turn. Opus 4.8 receives one merged plain-text block; Sonnet 5 receives
+ * each attachment inside its own `<system-reminder>`.
+ */
+function renderClaudeEnvironmentMessage(
+    attachments: readonly ClaudeSessionAttachment[],
+    wrapped: boolean,
+): string {
+    const sections: string[] = [];
+    for (const attachment of attachments) {
+        if (attachment.type === "environment") {
+            const { snapshot } = attachment;
+            const lines = [
+                `Primary working directory: ${snapshot.workingDirectory}`,
+                ...(snapshot.isWorktree
+                    ? [
+                          "This is a git worktree — an isolated copy of the repository. Run all commands from this directory. Do NOT `cd` to the original repository root.",
+                          "The git stash stack is shared with the main checkout and all other worktrees, and other Claude sessions may push or pop it concurrently. Never use bare `git stash` / `git stash pop` — you could pop another session's changes. Prefer a temporary WIP commit to set work aside; if you must stash, use `git stash push -u -m \"<unique-tag>\"`, immediately capture your entry's SHA via `git stash list --format='%H %gs'`, restore with `git stash apply <sha>` (not pop), and afterwards drop the entry, re-finding its current `stash@{n}` by tag first.",
+                      ]
+                    : []),
+                `Is a git repository: ${snapshot.isGitRepo}`,
+                `Platform: ${snapshot.platform}`,
+                `Shell: ${snapshot.shell}`,
+                `OS Version: ${snapshot.osVersion}`,
+            ];
+            sections.push(
+                `# Environment\nYou have been invoked in the following environment: \n${lines
+                    .map((line) => ` - ${line}`)
+                    .join("\n")}`,
+            );
+        } else if (attachment.type === "model") {
+            sections.push(attachment.text);
+        } else if (attachment.type === "date") {
+            sections.push(`Today's date is ${attachment.date}.`);
+        }
+    }
+    return sections
+        .map((section) => (wrapped ? `<system-reminder>\n${section}\n</system-reminder>` : section))
+        .join("\n\n");
 }

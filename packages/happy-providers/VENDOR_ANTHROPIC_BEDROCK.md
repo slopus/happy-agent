@@ -40,6 +40,7 @@ wins:
 
 | Model            | Preferred Mantle regions                                                  | Runtime fallback           |
 | ---------------- | ------------------------------------------------------------------------- | -------------------------- |
+| Claude Opus 5.5  | Model card lists Mantle; in-region availability not yet documented        | Commercial Bedrock regions |
 | Claude Fable 5.1 | None documented; Runtime is the default                                   | Commercial Bedrock regions |
 | Claude Sonnet 5  | `eu-north-1`, `eu-west-1`, `us-east-1`                                    | Commercial Bedrock regions |
 | Claude Fable 5   | `us-east-1`                                                               | Commercial Bedrock regions |
@@ -50,7 +51,8 @@ documented in-region availability. Runtime remains the fallback because it suppo
 and global inference profiles. A per-model `transport = "mantle"` or `transport = "runtime"`
 override can force one supported surface; pairing it with `endpoint` supports a custom gateway.
 Fable 5.1 defaults to Runtime because AWS documents US and global inference profiles but no
-in-region Mantle route.
+in-region Mantle route. Opus 5.5 launched on both endpoints with the same us, eu, jp, au, and
+global Runtime profiles as Opus 5; its Mantle ID is the bare `anthropic.claude-opus-5-5`.
 
 ## Runtime ownership
 

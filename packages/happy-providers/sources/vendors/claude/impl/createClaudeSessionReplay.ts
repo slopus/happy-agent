@@ -24,6 +24,7 @@ import type {
 } from "@/core/SessionContext.js";
 import { toSessionAgentNotificationMessage } from "@/core/toSessionAgentNotificationMessage.js";
 import { toSessionReminderMessage } from "@/core/toSessionReminderMessage.js";
+import { claudeSessionAttachments } from "@/vendors/claude/impl/claudeSessionAttachments.js";
 
 /** A message Claude can replay, once system notices have been projected onto the user role. */
 type ReplayMessage = Exclude<SessionMessage, SessionSystemMessage | SessionAgentMessage>;
@@ -38,6 +39,7 @@ export interface ClaudeSessionReplay {
 
 export function createClaudeSessionReplay(options: {
     context: SessionContext;
+    env?: NodeJS.ProcessEnv;
     model: string;
     sessionId: string;
 }): ClaudeSessionReplay {
@@ -45,7 +47,11 @@ export function createClaudeSessionReplay(options: {
     const splitIndex = findPromptStart(messages);
     const history = messages.slice(0, splitIndex);
     const promptMessages = messages.slice(splitIndex);
-    const entries = toSessionStoreEntries(history, options);
+    const entries = toSessionStoreEntries(history, {
+        env: options.env ?? process.env,
+        model: options.model,
+        sessionId: options.sessionId,
+    });
     let compactionSummary: string | undefined;
     const sessionStore: SessionStore = {
         append: (key, appendedEntries) => {
@@ -136,11 +142,16 @@ function toPromptMessage(messages: readonly ReplayMessage[]): SDKUserMessage {
 
 function toSessionStoreEntries(
     messages: readonly ReplayMessage[],
-    options: { model: string; sessionId: string },
+    options: { env: NodeJS.ProcessEnv; model: string; sessionId: string },
 ): SessionStoreEntry[] {
     let parentUuid: string | null = null;
     const assistantUuidByToolCallId = new Map<string, string>();
     const entries: SessionStoreEntry[] = [];
+    // Claude Code records its environment, model, session-context, and date attachments right
+    // after the first prompt and renders them as the system message that follows the first user
+    // turn. A replay must carry the same attachments, in the same place, for a rebuilt session to
+    // send the same bytes as the live one; without them the CLI appends its own copy at the end.
+    let firstPromptAttachmentsPending = true;
     for (let index = 0; index < messages.length; index += 1) {
         const message = messages[index];
         if (message === undefined) continue;
@@ -269,6 +280,28 @@ function toSessionStoreEntries(
             type: "user",
         });
         parentUuid = uuid;
+        if (firstPromptAttachmentsPending) {
+            firstPromptAttachmentsPending = false;
+            const attachments = claudeSessionAttachments({
+                cwd: base.cwd,
+                env: options.env,
+                model: options.model,
+            });
+            for (const [attachmentIndex, attachment] of attachments.entries()) {
+                const attachmentUuid = stableUuid(
+                    options.sessionId,
+                    `${index}:attachment:${attachmentIndex}`,
+                );
+                entries.push({
+                    ...base,
+                    attachment,
+                    parentUuid,
+                    type: "attachment",
+                    uuid: attachmentUuid,
+                });
+                parentUuid = attachmentUuid;
+            }
+        }
     }
     return entries;
 }

@@ -1016,8 +1016,11 @@ describe("ClaudeSession", () => {
             }),
         );
 
-        expect(capturedEntries).toHaveLength(4);
-        expect(capturedEntries).toMatchObject([
+        const messageEntries = (capturedEntries as { type: string }[]).filter(
+            (entry) => entry.type !== "attachment",
+        );
+        expect(messageEntries).toHaveLength(4);
+        expect(messageEntries).toMatchObject([
             { type: "user", message: { role: "user", content: "Run both tools." } },
             {
                 type: "assistant",

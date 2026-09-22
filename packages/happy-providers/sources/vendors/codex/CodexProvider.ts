@@ -145,10 +145,9 @@ export class CodexProvider extends ResponsesProvider {
     }
 }
 
+/** Mantle does not serve the GPT-6 family, so those models default to the Runtime OpenAI endpoint. */
 function defaultBedrockTransport(model: string | undefined): CodexBedrockTransport {
-    return model === "openai/gpt-6-astra" ||
-        model === "openai.gpt-6-astra" ||
-        /^(?:global|us)\.openai\.gpt-6-astra$/u.test(model ?? "")
+    return /^(?:openai\/|(?:(?:global|us)\.)?openai\.)gpt-6-(?:astra|sol|luna)$/u.test(model ?? "")
         ? "runtime"
         : "mantle";
 }

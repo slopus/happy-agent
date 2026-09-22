@@ -46,10 +46,16 @@ describe("Claude session replay reasoning", () => {
             model: "claude-opus-4-8",
             sessionId: "replay-session",
         });
-        const entries = replay.entries();
+        // Claude Code records four attachments after the first prompt; the message entries that
+        // follow them are what this test is about.
+        const entries = replay.entries().filter((entry) => entry.type !== "attachment");
 
-        expect(entries.map((entry) => entry.type)).toEqual([
+        expect(replay.entries().map((entry) => entry.type)).toEqual([
             "user",
+            "attachment",
+            "attachment",
+            "attachment",
+            "attachment",
             "assistant",
             "user",
             "assistant",
@@ -233,8 +239,17 @@ describe("Claude session replay reasoning", () => {
         });
         const entries = replay.entries();
 
-        expect(entries).toHaveLength(2);
-        expect(entries[1]?.parentUuid).toBe(entries[0]?.uuid);
+        expect(entries.map((entry) => entry.type)).toEqual([
+            "user",
+            "attachment",
+            "attachment",
+            "attachment",
+            "attachment",
+            "user",
+        ]);
+        for (const [index, entry] of entries.entries()) {
+            expect(entry.parentUuid).toBe(index === 0 ? null : entries[index - 1]?.uuid);
+        }
     });
 
     it("projects unsigned reasoning only at the Claude request boundary", () => {

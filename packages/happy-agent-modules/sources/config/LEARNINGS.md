@@ -66,6 +66,15 @@ below the window made the display and the compaction disagree. The catalog there
 `autoCompactWindow` beside `contextWindow` on every route, including scripted ones, and the API
 model definition carries it so clients count down to the point where compaction actually fires.
 
+## Always-on thinking models do not offer the off effort
+
+The Claude provider turns effort `off` into a disabled-thinking request. Opus 5.5 rejects that
+with a 400, so its catalog entry uses the ladder without `off`; offering it would turn a picker
+choice into a failed turn. Its Claude Code SDK wire ID carries the `[1m]` suffix for the same
+reason Fable 5.1 does: the pinned SDK accepts the model but does not know its window, so without
+the suffix its continuation guard assumes 200k. Bedrock serves it on both endpoints through the
+same us, eu, jp, au, and global profiles as Opus 5.
+
 ## Reseller catalogs are explicit subsets
 
 Adding a model to its native provider must not automatically advertise it through a reseller.

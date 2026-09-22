@@ -57,11 +57,11 @@ prompt files in this package are test assets, not runtime prompt sources.
 nothing else. Skill metadata is ordinary caller-supplied prompt content that arrives that way,
 so the provider composes nothing of its own.
 
-Session `system` messages are not prompt content. Anthropic exposes no system role once a
-conversation is under way, so `impl/createClaudeSessionReplay.ts` projects each one onto a user
-turn wrapped in `<system-reminder>`, in the position the caller chose. This matches how Claude
-Code delivers out-of-band notices, and it keeps a mid-conversation notice from rewriting the
-cached prompt prefix.
+Session `system` messages are not prompt content. `impl/createClaudeSessionReplay.ts` projects
+each one onto a user turn wrapped in `<system-reminder>`, in the position the caller chose. This
+matches how Claude Code delivers out-of-band notices, and it keeps a mid-conversation notice from
+rewriting the cached prompt prefix. The only system-role message inside the conversation is the
+one Claude Code writes itself, described under "First-prompt attachments" below.
 
 The SDK adds its own small SDK identity and billing blocks on the final Anthropic request.
 The Rig prompt remains a distinct complete system block; the provider golden fixture
@@ -147,13 +147,43 @@ native compaction summary as the explicit result of `compact()`. Claude's SDK ma
 completed-turn thinking out of the outgoing API request when required by the active model or
 trajectory. That request-time projection does not change Rig's supplied session context.
 
-The bundled SDK and platform binaries are pinned together at `0.3.251` (Claude Code
-`2.1.251`), the minimum version required by Fable 5.1. Unlike the older SDK used for the
-original provider capture, this version retains signed thinking when reconstructing a session,
+The bundled SDK and platform binaries are pinned together at `0.3.280` (Claude Code
+`2.1.280`), the first version that lists Opus 5.5. Unlike the older SDK used for the original
+provider capture, SDK 0.3.251 and later retain signed thinking when reconstructing a session,
 including model switches and compaction requests. The recreation test compares the complete
 cache prefix, reasoning included. The original golden capture remains unchanged; its test
-explicitly expects the retained thinking block on the two reconstructed requests and still
-compares every other field exactly.
+explicitly expects the retained thinking block on the two reconstructed requests, the
+first-prompt attachment message described below, and the continuation block Claude Code now
+appends after a replayed compaction summary, and still compares every other field exactly.
+
+### First-prompt attachments
+
+Claude Code 2.1.280 no longer folds the current-date reminder into the first user turn. On the
+first prompt of a session it records four transcript attachments, an environment snapshot
+(working directory, git repository and worktree flags, platform, shell, OS version), the model
+identity (wire ID, marketing name, knowledge cutoff), an empty session context, and the calendar
+date, and renders them as one `system`-role message placed directly after the first user turn.
+The first cache breakpoint sits on that message. The rendering is model-dependent: Opus models
+receive one merged plain-text block, Sonnet and Fable models receive one `<system-reminder>` per
+attachment. The gate is on for every first-party model from Opus 4.8 onward and has no
+environment switch for first-party accounts.
+
+On resume the CLI renders whatever attachments the transcript holds in that same position and
+appends an update at the end only when a stored value differs from what it computes now. A
+transcript without them therefore gets a fresh copy appended after the last user turn, which
+diverges from the live request at the second message and loses the whole cache prefix on every
+rebuild, including resume after a daemon restart. `impl/claudeSessionAttachments.ts` computes the
+same four values the way the CLI does, and the replay inserts them after the first user entry, so
+a rebuilt session sends the same bytes as the surviving one. The CLI compares the structured
+values, not any rendered text, so the model identity table there must match the CLI's catalog
+for every curated model; `tests/vendors/claudeSessionRecreationCache.test.ts` proves that against
+the real binary for each one. Capturing the CLI's own entries instead was rejected: the SDK
+refuses a session store unless local persistence is on, and that would write Rig conversations
+into the user's Claude configuration directory.
+
+The date attachment is the local calendar date at replay time, as it is in the CLI. A session
+rebuilt after midnight therefore differs from the one it replaces; the CLI itself reports a
+changed date on a long-lived query, and the one-hour cache lifetime makes the difference moot.
 
 A run-level model overrides the active model and is retained for later turns and
 compaction. Replay serializes historical assistant entries with the currently selected
@@ -162,11 +192,13 @@ selected model. The real provider trace switches from Opus to Sonnet and verifie
 selected prompt and stable caller-owned tools on the wire.
 
 Curated million-token Claude models explicitly select the SDK's `[1m]` suffix, including
-Fable 5.1. SDK 2.1.251 accepts `claude-fable-5-1` on the wire but does not have that exact
-model in its local context catalog. Without the suffix its continuation guard assumes 200k,
-so a successful response reporting 235k tokens makes the next request fail locally before
-Rig's 400k compaction threshold. Native `/compact` bypasses that ordinary inference guard;
-manual compaction succeeding does not prove the continuation limit is configured correctly.
+Fable 5.1 and Opus 5.5. SDK 2.1.251 accepted `claude-fable-5-1` on the wire without having that
+exact model in its local context catalog. Without the suffix its continuation guard assumed 200k,
+so a successful response reporting 235k tokens made the next request fail locally before Rig's
+400k compaction threshold. Native `/compact` bypasses that ordinary inference guard; manual
+compaction succeeding does not prove the continuation limit is configured correctly. The suffix
+also feeds the model identity the CLI renders: models in its 1M-suffix set, such as Opus 5.5,
+are named "Opus 5.5 (1M context)", while Sonnet 5 and Fable stay unsuffixed in the name.
 
 SDK results with `subtype: "success"` can still carry `is_error: true`. Their result text is
 an error diagnostic, never an assistant answer. Emit only the terminal failure for these

@@ -12,7 +12,7 @@ describe("resolveClaudeCodeExecutablePath", () => {
         expect(() => accessSync(executablePath, constants.X_OK)).not.toThrow();
     });
 
-    it("bundles a Claude Code version that supports Fable 5.1", () => {
+    it("bundles a Claude Code version that supports Opus 5.5", () => {
         const output = execFileSync(resolveClaudeCodeExecutablePath(), ["--version"], {
             encoding: "utf8",
             timeout: 10_000,
@@ -21,11 +21,11 @@ describe("resolveClaudeCodeExecutablePath", () => {
         expect(match, output).not.toBeNull();
 
         const version = match!.slice(1).map(Number);
-        const minimum = [2, 1, 251];
+        const minimum = [2, 1, 280];
         const difference = version.findIndex((part, index) => part !== minimum[index]);
         expect(
             difference === -1 || version[difference]! > minimum[difference]!,
-            `Fable 5.1 requires Claude Code 2.1.251 or newer; bundled version: ${output.trim()}`,
+            `Opus 5.5 requires Claude Code 2.1.280 or newer; bundled version: ${output.trim()}`,
         ).toBe(true);
     });
 });

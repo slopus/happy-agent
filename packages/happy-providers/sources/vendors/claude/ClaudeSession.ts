@@ -424,6 +424,7 @@ export class ClaudeSession extends BaseSession {
         } = options;
         const replay = createClaudeSessionReplay({
             context: configuredContext,
+            env: this.env,
             model: options.model,
             sessionId: this.sdkSessionId,
         });

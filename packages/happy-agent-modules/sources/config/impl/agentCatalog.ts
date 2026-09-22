@@ -74,6 +74,10 @@ const MODEL_CONTEXTS: Readonly<Record<string, AgentModelContext>> = Object.freez
         contextWindow: CLAUDE_CONTEXT_WINDOW,
         autoCompactWindow: CLAUDE_AUTO_COMPACT_WINDOW,
     }),
+    "anthropic/opus-5-5": Object.freeze({
+        contextWindow: CLAUDE_CONTEXT_WINDOW,
+        autoCompactWindow: CLAUDE_AUTO_COMPACT_WINDOW,
+    }),
     "anthropic/opus-5": Object.freeze({
         contextWindow: CLAUDE_CONTEXT_WINDOW,
         autoCompactWindow: CLAUDE_AUTO_COMPACT_WINDOW,
@@ -87,6 +91,14 @@ const MODEL_CONTEXTS: Readonly<Record<string, AgentModelContext>> = Object.freez
         autoCompactWindow: 244_800,
     }),
     "openai/gpt-6-astra": Object.freeze({
+        contextWindow: 272_000,
+        autoCompactWindow: 244_800,
+    }),
+    "openai/gpt-6-sol": Object.freeze({
+        contextWindow: 272_000,
+        autoCompactWindow: 244_800,
+    }),
+    "openai/gpt-6-luna": Object.freeze({
         contextWindow: 272_000,
         autoCompactWindow: 244_800,
     }),
@@ -133,9 +145,13 @@ const ALL_BUT_OFF: AgentModel["effortLevels"] = ["low", "medium", "high", "xhigh
  */
 const CATALOG: readonly CatalogAgentModel[] = [
     model("codex", "openai/gpt-6-astra", "GPT-6 Astra", ALL_BUT_OFF, "high", ["priority"]),
+    model("codex", "openai/gpt-6-sol", "GPT-6 Sol", ALL_BUT_OFF, "high", ["priority"]),
+    model("codex", "openai/gpt-6-luna", "GPT-6 Luna", ALL_BUT_OFF, "medium", ["priority"]),
     model("codex", "openai/gpt-5.6-sol", "GPT-5.6 Sol", ALL_BUT_OFF, "medium", ["priority"]),
     model("codex", "openai/gpt-5.6-terra", "GPT-5.6 Terra", EVERY_EFFORT, "medium", ["priority"]),
     model("codex", "openai/gpt-5.6-luna", "GPT-5.6 Luna", EVERY_EFFORT, "medium", ["priority"]),
+    // Opus 5.5 always thinks: the API rejects disabled thinking, so "off" is not offered.
+    model("claude", "anthropic/opus-5-5", "Opus 5.5 1M", ALL_BUT_OFF),
     model("claude", "anthropic/opus-5", "Opus 5 1M"),
     model("claude", "anthropic/sonnet-5", "Sonnet 5"),
     model("claude", "anthropic/fable-5-1", "Fable 5.1"),

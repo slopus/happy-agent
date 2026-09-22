@@ -40,7 +40,10 @@ describe("Session system messages", () => {
         });
 
         expect(
-            replay.entries().map((entry) => (entry.message as { content: unknown }).content),
+            replay
+                .entries()
+                .filter((entry) => entry.type !== "attachment")
+                .map((entry) => (entry.message as { content: unknown }).content),
         ).toEqual(["Read the config.", [{ type: "text", text: "Reading it now." }], REMINDER]);
     });
 

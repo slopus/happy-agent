@@ -3,6 +3,7 @@ import { Value } from "@sinclair/typebox/value";
 import { claude_fable_5_1_system_prompt } from "../prompts/claude/claude_fable_5_1_system_prompt.js";
 import { claude_fable_5_system_prompt } from "../prompts/claude/claude_fable_5_system_prompt.js";
 import { claude_opus_4_8_system_prompt } from "../prompts/claude/claude_opus_4_8_system_prompt.js";
+import { claude_opus_5_5_system_prompt } from "../prompts/claude/claude_opus_5_5_system_prompt.js";
 import { claude_opus_5_system_prompt } from "../prompts/claude/claude_opus_5_system_prompt.js";
 import { claude_sonnet_5_system_prompt } from "../prompts/claude/claude_sonnet_5_system_prompt.js";
 import { codex_agent_instructions } from "../prompts/codex/codex_agent_instructions.js";
@@ -15,6 +16,7 @@ import {
 
 /** The prompt each model that has one of its own is written for. */
 const promptsByModel: Readonly<Record<string, string>> = Object.freeze({
+    "anthropic/opus-5-5": claude_opus_5_5_system_prompt,
     "anthropic/opus-5": claude_opus_5_system_prompt,
     "anthropic/sonnet-5": claude_sonnet_5_system_prompt,
     "anthropic/fable-5-1": claude_fable_5_1_system_prompt,

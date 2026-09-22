@@ -114,6 +114,31 @@ describe("CodexProvider credential behavior", () => {
         expect(provider.transport).toBe("sse");
     });
 
+    it.each(["openai/gpt-6-sol", "openai/gpt-6-luna"])(
+        "routes %s through regional Bedrock Runtime like Astra",
+        async (model) => {
+            const credential = await BedrockAwsCredential.tryLoad({
+                credentialProvider: async () => ({
+                    accessKeyId: "AKIATEST",
+                    secretAccessKey: "test-secret-key",
+                }),
+            });
+            expect(credential).not.toBeNull();
+
+            const provider = new CodexProvider({
+                credential: credential!,
+                model,
+                region: "us-east-2",
+            });
+
+            expect(provider.bedrockTransport).toBe("runtime");
+            expect(provider.endpoint).toBe(
+                "https://bedrock-runtime.us-east-2.amazonaws.com/openai/v1",
+            );
+            expect(provider.model).toBe(`global.openai.${model.replace("openai/", "")}`);
+        },
+    );
+
     it("omits the Mantle client header from Bedrock Runtime requests", async () => {
         let headers: Record<string, string | string[] | undefined> | undefined;
         const server = createServer(async (request, response) => {

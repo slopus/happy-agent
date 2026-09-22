@@ -69,4 +69,27 @@ describe("Codex model properties", () => {
             });
         }
     });
+
+    it.each([
+        ["gpt-6-sol", "low"],
+        ["gpt-6-luna", "medium"],
+    ] as const)("uses Astra's native Codex contract for %s", (model, defaultEffort) => {
+        expect(getCodexModelProperties(model)).toEqual({
+            compactionHash: "3000",
+            contextWindow: 272_000,
+            defaultEffort,
+            responsesLite: true,
+        });
+        expect(resolveCodexReasoningEffort(model, undefined)).toBe(defaultEffort);
+        expect(isCodexV2Model(model)).toBe(true);
+
+        for (const bedrockModel of [`openai.${model}`, `global.openai.${model}`]) {
+            expect(getCodexModelProperties(bedrockModel)).toEqual({
+                compactionHash: "2911",
+                contextWindow: 272_000,
+                defaultEffort,
+                responsesLite: false,
+            });
+        }
+    });
 });

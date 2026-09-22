@@ -91,13 +91,17 @@ The reviewed model contracts are:
 - `gpt-5.5`: ordinary Responses request shape, compaction hash `2911`, default medium effort;
 - `gpt-6-astra`: Responses Lite by default and ordinary Responses for parallel tool calls,
   compaction hash `3000`, default low effort, and API efforts low through max;
+- `gpt-6-sol`: same contract as Astra with default low effort; live tool-less inference verified
+  over SSE and WebSocket with a ChatGPT login, not yet checked against vendor metadata;
+- `gpt-6-luna`: same contract as Astra with default medium effort; live tool-less inference
+  verified over SSE and WebSocket with a ChatGPT login, not yet checked against vendor metadata;
 - `gpt-5.6-sol`: Responses Lite shape, compaction hash `3000`, default low effort;
 - `gpt-5.6-terra`: Responses Lite shape, compaction hash `3000`, default medium effort;
 - `gpt-5.6-luna`: Responses Lite shape, compaction hash `3000`, default medium effort;
-- Bedrock Mantle model names use the `openai.` prefix. GPT-6 Astra is not currently served by
-  Mantle, so Rig routes it through the regional Bedrock Runtime OpenAI endpoint as
-  `global.openai.gpt-6-astra`. Both Bedrock routes inherit the 5.5-style request and compaction
-  contract.
+- Bedrock Mantle model names use the `openai.` prefix. The GPT-6 family is not currently served by
+  Mantle, so Rig routes Astra, Sol, and Luna through the regional Bedrock Runtime OpenAI endpoint
+  as `global.openai.gpt-6-astra`, `global.openai.gpt-6-sol`, and `global.openai.gpt-6-luna`. Both
+  Bedrock routes inherit the 5.5-style request and compaction contract.
 
 Astra's active Codex context is 272,000 tokens and its automatic compaction threshold is 244,800.
 Codex metadata also advertises an opt-in 872,000-token ceiling; Rig does not currently expose that
