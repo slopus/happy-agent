@@ -1,13 +1,24 @@
 # Bots — learnings
 
-## Bots reserve subtasks for substantial workstreams
+## Bots strongly prefer workspace-bound subtasks for repository work
 
-Broad delegation guidance encouraged too many small or nested subtasks. Compact bot prompts now
-reserve `create_subtask` for substantial, distinct workstreams, such as changes across projects,
-and honor explicit subtask requests. Small steps stay inline; hidden subagents handle internal
-research. Second-level subtasks should usually be explicitly requested by the user. These are
-prompt defaults, not runtime restrictions. Bots coordinate through existing messages and archive
-direct subtasks with `archive_subtask`, without awaiting them.
+Restricting subtasks to substantial workstreams made project delegation unclear and encouraged
+bots to do small repository tasks inline. Bot-only prompts now strongly prefer workspace-bound
+subtasks for repository work, including small tasks. "Work in a project" means creating a subtask
+in that project with its own workspace, not changing directories or sharing the bot's folder.
+Follow-up work can reuse a suitable existing workspace-bound subtask. For other work, small steps
+stay inline and subtasks are reserved for substantial, distinct workstreams. Explicit subtask
+requests are honored; hidden subagents handle internal research. Second-level subtasks should
+usually be explicitly requested by the user. These are prompt defaults, not runtime restrictions,
+and do not change ordinary agent or subtask prompts. Bots coordinate through existing messages
+and archive direct subtasks with `archive_subtask`, without awaiting them.
+
+## Making a task means creating a subtask
+
+The word "task" was ambiguous between delegated work and a task-list entry. Bot-only prompts now
+interpret "make a task" and "create a task" as requests to use `create_subtask`, not task-tracking
+tools. A task-list entry does not create the user-visible conversation the user expects. Only
+interpret such a request as task tracking when it explicitly asks for a checklist or task-list entry.
 
 ## Windows bots coordinate WSL as a separate remote installation
 
