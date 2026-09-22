@@ -22,6 +22,12 @@ below. Bun 1.4.0 is pinned by `mise.toml` and invoked at that exact version thro
 `pnpm dlx`. Output names are `dist/bin/happy-agent-<platform>-<arch>`; Windows adds
 `.exe`. Windows helpers are embedded only in the Windows executable.
 
+Every standalone target embeds Bun's `--smol` runtime flag, so each launch uses
+more frequent garbage collection to reduce JavaScript heap growth at a potential
+performance cost. This is not a hard memory limit and does not constrain native
+allocations or separate helper processes. The Node-compatible distribution is
+unchanged.
+
 Each target embeds a checked-in Tailcat v0.4.0 executable after verifying its pinned SHA-256. The
 Linux assets come unchanged from Tailcat's official release archives. Tailcat publishes no macOS
 archives, so the two Darwin assets were built once from the exact v0.4.0 tag with the upstream

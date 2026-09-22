@@ -125,6 +125,7 @@ async function buildTarget(target: BinaryTarget): Promise<void> {
     console.log(`Compiling ${target.key}...`);
     const result = await Bun.build({
         compile: {
+            execArgv: ["--smol"],
             outfile,
             target: target.bunTarget,
         },
