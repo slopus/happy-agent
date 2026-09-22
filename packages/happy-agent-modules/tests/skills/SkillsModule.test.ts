@@ -222,6 +222,113 @@ describe("SkillsModule", () => {
         );
     });
 
+    it("reserves a skill marked disable-model-invocation for the user", async () => {
+        const compute = new FakeCompute("/workspace");
+        compute.directories.add("/workspace/.git");
+        compute.write(
+            "/workspace/.agents/skills/review/SKILL.md",
+            skill("review", "Review the changes.", "Review instructions."),
+        );
+        compute.write(
+            "/workspace/.agents/skills/deploy/SKILL.md",
+            `---\nname: deploy\ndescription: Deploy to production.\ndisable-model-invocation: true\n---\n\nDeploy instructions.`,
+        );
+        const module = moduleFor(compute);
+        let sent:
+            | {
+                  readonly message: AgentQueuedMessage;
+                  readonly options: AgentBaseMessageOptions | undefined;
+              }
+            | undefined;
+        const agents = {
+            send: async (
+                _ctx: unknown,
+                _agentId: string,
+                message: AgentQueuedMessage,
+                options?: AgentBaseMessageOptions,
+            ) => {
+                sent = { message, options };
+                return {} as never;
+            },
+            updateMetadata: async () => ({}) as never,
+        } as unknown as AgentSystemRef;
+        const hooks = await resolveModuleHooks(ctx, module, agents);
+
+        // The model neither sees nor reads it.
+        await expect(module.list(ctx, agentId)).resolves.toEqual({
+            skills: [
+                {
+                    description: "Review the changes.",
+                    location: "/workspace/.agents/skills/review/SKILL.md",
+                    name: "review",
+                    source: "project",
+                },
+            ],
+        });
+        await expect(module.list(ctx, agentId, { query: "deploy" })).resolves.toEqual({
+            skills: [],
+        });
+        await expect(module.read(ctx, agentId, { name: "deploy" })).rejects.toThrow(
+            'The "deploy" skill can only be invoked by the user with /deploy, not by the model.',
+        );
+        const instructions = await hooks.instructions!(ctx, scope);
+        expect(instructions).toContain("<name>review</name>");
+        expect(instructions).not.toContain("deploy");
+
+        // The user still has it as a slash command, and invoking it carries the content in.
+        await expect(module.slashCommands(ctx, agentId)).resolves.toEqual([
+            {
+                description: "Deploy to production.",
+                hasArguments: true,
+                kind: "skill",
+                name: "deploy",
+            },
+            {
+                description: "Review the changes.",
+                hasArguments: true,
+                kind: "skill",
+                name: "review",
+            },
+        ]);
+        await module.invokeSlashCommand(ctx, agentId, "deploy", {
+            mode: {
+                effort: "medium",
+                modelId: "openai/gpt-5.6-sol",
+                permissionMode: "auto",
+                providerId: "codex",
+                serviceTier: null,
+            },
+        });
+        expect(sent?.options?.metadata).toMatchObject({
+            skillInvocation: {
+                content: expect.stringContaining("Deploy instructions."),
+                name: "deploy",
+            },
+        });
+        const values = new Map<string, unknown>();
+        const invokedScope = {
+            agent: { id: agentId },
+            runKV: {
+                read: async (_ctx: unknown, key: string) => values.get(key),
+                write: async (_ctx: unknown, key: string, value: unknown) => {
+                    values.set(key, value);
+                },
+            },
+        } as never;
+        const acceptedMetadata = sent?.options?.metadata;
+        await hooks.messageAcceptedTransact?.(ctx, invokedScope, {
+            id: sent?.options?.id ?? "missing",
+            kind: "send",
+            message: sent?.message ?? { role: "user", content: [] },
+            profile: null,
+            ...(acceptedMetadata === undefined ? {} : { metadata: acceptedMetadata }),
+        });
+        const invoked = await hooks.instructions!(ctx, invokedScope);
+        expect(invoked).toContain("The user directly invoked the /deploy skill for this run.");
+        expect(invoked).toContain("Deploy instructions.");
+        expect(invoked).not.toContain("<name>deploy</name>");
+    });
+
     it("bounds system instructions for a large valid catalog", async () => {
         const compute = new FakeCompute("/workspace");
         compute.directories.add("/workspace/.git");

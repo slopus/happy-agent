@@ -7,6 +7,8 @@ const exact = { additionalProperties: false } as const;
 const parsedSkillMetadataSchema = Type.Object(
     {
         description: Type.String({ maxLength: MAX_SKILL_DESCRIPTION_LENGTH }),
+        /** Present only when `disable-model-invocation: true` reserves the skill for the user. */
+        disableModelInvocation: Type.Optional(Type.Literal(true)),
         name: Type.String({ maxLength: MAX_SKILL_NAME_LENGTH }),
     },
     exact,
@@ -14,12 +16,16 @@ const parsedSkillMetadataSchema = Type.Object(
 type ParsedSkillMetadata = Static<typeof parsedSkillMetadataSchema>;
 
 /**
- * Read the two fields that identify a skill from a YAML frontmatter document.
+ * Read the fields that identify a skill from a YAML frontmatter document, plus the one flag that
+ * decides who may invoke it.
  *
  * Skill frontmatter is deliberately parsed as YAML rather than as a collection of line prefixes.
  * The parser handles YAML maps, flow maps, quoted and plain scalars, aliases, and block scalars.
  * Other valid YAML values are ignored in the same way the legacy loader ignored non-string
  * `name` and `description` values.
+ *
+ * `disable-model-invocation` follows Claude Code: only the plain YAML boolean `true` reserves the
+ * skill for explicit user invocation. The quoted string `"true"` is a string, not a flag.
  */
 export function parseSkillFrontmatter(content: string, directoryName: string): ParsedSkillMetadata {
     const normalized = content.replaceAll("\r\n", "\n").replaceAll("\r", "\n");
@@ -38,9 +44,12 @@ export function parseSkillFrontmatter(content: string, directoryName: string): P
     }
 
     const frontmatter = lines.slice(1, closingLine);
-    const values = parseYamlMap(frontmatter);
+    const { booleans, values } = parseYamlMap(frontmatter);
     const result = {
         description: values.get("description") ?? "",
+        ...(booleans.get("disable-model-invocation") === true
+            ? { disableModelInvocation: true as const }
+            : {}),
         name: values.get("name") ?? directoryName,
     };
     if (!Value.Check(parsedSkillMetadataSchema, result)) {
@@ -49,14 +58,21 @@ export function parseSkillFrontmatter(content: string, directoryName: string): P
     return result;
 }
 
-function parseYamlMap(lines: readonly string[]): Map<string, string> {
+interface ParsedYamlMap {
+    /** Top-level boolean scalars, kept apart because everything else the loader reads is text. */
+    readonly booleans: Map<string, boolean>;
+    readonly values: Map<string, string>;
+}
+
+function parseYamlMap(lines: readonly string[]): ParsedYamlMap {
     const values = new Map<string, string>();
+    const booleans = new Map<string, boolean>();
     const anchors = new Map<string, string>();
     const source = lines.join("\n").trim();
     if (source.startsWith("{")) {
         if (!source.endsWith("}")) throw new Error("Skill frontmatter flow map is incomplete.");
-        addFlowMapValues(source, values, anchors);
-        return values;
+        addFlowMapValues(source, values, booleans, anchors);
+        return { booleans, values };
     }
 
     for (let index = 0; index < lines.length; index += 1) {
@@ -85,16 +101,47 @@ function parseYamlMap(lines: readonly string[]): Map<string, string> {
         }
 
         const plain = readPlainScalar(lines, index, indentation, rawValue);
-        const value = parseScalar(plain.value, anchors);
-        if (value !== undefined) values.set(key, value);
+        setScalar(key, plain.value, values, booleans, anchors);
         index = plain.nextIndex - 1;
     }
-    return values;
+    return { booleans, values };
+}
+
+/**
+ * Record one scalar under its key. A later duplicate key wins, as in the rest of this loader, and
+ * it wins across kinds: a string after a boolean removes the boolean and the other way round.
+ */
+function setScalar(
+    key: string,
+    rawValue: string,
+    values: Map<string, string>,
+    booleans: Map<string, boolean>,
+    anchors: Map<string, string>,
+): void {
+    const value = parseScalar(rawValue, anchors);
+    if (value !== undefined) {
+        values.set(key, value);
+        booleans.delete(key);
+        return;
+    }
+    const boolean = parseBoolean(rawValue);
+    if (boolean !== undefined) {
+        booleans.set(key, boolean);
+        values.delete(key);
+    }
+}
+
+function parseBoolean(rawValue: string): boolean | undefined {
+    const value = stripInlineComment(rawValue).trim().toLowerCase();
+    if (value === "true") return true;
+    if (value === "false") return false;
+    return undefined;
 }
 
 function addFlowMapValues(
     source: string,
     values: Map<string, string>,
+    booleans: Map<string, boolean>,
     anchors: Map<string, string>,
 ): void {
     const inner = source.slice(1, -1);
@@ -103,8 +150,7 @@ function addFlowMapValues(
         const pair = splitMappingLine(item);
         if (pair === undefined) throw new Error("Skill frontmatter flow entry is invalid.");
         const [key, rawValue] = pair;
-        const value = parseScalar(rawValue, anchors);
-        if (value !== undefined) values.set(key, value);
+        setScalar(key, rawValue, values, booleans, anchors);
     }
 }
 

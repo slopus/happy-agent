@@ -157,7 +157,8 @@ export class SkillsModule implements AgentModule {
     ): Promise<void> {
         const agents = this.#agents;
         if (agents === undefined) throw new Error("The skills module has not started.");
-        const document = await this.read(ctx, agentId, { name });
+        // The user may invoke every discoverable skill, including one the model may not.
+        const document = await this.#readDocument(ctx, agentId, name, "user");
         const id = createId();
         const text =
             input.arguments === undefined
@@ -197,7 +198,7 @@ export class SkillsModule implements AgentModule {
         input: SkillListInput = {},
     ): Promise<SkillListResult> {
         assertValue(skillListInputSchema, input, "Skill list input");
-        const entries = await this.#discover(ctx, agentId);
+        const entries = modelInvocable(await this.#discover(ctx, agentId));
         const query = input.query?.trim().toLocaleLowerCase();
         const filtered =
             query === undefined || query.length === 0
@@ -214,15 +215,36 @@ export class SkillsModule implements AgentModule {
         return structuredClone(result);
     }
 
-    /** Read one currently discoverable skill by name. */
+    /** Read one currently discoverable skill by name, on the model's behalf. */
     async read(ctx: Context, agentId: string, input: SkillReadInput): Promise<SkillDocument> {
         assertValue(skillReadInputSchema, input, "Skill read input");
+        return await this.#readDocument(ctx, agentId, input.name, "model");
+    }
+
+    /**
+     * The complete document of one currently discoverable skill.
+     *
+     * A skill marked `disable-model-invocation: true` exists for the user alone. The model is told
+     * so rather than being told the skill does not exist, so it can ask instead of guessing at
+     * other names.
+     */
+    async #readDocument(
+        ctx: Context,
+        agentId: string,
+        name: string,
+        audience: "model" | "user",
+    ): Promise<SkillDocument> {
         const compute = await this.#resolveCompute(ctx, agentId);
         if (compute === undefined) throw new Error("This agent has no compute.");
         const permissions = this.#compute.permissionsForContext(ctx);
         const entries = await this.#entries(ctx, compute, permissions);
-        const entry = entries.find((candidate) => candidate.name === input.name);
-        if (entry === undefined) throw new Error(`Unknown skill "${input.name}".`);
+        const entry = entries.find((candidate) => candidate.name === name);
+        if (entry === undefined) throw new Error(`Unknown skill "${name}".`);
+        if (audience === "model" && entry.disableModelInvocation === true) {
+            throw new Error(
+                `The "${name}" skill can only be invoked by the user with /${name}, not by the model.`,
+            );
+        }
         const bytes = await compute.fs.readFileBuffer(permissions, entry.location, {
             maxBytes: MAX_SKILL_DOCUMENT_BYTES,
             noFollow: true,
@@ -332,8 +354,11 @@ export class SkillsModule implements AgentModule {
         instructions: async (ctx: Context, scope: AgentModuleScope): Promise<string> => {
             const entries = await this.#discover(ctx, scope.agent.id);
             const invocations = await this.#skillInvocations(ctx, scope);
+            // The model's catalog omits user-only skills; a user's own invocation of one still
+            // carries its content into the run.
+            const catalog = modelInvocable(entries);
             return [
-                entries.length === 0 ? "" : formatInstructions(entries),
+                catalog.length === 0 ? "" : formatInstructions(catalog),
                 ...invocations
                     .filter((invocation) =>
                         entries.some(
@@ -408,6 +433,11 @@ export class SkillsModule implements AgentModule {
         }
         return structuredClone(stored);
     }
+}
+
+/** The part of the catalog the model may choose from on its own. */
+function modelInvocable(entries: readonly SkillEntry[]): readonly SkillEntry[] {
+    return entries.filter((entry) => entry.disableModelInvocation !== true);
 }
 
 function formatInvokedSkill(invocation: SkillInvocation): string {
@@ -611,6 +641,7 @@ async function readSkillEntry(
         );
         const entry = {
             description: metadata.description,
+            ...(metadata.disableModelInvocation === true ? { disableModelInvocation: true } : {}),
             location,
             name: metadata.name,
             source,

@@ -371,8 +371,14 @@ description: Use when the user asks to draft release notes from merged pull requ
 
 Only three frontmatter keys are read:
 `name` (string), `description` (string), and `disable-model-invocation`
-(boolean). The first two are what matter — `disable-model-invocation` is parsed
-but nothing currently consumes it. Any other key is ignored.
+(boolean). Any other key is ignored.
+
+`disable-model-invocation: true` reserves the skill for you, as in Claude Code.
+The skill still appears as a `/name` command and works normally when you invoke
+it, but the model never sees it in its catalog, cannot list it, and is refused
+when it tries to read it. Use it for side-effecting procedures such as deploys
+or releases that should only run when you ask. Only the plain YAML boolean
+counts; a quoted `"true"` is a string and does not set the flag.
 
 Validation, when a skill file is loaded:
 

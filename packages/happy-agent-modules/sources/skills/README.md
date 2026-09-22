@@ -37,6 +37,12 @@ the rest of the catalog; `list_skills` uses its returned cursor to continue a bo
 Frontmatter metadata is parsed as YAML-compatible mapping data, including flow maps, aliases,
 quoted values, and block scalars.
 
+A skill whose frontmatter says `disable-model-invocation: true` is reserved for the user, as in
+Claude Code. It is still discovered and still offered as a slash command, and invoking it carries
+its content into the run as usual, but it is left out of the model's instruction catalog and
+`list_skills`, and `read_skill` refuses it with a message saying only the user may invoke it. Only
+the plain YAML boolean counts; a quoted `"true"` is an ordinary string and does not set the flag.
+
 ## Public operations
 
 - `list(ctx, agentId, input?)` — a bounded, optionally filtered page of the current catalog.

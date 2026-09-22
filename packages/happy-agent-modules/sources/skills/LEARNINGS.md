@@ -31,3 +31,17 @@ data. Later calls rescan immediately, including after partial filesystem failure
 metadata uses the backend's bounded batch operation, and canonical non-symlink child directories
 do not need another realpath lookup. Symbolic links still resolve through the permission-aware
 backend; individual unreadable or disappearing files do not hide other skills.
+
+## A user-only skill is hidden from the model, not from the user
+
+`disable-model-invocation: true` used to be documented as parsed but was neither parsed nor
+honored, so a skill written to run only on explicit request was listed to the model with its
+description and could be picked up whenever a task matched. Claude Code treats the flag as
+"user-invocable only": the skill stays a slash command but leaves the model's catalog. Codex
+ignores the frontmatter field and expresses the same intent through a sidecar
+`agents/openai.yaml` with `policy.allow_implicit_invocation: false`. Skill discovery now follows
+Claude Code: the flag is read as a plain YAML boolean, flagged skills stay in `slashCommands` and
+`invokeSlashCommand`, and are excluded from the instruction catalog, `list_skills`, and
+`read_skill`. The model is told that only the user may invoke such a skill rather than that it
+does not exist, so it asks instead of hunting for another name. The invoked-skill prompt is still
+matched against the complete catalog, otherwise a user's own `/deploy` would drop its content.

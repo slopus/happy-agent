@@ -472,6 +472,36 @@ describe("SkillsModule edge cases", () => {
         });
     });
 
+    it("reads disable-model-invocation only as a plain YAML boolean", () => {
+        expect(
+            parseSkillFrontmatter(
+                "---\nname: deploy\ndescription: Deploy.\ndisable-model-invocation: true # user only\n---\nBody",
+                "fallback",
+            ),
+        ).toEqual({ name: "deploy", description: "Deploy.", disableModelInvocation: true });
+        expect(
+            parseSkillFrontmatter(
+                "---\n{ name: deploy, description: Deploy., disable-model-invocation: TRUE }\n---\nBody",
+                "fallback",
+            ),
+        ).toEqual({ name: "deploy", description: "Deploy.", disableModelInvocation: true });
+        for (const value of ["false", '"true"', "yes", "1", "~"]) {
+            expect(
+                parseSkillFrontmatter(
+                    `---\nname: deploy\ndescription: Deploy.\ndisable-model-invocation: ${value}\n---\nBody`,
+                    "fallback",
+                ),
+            ).toEqual({ name: "deploy", description: "Deploy." });
+        }
+        // The last duplicate key wins, whichever kind of scalar it is.
+        expect(
+            parseSkillFrontmatter(
+                "---\nname: deploy\ndescription: Deploy.\ndisable-model-invocation: true\ndisable-model-invocation: no\n---\nBody",
+                "fallback",
+            ),
+        ).toEqual({ name: "deploy", description: "Deploy." });
+    });
+
     it("accepts YAML document markers with comments", () => {
         expect(
             parseSkillFrontmatter(

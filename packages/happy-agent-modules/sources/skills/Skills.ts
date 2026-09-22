@@ -31,6 +31,12 @@ export const skillSourceSchema = Type.String({
 export const skillEntrySchema = Type.Object(
     {
         description: skillDescriptionSchema,
+        /**
+         * Present when the skill's frontmatter says `disable-model-invocation: true`. Such a skill
+         * is reserved for the user: it stays a slash command but is kept out of the model's
+         * catalog, tools, and instructions.
+         */
+        disableModelInvocation: Type.Optional(Type.Literal(true)),
         location: skillLocationSchema,
         name: skillNameSchema,
         source: skillSourceSchema,
