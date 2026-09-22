@@ -17,10 +17,24 @@ import type {
     AgentProviders,
 } from "@slopus/happy-agent-base";
 import { cuid2Schema } from "@slopus/happy-agent-base";
-import type { AnthropicBedrockTransport, ProviderUsage } from "@slopus/happy-providers";
+import {
+    CodexProvider,
+    CodexSessionCredential,
+    GrokProvider,
+    GrokSessionCredential,
+    type AnthropicBedrockTransport,
+    type ProviderUsage,
+} from "@slopus/happy-providers";
 import { Type, type Static, type TSchema } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
-import { asyncLock, type AsyncLock, type Context } from "@steve.kite/stdlib";
+import {
+    asyncLock,
+    detach,
+    forever,
+    withLifetime,
+    type AsyncLock,
+    type Context,
+} from "@steve.kite/stdlib";
 import { parse, stringify, TomlDate, type TomlTable, type TomlValue } from "smol-toml";
 
 import { getManagedProjectsDirectory } from "../impl/managedProjectsDirectory.js";
@@ -66,6 +80,7 @@ const MAX_TOOL_RESULT_RETENTION_DAYS = 36_500;
 const MAX_MCP_TIMEOUT_SECONDS = 600;
 const MAX_LOCAL_CREDENTIAL_FILE_BYTES = 256 * 1024;
 const DEFAULT_TAILCAT_PORT = 24_779;
+const PROVIDER_CREDENTIAL_REFRESH_INTERVAL_MS = 3 * 60 * 60 * 1_000;
 
 const pathSchema = Type.String({
     minLength: 1,
@@ -1262,6 +1277,7 @@ export class ConfigModule implements AgentModule {
     readonly #scripted: ConfigInferenceOverride | ConfigInferenceFactory | undefined;
     readonly #environment: Readonly<NodeJS.ProcessEnv>;
     readonly #providerLifetime = new AbortController();
+    #credentialRefreshStarted = false;
     readonly #providerEnabled = new Map<string, boolean>();
     readonly #mcpLock: AsyncLock = asyncLock({ reentry: "allow" });
     readonly #runtimeLock: AsyncLock = asyncLock({ reentry: "allow" });
@@ -1384,6 +1400,33 @@ export class ConfigModule implements AgentModule {
         /** Apply configured root instructions through the normal pre-inference hook. */
         instructions: async (): Promise<string> =>
             this.configuration.values.defaults.instructions ?? "",
+        afterStart: async (ctx): Promise<void> => {
+            if (this.#credentialRefreshStarted) return;
+            this.#credentialRefreshStarted = true;
+            const lifetime =
+                ctx.lifetime === undefined
+                    ? this.#providerLifetime.signal
+                    : AbortSignal.any([ctx.lifetime, this.#providerLifetime.signal]);
+            const owner = withLifetime(
+                detach(ctx).named("provider-credential-maintenance"),
+                lifetime,
+            );
+            // The loop belongs to the daemon, not startup or the next inference request. A
+            // completed pass schedules the next one, so slow refreshes never pile up.
+            void forever(
+                owner,
+                {
+                    delay: PROVIDER_CREDENTIAL_REFRESH_INTERVAL_MS,
+                    delayFirst: false,
+                    name: "refresh-provider-credentials",
+                },
+                async (refreshCtx) => {
+                    await this.refreshProviderCredentials(refreshCtx);
+                },
+            ).catch(() => {
+                if (!lifetime.aborted) owner.log.warn("Background provider token refresh stopped.");
+            });
+        },
     };
 
     readonly beforeStart = (): AgentModuleHooks => this.#hooks;
@@ -1819,6 +1862,55 @@ export class ConfigModule implements AgentModule {
     /** Cancel every provider request owned by this daemon without coupling agents to its lifetime. */
     closeProviders(): void {
         this.#providerLifetime.abort(new Error("The Happy Agent runtime is shutting down."));
+    }
+
+    /** Renew enabled Codex/Grok logins without creating a session or making an inference call. */
+    async refreshProviderCredentials(ctx: Context): Promise<void> {
+        await Promise.all(
+            Object.entries(this.configuration.values.providers).map(async ([id, configured]) => {
+                if (
+                    ctx.lifetime?.aborted ||
+                    this.#providerLifetime.signal.aborted ||
+                    !this.#isAccountEnabled(id)
+                )
+                    return;
+                if (configured.type !== "codex" && configured.type !== "grok") return;
+                if (configured.apiKey !== undefined) return;
+                try {
+                    // Use exactly the same account construction, isolation, and credential precedence
+                    // as inference. Scripted providers and static keys have no maintenance surface.
+                    const provider = await this.resolveProviderUnchecked(id, undefined);
+                    if (!this.#isAccountEnabled(id)) return;
+                    const credential =
+                        provider instanceof CodexProvider &&
+                        provider.credential instanceof CodexSessionCredential
+                            ? provider.credential
+                            : provider instanceof GrokProvider &&
+                                provider.credential instanceof GrokSessionCredential
+                              ? provider.credential
+                              : undefined;
+                    if (credential === undefined) return;
+                    const signal =
+                        ctx.lifetime === undefined
+                            ? this.#providerLifetime.signal
+                            : AbortSignal.any([ctx.lifetime, this.#providerLifetime.signal]);
+                    const refreshed = await credential.refreshForMaintenance({ signal });
+                    if (!refreshed && !signal.aborted) {
+                        ctx.log.warn(
+                            `Could not refresh the sign-in for provider "${id}" in the background.`,
+                        );
+                    }
+                } catch {
+                    // Vendor diagnostics and credential-file parse failures can contain secrets.
+                    // Maintenance is advisory: never disable an account or fail an agent turn here.
+                    if (!ctx.lifetime?.aborted && !this.#providerLifetime.signal.aborted) {
+                        ctx.log.warn(
+                            `Could not refresh the sign-in for provider "${id}" in the background.`,
+                        );
+                    }
+                }
+            }),
+        );
     }
 
     /** Ask one configured account for its complete normalized vendor usage reading. */

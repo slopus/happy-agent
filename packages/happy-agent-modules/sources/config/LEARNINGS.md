@@ -1,5 +1,15 @@
 # Config module learnings
 
+## Idle credential maintenance excludes Claude
+
+Refreshing only when inference needs a credential leaves idle Codex and Grok accounts unattended.
+Configuration now renews enabled session logins after startup and every three hours, including
+hidden accounts, without starting inference. Claude is deliberately excluded: its SDK retains
+ownership of refresh. Static API keys, disabled accounts, and smart aliases are also skipped.
+Refresh failures are advisory and never change account enablement; the shared provider library
+owns rotation coordination and network bounds so background work cannot spend the same refresh
+token concurrently with another session in this process.
+
 ## GitHub CLI discovery is request-bound
 
 Imports previously saw only exported tokens. An explicit standalone-owner import can now read

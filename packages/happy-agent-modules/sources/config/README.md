@@ -107,6 +107,15 @@ while `offeredModels` is the stable complete set the agent systems can accept af
 Happy Agent never asks a vendor which models exist — the list is source, and a configured provider
 entry decides which of them its own key serves.
 
+After startup, configuration renews enabled Codex and Grok session logins in the background,
+then repeats three hours after each completed pass. Hidden enabled accounts are included;
+disabled accounts, static API keys, smart routing aliases, Bedrock, and Claude are skipped.
+The loop uses the same configured provider construction as inference, starts no inference
+session, and stops with `closeProviders()`. Failures are logged without credential diagnostics
+and do not disable an account or affect a running turn. The provider library shares refreshes
+with inference recovery and bounds each exchange. An exchange already rotating a token may
+finish saving it after shutdown cancels the maintenance observer.
+
 Set `hidden = true` in a machine's `[providers.<id>]` table to prevent direct account selection
 while allowing an enabled account to back a smart provider. The default is `false`. Hidden providers and their complete model lists
 remain in the public catalog with the existing `enabled = false` values, so clients omit them from

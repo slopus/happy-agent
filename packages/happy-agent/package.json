@@ -53,7 +53,7 @@
         "@slopus/happy-agent-compute": "0.1.19",
         "@slopus/happy-agent-modules": "workspace:*",
         "@slopus/happy-agent-supervisor": "0.0.13-preview.1",
-        "@slopus/happy-providers": "0.0.28",
+        "@slopus/happy-providers": "0.0.29",
         "@steve.kite/stdlib": "0.0.12"
     },
     "devDependencies": {
