@@ -2,6 +2,7 @@ import {
     withAgentConfig,
     type AgentConfig,
     type AgentMessageAcceptance,
+    type AgentMetadata,
     type AgentModel,
     type AgentModuleHooks,
     type AgentSystemRef,
@@ -150,6 +151,12 @@ class Collection {
         this.aborted.push(agentId);
     }
 
+    async updateMetadata(_ctx: Context, agentId: string, update: AgentMetadata): Promise<void> {
+        const config = this.configs.get(agentId);
+        if (config === undefined) throw new Error(`Agent "${agentId}" does not exist.`);
+        this.configs.set(agentId, { ...config, metadata: { ...config.metadata, ...update } });
+    }
+
     /** The module holds an `AgentSystemRef`; this stub supplies only what it actually calls. */
     asRef(): AgentSystemRef {
         return this as unknown as AgentSystemRef;
@@ -290,7 +297,7 @@ describe("collaboration", () => {
 
         await module.createAgent(ctx, "parent", TASK, "child");
 
-        expect(collection.configs.get("child")?.metadata).toEqual({ title: "Reviewer" });
+        expect(collection.configs.get("child")?.metadata).toMatchObject({ title: "Reviewer" });
     });
 
     it("persists resolved model identity before creating the child and adds its ID only after delivery", async () => {
@@ -426,7 +433,7 @@ describe("collaboration", () => {
         const { module, hooks, ctx } = await started(collection);
         await module.createAgent(ctx, "parent", TASK, "child");
 
-        expect(collection.delivered[0]!.options.metadata).toEqual({
+        expect(collection.delivered[0]!.options.metadata).toMatchObject({
             collaboration: { fromAgentId: "parent", toAgentId: "child" },
             senderAgentId: "parent",
         });
@@ -778,17 +785,29 @@ describe("collaboration", () => {
         ).rejects.toThrow('Service tier "priority" is not available');
     });
 
-    it("omits provider when an unambiguous model does not need one", async () => {
+    it("resolves the provider of an unambiguous model and records it as the collaborator's mode", async () => {
         const collection = new Collection();
         const { module, hooks, ctx } = await started(collection);
 
         await module.createAgent(ctx, "parent", TASK, "child");
 
+        // The opening task is the collaborator's first message, so what it selected is the
+        // mode a person joining a user-visible collaborator composes on top of.
+        const mode = {
+            effort: "high",
+            modelId: "gpt-5.6-sol",
+            permissionMode: "auto",
+            providerId: "codex",
+            serviceTier: null,
+        };
         expect(collection.delivered[0]!.options).toMatchObject({
             model: "gpt-5.6-sol",
             effort: "high",
+            provider: "codex",
+            permissionMode: "auto",
+            metadata: expect.objectContaining({ mode }),
         });
-        expect(collection.delivered[0]!.options).not.toHaveProperty("provider");
+        expect(collection.configs.get("child")?.metadata?.["lastMode"]).toEqual(mode);
     });
 
     it("refuses a provider that does not expose the requested model", async () => {

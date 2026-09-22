@@ -22,6 +22,16 @@ delivery succeeds. Replay keeps the recorded model name and provider; catalog/co
 changes must not relabel historical spawns. The call's status describes creation, not the child's
 later work. These facts belong to the feature modules, without changing frozen Agent Base.
 
+## The opening task records the collaborator's mode
+
+A collaborator ran on the model its creator chose, but nothing recorded that choice as the
+agent's mode, so the mode endpoint and bootstrap reported `null`. Clients treat a null mode as
+"use the daemon defaults", so the first user message to a user-visible subtask silently moved it
+onto the default model, and could reset its context when the default was another provider type.
+Every creation path now resolves the provider, sends the opening task with an explicit
+permission mode, stamps the full mode on that message's metadata, and records it as the
+agent's `lastMode`, so a person joining composes on top of the coordinator's selection.
+
 ## Messages and interruption
 
 Messages between a creator and collaborator are steering in both directions. After the opening task

@@ -1,5 +1,6 @@
 import {
     agentConfig,
+    DEFAULT_AGENT_PERMISSION_MODE,
     type AgentBasePersistedEvent,
     type AgentBaseSettlement,
     type AgentBaseTurn,
@@ -81,7 +82,7 @@ export class CollaborationModule implements AgentModule {
     selectModel(
         input: CollaborationCreateInput,
         currentProviderId?: string,
-    ): CollaborationAgentSelection {
+    ): CollaborationAgentSelection & { readonly provider: string } {
         this.#assert(collaborationCreateInputSchema, input, "create agent");
         const models = this.#availableModels();
         const provider =
@@ -121,7 +122,7 @@ export class CollaborationModule implements AgentModule {
         this.#assert(collaborationAgentIdSchema, agentId, "collaborator ID");
         this.#assert(collaborationCreateInputSchema, input, "create agent");
         this.#assert(collaborationCreateOptionsSchema, options, "create agent options");
-        const selection = this.#validateSelection(this.#availableModels(), input);
+        const selection = this.selectModel(input);
 
         return await this.#createAgent(ctx, actingAgentId, input, agentId, options, selection);
     }
@@ -202,7 +203,7 @@ export class CollaborationModule implements AgentModule {
         input: CollaborationCreateInput,
         agentId: string,
         options: CollaborationCreateOptions,
-        selection: CollaborationAgentSelection,
+        selection: CollaborationAgentSelection & { readonly provider: string },
     ): Promise<CollaborationCreateResult> {
         const agents = this.#requireAgents();
         const existing = await agents.config(ctx, agentId);
@@ -438,7 +439,7 @@ export class CollaborationModule implements AgentModule {
         text: string,
         messageId: string,
         delivery: "send" | "steer",
-        selection: CollaborationAgentSelection | undefined,
+        selection: (CollaborationAgentSelection & { readonly provider: string }) | undefined,
     ): Promise<void> {
         const agents = this.#requireAgents();
         if (
@@ -456,18 +457,36 @@ export class CollaborationModule implements AgentModule {
                 { type: "text" as const, text: `Message from agent ${fromAgentId}:\n\n${text}` },
             ],
         };
+        // The opening task is the collaborator's first message, so its selection is the mode
+        // the collaborator runs with. It is stamped on the message the way an API message
+        // carries its mode, and recorded as the agent's last mode, so a person who joins a
+        // user-visible collaborator composes on top of the coordinator's choice instead of the
+        // daemon defaults. The permission mode is the one Agent Base gives a new agent, sent
+        // explicitly so the recorded mode is what the collaborator actually runs with.
+        const mode =
+            selection === undefined
+                ? undefined
+                : {
+                      effort: selection.effort,
+                      modelId: selection.model,
+                      permissionMode: DEFAULT_AGENT_PERMISSION_MODE,
+                      providerId: selection.provider,
+                      serviceTier: selection.serviceTier ?? null,
+                  };
         const options = {
             id: messageId,
             metadata: {
                 collaboration: { fromAgentId, toAgentId },
                 ...senderAgentIdMetadata(fromAgentId),
+                ...(mode === undefined ? {} : { mode }),
             },
             ...(selection === undefined
                 ? {}
                 : {
                       model: selection.model,
                       effort: selection.effort,
-                      ...(selection.provider === undefined ? {} : { provider: selection.provider }),
+                      permissionMode: DEFAULT_AGENT_PERMISSION_MODE,
+                      provider: selection.provider,
                       ...(selection.serviceTier === undefined
                           ? {}
                           : { serviceTier: selection.serviceTier }),
@@ -479,6 +498,9 @@ export class CollaborationModule implements AgentModule {
                 : await agents.send(ctx, toAgentId, message, options);
         if (accepted.id !== messageId) {
             throw new Error("Agent Base did not preserve the requested message ID.");
+        }
+        if (mode !== undefined) {
+            await agents.updateMetadata(ctx, toAgentId, { lastMode: mode });
         }
     }
 

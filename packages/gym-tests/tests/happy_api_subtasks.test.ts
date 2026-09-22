@@ -82,6 +82,42 @@ async function harness() {
 }
 
 describe("user-interactive subtasks", () => {
+    it("runs on the coordinator's selection and reports it as the subtask's mode", async () => {
+        const { gym, bot, call } = await harness();
+        const result = await call(bot.agent.id, "create_subtask", {
+            title: "Second model",
+            text: "Work on the second model.",
+            model: "gym/model-2",
+            effort: "high",
+        });
+        expect(result.text).toContain("Created subtask");
+        const agentId = /Created subtask ([a-z0-9]+)/.exec(result.text)?.[1];
+        expect(agentId).toBeDefined();
+        const request = await gym.waitUntil(
+            async () => gym.inference.requests.find((item) => item.sessionId === agentId),
+            "the subtask's first inference",
+        );
+        expect({ model: request.model, effort: request.effort }).toEqual({
+            model: "gym/model-2",
+            effort: "high",
+        });
+        // A person opening the subtask composes on top of this mode. Before it was recorded,
+        // clients fell back to the daemon defaults and silently moved the subtask off the
+        // model its coordinator chose.
+        const mode = {
+            effort: "high",
+            modelId: "gym/model-2",
+            permissionMode: "auto",
+            providerId: "gym",
+            serviceTier: null,
+        };
+        expect((await gym.client.getAgentMode(agentId!)).mode).toEqual(mode);
+        expect((await gym.client.getAgentBootstrap(agentId!)).mode).toEqual(mode);
+        expect((await gym.client.getAgentMode(bot.agent.id)).mode).toMatchObject({
+            modelId: gym.selection.modelId,
+        });
+    });
+
     it("lets a subtask archive its active direct child and stop that child's inference", async () => {
         const { gym, bot, create, call, commands } = await harness();
         const main = await create(bot.agent.id, "Active coordinator");
