@@ -197,6 +197,21 @@ It lives here for the same reason the accounts do: credentials are configuration
 and Gemini modules ask this module for the key rather than reading the file or the environment
 behind its back.
 
+### Extra skill folders
+
+Skill discovery always scans `~/.agents/skills` and each project's `.agents/skills`. The
+`[skills]` table adds folders to that: `directories` is a list of paths, each a container of skill
+directories with a `SKILL.md`, exactly like the standard roots. Absolute paths are preferred, since
+they mean the same thing regardless of what a relative entry would be resolved against. In the
+user `happy.toml` (or the generated `runtime.toml`, which adds to it) a `~`-relative or bare
+relative entry is resolved against the home folder, and `globalSkillDirectories` answers with the
+resolved list. In a project's root `happy.toml` a relative entry is resolved against that project
+root, which suits only folders inside the repository itself. The two lists add rather than
+override: the project list is deliberately dropped from the merged machine configuration, and
+`projectSkillDirectories(source)` parses one project file's list for the skills module, which reads
+that file through the agent's compute so a remote or container project is read on its own machine.
+A skill in a configured folder ranks below a same-named skill in the standard roots.
+
 ## What else this module answers
 
 The same reasoning applies to anything else whose location or policy the configuration already

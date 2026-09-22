@@ -100,6 +100,21 @@ const projectRelativePathsSchema = Type.Array(projectRelativePathSchema, {
     maxItems: MAX_PROTECTED_PATHS,
     uniqueItems: true,
 });
+/**
+ * Extra folders skill discovery scans, beside the standard `.agents/skills` roots.
+ *
+ * A global entry is absolute or `~`-relative and names a folder on this machine. A project entry
+ * is relative to the project root, or absolute. Each folder is a container of skill directories,
+ * exactly like `.agents/skills`.
+ */
+const skillDirectoriesSchema = Type.Array(
+    Type.String({ minLength: 1, maxLength: MAX_PATH_LENGTH, pattern: "^[^\\u0000\\r\\n]+$" }),
+    { maxItems: MAX_CONFIG_ARRAY_ITEMS, uniqueItems: true },
+);
+const skillsInputSchema = Type.Object(
+    { directories: Type.Optional(skillDirectoriesSchema) },
+    { additionalProperties: false },
+);
 const permissionModeSchema = Type.Union([
     Type.Literal("auto"),
     Type.Literal("read_only"),
@@ -583,6 +598,7 @@ const partialValuesSchema = Type.Object(
         provider_default_enable: Type.Optional(Type.Boolean()),
         providers: Type.Optional(providerMapInputSchema),
         settings: Type.Optional(settingsInputSchema),
+        skills: Type.Optional(skillsInputSchema),
         theme: Type.Optional(
             Type.Object(
                 {
@@ -1027,6 +1043,10 @@ const resolvedValuesSchema = Type.Object(
             },
             { additionalProperties: false },
         ),
+        skills: Type.Object(
+            { directories: skillDirectoriesSchema },
+            { additionalProperties: false },
+        ),
         theme: Type.Object(
             {
                 accent: configStringSchema,
@@ -1224,6 +1244,7 @@ const DEFAULT_VALUES: HappyAgentConfigValues = {
         showUsage: false,
         toolResultRetentionDays: 7,
     },
+    skills: { directories: [] },
     theme: {
         accent: "cyan",
         brand: "ansi:202",
@@ -1303,6 +1324,31 @@ export class ConfigModule implements AgentModule {
     /** Installed global skills live on this daemon's machine, independently of its config home. */
     get globalSkillsRoot(): string {
         return join(this.#environment.HOME?.trim() || homedir(), ".agents", "skills");
+    }
+
+    /**
+     * Extra skill folders configured for this machine, as absolute paths.
+     *
+     * `[skills] directories` in the user `happy.toml` (or generated `runtime.toml`) lists folders
+     * that skill discovery scans beside `~/.agents/skills`. A `~` prefix or a relative entry is
+     * resolved against the same home as the global skills root.
+     */
+    get globalSkillDirectories(): readonly string[] {
+        const home = this.#environment.HOME?.trim() || homedir();
+        return this.configuration.values.skills.directories.map((directory) =>
+            resolveSkillDirectory(directory, home),
+        );
+    }
+
+    /**
+     * Extra skill folders one project's `happy.toml` names, as the file wrote them.
+     *
+     * Skill discovery reads the project file through the agent's compute and resolves each entry
+     * against that project root, so this only parses. The whole file must be valid configuration;
+     * an unparseable file is an error the caller decides how to treat.
+     */
+    projectSkillDirectories(source: string): readonly string[] {
+        return [...(parseHappyAgentConfigToml(source).values.skills?.directories ?? [])];
     }
 
     get runtimeSkillEnablement(): Readonly<Record<string, boolean>> {
@@ -2499,6 +2545,7 @@ export function parseHappyAgentConfigToml(source: string): {
         "profile",
         "providers",
         "settings",
+        "skills",
         "theme",
         "workspace",
     ]);
@@ -2508,6 +2555,7 @@ export function parseHappyAgentConfigToml(source: string): {
     const defaults = readDefaults(table.defaults, recordUnknown);
     const providers = readProviders(table.providers, recordUnknown);
     const settings = readSettings(table.settings, recordUnknown);
+    const skills = readSkills(table.skills, recordUnknown);
     const features = readFeatures(table.features, recordUnknown);
     const feature = readFeature(table.feature, recordUnknown);
     const gemini = readGemini(table.gemini, recordUnknown);
@@ -2548,6 +2596,7 @@ export function parseHappyAgentConfigToml(source: string): {
             : { provider_default_enable: providerDefaultEnable }),
         ...(providers === undefined ? {} : { providers }),
         ...(settings === undefined ? {} : { settings }),
+        ...(skills === undefined ? {} : { skills }),
         ...(theme === undefined ? {} : { theme }),
         ...(workspace === undefined ? {} : { workspace }),
     };
@@ -2625,6 +2674,7 @@ function normalizeSourceValues(values: PartialValues): Record<string, unknown> {
                   ),
               }),
         ...(values.settings === undefined ? {} : { settings: normalizeSettings(values.settings) }),
+        ...(values.skills === undefined ? {} : { skills: normalizeSkills(values.skills) }),
         ...(values.theme === undefined ? {} : { theme: values.theme }),
         ...(values.workspace === undefined
             ? {}
@@ -2787,6 +2837,11 @@ function mergeValues(...partials: readonly PartialValues[]): HappyAgentConfigVal
         if (partial.settings !== undefined) {
             Object.assign(merged.settings, normalizeSettings(partial.settings));
         }
+        if (partial.skills?.directories !== undefined) {
+            merged.skills.directories = [
+                ...new Set([...merged.skills.directories, ...partial.skills.directories]),
+            ];
+        }
         if (partial.theme !== undefined) Object.assign(merged.theme, partial.theme);
         if (partial.workspace !== undefined) {
             Object.assign(merged.workspace, normalizeWorkspace(partial.workspace));
@@ -2902,6 +2957,17 @@ function normalizeSettings(value: NonNullable<PartialValues["settings"]>): Recor
             ? {}
             : { toolResultRetentionDays: value.tool_result_retention_days }),
     };
+}
+
+/** `~` and relative entries belong to the given home; absolute entries stand as written. */
+function resolveSkillDirectory(directory: string, home: string): string {
+    if (directory === "~") return resolve(home);
+    if (directory.startsWith("~/")) return resolve(home, directory.slice(2));
+    return resolve(home, directory);
+}
+
+function normalizeSkills(value: NonNullable<PartialValues["skills"]>): Record<string, unknown> {
+    return value.directories === undefined ? {} : { directories: [...value.directories] };
 }
 
 function normalizeWorkspace(
@@ -3298,6 +3364,10 @@ function withoutProjectMachineSettings(values: PartialValues): PartialValues {
         profile: _profile,
         provider_default_enable: _providerDefaultEnable,
         providers: _providers,
+        // Project skill folders are relative to the project they sit in and add to the machine's
+        // list rather than replacing it. Skill discovery reads them beside each project root
+        // through the compute, so they never enter the merged machine configuration.
+        skills: _skills,
         defaults,
         feature,
         settings,
@@ -3434,6 +3504,7 @@ function calculateProvenance(...sources: readonly PartialValues[]): Record<strin
             if (
                 section === "defaults" ||
                 section === "settings" ||
+                section === "skills" ||
                 section === "features" ||
                 section === "observation" ||
                 section === "profile" ||
@@ -3585,6 +3656,19 @@ function readGemini(
         ["api_key"],
         partialValuesSchema.properties.gemini!,
     ) as PartialValues["gemini"];
+}
+
+function readSkills(
+    value: TomlValue | undefined,
+    unknown: (path: string) => void,
+): PartialValues["skills"] {
+    return readTableValues(
+        value,
+        "skills",
+        unknown,
+        ["directories"],
+        skillsInputSchema,
+    ) as PartialValues["skills"];
 }
 
 function readWorkspace(

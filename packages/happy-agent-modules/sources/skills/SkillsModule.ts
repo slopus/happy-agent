@@ -1,4 +1,4 @@
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, isAbsolute, join } from "node:path";
 
 import { createId } from "@paralleldrive/cuid2";
 import {
@@ -15,6 +15,7 @@ import { Value } from "@sinclair/typebox/value";
 import { type Context } from "@steve.kite/stdlib";
 
 import type { ComputeModule, ComputePermissions, HostCompute } from "../compute/index.js";
+import type { ConfigModule } from "../config/index.js";
 import { USER_MESSAGE_ORIGIN_METADATA } from "../impl/messageOrigin.js";
 import type { SlashCommandDefinition } from "../slashCommands/index.js";
 import {
@@ -44,6 +45,8 @@ const SKILL_INVOCATIONS_KEY = "slash-command-invocations";
 const MAX_SKILL_INVOCATIONS_PER_RUN = 16;
 /** Cap retained in-flight scans; completed catalogs are never cached. */
 const MAX_SHARED_SKILL_SCANS = 128;
+/** A project `happy.toml` larger than this is not read for skill folders. */
+const MAX_PROJECT_CONFIG_BYTES = 1_048_576;
 /** A directory skills are looked for under, and what the skills found there are called. */
 const discoveredRootSchema = Type.Object(
     {
@@ -121,13 +124,20 @@ export class SkillsModule implements AgentModule {
     readonly name = "skills";
     readonly #compute: ComputeModule;
     readonly #globalSkills: GlobalSkillsModule | undefined;
+    readonly #config: ConfigModule | undefined;
     readonly #discoveries = new Map<object | string, Map<string, Promise<readonly SkillEntry[]>>>();
     #sharedScanCount = 0;
     #agents: AgentSystemRef | undefined;
 
-    constructor(compute: ComputeModule, globalSkills?: GlobalSkillsModule) {
+    /**
+     * Configuration supplies the extra skill folders: `[skills] directories` in the user
+     * `happy.toml` for this machine, and the parser for the same table in a project's own file.
+     * Without it, discovery covers only the standard `.agents/skills` roots.
+     */
+    constructor(compute: ComputeModule, globalSkills?: GlobalSkillsModule, config?: ConfigModule) {
         this.#compute = compute;
         this.#globalSkills = globalSkills;
+        this.#config = config;
     }
 
     async slashCommands(ctx: Context, agentId: string): Promise<readonly SlashCommandDefinition[]> {
@@ -264,18 +274,29 @@ export class SkillsModule implements AgentModule {
         unavailable: ReadonlySet<string>,
     ): Promise<readonly SkillEntry[]> {
         const identity = this.#compute.fileSystemIdentity(compute);
+        const config = this.#config;
+        // Machine-wide folders name paths on the daemon's own filesystem, so only a native compute
+        // scans them; a container or remote machine has no such folders.
+        const configured: ConfiguredSkillRoots | undefined =
+            config === undefined
+                ? undefined
+                : {
+                      global: typeof identity === "string" ? config.globalSkillDirectories : [],
+                      project: (source) => config.projectSkillDirectories(source),
+                  };
         const key = JSON.stringify([
             compute.cwd,
             compute.fs.home,
             permissions,
             [...unavailable].sort(),
+            configured?.global ?? null,
         ]);
         const existing = this.#discoveries.get(identity)?.get(key);
         if (existing !== undefined) {
             return await ctx.span("skills.discovery.wait", () => existing);
         }
         const pending = ctx.span("skills.discover", () =>
-            discoverSkills(compute, permissions, unavailable),
+            discoverSkills(compute, permissions, unavailable, configured),
         );
         if (this.#sharedScanCount >= MAX_SHARED_SKILL_SCANS) return await pending;
         const scans =
@@ -393,15 +414,22 @@ function formatInvokedSkill(invocation: SkillInvocation): string {
     return `The user directly invoked the /${invocation.name} skill for this run. Follow its complete instructions below.\n\n<skill name="${invocation.name}">\n${invocation.content}\n</skill>`;
 }
 
+/** The extra roots configuration adds: machine folders as paths, project folders as a parser. */
+interface ConfiguredSkillRoots {
+    readonly global: readonly string[];
+    readonly project: (source: string) => readonly string[];
+}
+
 async function discoverSkills(
     compute: HostCompute,
     permissions: ComputePermissions,
     unavailable: ReadonlySet<string>,
+    configured: ConfiguredSkillRoots | undefined,
 ): Promise<readonly SkillEntry[]> {
     const byName = new Map<string, SkillEntry>();
     const budget: DiscoveryBudget = { entries: 0, files: 0 };
     assertValue(discoveryBudgetSchema, budget, "Skill discovery budget");
-    for (const root of await filesystemSkillRoots(compute, permissions)) {
+    for (const root of await filesystemSkillRoots(compute, permissions, configured)) {
         if (byName.size >= MAX_SKILL_COUNT || budget.entries >= MAX_SKILL_DISCOVERY_ENTRIES) {
             break;
         }
@@ -596,6 +624,7 @@ async function readSkillEntry(
 async function filesystemSkillRoots(
     compute: HostCompute,
     permissions: ComputePermissions,
+    configured: ConfiguredSkillRoots | undefined,
 ): Promise<readonly DiscoveredRoot[]> {
     const ancestors: string[] = [];
     let current = compute.cwd;
@@ -627,6 +656,21 @@ async function filesystemSkillRoots(
         };
         if (Value.Check(discoveredRootSchema, root)) roots.push(root);
     }
+    // Folders the project's own happy.toml names come after the standard project roots, so a
+    // standard skill of the same name keeps precedence.
+    const projectRoot = ancestors[projectRootIndex]!;
+    if (configured !== undefined) {
+        const directories = await projectSkillDirectories(
+            compute,
+            permissions,
+            projectRoot,
+            configured,
+        );
+        for (const directory of directories) {
+            const root = { path: resolveAgainst(projectRoot, directory), source: "project" };
+            if (Value.Check(discoveredRootSchema, root)) roots.push(root);
+        }
+    }
     if (compute.fs.home !== undefined) {
         const root = {
             path: join(compute.fs.home, ".agents", "skills"),
@@ -634,7 +678,43 @@ async function filesystemSkillRoots(
         };
         if (Value.Check(discoveredRootSchema, root)) roots.push(root);
     }
+    for (const directory of configured?.global ?? []) {
+        const root = { path: directory, source: "user" };
+        if (Value.Check(discoveredRootSchema, root)) roots.push(root);
+    }
     return roots;
+}
+
+/**
+ * The `[skills] directories` a project's root `happy.toml` names, or nothing at all.
+ *
+ * The file is read through the compute because it lives on the agent's machine. A missing,
+ * oversized, or invalid file hides no skills: discovery simply proceeds without extra folders.
+ */
+async function projectSkillDirectories(
+    compute: HostCompute,
+    permissions: ComputePermissions,
+    projectRoot: string,
+    configured: ConfiguredSkillRoots,
+): Promise<readonly string[]> {
+    try {
+        const bytes = await compute.fs.readFileBuffer(
+            permissions,
+            join(projectRoot, "happy.toml"),
+            {
+                maxBytes: MAX_PROJECT_CONFIG_BYTES,
+                noFollow: true,
+            },
+        );
+        if (bytes.byteLength > MAX_PROJECT_CONFIG_BYTES) return [];
+        return configured.project(new TextDecoder().decode(bytes));
+    } catch {
+        return [];
+    }
+}
+
+function resolveAgainst(base: string, directory: string): string {
+    return isAbsolute(directory) ? directory : join(base, directory);
 }
 
 function fitListPage(

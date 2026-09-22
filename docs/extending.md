@@ -341,6 +341,11 @@ Happy Agent searches these roots, in this order:
 2. **User** — `~/.codex/skills` and `~/.agents/skills`.
 3. **Project** — `.agents/skills` in every directory from the project root down
    to the working directory.
+4. **Configured** — extra folders listed under `[skills] directories` in the
+   user `happy.toml` (scanned as user skills) and in the project root
+   `happy.toml` (scanned as project skills). Prefer absolute paths; see
+   [Extra skill folders](configuration.md#extra-skill-folders). A configured
+   folder never outranks a standard root for a same-named skill.
 
 Within each root, discovery walks directories recursively looking for a
 `SKILL.md`; finding one stops descent into that subtree. Entries starting with

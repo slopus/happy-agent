@@ -1,19 +1,28 @@
 # Skills module
 
 ```ts
-const skills = new SkillsModule(computeModule);
+const skills = new SkillsModule(computeModule, globalSkillsModule, configModule);
 ```
 
 The daemon additionally installs `new GlobalSkillsModule(configModule, durableFunctionsModule)`
 and passes it to `SkillsModule` as the optional second module dependency. Global management owns
 the daemon's native `~/.agents/skills` catalog; it never inspects a separate compute's filesystem.
+The optional third dependency, the config module, supplies the extra skill folders configured in
+`[skills] directories`: the user `happy.toml` list, already resolved to absolute paths, and the
+parser for the same table in a project's root `happy.toml`. Without it only the standard roots
+are scanned.
 
 `SkillsModule` takes the compute module and asks it for the exact cached compute belonging to the
 current agent, and for the permissions that machine is read under. It recursively discovers user
 skills under `~/.agents/skills` and project skills under `.agents/skills` from the nearest Git root
-down to `compute.cwd`. A deeper project skill with the same name replaces an earlier one. There are
-no other roots: a skill is a file on the agent's own machine, so an agent with no machine has no
-skills and is given no skill tools.
+down to `compute.cwd`. A deeper project skill with the same name replaces an earlier one. Configured
+folders come after those: the project root's `happy.toml` is read through the compute and its
+`[skills] directories` entries are resolved against the project root and scanned as project skills;
+the machine's configured folders are scanned as user skills, but only on the daemon's native
+filesystem, since they name paths on this machine. A configured folder never outranks a standard
+root for a same-named skill, and a missing or invalid project file simply adds nothing. Apart from
+that, a skill is a file on the agent's own machine, so an agent with no machine has no skills and
+is given no skill tools.
 
 The catalog and skill documents are read live through `compute.fs`, bounded, and exposed through
 model instructions plus `list_skills` and `read_skill`. Both tools read inside Happy Agent's own filesystem

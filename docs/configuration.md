@@ -450,6 +450,40 @@ entry. No other Gemini or Google credential variable is used. Repository
 provider's native tools, including Claude's unchanged `WebSearch` tool. Restart
 the local daemon after adding or changing the key.
 
+## Extra skill folders
+
+Skills are always discovered under `~/.agents/skills` and each project's
+`.agents/skills`. To scan more folders, list them under `[skills]`. Each entry
+is a container of skill directories, each holding a `SKILL.md`, exactly like the
+standard roots.
+
+```toml
+# User happy.toml: folders on this machine.
+[skills]
+directories = ["/opt/shared-skills", "/home/me/team-skills"]
+```
+
+```toml
+# Project happy.toml: folders that ship with the repository.
+[skills]
+directories = ["tools/skills"]
+```
+
+Prefer absolute paths. They mean the same thing wherever discovery runs and
+never depend on which home or project a path happens to be resolved against.
+Relative forms exist as a convenience with a fixed meaning: in the user file, an
+entry starting with `~/` or a bare relative path is resolved against the home
+folder; in a project file, a bare relative path is resolved against that
+project's root. A project file should use a relative entry only for a folder
+inside the repository itself; anything outside it should be absolute.
+
+The two lists add together. A project cannot remove a machine folder, and a
+machine folder cannot hide a project one. A skill in a configured folder ranks
+below a skill of the same name in a standard root. Machine folders are scanned
+only when the agent runs on the daemon's own filesystem, since they name paths
+on this machine; a Docker or remote session sees only its project's folders.
+A missing or invalid project file adds nothing and hides nothing.
+
 ### Hiding providers
 
 To keep an account available behind a smart provider without allowing direct selection, set `hidden = true`

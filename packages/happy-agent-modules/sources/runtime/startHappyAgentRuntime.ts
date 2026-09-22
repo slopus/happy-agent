@@ -394,7 +394,7 @@ export async function startHappyAgentRuntime(
                   });
         const durableFunctions = new DurableFunctionsModule();
         const globalSkills = new GlobalSkillsModule(config, durableFunctions);
-        const compute = createComputeModules(computeModule, globalSkills);
+        const compute = createComputeModules(computeModule, globalSkills, config);
         registerShutdown("global-skills", async () => await globalSkills.close());
         registerShutdown("compute", async (shutdownCtx) => {
             await Promise.allSettled([

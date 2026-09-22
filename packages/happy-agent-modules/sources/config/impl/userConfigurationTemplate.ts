@@ -201,6 +201,13 @@ export const HAPPY_TOML_TEMPLATE = `# Happy configuration for Happy Agent.
 # [gemini]
 # api_key = "your-gemini-api-key"
 
+# Extra folders to scan for skills, beside ~/.agents/skills. Each folder holds skill directories
+# with a SKILL.md, exactly like ~/.agents/skills. Prefer absolute paths; a ~ prefix or a relative
+# entry is resolved against your home folder. A project's own happy.toml may name folders too,
+# relative to that project's root; those add to this list rather than replacing it.
+# [skills]
+# directories = ["/opt/shared-skills", "/home/me/team-skills"]
+
 # [docker]
 # Choose exactly one of image or container.
 # image = "my-project-dev:latest"

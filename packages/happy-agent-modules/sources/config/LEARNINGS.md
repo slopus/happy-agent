@@ -192,3 +192,14 @@ duplicate consumed-token attribution under both smart and concrete providers is 
 Scripted inference must replace concrete accounts, not smart routing itself. Factories receive
 enabled hidden accounts as well as their visible smart routes; configuration rebuilds the real
 router over the substituted concrete registry so gym tests exercise selection and cancellation.
+
+## Extra skill folders are a plain list in `[skills]`
+
+The user asked for extra skill folders and found nothing: discovery hardcoded `~/.agents/skills`
+and each project's `.agents/skills`. `[skills] directories` now lists more folders in the user
+`happy.toml` (resolved against home) and in a project root `happy.toml` (resolved against that
+project). The two lists add together instead of the project one replacing the machine one, so the
+project entry is dropped from the merged machine values and parsed separately for the skills
+module. Machine folders are scanned only on the daemon's native filesystem, since they name paths
+on this machine; project folders are read through the agent's compute. Configured folders rank
+below the standard roots for a same-named skill.
