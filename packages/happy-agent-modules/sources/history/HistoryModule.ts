@@ -782,70 +782,88 @@ export class HistoryModule implements AgentModule {
         ) {
             throw new Error("The history run reader received an invalid query.");
         }
-        return await this.#direct(ctx, async (txCtx) => {
-            const limit = query.limit ?? 50;
-            const anchor = await resolveRunAnchor(txCtx.db, agentId, query);
-            const candidates = await candidateRuns(txCtx.db, agentId, anchor);
-            const selected: { row: HistoryRunRow; afterPosition?: number }[] = [];
-            let selectedMessages = 0;
-            let hasMore = candidates.length > MAX_HISTORY_RUNS_PER_PAGE;
-            const boundedCandidates = candidates.slice(0, MAX_HISTORY_RUNS_PER_PAGE);
-            for (let index = 0; index < boundedCandidates.length; index += 1) {
-                const row = boundedCandidates[index] as HistoryRunRow;
-                const afterPosition =
-                    anchor.kind === "after" &&
-                    anchor.includeAnchorRun &&
-                    row.run_id === anchor.runId
-                        ? anchor.position
-                        : undefined;
-                const count = await countHistoryRows(
-                    txCtx.db,
-                    afterPosition === undefined
-                        ? sql`agent_id = ${agentId} AND run_id = ${row.run_id}`
-                        : sql`agent_id = ${agentId}
+        return await this.#direct(ctx, (txCtx) =>
+            txCtx.span("history.runs.read", async (txCtx) => {
+                const limit = query.limit ?? 50;
+                const anchor = await txCtx.span("history.runs.anchor", (ctx) =>
+                    resolveRunAnchor(ctx.db, agentId, query),
+                );
+                const candidates = await txCtx.span("history.runs.candidates", (ctx) =>
+                    candidateRuns(ctx.db, agentId, anchor),
+                );
+                const selected: { row: HistoryRunRow; afterPosition?: number }[] = [];
+                let selectedMessages = 0;
+                let hasMore = candidates.length > MAX_HISTORY_RUNS_PER_PAGE;
+                const boundedCandidates = candidates.slice(0, MAX_HISTORY_RUNS_PER_PAGE);
+                for (let index = 0; index < boundedCandidates.length; index += 1) {
+                    const row = boundedCandidates[index] as HistoryRunRow;
+                    const afterPosition =
+                        anchor.kind === "after" &&
+                        anchor.includeAnchorRun &&
+                        row.run_id === anchor.runId
+                            ? anchor.position
+                            : undefined;
+                    const count = await txCtx.span("history.runs.count", (ctx) =>
+                        countHistoryRows(
+                            ctx.db,
+                            afterPosition === undefined
+                                ? sql`agent_id = ${agentId} AND run_id = ${row.run_id}`
+                                : sql`agent_id = ${agentId}
                             AND run_id = ${row.run_id}
                             AND position > ${afterPosition}`,
-                );
-                if (count === 0) continue;
-                selected.push({
-                    row,
-                    ...(afterPosition === undefined ? {} : { afterPosition }),
-                });
-                selectedMessages += count;
-                if (selectedMessages >= limit) {
-                    hasMore = hasMore || index < boundedCandidates.length - 1;
-                    break;
+                        ),
+                    );
+                    if (count === 0) continue;
+                    selected.push({
+                        row,
+                        ...(afterPosition === undefined ? {} : { afterPosition }),
+                    });
+                    selectedMessages += count;
+                    if (selectedMessages >= limit) {
+                        hasMore = hasMore || index < boundedCandidates.length - 1;
+                        break;
+                    }
                 }
-            }
-            const chronological = anchor.kind === "after" ? selected : [...selected].reverse();
-            const runs: HistoryRun[] = [];
-            for (const selectedRun of chronological) {
-                const records = await readRunMessages(
-                    txCtx.db,
+                const chronological = anchor.kind === "after" ? selected : [...selected].reverse();
+                const runs: HistoryRun[] = [];
+                for (const selectedRun of chronological) {
+                    const records = await txCtx.span("history.runs.messages", (ctx) =>
+                        readRunMessages(
+                            ctx,
+                            agentId,
+                            selectedRun.row.run_id,
+                            selectedRun.afterPosition,
+                        ),
+                    );
+                    txCtx.span("history.runs.project", () => {
+                        const messages = records.map((record) => record.message);
+                        runs.push(
+                            runFromRow(
+                                selectedRun.row,
+                                query.omitToolData === true
+                                    ? omitPresentedToolData(messages)
+                                    : messages,
+                            ),
+                        );
+                    });
+                }
+                const pending = await txCtx.span("history.runs.pending", (ctx) =>
+                    readPendingMessages(ctx.db, agentId),
+                );
+                const page: HistoryRunsPage = {
                     agentId,
-                    selectedRun.row.run_id,
-                    selectedRun.afterPosition,
-                );
-                const messages = records.map((record) => record.message);
-                runs.push(
-                    runFromRow(
-                        selectedRun.row,
-                        query.omitToolData === true ? omitPresentedToolData(messages) : messages,
-                    ),
-                );
-            }
-            const pending = await readPendingMessages(txCtx.db, agentId);
-            const page: HistoryRunsPage = {
-                agentId,
-                runs,
-                pending,
-                hasMore,
-            };
-            if (!Value.Check(historyRunsPageSchema, page)) {
-                throw new Error("The history module produced an invalid run page.");
-            }
-            return page;
-        });
+                    runs,
+                    pending,
+                    hasMore,
+                };
+                txCtx.span("history.runs.validate", () => {
+                    if (!Value.Check(historyRunsPageSchema, page)) {
+                        throw new Error("The history module produced an invalid run page.");
+                    }
+                });
+                return page;
+            }),
+        );
     }
 
     /** Read one exact run's lifecycle state, including a run that has no messages. */
@@ -2380,31 +2398,33 @@ async function candidateRuns(
 }
 
 async function readRunMessages(
-    database: AgentDatabaseFacade<AgentDatabase>,
+    ctx: Context,
     agentId: string,
     runId: string,
     afterPosition?: number,
 ): Promise<HistoryRecord[]> {
-    const rows = await agentDatabaseRows<HistoryRow>(
-        database,
-        afterPosition === undefined
-            ? sql`SELECT ${sql.raw(HISTORY_ROW_COLUMNS)}
+    const rows = await ctx.span("history.runs.messages.query", (ctx) =>
+        agentDatabaseRows<HistoryRow>(
+            ctx.db,
+            afterPosition === undefined
+                ? sql`SELECT ${sql.raw(HISTORY_ROW_COLUMNS)}
                 FROM ${sql.raw(HISTORY_TABLE)}
                 WHERE agent_id = ${agentId} AND run_id = ${runId}
                 ORDER BY position ASC
                 LIMIT ${MAX_HISTORY_MESSAGES_PER_RUN + 1}`
-            : sql`SELECT ${sql.raw(HISTORY_ROW_COLUMNS)}
+                : sql`SELECT ${sql.raw(HISTORY_ROW_COLUMNS)}
                 FROM ${sql.raw(HISTORY_TABLE)}
                 WHERE agent_id = ${agentId}
                     AND run_id = ${runId}
                     AND position > ${afterPosition}
                 ORDER BY position ASC
                 LIMIT ${MAX_HISTORY_MESSAGES_PER_RUN + 1}`,
+        ),
     );
     if (rows.length > MAX_HISTORY_MESSAGES_PER_RUN) {
         throw new Error("The history module found a run too large to read.");
     }
-    return rows.map(toHistoryRecord);
+    return ctx.span("history.runs.messages.decode", () => rows.map(toHistoryRecord));
 }
 
 function runStateFromRow(row: HistoryRunRow): HistoryRunState {

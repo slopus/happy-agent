@@ -3402,42 +3402,55 @@ export class ApiModule implements AgentModule {
         url: URL,
         agentId: string,
     ): Promise<void> {
-        // Capture first so a concurrent message change is either visible in history or replayed
-        // after this cursor. Stable identities and offset-addressed deltas make overlap harmless.
-        const cursor = this.#journal.cursor();
-        const before = optionalApiId(url.searchParams.get("before"), "run");
-        const after = optionalApiId(url.searchParams.get("after"), "message");
-        if (before !== undefined && after !== undefined) {
-            throw invalidRequest("History cannot page before a run and after a message together.");
-        }
-        const limit = integerParameter(url.searchParams.get("limit"), 50, 1, 500);
-        const omitToolData = booleanParameter(url.searchParams.get("omitToolData"), false);
-        await this.#requireAgentResource(ctx, agentId);
-        const page = await this.#history.runs(ctx, agentId, {
-            ...(before === undefined ? {} : { before }),
-            ...(after === undefined ? {} : { after }),
-            limit,
-        });
-        sendJson(response, 200, {
-            cursor,
-            runs: await Promise.all(
-                page.runs.map(async (run) => {
-                    const runUsage = await this.#usage.readRun(ctx, agentId, run.id);
-                    return {
-                        id: run.id,
-                        status: run.status,
-                        reason: run.reason,
-                        startedAt: run.startedAt,
-                        endedAt: run.endedAt,
-                        usage: runUsage.usage,
-                        costUsd: runUsage.costUsd,
-                        messages: run.messages
-                            .filter((message) => !messageHiddenFromUser(message))
-                            .map((message) => messageResource(message, { omitToolData })),
-                    };
+        await ctx.span("api.messages", async (ctx) => {
+            // Capture first so a concurrent message change is either visible in history or replayed
+            // after this cursor. Stable identities and offset-addressed deltas make overlap harmless.
+            const cursor = this.#journal.cursor();
+            const before = optionalApiId(url.searchParams.get("before"), "run");
+            const after = optionalApiId(url.searchParams.get("after"), "message");
+            if (before !== undefined && after !== undefined) {
+                throw invalidRequest(
+                    "History cannot page before a run and after a message together.",
+                );
+            }
+            const limit = integerParameter(url.searchParams.get("limit"), 50, 1, 500);
+            const omitToolData = booleanParameter(url.searchParams.get("omitToolData"), false);
+            await ctx.span("api.messages.agent", (ctx) => this.#requireAgentResource(ctx, agentId));
+            const page = await ctx.span("api.messages.history", (ctx) =>
+                this.#history.runs(ctx, agentId, {
+                    ...(before === undefined ? {} : { before }),
+                    ...(after === undefined ? {} : { after }),
+                    limit,
                 }),
-            ),
-            hasMore: page.hasMore,
+            );
+            const runs = await ctx.span("api.messages.runs", (ctx) =>
+                Promise.all(
+                    page.runs.map(async (run) => {
+                        const runUsage = await ctx.span("api.messages.run_usage", (ctx) =>
+                            this.#usage.readRun(ctx, agentId, run.id),
+                        );
+                        return ctx.span("api.messages.project_run", () => ({
+                            id: run.id,
+                            status: run.status,
+                            reason: run.reason,
+                            startedAt: run.startedAt,
+                            endedAt: run.endedAt,
+                            usage: runUsage.usage,
+                            costUsd: runUsage.costUsd,
+                            messages: run.messages
+                                .filter((message) => !messageHiddenFromUser(message))
+                                .map((message) => messageResource(message, { omitToolData })),
+                        }));
+                    }),
+                ),
+            );
+            ctx.span("api.messages.serialize", () =>
+                sendJson(response, 200, {
+                    cursor,
+                    runs,
+                    hasMore: page.hasMore,
+                }),
+            );
         });
     }
 

@@ -5,10 +5,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentConfig } from "@slopus/happy-agent-base";
 import type { DesktopBootstrapResponse } from "@slopus/happy-agent-client";
-import { createRootContext, type Context } from "@steve.kite/stdlib";
+import { createRootContext, withTracer, type Context } from "@steve.kite/stdlib";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ApiModule } from "../../sources/api/ApiModule.js";
+import { recordingTracer } from "../support/recordingTracer.js";
 
 const cleanups: (() => Promise<void>)[] = [];
 const token = "t".repeat(43);
@@ -139,10 +140,95 @@ describe("desktop bootstrap resource reads", () => {
     });
 });
 
-async function createFixture() {
+describe("message history request tracing", () => {
+    it("nests stages under one request and keeps usage spans open until their reads finish", async () => {
+        const fixture = await createFixture(true);
+        let release!: () => void;
+        let started!: () => void;
+        const gate = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        const ready = new Promise<void>((resolve) => {
+            started = resolve;
+        });
+        fixture.usage.readRun.mockImplementation(async (ctx, agentId, runId) => {
+            await ctx.span("test.usage.read", async () => {
+                started();
+                await gate;
+            });
+            return { agentId, runId, usage: {}, costUsd: null };
+        });
+        const loading = fixture.get("/v0/agents/activeagent/messages?limit=100&omitToolData=false");
+        await ready;
+        try {
+            const root = fixture.spans.find((span) => span.name === "api.messages");
+            const usage = fixture.spans.find((span) => span.name === "api.messages.run_usage");
+            expect(root?.ends).toBe(0);
+            expect(usage?.ends).toBe(0);
+            expect(fixture.spans.find((span) => span.name === "test.usage.read")?.parent).toBe(
+                usage,
+            );
+        } finally {
+            release();
+            await loading;
+        }
+        expect(fixture.spans.map((span) => span.name)).toEqual([
+            "api.messages",
+            "api.messages.agent",
+            "api.messages.history",
+            "api.messages.runs",
+            "api.messages.run_usage",
+            "test.usage.read",
+            "api.messages.project_run",
+            "api.messages.serialize",
+        ]);
+        const root = fixture.spans[0];
+        for (const name of [
+            "api.messages.agent",
+            "api.messages.history",
+            "api.messages.runs",
+            "api.messages.serialize",
+        ]) {
+            expect(fixture.spans.find((span) => span.name === name)?.parent).toBe(root);
+        }
+        expect(fixture.spans.every((span) => span.ends === 1 && span.errors.length === 0)).toBe(
+            true,
+        );
+    });
+
+    it("ends failed history and request spans without changing the HTTP error", async () => {
+        const fixture = await createFixture(true);
+        const failure = new Error("history read failed");
+        fixture.history.runs.mockRejectedValue(failure);
+        await fixture.get("/v0/agents/activeagent/messages", 500);
+        expect(fixture.spans.map((span) => span.name)).toEqual([
+            "api.messages",
+            "api.messages.agent",
+            "api.messages.history",
+        ]);
+        expect(fixture.spans.map((span) => span.errors)).toEqual([[failure], [], [failure]]);
+        expect(fixture.spans.every((span) => span.ends === 1)).toBe(true);
+    });
+
+    it("keeps the response identical when tracing is disabled", async () => {
+        const plain = await createFixture();
+        const traced = await createFixture(true);
+        const path = "/v0/agents/activeagent/messages?limit=100&omitToolData=false";
+        const { cursor: _plainCursor, ...plainPage } =
+            await plain.get<Record<string, unknown>>(path);
+        const { cursor: _tracedCursor, ...tracedPage } =
+            await traced.get<Record<string, unknown>>(path);
+        expect(tracedPage).toEqual(plainPage);
+        expect(plain.spans).toEqual([]);
+    });
+});
+
+async function createFixture(tracing = false) {
     const directory = await mkdtemp(join(tmpdir(), "bootstrap-reads-"));
     cleanups.push(() => rm(directory, { recursive: true, force: true }));
-    const context = createRootContext().named("bootstrap-reads-test");
+    const { tracer, spans } = recordingTracer();
+    const root = createRootContext();
+    const context = (tracing ? withTracer(root, tracer) : root).named("bootstrap-reads-test");
     const subscribe = () => () => undefined;
     const passive = new Proxy({}, { get: () => subscribe });
     const project = {
@@ -190,6 +276,7 @@ async function createFixture() {
     };
     const workspaces = {
         onEvent: subscribe,
+        workspaceForAgent: vi.fn(async () => "projectone"),
         listPage: vi.fn(
             async (): Promise<{ workspaces: (typeof workspace)[] }> => ({ workspaces: [] }),
         ),
@@ -219,6 +306,35 @@ async function createFixture() {
         async (_ctx: Context, _id: string): Promise<{ id: string } | undefined> => undefined,
     );
     const profile = { name: "Test", photo: null, version: 1, createdAt: 0, updatedAt: 0 };
+    const history = {
+        onPending: subscribe,
+        onAppend: subscribe,
+        onToolSpawn: subscribe,
+        runningRun,
+        runs: vi.fn(async () => ({
+            runs: [
+                {
+                    id: "runone",
+                    status: "completed",
+                    reason: "completed",
+                    startedAt: 1,
+                    endedAt: 2,
+                    messages: [],
+                },
+            ],
+            pending: [],
+            hasMore: false,
+        })),
+    };
+    const usage = {
+        onEvent: subscribe,
+        readRun: vi.fn(async (_ctx: Context, agentId: string, runId: string) => ({
+            agentId,
+            runId,
+            usage: {},
+            costUsd: null,
+        })),
+    };
     const api = new ApiModule(
         passive as never,
         {
@@ -247,10 +363,10 @@ async function createFixture() {
         passive as never,
         passive as never,
         passive as never,
-        { onPending: subscribe, onAppend: subscribe, onToolSpawn: subscribe, runningRun } as never,
+        history as never,
         passive as never,
         { onEvent: subscribe, listPage: questions } as never,
-        passive as never,
+        usage as never,
         passive as never,
         passive as never,
         { onIntegrationUpdated: subscribe, integration: async () => ({}) } as never,
@@ -276,7 +392,10 @@ async function createFixture() {
         processes,
         questions,
         runningRun,
-        async get<T>(path: string): Promise<T> {
+        history,
+        usage,
+        spans,
+        async get<T>(path: string, status = 200): Promise<T> {
             const socket = new Socket();
             try {
                 const request = new IncomingMessage(socket);
@@ -287,7 +406,7 @@ async function createFixture() {
                 const end = vi.spyOn(response, "end").mockImplementation(() => response);
                 await api.handleRequest(context, request, response);
                 const body = JSON.parse(String(end.mock.calls[0]?.[0])) as T;
-                expect(response.statusCode, JSON.stringify(body)).toBe(200);
+                expect(response.statusCode, JSON.stringify(body)).toBe(status);
                 return body;
             } finally {
                 socket.destroy();

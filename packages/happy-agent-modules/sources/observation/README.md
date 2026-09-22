@@ -137,6 +137,38 @@ Concurrent equivalent skill loads use `skills.discovery.wait` for the callers sh
 Cached catalog reads do not rebuild, and coalesced refreshes share one loading span. These spans
 require `traces = true`; setting only `log_level = "trace"` enables detailed logs, not OTLP tracing.
 
+### Message-history latency
+
+`GET /v0/agents/:agentId/messages` emits an `api.messages` span after authentication and routing.
+Its children separate agent-resource lookup (`api.messages.agent`), history loading
+(`api.messages.history`), per-run usage and projection (`api.messages.runs`,
+`api.messages.run_usage`, `api.messages.project_run`), and JSON serialization plus response
+enqueueing (`api.messages.serialize`). These measure handler work, not network delivery to the
+client. Span names are fixed; no message bodies, tool arguments/results, or raw query strings
+are attached.
+
+History's `history.runs.read` starts inside the database transaction. The gap between the start
+of `api.messages.history` and that child helps identify transaction acquisition delays. Its
+children measure cursor resolution (`anchor`), candidate selection (`candidates`), per-run
+counts (`count`), message loading (`messages`), projection (`project`), pending messages
+(`pending`), and final validation (`validate`), all prefixed `history.runs.`. Message loading
+further separates `history.runs.messages.query` from `history.runs.messages.decode`, so SQLite
+time is distinguishable from JSON decoding and record validation. Repeated run spans reveal
+per-run work without creating a span for every message or tool block.
+
+To collect these spans after deploying the instrumented build, start an OTLP collector, set the
+following in the machine's global `happy.toml`, and restart the daemon:
+
+```toml
+[observation]
+traces = true
+traces_endpoint = "http://127.0.0.1:4318/v1/traces"
+```
+
+Reproduce the history load and search the collector's trace viewer for `api.messages` around
+that time. The endpoint must be reachable from the daemon itself. Tracing remains disabled by
+default; adding instrumentation alone does not enable export or restart any daemon.
+
 ## History dump
 
 The durable history already lives in the agent's database, where the model

@@ -1,5 +1,13 @@
 # API module learnings
 
+## Measure message-history latency before changing its queries
+
+Static inspection found repeated reads but could not establish what dominated a slow history
+request. The messages handler now exposes nested timing spans for agent lookup, history, usage,
+projection, and serialization; History separates database reads from decoding and validation.
+Keep query behavior and the response contract unchanged while collecting that evidence. Trace
+instrumentation does not enable export on a deployed daemon or authorize its restart.
+
 ## Shell names preserve command presentation
 
 Claude uses PowerShell on native Windows. Its calls use the same existing command presentation

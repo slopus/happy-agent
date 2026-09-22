@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { withTracer } from "@steve.kite/stdlib";
 import type {
     AgentBaseAcceptedMessage,
     AgentModuleHooks,
@@ -10,6 +11,7 @@ import { HistoryModule, type HistoryPendingMessage } from "../../sources/history
 import { USER_MESSAGE_ORIGIN_METADATA } from "../../sources/impl/messageOrigin.js";
 import { moduleDatabase, type ModuleDatabase } from "../support/moduleDatabase.js";
 import { resolveModuleHooks } from "../support/moduleHooks.js";
+import { recordingTracer } from "../support/recordingTracer.js";
 
 const mode = {
     providerId: "codex",
@@ -139,6 +141,41 @@ async function finishInference(
 }
 
 describe("HistoryModule run history", () => {
+    it("traces transaction work, queries, decoding and validation without changing the page", async () => {
+        const world = await setup("history-runs-tracing");
+        try {
+            await acceptBatch(world, [accepted("message-a", "send")]);
+            await finishInference(world, "inference-a", "answer");
+            const expected = await world.history.runs(world.database.context, "agent-a");
+            const { tracer, spans } = recordingTracer();
+            const ctx = withTracer(world.database.context, tracer);
+            const actual = await ctx.span("test.history", (ctx) =>
+                world.history.runs(ctx, "agent-a"),
+            );
+            expect(actual).toEqual(expected);
+            expect(spans.map((span) => span.name)).toEqual([
+                "test.history",
+                "history.runs.read",
+                "history.runs.anchor",
+                "history.runs.candidates",
+                "history.runs.count",
+                "history.runs.messages",
+                "history.runs.messages.query",
+                "history.runs.messages.decode",
+                "history.runs.project",
+                "history.runs.pending",
+                "history.runs.validate",
+            ]);
+            expect(spans[1]?.parent).toBe(spans[0]);
+            expect(spans[2]?.parent).toBe(spans[1]);
+            expect(spans[6]?.parent).toBe(spans[5]);
+            expect(spans[7]?.parent).toBe(spans[5]);
+            expect(spans.every((span) => span.ends === 1 && span.errors.length === 0)).toBe(true);
+        } finally {
+            world.database.close();
+        }
+    });
+
     it("never backfills an older pending message from later acceptance metadata", async () => {
         const world = await setup("history-author-absent");
         try {
