@@ -1,7 +1,38 @@
 import { randomUUID } from "node:crypto";
 import { chmod, open, readFile, rename, unlink } from "node:fs/promises";
+import { Type } from "@sinclair/typebox";
+import { Value } from "@sinclair/typebox/value";
+
+import {
+    credentialRefreshRequest,
+    readCredentialRefreshJson,
+} from "@/core/impl/credentialRefresh.js";
 
 import { readCodexQuotaAuth, type CodexQuotaAuth } from "@/vendors/codex/impl/auth.js";
+
+const authSchema = Type.Object(
+    {
+        last_refresh: Type.Optional(Type.Unknown()),
+        tokens: Type.Object(
+            {
+                access_token: Type.Optional(Type.String()),
+                account_id: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                id_token: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                refresh_token: Type.String({ minLength: 1 }),
+            },
+            { additionalProperties: true },
+        ),
+    },
+    { additionalProperties: true },
+);
+const responseSchema = Type.Object(
+    {
+        access_token: Type.String({ minLength: 1 }),
+        id_token: Type.Optional(Type.String()),
+        refresh_token: Type.Optional(Type.String({ minLength: 1 })),
+    },
+    { additionalProperties: true },
+);
 
 export async function refreshCodexAuthFile(options: {
     authFile: string;
@@ -9,51 +40,38 @@ export async function refreshCodexAuthFile(options: {
     refreshTokenUrl: string;
 }): Promise<CodexQuotaAuth> {
     const contents = await readFile(options.authFile, "utf8");
-    const parsed = JSON.parse(contents) as {
-        last_refresh?: unknown;
-        tokens?: {
-            access_token?: unknown;
-            account_id?: unknown;
-            id_token?: unknown;
-            refresh_token?: unknown;
-        };
-    };
-    const refreshToken = parsed.tokens?.refresh_token;
-    if (typeof refreshToken !== "string" || refreshToken.length === 0) {
+    const parsed: unknown = JSON.parse(contents);
+    if (!Value.Check(authSchema, parsed)) {
         throw new Error("Codex authentication is missing a refresh token.");
     }
-    const response = await fetch(options.refreshTokenUrl, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-            client_id: options.clientId,
-            grant_type: "refresh_token",
-            refresh_token: refreshToken,
-        }),
+    const body = await credentialRefreshRequest(async (signal) => {
+        const response = await fetch(options.refreshTokenUrl, {
+            method: "POST",
+            signal,
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+                client_id: options.clientId,
+                grant_type: "refresh_token",
+                refresh_token: parsed.tokens.refresh_token,
+            }),
+        });
+        if (!response.ok) {
+            await response.body?.cancel();
+            throw new Error(`Codex access token could not be refreshed (HTTP ${response.status}).`);
+        }
+        const body = await readCredentialRefreshJson(response);
+        if (!Value.Check(responseSchema, body)) {
+            throw new Error("Codex token refresh did not return an access token.");
+        }
+        return body;
     });
-    const body = (await response.json().catch(() => undefined)) as
-        | {
-              access_token?: unknown;
-              error?: unknown;
-              error_description?: unknown;
-              id_token?: unknown;
-              refresh_token?: unknown;
-          }
-        | undefined;
-    if (!response.ok) {
-        const detail =
-            typeof body?.error_description === "string"
-                ? body.error_description
-                : typeof body?.error === "string"
-                  ? body.error
-                  : `${response.status} ${response.statusText}`.trim();
-        throw new Error(`Codex access token could not be refreshed: ${detail}`);
-    }
-    if (typeof body?.access_token !== "string" || body.access_token.length === 0) {
-        throw new Error("Codex token refresh did not return an access token.");
+
+    // Do not resurrect a sign-out or overwrite credentials changed while the network was busy.
+    if ((await readFile(options.authFile, "utf8")) !== contents) {
+        throw new Error("Codex authentication changed during token refresh.");
     }
 
-    const tokens = (parsed.tokens ??= {});
+    const tokens = parsed.tokens;
     tokens.access_token = body.access_token;
     if (typeof body.id_token === "string") tokens.id_token = body.id_token;
     if (typeof body.refresh_token === "string") tokens.refresh_token = body.refresh_token;

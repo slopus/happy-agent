@@ -1,10 +1,13 @@
 import { BaseCredential } from "@/core/BaseCredential.js";
+import { CredentialRefresh, waitForCredentialRefresh } from "@/core/impl/credentialRefresh.js";
 import {
     getCodexAuthPath,
     type CodexQuotaAuth,
     readCodexQuotaAuthFile,
 } from "@/vendors/codex/impl/auth.js";
 import { refreshCodexAuthFile } from "@/vendors/codex/impl/refreshCodexAuthFile.js";
+
+const refreshes = new CredentialRefresh<CodexQuotaAuth | undefined>();
 
 export type CodexSessionCredentialValue = {
     readonly accessToken: string;
@@ -70,15 +73,27 @@ export class CodexSessionCredential extends BaseCredential<
     }
 
     async refreshForUnauthorized(): Promise<CodexSessionCredential | undefined> {
-        const current = await readCodexQuotaAuthFile(this.authFile);
-        if (current === undefined || !this.matchesAccount(current.accountId)) return undefined;
-        const refreshed = await refreshCodexAuthFile({
-            authFile: this.authFile,
-            clientId: this.clientId,
-            refreshTokenUrl: this.refreshTokenUrl,
+        const refreshed = await refreshes.run(this.authFile, async (authFile) => {
+            const current = await readCodexQuotaAuthFile(authFile);
+            if (current === undefined || !this.matchesAccount(current.accountId)) return undefined;
+            // Another session or the native CLI may already have rotated this credential.
+            if (current.accessToken !== this.credential.accessToken) return current;
+            return await refreshCodexAuthFile({
+                authFile,
+                clientId: this.clientId,
+                refreshTokenUrl: this.refreshTokenUrl,
+            });
         });
-        if (!this.matchesAccount(refreshed.accountId)) return undefined;
+        if (refreshed === undefined || !this.matchesAccount(refreshed.accountId)) return undefined;
         return this.withAuth(refreshed);
+    }
+
+    /** Rotate a stored login without inference, sharing work with unauthorized recovery. */
+    async refreshForMaintenance(
+        options: { signal?: AbortSignal } = {},
+    ): Promise<CodexSessionCredential | undefined> {
+        options.signal?.throwIfAborted();
+        return await waitForCredentialRefresh(this.refreshForUnauthorized(), options.signal);
     }
 
     private constructor(

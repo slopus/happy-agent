@@ -171,8 +171,12 @@ async function fixture() {
     ]);
     const createdWorkspaces: unknown[] = [];
     const createdBots: unknown[] = [];
-    const wornAvatars: { botId: string; bytes: Uint8Array; contentType: string; version: number }[] =
-        [];
+    const wornAvatars: {
+        botId: string;
+        bytes: Uint8Array;
+        contentType: string;
+        version: number;
+    }[] = [];
 
     const agents = {
         abort: async (_ctx: unknown, agentId: string) => {

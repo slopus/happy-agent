@@ -165,6 +165,19 @@ Credentials are reusable: load one once and share it across every session you op
 don't take ownership of it, and there is no need to reload it per conversation. Token refreshing
 is handled for you.
 
+`CodexSessionCredential.refreshForMaintenance({ signal? })` and
+`GrokSessionCredential.refreshForMaintenance({ signal? })` also renew stored logins without
+inference. The caller owns the schedule. They share pending refreshes with inference recovery
+across credential instances using the same canonical file path in this process; separate native
+CLI processes are not locked. Codex returns the replacement credential (or `undefined`), while
+Grok updates its credential and returns a success boolean. Static API keys and Claude credentials
+are not part of this maintenance surface.
+
+Refresh HTTP work has a 30-second deadline and a 256 KiB response limit. Cancelling a maintenance
+caller stops its wait, but an exchange already in progress completes within that deadline so a
+rotated refresh token can still be saved and another session is not cancelled. Changed or removed
+login files observed after the exchange are not overwritten. Failures do not replay inference.
+
 Model catalogs are curated in source. The library never fetches a model list during startup or
 session creation.
 
