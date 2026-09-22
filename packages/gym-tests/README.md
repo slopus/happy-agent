@@ -137,7 +137,7 @@ or larger stress runs. The default `1` generates a calibrated roughly 200 MB ses
 
 ### Live provider Gym
 
-The ordinary Gym suite always uses deterministic inference. To exercise Grok 4.6 through the real
+The ordinary Gym suite always uses deterministic inference. To exercise Grok 4.7 through the real
 Happy Terminal CLI, daemon, agent loop, Grok provider, and xAI backend, run:
 
 ```sh
@@ -155,7 +155,7 @@ configured account except one already aimed at an explicit endpoint, so without 
 server answers and nothing live is proven. Asserting that `gym.inference.requests` stays empty is
 what makes the difference visible.
 
-The scenario asks Grok 4.6 to call a real terminal tool, waits for the tool result and final answer
+The scenario asks Grok 4.7 to call a real terminal tool, waits for the tool result and final answer
 at the PTY boundary, and checks the nonzero input, output, and session-work counters xAI reported.
 
 Set `mode: "docker"` on every scenario that needs Docker. `dockerSocket` and `image` are rejected in

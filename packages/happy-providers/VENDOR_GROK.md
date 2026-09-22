@@ -43,7 +43,7 @@ message order, request options, stable headers, and event structure remain real.
 
 ## Supported production surface
 
-The provider supports the curated `grok-4.6`, `grok-build`, `grok-4.5`, and
+The provider supports the curated `grok-4.7`, `grok-4.6`, `grok-build`, `grok-4.5`, and
 `grok-composer-2.5-fast` models. The model catalog is curated by Rig rather than fetched from Grok
 at runtime. Protocol reproduction remains trace-driven against Grok 4.5. `GrokProvider` accepts a
 credential, optional endpoint, and optional model. A model must be supplied either on the provider
@@ -401,14 +401,14 @@ summary cleanup, existing-reminder repositioning, and turn-index behavior.
 `tests/vendors/grokConnectionRetry.test.ts` covers rebuilding a dropped connection as HTTP/1 and
 completing the retry. `tests/grokImages.test.ts` covers native image-error recovery, and
 `tests/grokCredential.test.ts` covers OIDC refresh after an unauthorized response.
-`tests/grok.live.test.ts` separately verifies real tool-less inference against Grok 4.6, plus
-encrypted-reasoning tool continuation and structural compaction against Grok 4.5.
+`tests/grok.live.test.ts` separately verifies real tool-less inference against Grok 4.7 and
+Grok 4.6, plus encrypted-reasoning tool continuation and structural compaction against Grok 4.5.
 
 ## Intentional limitations
 
 - Rig owns transcript persistence, tool execution, and permissions; Grok CLI local session files,
   native tools, and its permission UI are not authoritative.
-- Only the four curated models above are supported. Models are not discovered from Grok during
+- Only the five curated models above are supported. Models are not discovered from Grok during
   startup.
 - The complete vanilla prompt and tools are exported assets, not hidden defaults. Server search is
   present only when the session tool catalog contains the corresponding native `server`

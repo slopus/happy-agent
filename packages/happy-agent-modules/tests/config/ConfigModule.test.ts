@@ -549,6 +549,56 @@ describe("ConfigModule", () => {
         });
     });
 
+    it("offers Grok 4.7 through Grok with its 500k context and xhigh effort ladder", async () => {
+        const root = await mkdtemp(join(tmpdir(), "happy-agent-grok-4-7-catalog-"));
+        temporaryDirectories.push(root);
+        await mkdir(join(root, process.platform === "darwin" ? "Happy/Config" : "happy/config"), {
+            recursive: true,
+        });
+        await writeFile(
+            join(
+                root,
+                process.platform === "darwin" ? "Happy/Config" : "happy/config",
+                "happy.toml",
+            ),
+            "[providers.grok]\nenabled = true\n\n[providers.bedrock]\nenabled = true\n",
+        );
+
+        const module = await ConfigModule.load(join(root, ".happy"));
+
+        expect(
+            module.catalog.find(
+                (model) => model.providerId === "grok" && model.id === "xai/grok-4.7",
+            ),
+        ).toMatchObject({
+            contextWindow: 500_000,
+            defaultEffort: "high",
+            effortLevels: ["low", "medium", "high", "xhigh"],
+            enabled: true,
+            name: "Grok 4.7",
+        });
+        expect(module.modelContext("grok", "xai/grok-4.7")).toEqual({
+            contextWindow: 500_000,
+            autoCompactWindow: 450_000,
+        });
+        expect(
+            module.catalog.some(
+                (model) => model.providerId === "bedrock" && model.id === "xai/grok-4.7",
+            ),
+        ).toBe(false);
+        expect(
+            module.catalog
+                .filter((model) => model.providerId === "grok" && model.enabled)
+                .map((model) => model.id),
+        ).toEqual([
+            "xai/grok-4.7",
+            "xai/grok-4.6",
+            "xai/grok-build",
+            "xai/grok-4.5",
+            "xai/grok-composer-2.5-fast",
+        ]);
+    });
+
     it("offers GPT-6 Astra through Codex and Bedrock with Happy's operating profile", async () => {
         const root = await mkdtemp(join(tmpdir(), "happy-agent-gpt-6-astra-catalog-"));
         temporaryDirectories.push(root);

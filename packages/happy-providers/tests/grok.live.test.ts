@@ -21,6 +21,133 @@ async function resolveGrokCredential(): Promise<GrokCredential | null> {
 }
 
 describeLive("GrokProvider live", () => {
+    it("streams tool-less inference against Grok 4.7", async () => {
+        const credential = await resolveGrokCredential();
+        if (credential === null) {
+            expect.fail("RIG_LIVE_TEST=1 is set but no grok credentials were found");
+        }
+
+        const provider = new GrokProvider({ credential });
+        const session = await provider.session(`grok-47-live-${Date.now()}`, {
+            instructions: "You are a concise assistant.",
+            tools: [],
+        });
+        try {
+            const events = await collectSessionEvents(
+                session.run(testContext, {
+                    context: {
+                        instructions: "",
+                        messages: [
+                            {
+                                role: "user",
+                                content: [
+                                    {
+                                        type: "text" as const,
+                                        text: "What is 7 times 9? Include the product in your reply.",
+                                    },
+                                ],
+                            },
+                        ],
+                    },
+                    effort: "low",
+                    model: "grok-4.7",
+                }),
+            );
+
+            const done = events.find((event) => event.type === "done" && event.state === "normal");
+            const tokenUsage = events.find((event) => event.type === "token_usage");
+            expect(done).toBeDefined();
+            expect(tokenUsage).toBeDefined();
+
+            const text = textFromSessionEvents(events);
+            expect(text).toContain("63");
+            if (tokenUsage?.type === "token_usage") {
+                expect(tokenUsage.usage.totalTokens).toBeGreaterThan(0);
+            }
+        } finally {
+            await session.destroy();
+        }
+    }, 120_000);
+
+    it("continues after an encrypted-reasoning Grok 4.7 tool call", async () => {
+        const credential = await resolveGrokCredential();
+        if (credential === null) {
+            expect.fail("RIG_LIVE_TEST=1 is set but no grok credentials were found");
+        }
+        const probe = {
+            name: "live_probe",
+            description: "Returns the supplied value.",
+            parameters: Type.Object({
+                value: Type.String({ description: "Value to return." }),
+            }),
+        } as const satisfies SessionTool;
+        const provider = new GrokProvider({ credential, model: "grok-4.7" });
+        const session = await provider.session(`grok-47-tool-live-${Date.now()}`, {
+            instructions: "Follow the user's tool instructions exactly.",
+            tools: [probe],
+        });
+        try {
+            const user = {
+                role: "user" as const,
+                content: [
+                    {
+                        type: "text" as const,
+                        text: 'Call live_probe exactly once with value "tool path ok". Do not answer yet.',
+                    },
+                ],
+            };
+            const first = await collectSessionEvents(
+                session.run(testContext, {
+                    context: { instructions: "", messages: [user] },
+                    effort: "low",
+                }),
+            );
+            expect(first.at(-1)).toMatchObject({ type: "done", state: "tool_call" });
+            const assistant = assistantMessageFromEvents(first);
+            if (assistant === undefined) expect.fail("Missing assistant tool-call message.");
+            const call = assistant.content.find((block) => block.type === "tool_call");
+            if (call?.type !== "tool_call") expect.fail("Missing live_probe tool call.");
+            expect(JSON.parse(call.arguments)).toEqual({ value: "tool path ok" });
+            expect(
+                assistant.content.some(
+                    (block) => block.type === "reasoning" && block.reasoning !== undefined,
+                ),
+            ).toBe(true);
+
+            const second = await collectSessionEvents(
+                session.run(testContext, {
+                    context: {
+                        instructions: "",
+                        messages: [
+                            user,
+                            assistant,
+                            {
+                                role: "tool",
+                                content: [{ type: "text" as const, text: "tool path ok" }],
+                                callId: call.callId,
+                                ...(call.vendor === undefined ? {} : { vendor: call.vendor }),
+                            },
+                            {
+                                role: "user",
+                                content: [
+                                    {
+                                        type: "text" as const,
+                                        text: "Confirm the tool result in your reply.",
+                                    },
+                                ],
+                            },
+                        ],
+                    },
+                    effort: "low",
+                }),
+            );
+            expect(second.at(-1)).toMatchObject({ type: "done", state: "normal" });
+            expect(textFromSessionEvents(second).toLowerCase()).toContain("tool path ok");
+        } finally {
+            await session.destroy();
+        }
+    }, 180_000);
+
     it("accepts nonempty secret dictionaries on Grok 4.6 without calling a tool", async () => {
         const credential = await resolveGrokCredential();
         if (credential === null) {

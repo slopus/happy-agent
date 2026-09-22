@@ -110,6 +110,10 @@ const MODEL_CONTEXTS: Readonly<Record<string, AgentModelContext>> = Object.freez
         contextWindow: 500_000,
         autoCompactWindow: 450_000,
     }),
+    "xai/grok-4.7": Object.freeze({
+        contextWindow: 500_000,
+        autoCompactWindow: 450_000,
+    }),
     "xai/grok-build": Object.freeze({
         contextWindow: 500_000,
         autoCompactWindow: 450_000,
@@ -137,6 +141,7 @@ const CATALOG: readonly CatalogAgentModel[] = [
     model("claude", "anthropic/fable-5-1", "Fable 5.1"),
     model("claude", "anthropic/fable-5", "Fable 5"),
     model("claude", "anthropic/opus-4-8", "Opus 4.8 1M"),
+    model("grok", "xai/grok-4.7", "Grok 4.7", ["low", "medium", "high", "xhigh"], "high"),
     model("grok", "xai/grok-4.6", "Grok 4.6", ["low", "medium", "high", "xhigh"], "high"),
     model("grok", "xai/grok-build", "Grok Build", ["medium"]),
     model("grok", "xai/grok-4.5", "Grok 4.5", ["low", "medium", "high"], "high"),

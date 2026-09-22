@@ -87,6 +87,7 @@ describe("ToolDiscoveryModule", () => {
     });
 
     it.each([
+        { providerKind: "grok" as const, model: "xai/grok-4.7" },
         { providerKind: "grok" as const, model: "xai/grok-4.6" },
         { providerKind: "gym" as const, model: "openai/gpt-5.6-sol" },
         { providerKind: "bedrock" as const, model: "openai/gpt-5.6-sol" },

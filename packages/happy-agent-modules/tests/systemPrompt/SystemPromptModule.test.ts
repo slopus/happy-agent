@@ -122,6 +122,9 @@ describe("SystemPromptModule", () => {
         expect(await instructions(ctx, scopeOf("xai/grok-build", "grok"))).toBe(
             await instructions(ctx, scopeOf("xai/grok-4.5", "grok")),
         );
+        expect(await instructions(ctx, scopeOf("xai/grok-4.7", "grok"))).toBe(
+            await instructions(ctx, scopeOf("xai/grok-4.5", "grok")),
+        );
     });
 
     it("falls back to the provider's family when the model is unknown or absent", async () => {
