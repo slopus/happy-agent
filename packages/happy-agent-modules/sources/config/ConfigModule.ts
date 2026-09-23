@@ -2000,6 +2000,8 @@ export class ConfigModule implements AgentModule {
                     undefined,
                     (id) => this.#isAccountEnabled(id),
                     (id) => this.#providerEnablement?.signal(id),
+                    undefined,
+                    { ...process.env, ...this.#environment },
                 ),
             },
             this.configuration,
@@ -2037,6 +2039,7 @@ export class ConfigModule implements AgentModule {
                           (id) => this.#isAccountEnabled(id),
                           (id) => this.#providerEnablement?.signal(id),
                           scripted,
+                          { ...process.env, ...this.#environment },
                       );
             // A test-owned inference registry is already authenticated. Initialize all its
             // accounts as usable, including canonical IDs whose production defaults are off. This

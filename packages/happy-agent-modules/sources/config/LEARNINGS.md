@@ -18,6 +18,18 @@ tokens win even when blank or invalid; discovery never switches accounts, logs d
 persists tokens. Tokens go only to the project-scoped in-memory broker. Team and foreign creators
 cannot discover the host login, and background recovery after restart never performs CLI lookup.
 
+## Ambient Codex accounts include their selected native provider
+
+Reusing only `~/.codex/auth.json` while ignoring `model_provider` sent a custom provider's bearer
+token to OpenAI's default endpoint, where it failed as an invalid OpenAI API key. An ambient Codex
+account now reads the selected provider from `$CODEX_HOME/config.toml` or `~/.codex/config.toml` and
+keeps its endpoint, Responses wire protocol, and optional experimental bearer token together.
+Explicit Happy credentials still win, an explicit Happy endpoint replaces native provider
+selection, and credential isolation disables the native lookup. A custom host without its own
+token receives ambient OpenAI authentication only when its Codex record explicitly sets
+`requires_openai_auth = true`, so provider discovery cannot silently disclose a credential to an
+untrusted host.
+
 ## Node display identity is not P2P identity
 
 Reusing `p2p.name` for the daemon's display name conflates separate identities. The Happy Agent

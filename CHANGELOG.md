@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Added workspace slices to the Happy Agent API and client: the immutable slice resource, the
+  two workspace read routes, the `slice.created` event, and the additive `slice` tool-call
+  presentation the `create_slice` tool will carry.
+- Added the slices module to the daemon: durable per-workspace storage, the common `create_slice`
+  tool with its `slice` presentation, the workspace slice routes, and `slice.created`.
+- Added slice removal: `DELETE /v0/workspaces/:workspaceId/slices/:sliceId`, the `slice.deleted`
+  event, and `deleteSlice` on the client.
 - Added required local-plugin author/category metadata and an authenticated, generation-bound PNG
   icon capability for local and remote `rig-connect` catalog clients. This is a hard protocol 5
   cut: older Happy clients are incompatible, legacy manifests without `author`, `category`, or a

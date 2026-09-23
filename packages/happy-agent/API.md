@@ -2985,6 +2985,81 @@ simply absent, and its first `git.updated` event follows shortly. Watch registra
 per subscription set: a client re-`POST`s its current interest, and workspaces it stops
 mentioning age out of the watcher.
 
+### Slices
+
+A **slice** is an attention mask over a workspace's files: the files an agent picked out for one
+question — "the API schema changes", "the core data structures", "the substantive part of the
+last couple of turns" — under a title that says what the selection is. It is a list of paths,
+never content: a client reads the files and their diffs through the file and git routes above,
+so a slice is a live view over the working tree rather than a snapshot of it.
+
+Slices belong to the workspace, not to a conversation. Only agents create them, through the
+common `create_slice` tool; the daemon validates shape and bounds and stores the result. There
+is no route for a client to create or edit one, and a slice is immutable once created; a client
+may only remove one the person no longer needs.
+
+The slice object:
+
+```json
+{
+    "id": "s7m2p9r4t1v6x8z3b5n0c2d4",
+    "workspaceId": "w9x8y7z6",
+    "agentId": "a1b2c3d4",
+    "title": "API schema changes",
+    "note": "The three files that define the new endpoint. Tests and the generated client are left out.",
+    "files": [
+        {
+            "path": "sources/api/schema.ts",
+            "reason": "Defines the new resource.",
+            "lines": [{ "start": 12, "end": 48 }]
+        },
+        { "path": "sources/api/routes.ts", "reason": null, "lines": [] }
+    ],
+    "version": "01991f3a-6050-7000-8000-7e4f60819203",
+    "createdAt": 1755400000000
+}
+```
+
+- `id` — stable slice identifier (CUID2).
+- `workspaceId` — the workspace the slice belongs to; a project's root workspace ID is the
+  project ID.
+- `agentId` — the agent that created it.
+- `title` — what the selection is, 1 to 200 characters.
+- `note` — a sentence from the agent about why these files, at most 2,000 characters, or `null`.
+- `files` — one to 200 entries, in the order the agent listed them. Each has:
+    - `path` — workspace-relative, forward-slash separated, at most 1,024 characters; never
+      absolute and never containing a `..` segment. The path does not have to exist: a slice may
+      name a file the working tree has since lost, and the client shows it as gone.
+    - `reason` — why this file is in the slice, at most 500 characters, or `null`.
+    - `lines` — up to 32 `{ "start", "end" }` ranges of interest, one-based and inclusive with
+      `start <= end`; empty when the whole file is meant.
+- `version` — the resource version. A slice never changes, so it is minted once and stays.
+- `createdAt` — when the slice was created.
+
+The daemon retains at most 100 slices per workspace. Creating one beyond that removes the oldest,
+which then reads as `404`.
+
+#### `GET /v0/workspaces/:workspaceId/slices`
+
+Every retained slice of the workspace, newest first. Response — `200`: `{ "slices": [ ... ] }`.
+`404` for an unknown workspace; `409` when the workspace is not ready.
+
+#### `GET /v0/workspaces/:workspaceId/slices/:sliceId`
+
+One slice. Response — `200`: `{ "slice": { ... } }`; `404` when the slice never existed, belongs
+to another workspace, or has been dropped or removed.
+
+#### `DELETE /v0/workspaces/:workspaceId/slices/:sliceId`
+
+Removes one slice the person no longer needs. It leaves the workspace's list at once; the
+transcript card that named it stays, but points at a slice that no longer exists. Response —
+`200`: `{ "slice": { ... } }`, the slice as it was; `404` when the slice never existed, belongs to
+another workspace, or has already been dropped or removed. Announced by `slice.deleted`.
+
+A new slice is announced by `slice.created`, so a client watching the workspace shows it without
+polling. The tool call that made it carries a `slice` presentation naming the same ID, so a
+transcript can open the slice it produced.
+
 ## Agents
 
 An agent is one conversation running in a workspace: its transcript and its activity. Agents
@@ -3635,6 +3710,7 @@ expected arguments are present:
 | `file_diff`    | `Edit`, `Write`, `apply_patch`, `search_replace`, `write`                                                              |
 | `search`       | `bedrock_web_search`, `claude_web_search`, `codex_web_search`, `gemini_web_search`, `grok_web_search`, `grok_x_search` |
 | `agent_spawn`  | `create_agent`                                                                                                         |
+| `slice`        | `create_slice`                                                                                                         |
 
 **`exploration`** — one normalized directory listing, file read, or code search. The daemon
 currently emits one operation per mapped tool call.
@@ -3742,6 +3818,26 @@ This presentation is additive and does not increment the protocol version. Older
 it. To preserve unknown-presentation fallback in older clients, `agent_spawn` blocks retain their
 raw `arguments` and `result` even when `omitToolData=true`; other presentations keep their existing
 omission behavior. Clients never need to parse these raw fields to render a recognized spawn.
+
+**`slice`** — a slice the `create_slice` tool made: the files an agent picked out for one
+question, under a title. The presentation is outcome-derived, so it is absent while the call is
+running and appears when the call completes. It names the slice rather than repeating it; the
+slice itself is read from `GET /v0/workspaces/:workspaceId/slices/:sliceId` or arrives by
+`slice.created`.
+
+```json
+{
+    "type": "slice",
+    "sliceId": "s7m2p9r4t1v6x8z3b5n0c2d4",
+    "title": "API schema changes",
+    "fileCount": 2
+}
+```
+
+`sliceId` is the slice's CUID2, `title` its title, and `fileCount` how many files it holds. This
+presentation is additive and does not increment the protocol version; older daemons never emit
+it, and a client that does not recognize it falls back to the block's raw data. Like `file_diff`,
+a completed `slice` presentation is complete, so `omitToolData=true` drops the block's raw data.
 
 Other calls, including background-terminal-input calls, currently carry no presentation and keep
 their raw data. The presentation set may grow; a client that meets an unknown presentation type
@@ -4937,6 +5033,15 @@ services are an on-demand workspace surface.
       coalesced into one bounded event. `null` means the operating system did not identify a path
       or too many paths changed, so the client refreshes the visible file and tree state for that
       workspace.
+
+**Slices**
+
+- `slice.created` — an agent created a slice in a workspace. Slices are immutable, so there is
+  no `slice.updated`; the object names its workspace and author itself.
+    - `slice` (full slice object).
+- `slice.deleted` — a client removed a slice through its `DELETE` route. A slice dropped by the
+  retention bound is not announced; it simply stops being listed.
+    - `sliceId`, `workspaceId`.
 
 **Global skills**
 

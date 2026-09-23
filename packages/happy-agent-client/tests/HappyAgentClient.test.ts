@@ -119,6 +119,40 @@ describe("HappyAgentClient", () => {
         expect(request?.method).toBe("GET");
     });
 
+    it("lists and reads a workspace's slices through their focused routes", async () => {
+        const slice = {
+            id: "s7m2p9r4t1v6x8z3b5n0c2d4",
+            workspaceId: "w9x8y7z6",
+            agentId: "a1b2c3d4",
+            title: "API schema changes",
+            note: null,
+            files: [
+                {
+                    path: "sources/api/schema.ts",
+                    reason: "Defines the new resource.",
+                    lines: [{ start: 12, end: 48 }],
+                },
+                { path: "sources/api/routes.ts", reason: null, lines: [] },
+            ],
+            version: "01991f3a-6050-7000-8000-7e4f60819203",
+            createdAt: 1_755_400_000_000,
+        };
+        const { fetch, requests } = stubFetch((request) =>
+            request.url.endsWith("/slices") ? json({ slices: [slice] }) : json({ slice }),
+        );
+        const client = new HappyAgentClient({ endpoint: "http://agent.local", token: "t", fetch });
+
+        const listed = await client.listSlices("w9x8y7z6");
+        const read = await client.getSlice("w9x8y7z6", "s7m2p9r4t1v6x8z3b5n0c2d4");
+
+        expect(listed.slices).toEqual([slice]);
+        expect(read.slice).toEqual(slice);
+        expect(requests.map((request) => `${request.method} ${request.url}`)).toEqual([
+            "GET http://agent.local/v0/workspaces/w9x8y7z6/slices",
+            "GET http://agent.local/v0/workspaces/w9x8y7z6/slices/s7m2p9r4t1v6x8z3b5n0c2d4",
+        ]);
+    });
+
     it("enters daemon draining through its dedicated lifecycle route", async () => {
         const response = { draining: true as const, pid: 12345 };
         const { fetch, requests } = stubFetch(() => json(response, 202));

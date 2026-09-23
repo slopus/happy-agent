@@ -204,6 +204,13 @@ export function createHappySyncDatabase(ownerId = "") {
          * Credentials that no longer match the stored ones mean a different
          * account or server: the remote identity, the projection cursor and every
          * queued message belong to the old account and are discarded.
+         *
+         * The session's own encryption key is kept when the variant still
+         * matches. Re-linking the same account finds the same remote session by
+         * tag, and the server keeps the key it was created with: a fresh key
+         * here would have this daemon publishing metadata and messages the
+         * phone unwraps with the old key and cannot read. A different account
+         * never finds the session, and the kept key is wrapped anew for it.
          */
         async ensureSession(
             ctx: Context,
@@ -218,6 +225,10 @@ export function createHappySyncDatabase(ownerId = "") {
             ) {
                 return existing;
             }
+            const encryptionKeyBase64 =
+                existing !== undefined && existing.encryptionVariant === input.encryptionVariant
+                    ? existing.encryptionKeyBase64
+                    : input.encryptionKeyBase64;
             if (existing !== undefined) {
                 await agentDatabaseRun(
                     ctx.db,
@@ -237,7 +248,7 @@ export function createHappySyncDatabase(ownerId = "") {
                      projection_stall_cause, projection_error, created_at_ms, updated_at_ms)
                     VALUES (${ownerId}, ${input.agentId}, ${input.sessionId}, ${input.credentialFingerprint},
                             ${happySessionTag(ownerId === "" ? input.sessionId : `${ownerId}:${input.sessionId}`)}, NULL, ${input.encryptionVariant},
-                            ${input.encryptionKeyBase64}, 0, 0, NULL, 'active', NULL, NULL,
+                            ${encryptionKeyBase64}, 0, 0, NULL, 'active', NULL, NULL,
                             ${now}, ${now})`,
             );
             const created = await readSession(ctx, input.agentId);

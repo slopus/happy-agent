@@ -48,6 +48,7 @@ import { WebSocketServer } from "ws";
 
 import { AbortModule } from "../abort/index.js";
 import { ServicesModule, ServiceError, ServiceAccessError } from "../services/index.js";
+import { SlicesModule } from "../slices/index.js";
 import { ServiceHttpTunnel } from "./ServiceHttpTunnel.js";
 import {
     BotAvatarInputError,
@@ -176,6 +177,7 @@ import {
     projectResource,
     questionResource,
     rootWorkspaceResource,
+    sliceResource,
     terminalResource,
     workspaceResource,
 } from "./ApiResourceProjection.js";
@@ -350,6 +352,7 @@ export class ApiModule implements AgentModule {
     #serviceAttachmentCount = 0;
     #serviceInputs = 0;
     readonly #services: ServicesModule | undefined;
+    readonly #slices: SlicesModule | undefined;
     readonly #unsubscribe: (() => void)[] = [];
     readonly #streams = new Set<SseWriter>();
     readonly #shutdownListeners = new Set<() => void | Promise<void>>();
@@ -408,6 +411,7 @@ export class ApiModule implements AgentModule {
         globalSkills?: GlobalSkillsModule,
         services?: ServicesModule,
         subtasks?: SubtasksModule,
+        slices?: SlicesModule,
     ) {
         this.#abort = abort;
         this.#config = config;
@@ -437,6 +441,7 @@ export class ApiModule implements AgentModule {
         this.#globalSkills = globalSkills;
         this.#services = services;
         this.#subtasks = subtasks;
+        this.#slices = slices;
     }
 
     readonly beforeStart = async (
@@ -1527,6 +1532,24 @@ export class ApiModule implements AgentModule {
 
     #subscribeToModules(ctx: Context): void {
         if (this.#unsubscribe.length > 0) return;
+        if (this.#slices !== undefined)
+            this.#unsubscribe.push(
+                this.#slices.onEvent((event) => {
+                    if (event.type === "slice_created") {
+                        this.#journal.append(
+                            "slice.created",
+                            { slice: sliceResource(event.slice) },
+                            event.at,
+                        );
+                        return;
+                    }
+                    this.#journal.append(
+                        "slice.deleted",
+                        { sliceId: event.slice.id, workspaceId: event.slice.workspaceId },
+                        event.at,
+                    );
+                }),
+            );
         if (this.#services !== undefined)
             this.#unsubscribe.push(
                 this.#services.onEvent((event) => {
@@ -4560,6 +4583,34 @@ export class ApiModule implements AgentModule {
         response: ServerResponse,
         url: URL,
     ): Promise<boolean> {
+        const slices = /^\/v0\/workspaces\/([a-z][a-z0-9]*)\/slices(?:\/([a-z][a-z0-9]*))?$/.exec(
+            url.pathname,
+        );
+        if (slices !== null && this.#slices !== undefined) {
+            const workspaceId = slices[1] as string;
+            const sliceId = slices[2];
+            // The workspace answers 404 when unknown and 409 when not ready, as the terminals do.
+            await this.#resolveWorkspaceScope(ctx, workspaceId);
+            if (sliceId === undefined) {
+                if (request.method !== "GET") return false;
+                const rows = await this.#slices.list(ctx, workspaceId);
+                sendJson(response, 200, { slices: rows.map(sliceResource) });
+                return true;
+            }
+            if (request.method === "GET") {
+                const slice = await this.#slices.get(ctx, workspaceId, sliceId);
+                if (slice === undefined) throw notFound("The slice was not found.");
+                sendJson(response, 200, { slice: sliceResource(slice) });
+                return true;
+            }
+            if (request.method === "DELETE") {
+                const removed = await this.#slices.delete(ctx, workspaceId, sliceId);
+                if (removed === undefined) throw notFound("The slice was not found.");
+                sendJson(response, 200, { slice: sliceResource(removed) });
+                return true;
+            }
+            return false;
+        }
         const terminals = /^\/v0\/workspaces\/([a-z][a-z0-9]*)\/terminals$/.exec(url.pathname);
         if (terminals !== null) {
             const workspaceId = terminals[1] as string;

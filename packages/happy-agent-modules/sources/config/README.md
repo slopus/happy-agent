@@ -130,6 +130,13 @@ The internal `offeredModels` catalog also retains hidden routes so startup and s
 valid even when every account is hidden; the direct-selection gate prevents starting work on those
 account IDs. The independent account gate controls router eligibility and cancellation.
 
+An ambient Codex provider follows the provider selected by the installed Codex CLI in
+`$CODEX_HOME/config.toml` or `~/.codex/config.toml`. Happy Agent reuses that provider's `base_url`,
+Responses wire API, and optional `experimental_bearer_token`; without a provider token, a custom
+host receives the normal Codex credential only when `requires_openai_auth = true`. An explicit
+Happy `base_url` replaces the native provider selection, while `credential_isolation = true`
+disables native discovery entirely.
+
 A provider may independently narrow delegation with `include_subagent_models` and
 `exclude_subagent_models`. These use the same exact model IDs and exclusion precedence as
 `include_models` and `exclude_models`, but they do not change the ordinary catalog or model picker.

@@ -128,6 +128,8 @@ export const HAPPY_TOML_TEMPLATE = `# Happy configuration for Happy Agent.
 
 # [providers.codex]
 # type = "codex"
+# With no Happy base_url, an ambient provider follows model_provider from ~/.codex/config.toml,
+# including its custom endpoint and authentication policy.
 # A new local credential detection writes auto_enable = true to generated runtime.toml.
 # Set auto_enable = false to prevent automatic use.
 # auto_enable = false

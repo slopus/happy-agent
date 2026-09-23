@@ -34,6 +34,7 @@ import {
     secretEnvironmentVariableNameSchema,
     secretSchema,
 } from "./secrets.js";
+import type { Slice } from "./slices.js";
 import type { Terminal } from "./terminals.js";
 import type { AgentContextUsage } from "./usage.js";
 import type { Workspace } from "./workspaces.js";
@@ -157,6 +158,11 @@ export interface FilesUpdatedPayload {
     /** Relative paths, or `null` when the safe scope is every visible path in the workspace. */
     paths: string[] | null;
 }
+
+/** Slices are immutable, so a creation carries the whole new resource. */
+export type SliceCreatedPayload = MutationEcho & { slice: Slice };
+/** A slice the person removed; retention drops are silent, only an explicit removal is told. */
+export type SliceDeletedPayload = MutationEcho & { sliceId: Cuid2; workspaceId: Cuid2 };
 
 export type AgentCreatedPayload = MutationEcho & { agent: Agent };
 export type AgentUpdatedPayload = ResourceUpdate<Agent> & { agentId: Cuid2 };
@@ -312,6 +318,8 @@ export type HappyAgentEvent =
     | EventEnvelope<"service.updated", WorkspaceServiceUpdatedPayload>
     | EventEnvelope<"git.updated", GitUpdatedPayload>
     | EventEnvelope<"files.updated", FilesUpdatedPayload>
+    | EventEnvelope<"slice.created", SliceCreatedPayload>
+    | EventEnvelope<"slice.deleted", SliceDeletedPayload>
     | EventEnvelope<"skills.updated", SkillsUpdatedPayload>
     | EventEnvelope<"agent.created", AgentCreatedPayload>
     | EventEnvelope<"agent.updated", AgentUpdatedPayload>
