@@ -212,6 +212,10 @@ override: the project list is deliberately dropped from the merged machine confi
 that file through the agent's compute so a remote or container project is read on its own machine.
 A skill in a configured folder ranks below a same-named skill in the standard roots.
 
+`addRuntimeSkillDirectory` and `removeRuntimeSkillDirectory` change the `runtime.toml` list live,
+under the runtime lock. `userSkillDirectories` and `runtimeSkillDirectories` report each layer
+separately, and `globalSkillDirectories` merges them again every time it is read.
+
 ## What else this module answers
 
 The same reasoning applies to anything else whose location or policy the configuration already

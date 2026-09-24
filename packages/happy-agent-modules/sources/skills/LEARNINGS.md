@@ -45,3 +45,16 @@ Claude Code: the flag is read as a plain YAML boolean, flagged skills stay in `s
 `read_skill`. The model is told that only the user may invoke such a skill rather than that it
 does not exist, so it asks instead of hunting for another name. The invoked-skill prompt is still
 matched against the complete catalog, otherwise a user's own `/deploy` would drop its content.
+
+## Admin bots change machine skill folders live, in runtime.toml only
+
+Extra machine skill folders could only be set by editing the user `happy.toml` and restarting.
+Active admin bots can now list, add, and remove them with tools, and the changes are saved in the
+`[skills] directories` list in generated `runtime.toml`. The config module used to read that list
+once, from values merged at load. It now merges the user list with its live runtime list every time
+it is asked, so discovery sees a change on the next turn. The user's `happy.toml` stays theirs: a
+folder named there is shown as `user` and refused on removal rather than hidden with a runtime
+override. Only absolute paths are accepted. A relative path has no working directory everyone would agree
+on, and `~` depends on which home the daemon resolves, so the saved entry is always the exact path. A missing folder or a file path is also rejected, so a typo cannot be saved and
+then quietly find nothing. There is no database intent to recover. The runtime file write is atomic
+and adding or removing is idempotent, so the tools are marked durable without Durable Functions.

@@ -1334,10 +1334,69 @@ export class ConfigModule implements AgentModule {
      * resolved against the same home as the global skills root.
      */
     get globalSkillDirectories(): readonly string[] {
-        const home = this.#environment.HOME?.trim() || homedir();
-        return this.configuration.values.skills.directories.map((directory) =>
-            resolveSkillDirectory(directory, home),
+        return [...new Set([...this.userSkillDirectories, ...this.runtimeSkillDirectories])];
+    }
+
+    /** The extra skill folders the user `happy.toml` names, which live mutations cannot change. */
+    get userSkillDirectories(): readonly string[] {
+        const skills = this.configuration.sources.global.values["skills"];
+        const directories = Value.Check(skillsInputSchema, skills) ? skills.directories : undefined;
+        return (directories ?? []).map((directory) => this.resolveSkillDirectory(directory));
+    }
+
+    /** The extra skill folders added live and kept in generated `runtime.toml`. */
+    get runtimeSkillDirectories(): readonly string[] {
+        return (this.#runtimeValues.skills?.directories ?? []).map((directory) =>
+            this.resolveSkillDirectory(directory),
         );
+    }
+
+    /** An absolute or `~`-relative machine skill folder, resolved against the skills home. */
+    resolveSkillDirectory(directory: string): string {
+        return resolveSkillDirectory(directory, this.#environment.HOME?.trim() || homedir());
+    }
+
+    /**
+     * Add one machine skill folder to generated `runtime.toml`, taking effect on the next discovery.
+     * Returns false when the folder was already listed, so a repeated call changes nothing.
+     */
+    async addRuntimeSkillDirectory(ctx: Context, directory: string): Promise<boolean> {
+        const resolved = this.resolveSkillDirectory(directory);
+        return await this.#runtimeLock.runInLock(ctx, async () => {
+            const current = this.runtimeSkillDirectories;
+            if (current.includes(resolved)) return false;
+            await this.#writeRuntimeSkillDirectories([...current, resolved]);
+            return true;
+        });
+    }
+
+    /**
+     * Remove one machine skill folder from generated `runtime.toml`. Returns false when it was not
+     * listed there; a folder the user `happy.toml` names stays, since that file is the user's.
+     */
+    async removeRuntimeSkillDirectory(ctx: Context, directory: string): Promise<boolean> {
+        const resolved = this.resolveSkillDirectory(directory);
+        return await this.#runtimeLock.runInLock(ctx, async () => {
+            const current = this.runtimeSkillDirectories;
+            if (!current.includes(resolved)) return false;
+            await this.#writeRuntimeSkillDirectories(current.filter((path) => path !== resolved));
+            return true;
+        });
+    }
+
+    async #writeRuntimeSkillDirectories(directories: readonly string[]): Promise<void> {
+        const { skills: _skills, ...rest } = structuredClone(this.#runtimeValues);
+        const next: PartialValues =
+            directories.length === 0
+                ? rest
+                : { ...rest, skills: { directories: [...directories] } };
+        if (!Value.Check(partialValuesSchema, next)) {
+            throw new Error(
+                `At most ${MAX_CONFIG_ARRAY_ITEMS} skill folders can be added, each a path of at most ${MAX_PATH_LENGTH} characters.`,
+            );
+        }
+        await writeRuntimeConfigurationFile(this.configuration.paths.runtimeConfigPath, next);
+        this.#runtimeValues = next;
     }
 
     /**

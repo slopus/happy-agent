@@ -69,3 +69,15 @@ Native agent discovery excludes unavailable global locations before resolving na
 rechecks enablement after shared discovery. Project skills and alternate compute filesystems remain
 independent. Prompt refresh also filters pending skill invocations against the current catalog;
 ordinary filesystem tools and already-sent history are unaffected.
+
+## Live skill folders for admin bots
+
+`SkillFoldersModule` takes the config and bots modules and gives active admin bots three tools:
+`list_skill_folders`, `add_skill_folder`, and `remove_skill_folder`. Other agents do not receive
+them, and every operation checks the caller's bot record again when it runs. Adding a folder or
+removing one writes the machine `[skills] directories` list in generated `runtime.toml` through the
+config module, which merges it with the user `happy.toml` list. Discovery reads that merged list on
+every scan, so a change reaches every agent's next turn without a restart. A folder must be an
+existing directory given as an absolute path; `~/` and relative paths are rejected. Folders from the user `happy.toml` are listed
+but cannot be removed live. Repeating an add or remove leaves the list unchanged and succeeds, so
+the tools are durable.

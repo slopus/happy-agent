@@ -1,5 +1,6 @@
 export { SkillsModule } from "./SkillsModule.js";
 export { GlobalSkillsModule } from "./GlobalSkillsModule.js";
+export { SkillFoldersModule } from "./SkillFoldersModule.js";
 export { GlobalSkillsError } from "./GlobalSkillsError.js";
 export {
     skillDescriptionSchema,
@@ -17,3 +18,11 @@ export {
     type SkillListResult,
     type SkillReadInput,
 } from "./Skills.js";
+export {
+    skillFolderChangeSchema,
+    skillFolderListSchema,
+    skillFolderSchema,
+    type SkillFolder,
+    type SkillFolderChange,
+    type SkillFolderList,
+} from "./SkillFolders.js";

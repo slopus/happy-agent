@@ -68,7 +68,7 @@ import { SearchModule } from "../search/index.js";
 import { SecretsModule } from "../secrets/index.js";
 import { ServicesModule } from "../services/index.js";
 import { SlashCommandsModule } from "../slashCommands/index.js";
-import { SkillsModule, GlobalSkillsModule } from "../skills/index.js";
+import { SkillsModule, GlobalSkillsModule, SkillFoldersModule } from "../skills/index.js";
 import { SystemPromptModule } from "../systemPrompt/index.js";
 import { TailcatModule } from "../tailcat/index.js";
 import { TasksModule } from "../tasks/index.js";
@@ -168,6 +168,7 @@ export interface HappyAgentRuntimeModules {
     readonly slashCommands: SlashCommandsModule;
     readonly skills: SkillsModule;
     readonly globalSkills: GlobalSkillsModule;
+    readonly skillFolders: SkillFoldersModule;
     readonly systemPrompt: SystemPromptModule;
     readonly tailcat: TailcatModule;
     readonly tasks: TasksModule;
@@ -447,6 +448,7 @@ export async function startHappyAgentRuntime(
             events,
         );
         const node = new NodeModule(config, bots, compute.computeModule, durableFunctions);
+        const skillFolders = new SkillFoldersModule(config, bots);
         const tailcat = new TailcatModule(config, bots, durableFunctions);
         registerShutdown("tailcat", async (shutdownCtx) => await tailcat.close(shutdownCtx));
         const terminals = new TerminalsModule(projects, workspaces, bots);
@@ -601,6 +603,7 @@ export async function startHappyAgentRuntime(
             slashCommands,
             skills: compute.skillsModule,
             globalSkills,
+            skillFolders,
             systemPrompt,
             tailcat,
             tasks,
@@ -643,6 +646,7 @@ export async function startHappyAgentRuntime(
             globalSkills,
             bots,
             node,
+            skillFolders,
             tailcat,
             ...(team.enabled ? [] : [happyTeams]),
             connections,
