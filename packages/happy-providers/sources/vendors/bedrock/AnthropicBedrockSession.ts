@@ -31,6 +31,7 @@ import { AnthropicBedrockConnection } from "@/vendors/bedrock/impl/AnthropicBedr
 import type { AnthropicBedrockClient as CreatedAnthropicBedrockClient } from "@/vendors/bedrock/impl/createAnthropicBedrockClient.js";
 import { createAnthropicRequest } from "@/protocol/anthropic/createAnthropicRequest.js";
 import { mapAnthropicStream } from "@/protocol/anthropic/mapAnthropicStream.js";
+import { pendingAnthropicServerTools } from "@/protocol/anthropic/anthropicServerToolContinuation.js";
 import { requestAnthropicBedrockCompaction } from "@/vendors/bedrock/impl/requestAnthropicBedrockCompaction.js";
 import { resolveAnthropicBedrockModelId } from "@/vendors/bedrock/impl/resolveAnthropicBedrockModelId.js";
 import { resolveClaudeTools } from "@/vendors/claude/impl/resolveClaudeTools.js";
@@ -240,6 +241,7 @@ export class AnthropicBedrockSession extends BaseSession {
                         },
                         ...(options.signal === undefined ? {} : { signal: options.signal }),
                         tools,
+                        pendingServerTools: pendingAnthropicServerTools(options.context.messages),
                     })) {
                         if (event.type === "block_start") blockStarted = true;
                         if (isAnthropicResponseContentEvent(event)) {

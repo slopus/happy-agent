@@ -8,23 +8,26 @@ import type {
 import type {
     SessionAssistantBlock,
     SessionAssistantMessage,
-    SessionImageBlock,
     SessionInputBlock,
     SessionMessage,
     SessionOutputBlock,
-    SessionTextBlock,
     SessionToolResultMessage,
 } from "@/core/SessionContext.js";
 import { toSessionAgentNotificationMessage } from "@/core/toSessionAgentNotificationMessage.js";
 import { toSessionReminderMessage } from "@/core/toSessionReminderMessage.js";
 import { toAnthropicCompactionBlock } from "@/protocol/anthropic/toAnthropicCompactionBlock.js";
 import { toAnthropicToolName } from "@/protocol/anthropic/toAnthropicToolName.js";
+import {
+    AnthropicServerToolReplay,
+    isAnthropicServerToolContinuation,
+} from "@/protocol/anthropic/anthropicServerToolContinuation.js";
 
 export type AnthropicReasoningState =
     | { type: "thinking"; thinking: string; signature: string }
     | { type: "redacted_thinking"; data: string };
 
 export function toAnthropicMessages(messages: readonly SessionMessage[]): BetaMessageParam[] {
+    const serverTools = new AnthropicServerToolReplay();
     const converted = messages.flatMap((message): BetaMessageParam[] => {
         if (message.role === "system" || message.role === "agent") {
             // Anthropic has no system role inside a conversation, so a notice keeps the position
@@ -44,7 +47,15 @@ export function toAnthropicMessages(messages: readonly SessionMessage[]): BetaMe
         if (message.role === "tool") {
             return [{ role: "user", content: [toToolResult(message)] }];
         }
-        return [{ role: "assistant", content: toAssistantContent(message) }];
+        const content = toAssistantContent(message, serverTools);
+        const continuationOnly =
+            content.length === 0 &&
+            message.content.some(
+                (block) =>
+                    (block.type === "tool_call" || block.type === "tool_result") &&
+                    isAnthropicServerToolContinuation(block.vendor),
+            );
+        return continuationOnly ? [] : [{ role: "assistant", content }];
     });
     const last = converted.at(-1);
     if (last !== undefined) last.content = addCacheBreakpoint(last.content);
@@ -79,8 +90,13 @@ function toInputBlock(block: SessionInputBlock): BetaContentBlockParam {
     };
 }
 
-function toAssistantContent(message: SessionAssistantMessage): BetaContentBlockParam[] {
-    return message.content.flatMap(toAssistantBlock);
+function toAssistantContent(
+    message: SessionAssistantMessage,
+    serverTools: AnthropicServerToolReplay,
+): BetaContentBlockParam[] {
+    return message.content.flatMap((block) =>
+        serverTools.skip(block) ? [] : toAssistantBlock(block),
+    );
 }
 
 function toAssistantBlock(block: SessionAssistantBlock): BetaContentBlockParam[] {

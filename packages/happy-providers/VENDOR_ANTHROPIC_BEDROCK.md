@@ -86,6 +86,26 @@ against that same request's tools. Sending an empty tool list makes an otherwise
 fail with `Tool reference 'web_fetch' not found in available tools`. Keep the definitions and the
 opaque historical results intact; `pause_after_compaction` still stops at the native checkpoint.
 
+### Server tools across client-tool results
+
+An Anthropic `tool_use` response can contain both a client call and an unfinished native server
+call. The caller executes only the client call. The following response may begin with the server
+result referencing the earlier call, without repeating its native start. This is separate from
+`pause_turn`.
+
+The adapter reconstructs pending server calls from the caller's opaque native context on each
+run, including after a restart. Before emitting a delayed result, it emits a response-local
+continuation of that known call so callers with response-local event identities can correlate it.
+The continuation is marked in opaque `vendor` metadata. Request serialization verifies its
+original call and omits only the continuation copy: the original native call keeps its position,
+and the real result keeps its position after the client-tool round trip. No result is invented,
+no client call is re-executed, and caller-owned history is never mutated.
+
+Some callers retain completed blocks when a failed stream is reset. Repeated identical marked
+settlements are projected to one native result; conflicting results and unanchored continuation
+markers fail explicitly. Unknown incoming result IDs likewise fail at the provider boundary.
+Visibility/history publication settings do not remove native blocks from private model context.
+
 ## Credentials
 
 Load `BedrockBearerTokenCredential`, normally from `AWS_BEARER_TOKEN_BEDROCK`, or load

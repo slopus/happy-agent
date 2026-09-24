@@ -4,6 +4,7 @@ import type {
     BetaStopReason,
 } from "@anthropic-ai/sdk/resources/beta/messages/messages";
 import { APIConnectionError } from "@anthropic-ai/sdk/error";
+import { Value } from "@sinclair/typebox/value";
 
 import { EmptyResponseError } from "@/core/EmptyResponseError.js";
 import type { SessionUsage } from "@/core/SessionUsage.js";
@@ -13,6 +14,7 @@ import type { SessionEvent } from "@/core/SessionEvent.js";
 import type { SessionTool } from "@/core/SessionTool.js";
 import { toAnthropicToolName } from "@/protocol/anthropic/toAnthropicToolName.js";
 import { type AnthropicReasoningState } from "@/protocol/anthropic/toAnthropicMessages.js";
+import { anthropicServerResultSchema } from "@/protocol/anthropic/anthropicServerToolContinuation.js";
 
 type AnthropicReplayBlock =
     | AnthropicReasoningState
@@ -26,9 +28,12 @@ export async function* mapAnthropicStream(
         onOutputStarted?: () => void;
         signal?: AbortSignal;
         tools?: readonly SessionTool[];
+        pendingServerTools?: ReadonlyMap<string, SessionToolCallBlock>;
     } = {},
 ): AsyncGenerator<SessionEvent> {
     const blocks = new Map<number, AnthropicReplayBlock>();
+    const pendingServerTools = new Map(options.pendingServerTools);
+    const completedServerTools = new Set<string>();
     const tools = new Map<
         number,
         {
@@ -56,6 +61,7 @@ export async function* mapAnthropicStream(
     let sawClientTool = false;
     let started = false;
     for await (const event of stream) {
+        options.signal?.throwIfAborted();
         if (!started) {
             started = true;
             yield { type: "block_start" };
@@ -126,18 +132,44 @@ export async function* mapAnthropicStream(
                         delta: initialArguments,
                     };
                 }
-            } else if (isAnthropicServerToolResultBlock(event.content_block)) {
+            } else if (Value.Check(anthropicServerResultSchema, event.content_block)) {
                 const callId = event.content_block.tool_use_id;
+                const pending = pendingServerTools.get(callId);
+                if (pending !== undefined) {
+                    // The native call is already durable, but the caller's event identities are
+                    // response-local. Reopen only this known server lifecycle. Its marker is
+                    // omitted during native serialization; it is not another server invocation.
+                    const vendor = { ...pending.vendor, anthropicServerToolContinuation: true };
+                    yield {
+                        type: "toolcall_start",
+                        callId,
+                        name: pending.name,
+                        ...(pending.namespace === undefined
+                            ? {}
+                            : { namespace: pending.namespace }),
+                        server: true,
+                        vendor,
+                    };
+                    options.signal?.throwIfAborted();
+                    yield { type: "toolcall_end", callId, arguments: pending.arguments, vendor };
+                    pendingServerTools.delete(callId);
+                } else if (!completedServerTools.delete(callId)) {
+                    throw new Error(
+                        "Anthropic returned a server-tool result without a pending call.",
+                    );
+                }
                 const result = JSON.stringify(event.content_block.content ?? null);
+                const vendor = {
+                    outputBlock: JSON.stringify(event.content_block),
+                    ...(pending === undefined ? {} : { anthropicServerToolContinuation: true }),
+                };
                 blocks.set(event.index, {
                     type: "tool_result",
                     callId,
                     content: [{ type: "text", text: result }],
-                    vendor: { outputBlock: JSON.stringify(event.content_block) },
+                    vendor,
                 });
-                yield* emitToolCallResult(callId, result, {
-                    vendor: { outputBlock: JSON.stringify(event.content_block) },
-                });
+                yield* emitToolCallResult(callId, result, { vendor });
             } else if (event.content_block.type === "thinking") {
                 blocks.set(event.index, {
                     type: "thinking",
@@ -243,6 +275,7 @@ export async function* mapAnthropicStream(
                     ...(tool.server === undefined ? {} : { server: true }),
                     vendor,
                 });
+                if (tool.server === true) completedServerTools.add(tool.callId);
                 yield {
                     type: "toolcall_end",
                     callId: tool.callId,
@@ -299,15 +332,6 @@ export async function* mapAnthropicStream(
 function anthropicToolWireName(tool: SessionTool): string {
     const nativeName = tool.server?.name;
     return typeof nativeName === "string" ? nativeName : toAnthropicToolName(tool);
-}
-
-function isAnthropicServerToolResultBlock(
-    block: unknown,
-): block is { type: string; tool_use_id: string; content?: unknown } {
-    if (typeof block !== "object" || block === null) return false;
-    if (!("type" in block) || typeof block.type !== "string") return false;
-    if (!block.type.endsWith("_tool_result")) return false;
-    return "tool_use_id" in block && typeof block.tool_use_id === "string";
 }
 
 function parseArguments(
