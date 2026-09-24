@@ -535,6 +535,12 @@ export class AgentBase {
      */
     #recoveryChecked = false;
     /**
+     * Whether this instance has told its listeners to drop a block an earlier process was still
+     * streaming. It is decided from the inherited record alone, before this instance writes any
+     * record of its own.
+     */
+    #interruptionChecked = false;
+    /**
      * The outstanding work this agent has recorded, held in memory exactly as the store holds
      * it. Its presence is the whole of the active flag, so the one thing anyone outside can ask
      * about the agent is answered from here without touching the disk.
@@ -610,6 +616,23 @@ export class AgentBase {
     #durableWorkBlocked = false;
     /** Whether something has asked for a turn that has not been answered yet. */
     #turnRequested = false;
+    /**
+     * Whether an abort dropped a turn request since the current run began. A message accepted
+     * after the run committed its settlement makes the store owe work again; when an abort then
+     * drops the turn it asked for, the run that is unwinding settles that record once more
+     * rather than leaving the agent recorded as working with nothing running.
+     */
+    #abortDroppedTurn = false;
+    /** The next run only settles the work an abort left recorded as owed. */
+    #settleAfterAbort = false;
+    /** The run's settlement reopened the record for input accepted since its settle decision. */
+    #reopenedBySettlement = false;
+    /**
+     * Queue entries whose requested turn was dropped, by an abort or by a run failure, since the
+     * current turn began. They stay queued without owing a turn; any other queued entry found
+     * when the run records its settlement arrived after the decision and keeps the agent owed.
+     */
+    readonly #abandonedQueueKeys = new Set<string>();
     /** The run loop while it is running; the field is cleared once it has actually stopped. */
     #runPromise: Promise<void> | undefined;
     /** Sticky for this instance: once requested, no later operation starts another run. */
@@ -626,6 +649,12 @@ export class AgentBase {
     readonly #admitted = new Set<Promise<unknown>>();
     /** Queue acceptances the run loop must publish before it may decide its queues are empty. */
     readonly #messageAdmissions = new Set<Promise<readonly AgentMessageAcceptance[]>>();
+    /**
+     * The lifetime of each executing call's own store handle. The batch ends it when it commits
+     * the call's result, so an execution still unwinding after an abort cannot recreate the call
+     * state that commit erased, whatever context it writes through.
+     */
+    readonly #callLifetimes = new Map<string, AbortController>();
     /** Active tool executions whose own definition opts into cooperative steering cancellation. */
     readonly #steerableToolExecutions = new Set<AbortController>();
     /** Raised once sticky drain or shutdown stops accepting steerable execution latency. */
@@ -1824,6 +1853,8 @@ export class AgentBase {
         // An abort drops ordinary requested continuation, but a notice already appended to
         // history remains owed one provider request and must reopen under a fresh abort scope.
         this.#turnRequested = this.#hasNoticeWorkToFinish();
+        this.#abortDroppedTurn = true;
+        this.#abandonQueuedInput();
         this.#abortController?.abort();
         return run;
     }
@@ -1933,10 +1964,35 @@ export class AgentBase {
                 .run([this.id], () => this.#runLoop())
                 .finally(() => {
                     this.#runPromise = undefined;
+                    const reopened = this.#reopenedBySettlement;
+                    this.#reopenedBySettlement = false;
                     // A request that arrived while the loop was settling would otherwise be stranded:
                     // the loop had stopped checking, and the caller's own `#startRun` saw a run still
                     // in flight. Waiters re-check the field, so they pick this continuation up.
                     if (this.#turnRequested && !this.#closed && !this.#draining) {
+                        this.#startRun();
+                        return;
+                    }
+                    // A message accepted after this run committed its settlement recorded work
+                    // again, and an abort then dropped the turn it asked for. The queued message
+                    // stays queued, as after any abort, but the store must not keep saying the
+                    // agent is working when nothing is going to run.
+                    if (
+                        this.#abortDroppedTurn &&
+                        this.#pending !== undefined &&
+                        !this.#closed &&
+                        !this.#draining
+                    ) {
+                        this.#settleAfterAbort = true;
+                        this.#startRun();
+                        return;
+                    }
+                    // The settlement reopened the record for input nobody dropped, so that input
+                    // is owed a turn whether or not its own request survived: the store must
+                    // never say the agent is working while nothing in this process will run.
+                    // Drain and close leave it recorded for the next owner instead.
+                    if (reopened && !this.#closed && !this.#draining) {
+                        this.#turnRequested = true;
                         this.#startRun();
                         return;
                     }
@@ -1961,8 +2017,15 @@ export class AgentBase {
 
     /** The run itself, on the context of the span the whole of it belongs to. */
     async #runTurns(ctx: Context): Promise<void> {
+        const settleAfterAbort = this.#settleAfterAbort;
+        this.#settleAfterAbort = false;
+        this.#abortDroppedTurn = false;
         if (this.#stopAtSafeEdgeRequested()) return;
-        if (this.#pending?.stage === "settlement") {
+        // Before anything else this run does: every path below writes a stage of its own, and
+        // the first write replaces the only record of a response an earlier process was
+        // streaming.
+        await this.#resetInterruptedResponse(ctx);
+        if (this.#pending?.stage === "settlement" || settleAfterAbort) {
             // A prior implementation could advance to settlement while a dispatched tool was
             // still open. Never repeat that conclusion on restore: load the real history, settle
             // only a complete conversation, and otherwise fall through to the ordinary loop
@@ -1972,12 +2035,18 @@ export class AgentBase {
                 this.#loopId ??= createId();
                 this.#settlementId ??= createId();
                 setAgentSpanAttributes(ctx, { "agent.loop.id": this.#loopId });
+                // The settle decision is recorded first, exactly as at the end of a run, so a
+                // message accepted meanwhile is seen by the settlement and kept owed.
+                if (settleAfterAbort) await this.#enterSettlementStage(ctx);
                 await this.#settleDurably(ctx, {
                     loopId: this.#loopId,
                     settlementId: this.#settlementId,
                 });
                 return;
             }
+            // Open tool calls keep the record for the attempt that answers them, as after any
+            // run that could not settle; an abort never turns that into a new turn.
+            if (settleAfterAbort) return;
         }
         // The outer loop reopens when an `afterAgentLoop` action requests more work, so the
         // loop hooks always bracket a settled-to-settled span.
@@ -2008,6 +2077,7 @@ export class AgentBase {
             // made the run throw would make the next one throw too — for ever, without anything
             // in between ever reaching the model.
             this.#turnRequested = false;
+            this.#abandonQueuedInput();
         }
         // A run that could not settle a staged tool result is the one exception: it must leave
         // its pending state exactly as it found it, for the next attempt to finish.
@@ -2017,7 +2087,7 @@ export class AgentBase {
         // so no owner can ever see the agent finished without their conclusions or their
         // conclusions without the agent being finished.
         this.#settlementId ??= createId();
-        await this.#enterStage(ctx, "settlement");
+        await this.#enterSettlementStage(ctx);
         await this.#settleDurably(ctx, {
             loopId: this.#loopId ?? createId(),
             settlementId: this.#settlementId,
@@ -2101,8 +2171,15 @@ export class AgentBase {
         setAgentSpanAttributes(ctx, { "agent.turn.id": this.#turnId });
         // Claimed before any awaiting, so a request raised while the turn is still starting up
         // survives into another turn instead of being cleared by it. The redundant turn this can
-        // cost is cheap: an empty queue drains without any inference.
-        this.#turnRequested = false;
+        // cost is cheap: an empty queue drains without any inference. A turn whose scope is
+        // already aborted answers nothing, so it claims nothing either: the abort already dropped
+        // the request it cancelled, and any request standing now was raised after it and is owed
+        // the next turn. Such a turn also keeps the input the abort dropped abandoned; a turn
+        // that runs answers the queue again, that input included.
+        if (!abort.signal.aborted) {
+            this.#turnRequested = false;
+            this.#abandonedQueueKeys.clear();
+        }
         // Every turn starts from durable state rather than from what this instance last
         // remembered, so the store remains authoritative after recovery.
         this.#loaded = undefined;
@@ -2134,6 +2211,7 @@ export class AgentBase {
             }
             this.#runFailure = message;
             this.#turnId = undefined;
+            this.#abandonQueuedInput();
             return "stop";
         }
         const turnStart = {
@@ -2180,6 +2258,35 @@ export class AgentBase {
         return "continue";
     }
 
+    /** Record that the queued input known in memory no longer has a turn requested for it. */
+    #abandonQueuedInput(): void {
+        for (const { key } of this.#steering) this.#abandonedQueueKeys.add(key);
+        for (const { key } of this.#sends) this.#abandonedQueueKeys.add(key);
+    }
+
+    /**
+     * Record the settle decision as the settlement stage, unless input accepted since the
+     * decision is queued. Such input already rewrote the record as the inference it owes, and the
+     * settlement stage written over it would let the settlement erase the only durable sign that
+     * the message still has to be answered. The check and the write are one transaction, so a
+     * message committing afterwards rewrites the stage again and the settlement sees it.
+     */
+    async #enterSettlementStage(ctx: Context): Promise<void> {
+        try {
+            await this.#runPersistenceStep(this.#workContext(ctx), (lockCtx) =>
+                this.#recordTransaction(lockCtx, async (txCtx) => {
+                    for (const prefix of ["steering.", "send."]) {
+                        const entries = await this.#persistence.readValues(txCtx, prefix);
+                        if (entries.some(({ key }) => !this.#abandonedQueueKeys.has(key))) return;
+                    }
+                    await this.#recordPending(txCtx, "settlement", true);
+                }),
+            );
+        } catch {
+            // As for any stage record: losing it costs recovery precision, never the work.
+        }
+    }
+
     /**
      * Erase the outstanding work and let the transactional settling hooks write in the same
      * transaction. A failure leaves the record in place: an agent wrongly believed to be working
@@ -2204,8 +2311,14 @@ export class AgentBase {
     /** The settlement itself, on the context of the span it belongs to. */
     async #settleRecord(ctx: Context, settlement: AgentBaseSettlement): Promise<void> {
         try {
+            let reopened: AgentBasePendingState | undefined;
             await this.#runPersistenceStep(this.#workContext(ctx), (lockCtx) =>
                 this.#recordTransaction(lockCtx, async (txCtx) => {
+                    reopened = undefined;
+                    // The run recorded its settle decision as the settlement stage. Work
+                    // accepted since then rewrote that record as the inference it owes, and
+                    // erasing it would leave a queued message behind an agent that looks idle.
+                    const owed = await agentBasePendingStateOf(txCtx, this.#persistence);
                     await this.#clearPending(txCtx);
                     await this.#invokeTransactionalSettle(txCtx, settlement);
                     // The run store is erased last, so a settling hook can still read what the
@@ -2213,6 +2326,13 @@ export class AgentBase {
                     // It commits with the settlement: the run is over and its notes are gone as
                     // one fact, never one without the other.
                     await this.#clearRunStore(txCtx);
+                    if (owed !== undefined && owed.stage !== "settlement") {
+                        // This run is over, and the late work opens the next one in the same
+                        // commit, activation included, so no crash can separate the two.
+                        reopened = { stage: "inference", loopId: createId() };
+                        await this.#persistence.writeValue(txCtx, AGENT_BASE_PENDING_KEY, reopened);
+                        await this.#announceActivation(txCtx, false);
+                    }
                 }),
             );
             this.#loopId = undefined;
@@ -2224,9 +2344,12 @@ export class AgentBase {
             this.#settlementId = undefined;
             this.#settlement = settlement;
             // Settled means nothing is owed: the next scheduled message activates the agent
-            // afresh, and nothing inherited remains to announce.
-            this.#activationAnnounced = false;
+            // afresh, and nothing inherited remains to announce. Work that arrived during the
+            // settlement is owed already, and its activation committed with it.
+            this.#activationAnnounced = reopened !== undefined;
             this.#restoreActivationOwed = false;
+            this.#reopenedBySettlement = reopened !== undefined;
+            if (reopened !== undefined) this.#adoptPendingState(reopened);
         } catch {
             // The run itself is over and succeeded; only the record of its ending failed.
         }
@@ -2521,18 +2644,21 @@ export class AgentBase {
             }
             let needsInference = resumed.length > 0 || forceInference;
             forceInference = false;
-            // A requested compaction runs before this turn's first inference, so the model
-            // always receives a settled conversation — never one still owing tool results.
-            await this.#runCompaction(ctx, abort.signal, needsInference);
-            if (this.#stopAtSafeEdgeRequested()) return "shutdown";
             // An inference is needed without any injection when tool results from a resumed batch
             // end the context, or — checked once, against the freshly loaded durable state —
             // when a cut-off run left its trailing user or tool message unanswered. Afterwards
             // a trailing user message can be legitimate: a response may have zero blocks.
+            // It comes before any compaction, so a compaction is told to continue the response
+            // the restart owes.
             if (!this.#recoveryChecked) {
                 this.#recoveryChecked = true;
                 if (await this.#resumesInterruptedRun(ctx)) needsInference = true;
             }
+            // A requested compaction runs before this turn's first inference, so the model
+            // always receives a settled conversation — never one still owing tool results. A
+            // response the restart owes is continued after it.
+            await this.#runCompaction(ctx, abort.signal, needsInference);
+            if (this.#stopAtSafeEdgeRequested()) return "shutdown";
             // Each cycle first drains the queues, then runs one inference. Steering injects at
             // every stop between responses and always outranks sends; sent messages inject
             // only when the agent would otherwise stop — no tool results or steering remain.
@@ -2737,6 +2863,10 @@ export class AgentBase {
             }
             this.#noticeAwaitingResponse = false;
             this.#clearTurnRequestIfNoPendingInput();
+            // The failure answers the input this turn was asked to take, as a failed run does:
+            // it stays queued, and the settlement must not reopen the record for it only to fail
+            // the same way again. Anything that asks for another turn answers it afresh.
+            this.#abandonQueuedInput();
         }
         this.#turnAborted = abort.signal.aborted;
         return this.#stopAtSafeEdgeRequested() ? "shutdown" : "complete";
@@ -2871,6 +3001,18 @@ export class AgentBase {
             this.#noticeAwaitingResponse = false;
             this.#clearTurnRequestIfNoPendingInput();
         }
+        // A stream that ended without a done event ends its turn, but not the messages queued
+        // behind it: they asked for a turn, and the next one drains them. An abort is different
+        // and deliberately leaves them queued.
+        if (
+            state === undefined &&
+            (this.#steering.length > 0 ||
+                this.#sends.length > 0 ||
+                this.#injections.length > 0 ||
+                this.#committedQueueDirty)
+        ) {
+            this.#turnRequested = true;
+        }
         // A cancelled or failed response measures nothing, so the conversation keeps the last
         // real measurement instead of forgetting how large it had become.
         const inference = {
@@ -2913,24 +3055,78 @@ export class AgentBase {
      * Liveness comes only from the inherited pending record. Within that active run, a consumed
      * message, tool result, or failure note is owed an answer. A compaction replacement is owed
      * one only when its transaction preserved the inference identity of the active continuation.
-     * A listener shown the beginning of a block that will now never arrive is told to drop it.
-     * Only finished blocks are persisted, so the conversation is intact and it is the view being
-     * corrected.
+     * So is a response whose finished blocks were persisted while its provider request was still
+     * open: the identity is retired only once the response ends, so a block written under a live
+     * identity belongs to a response the dead process was still streaming. A listener shown the
+     * beginning of a block that will now never arrive is told to drop it. Only finished blocks
+     * are persisted, so the conversation is intact and it is the view being corrected — as a
+     * rule already by `#resetInterruptedResponse`, before this run wrote anything.
      */
     async #resumesInterruptedRun(ctx: Context): Promise<boolean> {
-        const continuedAfterCompaction =
-            this.#lastRecordType === "compaction" &&
-            this.#inherited?.stage === "inference" &&
-            this.#inherited.inferenceId !== undefined;
-        const owed =
+        const owed = this.#lastRecordOwesResponse();
+        if (owed && !this.#interruptionChecked && this.#inherited?.stage === "inference") {
+            await this.#emit(ctx, { type: "block_reset" });
+        }
+        this.#interruptionChecked = true;
+        return owed;
+    }
+
+    /** What the loaded conversation's last record says about a response the run owes. */
+    #lastRecordOwesResponse(): boolean {
+        const requestOpen = this.#inheritedRequestOpen();
+        return (
             this.#lastRecordType === "user" ||
             this.#lastRecordType === "tool" ||
             this.#lastRecordType === "system" ||
-            continuedAfterCompaction;
-        if (owed && this.#inherited?.stage === "inference") {
-            await this.#emit(ctx, { type: "block_reset" });
+            (this.#lastRecordType === "compaction" && requestOpen) ||
+            (this.#lastRecordType === "block" && requestOpen)
+        );
+    }
+
+    /** The inherited record says a provider request was open when its process stopped. */
+    #inheritedRequestOpen(): boolean {
+        return this.#inherited?.stage === "inference" && this.#inherited.inferenceId !== undefined;
+    }
+
+    /**
+     * Tell listeners to drop the block an earlier process was streaming when it died. Only the
+     * inherited record can say so, and only until this instance writes a record of its own —
+     * a tool batch, a compaction, or a settlement would each replace it — so this runs once, at
+     * the start of the first run, before any of them. A listener can only have been shown a
+     * block while a provider request was open, and the record carries that request's identity
+     * from before the stream opened until after it ended, so the record alone decides this
+     * without loading the conversation.
+     *
+     * An inherited inference stage without an open request never streamed anything. It is left
+     * to the first loaded edge, which still resets when the conversation owes a response; a
+     * stage written before then cannot hide a block nobody was shown.
+     */
+    async #resetInterruptedResponse(ctx: Context): Promise<void> {
+        if (this.#interruptionChecked) return;
+        if (!this.#inheritedRead) {
+            // An instance made with `create` has not looked at the store yet. The read fails
+            // only with the store, and then the first stage write reads it again.
+            try {
+                await this.#runPersistenceStep(this.#workContext(ctx), async (lockCtx) => {
+                    if (this.#inheritedRead) return;
+                    const stored = await agentBasePendingStateOf(lockCtx, this.#persistence);
+                    this.#inheritedRead = true;
+                    this.#inherited = stored;
+                    this.#restoreActivationOwed =
+                        stored !== undefined &&
+                        !this.#activationAnnounced &&
+                        this.#hooks.afterAgentActivatedTransact !== undefined;
+                });
+            } catch {
+                return;
+            }
         }
-        return owed;
+        if (this.#inheritedRequestOpen()) {
+            this.#interruptionChecked = true;
+            await this.#emit(ctx, { type: "block_reset" });
+        } else if (this.#inherited?.stage !== "inference") {
+            this.#interruptionChecked = true;
+        }
     }
 
     /** Load the durable state once. A failed load is not sticky: the next turn retries it. */
@@ -2956,18 +3152,19 @@ export class AgentBase {
         this.#contextTokens = tokens;
         try {
             await this.#runPersistenceStep(this.#workContext(ctx), async (lockCtx) => {
-                const write = (writeCtx: Context): Promise<void> =>
-                    tokens === undefined
-                        ? this.#persistence.deleteValue(writeCtx, "context")
-                        : this.#persistence.writeValue(writeCtx, "context", { tokens });
-                if (transact === undefined) {
-                    await write(lockCtx);
-                    return;
-                }
                 await this.#recordTransaction(lockCtx, async (txCtx) => {
-                    await write(txCtx);
-                    await this.#recordPending(txCtx, "inference", true);
-                    await this.#withTransactionalContext(txCtx, transact);
+                    if (tokens === undefined) {
+                        await this.#persistence.deleteValue(txCtx, "context");
+                    } else {
+                        await this.#persistence.writeValue(txCtx, "context", { tokens });
+                    }
+                    // The measurement closes the response that produced it, so the stage stops
+                    // carrying that response's retired inference identity in the same commit. A
+                    // restart then reads a live identity only on a response that never ended.
+                    await this.#recordPending(txCtx, "inference", transact !== undefined);
+                    if (transact !== undefined) {
+                        await this.#withTransactionalContext(txCtx, transact);
+                    }
                 });
             });
         } catch (error) {
@@ -4073,6 +4270,9 @@ export class AgentBase {
                                 result,
                             );
                             await this.#kv.scoped("call", entry.id).clear(txCtx);
+                            // An execution the batch stopped waiting for may still be running,
+                            // and its handle dies with the state it would have written to.
+                            afterCommit(txCtx, () => this.#callLifetimes.get(entry.id)?.abort());
                         });
                         this.#messages.push(winner);
                         committed += 1;
@@ -4102,6 +4302,10 @@ export class AgentBase {
                         entry.id,
                         "The tool call was interrupted by a restart and was not retried.",
                     );
+                } else if (signal.aborted || this.#closeController.signal.aborted) {
+                    // Cancelled before it started: the call is answered as aborted, like its
+                    // running siblings, and never gets to act at all.
+                    outcome = ABORTED;
                 } else {
                     const toolLifetime = AbortSignal.any([signal, this.#closeController.signal]);
                     // The call's own span hangs off the batch's. Every call in the batch runs at
@@ -4395,9 +4599,24 @@ export class AgentBase {
         }
         const callKV = this.#kv.scoped("call", entry.id);
         const callLifetime = new AbortController();
+        this.#callLifetimes.set(entry.id, callLifetime);
+        callLifetime.signal.addEventListener(
+            "abort",
+            () => {
+                if (this.#callLifetimes.get(entry.id) === callLifetime) {
+                    this.#callLifetimes.delete(entry.id);
+                }
+            },
+            { once: true },
+        );
         let committing = false;
         const boundedCallKV = callKV.until(callLifetime.signal, () => !committing);
-        const callCtx = withAgentKV(this.#callScoped(ctx, entry.id), boundedCallKV);
+        // The call's run store dies with the call too: an execution still unwinding after its
+        // result committed must not leave run state behind a settled agent.
+        const callCtx = withAgentRunKV(
+            withAgentKV(this.#callScoped(ctx, entry.id), boundedCallKV),
+            this.#runKV.scoped("call", entry.id).until(callLifetime.signal),
+        );
         // From here the call is one the two tool hooks bracket: a tool that exists, a call that
         // finished, and arguments its schema accepts. A call refused before that reaches neither
         // hook, because there is nothing yet to decide about or to report.
@@ -4536,6 +4755,11 @@ export class AgentBase {
                     kv: boundedCallKV,
                     commit,
                 };
+                // The hooks above can outlast an abort or close. A call cancelled by then never
+                // starts; the batch answers it as cancelled.
+                if (runCtx.lifetime?.aborted === true) {
+                    throw new Error("The tool call was aborted before it started.");
+                }
                 if (steeringLifetime !== undefined) {
                     this.#steerableToolExecutions.add(steeringLifetime);
                     if (this.#pendingSteeringInterruptions.size > 0) steeringLifetime.abort();
@@ -4999,7 +5223,12 @@ export class AgentBase {
                         break;
                 }
             }
-            return { content, state: undefined };
+            // The stream ended without a done event. As after an abort, only the finished blocks
+            // stand, and a listener shown the start of one that never finished is told to drop
+            // it. Keeping the unfinished remainder would put a call nobody can answer into
+            // memory alone, where it would be answered with a result the store has no call for.
+            if (content.length > persisted.length) await this.#emit(ctx, { type: "block_reset" });
+            return { content: persisted, state: undefined };
         } finally {
             // A done event ends the response, not the provider's ownership of its session. The
             // closure is requested here and waited for before the next request, rather than

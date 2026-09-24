@@ -863,8 +863,11 @@ describe("AgentBase black-box persistence and restart behavior", () => {
         agent.start();
         await agent.waitForIdle();
 
-        expect(followingInferenceIds).toHaveLength(1);
-        expect(followingInferenceIds[0]).not.toBe(interruptedInferenceId);
+        // The interrupted response is continued first and the queued message answered after it,
+        // each under a fresh identity.
+        expect(followingInferenceIds).toHaveLength(2);
+        expect(followingInferenceIds).not.toContain(interruptedInferenceId);
+        expect(new Set(followingInferenceIds).size).toBe(2);
         await agent.close();
     });
 
@@ -1255,10 +1258,10 @@ describe("AgentBase black-box persistence and restart behavior", () => {
         let transactionCount = 0;
         const realTransaction = persistence.transaction.bind(persistence);
         persistence.transaction = async (transactionContext, work) => {
-            // Acceptance, consumption, and the tool dispatch commit first; the fourth is the one
-            // that would record the tool's result.
+            // Acceptance, consumption, the response's measurement, and the tool dispatch commit
+            // first; the fifth is the one that would record the tool's result.
             transactionCount += 1;
-            if (transactionCount === 4) {
+            if (transactionCount === 5) {
                 throw new Error("result transaction crashed");
             }
             return realTransaction(transactionContext, work);

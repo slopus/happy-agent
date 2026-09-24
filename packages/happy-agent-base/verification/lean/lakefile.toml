@@ -1,0 +1,9 @@
+name = "AgentBaseVerification"
+version = "0.1.0"
+defaultTargets = ["AgentBaseVerification"]
+
+[leanOptions]
+autoImplicit = false
+
+[[lean_lib]]
+name = "AgentBaseVerification"
