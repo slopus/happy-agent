@@ -86,6 +86,7 @@ import type {
     WriteFileResponse,
 } from "./protocol/files.js";
 import type { GitStateResponse, WatchGitRequest, WatchGitResponse } from "./protocol/git.js";
+import type { SliceResponse, SlicesResponse } from "./protocol/slices.js";
 import type { HappyIntegrationResponse } from "./protocol/integrations.js";
 import type {
     MessageHistoryQuery,
@@ -1381,6 +1382,41 @@ export class HappyAgentClient {
             method: "GET",
             path: `v0/workspaces/${encodeURIComponent(workspaceId)}/file-tree`,
             query: { path: query.path, cursor: query.cursor, limit: query.limit },
+            signal: options.signal,
+        });
+    }
+
+    /** `GET /v0/workspaces/:workspaceId/slices` — every retained slice, newest first. */
+    async listSlices(workspaceId: Cuid2, options: RequestOptions = {}): Promise<SlicesResponse> {
+        return await this.#json({
+            method: "GET",
+            path: `v0/workspaces/${encodeURIComponent(workspaceId)}/slices`,
+            signal: options.signal,
+        });
+    }
+
+    /** `GET /v0/workspaces/:workspaceId/slices/:sliceId` — `404` once a slice has been dropped. */
+    async getSlice(
+        workspaceId: Cuid2,
+        sliceId: Cuid2,
+        options: RequestOptions = {},
+    ): Promise<SliceResponse> {
+        return await this.#json({
+            method: "GET",
+            path: `v0/workspaces/${encodeURIComponent(workspaceId)}/slices/${encodeURIComponent(sliceId)}`,
+            signal: options.signal,
+        });
+    }
+
+    /** `DELETE /v0/workspaces/:workspaceId/slices/:sliceId` — removes a slice; `404` once gone. */
+    async deleteSlice(
+        workspaceId: Cuid2,
+        sliceId: Cuid2,
+        options: RequestOptions = {},
+    ): Promise<SliceResponse> {
+        return await this.#json({
+            method: "DELETE",
+            path: `v0/workspaces/${encodeURIComponent(workspaceId)}/slices/${encodeURIComponent(sliceId)}`,
             signal: options.signal,
         });
     }

@@ -22,6 +22,10 @@ import {
 } from "@slopus/happy-providers";
 import type { HappyAgentConfigValues, HappyAgentConfiguration } from "../ConfigModule.js";
 import { RoundRobinRouterProvider } from "./RoundRobinRouterProvider.js";
+import {
+    loadNativeCodexProviderConfig,
+    resolveNativeCodexCredentialAccess,
+} from "./loadNativeCodexProviderConfig.js";
 
 type ConfiguredProvider = HappyAgentConfigValues["providers"][string];
 type ConcreteConfiguredProvider = Exclude<ConfiguredProvider, { readonly type: "smart" }>;
@@ -358,6 +362,7 @@ export function agentProviders(
     isProviderEnabled: (providerId: string) => boolean = () => true,
     providerSignal: (providerId: string) => AbortSignal | undefined = () => undefined,
     concreteProviders?: AgentProviders,
+    environment: NodeJS.ProcessEnv = process.env,
 ): AgentProviders {
     const providers = new AgentProviders();
     const retryLimit = configuration.values.settings.inferenceMaxRetries;
@@ -382,7 +387,14 @@ export function agentProviders(
         providers.add(
             id,
             async ({ model: selected }) =>
-                await createProvider(id, provider, selected, retryLimit, onAccountUsage),
+                await createProvider(
+                    id,
+                    provider,
+                    selected,
+                    retryLimit,
+                    environment,
+                    onAccountUsage,
+                ),
             provider.type,
         );
     }
@@ -476,6 +488,7 @@ async function createProvider(
     provider: ConcreteConfiguredProvider,
     selectedModel: string | undefined,
     retryLimit: number | undefined,
+    environment: NodeJS.ProcessEnv,
     onAccountUsage?: (usage: ProviderUsage) => void,
 ): Promise<BaseProvider> {
     // Credential isolation means this provider may use only what its own configuration names.
@@ -491,21 +504,43 @@ async function createProvider(
         value === undefined ? (ambient ? await discover() : null) : await fromValue(value);
 
     if (provider.type === "codex") {
+        const nativeConfiguration =
+            ambient && provider.baseUrl === undefined
+                ? await loadNativeCodexProviderConfig(environment)
+                : null;
+        const access = resolveNativeCodexCredentialAccess({
+            ...(provider.apiKey === undefined ? {} : { apiKey: provider.apiKey }),
+            ...(provider.authFile === undefined ? {} : { authFile: provider.authFile }),
+            ...(provider.baseUrl === undefined ? {} : { configuredBaseUrl: provider.baseUrl }),
+            nativeConfiguration,
+        });
+        if (access.status === "unsupported_wire_api") {
+            throw new Error(
+                `The selected native Codex provider uses an unsupported wire_api (${access.wireApi}). Happy Agent supports responses only.`,
+            );
+        }
         const credential = ambient
-            ? await loadCodexCredential({
-                  ...(provider.apiKey === undefined ? {} : { apiKey: provider.apiKey }),
-                  ...(provider.authFile === undefined ? {} : { authFile: provider.authFile }),
-              })
+            ? access.status === "unavailable"
+                ? null
+                : await loadCodexCredential({
+                      ...(access.apiKey === undefined ? {} : { apiKey: access.apiKey }),
+                      ...(provider.authFile === undefined ? {} : { authFile: provider.authFile }),
+                      env: environment,
+                  })
             : ((provider.apiKey === undefined
                   ? null
                   : await CodexApiKeyCredential.tryLoad({ apiKey: provider.apiKey })) ??
               (provider.authFile === undefined
                   ? null
-                  : await CodexSessionCredential.tryLoad({ authFile: provider.authFile })));
+                  : await CodexSessionCredential.tryLoad({
+                        authFile: provider.authFile,
+                        env: environment,
+                    })));
+        const endpoint = provider.baseUrl ?? nativeConfiguration?.baseUrl;
         return new CodexProvider({
             credential: required(credential, "Codex", id),
             parallelToolCalls: true,
-            ...(provider.baseUrl === undefined ? {} : { endpoint: provider.baseUrl }),
+            ...(endpoint === undefined ? {} : { endpoint }),
             ...(provider.transport === undefined || provider.transport === "auto"
                 ? {}
                 : {

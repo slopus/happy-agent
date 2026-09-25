@@ -146,6 +146,36 @@ describe("Happy sync storage", () => {
         });
     });
 
+    it("keeps the session key when the account changes, so a re-linked account still reads it", async () => {
+        await withDatabase("happy-rotate-key", async (sync, database) => {
+            const first = await sync.ensureSession(database.context, ATTACH, NOW);
+            // The server answers a create-by-tag with the session it already has,
+            // wrapped with the key it was created under. Publishing under a fresh
+            // key would leave the phone unable to read anything new.
+            const rotated = await sync.ensureSession(
+                database.context,
+                { ...ATTACH, credentialFingerprint: "account-b", encryptionKeyBase64: "bmV3" },
+                NOW + 1,
+            );
+            expect(rotated.credentialFingerprint).toBe("account-b");
+            expect(rotated.encryptionKeyBase64).toBe(first.encryptionKeyBase64);
+
+            // A change of encryption variant is a different scheme altogether,
+            // and the old key means nothing under it.
+            const legacy = await sync.ensureSession(
+                database.context,
+                {
+                    ...ATTACH,
+                    credentialFingerprint: "account-c",
+                    encryptionKeyBase64: "bGVnYWN5",
+                    encryptionVariant: "legacy",
+                },
+                NOW + 2,
+            );
+            expect(legacy.encryptionKeyBase64).toBe("bGVnYWN5");
+        });
+    });
+
     it("lists the agents attached to one account, most recent first", async () => {
         await withDatabase("happy-list", async (sync, database) => {
             await sync.ensureSession(database.context, ATTACH, NOW);

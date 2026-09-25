@@ -157,6 +157,19 @@ export const agentSpawnPresentationSchema = Type.Object({
 /** Sub-agent creation; the enclosing tool status owns its lifecycle. */
 export type AgentSpawnPresentation = Static<typeof agentSpawnPresentationSchema>;
 
+/** A slice the `create_slice` tool made; outcome-derived, so absent while the call runs. */
+export const slicePresentationSchema = Type.Object({
+    /** How many files the slice holds. */
+    fileCount: Type.Integer({ minimum: 1 }),
+    /** The created slice, read through the workspace slice routes. */
+    sliceId: cuid2Schema,
+    title: Type.String(),
+    type: Type.Literal("slice"),
+});
+
+/** A slice the `create_slice` tool made; outcome-derived, so absent while the call runs. */
+export type SlicePresentation = Static<typeof slicePresentationSchema>;
+
 /** Every display-ready tool-call presentation the client understands. */
 export const toolPresentationSchema = Type.Union([
     explorationPresentationSchema,
@@ -165,6 +178,7 @@ export const toolPresentationSchema = Type.Union([
     fileDiffPresentationSchema,
     searchPresentationSchema,
     agentSpawnPresentationSchema,
+    slicePresentationSchema,
 ]);
 
 /** Every display-ready tool-call presentation the client understands. */

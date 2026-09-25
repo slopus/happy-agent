@@ -8,6 +8,7 @@ import { Value } from "@sinclair/typebox/value";
 import type { BotRecord } from "../bots/index.js";
 import type { Profile } from "../profile/index.js";
 import { ProjectsModule, type Project, type ProjectSettings } from "../projects/index.js";
+import type { Slice } from "../slices/index.js";
 import type { Terminal } from "../terminals/index.js";
 import type { UserInputRequest } from "../userInput/index.js";
 import type { Workspace } from "../workspaces/index.js";
@@ -256,6 +257,11 @@ export function terminalResource(
     terminal: Terminal,
 ): Record<string, unknown> {
     return { ...terminal };
+}
+
+/** The stored slice is already the wire shape `API.md` describes; only detach it from the store. */
+export function sliceResource(slice: Slice): Record<string, unknown> {
+    return structuredClone(slice);
 }
 
 export function questionResource(

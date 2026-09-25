@@ -264,8 +264,7 @@ const historyFileDiffSchema = Type.Object(
     { additionalProperties: false },
 );
 
-/** A bounded result-derived presentation retained with durable tool history. */
-export const historyToolPresentationSchema = Type.Object(
+const historyFileDiffPresentationSchema = Type.Object(
     {
         type: Type.Literal("file_diff"),
         files: Type.Array(historyFileDiffSchema, { maxItems: MAX_HISTORY_FILE_DIFF_FILES }),
@@ -273,6 +272,23 @@ export const historyToolPresentationSchema = Type.Object(
     },
     { additionalProperties: false },
 );
+
+/** A slice the `create_slice` tool made: it names the slice rather than repeating it. */
+const historySlicePresentationSchema = Type.Object(
+    {
+        type: Type.Literal("slice"),
+        sliceId: cuid2Schema,
+        title: Type.String({ minLength: 1, maxLength: 200 }),
+        fileCount: Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
+    },
+    { additionalProperties: false },
+);
+
+/** A bounded result-derived presentation retained with durable tool history. */
+export const historyToolPresentationSchema = Type.Union([
+    historyFileDiffPresentationSchema,
+    historySlicePresentationSchema,
+]);
 
 export type HistoryToolPresentation = Static<typeof historyToolPresentationSchema>;
 
