@@ -4,5 +4,5 @@
     "license": "Apache-2.0",
     "namespace": "Slopus.HappySandbox",
     "buildToolchain": "1.95.0-x86_64-pc-windows-gnu",
-    "setupVersion": 8
+    "setupVersion": 9
 }

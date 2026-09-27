@@ -1700,7 +1700,7 @@ index f2524fa..4365444 100644
  /// Versioned provisioning-service message carried in a length-prefixed JSON frame.
  #[derive(Debug, Serialize, Deserialize, Clone)]
 diff --git a/codex-rs/windows-sandbox-rs/src/setup.rs b/codex-rs/windows-sandbox-rs/src/setup.rs
-index 1e84b6f..c7fb1ee 100644
+index 1e84b6f..a46f248 100644
 --- a/codex-rs/windows-sandbox-rs/src/setup.rs
 +++ b/codex-rs/windows-sandbox-rs/src/setup.rs
 @@ -33,6 +33,8 @@ use crate::setup_error::extract_failure;
@@ -1712,15 +1712,16 @@ index 1e84b6f..c7fb1ee 100644
  use anyhow::Result;
  use anyhow::anyhow;
  use base64::Engine;
-@@ -47,13 +49,14 @@ use windows_sys::Win32::Security::CheckTokenMembership;
+@@ -47,13 +49,15 @@ use windows_sys::Win32::Security::CheckTokenMembership;
  use windows_sys::Win32::Security::FreeSid;
  use windows_sys::Win32::Security::SECURITY_NT_AUTHORITY;
  
 -pub const SETUP_VERSION: u32 = 5;
 -pub const OFFLINE_USERNAME: &str = "CodexSandboxOffline";
 -pub const ONLINE_USERNAME: &str = "CodexSandboxOnline";
-+// Happy setup revision: repair ACL ownership from the initial Windows prototype.
-+pub const SETUP_VERSION: u32 = 8;
++// Happy setup revisions: 8 repaired ACL ownership from the initial Windows prototype;
++// 9 replaces the account-wide bind blocks with listen and inbound blocks.
++pub const SETUP_VERSION: u32 = 9;
 +pub const OFFLINE_USERNAME: &str = "HappySandboxOffline";
 +pub const ONLINE_USERNAME: &str = "HappySandboxOnline";
  const ERROR_CANCELLED: u32 = 1223;
@@ -1731,7 +1732,7 @@ index 1e84b6f..c7fb1ee 100644
  const USERPROFILE_ROOT_EXCLUSIONS: &[&str] = &[
      ".ssh",
      ".tsh",
-@@ -348,7 +351,7 @@ fn run_setup_refresh_inner(
+@@ -348,7 +352,7 @@ fn run_setup_refresh_inner(
          proxy_ports: offline_proxy_settings.proxy_ports,
          allow_local_binding: offline_proxy_settings.allow_local_binding,
          otel: None,
@@ -1740,7 +1741,7 @@ index 1e84b6f..c7fb1ee 100644
          mode: SetupMode::Full,
          refresh_only: true,
      };
-@@ -949,20 +952,19 @@ fn run_setup_exe_payload(
+@@ -949,20 +953,19 @@ fn run_setup_exe_payload(
      };
  
      if !needs_elevation {
@@ -1763,7 +1764,7 @@ index 1e84b6f..c7fb1ee 100644
          }
          .map_err(|err| {
              failure(
-@@ -970,6 +972,7 @@ fn run_setup_exe_payload(
+@@ -970,6 +973,7 @@ fn run_setup_exe_payload(
                  format!("failed to launch setup helper (non-elevated): {err}"),
              )
          })?;
@@ -1771,7 +1772,7 @@ index 1e84b6f..c7fb1ee 100644
          if !status.success() {
              return Err(report_helper_failure(
                  codex_home,
-@@ -1004,7 +1007,7 @@ fn run_setup_exe_payload(
+@@ -1004,7 +1008,7 @@ fn run_setup_exe_payload(
      // Hide the window for the elevated helper.
      sei.nShow = 0; // SW_HIDE
      let ok = unsafe { ShellExecuteExW(&mut sei) };
@@ -1780,7 +1781,7 @@ index 1e84b6f..c7fb1ee 100644
          let last_error = unsafe { GetLastError() };
          let code = if last_error == ERROR_CANCELLED {
              SetupErrorCode::OrchestratorHelperLaunchCanceled
-@@ -1016,8 +1019,15 @@ fn run_setup_exe_payload(
+@@ -1016,8 +1020,15 @@ fn run_setup_exe_payload(
              format!("ShellExecuteExW failed to launch setup helper: {last_error}"),
          ));
      }
@@ -1797,7 +1798,7 @@ index 1e84b6f..c7fb1ee 100644
          let mut code: u32 = 1;
          GetExitCodeProcess(sei.hProcess, &mut code);
          CloseHandle(sei.hProcess);
-@@ -1040,48 +1050,80 @@ fn run_setup_exe_payload(
+@@ -1040,48 +1051,80 @@ fn run_setup_exe_payload(
  }
  
  pub fn run_elevated_setup(request: SandboxSetupRequest<'_>) -> Result<()> {
@@ -1895,7 +1896,7 @@ index 1e84b6f..c7fb1ee 100644
          version: SETUP_VERSION,
          offline_username: OFFLINE_USERNAME.to_string(),
          online_username: ONLINE_USERNAME.to_string(),
-@@ -1093,11 +1135,11 @@ fn elevated_provisioning_payload(
+@@ -1093,11 +1136,11 @@ fn elevated_provisioning_payload(
          deny_write_paths: Vec::new(),
          proxy_ports: offline_proxy_settings.proxy_ports,
          allow_local_binding: offline_proxy_settings.allow_local_binding,
@@ -1909,7 +1910,7 @@ index 1e84b6f..c7fb1ee 100644
  }
  
  pub fn run_elevated_provisioning_setup(
-@@ -1600,7 +1642,7 @@ mod tests {
+@@ -1600,7 +1643,7 @@ mod tests {
  
          let payload = super::elevated_provisioning_payload(
              &request, /*offline_proxy_settings_override*/ None,
@@ -1918,7 +1919,7 @@ index 1e84b6f..c7fb1ee 100644
  
          assert_eq!(payload.command_cwd, codex_home);
          assert_eq!(payload.read_roots, Vec::<PathBuf>::new());
-@@ -1870,7 +1912,7 @@ mod tests {
+@@ -1870,7 +1913,7 @@ mod tests {
          fs::create_dir_all(&bin_dir).expect("create bin dir");
          fs::create_dir_all(&resources_dir).expect("create resources dir");
          let exe = bin_dir.join("codex.exe");
@@ -2288,12 +2289,14 @@ index 8d52e60..236eac8 100644
      } else {
          unsafe { network::NetUserDel(null(), name_wide.as_ptr()) }
 diff --git a/codex-rs/windows-sandbox-rs/src/wfp.rs b/codex-rs/windows-sandbox-rs/src/wfp.rs
-index d992bcd..019e16a 100644
+index d992bcd..3ee3910 100644
 --- a/codex-rs/windows-sandbox-rs/src/wfp.rs
 +++ b/codex-rs/windows-sandbox-rs/src/wfp.rs
-@@ -64,17 +64,17 @@ use filter_specs::ConditionSpec;
+@@ -63,18 +63,19 @@ use windows_sys::core::GUID;
+ use filter_specs::ConditionSpec;
  use filter_specs::FILTER_SPECS;
  use filter_specs::FilterSpec;
++use filter_specs::RETIRED_FILTER_KEYS;
  
 -const SESSION_NAME: &str = "Codex Windows Sandbox WFP";
 -const PROVIDER_NAME: &str = "Codex Windows Sandbox WFP";
@@ -2316,19 +2319,148 @@ index d992bcd..019e16a 100644
  
  /// Installs the persistent Codex WFP filters for `account`.
  ///
+@@ -88,6 +89,9 @@ pub fn install_wfp_filters_for_account(account: &str) -> Result<usize> {
+     ensure_sublayer(engine.handle)?;
+ 
+     let user_condition = UserMatchCondition::for_account(account)?;
++    for key in RETIRED_FILTER_KEYS {
++        delete_filter_if_present(engine.handle, key)?;
++    }
+     let mut installed_filter_count = 0;
+     for spec in FILTER_SPECS {
+         delete_filter_if_present(engine.handle, &spec.key)?;
+@@ -103,6 +107,9 @@ pub(crate) fn remove_wfp_filters() -> Result<()> {
+     // Leave time for other cleanup if a WFP policy writer holds the transaction lock.
+     let engine = Engine::open(/*transaction_wait_timeout_ms*/ 1_000)?;
+     let mut transaction = engine.begin_transaction()?;
++    for key in RETIRED_FILTER_KEYS {
++        delete_filter_if_present(engine.handle, key)?;
++    }
+     for spec in FILTER_SPECS {
+         delete_filter_if_present(engine.handle, &spec.key)?;
+     }
+@@ -421,8 +428,88 @@ fn zero_guid() -> GUID {
+ #[cfg(test)]
+ mod tests {
+     use super::FILTER_SPECS;
++    use super::filter_specs::ConditionSpec;
++    use super::filter_specs::RETIRED_FILTER_KEYS;
+     use pretty_assertions::assert_eq;
+     use std::collections::BTreeSet;
++    use windows_sys::Win32::NetworkManagement::WindowsFilteringPlatform::FWPM_LAYER_ALE_AUTH_CONNECT_V4;
++    use windows_sys::Win32::NetworkManagement::WindowsFilteringPlatform::FWPM_LAYER_ALE_AUTH_CONNECT_V6;
++    use windows_sys::Win32::NetworkManagement::WindowsFilteringPlatform::FWPM_LAYER_ALE_AUTH_LISTEN_V4;
++    use windows_sys::Win32::NetworkManagement::WindowsFilteringPlatform::FWPM_LAYER_ALE_AUTH_LISTEN_V6;
++    use windows_sys::Win32::NetworkManagement::WindowsFilteringPlatform::FWPM_LAYER_ALE_AUTH_RECV_ACCEPT_V4;
++    use windows_sys::Win32::NetworkManagement::WindowsFilteringPlatform::FWPM_LAYER_ALE_AUTH_RECV_ACCEPT_V6;
++    use windows_sys::Win32::NetworkManagement::WindowsFilteringPlatform::FWPM_LAYER_ALE_RESOURCE_ASSIGNMENT_V4;
++    use windows_sys::Win32::NetworkManagement::WindowsFilteringPlatform::FWPM_LAYER_ALE_RESOURCE_ASSIGNMENT_V6;
++    use windows_sys::core::GUID;
++
++    fn guid_key(guid: &GUID) -> (u32, u16, u16, [u8; 8]) {
++        (guid.data1, guid.data2, guid.data3, guid.data4)
++    }
++
++    #[test]
++    fn no_filter_blocks_every_bind() {
++        // An ALE_RESOURCE_ASSIGNMENT block without a narrower condition also classifies the
++        // implicit port assignment inside every connect and sendto. On Windows 11 24H2 that
++        // left the sandboxed connect unfinished and stalled new TCP connections host-wide.
++        let assignment = [
++            guid_key(&FWPM_LAYER_ALE_RESOURCE_ASSIGNMENT_V4),
++            guid_key(&FWPM_LAYER_ALE_RESOURCE_ASSIGNMENT_V6),
++        ];
++        for spec in FILTER_SPECS {
++            let narrowed = spec
++                .conditions
++                .iter()
++                .any(|condition| matches!(condition, ConditionSpec::Protocol(_)));
++            assert!(
++                !assignment.contains(&guid_key(&spec.layer_key)) || narrowed,
++                "{} blocks every bind for the account",
++                spec.name
++            );
++        }
++    }
++
++    #[test]
++    fn retired_filters_are_not_reinstalled() {
++        let retired = RETIRED_FILTER_KEYS
++            .iter()
++            .map(guid_key)
++            .collect::<BTreeSet<_>>();
++        // Machines set up before version 9 still carry happy_wfp_offline_all_bind_v4/v6.
++        for all_bind in [
++            GUID::from_u128(0x835f145677384719a5435a4bf57c0f03),
++            GUID::from_u128(0x835f145677384719a5435a4bf57c0f04),
++        ] {
++            assert!(retired.contains(&guid_key(&all_bind)));
++        }
++        for spec in FILTER_SPECS {
++            assert!(
++                !retired.contains(&guid_key(&spec.key)),
++                "{} is retired",
++                spec.name
++            );
++        }
++    }
++
++    #[test]
++    fn offline_account_is_blocked_at_connect_listen_and_accept() {
++        for layer in [
++            FWPM_LAYER_ALE_AUTH_CONNECT_V4,
++            FWPM_LAYER_ALE_AUTH_CONNECT_V6,
++            FWPM_LAYER_ALE_AUTH_LISTEN_V4,
++            FWPM_LAYER_ALE_AUTH_LISTEN_V6,
++            FWPM_LAYER_ALE_AUTH_RECV_ACCEPT_V4,
++            FWPM_LAYER_ALE_AUTH_RECV_ACCEPT_V6,
++        ] {
++            assert!(
++                FILTER_SPECS.iter().any(|spec| {
++                    guid_key(&spec.layer_key) == guid_key(&layer)
++                        && matches!(spec.conditions, [ConditionSpec::User])
++                }),
++                "no account-wide block at layer {:?}",
++                guid_key(&layer)
++            );
++        }
++    }
+ 
+     #[test]
+     fn filter_keys_are_unique() {
 diff --git a/codex-rs/windows-sandbox-rs/src/wfp/filter_specs.rs b/codex-rs/windows-sandbox-rs/src/wfp/filter_specs.rs
-index d86df4a..8469289 100644
+index d86df4a..27b8b8c 100644
 --- a/codex-rs/windows-sandbox-rs/src/wfp/filter_specs.rs
 +++ b/codex-rs/windows-sandbox-rs/src/wfp/filter_specs.rs
-@@ -23,9 +23,39 @@ pub(super) struct FilterSpec {
+@@ -1,5 +1,9 @@
+ use windows_sys::Win32::NetworkManagement::WindowsFilteringPlatform::FWPM_LAYER_ALE_AUTH_CONNECT_V4;
+ use windows_sys::Win32::NetworkManagement::WindowsFilteringPlatform::FWPM_LAYER_ALE_AUTH_CONNECT_V6;
++use windows_sys::Win32::NetworkManagement::WindowsFilteringPlatform::FWPM_LAYER_ALE_AUTH_LISTEN_V4;
++use windows_sys::Win32::NetworkManagement::WindowsFilteringPlatform::FWPM_LAYER_ALE_AUTH_LISTEN_V6;
++use windows_sys::Win32::NetworkManagement::WindowsFilteringPlatform::FWPM_LAYER_ALE_AUTH_RECV_ACCEPT_V4;
++use windows_sys::Win32::NetworkManagement::WindowsFilteringPlatform::FWPM_LAYER_ALE_AUTH_RECV_ACCEPT_V6;
+ use windows_sys::Win32::NetworkManagement::WindowsFilteringPlatform::FWPM_LAYER_ALE_RESOURCE_ASSIGNMENT_V4;
+ use windows_sys::Win32::NetworkManagement::WindowsFilteringPlatform::FWPM_LAYER_ALE_RESOURCE_ASSIGNMENT_V6;
+ use windows_sys::Win32::Networking::WinSock::IPPROTO_ICMP;
+@@ -22,10 +26,65 @@ pub(super) struct FilterSpec {
+     pub(super) conditions: &'static [ConditionSpec],
  }
  
++/// Persistent filters from earlier Happy setup versions. Setup and uninstall delete them
++/// explicitly because the delete-then-add pass only walks the current `FILTER_SPECS`.
++pub(super) const RETIRED_FILTER_KEYS: &[GUID] = &[
++    // happy_wfp_offline_all_bind_v4/v6: account-wide ALE_RESOURCE_ASSIGNMENT blocks.
++    GUID::from_u128(0x835f145677384719a5435a4bf57c0f03),
++    GUID::from_u128(0x835f145677384719a5435a4bf57c0f04),
++];
++
  pub(super) const FILTER_SPECS: &[FilterSpec] = &[
-+    // Firewall COM rules alone do not prevent local loopback traffic. Enforce
-+    // the offline account boundary at ALE, including implicit and explicit binds.
-     FilterSpec {
--        key: GUID::from_u128(0x9f5f3812_79f0_4fe9_9615_4c2c92d2f0ff),
--        name: "codex_wfp_icmp_connect_v4",
++    // Firewall COM rules alone do not prevent local loopback traffic. Enforce the offline
++    // account boundary at ALE: no outbound connection (loopback included), no listening
++    // socket, no inbound connection or datagram. Never block ALE_RESOURCE_ASSIGNMENT for
++    // every bind: that layer also classifies the implicit port assignment inside connect and
++    // sendto, and an account-wide block there stalled new TCP connections host-wide.
++    FilterSpec {
 +        key: GUID::from_u128(0x835f145677384719a5435a4bf57c0f01),
 +        name: "happy_wfp_offline_all_connect_v4",
 +        description: "Block offline Happy sandbox network connect_v4",
@@ -2343,26 +2475,42 @@ index d86df4a..8469289 100644
 +        conditions: &[ConditionSpec::User],
 +    },
 +    FilterSpec {
-+        key: GUID::from_u128(0x835f145677384719a5435a4bf57c0f03),
-+        name: "happy_wfp_offline_all_bind_v4",
-+        description: "Block offline Happy sandbox network bind_v4",
-+        layer_key: FWPM_LAYER_ALE_RESOURCE_ASSIGNMENT_V4,
++        key: GUID::from_u128(0x835f145677384719a5435a4bf57c0f05),
++        name: "happy_wfp_offline_all_listen_v4",
++        description: "Block offline Happy sandbox network listen_v4",
++        layer_key: FWPM_LAYER_ALE_AUTH_LISTEN_V4,
 +        conditions: &[ConditionSpec::User],
 +    },
 +    FilterSpec {
-+        key: GUID::from_u128(0x835f145677384719a5435a4bf57c0f04),
-+        name: "happy_wfp_offline_all_bind_v6",
-+        description: "Block offline Happy sandbox network bind_v6",
-+        layer_key: FWPM_LAYER_ALE_RESOURCE_ASSIGNMENT_V6,
++        key: GUID::from_u128(0x835f145677384719a5435a4bf57c0f06),
++        name: "happy_wfp_offline_all_listen_v6",
++        description: "Block offline Happy sandbox network listen_v6",
++        layer_key: FWPM_LAYER_ALE_AUTH_LISTEN_V6,
 +        conditions: &[ConditionSpec::User],
 +    },
 +    FilterSpec {
++        key: GUID::from_u128(0x835f145677384719a5435a4bf57c0f07),
++        name: "happy_wfp_offline_all_recv_accept_v4",
++        description: "Block offline Happy sandbox network recv_accept_v4",
++        layer_key: FWPM_LAYER_ALE_AUTH_RECV_ACCEPT_V4,
++        conditions: &[ConditionSpec::User],
++    },
++    FilterSpec {
++        key: GUID::from_u128(0x835f145677384719a5435a4bf57c0f08),
++        name: "happy_wfp_offline_all_recv_accept_v6",
++        description: "Block offline Happy sandbox network recv_accept_v6",
++        layer_key: FWPM_LAYER_ALE_AUTH_RECV_ACCEPT_V6,
++        conditions: &[ConditionSpec::User],
++    },
+     FilterSpec {
+-        key: GUID::from_u128(0x9f5f3812_79f0_4fe9_9615_4c2c92d2f0ff),
+-        name: "codex_wfp_icmp_connect_v4",
 +        key: GUID::from_u128(0x718095af2bc080d7ab91b993c55c7300),
 +        name: "happy_wfp_icmp_connect_v4",
          description: "Block sandbox-account ICMP connect v4",
          layer_key: FWPM_LAYER_ALE_AUTH_CONNECT_V4,
          conditions: &[
-@@ -34,8 +64,8 @@ pub(super) const FILTER_SPECS: &[FilterSpec] = &[
+@@ -34,8 +93,8 @@ pub(super) const FILTER_SPECS: &[FilterSpec] = &[
          ],
      },
      FilterSpec {
@@ -2373,7 +2521,7 @@ index d86df4a..8469289 100644
          description: "Block sandbox-account ICMP connect v6",
          layer_key: FWPM_LAYER_ALE_AUTH_CONNECT_V6,
          conditions: &[
-@@ -44,8 +74,8 @@ pub(super) const FILTER_SPECS: &[FilterSpec] = &[
+@@ -44,8 +103,8 @@ pub(super) const FILTER_SPECS: &[FilterSpec] = &[
          ],
      },
      FilterSpec {
@@ -2384,7 +2532,7 @@ index d86df4a..8469289 100644
          description: "Block sandbox-account ICMP resource assignment v4",
          layer_key: FWPM_LAYER_ALE_RESOURCE_ASSIGNMENT_V4,
          conditions: &[
-@@ -54,8 +84,8 @@ pub(super) const FILTER_SPECS: &[FilterSpec] = &[
+@@ -54,8 +113,8 @@ pub(super) const FILTER_SPECS: &[FilterSpec] = &[
          ],
      },
      FilterSpec {
@@ -2395,7 +2543,7 @@ index d86df4a..8469289 100644
          description: "Block sandbox-account ICMP resource assignment v6",
          layer_key: FWPM_LAYER_ALE_RESOURCE_ASSIGNMENT_V6,
          conditions: &[
-@@ -66,57 +96,57 @@ pub(super) const FILTER_SPECS: &[FilterSpec] = &[
+@@ -66,57 +125,57 @@ pub(super) const FILTER_SPECS: &[FilterSpec] = &[
      // NAME_RESOLUTION_CACHE filters are intentionally omitted because ordinary
      // static filter shapes returned FWP_E_OUT_OF_BOUNDS during validation.
      FilterSpec {
