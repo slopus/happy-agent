@@ -1542,10 +1542,10 @@ index 7532d19..e32e2d6 100644
      }
  }
 diff --git a/codex-rs/windows-sandbox-rs/src/identity.rs b/codex-rs/windows-sandbox-rs/src/identity.rs
-index 6f3a66d..7fd52cc 100644
+index 6f3a66d..ab723fb 100644
 --- a/codex-rs/windows-sandbox-rs/src/identity.rs
 +++ b/codex-rs/windows-sandbox-rs/src/identity.rs
-@@ -73,6 +73,20 @@ pub fn sandbox_setup_is_complete_with_settings(
+@@ -73,6 +73,36 @@ pub fn sandbox_setup_is_complete_with_settings(
          && matches!(load_users(codex_home), Ok(Some(users)) if users.version_matches())
  }
  
@@ -1563,9 +1563,101 @@ index 6f3a66d..7fd52cc 100644
 +        })
 +}
 +
++/// True when this installation's own setup record names Happy's accounts but predates the
++/// current setup version. This installation provisioned those accounts, so automatic setup may
++/// upgrade them; existing accounts with no record here stay with the installation that made them.
++/// A newer record is never downgraded.
++pub(crate) fn happy_sandbox_setup_is_outdated(codex_home: &Path) -> bool {
++    let current = crate::setup::SETUP_VERSION;
++    matches!(load_marker(codex_home), Ok(Some(marker))
++        if marker.version < current
++            && marker.offline_username == OFFLINE_USERNAME
++            && marker.online_username == ONLINE_USERNAME)
++        && matches!(load_users(codex_home), Ok(Some(users))
++            if users.version < current
++                && users.offline.username == OFFLINE_USERNAME
++                && users.online.username == ONLINE_USERNAME)
++}
++
  fn load_marker(codex_home: &Path) -> Result<Option<SetupMarker>> {
      let path = setup_marker_path(codex_home);
      let marker = match fs::read_to_string(&path) {
+@@ -383,16 +413,75 @@ pub(crate) fn refresh_logon_sandbox_creds(
+ #[cfg(test)]
+ mod tests {
+     use super::desired_offline_proxy_settings;
++    use super::happy_sandbox_setup_is_outdated;
+     use super::remove_sandbox_users_file;
+     use crate::WindowsSandboxProxySettingsMode;
++    use crate::setup::OFFLINE_USERNAME;
++    use crate::setup::ONLINE_USERNAME;
+     use crate::setup::SandboxNetworkIdentity;
++    use crate::setup::SandboxUserRecord;
++    use crate::setup::SandboxUsersFile;
+     use crate::setup::SetupMarker;
+     use crate::setup::sandbox_users_path;
++    use crate::setup::setup_marker_path;
+     use pretty_assertions::assert_eq;
+     use std::collections::HashMap;
+     use std::fs;
++    use std::path::Path;
+     use tempfile::TempDir;
+ 
++    fn write_setup_record(codex_home: &Path, version: u32, offline: &str, online: &str) {
++        let marker = SetupMarker {
++            version,
++            offline_username: offline.to_string(),
++            online_username: online.to_string(),
++            created_at: None,
++            proxy_ports: Vec::new(),
++            allow_local_binding: false,
++        };
++        let users = SandboxUsersFile {
++            version,
++            offline: SandboxUserRecord {
++                username: offline.to_string(),
++                password: String::new(),
++            },
++            online: SandboxUserRecord {
++                username: online.to_string(),
++                password: String::new(),
++            },
++        };
++        for (path, contents) in [
++            (setup_marker_path(codex_home), serde_json::to_string(&marker)),
++            (sandbox_users_path(codex_home), serde_json::to_string(&users)),
++        ] {
++            fs::create_dir_all(path.parent().expect("record directory"))
++                .expect("create record directory");
++            fs::write(path, contents.expect("serialize record")).expect("write record");
++        }
++    }
++
++    #[test]
++    fn only_an_older_record_of_happy_accounts_is_outdated() {
++        let current = crate::setup::SETUP_VERSION;
++        let outdated = |version: u32, offline: &str, online: &str| {
++            let codex_home = TempDir::new().expect("tempdir");
++            write_setup_record(codex_home.path(), version, offline, online);
++            happy_sandbox_setup_is_outdated(codex_home.path())
++        };
++        assert!(outdated(current - 1, OFFLINE_USERNAME, ONLINE_USERNAME));
++        assert!(!outdated(current, OFFLINE_USERNAME, ONLINE_USERNAME));
++        // An older build must not downgrade a newer installation.
++        assert!(!outdated(current + 1, OFFLINE_USERNAME, ONLINE_USERNAME));
++        assert!(!outdated(current - 1, "CodexSandboxOffline", "CodexSandboxOnline"));
++
++        // Without this installation's credentials the accounts are not its own to upgrade.
++        let codex_home = TempDir::new().expect("tempdir");
++        assert!(!happy_sandbox_setup_is_outdated(codex_home.path()));
++        write_setup_record(codex_home.path(), current - 1, OFFLINE_USERNAME, ONLINE_USERNAME);
++        fs::remove_file(sandbox_users_path(codex_home.path())).expect("remove users");
++        assert!(!happy_sandbox_setup_is_outdated(codex_home.path()));
++    }
++
+     #[test]
+     fn remove_sandbox_users_file_deletes_existing_file() {
+         let codex_home = TempDir::new().expect("tempdir");
 diff --git a/codex-rs/windows-sandbox-rs/src/lib.rs b/codex-rs/windows-sandbox-rs/src/lib.rs
 index e83a42a..ee49c67 100644
 --- a/codex-rs/windows-sandbox-rs/src/lib.rs
@@ -1700,7 +1792,7 @@ index f2524fa..4365444 100644
  /// Versioned provisioning-service message carried in a length-prefixed JSON frame.
  #[derive(Debug, Serialize, Deserialize, Clone)]
 diff --git a/codex-rs/windows-sandbox-rs/src/setup.rs b/codex-rs/windows-sandbox-rs/src/setup.rs
-index 1e84b6f..a46f248 100644
+index 1e84b6f..1e55468 100644
 --- a/codex-rs/windows-sandbox-rs/src/setup.rs
 +++ b/codex-rs/windows-sandbox-rs/src/setup.rs
 @@ -33,6 +33,8 @@ use crate::setup_error::extract_failure;
@@ -1798,7 +1890,7 @@ index 1e84b6f..a46f248 100644
          let mut code: u32 = 1;
          GetExitCodeProcess(sei.hProcess, &mut code);
          CloseHandle(sei.hProcess);
-@@ -1040,48 +1051,80 @@ fn run_setup_exe_payload(
+@@ -1040,48 +1051,83 @@ fn run_setup_exe_payload(
  }
  
  pub fn run_elevated_setup(request: SandboxSetupRequest<'_>) -> Result<()> {
@@ -1867,7 +1959,10 @@ index 1e84b6f..a46f248 100644
 +        &coordination_home,
 +        intent,
 +        || crate::identity::happy_sandbox_setup_is_ready(request.codex_home, &settings),
-+        || Ok(crate::winutil::local_user_flags(OFFLINE_USERNAME)?.is_none() && crate::winutil::local_user_flags(ONLINE_USERNAME)?.is_none()),
++        // Automatic setup may create the global accounts, or upgrade the ones this installation
++        // already provisioned. Accounts another installation provisioned need explicit setup.
++        || Ok(crate::identity::happy_sandbox_setup_is_outdated(request.codex_home)
++            || (crate::winutil::local_user_flags(OFFLINE_USERNAME)?.is_none() && crate::winutil::local_user_flags(ONLINE_USERNAME)?.is_none())),
 +        || run_setup_exe(&payload, needs_elevation, request.codex_home, &[]),
 +    )
 +}
@@ -1896,7 +1991,7 @@ index 1e84b6f..a46f248 100644
          version: SETUP_VERSION,
          offline_username: OFFLINE_USERNAME.to_string(),
          online_username: ONLINE_USERNAME.to_string(),
-@@ -1093,11 +1136,11 @@ fn elevated_provisioning_payload(
+@@ -1093,11 +1139,11 @@ fn elevated_provisioning_payload(
          deny_write_paths: Vec::new(),
          proxy_ports: offline_proxy_settings.proxy_ports,
          allow_local_binding: offline_proxy_settings.allow_local_binding,
@@ -1910,7 +2005,7 @@ index 1e84b6f..a46f248 100644
  }
  
  pub fn run_elevated_provisioning_setup(
-@@ -1600,7 +1643,7 @@ mod tests {
+@@ -1600,7 +1646,7 @@ mod tests {
  
          let payload = super::elevated_provisioning_payload(
              &request, /*offline_proxy_settings_override*/ None,
@@ -1919,7 +2014,7 @@ index 1e84b6f..a46f248 100644
  
          assert_eq!(payload.command_cwd, codex_home);
          assert_eq!(payload.read_roots, Vec::<PathBuf>::new());
-@@ -1870,7 +1913,7 @@ mod tests {
+@@ -1870,7 +1916,7 @@ mod tests {
          fs::create_dir_all(&bin_dir).expect("create bin dir");
          fs::create_dir_all(&resources_dir).expect("create resources dir");
          let exe = bin_dir.join("codex.exe");
