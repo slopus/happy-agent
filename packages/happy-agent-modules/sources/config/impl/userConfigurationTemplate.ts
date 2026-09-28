@@ -133,9 +133,12 @@ export const HAPPY_TOML_TEMPLATE = `# Happy configuration for Happy Agent.
 # auto_enable = false
 # enabled = true
 # Set hidden = true to prevent direct selection while allowing use through a smart provider.
-# The account must remain enabled for routing and quota polling. Restart after changing hidden.
+# The account must remain enabled for routing and quota polling. Reload or restart after changing hidden.
 # hidden = false
+# The account and endpoint are set here explicitly; nothing is read from ~/.codex/config.toml.
+# Apply an edit with the reload_configuration tool or POST /v0/config/reload; no restart is needed.
 # auth_file = "/absolute/path/to/auth.json"
+# api_key = "sk-..."
 # base_url = "https://api.openai.com/v1"
 # transport = "auto"
 # include_models = ["openai/gpt-5.6-sol"]

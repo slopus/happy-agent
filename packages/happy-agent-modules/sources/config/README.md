@@ -107,6 +107,18 @@ while `offeredModels` is the stable complete set the agent systems can accept af
 Happy Agent never asks a vendor which models exist — the list is source, and a configured provider
 entry decides which of them its own key serves.
 
+`reload(ctx)` re-reads the user and project `happy.toml` and the generated `runtime.toml` and
+applies them without a restart. It is atomic: every file is parsed and validated first, and an
+invalid file leaves the running configuration untouched and returns the errors. `providers`,
+`defaults`, and `settings` take effect at once — the source registry is rebuilt and the registry
+handed to the agent system resolves through it, so a changed `base_url`, `api_key`, or `auth_file`
+reaches the next request, and providers added or removed in the file are registered or dropped.
+Every other changed section is reported in `requiresRestart`, because the module that consumed it
+was built at startup. `onReloaded` tells the API module to publish `config.updated` and the
+provider scan to re-probe accounts. The API exposes this as `POST /v0/config/reload` and every
+model gets it as the common `reload_configuration` tool. Codex endpoints and credentials are
+written explicitly here; nothing is imported from the Codex CLI's own `config.toml`.
+
 After startup, configuration renews enabled Codex and Grok session logins in the background,
 then repeats three hours after each completed pass. Hidden enabled accounts are included;
 disabled accounts, static API keys, smart routing aliases, Bedrock, and Claude are skipped.

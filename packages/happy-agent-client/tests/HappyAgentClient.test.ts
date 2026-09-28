@@ -119,6 +119,44 @@ describe("HappyAgentClient", () => {
         expect(request?.method).toBe("GET");
     });
 
+    it("reloads the configuration files through their dedicated route", async () => {
+        const reloaded = {
+            config: { defaults: { providerId: "codex" } },
+            changed: ["providers"],
+            requiresRestart: [],
+            warnings: [],
+        };
+        const { fetch, requests } = stubFetch(() => json(reloaded));
+        const client = new HappyAgentClient({ endpoint: "http://agent.local", token: "t", fetch });
+
+        const response = await client.reloadConfig();
+
+        expect(response).toEqual(reloaded);
+        expect(requests.map((request) => `${request.method} ${request.url}`)).toEqual([
+            "POST http://agent.local/v0/config/reload",
+        ]);
+    });
+
+    it("surfaces a refused reload with the daemon's errors and leaves the client unchanged", async () => {
+        const { fetch } = stubFetch(() =>
+            json(
+                {
+                    error: "The configuration could not be reloaded.",
+                    code: "invalid_request",
+                    errors: ["Could not read Happy Agent configuration 'happy.toml'. Bad TOML."],
+                },
+                400,
+            ),
+        );
+        const client = new HappyAgentClient({ endpoint: "http://agent.local", token: "t", fetch });
+
+        await expect(client.reloadConfig()).rejects.toMatchObject({
+            status: 400,
+            code: "invalid_request",
+            body: { errors: ["Could not read Happy Agent configuration 'happy.toml'. Bad TOML."] },
+        });
+    });
+
     it("enters daemon draining through its dedicated lifecycle route", async () => {
         const response = { draining: true as const, pid: 12345 };
         const { fetch, requests } = stubFetch(() => json(response, 202));

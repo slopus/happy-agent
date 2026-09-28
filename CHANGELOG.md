@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Added `POST /v0/config/reload` and the common `reload_configuration` tool: `happy.toml` is
+  re-read and applied without a daemon restart. The reload is atomic — an invalid file keeps the
+  previous configuration and returns the errors — emits `config.updated`, and lists the changed
+  sections that still need a restart. Codex `base_url`, `api_key`, and `auth_file` are set
+  explicitly in `happy.toml`; nothing is imported from `~/.codex`.
 - Added required local-plugin author/category metadata and an authenticated, generation-bound PNG
   icon capability for local and remote `rig-connect` catalog clients. This is a hard protocol 5
   cut: older Happy clients are incompatible, legacy manifests without `author`, `category`, or a

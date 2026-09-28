@@ -53,6 +53,7 @@ import type {
 } from "./protocol/cloud.js";
 import type {
     ConfigPatch,
+    ConfigReloadResponse,
     ConfigResponse,
     DrainResponse,
     GreetingResponse,
@@ -320,6 +321,20 @@ export class HappyAgentClient {
             method: "PATCH",
             path: "v0/config",
             json: patch,
+            signal: options.signal,
+        });
+    }
+
+    /**
+     * `POST /v0/config/reload` — re-reads the configuration files and applies them.
+     *
+     * An invalid file leaves the previous configuration in effect; the daemon
+     * answers `400` and the error body carries an `errors` array.
+     */
+    async reloadConfig(options: RequestOptions = {}): Promise<ConfigReloadResponse> {
+        return await this.#json({
+            method: "POST",
+            path: "v0/config/reload",
             signal: options.signal,
         });
     }

@@ -801,6 +801,26 @@ export class ApiModule implements AgentModule {
                 sendJson(response, 200, { config: await this.#sanitizedConfig(ctx) });
                 return;
             }
+            if (request.method === "POST" && url.pathname === "/v0/config/reload") {
+                // `config.updated` is published by the reload subscription below, so the tool
+                // path and this route announce a reload the same way exactly once.
+                const result = await this.#config.reload(ctx);
+                if (result.status === "invalid") {
+                    throw new ApiError(
+                        400,
+                        "invalid_request",
+                        "The configuration could not be reloaded. The previous configuration is still in effect.",
+                        { errors: result.errors },
+                    );
+                }
+                sendJson(response, 200, {
+                    config: await this.#sanitizedConfig(ctx),
+                    changed: result.changed,
+                    requiresRestart: result.requiresRestart,
+                    warnings: result.warnings,
+                });
+                return;
+            }
             if (request.method === "POST" && url.pathname === "/v0/providers/scan") {
                 const result = await this.#providerScan.scan(ctx);
                 this.#journal.append("config.updated", {});
@@ -1556,6 +1576,9 @@ export class ApiModule implements AgentModule {
                 }),
             );
         this.#unsubscribe.push(
+            this.#config.onReloaded(() => {
+                this.#journal.append("config.updated", {});
+            }),
             this.#node.onUpdated(() => {
                 this.#journal.append("config.updated", {});
             }),

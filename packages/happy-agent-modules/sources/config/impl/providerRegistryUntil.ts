@@ -42,26 +42,69 @@ export class ProviderEnablement {
         if (controller === undefined) throw new Error(`Provider "${id}" is not configured.`);
         return controller.signal;
     }
+
+    /** A provider the configuration gained after startup gets its own gate, in the given state. */
+    ensure(id: string, enabled: boolean): void {
+        if (this.#controllers.has(id)) return;
+        const controller = new AbortController();
+        if (!enabled) controller.abort(disabledError(id));
+        this.#controllers.set(id, controller);
+    }
+
+    /** A provider the configuration lost: cancel its work and drop its gate. */
+    forget(id: string): void {
+        const controller = this.#controllers.get(id);
+        if (controller === undefined) return;
+        if (!controller.signal.aborted) controller.abort(disabledError(id));
+        this.#controllers.delete(id);
+    }
 }
 
-/** Wrap every provider session so daemon shutdown cancels provider work from any agent lifetime. */
+/**
+ * Wrap every provider session so daemon shutdown cancels provider work from any agent lifetime.
+ *
+ * The registry resolves against whatever `source()` answers at the time of the call, so a
+ * configuration reload that rebuilds the source registry reaches every later session without
+ * anyone re-fetching the registry the agent system was handed at startup.
+ */
 export function providerRegistryUntil(
-    source: AgentProviders,
+    source: () => AgentProviders,
     shutdown: AbortSignal,
-    enablement = new ProviderEnablement(source.ids, () => true),
+    enablement = new ProviderEnablement(source().ids, () => true),
     isSelectable: (id: string) => boolean = () => true,
 ): AgentProviders {
     const providers = new AgentProviders();
+    reconcileProviderRegistry(providers, source, shutdown, enablement, isSelectable);
+    return providers;
+}
+
+/**
+ * Bring a wrapped registry's entries in line with its source: register every provider the source
+ * now has and drop every one it lost. Existing entries already resolve through `source()`, so a
+ * provider whose settings changed needs nothing here.
+ */
+export function reconcileProviderRegistry(
+    providers: AgentProviders,
+    source: () => AgentProviders,
+    shutdown: AbortSignal,
+    enablement: ProviderEnablement,
+    isSelectable: (id: string) => boolean,
+): void {
     const wrappedProviders = new WeakSet<BaseProvider>();
     const wrappedSessions = new WeakSet<BaseSession>();
-    for (const id of source.ids) {
-        const type = source.typeOf(id);
+    const current = source();
+    for (const id of providers.ids) {
+        if (!current.ids.includes(id)) providers.remove(id);
+    }
+    for (const id of current.ids) {
+        if (providers.ids.includes(id)) continue;
+        const type = current.typeOf(id);
         if (type === null) throw new Error(`Provider "${id}" has no compatibility type.`);
         providers.add(
             id,
             async ({ model }) => {
                 if (!enablement.isEnabled(id) || !isSelectable(id)) throw disabledError(id);
-                const provider = await source.resolve(id, model);
+                const provider = await source().resolve(id, model);
                 if (provider === null) throw new Error(`Provider "${id}" disappeared.`);
                 return providerUntil(
                     provider,
@@ -74,7 +117,6 @@ export function providerRegistryUntil(
             type,
         );
     }
-    return providers;
 }
 
 function providerUntil(

@@ -1,5 +1,16 @@
 # Config module learnings
 
+## happy.toml reloads online; Codex settings are never imported
+
+An attempt to make a custom Codex provider work read `model_provider` from `~/.codex/config.toml`
+and silently adopted its endpoint and bearer token. That is configuration inferred from another
+tool's files, with its own trust decisions about disclosing OpenAI credentials to a host. The
+module does not do this. Codex `base_url`, `api_key`, and `auth_file` are set explicitly in
+`happy.toml`, and an agent applies an edit with `reload_configuration` (`POST /v0/config/reload`)
+following the online-reload pattern `mcp.toml` already had. A reload is atomic — bad files keep
+the previous configuration and return the errors — publishes `config.updated`, and reports the
+changed sections a running daemon cannot apply, so nobody is left wondering whether an edit took.
+
 ## Idle credential maintenance excludes Claude
 
 Refreshing only when inference needs a credential leaves idle Codex and Grok accounts unattended.
