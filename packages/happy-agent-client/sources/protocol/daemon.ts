@@ -310,6 +310,23 @@ export const configPatchSchema = Type.Partial(
 );
 export type ConfigPatch = Static<typeof configPatchSchema>;
 
+/**
+ * `POST /v0/config/reload` — the configuration files re-read and applied.
+ *
+ * An invalid file never reaches this shape: the daemon keeps its previous
+ * configuration and answers `400` with an `errors` array on the error body.
+ */
+export const configReloadResponseSchema = Type.Object({
+    config: daemonConfigSchema,
+    /** Top-level configuration sections whose values differ from before the reload. */
+    changed: Type.Array(Type.String()),
+    /** Changed sections the running daemon applies only after it restarts. */
+    requiresRestart: Type.Array(Type.String()),
+    /** Settings the files name that the daemon does not know and ignored. */
+    warnings: Type.Array(Type.String()),
+});
+export type ConfigReloadResponse = Static<typeof configReloadResponseSchema>;
+
 /** What local credential discovery found during this scan. */
 export const providerCredentialStatusSchema = Type.Union([
     Type.Literal("available"),

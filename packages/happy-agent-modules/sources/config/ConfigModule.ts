@@ -15,6 +15,7 @@ import type {
     AgentModule,
     AgentModuleHooks,
     AgentProviders,
+    AnyAgentTool,
 } from "@slopus/happy-agent-base";
 import { cuid2Schema } from "@slopus/happy-agent-base";
 import {
@@ -51,7 +52,16 @@ import {
 } from "./impl/agentCatalog.js";
 import { loadConfiguredProviderUsage } from "./impl/loadConfiguredProviderUsage.js";
 import { discoverGithubCliToken, githubTokenSchema } from "./impl/discoverGithubCliToken.js";
-import { ProviderEnablement, providerRegistryUntil } from "./impl/providerRegistryUntil.js";
+import {
+    diffConfigurationSections,
+    LIVE_CONFIGURATION_SECTIONS,
+} from "./impl/diffConfigurationSections.js";
+import {
+    ProviderEnablement,
+    providerRegistryUntil,
+    reconcileProviderRegistry,
+} from "./impl/providerRegistryUntil.js";
+import { createReloadConfigurationTool } from "./tools/reload_configuration.js";
 import { readGlobalInstructions } from "./impl/readGlobalInstructions.js";
 import { HAPPY_TOML_TEMPLATE, MCP_TOML_TEMPLATE } from "./impl/userConfigurationTemplate.js";
 import { readSecurityDocument } from "./impl/readSecurityDocument.js";
@@ -1281,6 +1291,25 @@ export interface ConfigModuleLoadOptions {
     readonly environment?: Readonly<NodeJS.ProcessEnv>;
 }
 
+/** What `reload` answers: the files applied, or the files refused with the old values still in force. */
+export type ConfigReloadResult =
+    | {
+          readonly status: "reloaded";
+          /** Top-level sections whose values differ from before, sorted. */
+          readonly changed: readonly string[];
+          /** Changed sections the running daemon applies only after a restart. */
+          readonly requiresRestart: readonly string[];
+          /** Settings the files name that the daemon does not know and ignored. */
+          readonly warnings: readonly string[];
+      }
+    | { readonly status: "invalid"; readonly errors: readonly string[] };
+
+export type ConfigReloadedResult = Extract<ConfigReloadResult, { status: "reloaded" }>;
+export type ConfigReloadListener = (
+    ctx: Context,
+    result: ConfigReloadedResult,
+) => void | Promise<void>;
+
 /** Daemon-owned provider fields persisted together in generated runtime.toml. */
 export interface RuntimeProviderStateUpdate {
     readonly autoEnable?: boolean;
@@ -1293,8 +1322,18 @@ export interface RuntimeProviderStateUpdate {
  */
 export class ConfigModule implements AgentModule {
     readonly name = "config";
-    readonly configuration: HappyAgentConfiguration;
 
+    /**
+     * The resolved configuration in force right now. It is replaced whole by `reload`, never
+     * edited, so a reader that holds one snapshot sees one consistent set of values and a reader
+     * that comes back through this getter sees the current one.
+     */
+    get configuration(): HappyAgentConfiguration {
+        return this.#configuration;
+    }
+
+    #configuration: HappyAgentConfiguration;
+    readonly #reloadListeners = new Set<ConfigReloadListener>();
     readonly #scripted: ConfigInferenceOverride | ConfigInferenceFactory | undefined;
     readonly #environment: Readonly<NodeJS.ProcessEnv>;
     readonly #providerLifetime = new AbortController();
@@ -1489,7 +1528,7 @@ export class ConfigModule implements AgentModule {
         scripted: ConfigInferenceOverride | ConfigInferenceFactory | undefined,
         environment: Readonly<NodeJS.ProcessEnv>,
     ) {
-        this.configuration = configuration;
+        this.#configuration = configuration;
         this.#mcpServers = configuration.values.mcpServers;
         this.#runtimeValues = structuredClone(runtimeValues);
         this.#scripted = scripted;
@@ -1505,6 +1544,8 @@ export class ConfigModule implements AgentModule {
         /** Apply configured root instructions through the normal pre-inference hook. */
         instructions: async (): Promise<string> =>
             this.configuration.values.defaults.instructions ?? "",
+        /** Every model can apply an edited happy.toml without a daemon restart. */
+        tools: (): readonly AnyAgentTool[] => [createReloadConfigurationTool(this)],
         afterStart: async (ctx): Promise<void> => {
             if (this.#credentialRefreshStarted) return;
             this.#credentialRefreshStarted = true;
@@ -1637,7 +1678,7 @@ export class ConfigModule implements AgentModule {
             this.#isAccountEnabled(id),
         );
         this.#providers = providerRegistryUntil(
-            source,
+            () => this.#providerSource(),
             this.#providerLifetime.signal,
             this.#providerEnablement,
             (id) => this.isProviderEnabled(id),
@@ -1647,6 +1688,100 @@ export class ConfigModule implements AgentModule {
 
     get providerIds(): readonly string[] {
         return this.#providerSource().ids;
+    }
+
+    /** Watch successful reloads. Returns the function that stops the subscription. */
+    onReloaded(listener: ConfigReloadListener): () => void {
+        this.#reloadListeners.add(listener);
+        return () => {
+            this.#reloadListeners.delete(listener);
+        };
+    }
+
+    /**
+     * Re-read the configuration files and apply them to the running daemon.
+     *
+     * The reload is atomic: every file is read and validated before anything changes, and a file
+     * that cannot be parsed or fails validation leaves the current configuration in force and
+     * comes back as `invalid` with the errors. On success the resolved configuration is replaced
+     * whole, the provider source registry is rebuilt so the next request resolves through the new
+     * values, and the registry the agent system holds gains and loses provider entries to match.
+     * Sections that modules consumed at startup cannot be applied here and are reported in
+     * `requiresRestart`. Listeners are told after the values are in force and before the caller
+     * hears back, so the API's `config.updated` and the provider re-scan both precede the answer.
+     */
+    async reload(ctx: Context): Promise<ConfigReloadResult> {
+        return await this.#runtimeLock.runInLock(ctx, async (): Promise<ConfigReloadResult> => {
+            const previous = this.#configuration;
+            let read: ReadConfiguration;
+            try {
+                read = await readHappyAgentConfiguration(previous.paths, previous.version);
+            } catch (error) {
+                return {
+                    status: "invalid",
+                    errors: [error instanceof Error ? error.message : String(error)],
+                };
+            }
+            const next = read.configuration;
+            const changed = diffConfigurationSections(previous.values, next.values);
+            const requiresRestart = changed.filter(
+                (section) => !LIVE_CONFIGURATION_SECTIONS.has(section),
+            );
+            this.#configuration = next;
+            this.#runtimeValues = structuredClone(read.runtimeValues);
+            this.#mcpServers = next.values.mcpServers;
+            this.#catalogNotices.length = 0;
+            // A scripted (test-owned) registry is authoritative for its accounts; only real
+            // configured providers are rebuilt from the file.
+            if (this.#scripted === undefined) this.#rebuildProviders();
+            const result: ConfigReloadedResult = {
+                status: "reloaded",
+                changed,
+                requiresRestart,
+                warnings: unknownSettingWarnings(next),
+            };
+            for (const listener of [...this.#reloadListeners]) {
+                try {
+                    await listener(ctx, result);
+                } catch (error) {
+                    ctx.log.warn(
+                        `A configuration reload observer failed: ${error instanceof Error ? error.message : String(error)}`,
+                    );
+                }
+            }
+            return result;
+        });
+    }
+
+    /**
+     * Drop the built source registry so the next resolution constructs providers from the current
+     * values, and bring the gates and the registry the agent system holds in line with the
+     * provider IDs the file now names. A gained provider starts behind a closed gate unless the
+     * file enables it explicitly; the provider scan opens it once it finds credentials.
+     */
+    #rebuildProviders(): void {
+        this.#sourceProviders = undefined;
+        const ids = new Set(Object.keys(this.#configuration.values.providers));
+        for (const id of [...this.#providerEnabled.keys()]) {
+            if (ids.has(id)) continue;
+            this.#providerEnabled.delete(id);
+            this.#providerEnablement?.forget(id);
+        }
+        for (const id of ids) {
+            if (this.#providerEnabled.has(id)) continue;
+            const enabled = this.configuredProviderOverride(id) ?? false;
+            this.#providerEnabled.set(id, enabled);
+            this.#providerEnablement?.ensure(id, enabled);
+        }
+        if (this.#providers !== undefined && this.#providerEnablement !== undefined) {
+            reconcileProviderRegistry(
+                this.#providers,
+                () => this.#providerSource(),
+                this.#providerLifetime.signal,
+                this.#providerEnablement,
+                (id) => this.isProviderEnabled(id),
+            );
+        }
     }
 
     /** The current daemon-owned Tailcat setting, including live runtime mutations. */
@@ -2367,48 +2502,82 @@ export class ConfigModule implements AgentModule {
         input?: HappyAgentConfigurationInput,
         options: ConfigModuleLoadOptions = {},
     ): Promise<ConfigModule> {
-        const paths = derivePaths(input);
-        const [global, local, runtime, mcp] = await Promise.all([
-            readConfigSource(paths.globalConfigPath, "global"),
-            readConfigSource(paths.localConfigPath, "local"),
-            readConfigSource(paths.runtimeConfigPath, "runtime"),
-            readConfigSource(paths.mcpConfigPath, "global"),
-        ]);
-        const localValues = withoutProjectMachineSettings(local.values);
-        const globalValues = withoutMcpServers(global.values);
-        const runtimeValues = withoutMcpServers(runtime.values);
-        const values = mergeValues(
-            globalValues,
-            withoutMcpServers(localValues),
-            runtimeValues,
-            mcp.values.mcp_servers === undefined ? {} : { mcp_servers: mcp.values.mcp_servers },
+        // A build that was never stamped is a development build, and says so rather than
+        // reporting an empty version that reads as a bug wherever it is displayed.
+        const read = await readHappyAgentConfiguration(
+            derivePaths(input),
+            options.version ?? "development",
         );
-        const configuration = {
-            paths,
-            provenance: {
-                ...calculateProvenance(globalValues, withoutMcpServers(localValues), runtimeValues),
-                ...(mcp.values.mcp_servers === undefined ? {} : { mcpServers: "global" }),
-            },
-            sources: {
-                global: sourceSnapshot(global),
-                local: sourceSnapshot(local),
-                runtime: sourceSnapshot(runtime),
-            },
-            values,
-            // A build that was never stamped is a development build, and says so rather than
-            // reporting an empty version that reads as a bug wherever it is displayed.
-            version: options.version ?? "development",
-        };
-        if (!Value.Check(happyAgentConfigurationSchema, configuration)) {
-            throw new Error("The Happy Agent configuration is invalid.");
-        }
         return new ConfigModule(
-            deepFreeze(configuration),
-            runtimeValues,
+            read.configuration,
+            read.runtimeValues,
             options.inference,
             Object.freeze({ ...options.environment }),
         );
     }
+}
+
+interface ReadConfiguration {
+    readonly configuration: HappyAgentConfiguration;
+    readonly runtimeValues: PartialValues;
+}
+
+/**
+ * Read and resolve every configuration file into one frozen configuration, or throw with the
+ * first file that cannot be applied. Startup and `reload` share this so the two never disagree
+ * about what the files mean.
+ */
+async function readHappyAgentConfiguration(
+    paths: HappyAgentConfigurationPaths,
+    version: string,
+): Promise<ReadConfiguration> {
+    const [global, local, runtime, mcp] = await Promise.all([
+        readConfigSource(paths.globalConfigPath, "global"),
+        readConfigSource(paths.localConfigPath, "local"),
+        readConfigSource(paths.runtimeConfigPath, "runtime"),
+        readConfigSource(paths.mcpConfigPath, "global"),
+    ]);
+    const localValues = withoutProjectMachineSettings(local.values);
+    const globalValues = withoutMcpServers(global.values);
+    const runtimeValues = withoutMcpServers(runtime.values);
+    const values = mergeValues(
+        globalValues,
+        withoutMcpServers(localValues),
+        runtimeValues,
+        mcp.values.mcp_servers === undefined ? {} : { mcp_servers: mcp.values.mcp_servers },
+    );
+    const configuration = {
+        paths,
+        provenance: {
+            ...calculateProvenance(globalValues, withoutMcpServers(localValues), runtimeValues),
+            ...(mcp.values.mcp_servers === undefined ? {} : { mcpServers: "global" }),
+        },
+        sources: {
+            global: sourceSnapshot(global),
+            local: sourceSnapshot(local),
+            runtime: sourceSnapshot(runtime),
+        },
+        values,
+        version,
+    };
+    if (!Value.Check(happyAgentConfigurationSchema, configuration)) {
+        throw new Error("The Happy Agent configuration is invalid.");
+    }
+    return { configuration: deepFreeze(configuration), runtimeValues };
+}
+
+/** The settings a file names that the daemon does not know, as one warning per setting. */
+function unknownSettingWarnings(configuration: HappyAgentConfiguration): string[] {
+    const warnings: string[] = [];
+    for (const source of [configuration.sources.global, configuration.sources.local]) {
+        for (const setting of source.unknownSettings) {
+            warnings.push(`Unknown setting "${setting}" in ${source.path}.`);
+        }
+        if (source.unknownSettingsTruncated) {
+            warnings.push(`Further unknown settings in ${source.path} were not listed.`);
+        }
+    }
+    return warnings;
 }
 
 /** Creates one user configuration file exclusively, leaving an existing file untouched. */

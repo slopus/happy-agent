@@ -23,7 +23,7 @@ describe("providerRegistryUntil", () => {
         const originalProvider = new BlockingProvider(session);
         source.add("test", originalProvider, "codex");
         const shutdown = new AbortController();
-        const providers = providerRegistryUntil(source, shutdown.signal);
+        const providers = providerRegistryUntil(() => source, shutdown.signal);
         const provider = await providers.resolve("test", "test/model");
         if (provider === null) throw new Error("The wrapped provider was not found.");
         const wrappedSession = await provider.session("agent-1", {
@@ -61,7 +61,7 @@ describe("providerRegistryUntil", () => {
         source.add("test", new BlockingProvider(session), "codex");
         const shutdown = new AbortController();
         const enablement = new ProviderEnablement(source.ids, () => true);
-        const providers = providerRegistryUntil(source, shutdown.signal, enablement);
+        const providers = providerRegistryUntil(() => source, shutdown.signal, enablement);
         const provider = await providers.resolve("test", "test/model");
         if (provider === null) throw new Error("The wrapped provider was not found.");
         const cached = await provider.session("agent-1", { instructions: "", tools: [] });

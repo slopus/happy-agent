@@ -855,7 +855,58 @@ configuration shape as `GET /v0/config`, after the change has taken effect, and 
 
 A daemon that does not support runtime reconfiguration answers `409` with
 `{ "error": "This daemon cannot change its settings at runtime." }`. Settings outside the
-daemon's mutable subset are changed by editing the configuration files and restarting the daemon.
+daemon's mutable subset are changed by editing the configuration files and then either reloading
+them through `POST /v0/config/reload` or restarting the daemon.
+
+### `POST /v0/config/reload`
+
+Re-reads the configuration files — the user `happy.toml`, the project `happy.toml`, and the
+generated `runtime.toml` — and applies them to the running daemon. The body is empty. This is the
+route behind the `reload_configuration` tool, so an agent that edits `happy.toml` (a Codex
+`base_url`, an `api_key`, an `auth_file`) applies the edit the same way a client does; the daemon
+never reads another tool's configuration files to fill those settings in.
+
+The reload is atomic. Every file is read and validated first; if any of them cannot be parsed or
+fails validation, nothing changes, the previous configuration stays in effect, and the route
+answers `400 invalid_request` with an `errors` array naming what was wrong:
+
+```json
+{
+    "error": "The configuration could not be reloaded. The previous configuration is still in effect.",
+    "code": "invalid_request",
+    "errors": [
+        "Could not read Happy Agent configuration '/Users/ada/Happy/Config/happy.toml'. Unexpected character at line 12, column 3."
+    ]
+}
+```
+
+Response — `200`:
+
+```json
+{
+    "config": { "...": "the same sanitized shape as GET /v0/config" },
+    "changed": ["features", "providers"],
+    "requiresRestart": ["features"],
+    "warnings": [
+        "Unknown setting \"providers.codex.base_ur\" in /Users/ada/Happy/Config/happy.toml."
+    ]
+}
+```
+
+- `config` — the effective configuration after the reload, in the `GET /v0/config` shape.
+- `changed` — the top-level sections whose values differ from before the reload, sorted.
+- `requiresRestart` — the changed sections the running daemon cannot apply. `providers`,
+  `defaults`, and `settings` take effect at once: provider entries are rebuilt from the new values,
+  so a changed `base_url`, `api_key`, or `auth_file` reaches the next inference request, and a
+  provider added to the file becomes available once the credential scan the reload runs has
+  finished. Every other changed section — `features`, `feature`, `network`, `api`, `p2p`, `node`,
+  `presence`, `permissions`, and the rest — was consumed when the daemon started and is listed
+  here; the daemon keeps running on the old value until it restarts.
+- `warnings` — settings the files name that the daemon does not know. They are ignored, as they
+  are at startup.
+
+A successful reload emits `config.updated`, whether or not anything changed. `mcp.toml` is not
+part of this route; MCP servers reload through their own tools.
 
 ### `POST /v0/providers/scan`
 
@@ -5085,7 +5136,7 @@ version rules. Snapshot-to-stream cursor and version-gap recovery rules remain u
 - `config.updated` — payload `{}`, deliberately empty. Something about the daemon's
   configuration changed — the effective config, the instructions document, or the security
   policy. This includes changes to `config.node.name` or the node avatar through config mutations
-  or admin tools. It is a nudge to refetch the config endpoints whenever convenient; clients
+  or admin tools, and every successful `POST /v0/config/reload`. It is a nudge to refetch the config endpoints whenever convenient; clients
   displaying the node avatar also conditionally refetch its image bytes.
 - `connections.updated` — payload `{ "connections": [...], "version": "<UUIDv7>" }`, a
   complete replacement of the public remote roster, in the same shape as `GET /v0/connections`

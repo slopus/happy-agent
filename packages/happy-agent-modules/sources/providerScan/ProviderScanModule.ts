@@ -29,6 +29,22 @@ export class ProviderScanModule implements AgentModule {
 
     constructor(config: ConfigModule) {
         this.#config = config;
+        config.onReloaded(async (ctx) => {
+            await this.#afterReload(ctx);
+        });
+    }
+
+    /**
+     * A reloaded `happy.toml` may have gained accounts, lost some, or changed an explicit
+     * `enabled`. Re-apply every gate from the new values, then probe credentials so a newly named
+     * account with a login on this machine is usable without anyone restarting the daemon.
+     */
+    async #afterReload(ctx: Context): Promise<void> {
+        await this.#load(ctx);
+        await this.#lock.runInLock(ctx, async () => {
+            for (const providerId of this.#config.providerIds) this.#applyEffective(providerId);
+        });
+        await this.scan(ctx);
     }
 
     /** Load durable discoveries, keep automatic providers off, then complete the startup scan. */
