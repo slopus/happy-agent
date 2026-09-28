@@ -451,6 +451,9 @@ export * from "./abort/index.js";
 export * from "./collaboration/index.js";
 export * from "./subtasks/index.js";
 
+// Slices: gitignore-style masks agents lay over a workspace's files, carried in the transcript.
+export * from "./slices/index.js";
+
 // Workflows: host-managed durable workflow runs, scoped to the calling agent.
 export * from "./workflows/index.js";
 

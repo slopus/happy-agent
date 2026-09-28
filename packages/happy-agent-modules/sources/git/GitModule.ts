@@ -393,6 +393,22 @@ export class GitModule implements AgentModule {
         });
     }
 
+    /**
+     * Every changed path the working tree has, freshly scanned and without the snapshot's file
+     * cap. A mask laid over the changes must see all of them, not the bounded list clients page.
+     */
+    async changedPaths(options: {
+        readonly path: string;
+        readonly signal?: AbortSignal;
+    }): Promise<{ readonly paths: readonly string[]; readonly truncated: boolean }> {
+        const state = await scanGitRepository({
+            path: options.path,
+            runGit: this.#scan,
+            ...(options.signal === undefined ? {} : { signal: options.signal }),
+        });
+        return { paths: state.files.map((file) => file.path), truncated: state.filesTruncated };
+    }
+
     /** How many lines an untracked file adds, and whether it is binary or could not be counted. */
     async countUntrackedFileLines(path: string, maximumBytes: number): Promise<UntrackedFileCount> {
         return await countUntrackedFileLines(path, maximumBytes);

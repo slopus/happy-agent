@@ -264,8 +264,7 @@ const historyFileDiffSchema = Type.Object(
     { additionalProperties: false },
 );
 
-/** A bounded result-derived presentation retained with durable tool history. */
-export const historyToolPresentationSchema = Type.Object(
+const historyFileDiffPresentationSchema = Type.Object(
     {
         type: Type.Literal("file_diff"),
         files: Type.Array(historyFileDiffSchema, { maxItems: MAX_HISTORY_FILE_DIFF_FILES }),
@@ -273,6 +272,49 @@ export const historyToolPresentationSchema = Type.Object(
     },
     { additionalProperties: false },
 );
+
+const historySliceLineNumberSchema = Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER });
+const historySliceRuleSchema = Type.String({ minLength: 1, maxLength: 256 });
+const historySlicePinnedPathSchema = Type.Object(
+    {
+        path: Type.String({ minLength: 1, maxLength: 1_024 }),
+        reason: Type.Optional(Type.String({ maxLength: 500 })),
+        lines: Type.Array(
+            Type.Object(
+                { start: historySliceLineNumberSchema, end: historySliceLineNumberSchema },
+                { additionalProperties: false },
+            ),
+            { maxItems: 32 },
+        ),
+    },
+    { additionalProperties: false },
+);
+
+/**
+ * A slice the `create_slice` tool made: a gitignore-style mask over a workspace's files, carried
+ * whole. The tool call in the transcript is the slice; nothing else stores it.
+ */
+const historySlicePresentationSchema = Type.Object(
+    {
+        type: Type.Literal("slice"),
+        workspaceId: cuid2Schema,
+        root: Type.String({ minLength: 1, maxLength: 4_096 }),
+        title: Type.String({ minLength: 1, maxLength: 200 }),
+        note: Type.Optional(Type.String({ maxLength: 2_000 })),
+        source: Type.Union([Type.Literal("changes"), Type.Literal("all")]),
+        include: Type.Array(historySliceRuleSchema, { maxItems: 64 }),
+        exclude: Type.Array(historySliceRuleSchema, { maxItems: 64 }),
+        paths: Type.Array(historySlicePinnedPathSchema, { maxItems: 200 }),
+        fileCount: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
+    },
+    { additionalProperties: false },
+);
+
+/** A bounded result-derived presentation retained with durable tool history. */
+export const historyToolPresentationSchema = Type.Union([
+    historyFileDiffPresentationSchema,
+    historySlicePresentationSchema,
+]);
 
 export type HistoryToolPresentation = Static<typeof historyToolPresentationSchema>;
 

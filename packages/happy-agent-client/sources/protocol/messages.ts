@@ -157,6 +157,44 @@ export const agentSpawnPresentationSchema = Type.Object({
 /** Sub-agent creation; the enclosing tool status owns its lifecycle. */
 export type AgentSpawnPresentation = Static<typeof agentSpawnPresentationSchema>;
 
+/** One path a slice pins by name, with why it is there and which lines matter. */
+export const slicePinnedPathSchema = Type.Object({
+    /** Workspace-relative, forward-slash separated. */
+    path: Type.String({ minLength: 1 }),
+    reason: Type.Optional(Type.String()),
+    /** One-based inclusive ranges; empty when the whole file is meant. */
+    lines: Type.Array(
+        Type.Object({
+            start: Type.Integer({ minimum: 1 }),
+            end: Type.Integer({ minimum: 1 }),
+        }),
+    ),
+});
+export type SlicePinnedPath = Static<typeof slicePinnedPathSchema>;
+
+/**
+ * A slice the `create_slice` tool made: a gitignore-style mask over a workspace's files, carried
+ * whole so the transcript card is the slice. Nothing is stored elsewhere; a client evaluates the
+ * mask through `POST /v0/workspaces/:workspaceId/files/match` whenever it shows it.
+ * Outcome-derived, so absent while the call runs.
+ */
+export const slicePresentationSchema = Type.Object({
+    type: Type.Literal("slice"),
+    /** The workspace the mask was evaluated against. */
+    workspaceId: cuid2Schema,
+    /** The folder that workspace resolved to when the slice was made. */
+    root: Type.String({ minLength: 1 }),
+    title: Type.String({ minLength: 1 }),
+    note: Type.Optional(Type.String()),
+    source: Type.Union([Type.Literal("changes"), Type.Literal("all")]),
+    include: Type.Array(Type.String()),
+    exclude: Type.Array(Type.String()),
+    paths: Type.Array(slicePinnedPathSchema),
+    /** How many files the mask held when the slice was made. */
+    fileCount: Type.Integer({ minimum: 0 }),
+});
+export type SlicePresentation = Static<typeof slicePresentationSchema>;
+
 /** Every display-ready tool-call presentation the client understands. */
 export const toolPresentationSchema = Type.Union([
     explorationPresentationSchema,
@@ -165,6 +203,7 @@ export const toolPresentationSchema = Type.Union([
     fileDiffPresentationSchema,
     searchPresentationSchema,
     agentSpawnPresentationSchema,
+    slicePresentationSchema,
 ]);
 
 /** Every display-ready tool-call presentation the client understands. */

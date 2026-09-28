@@ -2913,6 +2913,65 @@ Reads one file as of a git revision, for diff views. Query parameters: `path` an
 (a commit-ish). Response — `200`: `{ "content": "<base64>" }`; `404` when the path does not
 exist at that revision.
 
+#### `POST /v0/workspaces/:workspaceId/files/match`
+
+Lays a gitignore-style mask over the workspace and answers what it holds right now. Nothing is
+stored: this is how a slice — the `create_slice` tool's card, which carries the whole definition —
+is shown, and how the app keeps it current as the working tree changes. The tool validates through
+the same evaluation, so the tool that wrote a mask and the client that shows it never disagree.
+
+Request:
+
+```json
+{
+    "source": "changes",
+    "include": ["packages/api/**"],
+    "exclude": ["*.test.ts", "__snapshots__/"],
+    "paths": [
+        {
+            "path": "packages/api/schema.ts",
+            "reason": "Defines the new resource.",
+            "lines": [{ "start": 12, "end": 48 }]
+        }
+    ],
+    "limit": 500
+}
+```
+
+- `source` — `"changes"` lays the mask over the daemon's complete list of changed files, not the
+  bounded list `git` snapshots carry; `"all"` lays it over every file Git tracks or would track
+  (`git ls-files --cached --others --exclude-standard`), or over a plain walk of the folder when it
+  is not a repository.
+- `include` — up to 64 rules a file must match; empty or absent includes every file.
+- `exclude` — up to 64 rules that take a file back out, applied after `include`.
+- `paths` — up to 200 paths named outright, each with an optional `reason` and optional one-based
+  inclusive `lines`. A pinned path is in the answer whenever the source holds it, whatever the
+  rules say; a path the source does not hold is reported in `unmatchedRules`.
+- `limit` — how many paths to return, `1` through `2000`, default `500`.
+
+Rules follow `.gitignore`: `*` matches within one path segment, `**` crosses segments, `?` matches
+one character, a rule containing a `/` (other than a trailing one) is anchored at the workspace
+root, a rule without one matches at any depth, a trailing `/` names a folder and everything under
+it, and a leading `!` negates. Within one list the last matching rule wins. Each rule is at most
+256 characters.
+
+Response — `200`:
+
+```json
+{
+    "files": ["packages/api/routes.ts", "packages/api/schema.ts"],
+    "total": 2,
+    "truncated": false,
+    "unmatchedRules": ["__snapshots__/"]
+}
+```
+
+`files` is sorted and at most `limit` long; `total` is how many paths the mask holds in all;
+`truncated` says whether `files` stops short of `total` or the source itself was cut short;
+`unmatchedRules` names every include and exclude rule, and every pinned path, that matched
+nothing, as written. A pinned path with `start > end` or one that is absolute or escapes the root
+answers `400`.
+
 ### Git
 
 Every workspace with a repository has a **git state**: branch and sync facts plus the working
@@ -3635,6 +3694,7 @@ expected arguments are present:
 | `file_diff`    | `Edit`, `Write`, `apply_patch`, `search_replace`, `write`                                                              |
 | `search`       | `bedrock_web_search`, `claude_web_search`, `codex_web_search`, `gemini_web_search`, `grok_web_search`, `grok_x_search` |
 | `agent_spawn`  | `create_agent`                                                                                                         |
+| `slice`        | `create_slice`                                                                                                         |
 
 **`exploration`** — one normalized directory listing, file read, or code search. The daemon
 currently emits one operation per mapped tool call.
@@ -3742,6 +3802,51 @@ This presentation is additive and does not increment the protocol version. Older
 it. To preserve unknown-presentation fallback in older clients, `agent_spawn` blocks retain their
 raw `arguments` and `result` even when `omitToolData=true`; other presentations keep their existing
 omission behavior. Clients never need to parse these raw fields to render a recognized spawn.
+
+**`slice`** — a slice the `create_slice` tool made: a gitignore-style mask over a workspace's
+files for one question, carried whole. The presentation is outcome-derived, so it is absent while
+the call is running and appears when the call completes. The card is the slice — the daemon
+stores no slice resource, exposes no slice routes, and emits no slice events — so a client shows
+it by evaluating the mask through `POST /v0/workspaces/:workspaceId/files/match`, and re-evaluates
+it as `git.updated` and `files.updated` arrive for that workspace. Clicking the card always opens
+this slice; it never expires and never falls back to another.
+
+```json
+{
+    "type": "slice",
+    "workspaceId": "w9x8y7z6",
+    "root": "/Users/ada/Projects/happy",
+    "title": "API schema changes, without tests",
+    "note": "The files that define the new endpoint. Tests and the generated client are left out.",
+    "source": "changes",
+    "include": ["packages/api/**"],
+    "exclude": ["*.test.ts"],
+    "paths": [
+        {
+            "path": "packages/api/schema.ts",
+            "reason": "Defines the new resource.",
+            "lines": [{ "start": 12, "end": 48 }]
+        }
+    ],
+    "fileCount": 3
+}
+```
+
+- `workspaceId` — the workspace the mask was evaluated against: the acting agent's bot workspace,
+  its child workspace, or its project root. A bot can hold several repositories and a subtask can
+  have its own workspace, so a client reads this from the card rather than assuming the
+  conversation's.
+- `root` — the folder that workspace resolved to when the slice was made.
+- `title`, `note` — what the selection is, and a sentence about why, when the agent gave one.
+- `source`, `include`, `exclude`, `paths` — the mask, exactly as the file-match route takes it.
+  Each pinned path carries its `reason` when the agent gave one and its `lines`, empty when the
+  whole file is meant.
+- `fileCount` — how many files the mask held when the slice was made.
+
+This presentation is additive and does not increment the protocol version; older daemons never
+emit it, and a client that does not recognize it falls back to the block's raw data. Like
+`file_diff`, a completed `slice` presentation is complete, so `omitToolData=true` drops the block's
+raw data.
 
 Other calls, including background-terminal-input calls, currently carry no presentation and keep
 their raw data. The presentation set may grow; a client that meets an unknown presentation type
