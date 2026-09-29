@@ -98,15 +98,18 @@ export class Gym {
                 );
             } else {
                 await killDockerGymProcesses(this.#containerName, this.#dockerFixtureRoot);
-                if (this.#dockerFixtureStateRoot !== undefined) {
-                    await execFileAsync("docker", [
-                        "exec",
-                        this.#containerName,
-                        "rm",
-                        "-rf",
-                        this.#dockerFixtureStateRoot,
-                    ]).catch(() => {});
-                }
+                // On Linux hosts the bind-mounted fixture holds private directories owned by the
+                // container user, which the host user cannot enter; remove them from inside.
+                await execFileAsync("docker", [
+                    "exec",
+                    this.#containerName,
+                    "rm",
+                    "-rf",
+                    this.#dockerFixtureRoot,
+                    ...(this.#dockerFixtureStateRoot === undefined
+                        ? []
+                        : [this.#dockerFixtureStateRoot]),
+                ]).catch(() => {});
             }
         } else if (
             this.#localEnvironment !== undefined &&
