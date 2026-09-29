@@ -1,5 +1,18 @@
 # Agent Base learnings
 
+## Completed SQLite transactions return their connection to the upstream pool
+
+The older libSQL client handed its connection to each transaction without taking it back,
+so sequential transactions accumulated native connections and lost connection-local setup.
+The core now uses libSQL client 0.18's upstream pool. A small bounded set of idle connections
+is expected while the client remains open; zero connections after every transaction is not
+a correctness requirement. Keep the shared database lock and ownership boundary, and use
+upstream connection reuse rather than adding an application-owned pool.
+
+The process-lifetime lock must reserve an explicit write transaction. A raw `BEGIN` issued
+through the pooled client's root `execute` is rolled back as that call returns its connection,
+silently releasing the owner lock. Retain the transaction handle and roll it back on release.
+
 ## An unavailable old provider must not prevent a provider switch
 
 Checking Bedrock GPT context compatibility resolved both the old and new providers. If the old

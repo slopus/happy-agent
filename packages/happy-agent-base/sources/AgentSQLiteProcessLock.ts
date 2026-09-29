@@ -2,7 +2,7 @@ import { mkdir, open, realpath } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { createClient, type Client } from "@libsql/client";
+import { createClient, type Client, type Transaction } from "@libsql/client";
 
 interface AgentSQLiteProcessLock {
     release(): Promise<void>;
@@ -39,11 +39,10 @@ export async function acquireAgentSQLiteProcessLock(
     try {
         await client.execute("PRAGMA journal_mode = DELETE");
         await client.execute("PRAGMA busy_timeout = 0");
-        // Keep the lock on the client's own connection. A libSQL transaction handle detaches that
-        // connection, so closing the handle is not the same lifecycle boundary as rolling back the
-        // client's process-lifetime transaction.
-        await client.execute("BEGIN IMMEDIATE");
-        return sqliteProcessLock(client);
+        // A transaction reserves its connection until release. A raw BEGIN in a
+        // root execute is rolled back when libSQL returns that connection to its pool.
+        const transaction = await client.transaction("write");
+        return sqliteProcessLock(client, transaction);
     } catch (error: unknown) {
         client.close();
         if (isSQLiteContention(error)) throw new AgentSQLiteDatabaseLockedError(path);
@@ -51,13 +50,13 @@ export async function acquireAgentSQLiteProcessLock(
     }
 }
 
-function sqliteProcessLock(client: Client): AgentSQLiteProcessLock {
+function sqliteProcessLock(client: Client, transaction: Transaction): AgentSQLiteProcessLock {
     let releasePromise: Promise<void> | undefined;
     return {
         async release() {
             releasePromise ??= (async () => {
                 try {
-                    await client.execute("ROLLBACK");
+                    await transaction.rollback();
                 } finally {
                     client.close();
                 }

@@ -23,6 +23,37 @@ afterEach(async () => {
 });
 
 describe("Agent Database SQLite concurrency", () => {
+    it("reuses the initialized connection after committed and rolled-back transactions", async () => {
+        const directory = await createTestDirectory();
+        const opened = await openAgentSQLiteDatabase(join(directory, "agent.sqlite"));
+        const { database } = opened;
+        try {
+            // Temporary tables belong to one native connection. Their survival
+            // proves sequential transactions return it to the upstream pool.
+            await agentDatabaseRun(
+                database,
+                sql`CREATE TEMP TABLE connection_probe (value TEXT NOT NULL)`,
+            );
+            await opened.transaction(async (tx) => {
+                await agentDatabaseRun(tx, sql`INSERT INTO connection_probe VALUES ('committed')`);
+            });
+            await expect(
+                opened.transaction(async (tx) => {
+                    await agentDatabaseRun(
+                        tx,
+                        sql`INSERT INTO connection_probe VALUES ('rolled back')`,
+                    );
+                    throw new Error("rollback probe");
+                }),
+            ).rejects.toThrow("rollback probe");
+            await expect(
+                agentDatabaseRows(database, sql`SELECT value FROM connection_probe`),
+            ).resolves.toEqual([{ value: "committed" }]);
+        } finally {
+            await opened.close();
+        }
+    });
+
     it("rejects a second connection until the process owner closes", async () => {
         const directory = await createTestDirectory();
         const path = join(directory, "agent.sqlite");
