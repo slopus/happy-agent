@@ -255,6 +255,35 @@ jobs:
               env:
                   TARGET: ${{ matrix.target }}
 
+            - name: Build the pinned native database binding
+              run: |
+                  rustup toolchain install 1.95.0 --profile minimal
+                  pnpm --filter @slopus/happy-agent build:native:libsql
+
+            - name: Verify native database lifetimes under Node and Bun
+              shell: bash
+              run: |
+                  ulimit -n 16384
+                  # Prove the unchanged regression detects the upstream binding,
+                  # then exercise our exact built addon in private runtime copies.
+                  # No installed dependency or pnpm store file is overwritten.
+                  for runtime in node bun; do
+                      if [[ "$runtime" == node ]]; then
+                          command=(node --expose-gc)
+                      else
+                          command=(pnpm dlx bun@1.4.0)
+                      fi
+                      baseline="$RUNNER_TEMP/libsql-upstream-$runtime.log"
+                      if "${command[@]}" packages/happy-agent/scripts/verify-native-libsql.mjs --upstream >"$baseline" 2>&1; then
+                          cat "$baseline"
+                          echo "The upstream database binding unexpectedly passed the lifetime regression." >&2
+                          exit 1
+                      fi
+                      cat "$baseline"
+                      grep -F "Native connections accumulated:" "$baseline"
+                      "${command[@]}" packages/happy-agent/scripts/verify-native-libsql.mjs
+                  done
+
             - name: Compile Happy Agent standalone binary
               run: |
                   pnpm --filter @slopus/happy-agent build:bun --target "$TARGET"

@@ -262,11 +262,6 @@ function readPackageVersion(): string {
 function resolveBinaryAssets(target: BinaryTarget, tailcatSource: string): BinaryAssets {
     const modulesRoot = directPackageRoot("@slopus/happy-agent-modules");
     const modulesRequire = createRequire(join(modulesRoot, "package.json"));
-    const libsqlRoot = packageDependencyRoot(
-        dependencyRoot("@slopus/happy-agent-modules", "@libsql/client"),
-        "libsql",
-    );
-    const libsqlRequire = createRequire(join(libsqlRoot, "package.json"));
     const montyRoot = dependencyRoot("@slopus/happy-agent-modules", "@pydantic/monty");
     const montyRequire = createRequire(join(montyRoot, "package.json"));
     const fffRoot = dependencyRoot("@slopus/happy-agent-modules", "@ff-labs/fff-node");
@@ -288,7 +283,6 @@ function resolveBinaryAssets(target: BinaryTarget, tailcatSource: string): Binar
             : target.platform === "linux"
               ? `${target.key}-gnu`
               : target.key;
-    const libsqlPackage = `@libsql/${nativeSuffix}`;
     const montyPackage = `@pydantic/monty-${nativeSuffix}`;
     const ffiPackage = `@yuuang/ffi-rs-${nativeSuffix}`;
     const fffPackage = `@ff-labs/fff-bin-${target.platform === "win32" ? target.key : nativeSuffix}`;
@@ -296,10 +290,12 @@ function resolveBinaryAssets(target: BinaryTarget, tailcatSource: string): Binar
     // Linux binaries target glibc, like every other embedded native library.
     const parcelWatcherPackage = `@parcel/watcher-${target.key}${target.platform === "linux" ? "-glibc" : ""}`;
 
-    const libsqlSource =
-        target.platform === "win32"
-            ? join(happyAgentRoot, "native", "target", "win32-x64", "libsql.node")
-            : resolveRequired(libsqlRequire, libsqlPackage);
+    const libsqlSource = join(happyAgentRoot, "native", "target", target.key, "libsql.node");
+    if (!existsSync(libsqlSource)) {
+        throw new Error(
+            `Build the patched database binding on ${target.key} first (pnpm --filter @slopus/happy-agent build:native:libsql).`,
+        );
+    }
     const montySource = resolveRequired(montyRequire, montyPackage);
     const montyWorkerSource =
         target.platform === "win32"
@@ -418,18 +414,14 @@ export const { getQuickJS } = QJS;
                 "LICENSE.monty",
             ),
         );
-        for (const [name, suffix] of [
-            ["LICENSE.libsql", "Core"],
-            ["LICENSE.libsql-js", "Binding"],
-        ] as const) {
-            assets.push(
-                asset(
-                    "libsqlLicense" + suffix,
-                    join(happyAgentRoot, "native", "libsql", name),
-                    name,
-                ),
-            );
-        }
+    }
+    for (const [name, suffix] of [
+        ["LICENSE.libsql", "Core"],
+        ["LICENSE.libsql-js", "Binding"],
+    ] as const) {
+        assets.push(
+            asset("libsqlLicense" + suffix, join(happyAgentRoot, "native", "libsql", name), name),
+        );
     }
 
     const supervisorGroups: BinaryAssets["supervisorGroups"] = {};
@@ -882,7 +874,11 @@ function loadNative(name, files, relativePath) {
     return value;
 }
 export function loadLibsqlNative() {
-    return loadNative("libsql", ${files(binaryAssets.assets.filter((entry) => entry.variable === "libsqlAsset" || entry.variable.startsWith("libsqlLicense")).map((entry) => entry.variable))}, ${JSON.stringify(binaryAssets.libsqlRelativePath)});
+    const binding = loadNative("libsql", ${files(binaryAssets.assets.filter((entry) => entry.variable === "libsqlAsset" || entry.variable.startsWith("libsqlLicense")).map((entry) => entry.variable))}, ${JSON.stringify(binaryAssets.libsqlRelativePath)});
+    if (typeof binding.statementFinalize !== "function" || typeof binding.rowsClose !== "function") {
+        throw new Error("The embedded database binding is missing deterministic disposal. Rebuild Happy Agent with the patched native binding.");
+    }
+    return binding;
 }
 export function loadParcelWatcherNative() {
     return loadNative("parcel-watcher", ${files(["parcelWatcherAsset", "parcelWatcherLicenseAsset"])}, ${JSON.stringify(binaryAssets.parcelWatcherRelativePath)});

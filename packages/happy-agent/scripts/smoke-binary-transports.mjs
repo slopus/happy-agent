@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { createServer, request as httpRequest } from "node:http";
 import { connect as connectUnix } from "node:net";
 import { resolve } from "node:path";
@@ -43,6 +44,8 @@ async function main() {
     const happyHome = `${root}/.happy`;
     const workspacePath = `${root}/workspace`;
     await mkdir(workspacePath, { recursive: true });
+    const nativeCacheTmp = `${root}/tmp`;
+    await mkdir(nativeCacheTmp);
     await writeFile(`${workspacePath}/binary-compatibility.txt`, "standalone binary\n", "utf8");
 
     const inferenceToken = randomBytes(24).toString("hex");
@@ -158,6 +161,7 @@ async function main() {
             HAPPY_GYM_TOKEN: inferenceToken,
             HAPPY_HOME_DIR: happyHome,
             HOME: root,
+            TMPDIR: nativeCacheTmp,
         },
         stdio: ["ignore", "pipe", "pipe"],
     });
@@ -177,6 +181,34 @@ async function main() {
             token,
         });
         await waitFor(async () => ((await client.getHealth()).ready ? true : undefined), daemon);
+
+        if (process.platform !== "win32" && !process.argv.includes("--bun-source")) {
+            const cache = `${nativeCacheTmp}/happy-agent-${process.getuid()}/binary-assets`;
+            const groups = (await readdir(cache)).filter((name) => name.startsWith("libsql-"));
+            if (groups.length !== 1)
+                throw new Error("Expected exactly one embedded database binding.");
+            const extracted = `${cache}/${groups[0]}/index.node`;
+            const built = resolve(
+                import.meta.dirname,
+                `../native/target/${process.platform}-${process.arch}/libsql.node`,
+            );
+            const digest = (value) => createHash("sha256").update(value).digest("hex");
+            if (digest(await readFile(extracted)) !== digest(await readFile(built))) {
+                throw new Error(
+                    "The release binary did not embed the verified native database binding.",
+                );
+            }
+            const binding = createRequire(import.meta.url)(extracted);
+            if (
+                typeof binding.statementFinalize !== "function" ||
+                typeof binding.rowsClose !== "function"
+            ) {
+                throw new Error(
+                    "The embedded database binding is missing deterministic disposal exports.",
+                );
+            }
+            process.stdout.write("Embedded native database binding matches the verified build.\n");
+        }
 
         process.stdout.write("Checking standalone HTTP keep-alive.\n");
         await checkBinaryKeepAlive(socketPath, token);

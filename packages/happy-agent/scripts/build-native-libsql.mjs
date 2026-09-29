@@ -8,11 +8,19 @@ import { fileURLToPath } from "node:url";
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const metadataRoot = join(packageRoot, "native", "libsql");
 const metadata = JSON.parse(readFileSync(join(metadataRoot, "source.json"), "utf8"));
-if (process.platform !== "win32" || process.arch !== "x64") {
-    throw new Error("This native database builder targets Windows x64.");
-}
+const key = `${process.platform}-${process.arch}`;
+const library = {
+    "win32-x64": "libsql_js.dll",
+    "darwin-arm64": "liblibsql_js.dylib",
+    "darwin-x64": "liblibsql_js.dylib",
+    "linux-arm64": "liblibsql_js.so",
+    "linux-x64": "liblibsql_js.so",
+}[key];
+if (!library) throw new Error(`Unsupported native database build target: ${key}`);
+const windows = process.platform === "win32";
+const toolchain = windows ? metadata.windowsToolchain : metadata.toolchain;
 const cache = resolve(
-    process.env.HAPPY_LIBSQL_BUILD_DIR ?? join(packageRoot, "../../.local/native-libsql"),
+    process.env.HAPPY_LIBSQL_BUILD_DIR ?? join(packageRoot, `../../.local/native-libsql/${key}`),
 );
 const source = join(cache, "libsql-js");
 const crate = join(cache, `libsql-${metadata.crateVersion}`);
@@ -30,13 +38,26 @@ function run(command, args, cwd = source, options = {}) {
 }
 // The encrypted SQLite dependency invokes these native build tools itself.
 // PowerShell aliases (notably cp) cannot satisfy a child process executable lookup.
-for (const executable of ["git", "cargo", "cp", "cmake", "gcc", "g++", "mingw32-make"]) {
-    const result = spawnSync("where.exe", [executable], { windowsHide: true, stdio: "pipe" });
+for (const executable of [
+    "git",
+    "cargo",
+    "cp",
+    "cmake",
+    "gcc",
+    "g++",
+    windows ? "mingw32-make" : "make",
+]) {
+    const result = spawnSync(windows ? "where.exe" : "which", [executable], {
+        windowsHide: true,
+        stdio: "pipe",
+    });
     if (result.status !== 0) {
         throw new Error(
             "Missing native build executable " +
                 executable +
-                ". Add Git for Windows usr/bin, CMake, and the MinGW compiler tools to PATH. " +
+                (windows
+                    ? ". Add Git for Windows usr/bin, CMake, and the MinGW compiler tools to PATH. "
+                    : ". Install Git, Rust, CMake, make, and the system C/C++ compiler. ") +
                 "These are build dependencies only; the distributed Happy Agent does not require them.",
         );
     }
@@ -87,7 +108,7 @@ if (!existsSync(crate)) {
     const archivePath = join(cache, "libsql.crate");
     writeFileSync(archivePath, archive);
     run(
-        join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe"),
+        windows ? join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe") : "tar",
         ["-xf", archivePath, "-C", cache],
         cache,
     );
@@ -109,7 +130,7 @@ copyFileSync(join(metadataRoot, "Cargo.lock"), join(source, "Cargo.lock"));
 run(
     "cargo",
     [
-        "+" + metadata.toolchain,
+        "+" + toolchain,
         "build",
         "--release",
         "--locked",
@@ -121,14 +142,16 @@ run(
         env: {
             ...process.env,
             CARGO_BUILD_JOBS: process.env.CARGO_BUILD_JOBS ?? "2",
-            CMAKE_GENERATOR: process.env.CMAKE_GENERATOR ?? "MinGW Makefiles",
+            ...(windows
+                ? { CMAKE_GENERATOR: process.env.CMAKE_GENERATOR ?? "MinGW Makefiles" }
+                : {}),
         },
     },
 );
-const output = join(packageRoot, "native", "target", "win32-x64");
+const output = join(packageRoot, "native", "target", key);
 mkdirSync(output, { recursive: true });
 const binary = join(output, "libsql.node");
-copyFileSync(join(source, "target", "release", "libsql_js.dll"), binary);
+copyFileSync(join(source, "target", "release", library), binary);
 const require = createRequire(import.meta.url);
 const binding = require(binary);
 if (typeof binding.statementFinalize !== "function" || typeof binding.rowsClose !== "function") {
@@ -138,7 +161,8 @@ if (process.argv.includes("--install-development-binding")) {
     const modulesRequire = createRequire(join(packageRoot, "../happy-agent-modules/package.json"));
     const clientRequire = createRequire(modulesRequire.resolve("@libsql/client"));
     const libsqlRequire = createRequire(clientRequire.resolve("libsql"));
-    copyFileSync(binary, libsqlRequire.resolve("@libsql/win32-x64-msvc"));
+    const suffix = windows ? "-msvc" : process.platform === "linux" ? "-gnu" : "";
+    copyFileSync(binary, libsqlRequire.resolve(`@libsql/${key}${suffix}`));
     console.log("Installed the corrected native database binding for local development.");
 }
 console.log(`Built ${binary}`);

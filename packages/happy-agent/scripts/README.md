@@ -17,8 +17,11 @@ docs/ ----> copy-docs ---> dist/docs/
 From the repository root, `pnpm build:bun` compiles the current platform after
 building JavaScript. The compiler supports macOS and Linux arm64/x64 plus Windows
 x64; `--all` selects all five targets and requires their native assets to be
-available. Windows native assets must be built on Windows first, as described
-below. Bun 1.4.0 is pinned by `mise.toml` and invoked at that exact version through
+available. Every target requires its patched libSQL binding built on the matching
+host with `pnpm --filter @slopus/happy-agent build:native:libsql`; see
+[`../native/libsql/README.md`](../native/libsql/README.md). Other Windows native
+assets must also be built on Windows first, as described below.
+Bun 1.4.0 is pinned by `mise.toml` and invoked at that exact version through
 `pnpm dlx`. Output names are `dist/bin/happy-agent-<platform>-<arch>`; Windows adds
 `.exe`. Windows helpers are embedded only in the Windows executable.
 
@@ -173,13 +176,11 @@ are deferred. This does not change the macOS/Linux implementations.
 ### Native verification
 
 The native verification commands require Bun 1.4 or newer on PATH alongside Node.
-The Windows database regression tests use the locally installed development
-binding. After building the native binding, install that same output into the
-development dependency explicitly; this does not change the standalone build's
-asset path:
+Database verification uses private copies of the client and built binding on
+every supported host, without changing the development dependency installation:
 
 ```powershell
-node packages/happy-agent/scripts/build-native-libsql.mjs --install-development-binding
+pnpm --filter @slopus/happy-agent build:native:libsql
 pnpm --filter @slopus/happy-agent test:native:libsql
 pnpm --filter @slopus/happy-agent test:native:monty
 pnpm --filter @slopus/happy-agent test:native:fff
