@@ -6,8 +6,9 @@ import { Value } from "@sinclair/typebox/value";
 
 import { latestHappyAgentReleaseVersion } from "./ensureHappyAgentBinary.js";
 import { getHappyDaemonPaths, type HappyDaemonPaths } from "./getHappyDaemonPaths.js";
-import { selectedHappyAgentBinary, SEMANTIC_VERSION_PATTERN } from "./happyAgentBinaryConfig.js";
+import { selectedHappyAgentBinary } from "./happyAgentBinaryConfig.js";
 import { isNewerSemanticVersion } from "./isNewerSemanticVersion.js";
+import { SEMANTIC_VERSION_PATTERN } from "./semanticVersionPattern.js";
 
 const UPDATE_CHECK_INTERVAL_MS = 20 * 60 * 60_000;
 const updateCacheSchema = Type.Object(

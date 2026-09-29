@@ -12,7 +12,6 @@ import { Value } from "@sinclair/typebox/value";
 import {
     isExecutableFile,
     selectedHappyAgentBinary,
-    SEMANTIC_VERSION_PATTERN,
     writeHappyAgentBinaryConfig,
 } from "./happyAgentBinaryConfig.js";
 import {
@@ -21,6 +20,7 @@ import {
     type HappyDaemonPaths,
 } from "./getHappyDaemonPaths.js";
 import { isNewerSemanticVersion } from "./isNewerSemanticVersion.js";
+import { SEMANTIC_VERSION_PATTERN } from "./semanticVersionPattern.js";
 
 const HAPPY_AGENT_LATEST_RELEASE_URL =
     "https://api.github.com/repos/slopus/happy-agent/releases/latest";
@@ -152,7 +152,7 @@ async function installLatestHappyAgentBinary(
                 version,
             });
         }
-        await writeHappyAgentBinaryConfig(paths, version);
+        await writeHappyAgentBinaryConfig(paths, version, options.onStatus);
         return { path: finalPath, version };
     } finally {
         await lock.release();

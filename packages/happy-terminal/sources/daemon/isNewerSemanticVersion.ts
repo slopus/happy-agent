@@ -1,4 +1,4 @@
-import { SEMANTIC_VERSION_PATTERN } from "./happyAgentBinaryConfig.js";
+import { SEMANTIC_VERSION_PATTERN } from "./semanticVersionPattern.js";
 
 interface SemanticVersion {
     readonly core: readonly [bigint, bigint, bigint];

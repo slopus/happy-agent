@@ -58,7 +58,9 @@ try {
     }
     await chmod(temporaryPath, 0o700);
     await rename(temporaryPath, targetPath);
-    await writeHappyAgentBinaryConfig(paths, LOCAL_AGENT_VERSION);
+    await writeHappyAgentBinaryConfig(paths, LOCAL_AGENT_VERSION, (message) =>
+        console.log(message),
+    );
 } finally {
     await rm(temporaryPath, { force: true });
     await installLock.release();
