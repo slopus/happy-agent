@@ -9,7 +9,15 @@ export function resolveAnthropicBedrockModelId(
     const modelName = model.slice("anthropic/".length);
     const base = `anthropic.claude-${modelName}`;
     if (
-        !["fable-5-1", "fable-5", "opus-5-5", "opus-5", "opus-4-8", "sonnet-5"].includes(modelName)
+        ![
+            "fable-5-1",
+            "fable-5",
+            "opus-5-5",
+            "opus-5",
+            "opus-4-8",
+            "sonnet-5-5",
+            "sonnet-5",
+        ].includes(modelName)
     ) {
         throw new Error(
             `Anthropic model "${model}" is not available through Rig's Bedrock catalog. Pass a Bedrock model or inference-profile ID directly to use an unlisted model.`,
@@ -19,6 +27,8 @@ export function resolveAnthropicBedrockModelId(
     if (modelName === "fable-5-1") {
         return region.startsWith("us-") ? `us.${base}` : `global.${base}`;
     }
+    // AWS documents only the global profile for Sonnet 5.5; it has no geo profiles.
+    if (modelName === "sonnet-5-5") return `global.${base}`;
     // AWS offers Opus 5.5 through the same five geo profiles as Opus 5: us, eu, jp, au, global.
     if (modelName === "opus-5-5" || modelName === "opus-5" || modelName === "opus-4-8") {
         if (region === "ap-northeast-1" || region === "ap-northeast-3") {

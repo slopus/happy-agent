@@ -68,12 +68,12 @@ model definition carries it so clients count down to the point where compaction 
 
 ## Always-on thinking models do not offer the off effort
 
-The Claude provider turns effort `off` into a disabled-thinking request. Opus 5.5 rejects that
-with a 400, so its catalog entry uses the ladder without `off`; offering it would turn a picker
-choice into a failed turn. Its Claude Code SDK wire ID carries the `[1m]` suffix for the same
-reason Fable 5.1 does: the pinned SDK accepts the model but does not know its window, so without
-the suffix its continuation guard assumes 200k. Bedrock serves it on both endpoints through the
-same us, eu, jp, au, and global profiles as Opus 5.
+The Claude provider turns effort `off` into a disabled-thinking request. Opus 5.5 and Sonnet 5.5
+reject that with a 400, so their catalog entries use the ladder without `off`; offering it would
+turn a picker choice into a failed turn. Their Claude Code SDK wire IDs carry the `[1m]` suffix
+for the same reason Fable 5.1 does: an SDK that accepts a model without knowing its window lets
+its continuation guard assume 200k. Bedrock serves Opus 5.5 on both endpoints through the same
+us, eu, jp, au, and global profiles as Opus 5.
 
 ## Reseller catalogs are explicit subsets
 
@@ -88,6 +88,10 @@ Oregon returned model-not-found despite having the correct ID. Both ordinary and
 catalogs now respect the selected transport and per-model region override; the private reviewer
 catalog must not re-add a Bedrock Sonnet route configuration omitted. Runtime overrides retain
 their existing inference-profile routing; catalog filtering never silently changes regions.
+
+Sonnet 5.5 launched with Mantle only in GovCloud West and Runtime only through the global
+profile, so, like Fable 5.1, it defaults to Runtime rather than to a Mantle route that would hide
+it in every commercial region. The same documented-region table limits a forced Mantle route.
 
 ## Tailcat exposure is an explicit machine setting
 

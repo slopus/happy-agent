@@ -38,13 +38,14 @@ inference-profile ID directly when intentionally using an unlisted model.
 Rig's Bedrock executor owns an ordered model/transport/region table. The first matching transport
 wins:
 
-| Model            | Preferred Mantle regions                                                  | Runtime fallback           |
-| ---------------- | ------------------------------------------------------------------------- | -------------------------- |
-| Claude Opus 5.5  | Model card lists Mantle; in-region availability not yet documented        | Commercial Bedrock regions |
-| Claude Fable 5.1 | None documented; Runtime is the default                                   | Commercial Bedrock regions |
-| Claude Sonnet 5  | `eu-north-1`, `eu-west-1`, `us-east-1`                                    | Commercial Bedrock regions |
-| Claude Fable 5   | `us-east-1`                                                               | Commercial Bedrock regions |
-| Claude Opus 4.8  | `ap-northeast-1`, `eu-north-1`, `eu-west-1`, `us-east-1`, `us-gov-west-1` | Commercial Bedrock regions |
+| Model             | Preferred Mantle regions                                                  | Runtime fallback           |
+| ----------------- | ------------------------------------------------------------------------- | -------------------------- |
+| Claude Opus 5.5   | Model card lists Mantle; in-region availability not yet documented        | Commercial Bedrock regions |
+| Claude Sonnet 5.5 | `us-gov-west-1` only; Runtime is the default                              | Commercial Bedrock regions |
+| Claude Fable 5.1  | None documented; Runtime is the default                                   | Commercial Bedrock regions |
+| Claude Sonnet 5   | `eu-north-1`, `eu-west-1`, `us-east-1`                                    | Commercial Bedrock regions |
+| Claude Fable 5    | `us-east-1`                                                               | Commercial Bedrock regions |
+| Claude Opus 4.8   | `ap-northeast-1`, `eu-north-1`, `eu-west-1`, `us-east-1`, `us-gov-west-1` | Commercial Bedrock regions |
 
 These Mantle lists are the intersection of the AWS Mantle endpoint regions and each model's
 documented in-region availability. Runtime remains the fallback because it supports geographic
@@ -53,6 +54,10 @@ override can force one supported surface; pairing it with `endpoint` supports a 
 Fable 5.1 defaults to Runtime because AWS documents US and global inference profiles but no
 in-region Mantle route. Opus 5.5 launched on both endpoints with the same us, eu, jp, au, and
 global Runtime profiles as Opus 5; its Mantle ID is the bare `anthropic.claude-opus-5-5`.
+Sonnet 5.5 also defaults to Runtime. AWS documents only its global profile,
+`global.anthropic.claude-sonnet-5-5`, with no geo profiles, so every region resolves to that
+profile. Its only in-region Mantle route is GovCloud West; the catalog hides a forced Mantle route
+anywhere else, and a GovCloud deployment selects it with `transport = "mantle"`.
 
 ## Runtime ownership
 

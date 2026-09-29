@@ -448,5 +448,11 @@ describe("SystemPromptModule", () => {
         expect(opus55).not.toContain("This iteration of Claude is");
         expect(opus55).not.toContain("Knowledge cutoff");
         expect(opus55).not.toContain("# Reporting outcomes");
+        // Sonnet 5.5 is the first Sonnet on Claude Code's lean prompt, so it no longer receives
+        // the long Sonnet 5 prompt; its text matches Opus 5.5's.
+        const sonnet55 = systemPromptForModel({ model: "anthropic/sonnet-5-5" });
+        expect(sonnet55).toBe(opus55);
+        expect(sonnet55).not.toBe(systemPromptForModel({ model: "anthropic/sonnet-5" }));
+        expect(sonnet55).not.toContain("# Doing tasks");
     });
 });

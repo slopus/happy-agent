@@ -63,6 +63,53 @@ describe("ConfigModule", () => {
         }
     });
 
+    it.each([
+        ["us-east-1", "", true],
+        ["ap-south-1", "", true],
+        ["us-east-1", 'transport = "mantle"', false],
+        ["eu-west-1", 'transport = "mantle"', false],
+        ["us-gov-west-1", 'transport = "mantle"', true],
+        ["us-east-1", 'transport = "mantle"\nregion = "us-gov-west-1"', true],
+    ])(
+        "defaults Sonnet 5.5 to Runtime and limits Mantle to GovCloud West: %s %s",
+        async (region, override, offered) => {
+            const root = await mkdtemp(join(tmpdir(), "happy-sonnet-5-5-regions-"));
+            temporaryDirectories.push(root);
+            const folder = join(
+                root,
+                process.platform === "darwin" ? "Happy/Config" : "happy/config",
+            );
+            await mkdir(folder, { recursive: true });
+            await writeFile(
+                join(folder, "happy.toml"),
+                [
+                    "[providers.aws]",
+                    'type = "bedrock"',
+                    "enabled = true",
+                    `region = "${region}"`,
+                    '[providers.aws.model_overrides."anthropic/sonnet-5-5"]',
+                    override,
+                    "[providers.router]",
+                    'type = "smart"',
+                    "enabled = true",
+                    'providers = ["aws"]',
+                ].join("\n"),
+            );
+            const config = await ConfigModule.load(join(root, ".happy"));
+            for (const providerId of ["aws", "router"]) {
+                expect(
+                    config.catalog.some(
+                        (model) =>
+                            model.providerId === providerId && model.id === "anthropic/sonnet-5-5",
+                    ),
+                ).toBe(offered);
+            }
+            expect(config.anthropicBedrockTransport("aws", "anthropic/sonnet-5-5")).toBe(
+                override === "" ? "runtime" : "mantle",
+            );
+        },
+    );
+
     it("loads standalone profile bootstrap records from machine configuration", async () => {
         const root = await mkdtemp(join(tmpdir(), "happy-agent-config-profile-"));
         temporaryDirectories.push(root);
@@ -551,6 +598,37 @@ describe("ConfigModule", () => {
         });
     });
 
+    it("offers Sonnet 5.5 through Claude and Bedrock, without the off effort it rejects", async () => {
+        const root = await mkdtemp(join(tmpdir(), "happy-agent-sonnet-5-5-catalog-"));
+        temporaryDirectories.push(root);
+        const configDirectory = process.platform === "darwin" ? "Happy/Config" : "happy/config";
+        await mkdir(join(root, configDirectory), { recursive: true });
+        await writeFile(
+            join(root, configDirectory, "happy.toml"),
+            "[providers.claude]\nenabled = true\n\n[providers.bedrock]\nenabled = true\n",
+        );
+
+        const module = await ConfigModule.load(join(root, ".happy"));
+
+        for (const providerId of ["claude", "bedrock"]) {
+            expect(
+                module.catalog.find(
+                    (model) =>
+                        model.providerId === providerId && model.id === "anthropic/sonnet-5-5",
+                ),
+                providerId,
+            ).toMatchObject({
+                autoCompactWindow: 400_000,
+                contextWindow: 1_000_000,
+                defaultEffort: "medium",
+                effortLevels: ["low", "medium", "high", "xhigh", "max"],
+                enabled: true,
+                name: "Sonnet 5.5",
+            });
+        }
+        expect(module.anthropicBedrockTransport("bedrock", "anthropic/sonnet-5-5")).toBe("runtime");
+    });
+
     it("compacts 1M Claude models at the Claude Code team's recommended 400k", async () => {
         const root = await mkdtemp(join(tmpdir(), "happy-agent-claude-compaction-"));
         temporaryDirectories.push(root);
@@ -577,6 +655,7 @@ describe("ConfigModule", () => {
             "anthropic/opus-4-8",
             "anthropic/opus-5-5",
             "anthropic/opus-5",
+            "anthropic/sonnet-5-5",
             "anthropic/sonnet-5",
         ]) {
             expect(module.modelContext("claude", modelId), modelId).toEqual({

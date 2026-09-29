@@ -91,9 +91,10 @@ describe("Claude context limits through the real SDK", () => {
                     message: "Prompt is too long",
                 }),
             ]);
-            // Claude owns its streaming-to-non-streaming fallback. Both HTTP failures must
-            // still become one terminal event, never a completed assistant text block.
-            expect(requests).toBe(2);
+            // Claude Code owns whether a rejected prompt is sent again: 2.1.280 repeated it once,
+            // 2.1.284 sends it once. The failure must still become one terminal event, never a
+            // completed assistant text block.
+            expect(requests).toBe(1);
         },
     );
 

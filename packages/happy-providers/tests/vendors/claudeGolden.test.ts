@@ -268,7 +268,9 @@ describe("Claude provider golden", () => {
                 // a bare string and the first cache breakpoint moves onto the system message.
                 // Rig's replay reproduces the same attachments so a rebuilt session sends the
                 // same bytes; the recreation-cache test proves that against the live query.
-                // Keep the capture unchanged and require these exact shapes.
+                // Keep the capture unchanged and require these exact shapes. A replayed native
+                // compaction summary is sent exactly as captured: Claude Code 2.1.280 appended
+                // a trailing newline and a continuation block to it, and 2.1.284 no longer does.
                 const model =
                     index < 3 ? golden.scenario.initialModel : golden.scenario.switchedModel;
                 const environmentText = renderClaudeEnvironmentMessage(
@@ -282,15 +284,6 @@ describe("Claude provider golden", () => {
                 const firstTurn = expectedBody.messages[0];
                 expect(firstTurn.content[0].text).toContain("# currentDate");
                 firstTurn.content.shift();
-                if (index === 5) {
-                    // A replayed native compaction summary now gains a trailing newline and
-                    // Claude Code's own continuation block.
-                    firstTurn.content[0].text += "\n";
-                    firstTurn.content.push({
-                        type: "text",
-                        text: "Continue from where you left off.",
-                    });
-                }
                 const breakpointOnFirstTurn = firstTurn.content[0].cache_control !== undefined;
                 delete firstTurn.content[0].cache_control;
                 if (firstTurn.content.length === 1) firstTurn.content = firstTurn.content[0].text;

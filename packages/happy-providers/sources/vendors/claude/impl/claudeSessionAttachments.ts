@@ -3,7 +3,7 @@ import { release, type as osType, version as osVersion } from "node:os";
 import { dirname, join } from "node:path";
 
 /**
- * The attachments Claude Code 2.1.280 records after the first prompt of a session.
+ * The attachments Claude Code 2.1.280 and later record after the first prompt of a session.
  *
  * On its first prompt the CLI persists an environment snapshot, the model identity, an empty
  * session context, and the calendar date, and it renders them into one system message placed
@@ -62,6 +62,11 @@ const CLAUDE_MODEL_IDENTITIES: Readonly<
         displayName: "Opus 4.8",
         knowledgeCutoff: "January 2026",
         oneMillionSuffix: true,
+    },
+    "claude-sonnet-5-5": {
+        displayName: "Sonnet 5.5",
+        knowledgeCutoff: "June 2026",
+        oneMillionSuffix: false,
     },
     "claude-sonnet-5": {
         displayName: "Sonnet 5",

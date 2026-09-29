@@ -201,6 +201,15 @@ describe("AnthropicBedrockProvider", () => {
         expect(resolveAnthropicBedrockModelId("anthropic/opus-5", "eu-west-1", "mantle")).toBe(
             "anthropic.claude-opus-5",
         );
+        // AWS documents only the global Runtime profile for Sonnet 5.5, whatever the region.
+        for (const region of ["us-east-1", "eu-west-1", "ap-northeast-1", "ap-southeast-2"]) {
+            expect(resolveAnthropicBedrockModelId("anthropic/sonnet-5-5", region)).toBe(
+                "global.anthropic.claude-sonnet-5-5",
+            );
+        }
+        expect(
+            resolveAnthropicBedrockModelId("anthropic/sonnet-5-5", "us-gov-west-1", "mantle"),
+        ).toBe("anthropic.claude-sonnet-5-5");
         expect(resolveAnthropicBedrockModelId("anthropic/sonnet-5", "eu-west-1")).toBe(
             "eu.anthropic.claude-sonnet-5",
         );

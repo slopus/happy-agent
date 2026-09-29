@@ -53,6 +53,7 @@ describe("Claude session recreation cache", () => {
     it.each([
         "anthropic/opus-5-5",
         "anthropic/opus-5",
+        "anthropic/sonnet-5-5",
         "anthropic/sonnet-5",
         "anthropic/fable-5-1",
         "anthropic/fable-5",

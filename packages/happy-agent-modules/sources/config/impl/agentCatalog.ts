@@ -82,6 +82,10 @@ const MODEL_CONTEXTS: Readonly<Record<string, AgentModelContext>> = Object.freez
         contextWindow: CLAUDE_CONTEXT_WINDOW,
         autoCompactWindow: CLAUDE_AUTO_COMPACT_WINDOW,
     }),
+    "anthropic/sonnet-5-5": Object.freeze({
+        contextWindow: CLAUDE_CONTEXT_WINDOW,
+        autoCompactWindow: CLAUDE_AUTO_COMPACT_WINDOW,
+    }),
     "anthropic/sonnet-5": Object.freeze({
         contextWindow: CLAUDE_CONTEXT_WINDOW,
         autoCompactWindow: CLAUDE_AUTO_COMPACT_WINDOW,
@@ -150,9 +154,11 @@ const CATALOG: readonly CatalogAgentModel[] = [
     model("codex", "openai/gpt-5.6-sol", "GPT-5.6 Sol", ALL_BUT_OFF, "medium", ["priority"]),
     model("codex", "openai/gpt-5.6-terra", "GPT-5.6 Terra", EVERY_EFFORT, "medium", ["priority"]),
     model("codex", "openai/gpt-5.6-luna", "GPT-5.6 Luna", EVERY_EFFORT, "medium", ["priority"]),
-    // Opus 5.5 always thinks: the API rejects disabled thinking, so "off" is not offered.
+    // Opus 5.5 and Sonnet 5.5 always think: the API rejects disabled thinking, so "off" is not
+    // offered.
     model("claude", "anthropic/opus-5-5", "Opus 5.5 1M", ALL_BUT_OFF),
     model("claude", "anthropic/opus-5", "Opus 5 1M"),
+    model("claude", "anthropic/sonnet-5-5", "Sonnet 5.5", ALL_BUT_OFF),
     model("claude", "anthropic/sonnet-5", "Sonnet 5"),
     model("claude", "anthropic/fable-5-1", "Fable 5.1"),
     model("claude", "anthropic/fable-5", "Fable 5"),
@@ -439,17 +445,33 @@ function concreteAgentModelCatalog(
     return models;
 }
 
-/** AWS's Sonnet 5 model card lists Mantle in-region support only in these regions.
+/**
+ * The only regions where AWS's model cards list Mantle in-region support for these models.
  * https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-sonnet-5.html
+ * https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-sonnet-5-5.html
+ */
+const BEDROCK_MANTLE_REGIONS: Readonly<Record<string, readonly string[]>> = Object.freeze({
+    "anthropic/sonnet-5-5": ["us-gov-west-1"],
+    "anthropic/sonnet-5": [
+        "us-east-1",
+        "us-gov-west-1",
+        "eu-north-1",
+        "eu-west-1",
+        "ap-southeast-4",
+    ],
+});
+
+/**
+ * A model whose Mantle route AWS does not serve in the configured region is not offered there.
  * Runtime inference profiles have separate availability; never silently switch transport/region.
  */
 function modelAvailableOnProvider(provider: ConcreteConfiguredProvider, modelId: string): boolean {
-    if (provider.type !== "bedrock" || modelId !== "anthropic/sonnet-5") return true;
+    if (provider.type !== "bedrock") return true;
+    const mantleRegions = BEDROCK_MANTLE_REGIONS[modelId];
+    if (mantleRegions === undefined) return true;
     if (resolveAnthropicBedrockTransport(provider, modelId) !== "mantle") return true;
     const region = provider.modelOverrides?.[modelId]?.region ?? provider.region ?? "us-east-1";
-    return ["us-east-1", "us-gov-west-1", "eu-north-1", "eu-west-1", "ap-southeast-4"].includes(
-        region,
-    );
+    return mantleRegions.includes(region);
 }
 
 function bedrockModelRegion(
@@ -662,9 +684,11 @@ function resolveAnthropicBedrockTransport(
     model: string | undefined,
 ): AnthropicBedrockTransport | undefined {
     if (model?.startsWith("anthropic/") !== true) return undefined;
+    // AWS documents no commercial Mantle route for Fable 5.1 or Sonnet 5.5, so both default to
+    // Runtime; the others prefer Mantle.
     return (
         provider.modelOverrides?.[model]?.transport ??
-        (model === "anthropic/fable-5-1" ? "runtime" : "mantle")
+        (model === "anthropic/fable-5-1" || model === "anthropic/sonnet-5-5" ? "runtime" : "mantle")
     );
 }
 
