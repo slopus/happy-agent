@@ -270,10 +270,13 @@ jobs:
                       if [[ "$runtime" == node ]]; then
                           command=(node --expose-gc)
                       else
-                          command=(pnpm dlx bun@1.4.0)
+                          command=(pnpm dlx bun@1.4.2)
                       fi
                       "${command[@]}" packages/happy-agent/scripts/verify-native-libsql.mjs
                   done
+
+            - name: Verify the Bun runtime before compiling
+              run: pnpm --filter @slopus/happy-agent test:bun:runtime
 
             - name: Compile Happy Agent standalone binary
               run: |

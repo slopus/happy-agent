@@ -7,7 +7,7 @@ import { basename, dirname, extname, join, resolve } from "node:path";
 import { resolveBinaryVersion } from "./resolveBinaryVersion.js";
 import { resolveTailcatBinaryAsset } from "./resolveTailcatBinaryAsset.js";
 
-const MINIMUM_BUN_VERSION = [1, 4, 0] as const;
+const MINIMUM_BUN_VERSION = [1, 4, 2] as const;
 const VIRTUAL_ASSETS_MODULE = "happy-agent:binary-assets";
 const MENU_BAR_RELATIVE_PATH = "happy-menu-bar";
 const happyAgentRoot = resolve(import.meta.dirname, "..");

@@ -7,6 +7,16 @@ target-specific Bun executables. The binary compiler owns all platform asset
 discovery and adapts third-party runtime-selected native packages at the bundle
 boundary; product code remains runtime-neutral.
 
+Standalone builds require Bun 1.4.2 or newer. Bun 1.4.0 can abort inside
+JavaScriptCore while resuming optimized async functions after caught exceptions.
+`test:bun:runtime` exercises this failure in a child process using the release
+runtime, since the ordinary Node tests cannot detect it. Every platform build
+runs this regression before compiling the executable. Bun 1.4.2 also aborted in
+JIT exception handling during a longer live run, so the CLI starts a fresh VM
+with the DFG and FTL optimizing tiers disabled before loading the daemon. The
+interpreter and baseline JIT remain available. This guard also applies to direct
+foreground launches and overrides inherited settings that re-enable those tiers.
+
 ```text
 sources/ ----> tsc ------> dist/cli.js (Node or Bun)
 docs/ ----> copy-docs ---> dist/docs/

@@ -150,6 +150,8 @@ jobs:
             - name: Install the pinned Artifact Signing module
               if: env.HAPPY_WINDOWS_SIGNING_ENABLED == 'true'
               run: Install-Module -Name ArtifactSigning -RequiredVersion 0.1.8 -Force -Repository PSGallery -Scope CurrentUser
+            - name: Verify the Bun runtime before compiling
+              run: pnpm --filter @slopus/happy-agent test:bun:runtime
             - name: Build standalone executable with signed embedded native assets when enabled
               run: pnpm --filter @slopus/happy-agent build:bun --target win32-x64
             - name: Sign and verify the standalone executable
@@ -161,13 +163,13 @@ jobs:
                   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
                   node --expose-gc packages/happy-agent/scripts/verify-native-libsql.mjs
                   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-                  pnpm --filter @slopus/happy-agent exec pnpm dlx bun@1.4.0 scripts/verify-native-libsql.mjs
+                  pnpm --filter @slopus/happy-agent exec pnpm dlx bun@1.4.2 scripts/verify-native-libsql.mjs
                   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
                   node packages/happy-agent/scripts/verify-native-fff.mjs
                   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-                  pnpm --filter @slopus/happy-agent exec pnpm dlx bun@1.4.0 scripts/verify-native-fff.mjs
+                  pnpm --filter @slopus/happy-agent exec pnpm dlx bun@1.4.2 scripts/verify-native-fff.mjs
                   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-                  pnpm --filter @slopus/happy-agent exec pnpm dlx bun@1.4.0 scripts/verify-windows-sockets.ts
+                  pnpm --filter @slopus/happy-agent exec pnpm dlx bun@1.4.2 scripts/verify-windows-sockets.ts
                   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             - name: Provision once on this disposable CI machine
               # Hosted Windows runners are already elevated. Never run this step on a
