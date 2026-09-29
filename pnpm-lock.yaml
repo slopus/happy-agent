@@ -149,8 +149,8 @@ importers:
         specifier: ^0.34.49
         version: 0.34.49
       '@slopus/happy-agent-base':
-        specifier: 0.0.58
-        version: 0.0.58(@opentelemetry/api@1.9.1)(@types/pg@8.15.6)(sql.js@1.14.1)(ws@8.21.1)(zod@4.4.3)
+        specifier: 0.0.59
+        version: 0.0.59(@opentelemetry/api@1.9.1)(@types/pg@8.15.6)(sql.js@1.14.1)(ws@8.21.1)(zod@4.4.3)
       '@slopus/happy-agent-client':
         specifier: 0.0.67
         version: 0.0.67
@@ -298,8 +298,8 @@ importers:
         specifier: workspace:*
         version: link:../happy-agent
       '@slopus/happy-agent-base':
-        specifier: npm:@slopus/happy-agent-base@0.0.58
-        version: 0.0.58(@opentelemetry/api@1.9.1)(@types/pg@8.15.6)(sql.js@1.14.1)(ws@8.21.1)(zod@4.4.3)
+        specifier: npm:@slopus/happy-agent-base@0.0.59
+        version: 0.0.59(@opentelemetry/api@1.9.1)(@types/pg@8.15.6)(sql.js@1.14.1)(ws@8.21.1)(zod@4.4.3)
       '@slopus/happy-agent-client':
         specifier: 0.0.67
         version: 0.0.67
@@ -429,8 +429,8 @@ importers:
         version: 8.21.1
     devDependencies:
       '@slopus/happy-agent-base':
-        specifier: npm:@slopus/happy-agent-base@0.0.58
-        version: 0.0.58(@opentelemetry/api@1.9.1)(@types/pg@8.15.6)(sql.js@1.14.1)(ws@8.21.1)(zod@4.4.3)
+        specifier: npm:@slopus/happy-agent-base@0.0.59
+        version: 0.0.59(@opentelemetry/api@1.9.1)(@types/pg@8.15.6)(sql.js@1.14.1)(ws@8.21.1)(zod@4.4.3)
       '@types/node':
         specifier: ^24.0.10
         version: 24.13.3
@@ -2100,8 +2100,8 @@ packages:
   '@slopus/ghostty-web@0.1.3':
     resolution: {integrity: sha512-z6t+XKBqUWQPM2tjBbOL6EjuKtD12gqtuLKUjMT4Pn74DjuGNHDw5tEdzn5hA0MTvXPW2w1rQTX089QDa892Xw==}
 
-  '@slopus/happy-agent-base@0.0.58':
-    resolution: {integrity: sha512-/+UOMeKPvIOBMHBE/UFeNAUYLAOsCN1+q7yNbb2SdlbqRvN1R4Gbi1mqRhgkbno2HxIraVGYIXtZaMPKRdOl6w==}
+  '@slopus/happy-agent-base@0.0.59':
+    resolution: {integrity: sha512-sCRchwsRpY2/cAF36At4rwfKufUic7UH5fqk5q6v44xNRQMUsnk9LYSkQU6LEWfpqvcg5LAGCDL1ZciU8Kj/cw==}
     engines: {node: '>=22.19.0'}
 
   '@slopus/happy-agent-client@0.0.67':
@@ -5359,7 +5359,7 @@ snapshots:
 
   '@slopus/ghostty-web@0.1.3': {}
 
-  '@slopus/happy-agent-base@0.0.58(@opentelemetry/api@1.9.1)(@types/pg@8.15.6)(sql.js@1.14.1)(ws@8.21.1)(zod@4.4.3)':
+  '@slopus/happy-agent-base@0.0.59(@opentelemetry/api@1.9.1)(@types/pg@8.15.6)(sql.js@1.14.1)(ws@8.21.1)(zod@4.4.3)':
     dependencies:
       '@electric-sql/pglite': 0.5.5
       '@libsql/client': 0.18.0(patch_hash=3bce7b073378d1b7c0380b19e5b714650a8b4710b65ab671e1608c88658e10fa)
