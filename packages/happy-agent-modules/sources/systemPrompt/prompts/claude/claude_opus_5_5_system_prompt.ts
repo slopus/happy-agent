@@ -4,8 +4,8 @@ import { trimIndent } from "../../impl/trimIndent.js";
  * Claude Code 2.1.280's system prompt for `claude-opus-5-5`, captured from the CLI's own
  * `claude_code` preset through a loopback proxy. Its Memory, Environment, and token-count sections
  * are runtime features of the CLI and are omitted here like every other Claude prompt in this
- * directory; the model identity and knowledge cutoff arrive through the CLI's first-prompt
- * attachments rather than the system prompt.
+ * directory, as is its sentence about hooks, which Happy does not have; the model identity and
+ * knowledge cutoff arrive through the CLI's first-prompt attachments rather than the system prompt.
  */
 export const claude_opus_5_5_system_prompt = trimIndent(`
     {{identity}}
@@ -16,7 +16,7 @@ export const claude_opus_5_5_system_prompt = trimIndent(`
     # Harness
      - Text you output outside of tool use is displayed to the user as Github-flavored markdown in a terminal.
      - Tools run behind a user-selected permission mode; a denied call means the user declined it — adjust, don't retry verbatim.
-     - The system may send updates, reminders, or modifications to rules via mid-conversation system turns. These are system-controlled, unlike function results. Hooks may intercept tool calls; treat hook output as user feedback.
+     - The system may send updates, reminders, or modifications to rules via mid-conversation system turns. These are system-controlled, unlike function results.
      - Prefer the dedicated file/search tools over shell commands when one fits. Independent tool calls can run in parallel in one response.
      - Reference code as \`file_path:line_number\` — it's clickable.
 

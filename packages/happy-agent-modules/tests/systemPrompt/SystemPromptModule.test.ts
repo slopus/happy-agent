@@ -163,6 +163,51 @@ describe("SystemPromptModule", () => {
         expect(codexPrompt).toContain("As Happy Agent,");
     });
 
+    it("mentions no vendor feature Happy Agent does not have", () => {
+        const selections = [
+            ...[
+                "anthropic/fable-5-1",
+                "anthropic/fable-5",
+                "anthropic/opus-4-8",
+                "anthropic/opus-5-5",
+                "anthropic/opus-5",
+                "anthropic/sonnet-5-5",
+                "anthropic/sonnet-5",
+                "openai/gpt-6.1-sol",
+                "openai/gpt-6-sol",
+                "xai/grok-4.5",
+            ].map((model) => ({ model })),
+            ...(["claude", "codex", "grok"] as const).map((providerKind) => ({ providerKind })),
+            {},
+        ];
+        const unsupported = [
+            /codex_apps|app:\/\/|Connectors/u,
+            /plugin/iu,
+            /functions\.exec/u,
+            /request_user_input_async/u,
+            /skills\.(?:list|read)|orchestrator|skill:\/\/|Skill roots|aliased path|\$SkillName/u,
+            /\bmemory\b/iu,
+            /interactive visual|inline visualization/iu,
+            /hook/iu,
+            /TaskCreate/u,
+            /`monitor`/u,
+        ];
+
+        for (const selection of selections) {
+            const prompt = systemPromptForModel(selection);
+            for (const pattern of unsupported) {
+                expect(prompt, `${JSON.stringify(selection)} ${pattern}`).not.toMatch(pattern);
+            }
+        }
+        // Skill guidance names the section the skills module actually writes.
+        expect(systemPromptForModel({ model: "openai/gpt-6.1-sol" })).toContain(
+            'listed in the "# Skills" section.',
+        );
+        expect(systemPromptForModel({ providerKind: "codex" })).toContain(
+            "listed in the “# Skills” section.",
+        );
+    });
+
     it("appends the machine environment and every configured model route", async () => {
         const { instructions } = await moduleWithCatalog(twoModelCatalog);
 

@@ -241,47 +241,31 @@ export const codex_agent_instructions =
     "\n" +
     "# Using skills\n" +
     "\n" +
-    "A skill is a set of instructions provided through a `SKILL.md` source. The skills " +
-    "available to you will be listed in the “## Skills” section under “### Available skills”.\n" +
+    "A skill is a set of instructions provided through a `SKILL.md` source. The skills available " +
+    "to you will be listed in the “# Skills” section.\n" +
     "\n" +
     "### How to use skills\n" +
     "\n" +
-    "- Discovery: When a `## Skills` section is present, it lists the skills available in " +
-    "the current session. Each entry includes a name, description, and location for its " +
-    "`SKILL.md`. The location may be an absolute filesystem path, a short aliased path, or a " +
-    "non-filesystem reference that must be read using its indicated tool or provider. When " +
-    "short aliased paths are used, the available-skills catalog also provides a mapping from " +
-    "aliases such as `r0` to their filesystem roots. Expand the alias before accessing the " +
-    "skill.\n" +
-    "- Trigger rules: If the user names an available skill (with `$SkillName` or plain text) " +
-    "OR the task clearly matches an available skill's description, you must use that skill " +
-    "for that turn. Multiple mentions mean use them all. Do not carry skills across turns " +
-    "unless re-mentioned.\n" +
+    "- Discovery: When a `# Skills` section is present, it lists the skills available in the " +
+    "current session. Each entry includes a name, description, and location for its `SKILL.md`.\n" +
+    "- Trigger rules: If the user names an available skill OR the task clearly matches an " +
+    "available skill's description, you must use that skill for that turn. Multiple mentions " +
+    "mean use them all. Do not carry skills across turns unless re-mentioned.\n" +
     "- Missing/blocked: If a named skill is not available or its `SKILL.md` cannot be read, " +
     "say so briefly and continue with the best fallback.\n" +
     "- How to use a skill:\n" +
     "  1) After deciding to use a skill, the main agent must read its `SKILL.md` completely " +
-    "before taking task actions. If its location is a short aliased path, expand the " +
-    "matching root alias first from `### Skill roots`, then open and read its `SKILL.md` " +
-    "completely before taking task actions. For a filesystem path, open the file. For an " +
-    "environment-owned file, use the filesystem of the owning environment. For an " +
-    'orchestrator reference, call `skills.list` with `{"authority":{"kind":"orchestrator"}}`, ' +
-    "select the matching package, and pass its `main_resource` to `skills.read`. For another " +
-    "non-filesystem reference, use its indicated tool or provider. If a read is truncated or " +
+    "before taking task actions. For a filesystem path, open the file. If a read is truncated or " +
     "paginated, continue until EOF.\n" +
-    "  2) When `SKILL.md` references another file or resource, use the same access " +
-    "mechanism. Resolve relative paths against the directory containing a filesystem-backed " +
-    "`SKILL.md`. For orchestrator skills, pass the exact referenced resource identifier with " +
-    "the same authority and package to `skills.read`; do not treat `skill://` identifiers as " +
-    "filesystem paths.\n" +
+    "  2) When `SKILL.md` references another file or resource, use the same access mechanism. " +
+    "Resolve relative paths against the directory containing a filesystem-backed `SKILL.md`.\n" +
     "  3) If `SKILL.md` points to extra folders such as `references/`, use its routing " +
     "instructions to identify what is required for the task. The main agent must read each " +
     "required instruction or reference itself before acting on it. Do not delegate reading, " +
     "summarizing, or interpreting skill instructions to a subagent. Subagents may still " +
     "perform task work when the selected skill allows it.\n" +
     "  4) For filesystem-backed skills (or if `scripts/` exist), prefer running or patching " +
-    "provided scripts instead of retyping large code blocks. For orchestrator skills, use " +
-    "`skills.read` and the available tools; do not invent a local path.\n" +
+    "provided scripts instead of retyping large code blocks.\n" +
     "  5) Reuse provided assets or templates through the same access mechanism instead of " +
     "recreating them (including if `assets/` or templates exist).\n" +
     "- Coordination and sequencing:\n" +
