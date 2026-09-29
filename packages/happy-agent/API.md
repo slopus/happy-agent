@@ -2134,8 +2134,10 @@ Every project route answers with the same shape:
     "remoteSource": { "kind": "github", "repository": "slopus/rig" },
     "avatar": { "kind": "image", "thumbhash": "3OcRJYB4d3h3iIeHeEh3eIhw+j2w", "source": "user" },
     "description": null,
+    "workspaceSetupCommands": ["pnpm install --frozen-lockfile"],
     "settings": {
-        "defaultWorkspaceCompute": { "type": "host" }
+        "defaultWorkspaceCompute": { "type": "host" },
+        "workspaceInitialPrompt": null
     },
     "agents": [
         /* active user-visible root agents owned by this project, in order */
@@ -2176,8 +2178,16 @@ Fields:
   built-in home project, which represents the user's machine outside any repository, carries
   `{ "kind": "home" }` instead: the client shows its home iconography, and there are no image
   bytes to fetch.
-- `settings` — per-project settings; `defaultWorkspaceCompute` chooses where new workspaces
-  run (`{ "type": "host" }` or `{ "type": "docker", "image": "..." }`).
+- `workspaceSetupCommands` — the ordered shell commands a new workspace of this project runs
+  once its checkout exists, as the daemon last read them from the project's `happy.toml`
+  (`[workspace] setup_commands`, over the machine-wide default). Read-only: the file is the
+  source of truth, and the daemon re-reads it when it changes, publishing the new list through
+  `project.updated`. Empty until the file has been read once or when it names no command.
+- `settings` — per-project settings. `defaultWorkspaceCompute` chooses where new workspaces
+  run (`{ "type": "host" }` or `{ "type": "docker", "image": "..." }`). `workspaceInitialPrompt`
+  is the text a client sends as the first user message to the first agent in every new workspace
+  of the project, or `null` when the project says nothing; the daemon stores it and does not send
+  it itself.
 - `agents` — active user-visible root agents owned by the project, in `orderKey` order. Because
   the project is also its root workspace, `GET /v0/workspaces/:projectId` exposes this same
   series. Archived agents and ordinary hidden subagents are excluded. A user-visible root managed
@@ -2263,9 +2273,14 @@ Request:
 ```json
 {
     "defaultWorkspaceCompute": { "type": "docker", "image": "ghcr.io/acme/dev:latest" },
+    "workspaceInitialPrompt": "Run the test suite and report what fails before touching anything.",
     "mutationId": "..."
 }
 ```
+
+`workspaceInitialPrompt` is optional. Because the body replaces the settings, omitting it, sending
+`null`, or sending blank text all leave the project with no initial prompt. A prompt is at most
+32,000 characters.
 
 Response — `200`: `{ "project": { ... }, "settings": { ... } }` — the row and the settings as
 persisted.

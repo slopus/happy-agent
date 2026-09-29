@@ -56,7 +56,14 @@ export function formatSettingsForModel(
             : compute.type === "local"
               ? "New workspaces run locally."
               : `New workspaces run in Docker using the ${compute.image} image.`;
-    return fitText(`Project ${projectId} settings\n${computeText}`, maxOutputCharacters);
+    const promptText =
+        settings.workspaceInitialPrompt === undefined
+            ? "No initial prompt: the first agent in a new workspace waits for the person."
+            : `The first agent in a new workspace is told:\n${settings.workspaceInitialPrompt}`;
+    return fitText(
+        `Project ${projectId} settings\n${computeText}\n${promptText}`,
+        maxOutputCharacters,
+    );
 }
 
 /**

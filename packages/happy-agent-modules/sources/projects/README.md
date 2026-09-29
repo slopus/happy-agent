@@ -89,6 +89,12 @@ can key on.
   `gitUpstream` are what the last Git scan observed. They are a cache of the
   repository, refreshed by `reconcileGitFacts` and by the live watcher, never
   the thing a decision is made against.
+- `workspaceSetupCommands` is what the workspaces catalog last read from the
+  project's own `happy.toml` (`[workspace] setup_commands`, over the machine's
+  defaults), recorded through `recordWorkspaceSetupCommands` so a client can
+  show what a new workspace will run. It is absent until the file has been read
+  once, and it is a cache for display: the commands a workspace actually runs
+  are read from its own checkout when it is prepared.
 
 Alongside those sit `status`, `orderKey`, `version`, `avatar`, `description`
 and the `createdAt`/`updatedAt`/`archivedAt` timestamps. Timestamps are
@@ -101,7 +107,9 @@ its integrity metadata are read separately by project ID.
 
 Settings are a bounded object, not arbitrary JSON: an optional
 `defaultWorkspaceCompute` of `{ type: "local" }` or
-`{ type: "docker", image }`. Anything else is rejected.
+`{ type: "docker", image }`, and an optional `workspaceInitialPrompt` — the
+text a client sends as the first user message to the first agent in every new
+workspace of the project. Anything else is rejected.
 
 ## Tools
 

@@ -283,6 +283,7 @@ describe("ProjectsModule", () => {
                 "006-project-root-agents",
                 "007-project-root-agent-order-keys",
                 "008-project-avatar-assets",
+                "009-project-workspace-setup-commands",
             ]);
         } finally {
             database.close();

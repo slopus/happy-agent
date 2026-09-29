@@ -101,6 +101,13 @@ export const projectSettingsBodySchema = Type.Object(
             ),
         ]),
         mutationId: Type.Optional(mutationIdSchema),
+        /**
+         * What the first agent in every new workspace is told. The body replaces the settings,
+         * so leaving it out, `null`, or blank all mean the project has nothing to say.
+         */
+        workspaceInitialPrompt: Type.Optional(
+            Type.Union([Type.String({ maxLength: 32_000 }), Type.Null()]),
+        ),
     },
     { additionalProperties: false },
 );

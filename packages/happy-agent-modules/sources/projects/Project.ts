@@ -27,6 +27,8 @@ export const MAX_PROJECT_GIT_REF_LENGTH = 512;
 export const MAX_PROJECT_GIT_DIVERGENCE = 1_000_000;
 export const MAX_PROJECT_INITIALIZATION_ATTEMPTS = 1_000_000;
 export const MAX_PROJECT_REMOTE_URL_LENGTH = 2_048;
+export const MAX_PROJECT_WORKSPACE_SETUP_COMMANDS = 100;
+export const MAX_PROJECT_WORKSPACE_SETUP_COMMAND_LENGTH = 4_096;
 
 /**
  * These are written as explicit code-point ranges rather than Unicode property escapes because a
@@ -217,6 +219,25 @@ export const projectGitFactsSchema = Type.Object(
     { additionalProperties: false },
 );
 
+/**
+ * One shell command a new workspace of this project runs once its checkout exists. It is the
+ * text of the repository's `happy.toml` as written, bounded but otherwise untouched: NUL is the
+ * only character no shell can be handed.
+ */
+export const projectWorkspaceSetupCommandSchema = Type.String({
+    maxLength: MAX_PROJECT_WORKSPACE_SETUP_COMMAND_LENGTH,
+    pattern: "^[^\\u0000]*$",
+});
+
+/**
+ * The ordered setup commands the workspaces catalog last read from the project's own
+ * `happy.toml`, over the machine's defaults. A cache of the file for clients to show, never the
+ * list a workspace actually runs — that is read from the checkout at the moment it is prepared.
+ */
+export const projectWorkspaceSetupCommandsSchema = Type.Array(projectWorkspaceSetupCommandSchema, {
+    maxItems: MAX_PROJECT_WORKSPACE_SETUP_COMMANDS,
+});
+
 export const projectTimestampSchema = Type.Integer({
     minimum: 0,
     maximum: MAX_PROJECT_TIMESTAMP,
@@ -321,6 +342,8 @@ export const projectSchema = Type.Object(
         gitBranch: Type.Optional(projectGitRefSchema),
         gitHead: Type.Optional(projectGitRefSchema),
         gitUpstream: Type.Optional(projectGitRefSchema),
+        /** Absent until the workspaces catalog has read the project's `happy.toml` once. */
+        workspaceSetupCommands: Type.Optional(projectWorkspaceSetupCommandsSchema),
         orderKey: projectOrderKeySchema,
         version: projectVersionSchema,
         avatar: Type.Optional(projectAvatarSchema),
@@ -457,6 +480,15 @@ export const projectGitFactsInputSchema = Type.Object(
     { additionalProperties: false },
 );
 
+/** The setup commands another catalog read from the project's `happy.toml`. */
+export const projectWorkspaceSetupCommandsInputSchema = Type.Object(
+    {
+        commands: projectWorkspaceSetupCommandsSchema,
+        projectId: projectIdSchema,
+    },
+    { additionalProperties: false },
+);
+
 export const projectSetDefaultBranchInputSchema = Type.Object(
     {
         branch: projectGitRefSchema,
@@ -520,6 +552,10 @@ export type ProjectSetAvatarInput = Static<typeof projectSetAvatarInputSchema>;
 export type ProjectClearAvatarInput = Static<typeof projectClearAvatarInputSchema>;
 export type ProjectProbeInput = Static<typeof projectProbeInputSchema>;
 export type ProjectGitFactsInput = Static<typeof projectGitFactsInputSchema>;
+export type ProjectWorkspaceSetupCommands = Static<typeof projectWorkspaceSetupCommandsSchema>;
+export type ProjectWorkspaceSetupCommandsInput = Static<
+    typeof projectWorkspaceSetupCommandsInputSchema
+>;
 export type ProjectSetDefaultBranchInput = Static<typeof projectSetDefaultBranchInputSchema>;
 export type ProjectAdoptRemoteNameInput = Static<typeof projectAdoptRemoteNameInputSchema>;
 export type ProjectInitializationFailureInput = Static<
