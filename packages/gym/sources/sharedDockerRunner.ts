@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
-const SHARED_DOCKER_RUNNER_VERSION = "3";
+const SHARED_DOCKER_RUNNER_VERSION = "4";
 const runners = new Map<string, Promise<SharedDockerRunner>>();
 
 export interface SharedDockerRunner {
@@ -127,6 +127,10 @@ async function startSharedDockerRunner(options: {
             `happy-terminal.gym.run=${runId}`,
             "--security-opt",
             "seccomp=unconfined",
+            // Docker's default AppArmor profile on Ubuntu hosts denies the mount changes bwrap
+            // makes for each scenario; hosts without AppArmor ignore this option.
+            "--security-opt",
+            "apparmor=unconfined",
             "--add-host",
             "host.docker.internal:host-gateway",
             "--env",
