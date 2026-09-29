@@ -92,4 +92,15 @@ describe("Codex model properties", () => {
             });
         }
     });
+
+    it("uses Codex's own GPT-6.1 Sol contract: Responses Lite, hash 3000, low by default", () => {
+        expect(getCodexModelProperties("gpt-6.1-sol")).toEqual({
+            compactionHash: "3000",
+            contextWindow: 272_000,
+            defaultEffort: "low",
+            responsesLite: true,
+        });
+        expect(resolveCodexReasoningEffort("gpt-6.1-sol", undefined)).toBe("low");
+        expect(isCodexV2Model("gpt-6.1-sol")).toBe(true);
+    });
 });

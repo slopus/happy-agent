@@ -454,5 +454,15 @@ describe("SystemPromptModule", () => {
         expect(sonnet55).toBe(opus55);
         expect(sonnet55).not.toBe(systemPromptForModel({ model: "anthropic/sonnet-5" }));
         expect(sonnet55).not.toContain("# Doing tasks");
+        // GPT-6.1 Sol has Codex's own GPT-6 instructions; the other Codex models keep the GPT-5.6
+        // prompt they share.
+        const gpt61Sol = systemPromptForModel({ model: "openai/gpt-6.1-sol" });
+        expect(gpt61Sol.startsWith("{{identity}}, an agent based on GPT-6. ")).toBe(true);
+        expect(gpt61Sol).toContain("# When to ask the user for permission");
+        expect(gpt61Sol).toContain("As {{name}}, you are a curious, thoughtful collaborator");
+        expect(gpt61Sol).not.toContain("Codex, an agent");
+        expect(systemPromptForModel({ model: "openai/gpt-6-sol" })).toBe(
+            systemPromptForModel({ providerKind: "codex" }),
+        );
     });
 });

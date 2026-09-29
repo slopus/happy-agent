@@ -26,6 +26,12 @@ const MODEL_PROPERTIES: Readonly<Record<string, CodexModelProperties>> = {
         defaultEffort: "medium",
         responsesLite: false,
     },
+    "gpt-6.1-sol": {
+        compactionHash: "3000",
+        contextWindow: 272_000,
+        defaultEffort: "low",
+        responsesLite: true,
+    },
     "gpt-6-astra": {
         compactionHash: "3000",
         contextWindow: 272_000,

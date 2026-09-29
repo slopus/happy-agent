@@ -80,7 +80,11 @@ us, eu, jp, au, and global profiles as Opus 5.
 Adding a model to its native provider must not automatically advertise it through a reseller.
 Keep the Bedrock catalog limited to models AWS currently documents, and add a reseller route only
 after its model ID and wire behavior are known. A native Codex model can otherwise appear usable
-through Bedrock even though AWS does not serve it.
+through Bedrock even though AWS does not serve it. The Bedrock catalog used to copy every non-Grok
+native entry, so the rule held only by convention; it is now an explicit list of resold model IDs.
+GPT-6.1 Sol showed why: Codex lists it, but AWS documents no GPT-6.1 model and Codex's own Bedrock
+catalog omits it, so it stays off Bedrock until AWS documents its Bedrock model ID. Bedrock
+still serves GPT through GPT-6 Astra, Sol, and Luna, the GPT-5.6 family, and GPT-5.4.
 
 Sonnet 5 uses `anthropic.claude-sonnet-5` on Mantle, but AWS documents in-region
 availability only in N. Virginia, GovCloud West, Stockholm, Ireland, and Melbourne.

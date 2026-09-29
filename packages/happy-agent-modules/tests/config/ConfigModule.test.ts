@@ -809,6 +809,56 @@ describe("ConfigModule", () => {
         });
     });
 
+    it("offers GPT-6.1 Sol through Codex and keeps it off Bedrock, which does not serve it", async () => {
+        const root = await mkdtemp(join(tmpdir(), "happy-agent-gpt-6-1-catalog-"));
+        temporaryDirectories.push(root);
+        const configDirectory = process.platform === "darwin" ? "Happy/Config" : "happy/config";
+        await mkdir(join(root, configDirectory), { recursive: true });
+        await writeFile(
+            join(root, configDirectory, "happy.toml"),
+            "[providers.codex]\nenabled = true\n\n[providers.bedrock]\nenabled = true\n",
+        );
+
+        const module = await ConfigModule.load(join(root, ".happy"));
+
+        expect(module.catalog.filter((model) => model.providerId === "codex")[0]).toMatchObject({
+            autoCompactWindow: 244_800,
+            contextWindow: 272_000,
+            defaultEffort: "high",
+            effortLevels: ["low", "medium", "high", "xhigh", "max"],
+            enabled: true,
+            id: "openai/gpt-6.1-sol",
+            name: "GPT-6.1 Sol",
+            serviceTiers: ["priority"],
+        });
+        expect(
+            module.catalog.some(
+                (model) => model.providerId === "bedrock" && model.id === "openai/gpt-6.1-sol",
+            ),
+        ).toBe(false);
+        // Bedrock keeps reselling exactly the documented subset it offered before.
+        expect(
+            module.catalog
+                .filter((model) => model.providerId === "bedrock")
+                .map((model) => model.id),
+        ).toEqual([
+            "openai/gpt-6-astra",
+            "openai/gpt-6-sol",
+            "openai/gpt-6-luna",
+            "openai/gpt-5.6-sol",
+            "openai/gpt-5.6-terra",
+            "openai/gpt-5.6-luna",
+            "anthropic/opus-5-5",
+            "anthropic/opus-5",
+            "anthropic/sonnet-5-5",
+            "anthropic/sonnet-5",
+            "anthropic/fable-5-1",
+            "anthropic/fable-5",
+            "anthropic/opus-4-8",
+            "openai/gpt-5.4",
+        ]);
+    });
+
     it("ignores unknown TOML fields while retaining their source locations", () => {
         const parsed = parseHappyAgentConfigToml(
             ["unknown = true", "[settings]", "show_usage = true", "show_usgae = false"].join("\n"),

@@ -94,6 +94,10 @@ const MODEL_CONTEXTS: Readonly<Record<string, AgentModelContext>> = Object.freez
         contextWindow: 272_000,
         autoCompactWindow: 244_800,
     }),
+    "openai/gpt-6.1-sol": Object.freeze({
+        contextWindow: 272_000,
+        autoCompactWindow: 244_800,
+    }),
     "openai/gpt-6-astra": Object.freeze({
         contextWindow: 272_000,
         autoCompactWindow: 244_800,
@@ -148,6 +152,7 @@ const ALL_BUT_OFF: AgentModel["effortLevels"] = ["low", "medium", "high", "xhigh
  * configured provider entry decides which of these its own key serves.
  */
 const CATALOG: readonly CatalogAgentModel[] = [
+    model("codex", "openai/gpt-6.1-sol", "GPT-6.1 Sol", ALL_BUT_OFF, "high", ["priority"]),
     model("codex", "openai/gpt-6-astra", "GPT-6 Astra", ALL_BUT_OFF, "high", ["priority"]),
     model("codex", "openai/gpt-6-sol", "GPT-6 Sol", ALL_BUT_OFF, "high", ["priority"]),
     model("codex", "openai/gpt-6-luna", "GPT-6 Luna", ALL_BUT_OFF, "medium", ["priority"]),
@@ -170,12 +175,34 @@ const CATALOG: readonly CatalogAgentModel[] = [
     model("grok", "xai/grok-composer-2.5-fast", "Composer 2.5", ["off"], "off"),
 ];
 
+/**
+ * The native models AWS documents on Bedrock. A model added to its native catalog stays off Bedrock
+ * until AWS serves it and its Bedrock route is known.
+ */
+const BEDROCK_RESOLD_MODEL_IDS: ReadonlySet<string> = new Set([
+    "openai/gpt-6-astra",
+    "openai/gpt-6-sol",
+    "openai/gpt-6-luna",
+    "openai/gpt-5.6-sol",
+    "openai/gpt-5.6-terra",
+    "openai/gpt-5.6-luna",
+    "anthropic/opus-5-5",
+    "anthropic/opus-5",
+    "anthropic/sonnet-5-5",
+    "anthropic/sonnet-5",
+    "anthropic/fable-5-1",
+    "anthropic/fable-5",
+    "anthropic/opus-4-8",
+]);
+
 /** Bedrock resells a documented subset of the native catalogs and adds one model of its own. */
 const BEDROCK_CATALOG: readonly CatalogAgentModel[] = [
-    ...CATALOG.filter((candidate) => candidate.providerId !== "grok").map((candidate) => {
-        const { serviceTiers: _unsupported, ...rest } = candidate;
-        return { ...rest, providerId: "bedrock" };
-    }),
+    ...CATALOG.filter((candidate) => BEDROCK_RESOLD_MODEL_IDS.has(candidate.id)).map(
+        (candidate) => {
+            const { serviceTiers: _unsupported, ...rest } = candidate;
+            return { ...rest, providerId: "bedrock" };
+        },
+    ),
     model("bedrock", "openai/gpt-5.4", "GPT-5.4", ["off", "low", "medium", "high", "xhigh"]),
 ];
 

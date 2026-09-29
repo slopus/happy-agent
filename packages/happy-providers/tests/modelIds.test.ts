@@ -18,6 +18,7 @@ describe("Rig model IDs", () => {
         [resolveBedrockModelId, "anthropic/fable-5-1", "anthropic.claude-fable-5-1"],
         [resolveBedrockModelId, "anthropic/opus-5-5", "anthropic.claude-opus-5-5"],
         [resolveBedrockModelId, "anthropic/opus-5", "anthropic.claude-opus-5"],
+        [resolveCodexModelId, "openai/gpt-6.1-sol", "gpt-6.1-sol"],
         [resolveCodexModelId, "openai/gpt-6-astra", "gpt-6-astra"],
         [resolveCodexModelId, "openai/gpt-6-sol", "gpt-6-sol"],
         [resolveCodexModelId, "openai/gpt-6-luna", "gpt-6-luna"],

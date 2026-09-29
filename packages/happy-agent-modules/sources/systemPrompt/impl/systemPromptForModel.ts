@@ -8,6 +8,7 @@ import { claude_opus_5_system_prompt } from "../prompts/claude/claude_opus_5_sys
 import { claude_sonnet_5_5_system_prompt } from "../prompts/claude/claude_sonnet_5_5_system_prompt.js";
 import { claude_sonnet_5_system_prompt } from "../prompts/claude/claude_sonnet_5_system_prompt.js";
 import { codex_agent_instructions } from "../prompts/codex/codex_agent_instructions.js";
+import { codex_gpt_6_1_sol_instructions } from "../prompts/codex/codex_gpt_6_1_sol_instructions.js";
 import { grok_4_5_system_prompt } from "../prompts/grok/grok_4_5_system_prompt.js";
 import { simple_system_prompt } from "../prompts/simple/simple_system_prompt.js";
 import {
@@ -24,6 +25,7 @@ const promptsByModel: Readonly<Record<string, string>> = Object.freeze({
     "anthropic/fable-5-1": claude_fable_5_1_system_prompt,
     "anthropic/fable-5": claude_fable_5_system_prompt,
     "anthropic/opus-4-8": claude_opus_4_8_system_prompt,
+    "openai/gpt-6.1-sol": codex_gpt_6_1_sol_instructions,
 });
 
 /** What a model family is told when no single model of it was written for. */
