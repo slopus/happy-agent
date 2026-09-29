@@ -1,5 +1,16 @@
 # Runtime learnings
 
+## Upstream pooling owns database connection reuse
+
+libSQL client 0.18 returns completed transaction connections to its pool, replacing our
+per-transaction close patch. Idle pooled connections are expected while the client is open;
+only final client shutdown must release every database handle. Statement finalization remains
+necessary for immediate Windows file release before garbage collection.
+
+The process-owner lock must hold an explicit write transaction for its lifetime. A raw
+`BEGIN IMMEDIATE` through root `execute` is rolled back when the pooled connection is returned,
+silently dropping ownership. Retaining the transaction until release preserves the kernel lock.
+
 ## Windows shutdown controls survive graceful cleanup
 
 Closing the tray with the first shutdown handlers removed the user's only Force stop control

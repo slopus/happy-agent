@@ -91,7 +91,7 @@
         ],
         "patchedDependencies": {
             "libsql@0.5.29": "patches/libsql@0.5.29.patch",
-            "@libsql/client@0.17.4": "patches/@libsql__client@0.17.4.patch"
+            "@libsql/client@0.18.0": "patches/@libsql__client@0.18.0.patch"
         }
     }
 }

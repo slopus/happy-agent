@@ -57,7 +57,7 @@ wait_for_exit() {
     return 1
 }
 
-if ! happy-terminal daemon start; then
+if ! rig daemon start; then
     cat /tmp/happy/agent/daemon.log >&2 || true
     exit 1
 fi
@@ -82,7 +82,7 @@ fi
 
 test "$(read_daemon_pid)" = "$owner_pid"
 kill -0 "$owner_pid"
-status="$(happy-terminal daemon status)"
+status="$(rig daemon status)"
 printf '%s\n' "$status"
 if [[ "$status" != *"Daemon is running"* ]]; then
     echo "The original daemon stopped responding after the rejected start." >&2
@@ -90,7 +90,7 @@ if [[ "$status" != *"Daemon is running"* ]]; then
 fi
 
 echo "Second daemon was rejected"
-happy-terminal daemon stop
+rig daemon stop
 wait_for_exit "$owner_pid"
 echo ${COMPLETED_MARKER}
 sleep 60

@@ -15,9 +15,7 @@ async function main() {
         await verify(process.argv[3]);
         return;
     }
-    const runtime = await createNativeLibsqlFixture(
-        process.argv.includes("--upstream") ? undefined : builtPath,
-    );
+    const runtime = await createNativeLibsqlFixture(builtPath);
     try {
         // The parent never loads the addon: Windows can delete the private DLL
         // only after the verification child and its native finalizers exit.

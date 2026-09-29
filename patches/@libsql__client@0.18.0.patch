@@ -1,0 +1,48 @@
+diff --git a/lib-cjs/sqlite3.js b/lib-cjs/sqlite3.js
+--- a/lib-cjs/sqlite3.js
++++ b/lib-cjs/sqlite3.js
+@@ -548,8 +548,9 @@ function executeStmt(db, stmt, intMode) {
+             }
+         }
+     }
++    let sqlStmt;
+     try {
+-        const sqlStmt = db.prepare(sql);
++        sqlStmt = db.prepare(sql);
+         sqlStmt.safeIntegers(true);
+         let returnsData = true;
+         try {
+@@ -580,6 +581,9 @@ function executeStmt(db, stmt, intMode) {
+     catch (e) {
+         throw mapSqliteError(e);
+     }
++    finally {
++        sqlStmt?.finalize?.();
++    }
+ }
+ function rowFromSql(sqlRow, columns, intMode) {
+     const row = {};
+diff --git a/lib-esm/sqlite3.js b/lib-esm/sqlite3.js
+--- a/lib-esm/sqlite3.js
++++ b/lib-esm/sqlite3.js
+@@ -523,8 +523,9 @@ function executeStmt(db, stmt, intMode) {
+             }
+         }
+     }
++    let sqlStmt;
+     try {
+-        const sqlStmt = db.prepare(sql);
++        sqlStmt = db.prepare(sql);
+         sqlStmt.safeIntegers(true);
+         let returnsData = true;
+         try {
+@@ -555,6 +556,9 @@ function executeStmt(db, stmt, intMode) {
+     catch (e) {
+         throw mapSqliteError(e);
+     }
++    finally {
++        sqlStmt?.finalize?.();
++    }
+ }
+ function rowFromSql(sqlRow, columns, intMode) {
+     const row = {};

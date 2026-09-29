@@ -20,6 +20,29 @@ afterEach(async () => {
 });
 
 describe("openHappyAgentDatabase", () => {
+    it("reuses its pooled connection across committed and rolled-back transactions", async () => {
+        const directory = await createTestDirectory();
+        const opened = await openHappyAgentDatabase(join(directory, "agent.sqlite"));
+        try {
+            // A temporary table belongs to one native connection, so it also proves reuse.
+            await opened.database.run(sql`CREATE TEMP TABLE connection_probe (value TEXT)`);
+            await opened.database.transaction(async (tx) => {
+                await tx.run(sql`INSERT INTO connection_probe VALUES ('committed')`);
+            });
+            await expect(
+                opened.database.transaction(async (tx) => {
+                    await tx.run(sql`INSERT INTO connection_probe VALUES ('rolled back')`);
+                    throw new Error("roll back this transaction");
+                }),
+            ).rejects.toThrow("roll back this transaction");
+            await expect(
+                opened.database.all<{ value: string }>(sql`SELECT value FROM connection_probe`),
+            ).resolves.toEqual([{ value: "committed" }]);
+        } finally {
+            await opened.close();
+        }
+    });
+
     it("rejects a second connection until the process owner closes", async () => {
         const directory = await createTestDirectory();
         const path = join(directory, "agent.sqlite");

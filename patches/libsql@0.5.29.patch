@@ -37,7 +37,7 @@ index e24987954ec427320f51fd8037f9754b60ffa363..2029733116e41fc5bf9ee043c533ffcf
          this.nextRowIndex++;
            return { value: row, done: false };
          } catch (err) {
-@@ -436,6 +443,12 @@ class Statement {
+@@ -436,6 +443,11 @@ class Statement {
    }
  }
  
@@ -46,7 +46,6 @@ index e24987954ec427320f51fd8037f9754b60ffa363..2029733116e41fc5bf9ee043c533ffcf
 +if (statementFinalize) {
 +  Statement.prototype.finalize = function () { statementFinalize.call(this.stmt); };
 +}
-+Database.supportsExplicitDisposal = Boolean(statementFinalize && rowsClose);
  module.exports = Database;
  module.exports.Authorization = Authorization;
  module.exports.SqliteError = SqliteError;

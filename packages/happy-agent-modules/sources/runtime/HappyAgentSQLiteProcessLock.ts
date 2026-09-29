@@ -2,7 +2,7 @@ import { mkdir, open, realpath } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { createClient, type Client } from "@libsql/client";
+import { createClient, type Client, type Transaction } from "@libsql/client";
 
 interface HappyAgentSQLiteProcessLock {
     release(): Promise<void>;
@@ -22,9 +22,10 @@ export async function acquireHappyAgentSQLiteProcessLock(
     try {
         await client.execute("PRAGMA journal_mode = DELETE");
         await client.execute("PRAGMA busy_timeout = 0");
-        // Match legacy Happy Agent's connection-pinned lock instead of using a detached transaction handle.
-        await client.execute("BEGIN IMMEDIATE");
-        return sqliteProcessLock(client);
+        // Reserve the pooled connection until release; root execute rolls back
+        // a raw BEGIN when it returns its connection to the pool.
+        const transaction = await client.transaction("write");
+        return sqliteProcessLock(client, transaction);
     } catch (error: unknown) {
         client.close();
         if (isSQLiteContention(error)) {
@@ -34,13 +35,13 @@ export async function acquireHappyAgentSQLiteProcessLock(
     }
 }
 
-function sqliteProcessLock(client: Client): HappyAgentSQLiteProcessLock {
+function sqliteProcessLock(client: Client, transaction: Transaction): HappyAgentSQLiteProcessLock {
     let releasePromise: Promise<void> | undefined;
     return {
         async release() {
             releasePromise ??= (async () => {
                 try {
-                    await client.execute("ROLLBACK");
+                    await transaction.rollback();
                 } finally {
                     client.close();
                 }
