@@ -100,7 +100,23 @@ jobs:
             - name: Build Happy Terminal
               run: pnpm --filter @slopus/happy-terminal build
 
+            - name: Enable Linux user namespaces
+              # The Docker gym confines each scenario with bubblewrap, and the daemon inside it
+              # installs its own sandbox; Ubuntu's AppArmor policy must allow both user namespaces.
+              run: |
+                  if [[ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]]; then
+                      sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+                  fi
+
+            - name: Build the isolated Docker gym image
+              # The image build keeps its temporary files in the checkout's .local directory.
+              run: |
+                  mkdir -p .local
+                  pnpm --filter @slopus/happy-terminal-gym-tests prepare:image
+
             - name: Prove inline Node.js embedding in a real terminal
+              env:
+                  HAPPY_TERMINAL_GYM_SKIP_BUILD: "1"
               run: >-
                   pnpm --filter @slopus/happy-terminal-gym-tests exec vitest run
                   tests/node_project_embeds_happy_terminal_inline.test.ts

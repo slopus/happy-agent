@@ -1,14 +1,8 @@
-import { createRequire } from "node:module";
-import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 
 const running = new Set<Gym>();
-const happyTerminalSourceUrl = pathToFileURL(
-    fileURLToPath(new URL("../../happy-terminal/sources/index.ts", import.meta.url)),
-).href;
-const tsxUrl = pathToFileURL(createRequire(import.meta.url).resolve("tsx")).href;
 
 afterEach(async () => {
     await Promise.all([...running].map((gym) => gym.dispose()));
@@ -18,10 +12,11 @@ afterEach(async () => {
 describe("embedding Happy Terminal in a Node.js project", () => {
     it("returns control to the host process after the inline terminal exits", async () => {
         const gym = await createGym({
-            entrypoint: [process.execPath, "--import", tsxUrl, "embedded.mts"],
+            mode: "docker",
+            entrypoint: ["node", "/workspace/embedded.mjs"],
             files: {
-                "embedded.mts": [
-                    `import { runHappyTerminal } from ${JSON.stringify(happyTerminalSourceUrl)};`,
+                "embedded.mjs": [
+                    'import { runHappyTerminal } from "/app/packages/happy-terminal/dist/index.js";',
                     'await runHappyTerminal({ cwd: process.cwd(), modelId: "openai/gym", permissionMode: "full_access", providerId: "gym" });',
                     'process.stdout.write("\\nHOST PROCESS CONTINUED\\n");',
                 ].join("\n"),

@@ -1,26 +1,10 @@
-import { createRequire } from "node:module";
-import { dirname, join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 
-const repositoryRoot = join(dirname(fileURLToPath(import.meta.url)), "../../..");
-const tsxEntry = pathToFileURL(
-    createRequire(join(dirname(fileURLToPath(import.meta.url)), "../../../package.json")).resolve(
-        "tsx",
-    ),
-).href;
-const typeScriptHook = join(
-    repositoryRoot,
-    "packages/gym/sources/registerTypeScriptSourceHooks.mjs",
-);
-const runAppUrl = pathToFileURL(
-    join(repositoryRoot, "packages/happy-terminal/sources/app/runApp.ts"),
-).href;
-const failureReportingUrl = pathToFileURL(
-    join(repositoryRoot, "packages/happy-terminal/sources/installCliFailureReporting.ts"),
-).href;
+// The Docker gym mounts the current Terminal sources and resolves these build paths to them.
+const runAppUrl = "/app/packages/happy-terminal/dist/app/runApp.js";
+const failureReportingUrl = "/app/packages/happy-terminal/dist/installCliFailureReporting.js";
 const running = new Set<Gym>();
 
 afterEach(async () => {
@@ -40,7 +24,7 @@ describe("resume instructions after an abrupt exit", () => {
                 "run-tui.sh": shellHarnessSource,
                 "tui.mjs": tuiSource("trigger-hangup", 'process.kill(process.pid, "SIGHUP");'),
             },
-            mode: "just-bash",
+            mode: "docker",
         });
         running.add(gym);
 
@@ -64,7 +48,7 @@ describe("resume instructions after an abrupt exit", () => {
                     'void Promise.reject(new Error("GYM_FATAL_REJECTION"));',
                 ),
             },
-            mode: "just-bash",
+            mode: "docker",
         });
         running.add(gym);
 
@@ -97,18 +81,20 @@ const timer = setInterval(() => {
 }, 10);
 
 await runApp(undefined, {
+    // The real entry point names its own command in the resume instructions.
+    commandName: "happy-terminal",
     ...(process.env.HAPPY_TERMINAL_MODEL === undefined ? {} : { modelId: process.env.HAPPY_TERMINAL_MODEL }),
     ...(process.env.HAPPY_TERMINAL_PROVIDER === undefined ? {} : { providerId: process.env.HAPPY_TERMINAL_PROVIDER }),
     ...(process.env.HAPPY_TERMINAL_PERMISSION_MODE === undefined
         ? {}
         : { permissionMode: process.env.HAPPY_TERMINAL_PERMISSION_MODE }),
 });
-// The gym runs the daemon in this process, so the real entry point exits explicitly too.
+// Only a fatal exit may skip the harness's finish marker, so leave nothing holding the process open.
 process.exit(0);
 `;
 }
 
 const shellHarnessSource = String.raw`
-node --import ${JSON.stringify(tsxEntry)} --import ${JSON.stringify(typeScriptHook)} tui.mjs
+node tui.mjs
 printf '\r\nHAPPY_TERMINAL_TUI_FINISHED\r\n'
 `;

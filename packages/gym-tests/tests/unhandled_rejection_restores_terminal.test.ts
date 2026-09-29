@@ -1,26 +1,10 @@
-import { createRequire } from "node:module";
-import { dirname, join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 
-const repositoryRoot = join(dirname(fileURLToPath(import.meta.url)), "../../..");
-const tsxEntry = pathToFileURL(
-    createRequire(join(dirname(fileURLToPath(import.meta.url)), "../../../package.json")).resolve(
-        "tsx",
-    ),
-).href;
-const typeScriptHook = join(
-    repositoryRoot,
-    "packages/gym/sources/registerTypeScriptSourceHooks.mjs",
-);
-const runAppUrl = pathToFileURL(
-    join(repositoryRoot, "packages/happy-terminal/sources/app/runApp.ts"),
-).href;
-const failureReportingUrl = pathToFileURL(
-    join(repositoryRoot, "packages/happy-terminal/sources/installCliFailureReporting.ts"),
-).href;
+// The Docker gym mounts the current Terminal sources and resolves these build paths to them.
+const runAppUrl = "/app/packages/happy-terminal/dist/app/runApp.js";
+const failureReportingUrl = "/app/packages/happy-terminal/dist/installCliFailureReporting.js";
 const running = new Set<Gym>();
 
 afterEach(async () => {
@@ -36,7 +20,7 @@ describe("unhandled rejection cleanup", () => {
                 "rejecting-tui.mjs": rejectingTuiSource,
                 "run-rejecting-tui.sh": shellHarnessSource,
             },
-            mode: "just-bash",
+            mode: "docker",
         });
         running.add(gym);
 
@@ -86,7 +70,7 @@ await runApp(undefined, {
 
 const shellHarnessSource = String.raw`
 before="$(stty -g)"
-node --import ${JSON.stringify(tsxEntry)} --import ${JSON.stringify(typeScriptHook)} rejecting-tui.mjs
+node rejecting-tui.mjs
 status="$?"
 after="$(stty -g)"
 if [ "$after" = "$before" ]; then

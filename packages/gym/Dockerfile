@@ -13,6 +13,7 @@ RUN apt-get update \
 
 WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json tsconfig.base.json ./
+COPY patches patches
 COPY docs docs
 COPY packages/gym/package.json packages/gym/package.json
 COPY packages/gym-tests/package.json packages/gym-tests/package.json
