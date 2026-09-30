@@ -29,6 +29,8 @@ import {
     workspaceServiceListQuerySchema,
     workspaceServiceInputRequestSchema,
     stopWorkspaceServiceRequestSchema,
+    type AuthenticationChallenge,
+    type AuthenticationResponse,
     type DrainWaitingFor,
     type MessageMode,
 } from "@slopus/happy-agent-client";
@@ -49,6 +51,7 @@ import { WebSocketServer } from "ws";
 import { AbortModule } from "../abort/index.js";
 import { ServicesModule, ServiceError, ServiceAccessError } from "../services/index.js";
 import { ServiceHttpTunnel } from "./ServiceHttpTunnel.js";
+import { parseAuthenticationRedirect } from "./parseAuthenticationRedirect.js";
 import {
     BotAvatarInputError,
     BotConflictError,
@@ -235,6 +238,8 @@ interface AcceptedMessageBatch {
 }
 
 export interface ApiSocketRejection {
+    /** How to sign in, carried by a `401` when the deployment offers a way. */
+    readonly authentication?: AuthenticationChallenge;
     readonly code: ApiErrorCode;
     readonly message: string;
     readonly status: number;
@@ -568,6 +573,10 @@ export class ApiModule implements AgentModule {
         setCommonHeaders(response);
         let finishMutation: (() => void) | undefined;
         try {
+            if (request.method === "GET" && requestUrl(request).pathname === "/v0/authentication") {
+                sendJson(response, 200, await this.#authenticationStatus(ctx, request));
+                return;
+            }
             ctx = await this.#authenticate(ctx, request.headers.authorization);
             const url = requestUrl(request);
             if (request.method === "GET" && url.pathname === "/v0/health") {
@@ -1284,12 +1293,7 @@ export class ApiModule implements AgentModule {
         );
         if (!prepared.handled) return false;
         if ("rejection" in prepared) {
-            writeSocketError(
-                socket,
-                prepared.rejection.status,
-                prepared.rejection.message,
-                prepared.rejection.code,
-            );
+            writeSocketError(socket, prepared.rejection);
             return true;
         }
         this.#webSockets.handleUpgrade(request, socket, head, (webSocket) => {
@@ -1313,12 +1317,7 @@ export class ApiModule implements AgentModule {
         );
         if (!prepared.handled) return false;
         if ("rejection" in prepared) {
-            writeSocketError(
-                socket,
-                prepared.rejection.status,
-                prepared.rejection.message,
-                prepared.rejection.code,
-            );
+            writeSocketError(socket, prepared.rejection);
             return true;
         }
         this.#workspaceProxy.accept(socket, head);
@@ -1423,7 +1422,7 @@ export class ApiModule implements AgentModule {
         } catch (error) {
             release?.();
             const rejection = this.#socketRejection(ctx, error, "The service was not found.");
-            writeSocketError(socket, rejection.status, rejection.message, rejection.code);
+            writeSocketError(socket, rejection);
         } finally {
             socket.off("close", closed);
         }
@@ -1491,7 +1490,7 @@ export class ApiModule implements AgentModule {
                 error,
                 "The remote connection was not found.",
             );
-            writeSocketError(socket, rejection.status, rejection.message, rejection.code);
+            writeSocketError(socket, rejection);
         }
         return true;
     }
@@ -5786,6 +5785,32 @@ export class ApiModule implements AgentModule {
         return { models, providers };
     }
 
+    /** Report the caller's authentication and the sign-in methods, without requiring a token. */
+    async #authenticationStatus(
+        ctx: Context,
+        request: IncomingMessage,
+    ): Promise<AuthenticationResponse> {
+        const redirect = parseAuthenticationRedirect(requestUrl(request).searchParams);
+        let authenticated = true;
+        try {
+            ctx = await this.#authenticate(ctx, request.headers.authorization);
+        } catch (error: unknown) {
+            if (!(error instanceof ApiError) || error.status !== 401) throw error;
+            authenticated = false;
+        }
+        return {
+            authenticated,
+            methods: [...this.#team.authenticationMethods(redirect)],
+            userId: authenticated ? (teamUser(ctx)?.id ?? null) : null,
+        };
+    }
+
+    /** The additive `401` field telling a client how to sign in, when there is a way. */
+    #authenticationChallenge(): { readonly authentication?: AuthenticationChallenge } {
+        const methods = this.#team.authenticationMethods();
+        return methods.length === 0 ? {} : { authentication: { methods: [...methods] } };
+    }
+
     async #authenticate(
         ctx: Context,
         authorization: string | string[] | undefined,
@@ -5850,7 +5875,10 @@ export class ApiModule implements AgentModule {
             return;
         }
         if (error instanceof ApiError) {
-            sendJson(response, error.status, error.body());
+            sendJson(response, error.status, {
+                ...error.body(),
+                ...(error.status === 401 ? this.#authenticationChallenge() : {}),
+            });
             return;
         }
         if (error instanceof RemoteConnectionError) {
@@ -5959,6 +5987,7 @@ export class ApiModule implements AgentModule {
             sendJson(response, 401, {
                 error: "Unauthorized",
                 code: "unauthorized",
+                ...this.#authenticationChallenge(),
             });
             return;
         }
@@ -6004,7 +6033,12 @@ export class ApiModule implements AgentModule {
         if (error instanceof RemoteConnectionError)
             return { code: error.code, status: error.status, message: error.message };
         if (error instanceof ApiError) {
-            return { code: error.code, message: error.message, status: error.status };
+            return {
+                code: error.code,
+                message: error.message,
+                status: error.status,
+                ...(error.status === 401 ? this.#authenticationChallenge() : {}),
+            };
         }
         if (error instanceof TerminalError && error.code === "not_found") {
             return { code: "not_found", message: notFoundMessage, status: 404 };
@@ -6322,11 +6356,10 @@ function sendJson(response: ServerResponse, status: number, body: unknown): void
 
 function writeSocketError(
     socket: import("node:stream").Duplex,
-    status: number,
-    message: string,
-    code: ApiErrorCode = socketErrorCode(status),
+    rejection: ApiSocketRejection,
 ): void {
-    const body = JSON.stringify({ error: message, code });
+    const { status } = rejection;
+    const body = JSON.stringify(socketRejectionBody(rejection));
     socket.end(
         `HTTP/1.1 ${status} ${httpStatusText(status)}\r\n` +
             "Content-Type: application/json; charset=utf-8\r\n" +
@@ -6337,13 +6370,15 @@ function writeSocketError(
     );
 }
 
-function socketErrorCode(
-    status: number,
-): "internal" | "not_found" | "not_initialized" | "unauthorized" {
-    if (status === 401) return "unauthorized";
-    if (status === 404) return "not_found";
-    if (status === 503) return "not_initialized";
-    return "internal";
+/** The JSON error body for a rejected attachment, shared by the Node and Bun transports. */
+export function socketRejectionBody(rejection: ApiSocketRejection): Record<string, unknown> {
+    return {
+        error: rejection.message,
+        code: rejection.code,
+        ...(rejection.authentication === undefined
+            ? {}
+            : { authentication: rejection.authentication }),
+    };
 }
 
 function httpStatusText(status: number): string {

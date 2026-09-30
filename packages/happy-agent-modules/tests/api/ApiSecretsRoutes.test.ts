@@ -243,6 +243,7 @@ async function secretsApiFixture() {
             enabled: false,
             onProfileUpdated: () => () => undefined,
             onDraftUpdated: () => () => undefined,
+            authenticationMethods: () => [],
         } as never,
         { list: () => [], onUpdated: () => () => {} } as never,
         { onUpdated: () => () => {} } as never,

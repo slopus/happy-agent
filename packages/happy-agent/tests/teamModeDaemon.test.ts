@@ -4,9 +4,13 @@ import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import { AgentProviders, type AgentModel } from "@slopus/happy-agent-base";
-import { HappyAgentClient } from "@slopus/happy-agent-client";
+import {
+    HappyAgentApiError,
+    HappyAgentClient,
+    readAuthenticationCallback,
+} from "@slopus/happy-agent-client";
 import { CodexApiKeyCredential, CodexProvider } from "@slopus/happy-providers";
-import { exportJWK, generateKeyPair, SignJWT } from "jose";
+import { exportJWK, exportSPKI, generateKeyPair, SignJWT } from "jose";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { startHappyAgentDaemon, type HappyAgentDaemon } from "../sources/main.js";
@@ -365,30 +369,124 @@ describe("team mode daemon", () => {
             expect(
                 sqlite
                     .prepare(
-                        `SELECT workos_user_id, first_name, last_name, email, is_owner
+                        `SELECT authentication, subject, first_name, last_name, email, is_owner
                          FROM happy_agent_team_users
-                         WHERE workos_user_id = ?`,
+                         WHERE authentication = 'workos' AND subject = ?`,
                     )
                     .get(OWNER_WORKOS_USER_ID),
             ).toEqual({
+                authentication: "workos",
                 email: "ada@example.com",
                 first_name: "Ada",
                 is_owner: 1,
                 last_name: "Lovelace Byron",
-                workos_user_id: OWNER_WORKOS_USER_ID,
+                subject: OWNER_WORKOS_USER_ID,
             });
             expect(
                 sqlite
                     .prepare(
                         `SELECT first_name, last_name, is_owner
                          FROM happy_agent_team_users
-                         WHERE workos_user_id = ?`,
+                         WHERE authentication = 'workos' AND subject = ?`,
                     )
                     .get(MEMBER_WORKOS_USER_ID),
             ).toEqual({ first_name: "Grace", is_owner: 0, last_name: "Hopper" });
         } finally {
             sqlite.close();
         }
+    });
+});
+
+describe("team mode daemon with JWT authentication", () => {
+    it("advertises browser sign-in and admits deployer-issued JWTs", async () => {
+        const root = await mkdtemp(join(tmpdir(), "happy-agent-team-jwt-"));
+        temporaryDirectories.push(root);
+        const happyHome = join(root, ".happy");
+        const configPath = join(
+            root,
+            process.platform === "darwin" ? "Happy/Config" : "happy/config",
+            "happy.toml",
+        );
+        const { privateKey, publicKey } = await generateKeyPair("ES256", { extractable: true });
+        const pem = await exportSPKI(publicKey);
+        await mkdir(dirname(configPath), { recursive: true });
+        await writeFile(
+            configPath,
+            [
+                "[feature.team]",
+                "enabled = true",
+                'host = "127.0.0.1"',
+                "port = 0",
+                'authentication = "jwt"',
+                'owner_user_id = "owner-1"',
+                "[feature.team.jwt]",
+                'name = "Acme SSO"',
+                'login_url = "https://sso.acme.example/happy/login"',
+                'issuer = "https://sso.acme.example"',
+                'audience = "happy-agent"',
+                'algorithms = ["ES256"]',
+                `public_key = """\n${pem}"""`,
+            ].join("\n"),
+        );
+        daemon = await startHappyAgentDaemon({ happyHome, inference: await inference() });
+
+        const anonymous = new HappyAgentClient({ endpoint: daemon.httpUrl });
+        const discovery = await anonymous.getAuthentication({
+            redirectUri: "happy://auth/callback",
+            state: "k3v9",
+        });
+        expect(discovery).toMatchObject({ authenticated: false, userId: null });
+        expect(discovery.methods).toHaveLength(1);
+        const [method] = discovery.methods;
+        expect(method).toMatchObject({ id: "jwt", name: "Acme SSO", type: "browser" });
+        const loginUrl = new URL(method!.url);
+        expect(loginUrl.searchParams.get("redirect_uri")).toBe("happy://auth/callback");
+        expect(loginUrl.searchParams.get("state")).toBe("k3v9");
+
+        const rejected = await new HappyAgentClient({ endpoint: daemon.httpUrl, token: "invalid" })
+            .getConfig()
+            .catch((error: unknown) => error);
+        expect(rejected).toBeInstanceOf(HappyAgentApiError);
+        expect((rejected as HappyAgentApiError).authentication?.methods).toEqual([
+            {
+                id: "jwt",
+                name: "Acme SSO",
+                type: "browser",
+                url: "https://sso.acme.example/happy/login",
+            },
+        ]);
+
+        const now = Math.floor(Date.now() / 1_000);
+        const token = await new SignJWT({})
+            .setProtectedHeader({ alg: "ES256" })
+            .setIssuer("https://sso.acme.example")
+            .setAudience("happy-agent")
+            .setSubject("owner-1")
+            .setIssuedAt(now)
+            .setExpirationTime(now + 300)
+            .sign(privateKey);
+        const signedIn = new HappyAgentClient({
+            endpoint: daemon.httpUrl,
+            token: readAuthenticationCallback(
+                `happy://auth/callback#token=${token}&state=k3v9`,
+                "k3v9",
+            ),
+        });
+        await expect(signedIn.getAuthentication()).resolves.toMatchObject({
+            authenticated: true,
+            userId: null,
+        });
+
+        const { profile } = await signedIn.getProfile();
+        const saved = await signedIn.updateProfile(
+            { mutationId: "jwt-profile-1", name: "Ada Lovelace" },
+            { ifMatch: profile.version },
+        );
+        expect(saved.profile.name).toBe("Ada Lovelace");
+        const status = await signedIn.getAuthentication();
+        expect(status.authenticated).toBe(true);
+        expect(status.userId).toEqual(expect.any(String));
+        await expect(signedIn.getConfig()).resolves.toBeDefined();
     });
 });
 

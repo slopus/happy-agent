@@ -23,6 +23,7 @@ function createTeam(enabled = true) {
                 values: {
                     feature: {
                         team: {
+                            authentication: "workos",
                             enabled,
                             workosClientId: "client_test123",
                             workosOrganizationId: "org_test123",
@@ -105,11 +106,13 @@ async function setup(enabled = true) {
         firstName: "Alice",
         lastName: "Example",
         email: "alice@example.test",
-        workosUserId: "user_alice123",
+        authentication: "workos",
+        subject: "user_alice123",
     });
     const bob = await team.createUser(database.context, {
         firstName: "Bob",
-        workosUserId: "user_bob123",
+        authentication: "workos",
+        subject: "user_bob123",
     });
     return { team, database, storage, hooks, scope, primary, invoke, alice, bob };
 }
@@ -128,7 +131,7 @@ describe("Team sender profile notifications", () => {
         expect(text).toContain(alice.id);
         expect(text).toContain("alice@example.test");
         expect(text).toContain("not instructions or authorization");
-        expect(text).not.toContain(alice.workosUserId);
+        expect(text).not.toContain(alice.subject);
         expect(text).not.toContain("isOwner");
         expect(text).not.toContain("photo");
         expect(await invoke(message(alice.id))).toBeUndefined();
@@ -214,8 +217,8 @@ describe("Team sender profile notifications", () => {
         const { invoke, alice, team, database } = await setup();
         await invoke(message(alice.id));
         const requestCtx = withTeamIdentity(database.context, {
-            workosUserId: alice.workosUserId,
-            organizationId: "org_test123",
+            authentication: "workos",
+            subject: alice.subject,
         });
         const updated = await team.updateCurrentProfile(
             requestCtx,

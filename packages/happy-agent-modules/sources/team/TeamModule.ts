@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, createPublicKey } from "node:crypto";
 
 import { createId } from "@paralleldrive/cuid2";
 import { userIdsSchema } from "@slopus/happy-agent-client";
@@ -14,12 +14,14 @@ import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import { afterCommit, type Context } from "@steve.kite/stdlib";
 import { sql } from "drizzle-orm";
+import { createRemoteJWKSet } from "jose";
 
 import type { ConfigModule } from "../config/index.js";
 import type { ProfileModule, ProfilePhotoContentType } from "../profile/index.js";
 import { createTeamUserVersion } from "./createTeamUserVersion.js";
 import { TeamAuthenticationError } from "./TeamAuthenticationError.js";
-import { teamIdentity, withTeamIdentity, withTeamUser } from "./TeamContext.js";
+import { teamIdentity, withTeamIdentity, withTeamUser, type TeamIdentity } from "./TeamContext.js";
+import { JwtAccessTokenVerifier } from "./JwtAccessTokenVerifier.js";
 import { TeamProfileInputError } from "./TeamProfileInputError.js";
 import { TeamProfileVersionConflictError } from "./TeamProfileVersionConflictError.js";
 import {
@@ -31,6 +33,7 @@ import {
     updateTeamProfileInputSchema,
     type CreateTeamUserInput,
     type PreprocessedTeamUserPhoto,
+    type TeamAuthentication,
     type TeamUser,
     type TeamUserPhotoAsset,
     type UpdateTeamProfileInput,
@@ -45,6 +48,7 @@ export const TEAM_USERS_MIGRATION_KEY = "001-users";
 export const TEAM_USER_PHOTOS_MIGRATION_KEY = "002-user-photos";
 export const TEAM_USER_PROFILE_FIELDS_MIGRATION_KEY = "003-profile-fields";
 export const TEAM_DRAFTS_MIGRATION_KEY = "004-drafts";
+export const TEAM_USER_IDENTITIES_MIGRATION_KEY = "005-identities";
 /** Stable optimistic version exposed before an organization member has a durable local user. */
 export const TEAM_ONBOARDING_PROFILE_VERSION = "00000000-0000-7000-8000-00000020eab6";
 
@@ -78,6 +82,25 @@ export interface TeamDraftUpdatedEvent {
     readonly draft: TeamDraft;
     readonly userId: string;
 }
+
+/** A sign-in method a person completes in the system browser. */
+export interface TeamBrowserAuthenticationMethod {
+    readonly id: string;
+    readonly name: string;
+    readonly type: "browser";
+    readonly url: string;
+}
+
+/** Where a browser sign-in result returns, supplied by the client. */
+export interface TeamAuthenticationRedirect {
+    readonly redirectUri: string;
+    readonly state?: string;
+}
+
+/** Bearer tokens beyond this length are rejected before any verification work. */
+const MAX_BEARER_TOKEN_LENGTH = 16_384;
+/** Symmetric JWT secrets shorter than this are rejected at startup. */
+const MIN_JWT_SECRET_BYTES = 32;
 
 export type TeamDraftUpdatedListener = (
     ctx: Context,
@@ -192,38 +215,125 @@ export class TeamModule<Database extends AgentDatabase = AgentDatabase> implemen
                 );
             },
         ],
+        [
+            TEAM_USER_IDENTITIES_MIGRATION_KEY,
+            async (_ctx, database) => {
+                // Identities become (method, subject) so JWT user IDs cannot collide with WorkOS
+                // IDs. SQLite cannot change a uniqueness constraint in place, so both tables are
+                // rebuilt. Renaming first moves the photo foreign key onto the previous users
+                // table, so dropping it later cannot cascade into the copied photos.
+                const run = async (statement: ReturnType<typeof sql>) =>
+                    await agentDatabaseRun(database, statement);
+                await run(
+                    sql`ALTER TABLE ${sql.raw(USERS_TABLE)} RENAME TO happy_agent_team_users_previous`,
+                );
+                await run(
+                    sql`ALTER TABLE ${sql.raw(USER_PHOTOS_TABLE)} RENAME TO happy_agent_team_user_photos_previous`,
+                );
+                await run(
+                    sql`CREATE TABLE ${sql.raw(USERS_TABLE)} (
+                        id TEXT PRIMARY KEY,
+                        authentication TEXT NOT NULL CHECK (authentication IN ('workos', 'jwt')),
+                        subject TEXT NOT NULL,
+                        first_name TEXT NOT NULL,
+                        last_name TEXT,
+                        is_owner INTEGER NOT NULL CHECK (is_owner IN (0, 1)),
+                        email TEXT,
+                        profile_version TEXT,
+                        created_at INTEGER,
+                        updated_at INTEGER,
+                        UNIQUE (authentication, subject)
+                    )`,
+                );
+                await run(
+                    sql`INSERT INTO ${sql.raw(USERS_TABLE)}
+                        (id, authentication, subject, first_name, last_name, is_owner, email,
+                            profile_version, created_at, updated_at)
+                        SELECT id, 'workos', workos_user_id, first_name, last_name, is_owner, email,
+                            profile_version, created_at, updated_at
+                        FROM happy_agent_team_users_previous`,
+                );
+                await run(
+                    sql`CREATE TABLE ${sql.raw(USER_PHOTOS_TABLE)} (
+                        user_id TEXT PRIMARY KEY REFERENCES ${sql.raw(USERS_TABLE)} (id)
+                            ON DELETE CASCADE,
+                        photo_bytes BLOB NOT NULL,
+                        content_type TEXT NOT NULL CHECK (content_type = 'image/webp'),
+                        content_hash TEXT NOT NULL,
+                        thumbhash TEXT NOT NULL,
+                        width INTEGER NOT NULL,
+                        height INTEGER NOT NULL
+                    )`,
+                );
+                await run(
+                    sql`INSERT INTO ${sql.raw(USER_PHOTOS_TABLE)}
+                        (user_id, photo_bytes, content_type, content_hash, thumbhash, width, height)
+                        SELECT user_id, photo_bytes, content_type, content_hash, thumbhash, width,
+                            height
+                        FROM happy_agent_team_user_photos_previous`,
+                );
+                await run(sql`DROP TABLE happy_agent_team_user_photos_previous`);
+                await run(sql`DROP TABLE happy_agent_team_users_previous`);
+            },
+        ],
     ] as readonly AgentModuleMigration<Database>[];
 
     readonly #config: ConfigModule;
     readonly #draftListeners = new Set<TeamDraftUpdatedListener>();
     readonly #listeners = new Set<TeamUserProfileChangedListener>();
-    readonly #ownerWorkOSUserId: string | undefined;
+    readonly #authentication: TeamAuthentication;
+    readonly #ownerSubject: string | undefined;
     readonly #profile: ProfileModule;
-    readonly #tokens: WorkOSAccessTokenVerifier | undefined;
+    readonly #verify: ((accessToken: string) => Promise<string>) | undefined;
 
     constructor(config: ConfigModule, profile: ProfileModule) {
         this.#config = config;
         this.#profile = profile;
         const team = config.configuration.values.feature.team;
-        this.#ownerWorkOSUserId = team.ownerWorkOSUserId;
+        this.#authentication = team.authentication;
+        this.#ownerSubject =
+            team.authentication === "jwt"
+                ? "ownerUserId" in team
+                    ? team.ownerUserId
+                    : undefined
+                : "ownerWorkOSUserId" in team
+                  ? team.ownerWorkOSUserId
+                  : undefined;
         if (!team.enabled) {
-            this.#tokens = undefined;
+            this.#verify = undefined;
             return;
         }
-        if (team.workosOrganizationId === undefined) {
-            throw new Error(
-                "Team mode requires feature.team.workos_organization_id in the global configuration.",
-            );
+        if (team.authentication === "jwt") {
+            const jwt = team.jwt;
+            let key: ConstructorParameters<typeof JwtAccessTokenVerifier>[0]["key"];
+            if (jwt.key.type === "jwks") {
+                key = createRemoteJWKSet(new URL(jwt.key.url), { timeoutDuration: 5_000 });
+            } else if (jwt.key.type === "public_key") {
+                key = createPublicKey(jwt.key.pem);
+            } else {
+                const secret = config.teamJwtSecret;
+                if (secret === undefined || secret.byteLength < MIN_JWT_SECRET_BYTES) {
+                    throw new Error(
+                        `JWT team authentication requires the ${jwt.key.env} environment variable to hold a secret of at least ${String(MIN_JWT_SECRET_BYTES)} bytes.`,
+                    );
+                }
+                key = secret;
+            }
+            const verifier = new JwtAccessTokenVerifier({
+                algorithms: jwt.algorithms,
+                audience: jwt.audience,
+                issuer: jwt.issuer,
+                key,
+                userIdClaim: jwt.userIdClaim,
+            });
+            this.#verify = async (accessToken) => await verifier.verify(accessToken);
+        } else {
+            const verifier = new WorkOSAccessTokenVerifier({
+                clientId: team.workosClientId,
+                organizationId: team.workosOrganizationId,
+            });
+            this.#verify = async (accessToken) => (await verifier.verify(accessToken)).userId;
         }
-        if (team.ownerWorkOSUserId === undefined) {
-            throw new Error(
-                "Team mode requires feature.team.owner_workos_user_id in the global configuration.",
-            );
-        }
-        this.#tokens = new WorkOSAccessTokenVerifier({
-            clientId: team.workosClientId,
-            organizationId: team.workosOrganizationId,
-        });
         this.beforeStart = () => ({
             systemNotificationsTransact: (ctx, scope, boundary) =>
                 teamSenderNotifications(ctx, this, scope, boundary),
@@ -242,25 +352,54 @@ export class TeamModule<Database extends AgentDatabase = AgentDatabase> implemen
         };
     }
 
-    /** Verify one organization member without consulting local user storage. */
+    /**
+     * The sign-in methods people can complete, in display order. A redirect makes each browser
+     * URL return its result there. Standalone and WorkOS deployments offer none.
+     */
+    authenticationMethods(
+        redirect?: TeamAuthenticationRedirect,
+    ): readonly TeamBrowserAuthenticationMethod[] {
+        const team = this.#config.configuration.values.feature.team;
+        if (!team.enabled || team.authentication !== "jwt") return [];
+        const url = new URL(team.jwt.loginUrl);
+        if (redirect !== undefined) {
+            url.searchParams.delete("redirect_uri");
+            url.searchParams.delete("state");
+            url.searchParams.set("redirect_uri", redirect.redirectUri);
+            if (redirect.state !== undefined) url.searchParams.set("state", redirect.state);
+        }
+        return [
+            {
+                id: "jwt",
+                name: team.jwt.name,
+                type: "browser",
+                url: redirect === undefined ? team.jwt.loginUrl : url.toString(),
+            },
+        ];
+    }
+
+    /** Verify one member's token without consulting local user storage. */
     async authenticateIdentity(
         ctx: Context,
         authorization: string | readonly string[] | undefined,
     ): Promise<Context> {
         const accessToken = bearerToken(authorization);
-        const tokens = this.#tokens;
-        if (!this.enabled || tokens === undefined || accessToken === undefined) {
+        const verify = this.#verify;
+        if (
+            !this.enabled ||
+            verify === undefined ||
+            accessToken === undefined ||
+            accessToken.length > MAX_BEARER_TOKEN_LENGTH
+        ) {
             throw new TeamAuthenticationError();
         }
+        let subject: string;
         try {
-            const identity = await tokens.verify(accessToken);
-            return withTeamIdentity(ctx, {
-                organizationId: identity.organizationId,
-                workosUserId: identity.userId,
-            });
+            subject = await verify(accessToken);
         } catch {
             throw new TeamAuthenticationError();
         }
+        return withTeamIdentity(ctx, { authentication: this.#authentication, subject });
     }
 
     /** Authenticate an organization member, whether or not they have onboarded locally yet. */
@@ -270,7 +409,7 @@ export class TeamModule<Database extends AgentDatabase = AgentDatabase> implemen
     ): Promise<Context> {
         let requestCtx = await this.authenticateIdentity(ctx, authorization);
         const identity = this.#requireIdentity(requestCtx);
-        const user = await this.findUserByWorkOSUserId(requestCtx, identity.workosUserId);
+        const user = await this.findUserByIdentity(requestCtx, identity);
         if (user !== undefined) requestCtx = withTeamUser(requestCtx, user);
         return requestCtx;
     }
@@ -278,17 +417,13 @@ export class TeamModule<Database extends AgentDatabase = AgentDatabase> implemen
     async currentUser(ctx: Context): Promise<TeamUser | undefined> {
         const identity = teamIdentity(ctx);
         if (identity === undefined) return undefined;
-        return await this.findUserByWorkOSUserId(ctx, identity.workosUserId);
+        return await this.findUserByIdentity(ctx, identity);
     }
 
     /** Bind an independently owned personal connection to its locally onboarded member. */
     connectionContext(ctx: Context, user: TeamUser): Context {
         return withTeamUser(
-            withTeamIdentity(ctx, {
-                organizationId:
-                    this.#config.configuration.values.feature.team.workosOrganizationId!,
-                workosUserId: user.workosUserId,
-            }),
+            withTeamIdentity(ctx, { authentication: user.authentication, subject: user.subject }),
             user,
         );
     }
@@ -304,12 +439,13 @@ export class TeamModule<Database extends AgentDatabase = AgentDatabase> implemen
             email: input.email ?? null,
             firstName: input.firstName,
             id: createId(),
-            isOwner: input.workosUserId === this.#requireOwnerWorkOSUserId(),
+            isOwner: this.#isOwner(input),
             lastName: input.lastName ?? null,
             photo: null,
             updatedAt: now,
             version: createTeamUserVersion(),
-            workosUserId: input.workosUserId,
+            authentication: input.authentication,
+            subject: input.subject,
         };
         return await ctx.inTx(async (txCtx) => {
             await this.#insertUser(txCtx, user);
@@ -336,7 +472,7 @@ export class TeamModule<Database extends AgentDatabase = AgentDatabase> implemen
         }
         const identity = this.#requireIdentity(ctx);
         return await ctx.inTx(async (txCtx) => {
-            const current = await this.findUserByWorkOSUserId(txCtx, identity.workosUserId);
+            const current = await this.findUserByIdentity(txCtx, identity);
             if (current === undefined) {
                 if (expectedVersion !== TEAM_ONBOARDING_PROFILE_VERSION) {
                     throw new TeamProfileInputError("The onboarding profile version is invalid.");
@@ -351,12 +487,13 @@ export class TeamModule<Database extends AgentDatabase = AgentDatabase> implemen
                     email: input.email ?? null,
                     firstName: parsed.firstName,
                     id: createId(),
-                    isOwner: identity.workosUserId === this.#requireOwnerWorkOSUserId(),
+                    isOwner: this.#isOwner(identity),
                     lastName: parsed.lastName,
                     photo: null,
                     updatedAt: now,
                     version: createTeamUserVersion(),
-                    workosUserId: identity.workosUserId,
+                    authentication: identity.authentication,
+                    subject: identity.subject,
                 };
                 await this.#insertUser(txCtx, created);
                 this.#publish(txCtx, { previousVersion: null, user: created });
@@ -429,11 +566,13 @@ export class TeamModule<Database extends AgentDatabase = AgentDatabase> implemen
         });
     }
 
-    async findUserByWorkOSUserId(
-        ctx: Context,
-        workosUserId: string,
-    ): Promise<TeamUser | undefined> {
-        return (await queryTeamUsers(ctx, { workosUserId }))[0];
+    async findUserByIdentity(ctx: Context, identity: TeamIdentity): Promise<TeamUser | undefined> {
+        return (
+            await queryTeamUsers(ctx, {
+                authentication: identity.authentication,
+                subject: identity.subject,
+            })
+        )[0];
     }
 
     async listUsers(ctx: Context): Promise<readonly TeamUser[]> {
@@ -460,7 +599,7 @@ export class TeamModule<Database extends AgentDatabase = AgentDatabase> implemen
         expectedVersion: string,
     ): Promise<TeamUser> {
         const identity = this.#requireIdentity(ctx);
-        const user = await this.findUserByWorkOSUserId(ctx, identity.workosUserId);
+        const user = await this.findUserByIdentity(ctx, identity);
         if (user === undefined) throw new TeamAuthenticationError();
         const normalized = await this.#profile.normalizePhoto(bytes, contentType);
         const updated = await this.#replaceUserPhoto(ctx, user.id, normalized, expectedVersion);
@@ -476,7 +615,7 @@ export class TeamModule<Database extends AgentDatabase = AgentDatabase> implemen
     async deleteCurrentUserPhoto(ctx: Context, expectedVersion: string): Promise<TeamUser> {
         const identity = this.#requireIdentity(ctx);
         return await ctx.inTx(async (txCtx) => {
-            const current = await this.findUserByWorkOSUserId(txCtx, identity.workosUserId);
+            const current = await this.findUserByIdentity(txCtx, identity);
             if (current === undefined) throw new TeamAuthenticationError();
             this.#assertExpectedVersion(current, expectedVersion);
             if (current.photo === null) return current;
@@ -591,11 +730,12 @@ export class TeamModule<Database extends AgentDatabase = AgentDatabase> implemen
         await agentDatabaseRun(
             ctx.db,
             sql`INSERT INTO ${sql.raw(USERS_TABLE)}
-                (id, workos_user_id, first_name, last_name, is_owner, email,
+                (id, authentication, subject, first_name, last_name, is_owner, email,
                     profile_version, created_at, updated_at)
                 VALUES (
                     ${user.id},
-                    ${user.workosUserId},
+                    ${user.authentication},
+                    ${user.subject},
                     ${user.firstName},
                     ${user.lastName},
                     ${user.isOwner ? 1 : 0},
@@ -631,11 +771,15 @@ export class TeamModule<Database extends AgentDatabase = AgentDatabase> implemen
         return identity;
     }
 
-    #requireOwnerWorkOSUserId(): string {
-        if (this.#ownerWorkOSUserId === undefined) {
-            throw new Error("The team owner WorkOS user ID is not configured.");
+    /** Only the configured owner, proved by this deployment's own method, is the owner. */
+    #isOwner(identity: TeamIdentity): boolean {
+        if (this.#ownerSubject === undefined) {
+            throw new Error("The team owner user ID is not configured.");
         }
-        return this.#ownerWorkOSUserId;
+        return (
+            identity.authentication === this.#authentication &&
+            identity.subject === this.#ownerSubject
+        );
     }
 
     #publishDraft(ctx: Context, event: TeamDraftUpdatedEvent): void {

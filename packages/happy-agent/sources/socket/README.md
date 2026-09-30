@@ -30,7 +30,7 @@ Node-only tests do not establish Bun socket compatibility.
 
 Team internal hops bind only loopback TCP and create no Unix socket or standalone token file.
 The workspace HTTP hop has a random, memory-only connection-admission credential, stripped before
-forwarding to the destination. Ordinary API and terminal requests keep their WorkOS authentication.
+forwarding to the destination. Ordinary API and terminal requests keep their team authentication.
 
 After building the modules, run `pnpm --filter @slopus/happy-agent test:bun:transports` for the
 asynchronous-upgrade regression. Run `scripts/smoke-bun-http.mjs <bun-executable>` after building

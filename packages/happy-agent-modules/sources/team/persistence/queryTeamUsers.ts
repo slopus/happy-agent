@@ -4,12 +4,13 @@ import { Value } from "@sinclair/typebox/value";
 import type { Context } from "@steve.kite/stdlib";
 import { sql } from "drizzle-orm";
 
-import { teamUserSchema, type TeamUser } from "../TeamUser.js";
+import { teamAuthenticationSchema, teamUserSchema, type TeamUser } from "../TeamUser.js";
 
 const filterSchema = Type.Object({
     id: Type.Optional(Type.String()),
     ids: Type.Optional(Type.Array(Type.String())),
-    workosUserId: Type.Optional(Type.String()),
+    authentication: Type.Optional(Type.String()),
+    subject: Type.Optional(Type.String()),
 });
 
 const storedUserRowSchema = Type.Object(
@@ -26,7 +27,8 @@ const storedUserRowSchema = Type.Object(
         thumbhash: Type.Union([Type.String(), Type.Null()]),
         updated_at: Type.Integer({ maximum: Number.MAX_SAFE_INTEGER, minimum: 0 }),
         width: Type.Union([Type.Integer(), Type.Null()]),
-        workos_user_id: Type.String(),
+        authentication: teamAuthenticationSchema,
+        subject: Type.String(),
     },
     { additionalProperties: false },
 );
@@ -39,8 +41,9 @@ export async function queryTeamUsers(
     if (filter.ids?.length === 0) return [];
     const predicates = [sql`1 = 1`];
     if (filter.id !== undefined) predicates.push(sql`u.id = ${filter.id}`);
-    if (filter.workosUserId !== undefined)
-        predicates.push(sql`u.workos_user_id = ${filter.workosUserId}`);
+    if (filter.authentication !== undefined)
+        predicates.push(sql`u.authentication = ${filter.authentication}`);
+    if (filter.subject !== undefined) predicates.push(sql`u.subject = ${filter.subject}`);
     if (filter.ids !== undefined)
         predicates.push(
             sql`u.id IN (${sql.join(
@@ -51,7 +54,7 @@ export async function queryTeamUsers(
     const rows = await agentDatabaseRows<unknown>(
         ctx.db,
         sql`
-        SELECT u.id, u.workos_user_id, u.first_name, u.last_name, u.is_owner, u.email,
+        SELECT u.id, u.authentication, u.subject, u.first_name, u.last_name, u.is_owner, u.email,
             u.profile_version, u.created_at, u.updated_at,
             p.content_hash, p.thumbhash, p.width, p.height
         FROM happy_agent_team_users u
@@ -85,7 +88,8 @@ export async function queryTeamUsers(
             photo,
             updatedAt: value.updated_at,
             version: value.profile_version,
-            workosUserId: value.workos_user_id,
+            authentication: value.authentication,
+            subject: value.subject,
         };
         if (!Value.Check(teamUserSchema, user)) throw new Error("A stored team user is invalid.");
         return user;

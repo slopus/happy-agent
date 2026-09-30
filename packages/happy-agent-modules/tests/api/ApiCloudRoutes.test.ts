@@ -444,7 +444,8 @@ async function apiFixture(
                   photo: null,
                   updatedAt: 0,
                   version: VERSION_1,
-                  workosUserId: user.id,
+                  authentication: "workos",
+                  subject: user.id,
               })
             : root;
     let current = initial;
@@ -500,6 +501,7 @@ async function apiFixture(
                   enabled: true,
                   onProfileUpdated: () => () => undefined,
                   onDraftUpdated: () => () => undefined,
+                  authenticationMethods: () => [],
               }
             : undefined;
     const api = createApi(cloud, config, subscriptions, team);
@@ -573,6 +575,7 @@ function createApi(
         enabled: false,
         onProfileUpdated: () => () => undefined,
         onDraftUpdated: () => () => undefined,
+        authenticationMethods: () => [],
     },
 ): ApiModule {
     return new ApiModule(

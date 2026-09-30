@@ -23,6 +23,7 @@ export {
     type ApiSocketRejection,
     type PreparedTerminalSocket,
     type PreparedWorkspaceProxySocket,
+    socketRejectionBody,
 } from "./ApiModule.js";
 export { messageResource } from "./ApiMessageProjection.js";
 export { type MessageResourceOptions } from "./ApiToolPresentation.js";

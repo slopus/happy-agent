@@ -36,6 +36,7 @@ export async function serviceApiHarness() {
             enabled: false,
             onProfileUpdated: () => () => {},
             onDraftUpdated: () => () => {},
+            authenticationMethods: () => [],
         } as never,
         inert,
         inert,

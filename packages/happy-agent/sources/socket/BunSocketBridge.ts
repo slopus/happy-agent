@@ -1,4 +1,8 @@
-import type { ApiSocketRejection, PreparedWorkspaceProxySocket } from "@slopus/happy-agent-modules";
+import {
+    socketRejectionBody,
+    type ApiSocketRejection,
+    type PreparedWorkspaceProxySocket,
+} from "@slopus/happy-agent-modules";
 import { Duplex } from "node:stream";
 
 const MAX_HEADER_BYTES = 64 * 1024;
@@ -426,7 +430,7 @@ function singleHeader(value: string | string[] | undefined): string | undefined 
 }
 
 function rejectSocket(socket: BunSocket, rejection: ApiSocketRejection): void {
-    const body = JSON.stringify({ error: rejection.message, code: rejection.code });
+    const body = JSON.stringify(socketRejectionBody(rejection));
     endWith(
         socket,
         `HTTP/1.1 ${String(rejection.status)} ${statusText(rejection.status)}\r\n` +

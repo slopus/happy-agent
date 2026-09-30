@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { isWindowsNamedPipe, readAgentSocketInformation } from "./agentSocketPaths.js";
 
 import {
+    socketRejectionBody,
     type PreparedHappyAgentRuntime,
     type PreparedTerminalSocket,
 } from "@slopus/happy-agent-modules";
@@ -159,11 +160,10 @@ export function startBunHttpServer(
                 return socketResponse(404, "not_found", "The requested endpoint does not exist.");
             }
             if ("rejection" in terminal) {
-                return socketResponse(
-                    terminal.rejection.status,
-                    terminal.rejection.code,
-                    terminal.rejection.message,
-                );
+                return Response.json(socketRejectionBody(terminal.rejection), {
+                    headers: { "cache-control": "no-store" },
+                    status: terminal.rejection.status,
+                });
             }
             const data: TerminalWebSocketData = { handlers: undefined, prepared: terminal };
             if (server.upgrade(request, { data })) return undefined;

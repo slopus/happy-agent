@@ -20,12 +20,14 @@ it("lets team members read global skills but only the owner change enablement", 
         enabled: true,
         onProfileUpdated: subscribe,
         onDraftUpdated: subscribe,
+        authenticationMethods: () => [],
         authenticate: async (context: Context, authorization: string) => {
             if (authorization !== "Bearer owner" && authorization !== "Bearer member")
                 throw new TeamAuthenticationError();
             return withTeamUser(context, {
                 id: "userone",
-                workosUserId: "user_fixture",
+                authentication: "workos",
+                subject: "user_fixture",
                 firstName: "Test",
                 lastName: null,
                 email: "test@example.com",

@@ -61,6 +61,12 @@ import {
     remoteConnectionEntrySchema,
     type RemoteConnectionEntry,
 } from "./RemoteConnectionConfig.js";
+import {
+    resolveTeamJwtConfig,
+    teamJwtConfigSchema,
+    teamJwtTomlSchema,
+    teamOwnerUserIdSchema,
+} from "./TeamJwtConfig.js";
 import { connectionIdSchema, nodeNameSchema } from "@slopus/happy-agent-client";
 import { resolveDefaultNodeName } from "./impl/resolveDefaultNodeName.js";
 
@@ -88,6 +94,7 @@ const pathSchema = Type.String({
     pattern: "^[^\\u0000]+$",
 });
 const configStringSchema = Type.String({ maxLength: MAX_CONFIG_STRING_LENGTH });
+const teamAuthenticationConfigSchema = Type.Union([Type.Literal("workos"), Type.Literal("jwt")]);
 const boundedStringArraySchema = Type.Array(configStringSchema, {
     maxItems: MAX_CONFIG_ARRAY_ITEMS,
 });
@@ -449,6 +456,7 @@ const partialValuesSchema = Type.Object(
                     team: Type.Optional(
                         Type.Object(
                             {
+                                authentication: Type.Optional(teamAuthenticationConfigSchema),
                                 enabled: Type.Optional(Type.Boolean()),
                                 host: Type.Optional(
                                     Type.String({
@@ -464,6 +472,8 @@ const partialValuesSchema = Type.Object(
                                         pattern: "^user_[A-Za-z0-9]+$",
                                     }),
                                 ),
+                                jwt: Type.Optional(teamJwtTomlSchema),
+                                owner_user_id: Type.Optional(teamOwnerUserIdSchema),
                                 port: Type.Optional(Type.Integer({ maximum: 65_535, minimum: 0 })),
                                 workos_client_id: Type.Optional(
                                     Type.String({
@@ -810,8 +820,11 @@ const resolvedValuesSchema = Type.Object(
                 team: Type.Union([
                     Type.Object(
                         {
+                            authentication: teamAuthenticationConfigSchema,
                             enabled: Type.Literal(false),
                             host: Type.String({ maxLength: 255, minLength: 1 }),
+                            jwt: Type.Optional(teamJwtConfigSchema),
+                            ownerUserId: Type.Optional(teamOwnerUserIdSchema),
                             ownerWorkOSUserId: Type.Optional(
                                 Type.String({
                                     maxLength: 160,
@@ -837,6 +850,7 @@ const resolvedValuesSchema = Type.Object(
                     ),
                     Type.Object(
                         {
+                            authentication: Type.Literal("workos"),
                             enabled: Type.Literal(true),
                             host: Type.String({ maxLength: 255, minLength: 1 }),
                             ownerWorkOSUserId: Type.String({
@@ -854,6 +868,22 @@ const resolvedValuesSchema = Type.Object(
                                 maxLength: 160,
                                 minLength: 6,
                                 pattern: "^org_[A-Za-z0-9]+$",
+                            }),
+                        },
+                        { additionalProperties: false },
+                    ),
+                    Type.Object(
+                        {
+                            authentication: Type.Literal("jwt"),
+                            enabled: Type.Literal(true),
+                            host: Type.String({ maxLength: 255, minLength: 1 }),
+                            jwt: teamJwtConfigSchema,
+                            ownerUserId: teamOwnerUserIdSchema,
+                            port: Type.Integer({ maximum: 65_535, minimum: 0 }),
+                            workosClientId: Type.String({
+                                maxLength: 160,
+                                minLength: 8,
+                                pattern: "^client_[A-Za-z0-9]+$",
                             }),
                         },
                         { additionalProperties: false },
@@ -1194,6 +1224,7 @@ const DEFAULT_VALUES: HappyAgentConfigValues = {
         codemode: { enabled: false, engine: "monty" },
         tailcat: { enabled: false, port: DEFAULT_TAILCAT_PORT },
         team: {
+            authentication: "workos",
             enabled: false,
             host: "0.0.0.0",
             port: 3_000,
@@ -2163,6 +2194,19 @@ export class ConfigModule implements AgentModule {
     }
 
     /**
+     * The shared secret for symmetric JWT team authentication, read from the configured
+     * environment variable. `undefined` when JWT authentication does not use a secret or the
+     * variable is unset. The value is never logged or exposed.
+     */
+    get teamJwtSecret(): Uint8Array | undefined {
+        const team = this.configuration.values.feature.team;
+        const key = "jwt" in team ? team.jwt?.key : undefined;
+        if (key?.type !== "secret") return undefined;
+        const value = this.#environmentValue(key.env);
+        return value === undefined ? undefined : new TextEncoder().encode(value);
+    }
+
+    /**
      * The GitHub token this installation acts with, when its environment carries one.
      *
      * Explicit environment credentials win in order, even when blank or invalid. Background
@@ -2832,6 +2876,7 @@ function resolveHappyHome(input: HappyAgentConfigurationInput): string {
 function mergeValues(...partials: readonly PartialValues[]): HappyAgentConfigValues {
     const merged = structuredClone(DEFAULT_VALUES) as MutableResolvedValues;
     const explicitProviderEnabled = new Set<string>();
+    let teamWorkOSConfigured = false;
     for (const partial of partials) {
         if (partial.profile !== undefined) merged.profile = { ...partial.profile };
         if (partial.api !== undefined) merged.api = { ...merged.api, ...partial.api };
@@ -2853,6 +2898,14 @@ function mergeValues(...partials: readonly PartialValues[]): HappyAgentConfigVal
         }
         if (partial.feature?.team !== undefined) {
             Object.assign(merged.feature.team, normalizeTeam(partial.feature.team));
+            const team = partial.feature.team;
+            if (
+                team.owner_workos_user_id !== undefined ||
+                team.workos_client_id !== undefined ||
+                team.workos_organization_id !== undefined
+            ) {
+                teamWorkOSConfigured = true;
+            }
         }
         if (partial.gemini !== undefined)
             Object.assign(merged.gemini, normalizeGemini(partial.gemini));
@@ -2911,6 +2964,7 @@ function mergeValues(...partials: readonly PartialValues[]): HappyAgentConfigVal
             provider.enabled = merged.providerDefaultEnable;
         }
     }
+    assertTeamAuthentication(merged.feature.team, teamWorkOSConfigured);
     if (merged.feature.team.enabled && merged.api?.token !== undefined) {
         throw new Error("Team deployments cannot configure a standalone API token.");
     }
@@ -2969,8 +3023,11 @@ function normalizeTeam(
     value: NonNullable<NonNullable<PartialValues["feature"]>["team"]>,
 ): Record<string, unknown> {
     return {
+        ...(value.authentication === undefined ? {} : { authentication: value.authentication }),
         ...(value.enabled === undefined ? {} : { enabled: value.enabled }),
         ...(value.host === undefined ? {} : { host: value.host }),
+        ...(value.jwt === undefined ? {} : { jwt: resolveTeamJwtConfig(value.jwt) }),
+        ...(value.owner_user_id === undefined ? {} : { ownerUserId: value.owner_user_id }),
         ...(value.owner_workos_user_id === undefined
             ? {}
             : { ownerWorkOSUserId: value.owner_workos_user_id }),
@@ -2980,6 +3037,33 @@ function normalizeTeam(
             ? {}
             : { workosOrganizationId: value.workos_organization_id }),
     };
+}
+
+/** Each team authentication method requires its own settings and rejects the other's. */
+function assertTeamAuthentication(
+    team: MutableResolvedValues["feature"]["team"],
+    workosConfigured: boolean,
+): void {
+    const jwt = "jwt" in team ? team.jwt : undefined;
+    const ownerUserId = "ownerUserId" in team ? team.ownerUserId : undefined;
+    if (team.authentication === "jwt") {
+        if (workosConfigured) {
+            throw new Error("JWT team authentication cannot also configure WorkOS settings.");
+        }
+        if (!team.enabled) return;
+        if (jwt === undefined) {
+            throw new Error("JWT team authentication requires a [feature.team.jwt] table.");
+        }
+        if (ownerUserId === undefined) {
+            throw new Error("JWT team authentication requires feature.team.owner_user_id.");
+        }
+        return;
+    }
+    if (jwt !== undefined || ownerUserId !== undefined) {
+        throw new Error(
+            'feature.team.jwt and feature.team.owner_user_id require authentication = "jwt".',
+        );
+    }
 }
 
 function normalizeSettings(value: NonNullable<PartialValues["settings"]>): Record<string, unknown> {
@@ -3540,8 +3624,17 @@ function calculateProvenance(...sources: readonly PartialValues[]): Record<strin
                 }
                 if (feature?.team !== undefined) {
                     result["feature.team"] = name;
+                    if (feature.team.authentication !== undefined) {
+                        result["feature.team.authentication"] = name;
+                    }
                     if (feature.team.enabled !== undefined) {
                         result["feature.team.enabled"] = name;
+                    }
+                    if (feature.team.jwt !== undefined) {
+                        result["feature.team.jwt"] = name;
+                    }
+                    if (feature.team.owner_user_id !== undefined) {
+                        result["feature.team.ownerUserId"] = name;
                     }
                     if (feature.team.host !== undefined) {
                         result["feature.team.host"] = name;
@@ -3667,8 +3760,11 @@ function readFeature(
             const team: Record<string, unknown> = {};
             for (const [teamKey, teamValue] of Object.entries(item)) {
                 if (
+                    teamKey !== "authentication" &&
                     teamKey !== "enabled" &&
                     teamKey !== "host" &&
+                    teamKey !== "jwt" &&
+                    teamKey !== "owner_user_id" &&
                     teamKey !== "owner_workos_user_id" &&
                     teamKey !== "port" &&
                     teamKey !== "workos_client_id" &&

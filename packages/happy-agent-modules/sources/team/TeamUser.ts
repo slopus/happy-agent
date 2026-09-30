@@ -17,6 +17,17 @@ export const workOSUserIdSchema = Type.String({
     pattern: "^user_[A-Za-z0-9]+$",
 });
 
+/** The team authentication method that proved an identity. */
+export const teamAuthenticationSchema = Type.Union([Type.Literal("workos"), Type.Literal("jwt")]);
+export type TeamAuthentication = Static<typeof teamAuthenticationSchema>;
+
+/** A user ID issued by the authentication method; unique only within that method. */
+export const teamSubjectSchema = Type.String({
+    maxLength: 256,
+    minLength: 1,
+    pattern: "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+});
+
 export const teamUserEmailSchema = Type.Union([
     Type.String({
         maxLength: 254,
@@ -52,7 +63,8 @@ export const teamUserSchema = Type.Object(
         photo: Type.Union([teamUserPhotoMetadataSchema, Type.Null()]),
         updatedAt: timestampSchema,
         version: teamUserVersionSchema,
-        workosUserId: workOSUserIdSchema,
+        authentication: teamAuthenticationSchema,
+        subject: teamSubjectSchema,
     },
     exact,
 );
@@ -63,7 +75,8 @@ export const createTeamUserInputSchema = Type.Object(
         email: Type.Optional(teamUserEmailSchema),
         firstName: teamUserNameSchema,
         lastName: Type.Optional(Type.Union([teamUserNameSchema, Type.Null()])),
-        workosUserId: workOSUserIdSchema,
+        authentication: teamAuthenticationSchema,
+        subject: teamSubjectSchema,
     },
     exact,
 );

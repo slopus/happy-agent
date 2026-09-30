@@ -177,6 +177,7 @@ function createTeam(): TeamModule {
                 values: {
                     feature: {
                         team: {
+                            authentication: "workos",
                             enabled: true,
                             host: "127.0.0.1",
                             ownerWorkOSUserId: "user_01TESTUSER123",

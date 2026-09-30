@@ -67,6 +67,23 @@ export const HAPPY_TOML_TEMPLATE = `# Happy configuration for Happy Agent.
 # workos_client_id = "client_01KZD3XE9YAFAMT0P8TD4HP73E"
 # workos_organization_id = "org_01EXAMPLE"
 # owner_workos_user_id = "user_01EXAMPLE"
+#
+# Enterprise deployments may instead verify JWTs issued by their own sign-in web app. Clients open
+# login_url in the browser; the app redirects back with #token=<jwt>&state=<state>.
+# [feature.team]
+# enabled = true
+# authentication = "jwt"
+# owner_user_id = "user-123"
+#
+# [feature.team.jwt]
+# name = "Acme SSO"
+# login_url = "https://sso.acme.example/happy/login"
+# issuer = "https://sso.acme.example"
+# audience = "happy-agent"
+# user_id_claim = "sub"
+# algorithms = ["RS256"]
+# Exactly one key source: jwks_url, public_key (PEM), or secret_env (HS256/384/512, >= 32 bytes).
+# jwks_url = "https://sso.acme.example/.well-known/jwks.json"
 
 # [workspace]
 # setup_commands = ["pnpm install"]

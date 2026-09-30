@@ -109,12 +109,14 @@ async function createFixture(teamMode = false) {
         enabled: teamMode,
         onProfileUpdated: subscribe,
         onDraftUpdated: subscribe,
+        authenticationMethods: () => [],
         getCurrentUserPhoto: async () => asset(),
         authenticate: async (ctx: Context, authorization: string) => {
             if (authorization !== `Bearer ${token}`) throw new TeamAuthenticationError();
             return withTeamUser(ctx, {
                 id: "userone",
-                workosUserId: "user_fixture",
+                authentication: "workos",
+                subject: "user_fixture",
                 firstName: "Test",
                 lastName: null,
                 email: "test@example.com",

@@ -186,6 +186,7 @@ describe("ConfigModule", () => {
         expect(configuration.values.feature.codemode.engine).toBe("monty");
         expect(configuration.values.feature.tailcat).toEqual({ enabled: false, port: 24_779 });
         expect(configuration.values.feature.team).toEqual({
+            authentication: "workos",
             enabled: false,
             host: "0.0.0.0",
             port: 3_000,
@@ -272,6 +273,7 @@ describe("ConfigModule", () => {
         const configuration = await loadHappyAgentConfiguration(happyHome);
 
         expect(configuration.values.feature.team).toEqual({
+            authentication: "workos",
             enabled: true,
             host: "127.0.0.1",
             ownerWorkOSUserId: "user_owner123",

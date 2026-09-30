@@ -38,11 +38,13 @@ describe("TeamModule", () => {
         try {
             const alice = await team.createUser(database.context, {
                 firstName: "Alice",
-                workosUserId: WORKOS_USER_ID,
+                authentication: "workos",
+                subject: WORKOS_USER_ID,
             });
             const bob = await team.createUser(database.context, {
                 firstName: "Bob",
-                workosUserId: "user_bob123",
+                authentication: "workos",
+                subject: "user_bob123",
             });
             await expect(
                 team.getUsers(database.context, [bob.id, "unknown123", alice.id, bob.id]),
@@ -59,7 +61,8 @@ describe("TeamModule", () => {
                 database.context.inTx(async (ctx) => {
                     const carol = await team.createUser(ctx, {
                         firstName: "Carol",
-                        workosUserId: "user_carol123",
+                        authentication: "workos",
+                        subject: "user_carol123",
                     });
                     expect(await team.getUsers(ctx, [carol.id])).toEqual([carol]);
                     throw new Error("Roll back this user.");
@@ -89,18 +92,23 @@ describe("TeamModule", () => {
         const created = await team.createUser(database.context, {
             firstName: "Ada",
             lastName: "Lovelace",
-            workosUserId: WORKOS_USER_ID,
+            authentication: "workos",
+            subject: WORKOS_USER_ID,
         });
         expect(created).toMatchObject({
             firstName: "Ada",
             isOwner: true,
             lastName: "Lovelace",
             photo: null,
-            workosUserId: WORKOS_USER_ID,
+            authentication: "workos",
+            subject: WORKOS_USER_ID,
         });
         expect(created.id).toMatch(/^[a-z][a-z0-9]+$/);
         await expect(
-            team.findUserByWorkOSUserId(database.context, WORKOS_USER_ID),
+            team.findUserByIdentity(database.context, {
+                authentication: "workos",
+                subject: WORKOS_USER_ID,
+            }),
         ).resolves.toEqual(created);
 
         const bytes = new Uint8Array([82, 73, 70, 70, 1, 2, 3, 4]);
@@ -129,7 +137,8 @@ describe("TeamModule", () => {
         await expect(
             team.createUser(database.context, {
                 firstName: "Augusta",
-                workosUserId: WORKOS_USER_ID,
+                authentication: "workos",
+                subject: WORKOS_USER_ID,
             }),
         ).rejects.toThrow();
 
@@ -149,14 +158,15 @@ describe("TeamModule", () => {
 
         const onboarding = await team.authenticate(database.context, `Bearer ${accessToken}`);
         expect(teamIdentity(onboarding)).toEqual({
-            organizationId: ORGANIZATION_ID,
-            workosUserId: WORKOS_USER_ID,
+            authentication: "workos",
+            subject: WORKOS_USER_ID,
         });
         expect(teamUser(onboarding)).toBeUndefined();
 
         const user = await team.createUser(database.context, {
             firstName: "Ada",
-            workosUserId: WORKOS_USER_ID,
+            authentication: "workos",
+            subject: WORKOS_USER_ID,
         });
         const authenticated = await team.authenticate(database.context, `Bearer ${accessToken}`);
         expect(teamUser(authenticated)).toEqual(user);
@@ -200,7 +210,8 @@ describe("TeamModule", () => {
             firstName: "Ada",
             isOwner: true,
             lastName: "Lovelace Byron",
-            workosUserId: WORKOS_USER_ID,
+            authentication: "workos",
+            subject: WORKOS_USER_ID,
         });
         expect(created.id).toMatch(/^[a-z][a-z0-9]+$/);
         expect(created.version).not.toBe(TEAM_ONBOARDING_PROFILE_VERSION);
@@ -249,6 +260,7 @@ function createTeam(): TeamModule {
                 values: {
                     feature: {
                         team: {
+                            authentication: "workos",
                             enabled: true,
                             host: "127.0.0.1",
                             ownerWorkOSUserId: WORKOS_USER_ID,

@@ -16,5 +16,10 @@ safe boundary restores the profile. A missing or unknown human identity clears t
 profile. System and agent-generated messages never select a human, and standalone installations
 do not announce team profiles.
 
+Team authentication is either WorkOS (`WorkOSAccessTokenVerifier`) or a deployer's own JWTs
+(`JwtAccessTokenVerifier`), selected by `feature.team.authentication`. Both yield the same
+`TeamIdentity`: the method plus the user ID it issued. Users are keyed by that pair.
+`authenticationMethods()` lists the browser sign-in the API advertises for JWT deployments.
+
 `impl/teamSenderNotifications.ts` owns this bounded, transactional behavior. `persistence/` owns
 user queries; profile changes continue through the existing identity-only public event surface.

@@ -414,7 +414,12 @@ async function createFixture(tracing = false) {
         { onProcessEvent: subscribe, listProcesses: processes } as never,
         passive as never,
         passive as never,
-        { enabled: false, onProfileUpdated: subscribe, onDraftUpdated: subscribe } as never,
+        {
+            enabled: false,
+            onProfileUpdated: subscribe,
+            onDraftUpdated: subscribe,
+            authenticationMethods: () => [],
+        } as never,
         passive as never,
         { onUpdated: subscribe, get: async () => ({}) } as never,
     );

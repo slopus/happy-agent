@@ -34,6 +34,24 @@ identity. The combined wire `name` is split into first name and optional last na
 storage boundary. Startup never manufactures a user; the first non-null profile name creates it,
 and only the configured WorkOS owner identity receives the owner flag.
 
+## Enterprise JWT authentication is a second team method, not a separate mode
+
+Enterprises need to sign members in through their own identity provider. Team mode now selects
+one method: WorkOS, or JWTs issued by a deployer's web app and verified locally with a JWKS URL,
+a PEM public key, or a shared secret from the environment. Key sources pin their algorithm family
+so a public key can never be used as an HMAC secret, and `none` is never accepted. The user ID
+comes from a configured claim.
+
+Identities are the pair of method and user ID, because a deployer's user IDs can look like WorkOS
+IDs. Users were rebuilt around that pair in a new migration. The photo table is renamed first, so
+dropping the old users table cannot cascade into copied photos. Everything else — onboarding,
+owner flag, drafts, sender notifications — is shared by both methods.
+
+Clients discover sign-in through the unauthenticated `GET /v0/authentication` and the
+`authentication` field on every `401`. The daemon builds the browser URL from the client's
+redirect and state but keeps no sign-in state: the client verifies `state`, and the deployer's
+app must allow-list redirect URIs.
+
 ## WorkOS organization membership grants access before onboarding
 
 A token must have a valid signature, the configured WorkOS client and issuer, and the deployment's
