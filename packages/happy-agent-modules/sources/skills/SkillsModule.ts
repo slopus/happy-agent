@@ -3,6 +3,7 @@ import { basename, dirname, isAbsolute, join } from "node:path";
 import { createId } from "@paralleldrive/cuid2";
 import {
     defineAgentTool,
+    type AgentBaseAcceptedMessage,
     type AgentModule,
     type AgentModuleHooks,
     type AgentModuleScope,
@@ -16,7 +17,7 @@ import { type Context } from "@steve.kite/stdlib";
 
 import type { ComputeModule, ComputePermissions, HostCompute } from "../compute/index.js";
 import type { ConfigModule } from "../config/index.js";
-import { USER_MESSAGE_ORIGIN_METADATA } from "../impl/messageOrigin.js";
+import { isUserOriginMetadata, USER_MESSAGE_ORIGIN_METADATA } from "../impl/messageOrigin.js";
 import type { SlashCommandDefinition } from "../slashCommands/index.js";
 import {
     MAX_SKILL_COUNT,
@@ -43,6 +44,8 @@ const MAX_SKILL_FILES_INSPECTED = 256;
 const SKILL_DIRECTORY_PAGE_SIZE = 256;
 const SKILL_INVOCATIONS_KEY = "slash-command-invocations";
 const MAX_SKILL_INVOCATIONS_PER_RUN = 16;
+/** Skills the user asked to read with a `read_skill` tool request in their own message. */
+const SKILL_READ_REQUESTS_KEY = "skill-read-requests";
 /** Cap retained in-flight scans; completed catalogs are never cached. */
 const MAX_SHARED_SKILL_SCANS = 128;
 /** A project `happy.toml` larger than this is not read for skill folders. */
@@ -90,6 +93,15 @@ const skillInvocationsSchema = Type.Array(skillInvocationSchema, {
     maxItems: MAX_SKILL_INVOCATIONS_PER_RUN,
 });
 type SkillInvocation = Static<typeof skillInvocationSchema>;
+const skillReadRequestsSchema = Type.Array(skillReadInputSchema.properties.name, {
+    maxItems: MAX_SKILL_INVOCATIONS_PER_RUN,
+});
+/** The tool request a client puts in a user message to have a skill read before inference. */
+const readSkillRequestSchema = Type.Object({
+    type: Type.Literal("tool_call_request"),
+    name: Type.Literal("read_skill"),
+    arguments: Type.Object({ name: skillReadInputSchema.properties.name }),
+});
 
 const callableSchema = Type.Function([], Type.Any());
 /**
@@ -222,17 +234,42 @@ export class SkillsModule implements AgentModule {
     }
 
     /**
+     * Read a skill during a run. A user-only skill the user invoked in this run, either with the
+     * slash command or by requesting this very read in their own message, is already the user's
+     * choice, so reading it is not the model reaching for it on its own.
+     */
+    async #readForRun(
+        ctx: Context,
+        scope: AgentModuleScope,
+        input: SkillReadInput,
+    ): Promise<SkillDocument> {
+        assertValue(skillReadInputSchema, input, "Skill read input");
+        const invocations = await this.#skillInvocations(ctx, scope);
+        const requested = await this.#skillReadRequests(ctx, scope);
+        return await this.#readDocument(
+            ctx,
+            scope.agent.id,
+            input.name,
+            "model",
+            (entry) =>
+                requested.includes(entry.name) ||
+                invocations.some((invocation) => invokes(invocation, entry)),
+        );
+    }
+
+    /**
      * The complete document of one currently discoverable skill.
      *
      * A skill marked `disable-model-invocation: true` exists for the user alone. The model is told
      * so rather than being told the skill does not exist, so it can ask instead of guessing at
-     * other names.
+     * other names. The model may still read one the user invoked in the current run.
      */
     async #readDocument(
         ctx: Context,
         agentId: string,
         name: string,
         audience: "model" | "user",
+        userInvoked: (entry: SkillEntry) => boolean = () => false,
     ): Promise<SkillDocument> {
         const compute = await this.#resolveCompute(ctx, agentId);
         if (compute === undefined) throw new Error("This agent has no compute.");
@@ -240,7 +277,7 @@ export class SkillsModule implements AgentModule {
         const entries = await this.#entries(ctx, compute, permissions);
         const entry = entries.find((candidate) => candidate.name === name);
         if (entry === undefined) throw new Error(`Unknown skill "${name}".`);
-        if (audience === "model" && entry.disableModelInvocation === true) {
+        if (audience === "model" && entry.disableModelInvocation === true && !userInvoked(entry)) {
             throw new Error(
                 `The "${name}" skill can only be invoked by the user with /${name}, not by the model.`,
             );
@@ -360,14 +397,7 @@ export class SkillsModule implements AgentModule {
             return [
                 catalog.length === 0 ? "" : formatInstructions(catalog),
                 ...invocations
-                    .filter((invocation) =>
-                        entries.some(
-                            (entry) =>
-                                entry.name === invocation.name &&
-                                (invocation.location === undefined ||
-                                    entry.location === invocation.location),
-                        ),
-                    )
+                    .filter((invocation) => entries.some((entry) => invokes(invocation, entry)))
                     .map(formatInvokedSkill),
             ]
                 .filter((text) => text.length > 0)
@@ -375,6 +405,7 @@ export class SkillsModule implements AgentModule {
         },
 
         messageAcceptedTransact: async (ctx, scope, accepted) => {
+            await this.#recordSkillReadRequest(ctx, scope, accepted);
             const invocation = accepted.metadata?.["skillInvocation"];
             if (!Value.Check(skillInvocationSchema, invocation)) return;
             const current = await this.#skillInvocations(ctx, scope);
@@ -411,7 +442,7 @@ export class SkillsModule implements AgentModule {
                     returnType: skillDocumentSchema,
                     reloadable: true,
                     shouldReviewInAutoMode: () => false,
-                    execute: async (ctx, input) => await this.read(ctx, scope.agent.id, input),
+                    execute: async (ctx, input) => await this.#readForRun(ctx, scope, input),
                     toLLM: (result) => [{ type: "text", text: result.content }],
                 }),
             ];
@@ -422,6 +453,41 @@ export class SkillsModule implements AgentModule {
         this.#agents = agents;
         return this.#hooks;
     };
+
+    /**
+     * Remember a `read_skill` request the end user put in their own message. Only a message
+     * stamped as a genuine user submission counts: an agent or system message wearing the user
+     * role must not unlock a user-only skill.
+     */
+    async #recordSkillReadRequest(
+        ctx: Context,
+        scope: AgentModuleScope,
+        accepted: AgentBaseAcceptedMessage,
+    ): Promise<void> {
+        if (!isUserOriginMetadata(accepted.metadata)) return;
+        const request = accepted.message.content.find((block) =>
+            Value.Check(readSkillRequestSchema, block),
+        );
+        if (!Value.Check(readSkillRequestSchema, request)) return;
+        const current = await this.#skillReadRequests(ctx, scope);
+        const name = request.arguments.name;
+        if (current.includes(name)) return;
+        if (current.length >= MAX_SKILL_INVOCATIONS_PER_RUN) {
+            throw new Error("Too many skills were invoked in one agent run.");
+        }
+        await scope.runKV.write(ctx, SKILL_READ_REQUESTS_KEY, [...current, name]);
+    }
+
+    async #skillReadRequests(ctx: Context, scope: AgentModuleScope): Promise<string[]> {
+        const runKV = scope.runKV;
+        if (runKV === undefined) return [];
+        const stored = await runKV.read(ctx, SKILL_READ_REQUESTS_KEY);
+        if (stored === undefined) return [];
+        if (!Value.Check(skillReadRequestsSchema, stored)) {
+            throw new Error("The skills module found invalid requested-skill state.");
+        }
+        return structuredClone(stored);
+    }
 
     async #skillInvocations(ctx: Context, scope: AgentModuleScope): Promise<SkillInvocation[]> {
         const runKV = scope.runKV;
@@ -435,13 +501,21 @@ export class SkillsModule implements AgentModule {
     }
 }
 
+/** Whether a user's invocation names this skill as it is currently installed. */
+function invokes(invocation: SkillInvocation, entry: SkillEntry): boolean {
+    return (
+        entry.name === invocation.name &&
+        (invocation.location === undefined || entry.location === invocation.location)
+    );
+}
+
 /** The part of the catalog the model may choose from on its own. */
 function modelInvocable(entries: readonly SkillEntry[]): readonly SkillEntry[] {
     return entries.filter((entry) => entry.disableModelInvocation !== true);
 }
 
 function formatInvokedSkill(invocation: SkillInvocation): string {
-    return `The user directly invoked the /${invocation.name} skill for this run. Follow its complete instructions below.\n\n<skill name="${invocation.name}">\n${invocation.content}\n</skill>`;
+    return `The user directly invoked the /${invocation.name} skill for this run. Its complete instructions are below, so there is no need to read it again; follow them.\n\n<skill name="${invocation.name}">\n${invocation.content}\n</skill>`;
 }
 
 /** The extra roots configuration adds: machine folders as paths, project folders as a parser. */

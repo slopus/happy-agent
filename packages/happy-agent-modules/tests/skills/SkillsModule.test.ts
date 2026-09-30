@@ -327,6 +327,79 @@ describe("SkillsModule", () => {
         expect(invoked).toContain("The user directly invoked the /deploy skill for this run.");
         expect(invoked).toContain("Deploy instructions.");
         expect(invoked).not.toContain("<name>deploy</name>");
+
+        // Once the user invoked it, the model may read it during that run, and only then.
+        const readSkill = async (scope: never) => {
+            const tools = await hooks.tools!(ctx, scope);
+            const tool = tools.find((candidate) => candidate.name === "read_skill")!;
+            return await tool.execute(ctx, { name: "deploy" } as never, undefined as never);
+        };
+        await expect(readSkill(invokedScope)).resolves.toMatchObject({
+            content: expect.stringContaining("Deploy instructions."),
+            name: "deploy",
+        });
+        values.clear();
+        await expect(readSkill(invokedScope)).rejects.toThrow(
+            'The "deploy" skill can only be invoked by the user with /deploy, not by the model.',
+        );
+    });
+
+    it("reads a user-only skill the user requested with a read_skill tool call", async () => {
+        const compute = new FakeCompute("/workspace");
+        compute.directories.add("/workspace/.git");
+        compute.write(
+            "/workspace/.agents/skills/deploy/SKILL.md",
+            `---\nname: deploy\ndescription: Deploy to production.\ndisable-model-invocation: true\n---\n\nDeploy instructions.`,
+        );
+        const hooks = await resolveModuleHooks(ctx, moduleFor(compute));
+        const values = new Map<string, unknown>();
+        const runScope = {
+            agent: { id: agentId },
+            runKV: {
+                read: async (_ctx: unknown, key: string) => values.get(key),
+                write: async (_ctx: unknown, key: string, value: unknown) => {
+                    values.set(key, value);
+                },
+            },
+        } as never;
+        const accept = async (metadata: { messageOrigin: string } | undefined) =>
+            await hooks.messageAcceptedTransact?.(ctx, runScope, {
+                id: "message-1",
+                kind: "send",
+                message: {
+                    role: "user",
+                    content: [
+                        { type: "text", text: "/deploy" },
+                        {
+                            type: "tool_call_request",
+                            name: "read_skill",
+                            arguments: { name: "deploy" },
+                        },
+                    ],
+                },
+                profile: null,
+                ...(metadata === undefined ? {} : { metadata }),
+            });
+        const readSkill = async () => {
+            const tools = await hooks.tools!(ctx, runScope);
+            const tool = tools.find((candidate) => candidate.name === "read_skill")!;
+            return await tool.execute(ctx, { name: "deploy" } as never, undefined as never);
+        };
+        const refusal =
+            'The "deploy" skill can only be invoked by the user with /deploy, not by the model.';
+
+        // A message that is not a genuine user submission unlocks nothing.
+        await accept(undefined);
+        await accept({ messageOrigin: "agent" });
+        await expect(readSkill()).rejects.toThrow(refusal);
+
+        await accept({ messageOrigin: "user" });
+        await expect(readSkill()).resolves.toMatchObject({
+            content: expect.stringContaining("Deploy instructions."),
+            name: "deploy",
+        });
+        values.clear();
+        await expect(readSkill()).rejects.toThrow(refusal);
     });
 
     it("bounds system instructions for a large valid catalog", async () => {

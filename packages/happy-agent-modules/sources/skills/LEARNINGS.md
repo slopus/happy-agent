@@ -46,6 +46,19 @@ Claude Code: the flag is read as a plain YAML boolean, flagged skills stay in `s
 does not exist, so it asks instead of hunting for another name. The invoked-skill prompt is still
 matched against the complete catalog, otherwise a user's own `/deploy` would drop its content.
 
+Refusing every `read_skill` of a user-only skill made the user's own `/deploy` look blocked. There
+are two ways a user invokes a skill, and both used to hit that refusal. The slash-command
+endpoint injects the document into instructions, but models often call `read_skill` anyway. Happy
+Desktop does not use that endpoint for skills. It sends `/deploy` as an ordinary user message
+carrying a `tool_call_request` for `read_skill`, which Agent Base runs as a normal tool call before
+inference, so the tool cannot tell it apart from a model's call. `read_skill` now succeeds for a
+user-only skill the user invoked in the current run: one recorded by the slash-command endpoint
+(same name and location), or one named by a `read_skill` request in an accepted message stamped
+`messageOrigin: "user"`. An unstamped or agent-origin message unlocks nothing, since agents and
+system paths also send user-role messages. Both records live in the run store, so reads in any
+later run and `list_skills` still exclude the skill. The injected prompt also says the content is
+complete, so a re-read is unnecessary.
+
 ## Admin bots change machine skill folders live, in runtime.toml only
 
 Extra machine skill folders could only be set by editing the user `happy.toml` and restarting.
