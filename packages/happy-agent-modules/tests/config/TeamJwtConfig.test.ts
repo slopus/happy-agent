@@ -62,7 +62,11 @@ describe("JWT team authentication configuration", () => {
                 algorithms: ["RS256", "ES256"],
                 audience: "happy-agent",
                 issuer: "https://sso.acme.example",
-                key: { type: "jwks", url: "https://sso.acme.example/.well-known/jwks.json" },
+                key: {
+                    refreshIntervalSec: 3_600,
+                    type: "jwks",
+                    url: "https://sso.acme.example/.well-known/jwks.json",
+                },
                 authorizationUrl: "https://sso.acme.example/oauth/authorize",
                 clientId: "happy",
                 name: "Acme SSO",
@@ -194,6 +198,39 @@ describe("JWT team authentication configuration", () => {
             "",
         );
         await expect(load(`${team}\n${base}\n`)).rejects.toThrow();
+    });
+
+    it("configures how often the JWKS is downloaded", async () => {
+        const configuration = await load(
+            `${team}\n${jwt([
+                'algorithms = ["RS256"]',
+                'jwks_url = "https://sso.acme.example/jwks"',
+                "jwks_refresh_interval_sec = 300",
+            ])}\n`,
+        );
+        expect(configuration.values.feature.team).toMatchObject({
+            jwt: { key: { refreshIntervalSec: 300, type: "jwks" } },
+        });
+        for (const interval of [59, 86_401, 1.5]) {
+            await expect(
+                load(
+                    `${team}\n${jwt([
+                        'algorithms = ["RS256"]',
+                        'jwks_url = "https://sso.acme.example/jwks"',
+                        `jwks_refresh_interval_sec = ${String(interval)}`,
+                    ])}\n`,
+                ),
+            ).rejects.toThrow();
+        }
+        await expect(
+            load(
+                `${team}\n${jwt([
+                    'algorithms = ["HS256"]',
+                    'secret_env = "SECRET"',
+                    "jwks_refresh_interval_sec = 300",
+                ])}\n`,
+            ),
+        ).rejects.toThrow("jwks_refresh_interval_sec requires jwks_url");
     });
 
     it("keeps each method's settings separate", async () => {

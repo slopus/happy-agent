@@ -167,7 +167,9 @@ export async function accessToken(userId: string): Promise<string> {
 ```
 
 Publish the public key as a JWKS at a stable `https` URL, include `kid` in both the key and the
-token header, and rotate by publishing a new key before signing with it. Serve every endpoint over
+token header, and rotate by publishing a new key before signing with it. Keep the old key in the
+JWKS until every token it signed has expired, then remove it; the daemon stops accepting it at its
+next download. Serve every endpoint over
 `https`; plain `http` is accepted only on a loopback host for local testing.
 
 ## 4. Configure the daemon
@@ -195,12 +197,18 @@ audience = "https://happy.acme.example"
 user_id_claim = "sub"
 algorithms = ["ES256"]
 jwks_url = "https://sso.acme.example/.well-known/jwks.json"
+jwks_refresh_interval_sec = 3600
 ```
 
 `name` is what the Happy app shows on the sign-in button. Leave out `refresh_url` to turn refresh
 off; leave out `scope` if the server needs none. Configure exactly one key source:
 
-- `jwks_url = "https://..."` for a published key set;
+- `jwks_url = "https://..."` for a published key set (recommended). The daemon downloads the keys
+  itself when it starts and again every `jwks_refresh_interval_sec` seconds (60–86,400, default
+  3,600), so no key is written into configuration. A token signed with a key the daemon has not
+  seen yet triggers an immediate download, at most every 30 seconds, so rotations apply at once.
+  If a download fails, the daemon keeps the last good keys and retries after a minute;
+  a key removed from the JWKS stops working at the next successful download;
 - `public_key = """-----BEGIN PUBLIC KEY-----..."""` for one PEM public key;
 - `secret_env = "HAPPY_TEAM_JWT_SECRET"` for a shared secret, kept in that environment variable of
   the daemon's service and never in `happy.toml`.
@@ -246,6 +254,9 @@ Run these checks from a machine that can reach the daemon, replacing `DAEMON` wi
 - **The code exchange fails with `invalid_grant`.** The code expired or was already used, the
   redirect URI differs from the one used to authorize, or the server does not verify PKCE with
   S256.
+- **Every access token is rejected right after startup.** The daemon could not download the JWKS:
+  check that the daemon can reach `jwks_url` over `https` without a redirect, and read the service
+  log for the key set warning.
 - **Every access token is rejected.** Compare `iss`, `aud`, `alg`, and `kid` with the configuration
   exactly, and check the server clock. Some identity providers issue opaque access tokens unless an
   API or resource audience is requested; the daemon needs a JWT.

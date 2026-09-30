@@ -14,7 +14,7 @@ import {
     refreshOAuthCredential,
 } from "@slopus/happy-agent-client";
 import { CodexApiKeyCredential, CodexProvider } from "@slopus/happy-providers";
-import { exportJWK, exportSPKI, generateKeyPair, SignJWT } from "jose";
+import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { startHappyAgentDaemon, type HappyAgentDaemon } from "../sources/main.js";
@@ -436,10 +436,13 @@ describe("team mode daemon with JWT authentication", () => {
                 `issuer = "${origin}"`,
                 'audience = "happy-agent-test"',
                 'algorithms = ["ES256"]',
-                `public_key = """\n${authorizationServer.publicKeyPem}"""`,
+                `jwks_url = "${origin}/jwks"`,
+                "jwks_refresh_interval_sec = 3600",
             ].join("\n"),
         );
         daemon = await startHappyAgentDaemon({ happyHome, inference: await inference() });
+        // The daemon downloads the key set itself once the agent system has started.
+        await vi.waitFor(() => expect(authorizationServer.requests).toContain("GET /jwks"));
         const daemonRequests: string[] = [];
         const recordingFetch: typeof globalThis.fetch = async (input, init) => {
             daemonRequests.push(
@@ -506,10 +509,18 @@ describe("team mode daemon with JWT authentication", () => {
         const status = await client.getAuthentication();
         expect(status).toMatchObject({ authenticated: true, userId: expect.any(String) });
 
+        // A rotated signing key is picked up at once, without waiting for the interval.
+        await authorizationServer.rotate();
+        current = await refreshOAuthCredential(current);
+        await expect(client.getConfig()).resolves.toBeDefined();
+
         expect(authorizationServer.requests).toEqual([
+            "GET /jwks",
             "GET /authorize",
             "POST /token authorization_code",
             "POST /refresh refresh_token",
+            "POST /refresh refresh_token",
+            "GET /jwks",
         ]);
         const sentToDaemon = daemonRequests.join("\n");
         expect(sentToDaemon).not.toContain(signIn.codeVerifier);
@@ -522,10 +533,18 @@ describe("team mode daemon with JWT authentication", () => {
 async function startAuthorizationServer(): Promise<{
     readonly close: () => Promise<void>;
     readonly origin: string;
-    readonly publicKeyPem: string;
     readonly requests: string[];
+    readonly rotate: () => Promise<void>;
 }> {
-    const { privateKey, publicKey } = await generateKeyPair("ES256", { extractable: true });
+    const keyPair = async (kid: string) => {
+        const pair = await generateKeyPair("ES256");
+        return {
+            jwk: { ...(await exportJWK(pair.publicKey)), alg: "ES256", kid },
+            kid,
+            privateKey: pair.privateKey,
+        };
+    };
+    let signing = await keyPair("key-1");
     const requests: string[] = [];
     const codes = new Map<string, string>();
     let issued = 0;
@@ -535,13 +554,13 @@ async function startAuthorizationServer(): Promise<{
         const now = Math.floor(Date.now() / 1_000);
         return {
             access_token: await new SignJWT({ n: issued })
-                .setProtectedHeader({ alg: "ES256" })
+                .setProtectedHeader({ alg: "ES256", kid: signing.kid })
                 .setIssuer(origin)
                 .setAudience("happy-agent-test")
                 .setSubject("owner-1")
                 .setIssuedAt(now)
                 .setExpirationTime(now + 300)
-                .sign(privateKey),
+                .sign(signing.privateKey),
             expires_in: 300,
             refresh_token: refreshToken,
             token_type: "Bearer",
@@ -588,8 +607,11 @@ async function startAuthorizationServer(): Promise<{
                 }
                 return json(200, await token("refresh-1"));
             }
-            if (url.pathname === "/refresh" && form.get("refresh_token") === "refresh-1") {
-                return json(200, await token("refresh-2"));
+            if (url.pathname === "/refresh" && form.get("refresh_token")?.startsWith("refresh-")) {
+                return json(200, await token(`refresh-${String(issued + 1)}`));
+            }
+            if (url.pathname === "/jwks") {
+                return json(200, { keys: [signing.jwk] });
             }
             return json(400, { error: "invalid_grant" });
         })();
@@ -603,8 +625,10 @@ async function startAuthorizationServer(): Promise<{
             await new Promise<void>((resolve) => server.close(() => resolve()));
         },
         origin,
-        publicKeyPem: await exportSPKI(publicKey),
         requests,
+        rotate: async () => {
+            signing = await keyPair(`key-${String(issued + 1)}`);
+        },
     };
 }
 

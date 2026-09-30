@@ -87,7 +87,9 @@ export const HAPPY_TOML_TEMPLATE = `# Happy configuration for Happy Agent.
 # user_id_claim = "sub"
 # algorithms = ["RS256"]
 # Exactly one key source: jwks_url, public_key (PEM), or secret_env (HS256/384/512, >= 32 bytes).
+# The daemon downloads jwks_url at startup and every jwks_refresh_interval_sec (default 3600).
 # jwks_url = "https://sso.acme.example/.well-known/jwks.json"
+# jwks_refresh_interval_sec = 3600
 
 # [workspace]
 # setup_commands = ["pnpm install"]

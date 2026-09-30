@@ -12,9 +12,8 @@ import {
 } from "@slopus/happy-agent-base";
 import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
-import { afterCommit, type Context } from "@steve.kite/stdlib";
+import { afterCommit, detach, withLifetime, type Context } from "@steve.kite/stdlib";
 import { sql } from "drizzle-orm";
-import { createRemoteJWKSet } from "jose";
 
 import type { ConfigModule } from "../config/index.js";
 import type { ProfileModule, ProfilePhotoContentType } from "../profile/index.js";
@@ -22,6 +21,7 @@ import { createTeamUserVersion } from "./createTeamUserVersion.js";
 import { TeamAuthenticationError } from "./TeamAuthenticationError.js";
 import { teamIdentity, withTeamIdentity, withTeamUser, type TeamIdentity } from "./TeamContext.js";
 import { JwtAccessTokenVerifier } from "./JwtAccessTokenVerifier.js";
+import { RefreshingJwks } from "./RefreshingJwks.js";
 import { TeamProfileInputError } from "./TeamProfileInputError.js";
 import { TeamProfileVersionConflictError } from "./TeamProfileVersionConflictError.js";
 import {
@@ -286,6 +286,8 @@ export class TeamModule<Database extends AgentDatabase = AgentDatabase> implemen
     readonly #ownerSubject: string | undefined;
     readonly #profile: ProfileModule;
     readonly #verify: ((accessToken: string) => Promise<string>) | undefined;
+    readonly #jwks: RefreshingJwks | undefined;
+    readonly #lifetime = new AbortController();
 
     constructor(config: ConfigModule, profile: ProfileModule) {
         this.#config = config;
@@ -302,13 +304,18 @@ export class TeamModule<Database extends AgentDatabase = AgentDatabase> implemen
                   : undefined;
         if (!team.enabled) {
             this.#verify = undefined;
+            this.#jwks = undefined;
             return;
         }
         if (team.authentication === "jwt") {
             const jwt = team.jwt;
             let key: ConstructorParameters<typeof JwtAccessTokenVerifier>[0]["key"];
             if (jwt.key.type === "jwks") {
-                key = createRemoteJWKSet(new URL(jwt.key.url), { timeoutDuration: 5_000 });
+                this.#jwks = new RefreshingJwks({
+                    intervalMs: jwt.key.refreshIntervalSec * 1_000,
+                    url: jwt.key.url,
+                });
+                key = this.#jwks.getKey;
             } else if (jwt.key.type === "public_key") {
                 key = createPublicKey(jwt.key.pem);
             } else {
@@ -338,6 +345,31 @@ export class TeamModule<Database extends AgentDatabase = AgentDatabase> implemen
         this.beforeStart = () => ({
             systemNotificationsTransact: (ctx, scope, boundary) =>
                 teamSenderNotifications(ctx, this, scope, boundary),
+            afterStart: (ctx) => {
+                this.#startJwksRefresh(ctx);
+            },
+        });
+    }
+
+    /** Stop background key downloads; the runtime calls this at shutdown. */
+    close(): void {
+        this.#lifetime.abort(new Error("The Happy Agent runtime is shutting down."));
+    }
+
+    #jwksRefreshStarted = false;
+
+    /** The key set refresh belongs to the daemon, not to startup or any request. */
+    #startJwksRefresh(ctx: Context): void {
+        const jwks = this.#jwks;
+        if (jwks === undefined || this.#jwksRefreshStarted || this.#lifetime.signal.aborted) return;
+        this.#jwksRefreshStarted = true;
+        const lifetime =
+            ctx.lifetime === undefined
+                ? this.#lifetime.signal
+                : AbortSignal.any([ctx.lifetime, this.#lifetime.signal]);
+        const owner = withLifetime(detach(ctx).named("team-jwks-refresh"), lifetime);
+        void jwks.run(owner).catch((error: unknown) => {
+            if (!lifetime.aborted) owner.log.warn("Background JWT key refresh stopped.", {}, error);
         });
     }
 

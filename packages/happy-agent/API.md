@@ -74,6 +74,7 @@ audience = "https://happy.acme.example"
 user_id_claim = "sub"
 algorithms = ["RS256"]
 jwks_url = "https://sso.acme.example/.well-known/jwks.json"
+jwks_refresh_interval_sec = 3600
 ```
 
 - `owner_user_id` — required; the user ID whose local user is created with the owner flag.
@@ -92,10 +93,13 @@ jwks_url = "https://sso.acme.example/.well-known/jwks.json"
   must be a string of 1–256 printable characters.
 - `algorithms` — required, non-empty; the accepted `alg` header values. `none` is never accepted.
 - Exactly one key source:
-    - `jwks_url` — a JWKS URL for asymmetric keys.
+    - `jwks_url` — a JWKS URL publishing the asymmetric public keys. The daemon downloads it
+      rather than having keys written into configuration, as described below.
     - `public_key` — one PEM-encoded SPKI public key for asymmetric keys.
     - `secret_env` — the name of an environment variable of the daemon process holding a shared
       secret for symmetric keys. The secret is read at startup and must contain at least 32 bytes.
+- `jwks_refresh_interval_sec` — optional, only with `jwks_url`; an integer from 60 through 86,400,
+  default 3,600. How often the daemon downloads the key set again.
 
 Every URL must be absolute and use `https`; `http` is accepted only for a loopback host
 (`localhost`, `[::1]`, or an IPv4 address in `127.0.0.0/8`). Asymmetric key sources accept only
@@ -108,9 +112,25 @@ JWKS through the API, errors, or logs.
 A JWT is accepted only when its signature verifies with the configured key source and one of the
 configured algorithms, its `iss` equals `issuer`, its `aud` equals or contains `audience`, and it
 carries an unexpired `exp`. `nbf` and `iat` are honored when present. Time comparisons allow 30
-seconds of clock skew. Remote JWKS keys are fetched lazily and cached; a JWKS fetch failure rejects
-the token rather than accepting it. A bearer token longer than 16,384 characters is rejected
-without verification.
+seconds of clock skew. A bearer token longer than 16,384 characters is rejected without
+verification.
+
+With `jwks_url`, the daemon owns a cached copy of the key set:
+
+- It downloads the key set when the agent system starts, and again every
+  `jwks_refresh_interval_sec` after each successful download. A failed download is retried after
+  60 seconds.
+- A token whose key is not in the cached set, or a token arriving before any download succeeded,
+  triggers one immediate download, at most once every 30 seconds. This picks up a rotated key
+  without waiting for the interval. Verification never waits on more than one download.
+- A successful download replaces the whole set, so a key removed from the JWKS stops verifying
+  tokens at the next successful download. A failed download keeps the last successful set.
+  Without any successful download, every token is rejected.
+- Each download sends `GET` with `accept: application/json`, does not follow redirects, times out
+  after 5 seconds, and accepts at most 1 MiB and 100 keys. A response that is not a valid JWKS
+  counts as a failed download.
+- Downloads stop when the daemon shuts down. Their failures are logged without key material and
+  never stop the daemon.
 
 #### Signing in with the authorization code flow
 

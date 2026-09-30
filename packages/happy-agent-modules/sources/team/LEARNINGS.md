@@ -62,6 +62,17 @@ query strings, so it cannot be used to reflect attacker-chosen redirects. A per-
 stops a daemon from replaying a member's token elsewhere; a shared secret lets the daemon mint
 tokens, so asymmetric keys are the recommendation.
 
+## The daemon owns its JWKS download
+
+Deployers should not have to paste public keys into configuration or restart the daemon to rotate
+them. `jose`'s remote key set fetched only lazily, on its own fixed cache schedule. `RefreshingJwks`
+now downloads the key set when the agent system starts and on a configurable interval, from a
+named daemon-owned context that shutdown stops. A token with an unknown key triggers one
+rate-limited download, so rotations apply at once without letting junk tokens hammer the issuer.
+A failed download keeps the last good set and retries after a minute; a successful one replaces
+the set, so removing a key from the JWKS revokes it. Downloads are bounded in time, size, and key
+count, and never follow redirects.
+
 ## WorkOS organization membership grants access before onboarding
 
 A token must have a valid signature, the configured WorkOS client and issuer, and the deployment's

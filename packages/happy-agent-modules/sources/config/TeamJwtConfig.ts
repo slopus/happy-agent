@@ -25,6 +25,8 @@ const algorithmsSchema = Type.Array(algorithmSchema, { maxItems: 13, minItems: 1
 const urlSchema = Type.String({ maxLength: 2_048, minLength: 1 });
 const nonEmptySchema = Type.String({ maxLength: 2_048, minLength: 1 });
 const printable = "^[^\\u0000-\\u001f\\u007f-\\u009f]+$";
+const refreshIntervalSchema = Type.Integer({ maximum: 86_400, minimum: 60 });
+const DEFAULT_JWKS_REFRESH_INTERVAL_SEC = 3_600;
 const clientIdSchema = Type.String({ maxLength: 256, minLength: 1, pattern: printable });
 const scopeSchema = Type.String({ maxLength: 1_024, minLength: 1, pattern: printable });
 
@@ -50,6 +52,7 @@ export const teamJwtTomlSchema = Type.Object(
         issuer: nonEmptySchema,
         authorization_url: urlSchema,
         client_id: clientIdSchema,
+        jwks_refresh_interval_sec: Type.Optional(refreshIntervalSchema),
         jwks_url: Type.Optional(urlSchema),
         name: teamJwtNameSchema,
         public_key: Type.Optional(Type.String({ maxLength: 16_384, minLength: 1 })),
@@ -74,7 +77,14 @@ export const teamJwtConfigSchema = Type.Object(
         clientId: clientIdSchema,
         issuer: nonEmptySchema,
         key: Type.Union([
-            Type.Object({ type: Type.Literal("jwks"), url: urlSchema }, exact),
+            Type.Object(
+                {
+                    refreshIntervalSec: refreshIntervalSchema,
+                    type: Type.Literal("jwks"),
+                    url: urlSchema,
+                },
+                exact,
+            ),
             Type.Object(
                 {
                     pem: Type.String({ maxLength: 16_384, minLength: 1 }),
@@ -115,6 +125,9 @@ export function resolveTeamJwtConfig(value: TeamJwtToml): TeamJwtConfig {
             "feature.team.jwt must configure exactly one of jwks_url, public_key, or secret_env.",
         );
     }
+    if (value.jwks_refresh_interval_sec !== undefined && value.jwks_url === undefined) {
+        throw new Error("feature.team.jwt.jwks_refresh_interval_sec requires jwks_url.");
+    }
     let key: TeamJwtConfig["key"];
     if (value.secret_env !== undefined) {
         assertAlgorithms(
@@ -133,7 +146,12 @@ export function resolveTeamJwtConfig(value: TeamJwtToml): TeamJwtConfig {
         );
         if (value.jwks_url !== undefined) {
             assertBrowserUrl(value.jwks_url, "feature.team.jwt.jwks_url");
-            key = { type: "jwks", url: value.jwks_url };
+            key = {
+                refreshIntervalSec:
+                    value.jwks_refresh_interval_sec ?? DEFAULT_JWKS_REFRESH_INTERVAL_SEC,
+                type: "jwks",
+                url: value.jwks_url,
+            };
         } else {
             try {
                 createPublicKey(value.public_key!);
