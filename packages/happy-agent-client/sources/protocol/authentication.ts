@@ -4,22 +4,32 @@ import { type Static, Type } from "@sinclair/typebox";
 
 import { Nullable } from "./common.js";
 
+const urlSchema = Type.String({ minLength: 1, maxLength: 2048 });
+
 /**
- * A sign-in completed in the system browser.
+ * A sign-in completed with the OAuth authorization code flow and PKCE.
  *
- * The page signs the person in and redirects to the client's `redirectUri` with
- * `#token=<jwt>&state=<state>` in the fragment.
+ * The client talks to these endpoints directly. The daemon never receives the
+ * authorization code, the PKCE verifier, or a refresh token.
  */
-export const browserAuthenticationMethodSchema = Type.Object({
-    type: Type.Literal("browser"),
+export const oauthAuthenticationMethodSchema = Type.Object({
+    type: Type.Literal("oauth"),
     /** Stable method identity, such as `"jwt"`. */
     id: Type.String({ minLength: 1 }),
     /** Human-readable method name for display. */
     name: Type.String({ minLength: 1, maxLength: 64 }),
-    /** The page to open in the system browser. */
-    url: Type.String({ minLength: 1 }),
+    /** The authorization endpoint, opened in the system browser. */
+    authorizationUrl: urlSchema,
+    /** Where the authorization code is exchanged for tokens. */
+    tokenUrl: urlSchema,
+    /** Where a refresh token is exchanged; absent when refresh is unavailable. */
+    refreshUrl: Type.Optional(urlSchema),
+    /** The public OAuth client identifier. */
+    clientId: Type.String({ minLength: 1, maxLength: 256 }),
+    /** The space-separated scope requested during authorization. */
+    scope: Type.Optional(Type.String({ minLength: 1, maxLength: 1024 })),
 });
-export type BrowserAuthenticationMethod = Static<typeof browserAuthenticationMethodSchema>;
+export type OAuthAuthenticationMethod = Static<typeof oauthAuthenticationMethodSchema>;
 
 /**
  * One way to sign in, discriminated by `type`.
@@ -27,17 +37,8 @@ export type BrowserAuthenticationMethod = Static<typeof browserAuthenticationMet
  * The set grows with the product; clients ignore methods whose `type` they do
  * not recognize.
  */
-export const authenticationMethodSchema = Type.Union([browserAuthenticationMethodSchema]);
+export const authenticationMethodSchema = Type.Union([oauthAuthenticationMethodSchema]);
 export type AuthenticationMethod = Static<typeof authenticationMethodSchema>;
-
-/** Query for `GET /v0/authentication`. */
-export const authenticationQuerySchema = Type.Object({
-    /** Absolute URL without a fragment where the client receives the sign-in result. */
-    redirectUri: Type.Optional(Type.String({ minLength: 1, maxLength: 2048 })),
-    /** Client-generated value returned unchanged with the result; requires `redirectUri`. */
-    state: Type.Optional(Type.String({ minLength: 1, maxLength: 512 })),
-});
-export type AuthenticationQuery = Static<typeof authenticationQuerySchema>;
 
 /** `GET /v0/authentication` */
 export const authenticationResponseSchema = Type.Object({
@@ -55,3 +56,19 @@ export const authenticationChallengeSchema = Type.Object({
     methods: Type.Array(authenticationMethodSchema),
 });
 export type AuthenticationChallenge = Static<typeof authenticationChallengeSchema>;
+
+/** A successful OAuth token endpoint response (RFC 6749 section 5.1). */
+export const oauthTokenResponseSchema = Type.Object({
+    access_token: Type.String({ minLength: 1, maxLength: 16_384 }),
+    token_type: Type.String({ pattern: "^[Bb][Ee][Aa][Rr][Ee][Rr]$" }),
+    expires_in: Type.Optional(Type.Number({ minimum: 0 })),
+    refresh_token: Type.Optional(Type.String({ minLength: 1, maxLength: 16_384 })),
+});
+export type OAuthTokenResponse = Static<typeof oauthTokenResponseSchema>;
+
+/** An OAuth error response (RFC 6749 section 5.2) or authorization error redirect. */
+export const oauthErrorResponseSchema = Type.Object({
+    error: Type.String({ minLength: 1, maxLength: 256 }),
+    error_description: Type.Optional(Type.String({ maxLength: 2048 })),
+});
+export type OAuthErrorResponse = Static<typeof oauthErrorResponseSchema>;

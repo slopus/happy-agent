@@ -29,7 +29,6 @@ import type {
 } from "./protocol/agents.js";
 import {
     authenticationMethodSchema,
-    type AuthenticationQuery,
     type AuthenticationResponse,
 } from "./protocol/authentication.js";
 import type { AgentBootstrapResponse, DesktopBootstrapResponse } from "./protocol/bootstrap.js";
@@ -192,9 +191,11 @@ export interface HappyAgentClientOptions {
     /**
      * The bearer token; every route except authentication discovery requires one.
      *
-     * Omit it only to call `getAuthentication()` before signing in.
+     * A function is called for every request, so a refreshed token takes effect
+     * without a new client. Omit it only to call `getAuthentication()` before
+     * signing in.
      */
-    token?: string | undefined;
+    token?: string | (() => string | Promise<string>) | undefined;
     /**
      * The `fetch` to make requests with. Defaults to the global one.
      *
@@ -238,7 +239,7 @@ interface HttpRequest {
  */
 export class HappyAgentClient {
     readonly #endpoint: string;
-    readonly #token: string | undefined;
+    readonly #token: HappyAgentClientOptions["token"];
     readonly #fetch: typeof globalThis.fetch;
 
     constructor(options: HappyAgentClientOptions) {
@@ -317,17 +318,13 @@ export class HappyAgentClient {
     /**
      * `GET /v0/authentication` — whether this client is signed in, and how to sign in.
      *
-     * Needs no token. A `browser` method's `url` is opened in the system browser;
-     * the result arrives at `redirectUri` and is read with `readAuthenticationCallback`.
+     * Needs no token. Sign in with an `oauth` method through `beginOAuthSignIn`,
+     * which talks to the authorization server rather than this daemon.
      */
-    async getAuthentication(
-        query: AuthenticationQuery = {},
-        options: RequestOptions = {},
-    ): Promise<AuthenticationResponse> {
+    async getAuthentication(options: RequestOptions = {}): Promise<AuthenticationResponse> {
         const response = await this.#json<AuthenticationResponse>({
             method: "GET",
             path: "v0/authentication",
-            query,
             signal: options.signal,
         });
         // Methods this client does not recognize are skipped rather than mistyped.
@@ -1897,7 +1894,8 @@ export class HappyAgentClient {
         const headers: Record<string, string> = {
             accept: request.accept ?? "application/json",
         };
-        if (this.#token !== undefined) headers.authorization = `Bearer ${this.#token}`;
+        const token = typeof this.#token === "function" ? await this.#token() : this.#token;
+        if (token !== undefined) headers.authorization = `Bearer ${token}`;
         if (request.ifMatch !== undefined) headers["if-match"] = request.ifMatch;
         if (request.ifNoneMatch !== undefined) headers["if-none-match"] = request.ifNoneMatch;
         if (request.lastEventId !== undefined) headers["last-event-id"] = request.lastEventId;

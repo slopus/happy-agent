@@ -17,7 +17,15 @@ export { HappyAgentApiError } from "./HappyAgentApiError.js";
 export type { ApiErrorBody } from "./HappyAgentApiError.js";
 export { EventStreamProtocolError, readEventStream } from "./readEventStream.js";
 export { readSseFrames } from "./readSseFrames.js";
-export { readAuthenticationCallback } from "./readAuthenticationCallback.js";
+export { HappyAgentOAuthError } from "./HappyAgentOAuthError.js";
+export {
+    beginOAuthSignIn,
+    completeOAuthSignIn,
+    refreshOAuthCredential,
+    type OAuthCredential,
+    type OAuthRequestOptions,
+    type OAuthSignIn,
+} from "./oauthSignIn.js";
 export type { SseFrame } from "./readSseFrames.js";
 export type { HappyAgentUpdate, HappyAgentUpdatesOptions } from "./updates.js";
 export { endpointUrl } from "./endpointUrl.js";

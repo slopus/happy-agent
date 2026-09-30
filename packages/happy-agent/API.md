@@ -48,9 +48,12 @@ equal `[feature.team] workos_organization_id`. The organization and
 with `[feature.team] workos_client_id`; the expected issuer and JWKS URL are derived from that
 client ID. The user ID is the token's `sub` claim.
 
-With JWT team authentication, an enterprise deployer operates its own web application that signs
-users in and issues a JWT for this daemon. The daemon verifies that JWT locally and takes the user
-ID from a configured claim. The settings live only in machine configuration, never in project
+With JWT team authentication, an enterprise deployer operates an OAuth 2.0 authorization server
+that signs members in and issues JWT access tokens for this daemon. It may be the organization's
+identity provider itself or a small application in front of it. Clients obtain tokens with the
+authorization code flow and PKCE for native apps (RFC 6749, RFC 7636, RFC 8252), talking to the
+authorization server directly. The daemon only verifies access tokens and takes the user ID from
+a configured claim. The settings live only in machine configuration, never in project
 configuration:
 
 ```toml
@@ -61,9 +64,13 @@ owner_user_id = "user-123"
 
 [feature.team.jwt]
 name = "Acme SSO"
-login_url = "https://sso.acme.example/happy/login"
+authorization_url = "https://sso.acme.example/oauth/authorize"
+token_url = "https://sso.acme.example/oauth/token"
+refresh_url = "https://sso.acme.example/oauth/token"
+client_id = "happy"
+scope = "happy"
 issuer = "https://sso.acme.example"
-audience = "happy-agent"
+audience = "https://happy.acme.example"
 user_id_claim = "sub"
 algorithms = ["RS256"]
 jwks_url = "https://sso.acme.example/.well-known/jwks.json"
@@ -71,24 +78,32 @@ jwks_url = "https://sso.acme.example/.well-known/jwks.json"
 
 - `owner_user_id` — required; the user ID whose local user is created with the owner flag.
 - `name` — required; 1–64 printable characters naming the sign-in method for people.
-- `login_url` — required; the deployer's absolute `https` sign-in page. `http` is accepted only
-  for a loopback host.
+- `authorization_url` — required; the authorization endpoint opened in the system browser.
+- `token_url` — required; the token endpoint that exchanges an authorization code.
+- `refresh_url` — optional; the endpoint that exchanges a refresh token. It may be the token
+  endpoint or any other endpoint, including one on another origin. Without it, clients do not
+  refresh and sign in again when an access token expires.
+- `client_id` — required; the public OAuth client identifier, 1–256 printable characters.
+- `scope` — optional; the space-separated scope requested during authorization, 1–1,024
+  printable characters.
 - `issuer` — required; the exact `iss` claim value.
 - `audience` — required; a value the `aud` claim must equal or contain.
 - `user_id_claim` — optional, default `"sub"`; the top-level claim holding the user ID. Its value
   must be a string of 1–256 printable characters.
 - `algorithms` — required, non-empty; the accepted `alg` header values. `none` is never accepted.
 - Exactly one key source:
-    - `jwks_url` — an absolute `https` JWKS URL for asymmetric keys; `http` only for loopback.
+    - `jwks_url` — a JWKS URL for asymmetric keys.
     - `public_key` — one PEM-encoded SPKI public key for asymmetric keys.
     - `secret_env` — the name of an environment variable of the daemon process holding a shared
       secret for symmetric keys. The secret is read at startup and must contain at least 32 bytes.
 
-Asymmetric key sources accept only `RS256`, `RS384`, `RS512`, `PS256`, `PS384`, `PS512`, `ES256`,
-`ES384`, `ES512`, and `EdDSA`. `secret_env` accepts only `HS256`, `HS384`, and `HS512`. A mixture,
-a missing or invalid setting, a missing or short secret, or any WorkOS setting under JWT
-authentication fails configuration loading with a human-readable message. The daemon never exposes
-the secret, the public key, or the JWKS through the API, errors, or logs.
+Every URL must be absolute and use `https`; `http` is accepted only for a loopback host
+(`localhost`, `[::1]`, or an IPv4 address in `127.0.0.0/8`). Asymmetric key sources accept only
+`RS256`, `RS384`, `RS512`, `PS256`, `PS384`, `PS512`, `ES256`, `ES384`, `ES512`, and `EdDSA`.
+`secret_env` accepts only `HS256`, `HS384`, and `HS512`. A mixture, a missing or invalid setting, a
+missing or short secret, or any WorkOS setting under JWT authentication fails configuration
+loading with a human-readable message. The daemon never exposes the secret, the public key, or the
+JWKS through the API, errors, or logs.
 
 A JWT is accepted only when its signature verifies with the configured key source and one of the
 configured algorithms, its `iss` equals `issuer`, its `aud` equals or contains `audience`, and it
@@ -96,6 +111,39 @@ carries an unexpired `exp`. `nbf` and `iat` are honored when present. Time compa
 seconds of clock skew. Remote JWKS keys are fetched lazily and cached; a JWKS fetch failure rejects
 the token rather than accepting it. A bearer token longer than 16,384 characters is rejected
 without verification.
+
+#### Signing in with the authorization code flow
+
+The daemon is not trusted with sign-in credentials. It never receives an authorization code, a
+PKCE verifier, or a refresh token, and it has no endpoint that accepts them. A client:
+
+1. Reads an `oauth` method from `GET /v0/authentication` or from a `401`.
+2. Generates a random `state` and a PKCE verifier of 43–128 characters, both kept only in the
+   client, and opens `authorizationUrl` in the system browser with the query parameters
+   `response_type=code`, `client_id`, `redirect_uri`, `state`, `code_challenge` (the base64url
+   SHA-256 of the verifier), `code_challenge_method=S256`, and `scope` when the method has one.
+   The redirect URI is a loopback `http://127.0.0.1:<port>/<path>` address or a private-use
+   custom scheme registered by the application, as RFC 8252 describes.
+3. Receives `redirect_uri?code=<code>&state=<state>`, or `error` and optional
+   `error_description` on failure, and rejects the result unless `state` matches.
+4. Sends `POST tokenUrl` with an `application/x-www-form-urlencoded` body carrying
+   `grant_type=authorization_code`, `code`, `redirect_uri`, `client_id`, and `code_verifier`.
+   A successful JSON response carries `access_token` and `token_type` `Bearer`, and optionally
+   `expires_in` in seconds and `refresh_token`.
+5. Uses `access_token` as its bearer token for this daemon.
+
+When the method advertises `refreshUrl` and the client holds a refresh token, the client may send
+`POST <refresh URL>` with `grant_type=refresh_token`, `refresh_token`, and `client_id` in the same
+form encoding, and receives the same response. A new `refresh_token` replaces the old one; its
+absence keeps the old one. The client sends a refresh token only to the refresh URL and client ID
+recorded when that token was issued, never to a URL a daemon advertises afterwards. When refresh
+fails or is unavailable, the client signs in again. Clients may keep credentials only in memory.
+
+Because the daemon sees every access token sent to it, each deployment must use its own
+`audience`, so that a daemon cannot replay a member's token to another deployment. A daemon
+configured with `secret_env` can mint tokens itself; a shared secret must never be shared with any
+other deployment or service, and asymmetric keys are required whenever the daemon is not fully
+trusted.
 
 User IDs are scoped to their authentication method. The same user ID from WorkOS and from JWT names
 two different identities, and switching an installation's method never merges them.
@@ -108,8 +156,7 @@ owner flag.
 A missing, invalid, expired, or wrong-organization token yields `401` with body
 `{ "error": "Unauthorized", "code": "unauthorized" }`. In JWT team mode, every `401` additionally
 carries an `authentication` object whose `methods` are the same as those returned by
-`GET /v0/authentication` without a `redirectUri`, so a client can discover how to sign in from any
-rejected request:
+`GET /v0/authentication`, so a client can discover how to sign in from any rejected request:
 
 ```json
 {
@@ -118,10 +165,14 @@ rejected request:
     "authentication": {
         "methods": [
             {
-                "type": "browser",
+                "type": "oauth",
                 "id": "jwt",
                 "name": "Acme SSO",
-                "url": "https://sso.acme.example/happy/login"
+                "authorizationUrl": "https://sso.acme.example/oauth/authorize",
+                "tokenUrl": "https://sso.acme.example/oauth/token",
+                "refreshUrl": "https://sso.acme.example/oauth/token",
+                "clientId": "happy",
+                "scope": "happy"
             }
         ]
     }
@@ -161,6 +212,11 @@ Authentication discovery, JWT team authentication, and the `authentication` fiel
 bodies are additive and do not increment the protocol version. `404` from
 `GET /v0/authentication` means discovery is unavailable; clients then use their existing bearer
 token configuration. Older daemons omit the `401` field.
+
+By explicit product decision, the `browser` sign-in method that returned a JWT in the redirect
+fragment, and the `redirectUri` and `state` parameters of `GET /v0/authentication`, are removed
+as a one-off exception to additive compatibility. No daemon release served them. Daemons advertise
+the `oauth` method instead and ignore any query string on discovery.
 
 Sandboxed workspace services are additive and do not increment the protocol version. For a known
 workspace, `404` or `501` from `GET /v0/workspaces/:workspaceId/services` means the feature is
@@ -660,17 +716,8 @@ Health is the only endpoint guaranteed to answer during startup; clients should 
 
 Checks the request's authentication and lists the ways a person can sign in. It is the only
 endpoint that does not require a bearer token. It never rejects a missing or invalid token with
-`401`; it reports it instead. It has no side effects, creates no user, and emits no events.
-
-Query parameters, both optional:
-
-- `redirectUri` — the absolute URL where the client receives the sign-in result, for example a
-  loopback `http://127.0.0.1:53682/callback` or a custom scheme such as `happy://auth/callback`.
-  At most 2,048 characters and without a fragment.
-- `state` — an opaque value of 1–512 characters generated by the client, returned unchanged by
-  the deployer's web application. The client must verify it when the result arrives.
-
-An invalid `redirectUri` or `state`, or `state` without `redirectUri`, is `400 invalid_request`.
+`401`; it reports it instead. It takes no parameters and ignores any query string. It has no side
+effects, creates no user, emits no events, and contacts no authorization server.
 
 Response — `200`:
 
@@ -680,10 +727,14 @@ Response — `200`:
     "userId": null,
     "methods": [
         {
-            "type": "browser",
+            "type": "oauth",
             "id": "jwt",
             "name": "Acme SSO",
-            "url": "https://sso.acme.example/happy/login?redirect_uri=happy%3A%2F%2Fauth%2Fcallback&state=k3v9"
+            "authorizationUrl": "https://sso.acme.example/oauth/authorize",
+            "tokenUrl": "https://sso.acme.example/oauth/token",
+            "refreshUrl": "https://sso.acme.example/oauth/token",
+            "clientId": "happy",
+            "scope": "happy"
         }
     ]
 }
@@ -698,18 +749,18 @@ Response — `200`:
   human-readable `name`. Clients ignore methods whose `type` they do not recognize. Standalone and
   WorkOS team deployments return an empty list.
 
-A `browser` method is completed in the system browser:
+An `oauth` method is completed with the authorization code flow and PKCE described under
+Authentication. Its fields come from machine configuration unchanged:
 
-- `url` — the page to open. It is `login_url` with `redirect_uri` and `state` query parameters set
-  from the request, replacing any parameters with those names already present. Without
-  `redirectUri`, it is `login_url` unchanged.
+- `authorizationUrl` — `authorization_url`, opened in the system browser.
+- `tokenUrl` — `token_url`, where the client exchanges the authorization code.
+- `refreshUrl` — `refresh_url`; present only when configured.
+- `clientId` — `client_id`.
+- `scope` — `scope`; present only when configured.
 
-The deployer's web application signs the person in and then redirects the browser to the
-`redirect_uri`, appending the result to its fragment so that it does not reach server logs:
-`<redirect_uri>#token=<jwt>&state=<state>`. The client verifies `state` and then uses the JWT as
-its bearer token for every request. When the token expires, requests return `401` and the client
-signs in again. The deployer's application must allow only redirect URIs it trusts; the daemon
-builds the URL but cannot restrict where the application sends a token.
+These URLs come from the daemon, which clients do not trust with credentials. Clients show the
+authorization server's host to the person before or during sign-in, send the code only to the
+`tokenUrl` of the method they started with, and refresh only as described under Authentication.
 
 ### `GET /v0/config`
 

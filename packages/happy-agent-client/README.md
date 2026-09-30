@@ -3,25 +3,20 @@
 A typed client for the Happy agent HTTP API, specified endpoint by endpoint in
 `packages/happy-agent/API.md`.
 
-`HappyAgentClient` is built from an endpoint and a bearer token. The token may be omitted only to
-call `getAuthentication()` before signing in. It has one typed method per
-request-response route, and it opens the event journal both as pulled pages and as a typed
-async iterator over the live Server-Sent Events stream, cancelled with an `AbortSignal`.
-`updates()` adds the durable client-side behavior a live view normally needs: it reconnects with
-exponential backoff from the last accepted cursor, filters duplicate and outdated events, and
-emits ordered `connected`, `daemon_started`, `draining`, `state_lost`, `disconnected`, and `event`
-items. The stream hello carries a per-process daemon identity, so `daemon_started` appears once for
-the first process and again only after reconnecting to a replacement. A state-loss item carries
-the fresh cursor from which authoritative snapshots can be reloaded. Resource caching, version
-reconciliation, and optimistic mutations remain decisions for the live view built on top.
+`HappyAgentClient` is built from an endpoint and a bearer token. The token may be a function called
+for every request, so refreshed credentials apply without a new client; it may be omitted only to
+call `getAuthentication()` before signing in.
 
-`getAuthentication({ redirectUri, state })` reports whether the client is signed in and lists
-sign-in methods. Open a `browser` method's `url` in the system browser; the deployer's page
-redirects to `redirectUri` with `#token=<jwt>&state=<state>`. `readAuthenticationCallback(url,
-state)` verifies the state and returns the JWT to use as the bearer token. Unknown method types are
-skipped. In JWT team mode, a `401` `HappyAgentApiError` carries the same methods in
-`authentication`, so a rejected request can start sign-in. Older daemons return `404` for
-discovery.
+`getAuthentication()` reports whether the client is signed in and lists sign-in methods. An `oauth`
+method uses the authorization code flow with PKCE, talking to the deployer's authorization server
+directly; the daemon never sees the code, the PKCE verifier, or a refresh token.
+`beginOAuthSignIn(method, { redirectUri })` returns the URL to open in the system browser, the
+server's `host` to show the person, and the state and verifier to keep in memory.
+`completeOAuthSignIn(signIn, callbackUrl)` checks `state` and exchanges the code at that method's
+token URL. `refreshOAuthCredential(credential)` refreshes only at the refresh URL recorded at
+sign-in, never at one a daemon advertises later. Failures throw `HappyAgentOAuthError` with an OAuth
+or client `code`. In JWT team mode, a `401` `HappyAgentApiError` carries the same methods in
+`authentication`. Unknown method types are skipped. Older daemons return `404` for discovery.
 
 Remote connection rosters are read with `listConnections()`. The typed `connections.updated`
 event carries the complete `{ connections, version }` snapshot: keep the greater UUIDv7 version
