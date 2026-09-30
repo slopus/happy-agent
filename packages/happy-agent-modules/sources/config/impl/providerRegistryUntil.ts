@@ -50,6 +50,11 @@ export function providerRegistryUntil(
     shutdown: AbortSignal,
     enablement = new ProviderEnablement(source.ids, () => true),
     isSelectable: (id: string) => boolean = () => true,
+    validateRequest?: (
+        id: string,
+        request: SessionRunRequest,
+        provider: BaseProvider,
+    ) => Promise<void>,
 ): AgentProviders {
     const providers = new AgentProviders();
     const wrappedProviders = new WeakSet<BaseProvider>();
@@ -69,6 +74,9 @@ export function providerRegistryUntil(
                     () => enablement.signal(id),
                     wrappedProviders,
                     wrappedSessions,
+                    validateRequest === undefined
+                        ? undefined
+                        : (request) => validateRequest(id, request, provider),
                 );
             },
             type,
@@ -83,6 +91,7 @@ function providerUntil(
     providerLifetime: () => AbortSignal,
     wrappedProviders: WeakSet<BaseProvider>,
     wrappedSessions: WeakSet<BaseSession>,
+    validateRequest: ((request: SessionRunRequest) => Promise<void>) | undefined,
 ): BaseProvider {
     if (wrappedProviders.has(provider)) return provider;
     const openSession = provider.session.bind(provider);
@@ -94,6 +103,7 @@ function providerUntil(
                 shutdown,
                 providerLifetime,
                 wrappedSessions,
+                validateRequest,
             ),
         writable: true,
     });
@@ -106,6 +116,7 @@ function sessionUntil(
     shutdown: AbortSignal,
     providerLifetime: () => AbortSignal,
     wrappedSessions: WeakSet<BaseSession>,
+    validateRequest: ((request: SessionRunRequest) => Promise<void>) | undefined,
 ): BaseSession {
     if (wrappedSessions.has(session)) return session;
     const run = session.run.bind(session);
@@ -113,8 +124,15 @@ function sessionUntil(
     Object.defineProperties(session, {
         run: {
             configurable: true,
-            value: (ctx: Context, request: SessionRunRequest): SessionStream =>
-                run(until(ctx, shutdown, providerLifetime()), request),
+            value: (ctx: Context, request: SessionRunRequest): SessionStream => {
+                const runCtx = until(ctx, shutdown, providerLifetime());
+                if (validateRequest === undefined || request.serviceTier !== "ultrafast")
+                    return run(runCtx, request);
+                return (async function* () {
+                    await validateRequest(request);
+                    yield* run(runCtx, request);
+                })();
+            },
             writable: true,
         },
         compact: {

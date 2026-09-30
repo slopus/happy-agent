@@ -15,7 +15,8 @@ import {
 } from "../client/index.js";
 import { loadConfig } from "../config/index.js";
 import { errorToMessage } from "../errorToMessage.js";
-import type { PermissionMode } from "../protocol/index.js";
+import type { PermissionMode, ServiceTier } from "../protocol/index.js";
+import { toWireServiceTier } from "../client/serviceTierMapping.js";
 import { HappyTerminalUserError } from "../HappyTerminalUserError.js";
 import { parsePermissionMode } from "./parsePermissionMode.js";
 import type { ExecCommandOptions } from "./parseExecCommand.js";
@@ -201,7 +202,7 @@ function resolveMode(
         modelId: string;
         permissionMode: PermissionMode;
         providerId?: string;
-        serviceTier?: "fast";
+        serviceTier?: ServiceTier;
     },
     config: DaemonConfig,
     previous: MessageMode | null,
@@ -241,13 +242,23 @@ function resolveMode(
         );
     }
     const tiers = providerModel.serviceTiers ?? config.models[modelId]?.serviceTiers ?? [];
+    const serviceTier =
+        previous !== null
+            ? previous.serviceTier
+            : defaults.serviceTier === undefined
+              ? null
+              : toWireServiceTier(defaults.serviceTier);
+    if (serviceTier !== null && !tiers.includes(serviceTier)) {
+        throw new HappyTerminalUserError(
+            "The selected model does not offer the configured inference speed.",
+        );
+    }
     return {
         effort,
         modelId,
         permissionMode,
         providerId,
-        serviceTier:
-            previous?.serviceTier ?? (defaults.serviceTier === "fast" ? (tiers[0] ?? null) : null),
+        serviceTier,
     };
 }
 

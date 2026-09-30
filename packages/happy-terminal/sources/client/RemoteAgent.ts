@@ -50,6 +50,7 @@ import type {
     StopBackgroundProcessResponse,
 } from "../protocol/index.js";
 import { fetchProviderQuotas } from "./fetchProviderQuotas.js";
+import { toTerminalServiceTier, toWireServiceTier } from "./serviceTierMapping.js";
 import { RemoteAgentRunError } from "./RemoteAgentRunError.js";
 import type { HappyAgentEventHub } from "./HappyAgentEventHub.js";
 
@@ -127,26 +128,26 @@ export class RemoteAgent implements CodingAssistantAgentBackend {
     }
 
     get confirmedServiceTier(): ServiceTier | undefined {
-        return this.#currentMode().serviceTier === null ? undefined : "fast";
+        return toTerminalServiceTier(this.#currentMode().serviceTier);
     }
 
     get provider(): CodingAssistantClientProvider {
         const providerId = this.#currentMode().providerId;
-        const provider = this.#config.providers[providerId];
+        const reference = this.#config.providers[providerId]?.models.find(
+            (model) => model.id === this.#currentMode().modelId,
+        );
+        const serviceTiers = (
+            reference?.serviceTiers ??
+            this.#config.models[this.#currentMode().modelId]?.serviceTiers ??
+            []
+        ).flatMap((tier) => {
+            const display = toTerminalServiceTier(tier);
+            return display === undefined ? [] : [display];
+        });
         return {
             id: providerId,
             models: this.#modelsForProvider(providerId),
-            ...(provider?.models.some(
-                (reference) =>
-                    reference.enabled &&
-                    (
-                        reference.serviceTiers ??
-                        this.#config.models[reference.id]?.serviceTiers ??
-                        []
-                    ).length > 0,
-            )
-                ? { serviceTiers: ["fast" as const] }
-                : {}),
+            serviceTiers,
         };
     }
 
@@ -470,15 +471,26 @@ export class RemoteAgent implements CodingAssistantAgentBackend {
         // effort usually belongs to the previous model, so an unsupported one falls back to the
         // new model's own default.
         const carried = effort ?? this.#currentMode().effort;
+        const tier = toTerminalServiceTier(this.#currentMode().serviceTier);
         this.#selection = {
             ...this.#selection,
             effort: model.thinkingLevels.includes(carried) ? carried : model.defaultThinkingLevel,
             modelId,
             providerId: resolvedProviderId,
+            serviceTier:
+                tier !== undefined &&
+                preferredServiceTier(this.#config, resolvedProviderId, modelId, tier) !== null
+                    ? tier
+                    : null,
         };
     }
 
     setServiceTier(serviceTier: ServiceTier | undefined): void {
+        if (serviceTier !== undefined && !this.provider.serviceTiers?.includes(serviceTier)) {
+            throw new Error(
+                `The selected model does not offer ${serviceTier === "ultrafast" ? "Ultrafast" : "Fast"} inference.`,
+            );
+        }
         this.#selection = { ...this.#selection, serviceTier: serviceTier ?? null };
     }
 
@@ -499,7 +511,9 @@ export class RemoteAgent implements CodingAssistantAgentBackend {
                 id: message.id,
                 message: toTerminalMessage(message),
             })),
-            ...(mode.serviceTier === null ? {} : { serviceTier: "fast" }),
+            ...(toTerminalServiceTier(mode.serviceTier) === undefined
+                ? {}
+                : { serviceTier: toTerminalServiceTier(mode.serviceTier)! }),
             status: this.#agent.status === "idle" ? "idle" : "running",
             tools: [],
         };
@@ -636,7 +650,16 @@ export class RemoteAgent implements CodingAssistantAgentBackend {
 
     #currentMode(): MessageMode {
         const base = this.#lastMode ?? this.#config.defaults;
-        const previousServiceTier = this.#lastMode?.serviceTier ?? null;
+        const previousTier = toTerminalServiceTier(this.#lastMode?.serviceTier ?? null);
+        const previousServiceTier =
+            previousTier === undefined
+                ? null
+                : preferredServiceTier(
+                      this.#config,
+                      this.#selection?.providerId ?? base.providerId,
+                      this.#selection?.modelId ?? base.modelId,
+                      previousTier,
+                  );
         return {
             effort: this.#selection?.effort ?? base.effort,
             modelId: this.#selection?.modelId ?? base.modelId,
@@ -651,6 +674,7 @@ export class RemoteAgent implements CodingAssistantAgentBackend {
                             this.#config,
                             this.#selection?.providerId ?? base.providerId,
                             this.#selection?.modelId ?? base.modelId,
+                            this.#selection.serviceTier,
                         ),
         };
     }
@@ -672,6 +696,7 @@ export class RemoteAgent implements CodingAssistantAgentBackend {
                             this.#config,
                             selection.providerId ?? current.providerId,
                             selection.modelId ?? current.modelId,
+                            selection.serviceTier,
                         ),
         };
     }
@@ -1057,7 +1082,13 @@ function preferredServiceTier(
     config: DaemonConfig,
     providerId: string,
     modelId: string,
+    tier: ServiceTier,
 ): string | null {
     const reference = config.providers[providerId]?.models.find((model) => model.id === modelId);
-    return (reference?.serviceTiers ?? config.models[modelId]?.serviceTiers ?? [])[0] ?? null;
+    const wireTier = toWireServiceTier(tier);
+    return (reference?.serviceTiers ?? config.models[modelId]?.serviceTiers ?? []).includes(
+        wireTier,
+    )
+        ? wireTier
+        : null;
 }

@@ -38,7 +38,7 @@ export function renderStartupStatusCard(options: {
             model.model,
             model.reasoning,
             model.provider,
-            ...(model.fast ? ["Fast"] : []),
+            ...(model.ultrafast ? ["Ultrafast"] : model.fast ? ["Fast"] : []),
         ];
         const usage = formatStartupStatusUsageRows(model.usage, width);
         if (width >= 48) {
@@ -51,7 +51,7 @@ export function renderStartupStatusCard(options: {
             return [
                 title,
                 "",
-                `${DIM}Model:${RESET} ${model.model} ${DIM}· Reasoning:${RESET} ${model.reasoning} ${DIM}· Provider:${RESET} ${model.provider}${model.fast ? ` ${DIM}·${RESET} ${options.theme.brand}Fast${RESET}` : ""}`,
+                `${DIM}Model:${RESET} ${model.model} ${DIM}· Reasoning:${RESET} ${model.reasoning} ${DIM}· Provider:${RESET} ${model.provider}${model.ultrafast || model.fast ? ` ${DIM}·${RESET} ${options.theme.brand}${model.ultrafast ? "Ultrafast" : "Fast"}${RESET}` : ""}`,
                 `${DIM}Workspace:${RESET} ${truncatePathToWidth(model.workspace, workspaceWidth)} ${DIM}· Environment:${RESET} ${model.environment}`,
                 `${DIM}Access:${RESET} ${model.access}`,
                 ...(model.engineVersion === undefined

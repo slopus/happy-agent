@@ -598,6 +598,7 @@ export class CodingAssistantApp implements Component, Focusable {
                 : { engineVersion: options.engineVersion }),
             environment: "Local",
             fast: snapshot.serviceTier === "fast",
+            ultrafast: snapshot.serviceTier === "ultrafast",
             model: options.agent.model.name,
             provider: humanizeProviderId(options.agent.provider.id),
             reasoning: humanizeReasoningLevel(
@@ -1327,11 +1328,13 @@ export class CodingAssistantApp implements Component, Focusable {
             if (event.data.changed.includes("serviceTier")) {
                 this.#appendEntry({
                     role: "event",
-                    title: "Fast mode",
+                    title: "Inference speed",
                     text:
-                        event.data.serviceTier === "fast"
-                            ? FAST_MODE_ON_MESSAGE
-                            : FAST_MODE_OFF_MESSAGE,
+                        event.data.serviceTier === "ultrafast"
+                            ? "Inference speed: Ultrafast."
+                            : event.data.serviceTier === "fast"
+                              ? FAST_MODE_ON_MESSAGE
+                              : FAST_MODE_OFF_MESSAGE,
                 });
             }
             return;
@@ -2046,6 +2049,11 @@ export class CodingAssistantApp implements Component, Focusable {
             return true;
         }
 
+        if (prompt === "/speed" || prompt.startsWith("/speed ")) {
+            this.#handleSpeedCommand(prompt);
+            return true;
+        }
+
         if (prompt === "/configure") {
             this.#openConfigureMenu();
             return true;
@@ -2251,6 +2259,105 @@ export class CodingAssistantApp implements Component, Focusable {
             title: "Debug",
         });
         this.#requestRender();
+    }
+
+    #handleSpeedCommand(prompt: string): void {
+        const argument = prompt.slice("/speed".length).trim().toLowerCase();
+        const current = this.#agent.snapshot().serviceTier ?? "regular";
+        const choices = [
+            { value: "regular", label: "Regular", description: "Standard inference." },
+            ...(this.#agent.provider.serviceTiers?.includes("fast")
+                ? [
+                      {
+                          value: "fast",
+                          label: "Fast",
+                          description: "Priority inference; increased usage.",
+                      },
+                  ]
+                : []),
+            ...(this.#agent.provider.serviceTiers?.includes("ultrafast")
+                ? [
+                      {
+                          value: "ultrafast",
+                          label: "Ultrafast",
+                          description:
+                              "Ultrafast inference; account eligibility and usage limits apply.",
+                      },
+                  ]
+                : []),
+        ];
+        if (argument.length === 0) {
+            this.#showSelectionPanel(
+                createSelectionPanel({
+                    theme: this.#theme,
+                    title: "Choose Inference Speed",
+                    subtitle: this.#agent.model.name,
+                    selectedValue: current,
+                    items: choices,
+                    onSelect: (item) => {
+                        this.#closeSelectionPanel();
+                        this.#handleSpeedCommand(`/speed ${item.value}`);
+                    },
+                    onCancel: () => this.#closeSelectionPanel(),
+                }),
+            );
+            return;
+        }
+        if (argument === "status") {
+            const label =
+                current === "ultrafast" ? "Ultrafast" : current === "fast" ? "Fast" : "Regular";
+            this.#appendEntry({
+                role: "event",
+                title: "Inference speed",
+                text: `Inference speed: ${label}.`,
+            });
+            return;
+        }
+        if (argument !== "regular" && argument !== "fast" && argument !== "ultrafast") {
+            this.#appendEntry({
+                role: "error",
+                text: "Usage: /speed [regular|fast|ultrafast|status]",
+            });
+            return;
+        }
+        const choice = choices.find((item) => item.value === argument);
+        if (choice === undefined) {
+            this.#appendEntry({
+                role: "error",
+                text: `${argument === "ultrafast" ? "Ultrafast" : "Fast"} inference is not available with ${this.#agent.model.name}.`,
+            });
+            return;
+        }
+        const complete = () => {
+            this.#persistDefaultModel(
+                this.#agent.model.id,
+                this.#agent.snapshot().effort ?? this.#agent.model.defaultThinkingLevel,
+                this.#agent.provider.id,
+                this.#agent.confirmedServiceTier ?? null,
+            );
+            this.#appendEntry({
+                role: "event",
+                title: "Inference speed",
+                text: `Inference speed: ${choice.label}.`,
+            });
+            this.#requestRender();
+        };
+        const fail = (error: unknown) => {
+            this.#appendEntry({
+                role: "error",
+                text: `Could not change inference speed: ${errorToMessage(error)}`,
+            });
+            this.#requestRender();
+        };
+        try {
+            const change = this.#agent.setServiceTier(
+                argument === "regular" ? undefined : argument,
+            );
+            if (change === undefined) complete();
+            else void change.then(complete).catch(fail);
+        } catch (error) {
+            fail(error);
+        }
     }
 
     #handleFastCommand(prompt: string): void {
@@ -6683,7 +6790,7 @@ export class CodingAssistantApp implements Component, Focusable {
             effort === undefined
                 ? this.#modelDisplayName()
                 : `${this.#modelDisplayName()} ${effort.toLowerCase()}`;
-        return snapshot.serviceTier === "fast" ? `${label} fast` : label;
+        return snapshot.serviceTier === undefined ? label : `${label} ${snapshot.serviceTier}`;
     }
 
     #supportsFastInference(): boolean {

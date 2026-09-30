@@ -1555,6 +1555,9 @@ export class ApiModule implements AgentModule {
                 }),
             );
         this.#unsubscribe.push(
+            this.#config.onProviderServiceTiersChanged(() => {
+                this.#journal.appendOutsideMutation("config.updated", {});
+            }),
             this.#node.onUpdated(() => {
                 this.#journal.append("config.updated", {});
             }),

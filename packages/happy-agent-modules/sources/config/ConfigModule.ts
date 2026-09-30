@@ -23,6 +23,7 @@ import {
     GrokProvider,
     GrokSessionCredential,
     type AnthropicBedrockTransport,
+    type BaseProvider,
     type ProviderUsage,
 } from "@slopus/happy-providers";
 import { Type, type Static, type TSchema } from "@sinclair/typebox";
@@ -52,6 +53,7 @@ import {
 import { loadConfiguredProviderUsage } from "./impl/loadConfiguredProviderUsage.js";
 import { discoverGithubCliToken, githubTokenSchema } from "./impl/discoverGithubCliToken.js";
 import { ProviderEnablement, providerRegistryUntil } from "./impl/providerRegistryUntil.js";
+import { ProviderServiceTiers } from "./impl/ProviderServiceTiers.js";
 import { readGlobalInstructions } from "./impl/readGlobalInstructions.js";
 import { HAPPY_TOML_TEMPLATE, MCP_TOML_TEMPLATE } from "./impl/userConfigurationTemplate.js";
 import { readSecurityDocument } from "./impl/readSecurityDocument.js";
@@ -87,6 +89,7 @@ const MAX_MCP_TIMEOUT_SECONDS = 600;
 const MAX_LOCAL_CREDENTIAL_FILE_BYTES = 256 * 1024;
 const DEFAULT_TAILCAT_PORT = 24_779;
 const PROVIDER_CREDENTIAL_REFRESH_INTERVAL_MS = 3 * 60 * 60 * 1_000;
+const PROVIDER_SERVICE_TIER_REFRESH_INTERVAL_MS = 60_000;
 
 const pathSchema = Type.String({
     minLength: 1,
@@ -139,7 +142,7 @@ const effortSchema = Type.Union([
     Type.Literal("ultra"),
     configStringSchema,
 ]);
-const serviceTierSchema = Type.Literal("fast");
+const serviceTierSchema = Type.Union([Type.Literal("fast"), Type.Literal("ultrafast")]);
 const defaultServiceTierSchema = Type.Union([serviceTierSchema, Type.Literal("default")]);
 const p2pShareSchema = Type.Union([
     Type.Literal("owner_only"),
@@ -1330,6 +1333,17 @@ export class ConfigModule implements AgentModule {
     readonly #environment: Readonly<NodeJS.ProcessEnv>;
     readonly #providerLifetime = new AbortController();
     #credentialRefreshStarted = false;
+    readonly #serviceTierListeners = new Set<() => void>();
+    readonly #serviceTiers = new ProviderServiceTiers(() => {
+        for (const listener of this.#serviceTierListeners) {
+            try {
+                listener();
+            } catch {
+                /* Capability notifications cannot fail inference. */
+            }
+        }
+    });
+    #serviceTierRefresh: Promise<void> | undefined;
     readonly #providerEnabled = new Map<string, boolean>();
     readonly #mcpLock: AsyncLock = asyncLock({ reentry: "allow" });
     readonly #runtimeLock: AsyncLock = asyncLock({ reentry: "allow" });
@@ -1562,6 +1576,24 @@ export class ConfigModule implements AgentModule {
             ).catch(() => {
                 if (!lifetime.aborted) owner.log.warn("Background provider token refresh stopped.");
             });
+            const tierOwner = withLifetime(
+                detach(ctx).named("provider-service-tier-maintenance"),
+                lifetime,
+            );
+            void forever(
+                tierOwner,
+                {
+                    delay: PROVIDER_SERVICE_TIER_REFRESH_INTERVAL_MS,
+                    delayFirst: false,
+                    name: "refresh-provider-service-tiers",
+                },
+                async (refreshCtx) => {
+                    await this.refreshProviderServiceTiers(refreshCtx);
+                },
+            ).catch(() => {
+                if (!lifetime.aborted)
+                    tierOwner.log.warn("Background provider capability refresh stopped.");
+            });
         },
     };
 
@@ -1589,7 +1621,7 @@ export class ConfigModule implements AgentModule {
             },
             (id) => this.isProviderEnabled(id),
             (id) => this.#isAccountEnabled(id),
-        );
+        ).map((model) => this.#serviceTiers.apply(model));
     }
 
     /** Every configured route independent of its live provider gate. */
@@ -1626,7 +1658,9 @@ export class ConfigModule implements AgentModule {
                 catalog.push(entry);
             }
         }
-        return catalog;
+        return catalog.map((model) =>
+            scriptedProviderIds.has(model.providerId) ? model : this.#serviceTiers.apply(model),
+        );
     }
 
     /** Curated context limits for one enabled provider/model route. */
@@ -1672,6 +1706,8 @@ export class ConfigModule implements AgentModule {
             this.#providerLifetime.signal,
             this.#providerEnablement,
             (id) => this.isProviderEnabled(id),
+            (id, request, provider) =>
+                this.validateProviderServiceTier(id, request.model, request.serviceTier, provider),
         );
         return this.#providers;
     }
@@ -1776,6 +1812,7 @@ export class ConfigModule implements AgentModule {
             throw new Error(`Provider "${providerId}" is not configured.`);
         }
         this.#providerEnabled.set(providerId, enabled);
+        if (!enabled) this.#serviceTiers.clear(providerId);
         this.#providerEnablement?.setEnabled(providerId, enabled);
     }
 
@@ -1998,6 +2035,91 @@ export class ConfigModule implements AgentModule {
     /** Cancel every provider request owned by this daemon without coupling agents to its lifetime. */
     closeProviders(): void {
         this.#providerLifetime.abort(new Error("The Happy Agent runtime is shutting down."));
+        this.#serviceTiers.clear();
+    }
+
+    /** Invalidate connected clients when ephemeral account capabilities change. */
+    onProviderServiceTiersChanged(listener: () => void): () => void {
+        this.#serviceTierListeners.add(listener);
+        return () => {
+            this.#serviceTierListeners.delete(listener);
+        };
+    }
+
+    /** Local eligibility guard also covers saved selections restored without an API mutation. */
+    async validateProviderServiceTier(
+        providerId: string,
+        model: string | undefined,
+        tier: string | undefined,
+        provider?: BaseProvider,
+    ): Promise<void> {
+        if (tier !== "ultrafast") return;
+        const scripted = this.#scriptedModels();
+        if (scripted?.some((candidate) => candidate.providerId === providerId)) {
+            if (
+                scripted.some(
+                    (candidate) =>
+                        candidate.providerId === providerId &&
+                        candidate.id === model &&
+                        candidate.serviceTiers?.includes(tier),
+                )
+            )
+                return;
+            throw new Error(
+                "Ultrafast is unavailable for this account and model. Choose Regular or Fast and try again.",
+            );
+        }
+        await this.#serviceTiers.validate(providerId, model, provider);
+    }
+
+    /** Refresh only tier metadata for fixed curated routes; no model discovery or inference. */
+    async refreshProviderServiceTiers(ctx: Context): Promise<void> {
+        if (this.#serviceTierRefresh !== undefined) return await this.#serviceTierRefresh;
+        const pass = this.#refreshProviderServiceTiers(ctx);
+        this.#serviceTierRefresh = pass;
+        try {
+            await pass;
+        } finally {
+            if (this.#serviceTierRefresh === pass) this.#serviceTierRefresh = undefined;
+        }
+    }
+
+    async #refreshProviderServiceTiers(ctx: Context): Promise<void> {
+        const signal =
+            ctx.lifetime === undefined
+                ? this.#providerLifetime.signal
+                : AbortSignal.any([ctx.lifetime, this.#providerLifetime.signal]);
+        const models = this.offeredModels;
+        await Promise.all(
+            Object.entries(this.configuration.values.providers).map(async ([id, configured]) => {
+                if (
+                    configured.type !== "codex" ||
+                    configured.apiKey !== undefined ||
+                    this.#scripted !== undefined
+                )
+                    return;
+                if (signal.aborted || !this.#isAccountEnabled(id)) {
+                    this.#serviceTiers.clear(id);
+                    return;
+                }
+                try {
+                    const provider = await this.resolveProviderUnchecked(id, undefined);
+                    if (!(provider instanceof CodexProvider)) {
+                        this.#serviceTiers.clear(id);
+                        return;
+                    }
+                    await this.#serviceTiers.refresh(
+                        id,
+                        provider,
+                        models.filter((model) => model.providerId === id).map((model) => model.id),
+                        signal,
+                    );
+                } catch {
+                    this.#serviceTiers.clear(id);
+                }
+                if (signal.aborted || !this.#isAccountEnabled(id)) this.#serviceTiers.clear(id);
+            }),
+        );
     }
 
     /** Renew enabled Codex/Grok logins without creating a session or making an inference call. */

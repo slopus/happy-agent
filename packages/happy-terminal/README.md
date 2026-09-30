@@ -13,6 +13,13 @@ happy-terminal
 
 The separate Happy CLI also integrates Happy Terminal and exposes it through `happy`.
 
+Use `/speed` to choose Regular, Fast, or Ultrafast from the selected model's advertised
+capabilities, or `/speed regular`, `/speed fast`, and `/speed ultrafast` directly. Regular
+clears the tier; Fast sends `priority`; Ultrafast sends `ultrafast`. `/fast` remains the Fast
+toggle. The speed preference is saved in generated `runtime.toml`. Availability depends on
+the connected daemon, model, and upstream account eligibility; a request alone is not proof
+the provider served the requested tier.
+
 Released installations check for a newer Happy Agent in the background. When one is available,
 the terminal shows the host command to run, such as `happy upgrade` or
 `happy-terminal upgrade`. The standalone command downloads and verifies the newest Agent release,

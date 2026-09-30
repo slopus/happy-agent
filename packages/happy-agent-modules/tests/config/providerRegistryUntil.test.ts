@@ -9,7 +9,7 @@ import {
     type SessionStream,
 } from "@slopus/happy-providers";
 import { createRootContext, type Context } from "@steve.kite/stdlib";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
     ProviderEnablement,
@@ -17,6 +17,43 @@ import {
 } from "../../sources/config/impl/providerRegistryUntil.js";
 
 describe("providerRegistryUntil", () => {
+    it("checks restored Ultrafast on every cached-session run before inference starts", async () => {
+        const session = new BlockingSession("saved-agent");
+        const run = vi.spyOn(session, "run");
+        const source = new AgentProviders();
+        source.add("account", new BlockingProvider(session), "codex");
+        const validate = vi.fn(async (): Promise<void> => {
+            throw new Error("Ultrafast is unavailable.");
+        });
+        const shutdown = new AbortController();
+        const providers = providerRegistryUntil(
+            source,
+            shutdown.signal,
+            undefined,
+            undefined,
+            validate,
+        );
+        const provider = await providers.resolve("account", "openai/gpt-6-astra");
+        const cached = await provider!.session("saved-agent", { instructions: "", tools: [] });
+        const request: SessionRunRequest = {
+            context: { instructions: "", messages: [] },
+            model: "openai/gpt-6-astra",
+            serviceTier: "ultrafast",
+        };
+        await expect(
+            cached.run(createRootContext(), request)[Symbol.asyncIterator]().next(),
+        ).rejects.toThrow("Ultrafast");
+        expect(validate).toHaveBeenCalledWith("account", request, provider);
+        expect(run).not.toHaveBeenCalled();
+        validate.mockResolvedValueOnce(undefined);
+        const next = cached.run(createRootContext(), request)[Symbol.asyncIterator]().next();
+        await session.started;
+        expect(validate).toHaveBeenCalledTimes(2);
+        expect(run).toHaveBeenCalledOnce();
+        shutdown.abort();
+        await expect(next).resolves.toMatchObject({ value: { state: "cancelled" } });
+    });
+
     it("cancels provider work when the daemon lifetime ends", async () => {
         const session = new BlockingSession("agent-1");
         const source = new AgentProviders();

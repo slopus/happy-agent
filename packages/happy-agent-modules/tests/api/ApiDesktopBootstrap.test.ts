@@ -20,6 +20,18 @@ afterEach(async () => {
 });
 
 describe("desktop bootstrap resource reads", () => {
+    it("invalidates connected clients when account tier capabilities change and unsubscribes on close", async () => {
+        const fixture = await createFixture();
+        const bootstrap = await fixture.get<DesktopBootstrapResponse>("/v0/bootstrap/desktop");
+        fixture.serviceTierListeners.forEach((listener) => listener());
+        const events = await fixture.get<{ events: { type: string }[] }>(
+            `/v0/events?after=${encodeURIComponent(bootstrap.cursor)}`,
+        );
+        expect(events.events.map((event) => event.type)).toEqual(["config.updated"]);
+        await fixture.close();
+        expect(fixture.serviceTierListeners.size).toBe(0);
+    });
+
     it("reads archived metadata once and materializes the shared project/root series once", async () => {
         const fixture = await createFixture();
         const bootstrap = await fixture.get<DesktopBootstrapResponse>("/v0/bootstrap/desktop");
@@ -268,6 +280,7 @@ async function createFixture(tracing = false) {
     const root = createRootContext();
     const context = (tracing ? withTracer(root, tracer) : root).named("bootstrap-reads-test");
     const subscribe = () => () => undefined;
+    const serviceTierListeners = new Set<() => void>();
     const passive = new Proxy({}, { get: () => subscribe });
     const project = {
         id: "projectone",
@@ -378,6 +391,12 @@ async function createFixture(tracing = false) {
     const api = new ApiModule(
         passive as never,
         {
+            onProviderServiceTiersChanged: (listener: () => void) => {
+                serviceTierListeners.add(listener);
+                return () => {
+                    serviceTierListeners.delete(listener);
+                };
+            },
             configuration: {
                 paths: { tokenPath: join(directory, "token"), agentHome: directory },
                 values: {
@@ -427,6 +446,8 @@ async function createFixture(tracing = false) {
     await api.beforeStart(context, agents as never);
     await api.markReady();
     return {
+        close: () => api.close(),
+        serviceTierListeners,
         agents,
         configs,
         projects,

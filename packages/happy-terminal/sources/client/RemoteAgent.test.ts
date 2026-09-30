@@ -1,8 +1,119 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import type { MessageMode } from "@slopus/happy-agent-client";
 
 import { RemoteAgent } from "./RemoteAgent.js";
 
 describe("RemoteAgent", () => {
+    it("clears a restored Ultrafast selection when that account no longer advertises it", async () => {
+        const mode = {
+            effort: "low",
+            modelId: "openai/gpt-6-astra",
+            permissionMode: "auto",
+            providerId: "codex",
+            serviceTier: "ultrafast",
+        } as const;
+        const sendMessage = vi.fn(async (_id: string, body: { mode: MessageMode }) => ({
+            message: { id: "sent", mode: body.mode },
+        }));
+        const remote = new RemoteAgent({
+            agent: { id: "agent", status: "idle" } as never,
+            bootstrap: { mode, draft: { updatedAt: null, value: null }, pending: [] } as never,
+            client: { sendMessage } as never,
+            events: {} as never,
+            history: { runs: [] } as never,
+            config: {
+                defaults: mode,
+                models: {
+                    [mode.modelId]: {
+                        name: "GPT-6 Astra",
+                        efforts: ["low"],
+                        defaultEffort: "low",
+                        serviceTiers: ["priority", "ultrafast"],
+                    },
+                },
+                providers: {
+                    codex: {
+                        models: [{ id: mode.modelId, enabled: true, serviceTiers: ["priority"] }],
+                    },
+                },
+            } as never,
+        });
+        expect(remote.confirmedServiceTier).toBeUndefined();
+        expect(remote.snapshot().serviceTier).toBeUndefined();
+        expect(remote.provider.serviceTiers).toEqual(["fast"]);
+        await remote.steer("Continue at the displayed Regular speed");
+        expect(sendMessage.mock.calls.at(-1)?.[1].mode.serviceTier).toBeNull();
+    });
+
+    it("keeps Ultrafast distinct across selection, draft serialization, and restored mode", async () => {
+        const mode = {
+            effort: "low",
+            modelId: "openai/gpt-6-astra",
+            permissionMode: "auto",
+            providerId: "codex",
+            serviceTier: "ultrafast",
+        } as const;
+        const config = {
+            defaults: mode,
+            models: {
+                [mode.modelId]: {
+                    name: "GPT-6 Astra",
+                    efforts: ["low"],
+                    defaultEffort: "low",
+                    serviceTiers: ["priority", "ultrafast"],
+                },
+            },
+            providers: { codex: { models: [{ id: mode.modelId, enabled: true }] } },
+        };
+        const saveAgentDraft = vi.fn(async () => ({ draft: { updatedAt: 1, value: null } }));
+        const sendMessage = vi.fn(async (_id: string, body: { mode: MessageMode }) => ({
+            message: { id: "sent", mode: body.mode },
+        }));
+        const remote = new RemoteAgent({
+            agent: { id: "agent", status: "idle" } as never,
+            bootstrap: { mode, draft: { updatedAt: null, value: null }, pending: [] } as never,
+            client: { saveAgentDraft, sendMessage } as never,
+            events: {} as never,
+            history: { runs: [] } as never,
+            config: config as never,
+        });
+        expect(remote.confirmedServiceTier).toBe("ultrafast");
+        expect(remote.snapshot().serviceTier).toBe("ultrafast");
+        expect(remote.provider.serviceTiers).toEqual(["fast", "ultrafast"]);
+        await remote.setDraft("Ultrafast draft");
+        expect(saveAgentDraft).toHaveBeenLastCalledWith("agent", {
+            draft: { ...mode, text: "Ultrafast draft" },
+        });
+        await remote.steer("Ultrafast message");
+        expect(sendMessage.mock.calls.at(-1)?.[1].mode.serviceTier).toBe("ultrafast");
+        expect(remote.confirmedServiceTier).toBe("ultrafast");
+        remote.setServiceTier("fast");
+        expect(remote.confirmedServiceTier).toBe("fast");
+        await remote.setDraft("Fast draft");
+        expect(saveAgentDraft).toHaveBeenLastCalledWith("agent", {
+            draft: { ...mode, serviceTier: "priority", text: "Fast draft" },
+        });
+        await remote.steer("Fast message");
+        expect(sendMessage.mock.calls.at(-1)?.[1].mode.serviceTier).toBe("priority");
+        remote.setServiceTier("ultrafast");
+        expect(remote.snapshot().serviceTier).toBe("ultrafast");
+        remote.setServiceTier(undefined);
+        expect(remote.snapshot().serviceTier).toBeUndefined();
+        await remote.setDraft("Regular draft");
+        expect(saveAgentDraft).toHaveBeenLastCalledWith("agent", {
+            draft: { ...mode, serviceTier: null, text: "Regular draft" },
+        });
+        await remote.steer("Regular message");
+        expect(sendMessage.mock.calls.at(-1)?.[1].mode.serviceTier).toBeNull();
+        config.providers.codex.models[0] = {
+            id: mode.modelId,
+            enabled: true,
+            serviceTiers: [],
+        } as never;
+        expect(remote.provider.serviceTiers).toEqual([]);
+        expect(() => remote.setServiceTier("ultrafast")).toThrow("does not offer Ultrafast");
+    });
+
     it("leaves event projection to the global follower when send has no callbacks", async () => {
         const mode = {
             effort: "low",

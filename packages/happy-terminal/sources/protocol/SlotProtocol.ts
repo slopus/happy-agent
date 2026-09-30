@@ -79,7 +79,9 @@ export const slotActionSchema = Type.Union([
             model: Type.Optional(Type.String()),
             provider: Type.Optional(Type.String()),
             effort: Type.Optional(Type.String()),
-            serviceTier: Type.Optional(Type.Literal("fast")),
+            serviceTier: Type.Optional(
+                Type.Union([Type.Literal("fast"), Type.Literal("ultrafast")]),
+            ),
             readOnly: Type.Optional(Type.Boolean()),
             title: Type.Optional(Type.String()),
             prompt: Type.Optional(Type.String()),

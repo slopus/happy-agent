@@ -7,6 +7,17 @@ import type { StartupStatusCardModel } from "./StartupStatusCardModel.js";
 import { stripAnsi } from "./testing/stripAnsi.js";
 
 describe("renderStartupStatusCard", () => {
+    it.each([45, 96])("labels Ultrafast separately at width %s", (width) => {
+        const rendered = stripAnsi(
+            renderStartupStatusCard({
+                model: status({ ultrafast: true }),
+                theme: DEFAULT_TERMINAL_THEME,
+                width,
+            }).join("\n"),
+        );
+        expect(rendered).toContain("Ultrafast");
+        expect(rendered).not.toContain("· Fast");
+    });
     it("renders both quota windows and readable reset countdowns at wide widths", () => {
         const rendered = stripAnsi(
             renderStartupStatusCard({

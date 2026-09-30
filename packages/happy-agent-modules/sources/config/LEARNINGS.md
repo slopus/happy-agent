@@ -1,5 +1,25 @@
 # Config module learnings
 
+## Inference speed preserves the provider tier
+
+Regular, Fast, and Ultrafast are distinct choices: Regular clears the tier, Fast sends
+`priority`, and Ultrafast sends `ultrafast`. Configuration accepts the Ultrafast preference;
+clients must preserve it rather than converting every non-default tier to Fast. Advertise a
+native model's new tier only after the pinned provider release can execute it. Successful
+inference alone does not prove Ultrafast. ChatGPT can report the default tier even for
+server-routed Fast requests, so report the requested route and backend label separately instead
+of treating that label as proof of either Ultrafast execution or fallback.
+
+Ultrafast is an authenticated account/model capability, not a static property of every Codex
+model. Configuration keeps the model list curated and asks the native provider only for tier
+metadata for those known IDs. Each concrete account has a five-minute eligibility cache, refreshed
+off the inference path and invalidated by credential-file changes, account changes, failures,
+disablement, or shutdown. Unknown accounts and smart aliases do not advertise Ultrafast. Regular
+and Fast keep their existing behavior. Connected clients receive the existing configuration-change
+event when eligibility changes; unchanged proactive refreshes do not reset their selection.
+Every Ultrafast inference rechecks the local account identity, including restored saved choices,
+and rejects unsupported choices visibly rather than silently executing a differently priced tier.
+
 ## Idle credential maintenance excludes Claude
 
 Refreshing only when inference needs a credential leaves idle Codex and Grok accounts unattended.

@@ -56,6 +56,7 @@ async function harness(mode: "standalone" | "jwt"): Promise<Harness> {
               }
             : { authentication: "workos", enabled: false, host: "127.0.0.1", port: 0 };
     const config = {
+        onProviderServiceTiersChanged: () => () => undefined,
         configuration: {
             paths: { tokenPath: join(directory, "token") },
             values: { feature: { team: teamValues }, features: { workspaces: false } },

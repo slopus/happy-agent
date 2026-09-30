@@ -14,6 +14,7 @@ export interface StartupStatusCardModel {
     engineVersion?: string;
     environment: string;
     fast: boolean;
+    ultrafast?: boolean;
     model: string;
     provider: string;
     reasoning: string;

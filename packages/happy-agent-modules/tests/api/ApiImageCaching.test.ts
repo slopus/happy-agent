@@ -100,6 +100,7 @@ async function createFixture(teamMode = false) {
         };
     };
     const config = {
+        onProviderServiceTiersChanged: subscribe,
         configuration: {
             paths: { tokenPath: join(directory, "token") },
             values: { api: { token }, features: { workspaces: false } },

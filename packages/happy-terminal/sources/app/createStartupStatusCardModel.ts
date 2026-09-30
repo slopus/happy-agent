@@ -24,6 +24,7 @@ export function createStartupStatusCardModel(options: {
         ...(options.engineVersion === undefined ? {} : { engineVersion: options.engineVersion }),
         environment: humanizeSessionEnvironment(options.session.environment),
         fast: serviceTier === "fast",
+        ultrafast: serviceTier === "ultrafast",
         model: options.model.name,
         provider: humanizeProviderId(options.session.providerId),
         reasoning: humanizeReasoningLevel(effort),

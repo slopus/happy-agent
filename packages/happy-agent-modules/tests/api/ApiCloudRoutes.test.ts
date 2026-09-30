@@ -485,6 +485,7 @@ async function apiFixture(
         },
     );
     const config = {
+        onProviderServiceTiersChanged: () => () => undefined,
         configuration: {
             paths: {
                 agentHome: directory,
@@ -540,6 +541,7 @@ async function actualCloudApiFixture() {
         },
     );
     const config = {
+        onProviderServiceTiersChanged: () => () => undefined,
         configuration: {
             paths: {
                 agentHome: directory,

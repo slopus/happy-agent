@@ -19,7 +19,11 @@ const defaultsSchema = Type.Partial(
             model: Type.String(),
             permission_mode: permissionModeSchema,
             provider: Type.String(),
-            service_tier: Type.Union([Type.Literal("default"), Type.Literal("fast")]),
+            service_tier: Type.Union([
+                Type.Literal("default"),
+                Type.Literal("fast"),
+                Type.Literal("ultrafast"),
+            ]),
         },
         { additionalProperties: false },
     ),
@@ -118,7 +122,7 @@ function mapDefaults(
         ...(defaults.provider === undefined ? {} : { providerId: defaults.provider }),
         ...(defaults.service_tier === undefined
             ? {}
-            : { serviceTier: defaults.service_tier === "default" ? null : "fast" }),
+            : { serviceTier: defaults.service_tier === "default" ? null : defaults.service_tier }),
     };
 }
 

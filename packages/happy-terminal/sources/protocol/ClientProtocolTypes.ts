@@ -6,7 +6,7 @@ import type { Attachment } from "./Attachment.js";
 import type { ServiceNotice } from "./ServiceNotice.js";
 
 export type PermissionMode = "auto" | "workspace_write" | "read_only" | "full_access";
-export type ServiceTier = "fast";
+export type ServiceTier = "fast" | "ultrafast";
 export type StopReason = "stop" | "length" | "toolUse" | "error" | "aborted";
 export type ProviderError = SessionProviderError;
 

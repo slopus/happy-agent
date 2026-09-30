@@ -42,6 +42,7 @@ it("lets team members read global skills but only the owner change enablement", 
     const api = new ApiModule(
         passive,
         {
+            onProviderServiceTiersChanged: subscribe,
             configuration: {
                 paths: { tokenPath: join(directory, "token") },
                 values: { features: { workspaces: false } },

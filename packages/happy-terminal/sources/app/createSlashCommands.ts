@@ -29,7 +29,13 @@ export function createSlashCommands(
         {
             value: "fast",
             label: "/fast",
-            description: "Toggle fastest inference at 2× plan usage.",
+            description: "Toggle Fast inference at 2× plan usage.",
+            aliases: [],
+        },
+        {
+            value: "speed",
+            label: "/speed",
+            description: "Choose Regular, Fast, or Ultrafast inference when supported.",
             aliases: [],
         },
         {

@@ -212,6 +212,7 @@ async function secretsApiFixture() {
         },
     );
     const config = {
+        onProviderServiceTiersChanged: () => () => undefined,
         configuration: {
             paths: { agentHome: directory, tokenPath: join(directory, "api-token") },
         },
