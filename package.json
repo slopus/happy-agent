@@ -98,7 +98,7 @@
         "packageExtensions": {
             "@parcel/watcher@2.6.0": {
                 "dependencies": {
-                    "node-gyp": "11.5.0"
+                    "node-gyp": "12.4.0"
                 }
             }
         }

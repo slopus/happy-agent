@@ -306,7 +306,7 @@ function resolveBinaryAssets(target: BinaryTarget, tailcatSource: string): Binar
     const parcelWatcherSource = join(parcelWatcherRoot, "build", target.key, "watcher.node");
     if (!existsSync(parcelWatcherSource)) {
         throw new Error(
-            `Build the patched Parcel watcher on ${target.key} first (pnpm rebuild @parcel/watcher).`,
+            `Build the patched Parcel watcher on ${target.key} first (pnpm --filter @slopus/happy-agent-modules rebuild @parcel/watcher).`,
         );
     }
     const claudeSource = resolveRequired(

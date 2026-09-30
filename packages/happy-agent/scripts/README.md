@@ -39,9 +39,11 @@ Bun 1.4.2 is pinned by `mise.toml` and invoked at that exact version through
 
 Parcel Watcher 2.6.0 carries an exact-version pnpm patch that releases callback references on
 their owning JavaScript thread. `pnpm install` builds the patched native source using the pinned
-`node-gyp` tool, Python, and the host C/C++ compiler. Both source execution and the standalone
-compiler select `@parcel/watcher/build/<platform>-<arch>/watcher.node`; neither may fall back to an
-upstream prebuild. After installing with scripts disabled, run `pnpm rebuild @parcel/watcher`.
+`node-gyp` 12.4.0 tool, Python, and the host C/C++ compiler. The pinned builder supports Visual
+Studio 2026. Both source execution and the standalone compiler select
+`@parcel/watcher/build/<platform>-<arch>/watcher.node`; neither may fall back to an
+upstream prebuild. After installing with scripts disabled, run
+`pnpm --filter @slopus/happy-agent-modules rebuild @parcel/watcher`.
 Each release target runs `test:native:watcher` under Node and Bun before bundling. The compiled
 binary smoke compares the extracted watcher with that verified build. The macOS `fs.watch`
 incident workaround has been removed; Windows retains its established watcher behavior.
