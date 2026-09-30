@@ -140,6 +140,7 @@ export {
     type CodexBedrockTransport,
     type CodexProviderOptions,
 } from "@/vendors/codex/CodexProvider.js";
+export type { CodexAccessProgram } from "@/vendors/codex/impl/codexAccessProgram.js";
 export {
     CodexImageGenerationError,
     generateCodexImage,
@@ -155,7 +156,11 @@ export {
     parseCodexProviderUsage,
     type FetchCodexProviderUsageOptions,
 } from "@/vendors/codex/fetchCodexProviderUsage.js";
-export { CodexSession, type CodexSessionOptions } from "@/vendors/codex/CodexSession.js";
+export {
+    CodexSession,
+    type CodexProviderSessionOptions,
+    type CodexSessionOptions,
+} from "@/vendors/codex/CodexSession.js";
 export type { CodexToolVendor } from "@/vendors/codex/CodexToolVendor.js";
 export {
     CODEX_API_ENDPOINT,

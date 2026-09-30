@@ -377,6 +377,8 @@ function readDetails(
 export function isRetryableCodexStreamError(error: unknown): boolean {
     if (isEmptyResponseError(error)) return true;
     if (hasAbortError(error, new Set())) return false;
+    // Access selection is repaired once by the session, never by repeating a rejected mode.
+    if (isCodexAccessProgramUnavailableError(error)) return false;
     // Repeating the same request cannot supply the tool output it omitted. CodexSession may
     // instead replay one complete caller context when that context proves the output exists.
     if (readCodexMissingToolOutputCallId(error) !== undefined) return false;
@@ -385,6 +387,60 @@ export function isRetryableCodexStreamError(error: unknown): boolean {
     // stays retryable below.
     if (readCodexUsageExhaustion(error) !== undefined) return false;
     return shouldRetry(error, new Set());
+}
+
+const accessProgramErrorEnvelopeSchema = Type.Object({
+    cause: Type.Optional(Type.Unknown()),
+    error: Type.Optional(Type.Unknown()),
+    body: Type.Optional(Type.Unknown()),
+    response: Type.Optional(Type.Unknown()),
+});
+
+const unavailableAccessProgramSchema = Type.Object({
+    code: Type.Literal("invalid_access_program"),
+    param: Type.Optional(
+        Type.Union([
+            Type.Literal("access_programs"),
+            Type.Literal("access_programs.cyber"),
+            Type.Null(),
+        ]),
+    ),
+});
+
+const accessProgramErrorTypeSchema = Type.Object({
+    type: Type.Optional(
+        Type.Union([
+            Type.Literal("error"),
+            Type.Literal("invalid_request_error"),
+            Type.Literal("permission_error"),
+        ]),
+    ),
+});
+
+/** A rejection of the selected access program, rather than the account or request content. */
+export function isCodexAccessProgramUnavailableError(error: unknown): boolean {
+    if (hasAbortError(error, new Set()) || readCodexUsageExhaustion(error) !== undefined)
+        return false;
+    const pending: unknown[] = [error];
+    const seen = new Set<object>();
+    let rejectedProgram = false;
+    while (pending.length > 0 && seen.size < USAGE_TRAVERSAL_LIMIT) {
+        const candidate = pending.shift();
+        if (!Value.Check(accessProgramErrorEnvelopeSchema, candidate) || seen.has(candidate))
+            continue;
+        seen.add(candidate);
+        // Unknown error categories cannot prove an availability failure, even with its code.
+        if (!Value.Check(accessProgramErrorTypeSchema, candidate)) return false;
+        const status = numericProperty(candidate, "status");
+        if (status !== undefined && status !== 400 && status !== 403) return false;
+        for (const key of ["code", "type"]) {
+            const code = stringProperty(candidate, key)?.toLowerCase();
+            if (code !== undefined && FATAL_CODES.has(code)) return false;
+        }
+        if (Value.Check(unavailableAccessProgramSchema, candidate)) rejectedProgram = true;
+        for (const key of USAGE_NESTING_KEYS) pending.push(candidate[key]);
+    }
+    return pending.length === 0 && rejectedProgram;
 }
 
 /** Unknown inference failures are transient unless the provider proves they are fatal. */

@@ -565,6 +565,11 @@ Every option each provider constructor accepts, and how the defaults are chosen.
 - `endpoint` — overrides that default endpoint.
 - `model` — the session's default model, resolved against the curated catalog. On Bedrock the
   catalog maps it to the corresponding Bedrock model ID.
+- `cyberAccessProgram` — optional native ChatGPT Codex access selection: `"standard"`,
+  `"daybreak_blue"`, or `"daybreak_red"`. Requires a `CodexSessionCredential`; omit it for API-key
+  and Bedrock routes. OpenAI decides account and model availability. The same option on
+  `provider.session(id, options)` overrides this provider default for that session, so individual
+  agents can select different programs while sharing a provider and account.
 - `parallelToolCalls` — enables multi-call tool batches. Because batches are unavailable under
   Responses Lite, setting this to `true` also forces standard Responses for v2 models (see below).
 - `region` — the Bedrock region. Resolution order: this option, then `AWS_REGION`, then
@@ -585,6 +590,29 @@ request (marked with the `x-openai-internal-codex-responses-lite: true` header),
 native Codex CLI sends it. There are two exceptions: setting `parallelToolCalls: true` forces
 standard Responses even for a v2 model, since Lite cannot carry multi-call batches, and v1 models
 always use standard Responses.
+
+For example, keep the main agent on ordinary access and select Daybreak for a helper:
+
+```ts
+const provider = new CodexProvider({ credential, model: "gpt-6-sol" });
+const main = await provider.session("main-agent", { instructions: mainInstructions });
+const helper = await provider.session("helper-agent", {
+    instructions: helperInstructions,
+    cyberAccessProgram: "daybreak_blue", // or "daybreak_red"
+});
+```
+
+An explicit `"standard"` session option also overrides a provider's Daybreak default. Omitting
+the option at both levels preserves the existing request without an `access_programs` field.
+This is a provider SDK option; exposing it through Happy's agent configuration requires a
+published SDK release and a downstream integration.
+
+If OpenAI rejects a selected Daybreak program before output begins, `run()` switches only that
+session to explicit Standard access and emits a `retrying` event naming the rejected program and
+the switch. Display this event's `reason` to notify the user. The switch consumes one retry from
+`inferenceMaxRetries`; a zero budget disables it. Later runs and compaction use Standard for that
+session. Authentication, quota, content-policy, and unrelated failures do not trigger the switch.
+Compaction itself surfaces an unavailable program rather than switching without a stream notice.
 
 ### `AnthropicProvider`
 

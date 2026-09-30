@@ -17,6 +17,7 @@ import type { SessionCompaction, SessionCompactionOptions } from "@/core/Session
 import type { SessionContext, SessionMessage } from "@/core/SessionContext.js";
 import type { SessionEvent, SessionStream } from "@/core/SessionEvent.js";
 import type { SessionModelConfiguration } from "@/core/SessionModelConfiguration.js";
+import type { SessionOptions } from "@/core/SessionOptions.js";
 import type { SessionReasoningEffort, SessionRunRequest } from "@/core/SessionRunRequest.js";
 import type { SessionTool } from "@/core/SessionTool.js";
 import { mapOpenAIResponseStream } from "@/protocol/responses/mapOpenAIResponseStream.js";
@@ -37,6 +38,12 @@ import {
     preserveCodexLocalCompactionMessages,
 } from "@/vendors/codex/impl/codexCompaction.js";
 import type { CodexResponseRequest } from "@/vendors/codex/impl/CodexResponseRequest.js";
+import {
+    assertCodexAccessProgramCredential,
+    parseCodexAccessProgram,
+    preserveCodexAccessProgramErrors,
+    type CodexAccessProgram,
+} from "@/vendors/codex/impl/codexAccessProgram.js";
 import { createCodexClient } from "@/vendors/codex/impl/createCodexClient.js";
 import { createCodexClientMetadata } from "@/vendors/codex/impl/createCodexClientMetadata.js";
 import { CodexSseConnection } from "@/vendors/codex/impl/CodexSseConnection.js";
@@ -52,6 +59,7 @@ import { getCodexContextSuffix } from "@/vendors/codex/impl/getCodexContextSuffi
 import { getCodexModelProperties } from "@/vendors/codex/impl/getCodexModelProperties.js";
 import { getCodexTurnKey } from "@/vendors/codex/impl/getCodexTurnKey.js";
 import { isCodexContextWindowError } from "@/vendors/codex/errors/codexErrors.js";
+import { isCodexAccessProgramUnavailableError } from "@/vendors/codex/errors/codexErrors.js";
 import { isCodexPreviousResponseNotFoundError } from "@/vendors/codex/errors/codexErrors.js";
 import { readCodexMissingToolOutputCallId } from "@/vendors/codex/errors/codexErrors.js";
 import { isCodexUnauthorizedError } from "@/vendors/codex/errors/codexErrors.js";
@@ -81,6 +89,7 @@ const CODEX_TOOL_SEARCH_MAX_ROUNDS = 4;
 
 export interface CodexSessionOptions extends InferenceRetryOptions {
     bedrockTransport?: CodexBedrockTransport;
+    cyberAccessProgram?: CodexAccessProgram;
     instructions: string;
     credential: CodexProviderCredential;
     endpoint: string;
@@ -95,8 +104,15 @@ export interface CodexSessionOptions extends InferenceRetryOptions {
     userAgent: string;
 }
 
+/** Vendor-specific session selection without changing the shared SessionOptions contract. */
+export interface CodexProviderSessionOptions extends SessionOptions {
+    readonly cyberAccessProgram?: CodexAccessProgram;
+}
+
 export class CodexSession extends BaseSession {
     readonly bedrockTransport: CodexBedrockTransport | undefined;
+    readonly cyberAccessProgram: CodexAccessProgram | undefined;
+    private standardAccessFallback = false;
     credential: CodexProviderCredential;
     readonly endpoint: string;
     readonly model: string | undefined;
@@ -127,6 +143,8 @@ export class CodexSession extends BaseSession {
     constructor(id: string, options: CodexSessionOptions) {
         super(id);
         this.credential = options.credential;
+        this.cyberAccessProgram = parseCodexAccessProgram(options.cyberAccessProgram);
+        assertCodexAccessProgramCredential(this.cyberAccessProgram, this.credential);
         this.bedrockTransport = options.bedrockTransport;
         this.endpoint = options.endpoint;
         this.installationId = options.installationId;
@@ -547,6 +565,7 @@ export class CodexSession extends BaseSession {
         let previousResponseRecoveries = 0;
         let missingToolOutputRecoveries = 0;
         let unauthorizedRecoveryStep = 0;
+        let outputStarted = false;
 
         for (;;) {
             const turnTools = codexTurnTools(
@@ -601,15 +620,18 @@ export class CodexSession extends BaseSession {
                           tools: turnTools,
                           ...(signal === undefined ? {} : { signal }),
                       });
-                const mapped = mapOpenAIResponseStream(responseStream, {
-                    failureMessage: `${model} failed to generate a response.`,
-                    serverToolNames,
-                    serverToolDisplayNames,
-                    serverToolDisplayNamespaces,
-                    requireTerminalEvent: true,
-                    vendor: "codex",
-                    ...(signal === undefined ? {} : { signal }),
-                });
+                const mapped = mapOpenAIResponseStream(
+                    preserveCodexAccessProgramErrors(responseStream),
+                    {
+                        failureMessage: `${model} failed to generate a response.`,
+                        serverToolNames,
+                        serverToolDisplayNames,
+                        serverToolDisplayNamespaces,
+                        requireTerminalEvent: true,
+                        vendor: "codex",
+                        ...(signal === undefined ? {} : { signal }),
+                    },
+                );
                 let result: Awaited<ReturnType<typeof mapped.next>>["value"] | undefined;
                 let terminal: Extract<SessionEvent, { type: "done" }> | undefined;
                 for (;;) {
@@ -627,6 +649,8 @@ export class CodexSession extends BaseSession {
                         attemptUsage.push(event);
                         continue;
                     }
+                    if (event.type !== "block_start" && event.type !== "block_stop")
+                        outputStarted = true;
                     if (
                         clientToolSearchEnabled &&
                         event.type === "toolcall_start" &&
@@ -742,6 +766,25 @@ export class CodexSession extends BaseSession {
                 }
                 const message = error instanceof Error ? error.message : String(error);
                 const displayMessage = codexErrorMessage(error, message);
+                if (
+                    isCodexAccessProgramUnavailableError(error) &&
+                    (this.cyberAccessProgram === "daybreak_blue" ||
+                        this.cyberAccessProgram === "daybreak_red") &&
+                    !this.standardAccessFallback &&
+                    !outputStarted &&
+                    reportedAttempt < this.inferenceMaxRetries
+                ) {
+                    this.standardAccessFallback = true;
+                    this.websocketConnection.discard("access program changed");
+                    this.turnState.clear();
+                    reportedAttempt += 1;
+                    yield {
+                        type: "retrying",
+                        attempt: reportedAttempt,
+                        reason: `Daybreak ${this.cyberAccessProgram === "daybreak_blue" ? "Blue" : "Red"} is unavailable; switching this session to Standard access.`,
+                    };
+                    continue;
+                }
                 if (isCodexUnauthorizedError(error)) {
                     const recovered = await recoverCodexUnauthorizedCredential(
                         this.credential,
@@ -880,6 +923,13 @@ export class CodexSession extends BaseSession {
                 ? {}
                 : { parallelToolCalls: this.parallelToolCalls }),
             promptCacheKey: this.id,
+            ...(this.cyberAccessProgram === undefined
+                ? {}
+                : {
+                      cyberAccessProgram: this.standardAccessFallback
+                          ? "standard"
+                          : this.cyberAccessProgram,
+                  }),
             ...(serviceTier === undefined ? {} : { serviceTier }),
             ...(structuredOutput === undefined ? {} : { structuredOutput }),
             tools: configuration.tools ?? [],
