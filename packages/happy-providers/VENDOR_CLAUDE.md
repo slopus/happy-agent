@@ -129,9 +129,12 @@ starts the next user turn.
 
 ## Multi-turn replay, images, and model switching
 
-For a first one-message turn, the SDK receives a fresh `sessionId`. For reconstructed
-history, `impl/createClaudeSessionReplay.ts` supplies an in-memory `SessionStore` and
-`resume` ID. Stable UUIDs preserve parent ordering across a replay without writing a
+When nothing precedes the prompt, the SDK receives a fresh `sessionId`; the CLI refuses to
+resume a session whose transcript is empty. Whenever the replay holds any history — including
+system notices, which replay as reminder turns — `impl/createClaudeSessionReplay.ts` supplies
+an in-memory `SessionStore` and `resume` ID. Deciding this by counting non-system messages
+once dropped a compaction summary followed only by a system notice, and every leading notice
+of a first turn. Stable UUIDs preserve parent ordering across a replay without writing a
 Claude transcript to disk.
 
 User messages and tool results may contain ordered text and base64 image blocks. Replay

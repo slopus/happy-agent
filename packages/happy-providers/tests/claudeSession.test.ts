@@ -607,6 +607,54 @@ describe("ClaudeSession", () => {
         });
     });
 
+    it("replays a compaction summary followed only by a system notice", async () => {
+        let capturedEntries: unknown;
+        let capturedResume: string | undefined;
+        const credential = await ClaudeAuthTokenCredential.tryLoad({ authToken: "test-token" });
+        if (credential === null) throw new Error("Expected test credential.");
+        const session = new ClaudeSession("compacted-session", {
+            instructions: "",
+            credential,
+            model: "sonnet[1m]",
+            query: ((parameters) => {
+                async function* messages() {
+                    capturedResume = parameters.options?.resume;
+                    capturedEntries = await parameters.options?.sessionStore?.load({
+                        projectKey: "test",
+                        sessionId: parameters.options.resume ?? "compacted-session",
+                    });
+                    yield* fakeQuery("RESUMED");
+                }
+                const generator = messages();
+                return Object.assign(generator, { close: () => {} });
+            }) as ClaudeSdkQuery,
+            tools: [],
+        });
+
+        await collectSessionEvents(
+            session.run(testContext, {
+                context: {
+                    instructions: "",
+                    messages: [
+                        { role: "system", content: [{ type: "text", text: "SENDER_PROFILE" }] },
+                        { role: "user", content: [{ type: "text", text: "COMPACTION_SUMMARY" }] },
+                        { role: "system", content: [{ type: "text", text: "SENDER_PROFILE" }] },
+                    ],
+                },
+            }),
+        );
+
+        expect(capturedResume).toBeDefined();
+        expect(capturedEntries).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({
+                    type: "user",
+                    message: { role: "user", content: "COMPACTION_SUMMARY" },
+                }),
+            ]),
+        );
+    });
+
     it("reports each inference usage instead of the result's accumulated query usage", async () => {
         const credential = await ClaudeAuthTokenCredential.tryLoad({ authToken: "test-token" });
         if (credential === null) throw new Error("Expected test credential.");
@@ -1597,8 +1645,9 @@ describe("ClaudeSession", () => {
             extraArgs: { "disable-slash-commands": null },
             includePartialMessages: true,
             permissionMode: "dontAsk",
-            persistSession: false,
-            sessionId: expect.any(String),
+            // The leading notices are history before the first prompt, so they are replayed.
+            persistSession: true,
+            resume: expect.any(String),
             settingSources: [],
             strictMcpConfig: true,
             tools: [],

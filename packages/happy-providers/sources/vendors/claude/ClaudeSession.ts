@@ -428,12 +428,9 @@ export class ClaudeSession extends BaseSession {
             model: options.model,
             sessionId: this.sdkSessionId,
         });
-        const replayableMessageCount = configuredContext.messages.filter(
-            (message) => message.role !== "system",
-        ).length;
-        if (!continuingQuery && replayableMessageCount > 1) {
-            // Applied below after the live tool bridge is installed.
-        }
+        // System notices replay as reminder turns, so anything before the prompt is history —
+        // including a compaction summary followed only by a notice.
+        const hasReplayHistory = replay.entries().length > 0;
         let stream = this.activeQuery;
         let resolveAbort = () => {};
         let invalidatedAfterAbort = false;
@@ -516,7 +513,7 @@ export class ClaudeSession extends BaseSession {
                     ...(this.userAgent === undefined ? {} : { userAgent: this.userAgent }),
                     callTool: (toolUseId) => toolBridge.execute(toolUseId),
                 });
-                if (replayableMessageCount > 1) {
+                if (hasReplayHistory) {
                     delete sdkOptions.sessionId;
                     Object.assign(sdkOptions, replay.options);
                 }
