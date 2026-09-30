@@ -50,7 +50,7 @@
     },
     "dependencies": {
         "@sinclair/typebox": "^0.34.49",
-        "@slopus/happy-agent-base": "0.0.59",
+        "@slopus/happy-agent-base": "0.0.60",
         "@slopus/happy-agent-client": "0.0.69",
         "@slopus/happy-agent-compute": "0.1.20",
         "@slopus/happy-agent-modules": "workspace:*",
