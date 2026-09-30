@@ -28,7 +28,7 @@ Linux had no working-tree watch, so every tracked repository — every workspace
 about, renewed each minute — got a full scan every thirty seconds: status over the whole tree, a
 rename-detecting diff against the merge base, and reads of untracked and binary files. On a server
 with many workspaces this showed up as periodic IO storms. Working trees are now watched on every
-platform through `@parcel/watcher`, with Git-ignored directories excluded from the watch so inotify
+platform, with Git-ignored directories excluded from the Linux Parcel watch so inotify
 spends hundreds of watches per checkout instead of tens of thousands. Polling remains only as the
 fallback for a tree that cannot be watched, backs off while nothing changes, and proves "nothing
 changed" with a status and a stat of each changed path before it will run a diff.
@@ -47,3 +47,17 @@ started a sandboxed `git ls-files` in the folder to learn what to ignore, and a 
 working directory is a folder keeps it locked on Windows even after its parent exits. Windows
 watches recursively in the kernel, so it no longer lists ignored directories at all and keeps
 Node's `fs.watch`; everywhere, closing a watch aborts a listing still in flight.
+
+## A missing workspace must not corrupt the JavaScript runtime
+
+Parcel 2.6 destroys a failed subscription on its worker thread, including releasing JavaScript
+references there. Watching a missing directory while other file operations run reproduces a
+native crash in Node's later stat callback, with the same freed handle seen in the live daemon.
+Bun also crashed during exception handling, so changing JavaScript engines or disabling JIT
+did not solve the incident.
+
+macOS now uses the runtime's built-in recursive `fs.watch`, as Windows already does. Missing
+directories fail on the JavaScript thread and retain the existing polling/retry behavior. The
+regression runs the real watcher in a child process, overlaps failed subscriptions with file
+stats and GC, and verifies that an existing workspace still reports changes. Linux retains
+Parcel's ignored-directory support; this macOS fix does not repair the upstream native addon.

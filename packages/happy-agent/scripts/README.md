@@ -14,8 +14,10 @@ runtime, since the ordinary Node tests cannot detect it. Every platform build
 runs this regression before compiling the executable. Bun 1.4.2 also aborted in
 JIT exception handling during a longer live run, so the CLI starts a fresh VM
 with the baseline, DFG, and FTL JavaScript JIT tiers disabled before loading the
-daemon. The interpreter and WebAssembly remain available. This guard also applies to direct
-foreground launches and overrides inherited settings that re-enable those tiers.
+daemon. The interpreter and WebAssembly remain available. This guard also applies
+to direct foreground launches and overrides inherited settings that re-enable
+those tiers. A later interpreter crash showed that disabling JIT is not a complete
+fix for the live incident; the guard only constrains which engine tiers run.
 
 ```text
 sources/ ----> tsc ------> dist/cli.js (Node or Bun)
@@ -31,7 +33,7 @@ available. Every target requires its patched libSQL binding built on the matchin
 host with `pnpm --filter @slopus/happy-agent build:native:libsql`; see
 [`../native/libsql/README.md`](../native/libsql/README.md). Other Windows native
 assets must also be built on Windows first, as described below.
-Bun 1.4.0 is pinned by `mise.toml` and invoked at that exact version through
+Bun 1.4.2 is pinned by `mise.toml` and invoked at that exact version through
 `pnpm dlx`. Output names are `dist/bin/happy-agent-<platform>-<arch>`; Windows adds
 `.exe`. Windows helpers are embedded only in the Windows executable.
 

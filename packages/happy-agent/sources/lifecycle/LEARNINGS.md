@@ -1,13 +1,26 @@
 # Daemon lifecycle learnings
 
-## Bun optimizer crashes need a startup safeguard
+## A runtime safeguard needs verification against the installed build
 
-Upgrading Bun from 1.4.0 to 1.4.2 fixed a reduced optimizer regression but did not
-stop a later live daemon crash in JavaScriptCore's JIT exception handler. A
-passing short smoke test is not proof that an engine upgrade resolves every
-long-running failure. The later assertion's caller is the baseline JIT catch
-opcode, so disabling only optimizing tiers does not cover both observed paths.
-The CLI now starts a fresh VM with baseline, DFG, and FTL JavaScript JIT disabled
-before loading the daemon, preserving the interpreter and WebAssembly. These
-options must exist before VM initialization; assigning environment variables
-inside an already-running daemon does not change its optimizer settings.
+Bun 1.4.2 passes the reduced optimizer regression that crashes Bun 1.4.0. That
+result did not establish that the live daemon was fixed: later crash reports
+reached the same exception assertion through both the baseline JIT and the
+interpreter. Disabling baseline, DFG, and FTL prevents those JIT tiers from
+running; it does not prove that all native crashes are resolved. The settings
+must be present before VM initialization, which is why the CLI re-executes.
+
+The incident was reproduced in the native working-tree watcher's missing-directory
+cleanup: it released JavaScript references on a worker thread and corrupted later
+runtime operations. macOS now uses the built-in recursive file watcher. The runtime
+upgrade and JIT guard alone could not fix that dependency's unsafe cleanup.
+
+Verify the selected managed executable, its build revision, resolved published
+SDKs, and native binding before testing a recovery. Reloading an older local
+binary does not pick up fixes synced to main. A Node source launch also uses its
+installed native addon, while a standalone build embeds the separately built
+addon. These are different artifacts until their identities are checked.
+
+Verify authenticated profile and project requests and the actual Desktop view,
+then observe real session work. A health response or a short transport smoke
+alone cannot establish recovery from an intermittent native crash. Preserve the
+live database and reproduce against an isolated copy whenever possible.

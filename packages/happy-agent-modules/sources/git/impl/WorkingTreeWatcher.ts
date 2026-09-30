@@ -15,6 +15,7 @@ const CREATED_PATH_PROBES = 32;
 const IGNORE_RECHECK_DELAY_MS = 2_000;
 const IGNORE_RECHECK_INTERVAL_MS = 10_000;
 const RETRY_START_MS = 60_000;
+const USE_BUILTIN_WATCHER = process.platform === "win32" || process.platform === "darwin";
 /**
  * Whether ignored directories are listed so the native watch can skip them. Only per-directory
  * watches (inotify) pay for ignored trees; Windows watches recursively in the kernel, and there a
@@ -96,8 +97,10 @@ function closeNative(subscription: AsyncSubscription): Promise<void> {
  * The ignore list is re-derived when `.gitignore` changes or new directories appear, and events
  * from newly ignored directories are dropped from then on.
  *
- * Windows keeps Node's own `fs.watch`, as it used before Parcel was introduced: ReadDirectoryChangesW
- * is recursive in the kernel, so ignored directories cost nothing to watch and are only filtered.
+ * macOS and Windows use the runtime's own recursive `fs.watch`. Parcel's failed-subscription
+ * cleanup releases JavaScript references from its worker thread, which can corrupt the runtime
+ * when a workspace disappears. These platforms already have kernel-recursive watching, so they
+ * do not need that addon. Ignored directories are filtered from the events.
  *
  * A folder keeps one native subscription for its whole life. It is never replaced by a narrower
  * one: a second subscription on a folder that is already watched shares the backend's cached
@@ -174,8 +177,8 @@ export class WorkingTreeWatcher {
         const handle = { live: true };
         let native: AsyncSubscription;
         try {
-            if (process.platform === "win32") {
-                native = this.#watchWindows(entry, handle);
+            if (USE_BUILTIN_WATCHER) {
+                native = this.#watchBuiltin(entry, handle);
             } else {
                 const parcel = await this.#loadParcel();
                 native = await serialized(
@@ -218,7 +221,7 @@ export class WorkingTreeWatcher {
     }
 
     /** A kernel-recursive watch whose close releases the directory immediately. */
-    #watchWindows(entry: WatchedRoot, handle: { live: boolean }): AsyncSubscription {
+    #watchBuiltin(entry: WatchedRoot, handle: { live: boolean }): AsyncSubscription {
         const watcher = watchDirectory(entry.root, { recursive: true }, (event, filename) => {
             if (entry.closed || !handle.live) return;
             if (typeof filename !== "string") {
@@ -344,8 +347,8 @@ export class WorkingTreeWatcher {
         if (entry.retryTimer !== undefined) clearTimeout(entry.retryTimer);
         if (entry.subscription !== undefined) {
             entry.subscription.live = false;
-            // Windows handles must be released before the caller goes on to delete the folder.
-            if (process.platform === "win32") void entry.subscription.native.unsubscribe();
+            // Built-in handles close before the caller goes on to delete the folder.
+            if (USE_BUILTIN_WATCHER) void entry.subscription.native.unsubscribe();
             else void closeNative(entry.subscription.native);
         }
         entry.subscription = undefined;

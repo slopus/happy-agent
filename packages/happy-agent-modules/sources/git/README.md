@@ -55,9 +55,9 @@ carries both old and new bytes for binary deltas that remain displayable.
 
 Watching is a subscription, not a scan. Worktrees share physical watchers for their common Git
 directory and refs, while ref events fan out only to worktrees whose branch, upstream, or
-`origin/main` comparison can change. Working trees are watched with `@parcel/watcher`: Watchman
-when it is installed, otherwise FSEvents, ReadDirectoryChangesW, or inotify. Directories Git
-ignores are excluded from the watch itself, which on Linux is what keeps `node_modules` from
+`origin/main` comparison can change. macOS and Windows use the runtime's built-in recursive
+`fs.watch`; Linux uses `@parcel/watcher` with Watchman or inotify. Directories Git
+ignores are excluded from the Linux watch itself, which keeps `node_modules` from
 spending thousands of inotify watches. The ignore list is re-derived when `.gitignore` changes or
 new directories appear, and events from newly ignored directories are dropped; the native watch
 itself is never replaced, because a second subscription on an already-watched folder can go deaf. `watchWorkingTree` shares that one watch per folder with other modules.
