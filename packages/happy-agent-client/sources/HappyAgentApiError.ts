@@ -1,3 +1,10 @@
+import { Value } from "@sinclair/typebox/value";
+
+import {
+    authenticationMethodSchema,
+    type AuthenticationChallenge,
+} from "./protocol/authentication.js";
+
 /**
  * A failed request, carrying what the daemon said about it.
  *
@@ -20,6 +27,12 @@ export class HappyAgentApiError extends Error {
      * file-write conflict carries the file's current `hash`.
      */
     readonly body: ApiErrorBody | null;
+    /**
+     * How to sign in, when a `401` says so.
+     *
+     * Only recognized methods are kept; `null` when the daemon offered none.
+     */
+    readonly authentication: AuthenticationChallenge | null;
 
     constructor(status: number, message: string, code: string | null, body: ApiErrorBody | null) {
         super(message);
@@ -27,7 +40,18 @@ export class HappyAgentApiError extends Error {
         this.status = status;
         this.code = code;
         this.body = body;
+        this.authentication = status === 401 ? readChallenge(body) : null;
     }
+}
+
+function readChallenge(body: ApiErrorBody | null): AuthenticationChallenge | null {
+    const authentication = body?.authentication;
+    if (typeof authentication !== "object" || authentication === null) return null;
+    const methods: unknown = (authentication as { methods?: unknown }).methods;
+    if (!Array.isArray(methods)) return null;
+    return {
+        methods: methods.filter((method) => Value.Check(authenticationMethodSchema, method)),
+    };
 }
 
 /** The JSON body of a failed request. */

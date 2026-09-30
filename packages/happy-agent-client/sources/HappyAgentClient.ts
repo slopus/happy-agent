@@ -27,6 +27,11 @@ import type {
     ReorderAgentRequest,
     SaveAgentDraftRequest,
 } from "./protocol/agents.js";
+import {
+    authenticationMethodSchema,
+    type AuthenticationQuery,
+    type AuthenticationResponse,
+} from "./protocol/authentication.js";
 import type { AgentBootstrapResponse, DesktopBootstrapResponse } from "./protocol/bootstrap.js";
 import type {
     ArchiveBotRequest,
@@ -184,8 +189,12 @@ export interface HappyAgentClientOptions {
      * resolved beneath it.
      */
     endpoint: string | URL;
-    /** The bearer token; every route, health included, requires one. */
-    token: string;
+    /**
+     * The bearer token; every route except authentication discovery requires one.
+     *
+     * Omit it only to call `getAuthentication()` before signing in.
+     */
+    token?: string | undefined;
     /**
      * The `fetch` to make requests with. Defaults to the global one.
      *
@@ -229,7 +238,7 @@ interface HttpRequest {
  */
 export class HappyAgentClient {
     readonly #endpoint: string;
-    readonly #token: string;
+    readonly #token: string | undefined;
     readonly #fetch: typeof globalThis.fetch;
 
     constructor(options: HappyAgentClientOptions) {
@@ -303,6 +312,31 @@ export class HappyAgentClient {
      */
     async getHealth(options: RequestOptions = {}): Promise<HealthResponse> {
         return await this.#json({ method: "GET", path: "v0/health", signal: options.signal });
+    }
+
+    /**
+     * `GET /v0/authentication` — whether this client is signed in, and how to sign in.
+     *
+     * Needs no token. A `browser` method's `url` is opened in the system browser;
+     * the result arrives at `redirectUri` and is read with `readAuthenticationCallback`.
+     */
+    async getAuthentication(
+        query: AuthenticationQuery = {},
+        options: RequestOptions = {},
+    ): Promise<AuthenticationResponse> {
+        const response = await this.#json<AuthenticationResponse>({
+            method: "GET",
+            path: "v0/authentication",
+            query,
+            signal: options.signal,
+        });
+        // Methods this client does not recognize are skipped rather than mistyped.
+        return {
+            ...response,
+            methods: response.methods.filter((method) =>
+                Value.Check(authenticationMethodSchema, method),
+            ),
+        };
     }
 
     /** `GET /v0/config` — the sanitized effective configuration. */
@@ -1862,8 +1896,8 @@ export class HappyAgentClient {
     async #send(request: HttpRequest): Promise<Response> {
         const headers: Record<string, string> = {
             accept: request.accept ?? "application/json",
-            authorization: `Bearer ${this.#token}`,
         };
+        if (this.#token !== undefined) headers.authorization = `Bearer ${this.#token}`;
         if (request.ifMatch !== undefined) headers["if-match"] = request.ifMatch;
         if (request.ifNoneMatch !== undefined) headers["if-none-match"] = request.ifNoneMatch;
         if (request.lastEventId !== undefined) headers["last-event-id"] = request.lastEventId;

@@ -17,6 +17,7 @@ export { HappyAgentApiError } from "./HappyAgentApiError.js";
 export type { ApiErrorBody } from "./HappyAgentApiError.js";
 export { EventStreamProtocolError, readEventStream } from "./readEventStream.js";
 export { readSseFrames } from "./readSseFrames.js";
+export { readAuthenticationCallback } from "./readAuthenticationCallback.js";
 export type { SseFrame } from "./readSseFrames.js";
 export type { HappyAgentUpdate, HappyAgentUpdatesOptions } from "./updates.js";
 export { endpointUrl } from "./endpointUrl.js";
@@ -26,6 +27,7 @@ export type { MessageDeltaApplication } from "./applyMessageDelta.js";
 export * from "./requestOptions.js";
 
 export * from "./protocol/agents.js";
+export * from "./protocol/authentication.js";
 export * from "./protocol/bootstrap.js";
 export * from "./protocol/bots.js";
 export * from "./protocol/cloud.js";

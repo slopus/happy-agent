@@ -35,22 +35,101 @@ start and persisted at `paths.tokenPath` with mode `0600`. A machine deployment 
 the socket token and is written to the same private token file so local clients use the same
 credential. Project configuration cannot set it. Team mode rejects a configured standalone token.
 
-In team mode, the token is a WorkOS access token issued for the production Happy Cloud client
-`client_01KZD3XE9YAFAMT0P8TD4HP73E`. The daemon verifies the RS256 signature and the required
-WorkOS claims locally against the WorkOS JWKS, with issuer
+In team mode, `[feature.team] authentication` selects one team authentication method: `"workos"`
+(the default) or `"jwt"`. Methods are an extensible set; further methods may be added without
+changing the others. Team mode does not create or read `paths.tokenPath` with either method.
+
+With WorkOS team authentication, the token is a WorkOS access token issued for the production
+Happy Cloud client `client_01KZD3XE9YAFAMT0P8TD4HP73E`. The daemon verifies the RS256 signature and
+the required WorkOS claims locally against the WorkOS JWKS, with issuer
 `https://api.workos.com/user_management/client_01KZD3XE9YAFAMT0P8TD4HP73E`. Its `org_id` claim must
 equal `[feature.team] workos_organization_id`. The organization and
 `owner_workos_user_id` are required team settings. A deployment may override the WorkOS client
 with `[feature.team] workos_client_id`; the expected issuer and JWKS URL are derived from that
-client ID. Team mode does not create or read `paths.tokenPath`.
+client ID. The user ID is the token's `sub` claim.
 
-An organization member without a local user may access health, onboarding status, and the profile
-routes needed to onboard. Other routes remain unauthorized until saving the profile creates that
-user. The user whose WorkOS ID equals `owner_workos_user_id` is created with the owner flag.
+With JWT team authentication, an enterprise deployer operates its own web application that signs
+users in and issues a JWT for this daemon. The daemon verifies that JWT locally and takes the user
+ID from a configured claim. The settings live only in machine configuration, never in project
+configuration:
+
+```toml
+[feature.team]
+enabled = true
+authentication = "jwt"
+owner_user_id = "user-123"
+
+[feature.team.jwt]
+name = "Acme SSO"
+login_url = "https://sso.acme.example/happy/login"
+issuer = "https://sso.acme.example"
+audience = "happy-agent"
+user_id_claim = "sub"
+algorithms = ["RS256"]
+jwks_url = "https://sso.acme.example/.well-known/jwks.json"
+```
+
+- `owner_user_id` — required; the user ID whose local user is created with the owner flag.
+- `name` — required; 1–64 printable characters naming the sign-in method for people.
+- `login_url` — required; the deployer's absolute `https` sign-in page. `http` is accepted only
+  for a loopback host.
+- `issuer` — required; the exact `iss` claim value.
+- `audience` — required; a value the `aud` claim must equal or contain.
+- `user_id_claim` — optional, default `"sub"`; the top-level claim holding the user ID. Its value
+  must be a string of 1–256 printable characters.
+- `algorithms` — required, non-empty; the accepted `alg` header values. `none` is never accepted.
+- Exactly one key source:
+    - `jwks_url` — an absolute `https` JWKS URL for asymmetric keys; `http` only for loopback.
+    - `public_key` — one PEM-encoded SPKI public key for asymmetric keys.
+    - `secret_env` — the name of an environment variable of the daemon process holding a shared
+      secret for symmetric keys. The secret is read at startup and must contain at least 32 bytes.
+
+Asymmetric key sources accept only `RS256`, `RS384`, `RS512`, `PS256`, `PS384`, `PS512`, `ES256`,
+`ES384`, `ES512`, and `EdDSA`. `secret_env` accepts only `HS256`, `HS384`, and `HS512`. A mixture,
+a missing or invalid setting, a missing or short secret, or any WorkOS setting under JWT
+authentication fails configuration loading with a human-readable message. The daemon never exposes
+the secret, the public key, or the JWKS through the API, errors, or logs.
+
+A JWT is accepted only when its signature verifies with the configured key source and one of the
+configured algorithms, its `iss` equals `issuer`, its `aud` equals or contains `audience`, and it
+carries an unexpired `exp`. `nbf` and `iat` are honored when present. Time comparisons allow 30
+seconds of clock skew. Remote JWKS keys are fetched lazily and cached; a JWKS fetch failure rejects
+the token rather than accepting it. A bearer token longer than 16,384 characters is rejected
+without verification.
+
+User IDs are scoped to their authentication method. The same user ID from WorkOS and from JWT names
+two different identities, and switching an installation's method never merges them.
+
+A member without a local user may access health, onboarding status, and the profile routes needed
+to onboard. Other routes remain unauthorized until saving the profile creates that user. The user
+whose user ID equals `owner_workos_user_id` (WorkOS) or `owner_user_id` (JWT) is created with the
+owner flag.
 
 A missing, invalid, expired, or wrong-organization token yields `401` with body
-`{ "error": "Unauthorized", "code": "unauthorized" }`. There are no unauthenticated endpoints —
-health included.
+`{ "error": "Unauthorized", "code": "unauthorized" }`. In JWT team mode, every `401` additionally
+carries an `authentication` object whose `methods` are the same as those returned by
+`GET /v0/authentication` without a `redirectUri`, so a client can discover how to sign in from any
+rejected request:
+
+```json
+{
+    "error": "Unauthorized",
+    "code": "unauthorized",
+    "authentication": {
+        "methods": [
+            {
+                "type": "browser",
+                "id": "jwt",
+                "name": "Acme SSO",
+                "url": "https://sso.acme.example/happy/login"
+            }
+        ]
+    }
+}
+```
+
+`GET /v0/authentication` is the only unauthenticated endpoint. Every other endpoint, health
+included, requires a valid bearer token.
 
 ### Versioning
 
@@ -77,6 +156,11 @@ The global skills catalog, parsed skill documents, enablement, file reads, and l
 detect this feature through `GET /v0/skills`: `404` or `501` means skill management is unavailable,
 not that the catalog is empty. Protocol 25 alone does not guarantee this feature. Existing
 protocol-22 capabilities remain usable without it.
+
+Authentication discovery, JWT team authentication, and the `authentication` field on `401`
+bodies are additive and do not increment the protocol version. `404` from
+`GET /v0/authentication` means discovery is unavailable; clients then use their existing bearer
+token configuration. Older daemons omit the `401` field.
 
 Sandboxed workspace services are additive and do not increment the protocol version. For a known
 workspace, `404` or `501` from `GET /v0/workspaces/:workspaceId/services` means the feature is
@@ -150,8 +234,9 @@ Failed requests return an appropriate 4xx/5xx status with a JSON body:
   `too_large` (413), `unsupported` (501), `internal` (500).
 
 An error body may carry additional fields alongside `error` and `code` when the endpoint
-documents them. Unexpected internal failures return `500` with a generic message; internal
-details (paths, tokens, provider diagnostics) are never exposed through error bodies.
+documents them. A `401` may carry `authentication`, described under Authentication. Unexpected
+internal failures return `500` with a generic message; internal details (paths, tokens, provider
+diagnostics) are never exposed through error bodies.
 
 ### Identifiers
 
@@ -456,8 +541,9 @@ remain serialized across organizations and are persisted through the existing au
 boundary before verification. Cached tokens and in-flight results cannot cross a committed
 sign-out, account or environment change, authoritative credential rejection, or daemon shutdown.
 This internal reuse does not change `POST /v0/cloud/access-token`. For a team main,
-the caller's authenticated WorkOS access token is forwarded; it must also authorize the destination
-organization. The proxy never substitutes the team's owner identity. The remote independently
+the caller's authenticated bearer token is forwarded: a WorkOS access token must also authorize the
+destination organization, and a JWT is accepted only by a remote with matching JWT team
+authentication. The proxy never substitutes the team's owner identity. The remote independently
 checks authentication, organization membership, and profile onboarding. Secrets are never returned
 to clients, included in URLs, or exposed in errors or logs.
 
@@ -569,6 +655,61 @@ Fields:
 
 Health is the only endpoint guaranteed to answer during startup; clients should poll it until
 `ready` is `true` before using the rest of the API.
+
+### `GET /v0/authentication`
+
+Checks the request's authentication and lists the ways a person can sign in. It is the only
+endpoint that does not require a bearer token. It never rejects a missing or invalid token with
+`401`; it reports it instead. It has no side effects, creates no user, and emits no events.
+
+Query parameters, both optional:
+
+- `redirectUri` — the absolute URL where the client receives the sign-in result, for example a
+  loopback `http://127.0.0.1:53682/callback` or a custom scheme such as `happy://auth/callback`.
+  At most 2,048 characters and without a fragment.
+- `state` — an opaque value of 1–512 characters generated by the client, returned unchanged by
+  the deployer's web application. The client must verify it when the result arrives.
+
+An invalid `redirectUri` or `state`, or `state` without `redirectUri`, is `400 invalid_request`.
+
+Response — `200`:
+
+```json
+{
+    "authenticated": false,
+    "userId": null,
+    "methods": [
+        {
+            "type": "browser",
+            "id": "jwt",
+            "name": "Acme SSO",
+            "url": "https://sso.acme.example/happy/login?redirect_uri=happy%3A%2F%2Fauth%2Fcallback&state=k3v9"
+        }
+    ]
+}
+```
+
+- `authenticated` — `true` only when the request carries a valid bearer token for this daemon.
+- `userId` — the installation-local Happy user ID of an authenticated team member who has
+  onboarded; otherwise `null`. Standalone requests always report `null`. It is never a WorkOS ID
+  or a JWT user ID.
+- `methods` — the available sign-in methods in display order, returned whether or not the request
+  is authenticated. Each method has a stable `type` discriminator, a stable `id`, and a
+  human-readable `name`. Clients ignore methods whose `type` they do not recognize. Standalone and
+  WorkOS team deployments return an empty list.
+
+A `browser` method is completed in the system browser:
+
+- `url` — the page to open. It is `login_url` with `redirect_uri` and `state` query parameters set
+  from the request, replacing any parameters with those names already present. Without
+  `redirectUri`, it is `login_url` unchanged.
+
+The deployer's web application signs the person in and then redirects the browser to the
+`redirect_uri`, appending the result to its fragment so that it does not reach server logs:
+`<redirect_uri>#token=<jwt>&state=<state>`. The client verifies `state` and then uses the JWT as
+its bearer token for every request. When the token expires, requests return `401` and the client
+signs in again. The deployer's application must allow only redirect URIs it trusts; the daemon
+builds the URL but cannot restrict where the application sends a token.
 
 ### `GET /v0/config`
 
@@ -1249,7 +1390,7 @@ Response — `200`: `{ "users": [ ... ] }`. Each user contains:
 - `updatedAt` — the profile's last update timestamp.
 
 This read has no side effects and emits no events. It never returns email addresses, WorkOS IDs,
-or owner flags. Clients may resolve IDs again after a `profile.updated` invalidation. Older
+JWT user IDs, or owner flags. Clients may resolve IDs again after a `profile.updated` invalidation. Older
 compatible daemons may return `404` for this additive endpoint.
 
 ## Profile
@@ -1283,7 +1424,7 @@ same user. The configured owner WorkOS user ID determines `isOwner`; the client 
   installation-local Happy CUID2, matching `metadata.userId` on messages and `id` from
   `GET /v0/users`. Current daemons always include it: it is `null` in standalone mode and before
   the authenticated team member has saved a local profile. Older compatible daemons may omit it.
-  This is never a WorkOS ID or the standalone profile's private identity. It is read-only and
+  This is never a WorkOS ID, a JWT user ID, or the standalone profile's private identity. It is read-only and
   cannot be supplied in a profile update.
 - `name` — display name, or `null`.
 - `email` — email address, or `null`.

@@ -3,7 +3,8 @@
 A typed client for the Happy agent HTTP API, specified endpoint by endpoint in
 `packages/happy-agent/API.md`.
 
-`HappyAgentClient` is built from an endpoint and a bearer token. It has one typed method per
+`HappyAgentClient` is built from an endpoint and a bearer token. The token may be omitted only to
+call `getAuthentication()` before signing in. It has one typed method per
 request-response route, and it opens the event journal both as pulled pages and as a typed
 async iterator over the live Server-Sent Events stream, cancelled with an `AbortSignal`.
 `updates()` adds the durable client-side behavior a live view normally needs: it reconnects with
@@ -13,6 +14,14 @@ items. The stream hello carries a per-process daemon identity, so `daemon_starte
 the first process and again only after reconnecting to a replacement. A state-loss item carries
 the fresh cursor from which authoritative snapshots can be reloaded. Resource caching, version
 reconciliation, and optimistic mutations remain decisions for the live view built on top.
+
+`getAuthentication({ redirectUri, state })` reports whether the client is signed in and lists
+sign-in methods. Open a `browser` method's `url` in the system browser; the deployer's page
+redirects to `redirectUri` with `#token=<jwt>&state=<state>`. `readAuthenticationCallback(url,
+state)` verifies the state and returns the JWT to use as the bearer token. Unknown method types are
+skipped. In JWT team mode, a `401` `HappyAgentApiError` carries the same methods in
+`authentication`, so a rejected request can start sign-in. Older daemons return `404` for
+discovery.
 
 Remote connection rosters are read with `listConnections()`. The typed `connections.updated`
 event carries the complete `{ connections, version }` snapshot: keep the greater UUIDv7 version
