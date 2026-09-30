@@ -15,6 +15,7 @@ import { CodexSession } from "@/vendors/codex/CodexSession.js";
 import type { CodexProviderSessionOptions } from "@/vendors/codex/CodexSession.js";
 import {
     assertCodexAccessProgramCredential,
+    codexAccessPrograms,
     parseCodexAccessProgram,
     type CodexAccessProgram,
 } from "@/vendors/codex/impl/codexAccessProgram.js";
@@ -58,6 +59,7 @@ export type CodexBedrockTransport = "mantle" | "runtime";
 
 export class CodexProvider extends ResponsesProvider {
     static override readonly name = "codex";
+    static readonly cyberAccessPrograms: readonly CodexAccessProgram[] = codexAccessPrograms;
     static override readonly inputTypes: readonly ProviderModality[] = ["text", "image"];
     static override readonly outputTypes: readonly ProviderModality[] = ["text"];
 

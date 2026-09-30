@@ -12,6 +12,11 @@ const codexAccessProgramSchema = Type.Union([
 /** ChatGPT Codex access program; the backend still decides whether an account is authorized. */
 export type CodexAccessProgram = Static<typeof codexAccessProgramSchema>;
 
+/** Capability metadata stays tied to the same literals used for native validation. */
+export const codexAccessPrograms: readonly CodexAccessProgram[] = Object.freeze(
+    codexAccessProgramSchema.anyOf.map((option) => option.const),
+);
+
 export function parseCodexAccessProgram(value: unknown): CodexAccessProgram | undefined {
     if (value === undefined) return undefined;
     if (!Value.Check(codexAccessProgramSchema, value)) {

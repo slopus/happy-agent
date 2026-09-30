@@ -272,6 +272,15 @@ function captured(transport: "sse" | "websocket"): OutboundRequest[] {
 }
 
 describe("Codex access programs", () => {
+    it("advertises only the three implemented native program selections", () => {
+        expect(CodexProvider.cyberAccessPrograms).toEqual([
+            "standard",
+            "daybreak_blue",
+            "daybreak_red",
+        ]);
+        expect(Object.isFrozen(CodexProvider.cyberAccessPrograms)).toBe(true);
+    });
+
     it.each(["sse", "websocket"] as const)(
         "sends omitted, standard, blue and red programs over %s in both envelope variants",
         async (transport) => {

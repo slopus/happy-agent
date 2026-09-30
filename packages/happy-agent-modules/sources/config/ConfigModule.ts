@@ -51,6 +51,10 @@ import {
     type ConfiguredAgentModel,
 } from "./impl/agentCatalog.js";
 import { loadConfiguredProviderUsage } from "./impl/loadConfiguredProviderUsage.js";
+import {
+    codexAccessProgramSchema,
+    supportsCodexAccessProgram,
+} from "./impl/codexAccessPrograms.js";
 import { discoverGithubCliToken, githubTokenSchema } from "./impl/discoverGithubCliToken.js";
 import { ProviderEnablement, providerRegistryUntil } from "./impl/providerRegistryUntil.js";
 import { ProviderServiceTiers } from "./impl/ProviderServiceTiers.js";
@@ -288,6 +292,7 @@ const providerInputSchemas = {
             api_key: Type.Optional(configStringSchema),
             auth_file: Type.Optional(pathSchema),
             base_url: Type.Optional(configStringSchema),
+            cyber_access_program: Type.Optional(codexAccessProgramSchema),
             transport: Type.Optional(
                 Type.Union([
                     Type.Literal("auto"),
@@ -702,6 +707,7 @@ const providerSchemas = {
             apiKey: Type.Optional(configStringSchema),
             authFile: Type.Optional(pathSchema),
             baseUrl: Type.Optional(configStringSchema),
+            cyberAccessProgram: Type.Optional(codexAccessProgramSchema),
             transport: Type.Optional(
                 Type.Union([
                     Type.Literal("auto"),
@@ -1784,7 +1790,13 @@ export class ConfigModule implements AgentModule {
     }
 
     #isAccountEnabled(providerId: string): boolean {
-        return this.#providerEnabled.get(providerId) === true;
+        const provider = this.configuration.values.providers[providerId];
+        return (
+            this.#providerEnabled.get(providerId) === true &&
+            (provider?.type !== "codex" ||
+                provider.cyberAccessProgram === undefined ||
+                supportsCodexAccessProgram(provider.cyberAccessProgram))
+        );
     }
 
     #isModelSelectable(model: AgentModel): boolean {
@@ -1802,6 +1814,9 @@ export class ConfigModule implements AgentModule {
         const provider = this.configuration.values.providers[providerId];
         return (
             provider?.hidden !== true &&
+            (provider?.type !== "codex" ||
+                provider.cyberAccessProgram === undefined ||
+                supportsCodexAccessProgram(provider.cyberAccessProgram)) &&
             provider?.includeSubagentModels?.includes(modelId) !== false &&
             provider?.excludeSubagentModels?.includes(modelId) !== true
         );
@@ -3537,6 +3552,9 @@ function normalizeProvider(id: string, value: Record<string, unknown>): Record<s
                 ...(value["api_key"] === undefined ? {} : { apiKey: value["api_key"] }),
                 ...(value["auth_file"] === undefined ? {} : { authFile: value["auth_file"] }),
                 ...(value["base_url"] === undefined ? {} : { baseUrl: value["base_url"] }),
+                ...(value["cyber_access_program"] === undefined
+                    ? {}
+                    : { cyberAccessProgram: value["cyber_access_program"] }),
                 ...(value["transport"] === undefined ? {} : { transport: value["transport"] }),
                 type: inferred,
             };

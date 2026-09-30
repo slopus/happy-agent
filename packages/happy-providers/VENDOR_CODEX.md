@@ -300,6 +300,10 @@ session selection takes precedence over the provider default, including an expli
 override. The shared session protocol is unchanged. Native session credentials are required;
 API-key and Bedrock routes reject explicit selections before sending a request.
 
+`CodexProvider.cyberAccessPrograms` is frozen capability metadata derived from the same TypeBox
+union used for validation. Happy uses it to gate named profiles against the published SDK; it
+describes implemented serialization, not account or model entitlement.
+
 The selection survives standard Responses and Responses Lite shaping, SSE, WebSocket prewarm,
 inference, and compaction. WebSocket continuation compares `access_programs` along with other
 request properties so a response chain cannot cross access selections. Omitting the option

@@ -604,8 +604,9 @@ const helper = await provider.session("helper-agent", {
 
 An explicit `"standard"` session option also overrides a provider's Daybreak default. Omitting
 the option at both levels preserves the existing request without an `access_programs` field.
-This is a provider SDK option; exposing it through Happy's agent configuration requires a
-published SDK release and a downstream integration.
+Happy's named Codex profiles accept the corresponding `cyber_access_program` setting. Choose
+each agent's provider ID independently; Happy offers explicit-mode profiles only when its
+published SDK advertises access-program support.
 
 If OpenAI rejects a selected Daybreak program before output begins, `run()` switches only that
 session to explicit Standard access and emits a `retrying` event naming the rejected program and
