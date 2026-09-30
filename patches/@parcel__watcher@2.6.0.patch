@@ -1,0 +1,157 @@
+diff --git a/index.js b/index.js
+index 78ee744d74900c39a839cafa46b295258fc86307..e8113cefd6f33f7de2c603d3e432f2c86d29045f 100644
+--- a/index.js
++++ b/index.js
+@@ -1,42 +1,8 @@
+ const {createWrapper} = require('./wrapper');
+ 
+-let name = `@parcel/watcher-${process.platform}-${process.arch}`;
+-if (process.platform === 'linux') {
+-  const {MUSL, familySync} = require('detect-libc');
+-  const family = familySync();
+-  if (family === MUSL) {
+-    name += '-musl';
+-  } else {
+-    name += '-glibc';
+-  }
+-}
+-
+-let binding;
+-try {
+-  binding = require(name);
+-} catch (err) {
+-  handleError(err);
+-  try {
+-    binding = require('./build/Release/watcher.node');
+-  } catch (err) {
+-    handleError(err);
+-    try {
+-      binding = require('./build/Debug/watcher.node');
+-    } catch (err) {
+-      handleError(err);
+-      throw new Error(
+-        `No prebuild or local build of @parcel/watcher found. Tried ${name}. Please ensure it is installed (don't use --no-optional when installing with npm). Otherwise it is possible we don't support your platform yet. If this is the case, please report an issue to https://github.com/parcel-bundler/watcher.`,
+-      );
+-    }
+-  }
+-}
+-
+-function handleError(err) {
+-  if (err?.code !== 'MODULE_NOT_FOUND') {
+-    throw err;
+-  }
+-}
+-
++// This package carries a native lifetime fix. Never load an unpatched prebuild.
++const name = `./build/${process.platform}-${process.arch}/watcher.node`;
++const binding = require(name);
+ const wrapper = createWrapper(binding);
+ exports.writeSnapshot = wrapper.writeSnapshot;
+ exports.getEventsSince = wrapper.getEventsSince;
+diff --git a/scripts/build-from-source.js b/scripts/build-from-source.js
+index 170a91adff1c621046caa35c1a515424b72bfae0..d87843372a15543d4a3303a82a50d328a7ffac34 100644
+--- a/scripts/build-from-source.js
++++ b/scripts/build-from-source.js
+@@ -1,16 +1,17 @@
+ #!/usr/bin/env node
+ 
+-const {spawn} = require('child_process');
++const {spawnSync} = require('child_process');
++const {copyFileSync, mkdirSync} = require('fs');
++const path = require('path');
+ 
+-if (process.env.npm_config_build_from_source === 'true') {
+-  build();
+-}
+-
+-function build() {
+-  spawn('node-gyp', ['rebuild'], {stdio: 'inherit', shell: true}).on(
+-    'exit',
+-    function (code) {
+-      process.exit(code);
+-    },
+-  );
+-}
++// Compile the pnpm-patched sources for both development and standalone builds.
++const result = spawnSync(
++  process.execPath,
++  [require.resolve('node-gyp/bin/node-gyp.js'), 'rebuild'],
++  {stdio: 'inherit', cwd: path.join(__dirname, '..')},
++);
++if (result.error) throw result.error;
++if (result.status !== 0) process.exit(result.status || 1);
++const output = path.join(__dirname, '../build', `${process.platform}-${process.arch}`);
++mkdirSync(output, {recursive: true});
++copyFileSync(path.join(__dirname, '../build/Release/watcher.node'), path.join(output, 'watcher.node'));
+diff --git a/src/Watcher.cc b/src/Watcher.cc
+index a58ff3722d0d4a85dbef822f7cd4a078cb4278ff..d67cdc5c9dd00e323927dd089218689f60d8d058 100644
+--- a/src/Watcher.cc
++++ b/src/Watcher.cc
+@@ -143,17 +143,26 @@ bool Watcher::watch(Function callback) {
+     return false;
+   }
+ 
++  // Failed subscriptions and backend errors can remove callbacks on a worker
++  // thread. Only the owning JavaScript thread may delete their N-API references.
++  auto ref = std::make_shared<FunctionReference>(Napi::Persistent(callback));
+   auto tsfn = ThreadSafeFunction::New(
+     callback.Env(),
+     callback,
+     "Watcher callback",
+     0, // Unlimited queue
+-    1 // Initial thread count
++    1, // Initial thread count
++    [ref](Napi::Env) {
++      ref->Reset();
++    }
+   );
++  if (tsfn == nullptr) {
++    return false;
++  }
+ 
+   mCallbacks.push_back(Callback {
+     tsfn,
+-    Napi::Persistent(callback),
++    ref,
+     std::this_thread::get_id()
+   });
+ 
+@@ -164,7 +173,7 @@ bool Watcher::watch(Function callback) {
+ std::vector<Callback>::iterator Watcher::findCallback(Function callback) {
+   for (auto it = mCallbacks.begin(); it != mCallbacks.end(); it++) {
+     // Only consider callbacks created by the same thread, or V8 will panic.
+-    if (it->threadId == std::this_thread::get_id() && it->ref.Value() == callback) {
++    if (it->threadId == std::this_thread::get_id() && !it->ref->IsEmpty() && it->ref->Value() == callback) {
+       return it;
+     }
+   }
+@@ -180,7 +189,6 @@ bool Watcher::unwatch(Function callback) {
+   auto it = findCallback(callback);
+   if (it != mCallbacks.end()) {
+     it->tsfn.Release();
+-    it->ref.Unref();
+     mCallbacks.erase(it);
+     removed = true;
+   }
+@@ -208,7 +216,6 @@ void Watcher::destroy() {
+ void Watcher::clearCallbacks() {
+   for (auto it = mCallbacks.begin(); it != mCallbacks.end(); it++) {
+     it->tsfn.Release();
+-    it->ref.Unref();
+   }
+ 
+   mCallbacks.clear();
+diff --git a/src/Watcher.hh b/src/Watcher.hh
+index f89e9f5dca4531b5c7cdf524252973dc2c568d6a..7a47438e918ac4674413346810fbeaf86474e484 100644
+--- a/src/Watcher.hh
++++ b/src/Watcher.hh
+@@ -18,7 +18,8 @@ using WatcherRef = std::shared_ptr<Watcher>;
+ 
+ struct Callback {
+   Napi::ThreadSafeFunction tsfn;
+-  Napi::FunctionReference ref;
++  // The thread-safe function's finalizer resets this on the JavaScript thread.
++  std::shared_ptr<Napi::FunctionReference> ref;
+   std::thread::id threadId;
+ };
+ 

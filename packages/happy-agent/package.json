@@ -45,7 +45,8 @@
         "build:native:libsql": "node scripts/build-native-libsql.mjs",
         "test:native:libsql": "node --expose-gc scripts/verify-native-libsql.mjs && bun scripts/verify-native-libsql.mjs",
         "build:native:fff": "node scripts/build-native-fff.mjs",
-        "test:native:fff": "node scripts/verify-native-fff.mjs && bun scripts/verify-native-fff.mjs"
+        "test:native:fff": "node scripts/verify-native-fff.mjs && bun scripts/verify-native-fff.mjs",
+        "test:native:watcher": "node --expose-gc scripts/verify-native-watcher.mjs && pnpm dlx bun@1.4.2 scripts/verify-native-watcher.mjs"
     },
     "dependencies": {
         "@sinclair/typebox": "^0.34.49",

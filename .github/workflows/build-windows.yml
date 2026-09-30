@@ -150,6 +150,9 @@ jobs:
             - name: Install the pinned Artifact Signing module
               if: env.HAPPY_WINDOWS_SIGNING_ENABLED == 'true'
               run: Install-Module -Name ArtifactSigning -RequiredVersion 0.1.8 -Force -Repository PSGallery -Scope CurrentUser
+            - name: Verify patched Parcel callback lifetimes under Node and Bun
+              run: pnpm --filter @slopus/happy-agent test:native:watcher
+
             - name: Verify the Bun runtime before compiling
               run: pnpm --filter @slopus/happy-agent test:bun:runtime
             - name: Build standalone executable with signed embedded native assets when enabled

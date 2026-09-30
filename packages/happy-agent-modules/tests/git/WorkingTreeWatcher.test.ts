@@ -1,5 +1,5 @@
 import { readdirSync, readFileSync, readlinkSync } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, realpath, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { createRootContext } from "@steve.kite/stdlib";
@@ -26,6 +26,23 @@ afterEach(async () => {
 
 // Native watch setup and Git subprocesses can be slow on a loaded machine.
 describe("WorkingTreeWatcher", { timeout: 60_000 }, () => {
+    it.skipIf(process.platform === "win32")(
+        "reports changes when the watched root is a directory symlink",
+        async () => {
+            const root = await realpath(await createRoot());
+            const actual = join(root, "actual");
+            const alias = join(root, "alias");
+            await mkdir(actual);
+            await symlink(actual, alias);
+            const { changes, watching } = watchRepository(alias);
+            await expect.poll(watching, { timeout: 5_000 }).toBe(true);
+            await writeFile(join(alias, "changed.txt"), "visible through the alias\n");
+            await expect
+                .poll(() => changes.map((change) => change.path), { timeout: 5_000 })
+                .toContain("changed.txt");
+        },
+    );
+
     it("reports working-tree changes and nothing from ignored directories", async () => {
         const repository = await createRepository();
         await commitFile(repository, ".gitignore", "build/\n");

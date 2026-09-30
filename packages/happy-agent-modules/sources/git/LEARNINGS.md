@@ -56,8 +56,14 @@ native crash in Node's later stat callback, with the same freed handle seen in t
 Bun also crashed during exception handling, so changing JavaScript engines or disabling JIT
 did not solve the incident.
 
-macOS now uses the runtime's built-in recursive `fs.watch`, as Windows already does. Missing
-directories fail on the JavaScript thread and retain the existing polling/retry behavior. The
-regression runs the real watcher in a child process, overlaps failed subscriptions with file
-stats and GC, and verifies that an existing workspace still reports changes. Linux retains
-Parcel's ignored-directory support; this macOS fix does not repair the upstream native addon.
+macOS and Linux now use Parcel with an exact-version pnpm patch. Its thread-safe-function
+finalizer resets callback references on their owning JavaScript thread, covering both failed
+subscriptions and backend errors. The native addon is compiled during installation, and both
+development and release builds load that compiled file; a source patch must never silently load
+an unchanged upstream prebuild. Windows keeps its existing `fs.watch` path for immediate folder
+release. The missing-workspace process regression remains unchanged, and native checks also
+verify ordinary events, ignored directories, unsubscribe, and callback garbage collection.
+
+Parcel reports canonical event paths. Each subscription resolves its native root and uses that
+same root for ignore paths and relative event names, so a caller's symlink alias cannot hide
+changes. Missing roots keep the original path and the ordinary subscription retry behavior.

@@ -8,10 +8,15 @@ overrides:
   '@slopus/happy-providers': 0.0.33
   '@steve.kite/stdlib': 0.0.12
 
+packageExtensionsChecksum: sha256-EVTZ/CzPO/ra9ZXQzsm7kW+iKCCZmsPQ8uvrVgPV5js=
+
 patchedDependencies:
   '@libsql/client@0.18.0':
     hash: 3bce7b073378d1b7c0380b19e5b714650a8b4710b65ab671e1608c88658e10fa
     path: patches/@libsql__client@0.18.0.patch
+  '@parcel/watcher@2.6.0':
+    hash: a595e20a32e8eff3ee4484f4fcb3c627b188f13e7dbd03be03547caf54ae4bbd
+    path: patches/@parcel__watcher@2.6.0.patch
   libsql@0.5.29:
     hash: b0b8f583a51a91e4873f7198c6d8aa4679534b7f0bfe9674ab52edd05ac943c7
     path: patches/libsql@0.5.29.patch
@@ -374,8 +379,8 @@ importers:
         specifier: ^3.3.0
         version: 3.3.0
       '@parcel/watcher':
-        specifier: ^2.6.0
-        version: 2.6.0
+        specifier: 2.6.0
+        version: 2.6.0(patch_hash=a595e20a32e8eff3ee4484f4fcb3c627b188f13e7dbd03be03547caf54ae4bbd)
       '@pydantic/monty':
         specifier: 0.0.21
         version: 0.0.21
@@ -5210,11 +5215,12 @@ snapshots:
   '@parcel/watcher-win32-x64@2.6.0':
     optional: true
 
-  '@parcel/watcher@2.6.0':
+  '@parcel/watcher@2.6.0(patch_hash=a595e20a32e8eff3ee4484f4fcb3c627b188f13e7dbd03be03547caf54ae4bbd)':
     dependencies:
       detect-libc: 2.1.2
       is-glob: 4.0.3
       node-addon-api: 7.1.1
+      node-gyp: 11.5.0
       picomatch: 4.0.5
     optionalDependencies:
       '@parcel/watcher-android-arm64': 2.6.0
@@ -5229,6 +5235,8 @@ snapshots:
       '@parcel/watcher-linux-x64-musl': 2.6.0
       '@parcel/watcher-win32-arm64': 2.6.0
       '@parcel/watcher-win32-x64': 2.6.0
+    transitivePeerDependencies:
+      - supports-color
 
   '@pinojs/redact@0.4.0': {}
 

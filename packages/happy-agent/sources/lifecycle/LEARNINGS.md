@@ -11,8 +11,9 @@ must be present before VM initialization, which is why the CLI re-executes.
 
 The incident was reproduced in the native working-tree watcher's missing-directory
 cleanup: it released JavaScript references on a worker thread and corrupted later
-runtime operations. macOS now uses the built-in recursive file watcher. The runtime
-upgrade and JIT guard alone could not fix that dependency's unsafe cleanup.
+runtime operations. Parcel now carries a pnpm native patch that finalizes those references
+on their owning JavaScript thread, and the temporary macOS built-in watcher fallback is
+removed. The runtime upgrade and JIT guard alone could not fix the dependency's cleanup.
 
 Verify the selected managed executable, its build revision, resolved published
 SDKs, and native binding before testing a recovery. Reloading an older local

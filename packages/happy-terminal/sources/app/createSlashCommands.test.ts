@@ -18,6 +18,7 @@ describe("createSlashCommands", () => {
             "context",
             "effort",
             "fast",
+            "speed",
             "configure",
             "permissions",
             "mcp",

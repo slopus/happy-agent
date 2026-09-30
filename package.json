@@ -87,11 +87,20 @@
             "@ffprobe-installer/linux-ia32",
             "@ffprobe-installer/linux-x64",
             "@ffprobe-installer/win32-ia32",
-            "@ffprobe-installer/win32-x64"
+            "@ffprobe-installer/win32-x64",
+            "@parcel/watcher"
         ],
         "patchedDependencies": {
             "libsql@0.5.29": "patches/libsql@0.5.29.patch",
-            "@libsql/client@0.18.0": "patches/@libsql__client@0.18.0.patch"
+            "@libsql/client@0.18.0": "patches/@libsql__client@0.18.0.patch",
+            "@parcel/watcher@2.6.0": "patches/@parcel__watcher@2.6.0.patch"
+        },
+        "packageExtensions": {
+            "@parcel/watcher@2.6.0": {
+                "dependencies": {
+                    "node-gyp": "11.5.0"
+                }
+            }
         }
     }
 }

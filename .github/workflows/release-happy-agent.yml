@@ -275,6 +275,9 @@ jobs:
                       "${command[@]}" packages/happy-agent/scripts/verify-native-libsql.mjs
                   done
 
+            - name: Verify patched Parcel callback lifetimes under Node and Bun
+              run: pnpm --filter @slopus/happy-agent test:native:watcher
+
             - name: Verify the Bun runtime before compiling
               run: pnpm --filter @slopus/happy-agent test:bun:runtime
 

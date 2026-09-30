@@ -267,7 +267,6 @@ function resolveBinaryAssets(target: BinaryTarget, tailcatSource: string): Binar
     const fffRoot = dependencyRoot("@slopus/happy-agent-modules", "@ff-labs/fff-node");
     const fffRequire = createRequire(join(fffRoot, "package.json"));
     const parcelWatcherRoot = dependencyRoot("@slopus/happy-agent-modules", "@parcel/watcher");
-    const parcelWatcherRequire = createRequire(join(parcelWatcherRoot, "package.json"));
     const computeRoot = dependencyRoot(
         "@slopus/happy-agent-modules",
         "@slopus/happy-agent-compute",
@@ -287,8 +286,6 @@ function resolveBinaryAssets(target: BinaryTarget, tailcatSource: string): Binar
     const ffiPackage = `@yuuang/ffi-rs-${nativeSuffix}`;
     const fffPackage = `@ff-labs/fff-bin-${target.platform === "win32" ? target.key : nativeSuffix}`;
     const claudePackage = `@anthropic-ai/claude-agent-sdk-${target.key}`;
-    // Linux binaries target glibc, like every other embedded native library.
-    const parcelWatcherPackage = `@parcel/watcher-${target.key}${target.platform === "linux" ? "-glibc" : ""}`;
 
     const libsqlSource = join(happyAgentRoot, "native", "target", target.key, "libsql.node");
     if (!existsSync(libsqlSource)) {
@@ -306,7 +303,12 @@ function resolveBinaryAssets(target: BinaryTarget, tailcatSource: string): Binar
         target.platform === "win32"
             ? join(happyAgentRoot, "native", "target", "win32-x64", "fff_c.dll")
             : resolveRequired(fffRequire, fffPackage);
-    const parcelWatcherSource = resolveRequired(parcelWatcherRequire, parcelWatcherPackage);
+    const parcelWatcherSource = join(parcelWatcherRoot, "build", target.key, "watcher.node");
+    if (!existsSync(parcelWatcherSource)) {
+        throw new Error(
+            `Build the patched Parcel watcher on ${target.key} first (pnpm rebuild @parcel/watcher).`,
+        );
+    }
     const claudeSource = resolveRequired(
         providersRequire,
         `${claudePackage}/claude${executableSuffix}`,
@@ -360,7 +362,7 @@ export const { getQuickJS } = QJS;
         asset("parcelWatcherAsset", parcelWatcherSource, "watcher.node"),
         asset(
             "parcelWatcherLicenseAsset",
-            join(dirname(parcelWatcherSource), "LICENSE"),
+            join(parcelWatcherRoot, "LICENSE"),
             "LICENSE.parcel-watcher",
         ),
         asset("claudeAsset", claudeSource, `claude${executableSuffix}`, true),
@@ -589,8 +591,8 @@ export function resolveSourceAdapters(target: BinaryTarget): Map<string, SourceA
         adapt: (source) =>
             replaceOnce(
                 source,
-                "  binding = require(name);",
-                `  binding = require(${JSON.stringify(VIRTUAL_ASSETS_MODULE)}).loadParcelWatcherNative();`,
+                "const binding = require(name);",
+                `const binding = require(${JSON.stringify(VIRTUAL_ASSETS_MODULE)}).loadParcelWatcherNative();`,
                 "Parcel watcher native loader",
             ),
     });

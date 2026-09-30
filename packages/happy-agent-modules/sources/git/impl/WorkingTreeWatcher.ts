@@ -1,5 +1,5 @@
 import { watch as watchDirectory } from "node:fs";
-import { lstat } from "node:fs/promises";
+import { lstat, realpath } from "node:fs/promises";
 import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import type { AsyncSubscription, Event } from "@parcel/watcher";
@@ -15,7 +15,7 @@ const CREATED_PATH_PROBES = 32;
 const IGNORE_RECHECK_DELAY_MS = 2_000;
 const IGNORE_RECHECK_INTERVAL_MS = 10_000;
 const RETRY_START_MS = 60_000;
-const USE_BUILTIN_WATCHER = process.platform === "win32" || process.platform === "darwin";
+const USE_WINDOWS_WATCHER = process.platform === "win32";
 /**
  * Whether ignored directories are listed so the native watch can skip them. Only per-directory
  * watches (inotify) pay for ignored trees; Windows watches recursively in the kernel, and there a
@@ -97,10 +97,8 @@ function closeNative(subscription: AsyncSubscription): Promise<void> {
  * The ignore list is re-derived when `.gitignore` changes or new directories appear, and events
  * from newly ignored directories are dropped from then on.
  *
- * macOS and Windows use the runtime's own recursive `fs.watch`. Parcel's failed-subscription
- * cleanup releases JavaScript references from its worker thread, which can corrupt the runtime
- * when a workspace disappears. These platforms already have kernel-recursive watching, so they
- * do not need that addon. Ignored directories are filtered from the events.
+ * Windows uses the runtime's recursive `fs.watch` so stopped watches immediately release their
+ * folders. macOS and Linux use Parcel with its pnpm-patched native callback finalizer.
  *
  * A folder keeps one native subscription for its whole life. It is never replaced by a narrower
  * one: a second subscription on a folder that is already watched shares the backend's cached
@@ -177,26 +175,28 @@ export class WorkingTreeWatcher {
         const handle = { live: true };
         let native: AsyncSubscription;
         try {
-            if (USE_BUILTIN_WATCHER) {
-                native = this.#watchBuiltin(entry, handle);
+            if (USE_WINDOWS_WATCHER) {
+                native = this.#watchWindows(entry, handle);
             } else {
                 const parcel = await this.#loadParcel();
+                // Parcel emits canonical paths, including for roots reached through symlinks.
+                const nativeRoot = await realpath(entry.root).catch(() => entry.root);
                 native = await serialized(
                     async () =>
                         await parcel.subscribe(
-                            entry.root,
+                            nativeRoot,
                             (error, events) => {
                                 if (entry.closed || !handle.live) return;
                                 if (error !== null) {
                                     this.#failed(entry, error, true);
                                     return;
                                 }
-                                this.#deliver(entry, events);
+                                this.#deliver(entry, events, nativeRoot);
                             },
                             {
                                 ignore: [
                                     ...ALWAYS_IGNORED,
-                                    ...ignored.map((path) => join(entry.root, path)),
+                                    ...ignored.map((path) => join(nativeRoot, path)),
                                 ],
                             },
                         ),
@@ -221,7 +221,7 @@ export class WorkingTreeWatcher {
     }
 
     /** A kernel-recursive watch whose close releases the directory immediately. */
-    #watchBuiltin(entry: WatchedRoot, handle: { live: boolean }): AsyncSubscription {
+    #watchWindows(entry: WatchedRoot, handle: { live: boolean }): AsyncSubscription {
         const watcher = watchDirectory(entry.root, { recursive: true }, (event, filename) => {
             if (entry.closed || !handle.live) return;
             if (typeof filename !== "string") {
@@ -247,12 +247,12 @@ export class WorkingTreeWatcher {
         };
     }
 
-    #deliver(entry: WatchedRoot, events: readonly Event[]): void {
+    #deliver(entry: WatchedRoot, events: readonly Event[], root = entry.root): void {
         const changes: WorkingTreeChange[] = [];
         const created: string[] = [];
         let ignoreRulesChanged = false;
         for (const event of events) {
-            const path = relativePath(entry.root, event.path);
+            const path = relativePath(root, event.path);
             if (
                 path === undefined ||
                 isUnder(path, ".git") ||
@@ -348,7 +348,7 @@ export class WorkingTreeWatcher {
         if (entry.subscription !== undefined) {
             entry.subscription.live = false;
             // Built-in handles close before the caller goes on to delete the folder.
-            if (USE_BUILTIN_WATCHER) void entry.subscription.native.unsubscribe();
+            if (USE_WINDOWS_WATCHER) void entry.subscription.native.unsubscribe();
             else void closeNative(entry.subscription.native);
         }
         entry.subscription = undefined;

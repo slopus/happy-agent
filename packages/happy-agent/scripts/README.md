@@ -37,6 +37,16 @@ Bun 1.4.2 is pinned by `mise.toml` and invoked at that exact version through
 `pnpm dlx`. Output names are `dist/bin/happy-agent-<platform>-<arch>`; Windows adds
 `.exe`. Windows helpers are embedded only in the Windows executable.
 
+Parcel Watcher 2.6.0 carries an exact-version pnpm patch that releases callback references on
+their owning JavaScript thread. `pnpm install` builds the patched native source using the pinned
+`node-gyp` tool, Python, and the host C/C++ compiler. Both source execution and the standalone
+compiler select `@parcel/watcher/build/<platform>-<arch>/watcher.node`; neither may fall back to an
+upstream prebuild. After installing with scripts disabled, run `pnpm rebuild @parcel/watcher`.
+Each release target runs `test:native:watcher` under Node and Bun before bundling. The compiled
+binary smoke compares the extracted watcher with that verified build. The macOS `fs.watch`
+incident workaround has been removed; Windows retains its established watcher behavior.
+The native fix is submitted upstream as [Parcel Watcher #267](https://github.com/parcel-bundler/watcher/pull/267).
+
 Every standalone target embeds Bun's `--smol` runtime flag, so each launch uses
 more frequent garbage collection to reduce JavaScript heap growth at a potential
 performance cost. This is not a hard memory limit and does not constrain native

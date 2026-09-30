@@ -281,6 +281,30 @@ async function main() {
         }, daemon);
         process.stdout.write("Standalone file indexing is healthy.\n");
 
+        if (process.platform !== "win32" && !process.argv.includes("--bun-source")) {
+            const cache = `${nativeCacheTmp}/happy-agent-${process.getuid()}/binary-assets`;
+            const groups = await waitFor(async () => {
+                const found = (await readdir(cache)).filter((name) =>
+                    name.startsWith("parcel-watcher-"),
+                );
+                return found.length > 0 ? found : undefined;
+            }, daemon);
+            if (groups.length !== 1)
+                throw new Error("Expected exactly one embedded Parcel watcher.");
+            const modulesRequire = createRequire(
+                new URL("../../happy-agent-modules/package.json", import.meta.url),
+            );
+            const built = modulesRequire.resolve(
+                `@parcel/watcher/build/${process.platform}-${process.arch}/watcher.node`,
+            );
+            const extracted = `${cache}/${groups[0]}/watcher.node`;
+            const digest = (value) => createHash("sha256").update(value).digest("hex");
+            if (digest(await readFile(extracted)) !== digest(await readFile(built))) {
+                throw new Error("The release binary did not embed the patched Parcel watcher.");
+            }
+            process.stdout.write("Embedded Parcel watcher matches the verified patched build.\n");
+        }
+
         process.stdout.write("Checking standalone compute and workflows.\n");
         const agent = (
             await client.createAgent({
