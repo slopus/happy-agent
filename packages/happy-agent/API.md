@@ -4973,6 +4973,159 @@ Removes the bot picture. Requires `If-Match`.
 
 Response — `200`: `{ "bot": { ... } }` with `avatar` `null`.
 
+## Live voice sessions
+
+GPT-Live is a voice frontend for an existing Happy orchestrator agent, not a replacement for
+its model, tools, permissions, or durable task state. The first integration creates ordinary
+sessions, bots, and workspaces through their existing operations and follows selected agents'
+text and status. It does not expose coding tools, screen capture, raw audio, private reasoning,
+or tool logs from those agents to the voice frontend.
+
+Every route uses ordinary API authentication. A session belongs to its creating principal;
+another principal receives `404` for its ID and never receives its journal events. The daemon
+validates access to the orchestrator and every watched agent before contacting the provider.
+Binding a bot never grants it admin privileges. Provider-derived transcripts and delegation
+requests remain attributed provider context, not automatically trusted human authorization.
+Required confirmations use the existing authenticated human-input and permission paths.
+
+The browser owns microphone and speaker WebRTC tracks. The daemon exchanges SDP using the
+explicitly selected server-held credential and owns the sideband, delegation identities,
+bounded text updates, and shutdown. Credentials never enter responses, events, URLs, or the
+browser. Selecting a Codex subscription credential is an explicit experimental choice, not a
+promise of entitlement; selecting an OpenAI API key explicitly opts into API billing. The
+daemon never falls back between credential kinds, accounts, or transports after a refusal.
+
+### The live session object
+
+```json
+{
+    "id": "l1a2b3c4",
+    "agentId": "a1b2c3d4",
+    "credential": { "type": "codex_subscription", "providerId": "codex" },
+    "watchedAgentIds": ["a9b8c7d6"],
+    "status": "active",
+    "usage": { "seconds": 12, "final": false },
+    "error": null,
+    "createdAt": 1755400000000,
+    "updatedAt": 1755400012000,
+    "endedAt": null,
+    "version": "01991f3a-6d2f-7000-8000-3a0b2c4d5e6f"
+}
+```
+
+- `id` — Happy's CUID2 resource ID, distinct from any provider session or delegation ID.
+- `agentId` — the existing, non-archived, user-messageable orchestrator; immutable.
+- `credential` — the immutable selection: `type` is `codex_subscription` or `openai_api_key`,
+  and `providerId` names an enabled configured provider holding that exact credential kind.
+  An unavailable provider, missing credential, or kind mismatch fails without trying another.
+- `watchedAgentIds` — at most 32 distinct accessible, user-visible agent IDs. Omitted at
+  creation means no watched agents, not every agent. Only these agents' text and status may
+  be shared. Orchestrator tools may change the set under the same access and permission rules.
+- `status` — `starting`, `active`, `closing`, `closed`, or `failed`. `active` requires a
+  verified provider session and attached sideband. `closed` requires provider finalization;
+  local transport loss, an interrupted start, or a finalization timeout instead means `failed`.
+- `usage.seconds` — the latest cumulative voice duration, or `null` before the provider reports
+  it. Never sum cumulative snapshots or infer billable duration from a local clock.
+- `usage.final` — `true` only after the provider confirms final usage. It remains `false` on
+  an interrupted connection without that confirmation. Coding-agent token usage remains on
+  the ordinary agent usage surface; no token usage is invented from voice duration.
+- `error` — a human-readable, sanitized explanation on failure, otherwise `null`; never a raw
+  provider diagnostic, credential, or private transcript.
+- `createdAt`, `updatedAt`, `endedAt` — timestamps; `endedAt` is `null` until local termination.
+- `version` — the ordinary resource version for reads and event chaining.
+
+### `POST /v0/live/sessions`
+
+Creates one voice session. Body:
+
+```json
+{
+    "mutationId": "start-voice-1",
+    "id": "l1a2b3c4",
+    "agentId": "a1b2c3d4",
+    "sdp": "<WebRTC SDP offer>",
+    "credential": { "type": "codex_subscription", "providerId": "codex" },
+    "watchedAgentIds": ["a9b8c7d6"]
+}
+```
+
+`mutationId`, `id`, and `watchedAgentIds` are optional; other fields are required. The SDP is
+nonblank and at most 65,536 characters. `providerId` is nonblank and at most 128 characters.
+Raw credentials, arbitrary endpoints, model overrides, and permission overrides are not accepted.
+Creation, credential-selection, and close request objects reject unknown fields. All resource
+IDs use the ordinary CUID2 syntax (2–32 lowercase alphanumeric characters, starting with a letter).
+The daemon chooses the supported Live model and transport for the selected credential kind.
+
+Response — `201`:
+
+```json
+{
+    "session": { "id": "l1a2b3c4", "agentId": "a1b2c3d4", "status": "starting" },
+    "transport": { "type": "webrtc", "sdp": "<WebRTC SDP answer>" }
+}
+```
+
+`session` is the complete live session object. Apply the answer to the browser peer connection
+and wait for its provider-ready event before sending commands. The create request already starts
+the call; do not send another start event. Only this response includes SDP, never GET or events.
+The response returns after upstream call allocation and sideband attachment; it must not wait
+for browser media negotiation. `starting` transitions asynchronously to `active` when the
+provider confirms readiness after the browser applies the answer. An already-ready call may
+instead return `active`.
+
+The daemon reserves the local resource before the single upstream create attempt. Reusing its
+ID returns `409 conflict` with the current `session`, including after an uncertain outcome; it
+never creates another upstream call. `mutationId` remains an echo, not a deduplication key.
+Clients should supply an ID, read it after a lost response, and close it before deliberately
+creating a replacement. An unknown upstream outcome is reported as failure, not retried.
+
+Invalid requests are `400 invalid_request`, inaccessible agents are `404 not_found`, a provider
+credential refusal is `403 forbidden`, and an unsupported credential transport is `501 unsupported`.
+An unavailable credential/provider or failed upstream connection is `503 live_unavailable`.
+Errors after reservation additionally carry the current `session`; errors before reservation
+create no resource or events. Call allocation and sideband attachment have a 30-second deadline;
+provider readiness after returning the answer has a separate 30-second deadline. There may be at most four
+nonterminal sessions per principal; further creates return `409 conflict` without an upstream call.
+
+### `GET /v0/live/sessions/:id`
+
+Response — `200`: `{ "session": { ... } }`. Returns the complete current resource, including
+terminal state and whether usage finalized. `404` for an unknown ID or another principal's session.
+
+### `POST /v0/live/sessions/:id/close`
+
+Body: `{ "mutationId": "stop-voice-1" }`, with `mutationId` optional.
+
+Response — `200`: `{ "session": { ... } }`. Records a close request and may return `closing`;
+that state does not claim provider finalization. Repeating close, including on a terminal session,
+is harmless. Unknown or another principal's IDs return `404`. No `If-Match` is required.
+
+Stop accepting delegations, send the native close command, and keep the sideband alive for up to
+15 seconds to collect final usage. Timeout or transport failure settles as `failed` with usage
+unconfirmed. Closing voice does not abort, archive, or recreate the orchestrator or its tasks.
+Daemon shutdown closes owned calls; restart marks unfinished local sessions failed and never
+replays creation or delegated mutations. Terminal records remain readable for seven days,
+bounded to the newest 1,000 per principal. Evicted records return `404`.
+
+### Live updates
+
+`live.session.created` carries `{ session, mutationId? }`; `live.session.updated` carries
+`{ sessionId, previousVersion, version, changes, mutationId? }`, with `updatedAt` in every
+`changes`. Both are committed before publishing and filtered to the session owner in journal
+pull and SSE. They never contain SDP, provider credentials, transcripts, or raw provider events.
+
+Text backfeed uses existing committed agent history/status events, with stable cursor and
+delegation identities. Duplicate delivery cannot repeat an operation; late results retain their
+original destination and cannot become a newer delegation's result. Send only bounded factual
+text, not reasoning or tool data. Background progress is silent context; completion, failure,
+and requests for human input may be spoken. Each provider append respects its documented size
+limit. Queues and retained transcript windows are bounded; overflow triggers snapshot
+reconciliation or an explicit failure, never silent loss of task state.
+
+These routes and events are additive without a protocol bump. A `404` or `501` from session
+creation may mean the daemon lacks Live support; clients must not mistake that for an empty
+session or silently choose a different authentication method.
+
 ## Events
 
 Everything that changes on the daemon is announced as an event: projects and workspaces
@@ -5302,6 +5455,12 @@ version rules. Snapshot-to-stream cursor and version-gap recovery rules remain u
     - `agentId` (ID string).
     - `runId` (ID string).
     - `messageId` (ID string).
+
+**Live voice sessions**
+
+- `live.session.created` — owner-private full `session`, with optional `mutationId`.
+- `live.session.updated` — owner-private version-chained changes identified by `sessionId`,
+  with optional `mutationId`. See "Live updates" for the exact payload and privacy boundary.
 
 **Configuration, profile, Cloud, and Happy integration**
 

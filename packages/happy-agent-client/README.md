@@ -123,6 +123,34 @@ returns `reconcile` so the caller can replace the message from authoritative his
 Protocol shapes live in `sources/protocol/`, one file per API chapter, with shared wire
 values declared as TypeBox schemas and their TypeScript types derived with `Static`.
 
+## Live voice sessions
+
+`createLiveSession({ id, agentId, sdp, credential, watchedAgentIds })` binds GPT-Live to an
+existing Happy orchestrator and returns its session resource and WebRTC SDP answer. Select the
+server-held credential explicitly as `{ providerId, type: "codex_subscription" }` or
+`{ providerId, type: "openai_api_key" }`. The former is experimental and does not promise
+subscription entitlement; the latter opts into API billing. There is no automatic fallback.
+The client never receives a provider token or API key.
+
+```text
+Client microphone/speaker <— WebRTC —> GPT-Live
+Client — authenticated SDP —> Happy daemon — sideband —> GPT-Live
+                                   └— existing orchestrator + selected text/status
+```
+
+Use a stable caller-chosen `id`: creation is never automatically retried, and a repeated ID
+returns a conflict with the current session rather than starting another billable call. After
+an uncertain outcome, use `getLiveSession(id)` and close before deliberately replacing it.
+Follow owner-private `live.session.created` and version-chained `live.session.updated` events
+through `updates()`. Refetch on gaps; `HappyReducer` does not maintain a second voice store.
+
+`closeLiveSession(id)` may return `closing`. Only `closed` confirms provider finalization;
+`usage.final` distinguishes confirmed usage from the latest cumulative observation. A failed
+connection may have `usage.seconds: null`, which is unknown, not zero. Voice closure never
+aborts the orchestrator or delegated tasks. Watched IDs default to an empty set, not all sessions.
+These additions do not change existing protocol compatibility. Older daemons may return `404`
+or `501`; leave voice unavailable rather than changing authentication or silently enabling billing.
+
 ## Sandboxed workspace services
 
 Services are started by an agent's separate `service_start` tool. This client manages and observes

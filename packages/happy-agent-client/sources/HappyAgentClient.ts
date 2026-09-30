@@ -92,6 +92,12 @@ import type {
 import type { GitStateResponse, WatchGitRequest, WatchGitResponse } from "./protocol/git.js";
 import type { HappyIntegrationResponse } from "./protocol/integrations.js";
 import type {
+    CloseLiveSessionRequest,
+    CreateLiveSessionRequest,
+    CreateLiveSessionResponse,
+    LiveSessionResponse,
+} from "./protocol/live.js";
+import type {
     MessageHistoryQuery,
     MessageHistoryResponse,
     SendMessageRequest,
@@ -1485,6 +1491,44 @@ export class HappyAgentClient {
         return await this.#json({
             method: "POST",
             path: "v0/git/watch",
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    // Live voice sessions. Creation and close are never retried automatically.
+
+    /** `POST /v0/live/sessions` — one explicitly authenticated WebRTC call. */
+    async createLiveSession(
+        request: CreateLiveSessionRequest,
+        options: RequestOptions = {},
+    ): Promise<CreateLiveSessionResponse> {
+        return await this.#json({
+            method: "POST",
+            path: "v0/live/sessions",
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /** `GET /v0/live/sessions/:id` — owner-private status and voice usage. */
+    async getLiveSession(id: Cuid2, options: RequestOptions = {}): Promise<LiveSessionResponse> {
+        return await this.#json({
+            method: "GET",
+            path: `v0/live/sessions/${encodeURIComponent(id)}`,
+            signal: options.signal,
+        });
+    }
+
+    /** `POST /v0/live/sessions/:id/close` — leaves the orchestrator and its tasks running. */
+    async closeLiveSession(
+        id: Cuid2,
+        request: CloseLiveSessionRequest = {},
+        options: RequestOptions = {},
+    ): Promise<LiveSessionResponse> {
+        return await this.#json({
+            method: "POST",
+            path: `v0/live/sessions/${encodeURIComponent(id)}/close`,
             json: request,
             signal: options.signal,
         });
