@@ -81,6 +81,18 @@ configuration reads only, so reducing that remaining per-agent cost must use a f
 batch API, not reads into its private storage or a second archival index. Preserve archived
 by-ID reads and the API's existing archived project/bot collection behavior.
 
+## Bootstrap carries a bounded, newest-first archived agent collection
+
+The desktop's chat history was empty after every launch: project and workspace resources
+exclude archived agents, and no endpoint listed them, so a client could show only the chats it
+had archived itself in the current run. Desktop bootstrap now also carries `archivedAgents`,
+the 200 most recently archived agents of the included owners, newest `archivedAt` first with
+the ID as the tie-breaker, each under its owner's `workspaceId`. The owner series build reads
+each attached agent's configuration once and records the archived ones with that configuration,
+so only agents inside the bound pay for detail reads. Keep the bound: an unbounded list would
+grow with every chat ever closed and undo the cost described above. Project and workspace
+resources still exclude archived agents; older archived agents stay readable by ID.
+
 ## Avatars and artwork share private browser caching
 
 The blanket no-store response policy prevented browsers from retaining images despite their
