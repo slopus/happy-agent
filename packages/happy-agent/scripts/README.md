@@ -13,8 +13,8 @@ JavaScriptCore while resuming optimized async functions after caught exceptions.
 runtime, since the ordinary Node tests cannot detect it. Every platform build
 runs this regression before compiling the executable. Bun 1.4.2 also aborted in
 JIT exception handling during a longer live run, so the CLI starts a fresh VM
-with the DFG and FTL optimizing tiers disabled before loading the daemon. The
-interpreter and baseline JIT remain available. This guard also applies to direct
+with the baseline, DFG, and FTL JavaScript JIT tiers disabled before loading the
+daemon. The interpreter and WebAssembly remain available. This guard also applies to direct
 foreground launches and overrides inherited settings that re-enable those tiers.
 
 ```text

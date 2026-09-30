@@ -2,17 +2,22 @@ import { spawn } from "node:child_process";
 
 declare const HAPPY_AGENT_STANDALONE: boolean | undefined;
 
-/** Start a fresh VM with the unstable optimizing tiers disabled, before loading the daemon. */
+/** Start a fresh VM with JavaScript JIT tiers disabled, before loading the daemon. */
 export async function ensureSafeBunRuntime(): Promise<void> {
     if (process.versions.bun === undefined) return;
-    if (process.env.BUN_JSC_useDFGJIT === "false" && process.env.BUN_JSC_useFTLJIT === "false") {
+    if (
+        process.env.BUN_JSC_useBaselineJIT === "false" &&
+        process.env.BUN_JSC_useDFGJIT === "false" &&
+        process.env.BUN_JSC_useFTLJIT === "false"
+    ) {
         return;
     }
 
     // Changing process.env in the existing VM is too late: JavaScriptCore reads
-    // these options at startup. Keep its interpreter and baseline JIT available.
+    // these options at startup. WebAssembly has separate tiers and stays available.
     const environment = {
         ...process.env,
+        BUN_JSC_useBaselineJIT: "false",
         BUN_JSC_useDFGJIT: "false",
         BUN_JSC_useFTLJIT: "false",
     };

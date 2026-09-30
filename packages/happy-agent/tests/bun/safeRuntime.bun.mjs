@@ -13,14 +13,14 @@ test("source and compiled launchers restart once with safe JIT settings and pres
         await writeFile(
             entry,
             `import { ensureSafeBunRuntime } from ${JSON.stringify(fileURLToPath(new URL("../../sources/lifecycle/ensureSafeBunRuntime.ts", import.meta.url)))};
-import { numberOfDFGCompiles, noInline } from "bun:jsc";
+import { numberOfDFGCompiles, noInline, totalCompileTime } from "bun:jsc";
 console.log("entry", process.pid);
 await ensureSafeBunRuntime();
 function hot(value) { return value + 1; }
 noInline(hot);
 let value = 0;
 for (let index = 0; index < 1000000; index++) value = hot(value);
-console.log(JSON.stringify({ args: process.argv.slice(2), dfg: process.env.BUN_JSC_useDFGJIT, ftl: process.env.BUN_JSC_useFTLJIT, compiles: numberOfDFGCompiles(hot), value }));
+console.log(JSON.stringify({ args: process.argv.slice(2), baseline: process.env.BUN_JSC_useBaselineJIT, dfg: process.env.BUN_JSC_useDFGJIT, ftl: process.env.BUN_JSC_useFTLJIT, compiles: numberOfDFGCompiles(hot), compileTime: totalCompileTime(), value }));
 process.exit(7);
 `,
         );
@@ -32,7 +32,12 @@ process.exit(7);
         expect(result.success).toBe(true);
         for (const command of [[process.execPath, entry], [binary]]) {
             const child = spawnSync(command[0], [...command.slice(1), "run", "with spaces"], {
-                env: { ...process.env, BUN_JSC_useDFGJIT: "true", BUN_JSC_useFTLJIT: "true" },
+                env: {
+                    ...process.env,
+                    BUN_JSC_useBaselineJIT: "true",
+                    BUN_JSC_useDFGJIT: "true",
+                    BUN_JSC_useFTLJIT: "true",
+                },
                 encoding: "utf8",
                 timeout: 20_000,
             });
@@ -44,11 +49,13 @@ process.exit(7);
             if (process.platform !== "win32") expect(lines[0]).toBe(lines[1]);
             expect(JSON.parse(lines[2])).toEqual({
                 args: ["run", "with spaces"],
+                baseline: "false",
                 dfg: "false",
                 ftl: "false",
                 // JavaScriptCore's TestRunnerUtils returns this sentinel when
                 // the DFG is disabled and the function has baseline bytecode.
                 compiles: 1000000,
+                compileTime: 0,
                 value: 1000000,
             });
         }
