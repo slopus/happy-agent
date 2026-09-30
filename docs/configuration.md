@@ -120,7 +120,8 @@ complete Tailcat setup and client commands.
 ## Team deployment mode
 
 Team mode turns one Happy Agent daemon into an organization-authenticated service. It replaces the
-private Unix socket and local token with a TCP HTTP listener authenticated by WorkOS access tokens.
+private Unix socket and local token with a TCP HTTP listener authenticated by WorkOS access tokens
+or, with [JWT authentication](#jwt-team-authentication), by the organization's own OAuth server.
 Configure it only in the user-wide `happy.toml`:
 
 ```toml
@@ -142,6 +143,7 @@ which WorkOS project authenticated the owner.
 | Setting                  | Default                               | Meaning                                                                                 |
 | ------------------------ | ------------------------------------- | --------------------------------------------------------------------------------------- |
 | `enabled`                | `false`                               | Selects team deployment mode.                                                           |
+| `authentication`         | `"workos"`                            | `"workos"`, or `"jwt"` for [JWT authentication](#jwt-team-authentication).              |
 | `host`                   | `"0.0.0.0"`                           | TCP interface for the HTTP listener.                                                    |
 | `port`                   | `3000`                                | TCP port; `0` asks the operating system to choose an ephemeral port.                    |
 | `workos_client_id`       | `"client_01KZD3XE9YAFAMT0P8TD4HP73E"` | WorkOS client whose issuer and JWKS authenticate access tokens.                         |
@@ -150,14 +152,70 @@ which WorkOS project authenticated the owner.
 
 The daemon verifies RS256 signatures and required WorkOS claims locally after retrieving and
 caching that client's JWKS. A token must match both the configured client and organization. Every
-HTTP request, including health, requires `Authorization: Bearer <workos-access-token>`.
+HTTP request, including health, requires `Authorization: Bearer <access-token>`; only
+`GET /v0/authentication` is public.
 
-Team mode does not seed users. A valid member of the configured WorkOS organization can read
-health, onboarding, and their current profile before a local user exists. Their first profile
-update must provide a non-null `name`; that update creates the durable user and derives its owner
-flag from `owner_workos_user_id`. All other product routes require an onboarded user. The existing
-profile wire contract remains unchanged: Happy Agent splits the first token of `name` into the
-stored first name and stores the trimmed remainder as the optional last name.
+Team mode does not seed users. A valid member of the configured WorkOS organization can read health,
+onboarding, and their current profile before a local user exists. Their first profile update must
+provide a non-null `name`; that update creates the durable user and derives its owner flag from
+`owner_workos_user_id`, or `owner_user_id` with JWT authentication. All other product routes require
+an onboarded user. The existing profile wire contract remains unchanged: Happy Agent splits the
+first token of `name` into the stored first name and stores the trimmed remainder as the optional
+last name.
+
+### JWT team authentication
+
+With `authentication = "jwt"`, members sign in with the organization's own OAuth 2.0 authorization
+server, such as its identity provider, instead of WorkOS. The apps use the authorization code flow
+with PKCE and optional refresh, talking to that server directly; the daemon only verifies the JWT
+access tokens and never receives codes or refresh tokens. The WorkOS settings above must not be
+set. [Set up enterprise JWT sign-in](recipe/enterprise-jwt-authentication.md) walks through the
+whole deployment.
+
+```toml
+[feature.team]
+enabled = true
+authentication = "jwt"
+owner_user_id = "user-123"
+
+[feature.team.jwt]
+name = "Acme SSO"
+authorization_url = "https://sso.acme.example/oauth/authorize"
+token_url = "https://sso.acme.example/oauth/token"
+refresh_url = "https://sso.acme.example/oauth/token"
+client_id = "happy"
+scope = "openid"
+issuer = "https://sso.acme.example"
+audience = "https://happy.acme.example"
+user_id_claim = "sub"
+algorithms = ["RS256"]
+jwks_url = "https://sso.acme.example/.well-known/jwks.json"
+jwks_refresh_interval_sec = 3600
+```
+
+| Setting                     | Default        | Meaning                                                                                        |
+| --------------------------- | -------------- | ---------------------------------------------------------------------------------------------- |
+| `owner_user_id`             | required       | User ID (from `user_id_claim`) whose user receives the owner flag when first created.          |
+| `name`                      | required       | Sign-in button label, 1–64 printable characters.                                               |
+| `authorization_url`         | required       | Authorization endpoint the apps open in the system browser.                                    |
+| `token_url`                 | required       | Token endpoint where the apps exchange the authorization code.                                 |
+| `refresh_url`               | none           | Endpoint for refresh tokens, on any origin. Without it, apps sign in again when tokens expire. |
+| `client_id`                 | required       | Public OAuth client ID registered for the Happy apps.                                          |
+| `scope`                     | none           | Space-separated scope requested at sign-in.                                                    |
+| `issuer`                    | required       | Exact `iss` claim required in every access token.                                              |
+| `audience`                  | required       | Value the `aud` claim must equal or contain; use a unique value per deployment.                |
+| `user_id_claim`             | `"sub"`        | Claim holding a stable, never-reused user ID.                                                  |
+| `algorithms`                | required       | Accepted signing algorithms; `none` is never accepted.                                         |
+| `jwks_url`                  | one key source | JWKS the daemon downloads at startup and refreshes; recommended.                               |
+| `jwks_refresh_interval_sec` | `3600`         | Seconds between JWKS downloads, 60–86,400; only with `jwks_url`.                               |
+| `public_key`                | one key source | One PEM public key, instead of a JWKS.                                                         |
+| `secret_env`                | one key source | Environment variable holding a shared HS256/384/512 secret of at least 32 bytes.               |
+
+Configure exactly one of `jwks_url`, `public_key`, and `secret_env`. Asymmetric sources accept the
+RS, PS, ES, and EdDSA algorithms; `secret_env` accepts only HS256, HS384, and HS512. A shared
+secret lets the daemon mint tokens itself, so prefer asymmetric keys. Every URL must use `https`,
+or plain `http` only on a loopback host. Clients discover the method without a token through
+`GET /v0/authentication` and from the `authentication` field of any `401`.
 
 Run a team deployment with `happy-agent run` under a process supervisor. Local socket-based daemon
 management and the macOS menu bar integration are disabled. The listener serves plain HTTP, so put

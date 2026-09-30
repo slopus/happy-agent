@@ -82,6 +82,7 @@ export const HAPPY_TOML_TEMPLATE = `# Happy configuration for Happy Agent.
 # token_url = "https://sso.acme.example/oauth/token"
 # refresh_url = "https://sso.acme.example/oauth/token"
 # client_id = "happy"
+# scope = "openid"
 # issuer = "https://sso.acme.example"
 # audience = "https://happy.acme.example"
 # user_id_claim = "sub"
