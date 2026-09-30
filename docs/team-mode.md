@@ -9,6 +9,9 @@ It includes Happy Social sign-in, creating the named team, verifying a local con
 for invitation emails only after the deployment works. [Happy teams](happy-teams.md) explains the
 account and membership model.
 
+To sign members in with the organization's own identity provider instead of WorkOS, use
+[Set up enterprise JWT sign-in](recipe/enterprise-jwt-authentication.md).
+
 ## Before you begin
 
 You need:

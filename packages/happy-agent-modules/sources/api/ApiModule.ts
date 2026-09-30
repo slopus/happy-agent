@@ -51,7 +51,6 @@ import { WebSocketServer } from "ws";
 import { AbortModule } from "../abort/index.js";
 import { ServicesModule, ServiceError, ServiceAccessError } from "../services/index.js";
 import { ServiceHttpTunnel } from "./ServiceHttpTunnel.js";
-import { parseAuthenticationRedirect } from "./parseAuthenticationRedirect.js";
 import {
     BotAvatarInputError,
     BotConflictError,
@@ -574,7 +573,11 @@ export class ApiModule implements AgentModule {
         let finishMutation: (() => void) | undefined;
         try {
             if (request.method === "GET" && requestUrl(request).pathname === "/v0/authentication") {
-                sendJson(response, 200, await this.#authenticationStatus(ctx, request));
+                sendJson(
+                    response,
+                    200,
+                    await this.#authenticationStatus(ctx, request.headers.authorization),
+                );
                 return;
             }
             ctx = await this.#authenticate(ctx, request.headers.authorization);
@@ -5791,19 +5794,18 @@ export class ApiModule implements AgentModule {
     /** Report the caller's authentication and the sign-in methods, without requiring a token. */
     async #authenticationStatus(
         ctx: Context,
-        request: IncomingMessage,
+        authorization: string | string[] | undefined,
     ): Promise<AuthenticationResponse> {
-        const redirect = parseAuthenticationRedirect(requestUrl(request).searchParams);
         let authenticated = true;
         try {
-            ctx = await this.#authenticate(ctx, request.headers.authorization);
+            ctx = await this.#authenticate(ctx, authorization);
         } catch (error: unknown) {
             if (!(error instanceof ApiError) || error.status !== 401) throw error;
             authenticated = false;
         }
         return {
             authenticated,
-            methods: [...this.#team.authenticationMethods(redirect)],
+            methods: [...this.#team.authenticationMethods()],
             userId: authenticated ? (teamUser(ctx)?.id ?? null) : null,
         };
     }

@@ -37,7 +37,9 @@ function jwt(lines: readonly string[]): string {
     return [
         "[feature.team.jwt]",
         'name = "Acme SSO"',
-        'login_url = "https://sso.acme.example/happy/login"',
+        'authorization_url = "https://sso.acme.example/oauth/authorize"',
+        'token_url = "https://sso.acme.example/oauth/token"',
+        'client_id = "happy"',
         'issuer = "https://sso.acme.example"',
         'audience = "happy-agent"',
         ...lines,
@@ -61,8 +63,10 @@ describe("JWT team authentication configuration", () => {
                 audience: "happy-agent",
                 issuer: "https://sso.acme.example",
                 key: { type: "jwks", url: "https://sso.acme.example/.well-known/jwks.json" },
-                loginUrl: "https://sso.acme.example/happy/login",
+                authorizationUrl: "https://sso.acme.example/oauth/authorize",
+                clientId: "happy",
                 name: "Acme SSO",
+                tokenUrl: "https://sso.acme.example/oauth/token",
                 userIdClaim: "sub",
             },
             ownerUserId: "owner-1",
@@ -141,16 +145,55 @@ describe("JWT team authentication configuration", () => {
     it("accepts a loopback http sign-in page and rejects the none algorithm", async () => {
         const loopback = await load(
             `${team}\n${jwt(['algorithms = ["HS512"]', 'secret_env = "SECRET"'])}\n`.replace(
-                "https://sso.acme.example/happy/login",
-                "http://127.0.0.1:8080/login",
+                "https://sso.acme.example/oauth/authorize",
+                "http://127.0.0.1:8080/authorize",
             ),
         );
         expect(loopback.values.feature.team).toMatchObject({
-            jwt: { loginUrl: "http://127.0.0.1:8080/login" },
+            jwt: { authorizationUrl: "http://127.0.0.1:8080/authorize" },
         });
         await expect(
             load(`${team}\n${jwt(['algorithms = ["none"]', 'secret_env = "SECRET"'])}\n`),
         ).rejects.toThrow();
+    });
+
+    it("resolves an optional refresh endpoint on another origin and a scope", async () => {
+        const configuration = await load(
+            `${team}\n${jwt([
+                'algorithms = ["ES256"]',
+                'jwks_url = "https://sso.acme.example/jwks"',
+                'refresh_url = "https://refresh.other.example/oauth/refresh"',
+                'scope = "happy offline_access"',
+            ])}\n`,
+        );
+        expect(configuration.values.feature.team).toMatchObject({
+            jwt: {
+                refreshUrl: "https://refresh.other.example/oauth/refresh",
+                scope: "happy offline_access",
+            },
+        });
+    });
+
+    it.each([
+        ["token_url", 'token_url = "http://sso.acme.example/oauth/token"'],
+        ["refresh_url", 'refresh_url = "http://refresh.acme.example/oauth/refresh"'],
+        ["authorization_url", 'authorization_url = "https://user:pass@sso.acme.example/x"'],
+    ])("rejects an insecure %s", async (name, line) => {
+        const base = jwt(['algorithms = ["HS256"]', 'secret_env = "SECRET"']).replace(
+            new RegExp(`^${name} = .*$`, "mu"),
+            "",
+        );
+        await expect(load(`${team}\n${base}\n${line}\n`)).rejects.toThrow(
+            `feature.team.jwt.${name}`,
+        );
+    });
+
+    it.each(["authorization_url", "token_url", "client_id"])("requires %s", async (name) => {
+        const base = jwt(['algorithms = ["HS256"]', 'secret_env = "SECRET"']).replace(
+            new RegExp(`^${name} = .*\\n`, "mu"),
+            "",
+        );
+        await expect(load(`${team}\n${base}\n`)).rejects.toThrow();
     });
 
     it("keeps each method's settings separate", async () => {

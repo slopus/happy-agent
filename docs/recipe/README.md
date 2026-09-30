@@ -57,3 +57,11 @@ Read [Create and deploy a Happy team](deploy-happy-team.md) for the complete sha
 Happy Social sign-in and a bound email, a specifically named team, a team-mode deployment, a verified
 local connection, and only then a request for invitation emails. The companion
 [Happy teams guide](../happy-teams.md) explains the account and administration boundaries.
+
+## Enterprise sign-in
+
+Read [Set up enterprise JWT sign-in](enterprise-jwt-authentication.md) when a team should sign in
+with its own identity provider instead of WorkOS. The Happy app signs in with the organization's
+OAuth authorization server directly, using the authorization code flow with PKCE and optional
+refresh; the daemon only verifies the resulting access token and never sees codes or refresh
+tokens.

@@ -20,7 +20,6 @@ import { testProfileModule } from "../support/testProfileModule.js";
 const ISSUER = "https://sso.acme.example";
 const AUDIENCE = "happy-agent";
 const SECRET = new TextEncoder().encode("a-very-long-shared-secret-of-at-least-32-bytes");
-const LOGIN_URL = "https://sso.acme.example/happy/login?tenant=acme&state=stale";
 
 interface Claims {
     readonly aud?: string | string[];
@@ -222,22 +221,25 @@ describe("TeamModule with JWT authentication", () => {
         }
     });
 
-    it("builds the browser sign-in URL from the client's redirect and state", () => {
-        const team = createJwtTeam();
-        expect(team.authenticationMethods()).toEqual([
-            { id: "jwt", name: "Acme SSO", type: "browser", url: LOGIN_URL },
+    it("advertises the configured OAuth endpoints and nothing secret", () => {
+        expect(createJwtTeam().authenticationMethods()).toEqual([
+            {
+                authorizationUrl: "https://sso.acme.example/oauth/authorize",
+                clientId: "happy",
+                id: "jwt",
+                name: "Acme SSO",
+                refreshUrl: "https://refresh.acme.example/oauth/refresh",
+                scope: "happy",
+                tokenUrl: "https://sso.acme.example/oauth/token",
+                type: "oauth",
+            },
         ]);
-        const [method] = team.authenticationMethods({
-            redirectUri: "happy://auth/callback",
-            state: "k3v9",
-        });
-        const url = new URL(method!.url);
-        expect(url.origin + url.pathname).toBe("https://sso.acme.example/happy/login");
-        expect(url.searchParams.get("tenant")).toBe("acme");
-        expect(url.searchParams.getAll("state")).toEqual(["k3v9"]);
-        expect(url.searchParams.get("redirect_uri")).toBe("happy://auth/callback");
-        const [withoutState] = team.authenticationMethods({ redirectUri: "happy://auth" });
-        expect(new URL(withoutState!.url).searchParams.has("state")).toBe(false);
+        const [withoutRefresh] = createJwtTeam(SECRET, {}).authenticationMethods();
+        expect(withoutRefresh).not.toHaveProperty("refreshUrl");
+        expect(withoutRefresh).not.toHaveProperty("scope");
+        expect(JSON.stringify(createJwtTeam().authenticationMethods())).not.toContain(
+            "HAPPY_TEAM_JWT_SECRET",
+        );
     });
 
     it("refuses to start without a long enough shared secret", () => {
@@ -297,7 +299,13 @@ describe("team identity migration", () => {
     });
 });
 
-function createJwtTeam(secret: Uint8Array | null = SECRET): TeamModule {
+function createJwtTeam(
+    secret: Uint8Array | null = SECRET,
+    endpoints: { readonly refreshUrl?: string; readonly scope?: string } = {
+        refreshUrl: "https://refresh.acme.example/oauth/refresh",
+        scope: "happy",
+    },
+): TeamModule {
     return new TeamModule(
         {
             configuration: {
@@ -312,8 +320,16 @@ function createJwtTeam(secret: Uint8Array | null = SECRET): TeamModule {
                                 audience: AUDIENCE,
                                 issuer: ISSUER,
                                 key: { env: "HAPPY_TEAM_JWT_SECRET", type: "secret" },
-                                loginUrl: LOGIN_URL,
+                                authorizationUrl: "https://sso.acme.example/oauth/authorize",
+                                clientId: "happy",
                                 name: "Acme SSO",
+                                ...(endpoints.refreshUrl === undefined
+                                    ? {}
+                                    : { refreshUrl: endpoints.refreshUrl }),
+                                ...(endpoints.scope === undefined
+                                    ? {}
+                                    : { scope: endpoints.scope }),
+                                tokenUrl: "https://sso.acme.example/oauth/token",
                                 userIdClaim: "sub",
                             },
                             ownerUserId: "owner-1",

@@ -83,18 +83,19 @@ export interface TeamDraftUpdatedEvent {
     readonly userId: string;
 }
 
-/** A sign-in method a person completes in the system browser. */
-export interface TeamBrowserAuthenticationMethod {
+/**
+ * An OAuth authorization code sign-in with PKCE. Clients complete it against these endpoints
+ * directly; the daemon never receives codes, verifiers, or refresh tokens.
+ */
+export interface TeamOAuthAuthenticationMethod {
+    readonly authorizationUrl: string;
+    readonly clientId: string;
     readonly id: string;
     readonly name: string;
-    readonly type: "browser";
-    readonly url: string;
-}
-
-/** Where a browser sign-in result returns, supplied by the client. */
-export interface TeamAuthenticationRedirect {
-    readonly redirectUri: string;
-    readonly state?: string;
+    readonly refreshUrl?: string;
+    readonly scope?: string;
+    readonly tokenUrl: string;
+    readonly type: "oauth";
 }
 
 /** Bearer tokens beyond this length are rejected before any verification work. */
@@ -352,28 +353,21 @@ export class TeamModule<Database extends AgentDatabase = AgentDatabase> implemen
         };
     }
 
-    /**
-     * The sign-in methods people can complete, in display order. A redirect makes each browser
-     * URL return its result there. Standalone and WorkOS deployments offer none.
-     */
-    authenticationMethods(
-        redirect?: TeamAuthenticationRedirect,
-    ): readonly TeamBrowserAuthenticationMethod[] {
+    /** The sign-in methods people can complete, in display order. Only JWT deployments offer one. */
+    authenticationMethods(): readonly TeamOAuthAuthenticationMethod[] {
         const team = this.#config.configuration.values.feature.team;
         if (!team.enabled || team.authentication !== "jwt") return [];
-        const url = new URL(team.jwt.loginUrl);
-        if (redirect !== undefined) {
-            url.searchParams.delete("redirect_uri");
-            url.searchParams.delete("state");
-            url.searchParams.set("redirect_uri", redirect.redirectUri);
-            if (redirect.state !== undefined) url.searchParams.set("state", redirect.state);
-        }
+        const jwt = team.jwt;
         return [
             {
+                authorizationUrl: jwt.authorizationUrl,
+                clientId: jwt.clientId,
                 id: "jwt",
-                name: team.jwt.name,
-                type: "browser",
-                url: redirect === undefined ? team.jwt.loginUrl : url.toString(),
+                name: jwt.name,
+                ...(jwt.refreshUrl === undefined ? {} : { refreshUrl: jwt.refreshUrl }),
+                ...(jwt.scope === undefined ? {} : { scope: jwt.scope }),
+                tokenUrl: jwt.tokenUrl,
+                type: "oauth",
             },
         ];
     }

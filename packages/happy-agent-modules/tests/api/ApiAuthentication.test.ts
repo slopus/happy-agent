@@ -14,8 +14,15 @@ import { moduleDatabase, type ModuleDatabase } from "../support/moduleDatabase.j
 import { testProfileModule } from "../support/testProfileModule.js";
 
 const SECRET = new TextEncoder().encode("a-very-long-shared-secret-of-at-least-32-bytes");
-const LOGIN_URL = "https://sso.acme.example/happy/login";
-const BROWSER = { id: "jwt", name: "Acme SSO", type: "browser", url: LOGIN_URL };
+const OAUTH = {
+    authorizationUrl: "https://sso.acme.example/oauth/authorize",
+    clientId: "happy",
+    id: "jwt",
+    name: "Acme SSO",
+    refreshUrl: "https://refresh.acme.example/oauth/refresh",
+    tokenUrl: "https://sso.acme.example/oauth/token",
+    type: "oauth",
+};
 
 const cleanups: (() => Promise<void>)[] = [];
 
@@ -46,8 +53,11 @@ async function harness(mode: "standalone" | "jwt"): Promise<Harness> {
                       audience: "happy-agent",
                       issuer: "https://sso.acme.example",
                       key: { env: "HAPPY_TEAM_JWT_SECRET", type: "secret" },
-                      loginUrl: LOGIN_URL,
+                      authorizationUrl: OAUTH.authorizationUrl,
+                      clientId: OAUTH.clientId,
                       name: "Acme SSO",
+                      refreshUrl: OAUTH.refreshUrl,
+                      tokenUrl: OAUTH.tokenUrl,
                       userIdClaim: "sub",
                   },
                   ownerUserId: "owner-1",
@@ -142,21 +152,21 @@ async function jwt(subject: string, audience = "happy-agent"): Promise<string> {
 }
 
 describe("GET /v0/authentication with JWT team authentication", () => {
-    it("lists the browser method without a token and reports sign-in state", async () => {
+    it("lists the OAuth method without a token and reports sign-in state", async () => {
         const { call, database, team } = await harness("jwt");
 
         expect(await call("/v0/authentication")).toEqual({
-            body: { authenticated: false, methods: [BROWSER], userId: null },
+            body: { authenticated: false, methods: [OAUTH], userId: null },
             status: 200,
         });
         expect(
             (await call("/v0/authentication", `Bearer ${await jwt("person-1", "other")}`)).body,
-        ).toEqual({ authenticated: false, methods: [BROWSER], userId: null });
+        ).toEqual({ authenticated: false, methods: [OAUTH], userId: null });
 
         const token = await jwt("person-1");
         expect((await call("/v0/authentication", `Bearer ${token}`)).body).toEqual({
             authenticated: true,
-            methods: [BROWSER],
+            methods: [OAUTH],
             userId: null,
         });
         const user = await team.createUser(database.context, {
@@ -170,30 +180,18 @@ describe("GET /v0/authentication with JWT team authentication", () => {
         });
     });
 
-    it("builds the sign-in URL from the redirect and state and rejects invalid ones", async () => {
+    it("ignores any query string and never echoes sign-in parameters", async () => {
         const { call } = await harness("jwt");
-        const redirect = encodeURIComponent("http://127.0.0.1:53682/callback");
 
-        const result = await call(`/v0/authentication?redirectUri=${redirect}&state=k3v9`);
-        expect(result.status).toBe(200);
-        const [method] = result.body.methods as { url: string }[];
-        const url = new URL(method!.url);
-        expect(url.searchParams.get("redirect_uri")).toBe("http://127.0.0.1:53682/callback");
-        expect(url.searchParams.get("state")).toBe("k3v9");
+        const result = await call(
+            "/v0/authentication?redirectUri=https%3A%2F%2Fevil.example&state=x&code=y",
+        );
 
-        for (const query of [
-            "state=k3v9",
-            `redirectUri=${encodeURIComponent("happy://auth#token=x")}`,
-            "redirectUri=relative/path",
-            `redirectUri=${redirect}&redirectUri=${redirect}`,
-            `redirectUri=${redirect}&state=`,
-            `redirectUri=${"a".repeat(2_049)}`,
-        ]) {
-            expect(await call(`/v0/authentication?${query}`)).toMatchObject({
-                body: { code: "invalid_request" },
-                status: 400,
-            });
-        }
+        expect(result).toEqual({
+            body: { authenticated: false, methods: [OAUTH], userId: null },
+            status: 200,
+        });
+        expect(JSON.stringify(result.body)).not.toContain("evil.example");
     });
 
     it("tells every rejected request how to sign in", async () => {
@@ -201,7 +199,7 @@ describe("GET /v0/authentication with JWT team authentication", () => {
 
         expect(await call("/v0/health")).toEqual({
             body: {
-                authentication: { methods: [BROWSER] },
+                authentication: { methods: [OAUTH] },
                 code: "unauthorized",
                 error: "Unauthorized",
             },
@@ -209,7 +207,7 @@ describe("GET /v0/authentication with JWT team authentication", () => {
         });
         const token = await jwt("person-2");
         expect((await call("/v0/projects", `Bearer ${token}`)).body).toMatchObject({
-            authentication: { methods: [BROWSER] },
+            authentication: { methods: [OAUTH] },
             code: "unauthorized",
         });
         await team.createUser(database.context, {

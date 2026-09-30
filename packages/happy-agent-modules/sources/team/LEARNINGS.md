@@ -48,9 +48,19 @@ dropping the old users table cannot cascade into copied photos. Everything else 
 owner flag, drafts, sender notifications — is shared by both methods.
 
 Clients discover sign-in through the unauthenticated `GET /v0/authentication` and the
-`authentication` field on every `401`. The daemon builds the browser URL from the client's
-redirect and state but keeps no sign-in state: the client verifies `state`, and the deployer's
-app must allow-list redirect URIs.
+`authentication` field on every `401`. The first design had the deployer's page redirect the JWT
+itself back in a URL fragment, like the old OAuth implicit flow. That exposes the token to any app
+that claims the redirect scheme and cannot be refreshed, so it was replaced before any daemon
+shipped it: the advertised `oauth` method is the standard authorization code flow with PKCE, plus
+an optional refresh endpoint that may live on another origin.
+
+The daemon is treated as untrusted with sign-in credentials. It only advertises endpoints from
+machine configuration and verifies access tokens; the app talks to the authorization server
+directly, so codes, PKCE verifiers, and refresh tokens never reach the daemon. The client refreshes
+only at the refresh URL recorded at sign-in, never one a daemon advertises later. Discovery ignores
+query strings, so it cannot be used to reflect attacker-chosen redirects. A per-deployment audience
+stops a daemon from replaying a member's token elsewhere; a shared secret lets the daemon mint
+tokens, so asymmetric keys are the recommendation.
 
 ## WorkOS organization membership grants access before onboarding
 

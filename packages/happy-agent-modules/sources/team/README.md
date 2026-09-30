@@ -19,7 +19,7 @@ do not announce team profiles.
 Team authentication is either WorkOS (`WorkOSAccessTokenVerifier`) or a deployer's own JWTs
 (`JwtAccessTokenVerifier`), selected by `feature.team.authentication`. Both yield the same
 `TeamIdentity`: the method plus the user ID it issued. Users are keyed by that pair.
-`authenticationMethods()` lists the browser sign-in the API advertises for JWT deployments.
+`authenticationMethods()` lists the OAuth code-flow sign-in the API advertises for JWT deployments.
 
 `impl/teamSenderNotifications.ts` owns this bounded, transactional behavior. `persistence/` owns
 user queries; profile changes continue through the existing identity-only public event surface.

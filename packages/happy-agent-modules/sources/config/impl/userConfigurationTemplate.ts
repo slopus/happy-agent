@@ -68,8 +68,9 @@ export const HAPPY_TOML_TEMPLATE = `# Happy configuration for Happy Agent.
 # workos_organization_id = "org_01EXAMPLE"
 # owner_workos_user_id = "user_01EXAMPLE"
 #
-# Enterprise deployments may instead verify JWTs issued by their own sign-in web app. Clients open
-# login_url in the browser; the app redirects back with #token=<jwt>&state=<state>.
+# Enterprise deployments may instead verify JWT access tokens from their own OAuth authorization
+# server. Apps sign in with the authorization code flow and PKCE, talking to these endpoints
+# directly; the daemon never sees codes or refresh tokens. Use a unique audience per deployment.
 # [feature.team]
 # enabled = true
 # authentication = "jwt"
@@ -77,9 +78,12 @@ export const HAPPY_TOML_TEMPLATE = `# Happy configuration for Happy Agent.
 #
 # [feature.team.jwt]
 # name = "Acme SSO"
-# login_url = "https://sso.acme.example/happy/login"
+# authorization_url = "https://sso.acme.example/oauth/authorize"
+# token_url = "https://sso.acme.example/oauth/token"
+# refresh_url = "https://sso.acme.example/oauth/token"
+# client_id = "happy"
 # issuer = "https://sso.acme.example"
-# audience = "happy-agent"
+# audience = "https://happy.acme.example"
 # user_id_claim = "sub"
 # algorithms = ["RS256"]
 # Exactly one key source: jwks_url, public_key (PEM), or secret_env (HS256/384/512, >= 32 bytes).

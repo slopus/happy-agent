@@ -24,6 +24,9 @@ const algorithmSchema = Type.Union(
 const algorithmsSchema = Type.Array(algorithmSchema, { maxItems: 13, minItems: 1 });
 const urlSchema = Type.String({ maxLength: 2_048, minLength: 1 });
 const nonEmptySchema = Type.String({ maxLength: 2_048, minLength: 1 });
+const printable = "^[^\\u0000-\\u001f\\u007f-\\u009f]+$";
+const clientIdSchema = Type.String({ maxLength: 256, minLength: 1, pattern: printable });
+const scopeSchema = Type.String({ maxLength: 1_024, minLength: 1, pattern: printable });
 
 /** Printable display name for the sign-in method. */
 export const teamJwtNameSchema = Type.String({
@@ -45,13 +48,17 @@ export const teamJwtTomlSchema = Type.Object(
         algorithms: algorithmsSchema,
         audience: nonEmptySchema,
         issuer: nonEmptySchema,
+        authorization_url: urlSchema,
+        client_id: clientIdSchema,
         jwks_url: Type.Optional(urlSchema),
-        login_url: urlSchema,
         name: teamJwtNameSchema,
         public_key: Type.Optional(Type.String({ maxLength: 16_384, minLength: 1 })),
         secret_env: Type.Optional(
             Type.String({ maxLength: 256, minLength: 1, pattern: "^[A-Za-z_][A-Za-z0-9_]*$" }),
         ),
+        refresh_url: Type.Optional(urlSchema),
+        scope: Type.Optional(scopeSchema),
+        token_url: urlSchema,
         user_id_claim: Type.Optional(Type.String({ maxLength: 256, minLength: 1 })),
     },
     exact,
@@ -63,6 +70,8 @@ export const teamJwtConfigSchema = Type.Object(
     {
         algorithms: algorithmsSchema,
         audience: nonEmptySchema,
+        authorizationUrl: urlSchema,
+        clientId: clientIdSchema,
         issuer: nonEmptySchema,
         key: Type.Union([
             Type.Object({ type: Type.Literal("jwks"), url: urlSchema }, exact),
@@ -81,8 +90,10 @@ export const teamJwtConfigSchema = Type.Object(
                 exact,
             ),
         ]),
-        loginUrl: urlSchema,
         name: teamJwtNameSchema,
+        refreshUrl: Type.Optional(urlSchema),
+        scope: Type.Optional(scopeSchema),
+        tokenUrl: urlSchema,
         userIdClaim: Type.String({ maxLength: 256, minLength: 1 }),
     },
     exact,
@@ -91,7 +102,11 @@ export type TeamJwtConfig = Static<typeof teamJwtConfigSchema>;
 
 /** Validate one JWT table's cross-field rules and resolve it, with human-readable failures. */
 export function resolveTeamJwtConfig(value: TeamJwtToml): TeamJwtConfig {
-    assertBrowserUrl(value.login_url, "feature.team.jwt.login_url");
+    assertBrowserUrl(value.authorization_url, "feature.team.jwt.authorization_url");
+    assertBrowserUrl(value.token_url, "feature.team.jwt.token_url");
+    if (value.refresh_url !== undefined) {
+        assertBrowserUrl(value.refresh_url, "feature.team.jwt.refresh_url");
+    }
     const sources = [value.jwks_url, value.public_key, value.secret_env].filter(
         (source) => source !== undefined,
     );
@@ -131,10 +146,14 @@ export function resolveTeamJwtConfig(value: TeamJwtToml): TeamJwtConfig {
     return {
         algorithms: [...new Set(value.algorithms)],
         audience: value.audience,
+        authorizationUrl: value.authorization_url,
+        clientId: value.client_id,
         issuer: value.issuer,
         key,
-        loginUrl: value.login_url,
         name: value.name,
+        ...(value.refresh_url === undefined ? {} : { refreshUrl: value.refresh_url }),
+        ...(value.scope === undefined ? {} : { scope: value.scope }),
+        tokenUrl: value.token_url,
         userIdClaim: value.user_id_claim ?? "sub",
     };
 }
@@ -161,7 +180,14 @@ function assertBrowserUrl(value: string, name: string): void {
         url.hostname === "localhost" ||
         url.hostname === "[::1]" ||
         /^127(?:\.\d{1,3}){3}$/u.test(url.hostname);
-    if (url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) {
-        throw new Error(`${name} must use https, or http only for a loopback host.`);
+    if (
+        (url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) ||
+        url.username !== "" ||
+        url.password !== "" ||
+        url.hash !== ""
+    ) {
+        throw new Error(
+            `${name} must use https, or http only for a loopback host, without credentials or a fragment.`,
+        );
     }
 }

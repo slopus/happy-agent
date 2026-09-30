@@ -1,13 +1,17 @@
+import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import { AgentProviders, type AgentModel } from "@slopus/happy-agent-base";
 import {
+    beginOAuthSignIn,
+    completeOAuthSignIn,
     HappyAgentApiError,
     HappyAgentClient,
-    readAuthenticationCallback,
+    refreshOAuthCredential,
 } from "@slopus/happy-agent-client";
 import { CodexApiKeyCredential, CodexProvider } from "@slopus/happy-providers";
 import { exportJWK, exportSPKI, generateKeyPair, SignJWT } from "jose";
@@ -21,10 +25,12 @@ const ORGANIZATION_ID = "org_test123";
 const OWNER_WORKOS_USER_ID = "user_owner123";
 const MEMBER_WORKOS_USER_ID = "user_member456";
 let daemon: HappyAgentDaemon | undefined;
+const closers: (() => Promise<void>)[] = [];
 
 afterEach(async () => {
     await daemon?.close();
     daemon = undefined;
+    for (const close of closers.splice(0)) await close();
     vi.unstubAllGlobals();
     await Promise.all(
         temporaryDirectories
@@ -398,7 +404,7 @@ describe("team mode daemon", () => {
 });
 
 describe("team mode daemon with JWT authentication", () => {
-    it("advertises browser sign-in and admits deployer-issued JWTs", async () => {
+    it("signs in with the code flow and refreshes without the daemon seeing credentials", async () => {
         const root = await mkdtemp(join(tmpdir(), "happy-agent-team-jwt-"));
         temporaryDirectories.push(root);
         const happyHome = join(root, ".happy");
@@ -407,8 +413,9 @@ describe("team mode daemon with JWT authentication", () => {
             process.platform === "darwin" ? "Happy/Config" : "happy/config",
             "happy.toml",
         );
-        const { privateKey, publicKey } = await generateKeyPair("ES256", { extractable: true });
-        const pem = await exportSPKI(publicKey);
+        const authorizationServer = await startAuthorizationServer();
+        closers.push(authorizationServer.close);
+        const { origin } = authorizationServer;
         await mkdir(dirname(configPath), { recursive: true });
         await writeFile(
             configPath,
@@ -421,74 +428,185 @@ describe("team mode daemon with JWT authentication", () => {
                 'owner_user_id = "owner-1"',
                 "[feature.team.jwt]",
                 'name = "Acme SSO"',
-                'login_url = "https://sso.acme.example/happy/login"',
-                'issuer = "https://sso.acme.example"',
-                'audience = "happy-agent"',
+                `authorization_url = "${origin}/authorize"`,
+                `token_url = "${origin}/token"`,
+                `refresh_url = "${origin}/refresh"`,
+                'client_id = "happy"',
+                'scope = "happy"',
+                `issuer = "${origin}"`,
+                'audience = "happy-agent-test"',
                 'algorithms = ["ES256"]',
-                `public_key = """\n${pem}"""`,
+                `public_key = """\n${authorizationServer.publicKeyPem}"""`,
             ].join("\n"),
         );
         daemon = await startHappyAgentDaemon({ happyHome, inference: await inference() });
+        const daemonRequests: string[] = [];
+        const recordingFetch: typeof globalThis.fetch = async (input, init) => {
+            daemonRequests.push(
+                `${String(input)} ${new Headers(init?.headers).get("authorization") ?? ""}`,
+            );
+            return await globalThis.fetch(input, init);
+        };
 
-        const anonymous = new HappyAgentClient({ endpoint: daemon.httpUrl });
-        const discovery = await anonymous.getAuthentication({
-            redirectUri: "happy://auth/callback",
-            state: "k3v9",
+        const anonymous = new HappyAgentClient({ endpoint: daemon.httpUrl, fetch: recordingFetch });
+        const discovery = await anonymous.getAuthentication();
+        expect(discovery).toEqual({
+            authenticated: false,
+            methods: [
+                {
+                    authorizationUrl: `${origin}/authorize`,
+                    clientId: "happy",
+                    id: "jwt",
+                    name: "Acme SSO",
+                    refreshUrl: `${origin}/refresh`,
+                    scope: "happy",
+                    tokenUrl: `${origin}/token`,
+                    type: "oauth",
+                },
+            ],
+            userId: null,
         });
-        expect(discovery).toMatchObject({ authenticated: false, userId: null });
-        expect(discovery.methods).toHaveLength(1);
-        const [method] = discovery.methods;
-        expect(method).toMatchObject({ id: "jwt", name: "Acme SSO", type: "browser" });
-        const loginUrl = new URL(method!.url);
-        expect(loginUrl.searchParams.get("redirect_uri")).toBe("happy://auth/callback");
-        expect(loginUrl.searchParams.get("state")).toBe("k3v9");
-
         const rejected = await new HappyAgentClient({ endpoint: daemon.httpUrl, token: "invalid" })
             .getConfig()
             .catch((error: unknown) => error);
-        expect(rejected).toBeInstanceOf(HappyAgentApiError);
-        expect((rejected as HappyAgentApiError).authentication?.methods).toEqual([
-            {
-                id: "jwt",
-                name: "Acme SSO",
-                type: "browser",
-                url: "https://sso.acme.example/happy/login",
-            },
-        ]);
+        expect((rejected as HappyAgentApiError).authentication?.methods).toEqual(discovery.methods);
 
-        const now = Math.floor(Date.now() / 1_000);
-        const token = await new SignJWT({})
-            .setProtectedHeader({ alg: "ES256" })
-            .setIssuer("https://sso.acme.example")
-            .setAudience("happy-agent")
-            .setSubject("owner-1")
-            .setIssuedAt(now)
-            .setExpirationTime(now + 300)
-            .sign(privateKey);
-        const signedIn = new HappyAgentClient({
-            endpoint: daemon.httpUrl,
-            token: readAuthenticationCallback(
-                `happy://auth/callback#token=${token}&state=k3v9`,
-                "k3v9",
-            ),
+        // The system browser: follow the authorization URL to the app's redirect.
+        const signIn = await beginOAuthSignIn(discovery.methods[0]!, {
+            redirectUri: "http://127.0.0.1:53682/callback",
         });
-        await expect(signedIn.getAuthentication()).resolves.toMatchObject({
+        const redirect = await fetch(signIn.url, { redirect: "manual" });
+        expect(redirect.status).toBe(302);
+        const credential = await completeOAuthSignIn(signIn, redirect.headers.get("location")!);
+        expect(credential.refreshToken).toBe("refresh-1");
+
+        let current = credential;
+        const client = new HappyAgentClient({
+            endpoint: daemon.httpUrl,
+            fetch: recordingFetch,
+            token: () => current.accessToken,
+        });
+        await expect(client.getAuthentication()).resolves.toMatchObject({
             authenticated: true,
             userId: null,
         });
-
-        const { profile } = await signedIn.getProfile();
-        const saved = await signedIn.updateProfile(
+        const { profile } = await client.getProfile();
+        await client.updateProfile(
             { mutationId: "jwt-profile-1", name: "Ada Lovelace" },
             { ifMatch: profile.version },
         );
-        expect(saved.profile.name).toBe("Ada Lovelace");
-        const status = await signedIn.getAuthentication();
-        expect(status.authenticated).toBe(true);
-        expect(status.userId).toEqual(expect.any(String));
-        await expect(signedIn.getConfig()).resolves.toBeDefined();
+        await expect(client.getConfig()).resolves.toBeDefined();
+
+        current = await refreshOAuthCredential(current);
+        expect(current).toMatchObject({
+            accessToken: expect.any(String),
+            refreshToken: "refresh-2",
+        });
+        expect(current.accessToken).not.toBe(credential.accessToken);
+        const status = await client.getAuthentication();
+        expect(status).toMatchObject({ authenticated: true, userId: expect.any(String) });
+
+        expect(authorizationServer.requests).toEqual([
+            "GET /authorize",
+            "POST /token authorization_code",
+            "POST /refresh refresh_token",
+        ]);
+        const sentToDaemon = daemonRequests.join("\n");
+        expect(sentToDaemon).not.toContain(signIn.codeVerifier);
+        expect(sentToDaemon).not.toContain("refresh-");
+        expect(sentToDaemon).not.toContain("code-");
     });
 });
+
+/** A minimal OAuth authorization server that checks PKCE and issues ES256 access tokens. */
+async function startAuthorizationServer(): Promise<{
+    readonly close: () => Promise<void>;
+    readonly origin: string;
+    readonly publicKeyPem: string;
+    readonly requests: string[];
+}> {
+    const { privateKey, publicKey } = await generateKeyPair("ES256", { extractable: true });
+    const requests: string[] = [];
+    const codes = new Map<string, string>();
+    let issued = 0;
+    let origin = "";
+    const token = async (refreshToken: string) => {
+        issued += 1;
+        const now = Math.floor(Date.now() / 1_000);
+        return {
+            access_token: await new SignJWT({ n: issued })
+                .setProtectedHeader({ alg: "ES256" })
+                .setIssuer(origin)
+                .setAudience("happy-agent-test")
+                .setSubject("owner-1")
+                .setIssuedAt(now)
+                .setExpirationTime(now + 300)
+                .sign(privateKey),
+            expires_in: 300,
+            refresh_token: refreshToken,
+            token_type: "Bearer",
+        };
+    };
+    const server = createServer((request, response) => {
+        void (async () => {
+            const url = new URL(request.url ?? "/", origin);
+            let body = "";
+            for await (const chunk of request) body += String(chunk);
+            const form = new URLSearchParams(body);
+            requests.push(
+                `${request.method ?? ""} ${url.pathname}${form.has("grant_type") ? ` ${form.get("grant_type")!}` : ""}`,
+            );
+            const json = (status: number, value: unknown) => {
+                response.writeHead(status, { "content-type": "application/json" });
+                response.end(JSON.stringify(value));
+            };
+            if (url.pathname === "/authorize") {
+                const params = url.searchParams;
+                if (
+                    params.get("response_type") !== "code" ||
+                    params.get("client_id") !== "happy" ||
+                    params.get("code_challenge_method") !== "S256"
+                ) {
+                    return json(400, { error: "invalid_request" });
+                }
+                const code = `code-${String(codes.size + 1)}`;
+                codes.set(code, params.get("code_challenge")!);
+                const target = new URL(params.get("redirect_uri")!);
+                target.searchParams.set("code", code);
+                target.searchParams.set("state", params.get("state")!);
+                response.writeHead(302, { location: target.toString() });
+                return response.end();
+            }
+            if (url.pathname === "/token" && form.get("grant_type") === "authorization_code") {
+                const challenge = codes.get(form.get("code") ?? "");
+                const expected = createHash("sha256")
+                    .update(form.get("code_verifier") ?? "")
+                    .digest("base64url");
+                codes.delete(form.get("code") ?? "");
+                if (challenge === undefined || challenge !== expected) {
+                    return json(400, { error: "invalid_grant" });
+                }
+                return json(200, await token("refresh-1"));
+            }
+            if (url.pathname === "/refresh" && form.get("refresh_token") === "refresh-1") {
+                return json(200, await token("refresh-2"));
+            }
+            return json(400, { error: "invalid_grant" });
+        })();
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (address === null || typeof address === "string") throw new Error("No address.");
+    origin = `http://127.0.0.1:${String(address.port)}`;
+    return {
+        close: async () => {
+            await new Promise<void>((resolve) => server.close(() => resolve()));
+        },
+        origin,
+        publicKeyPem: await exportSPKI(publicKey),
+        requests,
+    };
+}
 
 async function signAccessToken(
     privateKey: CryptoKey,
