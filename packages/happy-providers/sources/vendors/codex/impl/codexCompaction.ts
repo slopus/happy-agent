@@ -12,7 +12,6 @@ import type {
     ResponseStreamEvent,
 } from "openai/resources/responses/responses.js";
 import type { CodexResponseRequest } from "@/vendors/codex/impl/CodexResponseRequest.js";
-import type { ResponseCreateParamsStreaming } from "openai/resources/responses/responses.js";
 import type { ResponseInputItem } from "openai/resources/responses/responses.js";
 import type { SessionUsage } from "@/core/SessionUsage.js";
 import type { SessionMessage, SessionUserMessage } from "@/core/SessionContext.js";
@@ -93,7 +92,7 @@ function decodeSuffix(source: Buffer, budget: number): string {
 }
 
 export function createCodexCompactionRequest(
-    request: ResponseCreateParamsStreaming,
+    request: CodexResponseRequest,
     metadata: CodexCompactionMetadata,
 ): CodexResponseRequest {
     const compaction: CodexResponseRequest = structuredClone(request);

@@ -21,6 +21,7 @@ import { getCodexIncrementalInput } from "@/vendors/codex/impl/getCodexIncrement
 import { setCodexRequestKind } from "@/vendors/codex/impl/setCodexRequestKind.js";
 import { toCodexToolDefinitions } from "@/vendors/codex/impl/toCodexToolDefinitions.js";
 import { withCodexStreamIdleTimeout } from "@/vendors/codex/impl/codexRetry.js";
+import { createCodexRoutingHint } from "./createCodexRoutingHint.js";
 
 /**
  * OpenAI closes Responses websockets after sixty minutes. Rotate a few minutes early so a long
@@ -46,6 +47,8 @@ interface CodexWebSocketStreamOptions {
  */
 export class CodexWebSocketConnection {
     private socket: ResponsesWS | undefined;
+    private routingHint: string | undefined;
+    private routingTier: CodexResponseRequest["service_tier"];
     private openedAtMs = 0;
     private started = false;
     private inferenceStarted = false;
@@ -56,6 +59,7 @@ export class CodexWebSocketConnection {
 
     constructor(
         private readonly options: {
+            codexBackend: () => boolean;
             client: () => OpenAI;
             headers: () => Record<string, string>;
             idleTimeoutMs: number;
@@ -99,7 +103,7 @@ export class CodexWebSocketConnection {
         const { request, signal, tools } = options;
         const turnState = this.options.turnState;
         const client = this.options.client();
-        this.ensureSocket(client);
+        this.ensureSocket(client, request);
         if (!this.started) {
             const warmup =
                 request.tools === undefined
@@ -211,7 +215,18 @@ export class CodexWebSocketConnection {
             socket.close({ code: 1000, reason });
     }
 
-    private ensureSocket(client: OpenAI): ResponsesWS {
+    private ensureSocket(client: OpenAI, request: CodexResponseRequest): ResponsesWS {
+        const routingHint = this.options.codexBackend()
+            ? createCodexRoutingHint(request)
+            : undefined;
+        if (this.routingHint !== undefined && this.routingTier !== request.service_tier) {
+            // Routing headers belong to the handshake. Reusing the old connection after a speed
+            // change would retain the prior route even though the body names the new tier.
+            this.discard("inference route changed");
+            this.options.turnState.clear();
+        }
+        this.routingHint = routingHint;
+        this.routingTier = request.service_tier;
         const now = Date.now();
         if (
             this.socket !== undefined &&
@@ -221,7 +236,12 @@ export class CodexWebSocketConnection {
             this.reset("websocket max age");
         }
         if (this.socket === undefined) {
-            const socket = new ResponsesWS(client, { headers: this.options.headers() });
+            const socket = new ResponsesWS(client, {
+                headers: {
+                    ...this.options.headers(),
+                    ...(routingHint === undefined ? {} : { "x-codex-routing-hint": routingHint }),
+                },
+            });
             // The OpenAI SDK turns unobserved socket errors into Promise.reject(...). Keep one
             // listener for the life of the connection so an idle sixty-minute limit cannot kill
             // the daemon, and drop the dead socket so the next turn opens a fresh one.

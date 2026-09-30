@@ -1,5 +1,8 @@
 import type OpenAI from "openai";
-import type { ResponseStreamEvent } from "openai/resources/responses/responses.js";
+import type {
+    ResponseCreateParamsStreaming,
+    ResponseStreamEvent,
+} from "openai/resources/responses/responses.js";
 
 import type { SessionTool } from "@/core/SessionTool.js";
 import { createResponsesLiteSseRequest } from "@/protocol/responsesLite/createResponsesLiteRequest.js";
@@ -10,6 +13,7 @@ import { createCodexRequestHeaders } from "@/vendors/codex/impl/createCodexReque
 import { isCodexV2Model } from "@/vendors/codex/impl/isCodexV2Model.js";
 import { toCodexToolDefinitions } from "@/vendors/codex/impl/toCodexToolDefinitions.js";
 import { withCodexStreamIdleTimeout } from "@/vendors/codex/impl/codexRetry.js";
+import { createCodexRoutingHint } from "./createCodexRoutingHint.js";
 
 /**
  * One Codex request over server-sent events.
@@ -22,6 +26,7 @@ export class CodexSseConnection {
     constructor(
         private readonly options: {
             bedrock: () => boolean;
+            codexBackend: () => boolean;
             client: () => OpenAI;
             idleTimeoutMs: number;
             turnState: CodexTurnState;
@@ -48,15 +53,23 @@ export class CodexSseConnection {
         const { data: stream, response } = await this.options
             .client()
             .responses.create(
-                this.options.bedrock() ? createCodexBedrockRequest(request) : request,
+                // The SDK enum predates Codex's native "ultrafast" tier; serialization is unchanged.
+                (this.options.bedrock()
+                    ? createCodexBedrockRequest(request)
+                    : request) as ResponseCreateParamsStreaming,
                 {
-                    headers: createCodexRequestHeaders(
-                        options.model,
-                        turnState.value,
-                        this.options.windowId(),
-                        typeof turnMetadata === "string" ? turnMetadata : undefined,
-                        isCodexV2Model(options.model) && request.tools === undefined,
-                    ),
+                    headers: {
+                        ...createCodexRequestHeaders(
+                            options.model,
+                            turnState.value,
+                            this.options.windowId(),
+                            typeof turnMetadata === "string" ? turnMetadata : undefined,
+                            isCodexV2Model(options.model) && request.tools === undefined,
+                        ),
+                        ...(this.options.codexBackend()
+                            ? { "x-codex-routing-hint": createCodexRoutingHint(request) }
+                            : {}),
+                    },
                     ...(signal === undefined ? {} : { signal }),
                 },
             )

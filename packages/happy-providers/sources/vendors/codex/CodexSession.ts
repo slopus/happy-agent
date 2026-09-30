@@ -168,12 +168,14 @@ export class CodexSession extends BaseSession {
 
         this.sseConnection = new CodexSseConnection({
             bedrock: () => isBedrockCredential(this.credential),
+            codexBackend: () => this.credential.name === "codex-session",
             client: () => this.resolveClient(),
             idleTimeoutMs: this.streamIdleTimeoutMs,
             turnState: this.turnState,
             windowId: () => this.windowId,
         });
         this.websocketConnection = new CodexWebSocketConnection({
+            codexBackend: () => this.credential.name === "codex-session",
             client: () => this.resolveClient(),
             headers: () => this.websocketHeaders(),
             idleTimeoutMs: this.streamIdleTimeoutMs,

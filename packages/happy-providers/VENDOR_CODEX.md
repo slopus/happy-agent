@@ -11,6 +11,44 @@ provider tests.
 
 ## Evidence and provenance
 
+### Ultrafast service tier
+
+The desktop bundled with ChatGPT 26.908.70816 uses Codex 0.154.0-alpha.6.2. Its
+`thread/start` and `turn/start` contracts carry `serviceTier: "ultrafast"`; HTTP inference
+uses `service_tier: "ultrafast"`, distinct from Fast's `"priority"`. Regular omits the wire
+tier. See the [official Ultrafast guide](https://developers.openai.com/api/docs/guides/ultrafast-mode).
+The desktop picker uses each model's `serviceTiers` entries, not a boolean Fast flag.
+
+Live validation on 2026-09-30 verified the requested account locally before inference. After
+the user's plan upgrade and the official desktop account refresh, Astra's native catalog
+advertised both `priority` and `ultrafast`. Happy's corrected SSE and WebSocket requests
+completed normally; a bounded WebSocket tool-call/result/final-answer round trip also passed.
+Every response still reported `response.completed.response.service_tier: "default"`.
+This is **inconclusive about the tier actually served**, not proof of fallback: ChatGPT's
+server-routed Fast tiers can report `default` (see [Codex issue 14204](https://github.com/openai/codex/issues/14204)).
+The opt-in tests in `tests/codexUltrafast.live.test.ts` verify the requested routing and completed
+behavior, reporting response metadata separately without claiming it proves the tier served.
+The account-capability reader was also verified against the same authenticated account: Astra
+advertised `priority` and `ultrafast`, while Sol advertised only `priority`.
+
+Native source also sends `x-codex-routing-hint: model=gpt-6-astra;tier=ultrafast` to the
+ChatGPT backend, alongside the body field. Happy now matches this contract on SSE and the
+WebSocket handshake; changing speed reconnects the socket and clears sticky routing. Regular
+uses a model-only hint. API-key endpoints and Bedrock never receive ChatGPT routing hints.
+The source authority is `build_routing_hint_header` in
+[Codex client.rs](https://github.com/openai/codex/blob/main/codex-rs/core/src/client.rs).
+
+The isolated native capture initially lacked the upgraded account's model catalog, causing Codex
+to filter the requested tier out. Those captures do not prove an Ultrafast request. A corrected
+control preserving the advertised native cache was stopped after it stalled; native live wire
+parity remains unconfirmed. Deterministic transport regressions verify the documented contract.
+
+OpenAI SDK 6.46.0's generated request enum predates this tier. The internal Codex and Lite
+request types include it explicitly; the SSE adapter narrows only at the SDK serialization
+boundary. The shared session protocol remains an opaque string, and Bedrock strips the tier.
+
+### Existing transport evidence
+
 The implementation is checked against:
 
 - the vanilla Codex checkout at `~/Developer/coding-assistant-sources/codex`, reviewed at commit

@@ -2,7 +2,7 @@ import type { SessionServiceTier } from "@/core/SessionRunRequest.js";
 import { Type, type Static } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 
-const codexServiceTierSchema = Type.Literal("priority");
+const codexServiceTierSchema = Type.Union([Type.Literal("priority"), Type.Literal("ultrafast")]);
 
 /** A service tier understood by the native Codex request protocol. */
 export type CodexServiceTier = Static<typeof codexServiceTierSchema>;

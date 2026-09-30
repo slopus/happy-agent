@@ -1,13 +1,38 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
-import { copyFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { gunzipSync, zstdDecompressSync } from "node:zlib";
+import { Type } from "@sinclair/typebox";
+import { Value } from "@sinclair/typebox/value";
 
-const SUPPORTED_MODELS = new Set(["gpt-5.5", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]);
+const serviceTierSchema = Type.Union([Type.Literal("priority"), Type.Literal("ultrafast")]);
+const completedSchema = Type.Object({
+    type: Type.Literal("response.completed"),
+    response: Type.Object({
+        model: Type.String(),
+        service_tier: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+    }),
+});
+const modelCacheSchema = Type.Object({
+    models: Type.Array(
+        Type.Object({
+            slug: Type.String(),
+            service_tiers: Type.Optional(Type.Array(Type.Object({ id: Type.String() }))),
+        }),
+    ),
+});
+
+const SUPPORTED_MODELS = new Set([
+    "gpt-5.5",
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
+    "gpt-6-astra",
+]);
 const REASONING_EFFORT = "low";
 const PROMPT = "Reply with OK.";
 const CAPTURE_TIMEOUT_MS = 120_000;
@@ -15,19 +40,47 @@ const CODEX_UPSTREAM = "https://chatgpt.com/backend-api/codex";
 
 const outputArgument = process.argv[2];
 const model = process.argv[3];
+const serviceTier = process.argv[4];
+const codexBinary = process.env.CODEX_CAPTURE_BINARY || "codex";
 if (outputArgument === undefined || model === undefined) {
-    throw new Error("Usage: node captureCodexSseTrace.mjs <output.json> <model>");
+    throw new Error(
+        "Usage: node captureCodexSseTrace.mjs <output.json> <model> [priority|ultrafast]",
+    );
 }
 if (!SUPPORTED_MODELS.has(model)) throw new Error(`Unsupported capture model '${model}'.`);
+if (serviceTier !== undefined && !Value.Check(serviceTierSchema, serviceTier)) {
+    throw new Error("Unsupported capture service tier.");
+}
 
 const outputPath = resolve(outputArgument);
+const sourceCodexHome = process.env.CODEX_HOME?.trim() || join(homedir(), ".codex");
+if (serviceTier !== undefined) {
+    const cache = JSON.parse(await readFile(join(sourceCodexHome, "models_cache.json"), "utf8"));
+    if (
+        !Value.Check(modelCacheSchema, cache) ||
+        !cache.models.some(
+            (entry) =>
+                entry.slug === model &&
+                entry.service_tiers?.some((tier) => tier.id === serviceTier),
+        )
+    ) {
+        throw new Error(
+            "The native model cache does not advertise the requested tier; no inference was run.",
+        );
+    }
+}
 const captureDirectory = await mkdtemp(`${tmpdir()}/rig-codex-sse-capture-`);
 const isolatedCodexHome = join(captureDirectory, "codex-home");
 await mkdir(isolatedCodexHome);
-await copyFile(
-    join(process.env.CODEX_HOME?.trim() || join(homedir(), ".codex"), "auth.json"),
-    join(isolatedCodexHome, "auth.json"),
-);
+await copyFile(join(sourceCodexHome, "auth.json"), join(isolatedCodexHome, "auth.json"));
+if (serviceTier !== undefined) {
+    // Keep the native account's advertised model capabilities: an empty isolated cache would
+    // make Codex filter out a new tier before the request ever reaches the capture proxy.
+    await copyFile(
+        join(sourceCodexHome, "models_cache.json"),
+        join(isolatedCodexHome, "models_cache.json"),
+    );
+}
 
 let resolveCapture;
 let rejectCapture;
@@ -60,7 +113,12 @@ const server = createServer(async (request, response) => {
                     transport: "sse",
                     capture: "forwarded-live-inference",
                 },
-                invocation: { model, reasoningEffort: REASONING_EFFORT, prompt: PROMPT },
+                invocation: {
+                    model,
+                    reasoningEffort: REASONING_EFFORT,
+                    prompt: PROMPT,
+                    ...(serviceTier === undefined ? {} : { serviceTier }),
+                },
                 http: {
                     method: request.method,
                     path: request.url,
@@ -87,7 +145,7 @@ server.listen(0, "127.0.0.1");
 const port = await listeningPort(server);
 
 const codex = spawn(
-    "codex",
+    codexBinary,
     [
         "exec",
         "--ignore-user-config",
@@ -100,11 +158,12 @@ const codex = spawn(
         "--model",
         model,
         "--config",
-        'model_provider="capture"',
+        serviceTier === undefined ? 'model_provider="capture"' : 'model_provider="openai"',
         "--config",
         `model_reasoning_effort="${REASONING_EFFORT}"`,
+        ...(serviceTier === undefined ? [] : ["--config", `service_tier="${serviceTier}"`]),
         "--config",
-        `model_providers.capture={name="OpenAI",base_url="http://127.0.0.1:${port}/v1",wire_api="responses",requires_openai_auth=true,supports_websockets=false}`,
+        `model_providers.${serviceTier === undefined ? "capture" : "openai"}={name="OpenAI",base_url="http://127.0.0.1:${port}/v1",wire_api="responses",requires_openai_auth=true,supports_websockets=false}`,
         PROMPT,
     ],
     {
@@ -178,7 +237,7 @@ function listeningPort(httpServer) {
 
 async function codexVersion() {
     return new Promise((resolvePromise, rejectPromise) => {
-        const child = spawn("codex", ["--version"], { stdio: ["ignore", "pipe", "pipe"] });
+        const child = spawn(codexBinary, ["--version"], { stdio: ["ignore", "pipe", "pipe"] });
         let stdout = "";
         child.stdout.setEncoding("utf8");
         child.stdout.on("data", (chunk) => {
@@ -200,6 +259,8 @@ function sanitizeHeaders(headers) {
         "originator",
         "user-agent",
         "x-codex-beta-features",
+        "x-codex-routing-hint",
+        "x-openai-internal-codex-responses-lite",
     ]);
     return Object.fromEntries(
         Object.entries(headers).filter(
@@ -276,6 +337,7 @@ function relayResponseHeaders(headers) {
 }
 
 function summarizeSseResponse(text) {
+    let completed;
     const eventTypes = text
         .split(/\r?\n/u)
         .filter((line) => line.startsWith("data: "))
@@ -283,13 +345,21 @@ function summarizeSseResponse(text) {
         .filter((data) => data !== "[DONE]")
         .flatMap((data) => {
             try {
-                return [JSON.parse(data).type];
+                const event = JSON.parse(data);
+                if (Value.Check(completedSchema, event)) {
+                    completed = {
+                        model: event.response.model,
+                        serviceTier: event.response.service_tier ?? null,
+                    };
+                }
+                return [event.type];
             } catch {
                 return [];
             }
         });
     return {
         eventTypes,
+        ...(serviceTier === undefined ? {} : { completed }),
         terminal:
             eventTypes.findLast((type) =>
                 ["response.completed", "response.failed", "response.incomplete", "error"].includes(

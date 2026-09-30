@@ -13,6 +13,10 @@ import {
     bedrockRuntimeOpenAIEndpoint,
 } from "@/vendors/bedrock/impl/bedrockConstants.js";
 import { CodexSession } from "@/vendors/codex/CodexSession.js";
+import {
+    codexModelServiceTiers,
+    codexServiceTierAccountKey,
+} from "@/vendors/codex/impl/codexModelServiceTiers.js";
 import { assertCodexCredential } from "@/vendors/codex/impl/assertCodexCredential.js";
 import { resolveCodexInstallationId } from "@/vendors/codex/impl/resolveCodexInstallationId.js";
 import { resolveCodexSessionModelId } from "@/vendors/codex/impl/resolveCodexSessionModelId.js";
@@ -100,6 +104,26 @@ export class CodexProvider extends ResponsesProvider {
 
     get inferenceMaxRetries(): number {
         return this.#resolveInferenceMaxRetries();
+    }
+
+    /** Opaque current native-login identity for invalidating account-scoped tier caches. */
+    async serviceTierAccountKey(): Promise<string | null> {
+        return await codexServiceTierAccountKey(this.credential);
+    }
+
+    /** Authenticated tier capabilities for fixed caller-owned models; unknown data fails closed. */
+    async modelServiceTiers(
+        modelIds: readonly string[],
+        options: { signal?: AbortSignal } = {},
+    ): Promise<Readonly<Record<string, readonly string[]>>> {
+        if (this.credential.name !== "codex-session" || options.signal?.aborted) return {};
+        return await codexModelServiceTiers({
+            credential: this.credential,
+            endpoint: this.endpoint,
+            modelIds,
+            userAgent: this.userAgent ?? (await resolveCodexUserAgent()),
+            ...options,
+        });
     }
 
     async generateImage(request: GenerateCodexImageRequest): Promise<GenerateCodexImageResult> {

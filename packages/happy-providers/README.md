@@ -716,6 +716,16 @@ provider-owned identifier at the shared session boundary: the selected provider 
 against its own typed schema and maps it onto its own wire contract. Omitting `serviceTier` selects
 ordinary provider behavior.
 
+Codex accepts `"priority"` (Fast) and `"ultrafast"` (Ultrafast); omit the tier for Regular.
+Ultrafast requires a supported model such as GPT-6 Astra and an eligible account and region.
+It is a distinct wire value, not an alias for priority. Bedrock does not support these tiers.
+`CodexProvider.modelServiceTiers(modelIds, { signal })` reads the signed-in account's advertised
+speeds for caller-supplied model IDs; it does not discover models. Missing, invalid, oversized,
+or unavailable capability data returns an empty result. `serviceTierAccountKey()` returns an
+opaque fingerprint of the current stored login for short-lived account-scoped caches, or `null`
+when the login is absent, changed to another account, or not a native Codex session credential.
+Callers must expire capability caches and recheck this identity before using gated speeds.
+
 ### `SessionMessage` — the transcript
 
 The transcript you own is an array of six message shapes, discriminated by `role`:

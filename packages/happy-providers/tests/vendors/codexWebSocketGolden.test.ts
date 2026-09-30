@@ -628,6 +628,52 @@ describe("Codex CLI mode WebSocket goldens", () => {
         sse.requests.splice(0);
     });
 
+    it("reconnects native routing when speed changes and clears Ultrafast for Regular", async () => {
+        websocket.emitTextResponses = true;
+        const session = await new CodexProvider({
+            credential: {
+                name: "codex-session",
+                credential: { accessToken: "test", accountId: "test" },
+            } as never,
+            model: "gpt-6-astra",
+            transport: "websocket",
+            inferenceMaxRetries: 0,
+        }).session("speed-routing", { instructions: "Test", tools: [] });
+        try {
+            for (const tier of [undefined, "priority", "ultrafast", undefined]) {
+                for await (const event of session.run(testContext, {
+                    context: {
+                        instructions: "Test",
+                        messages: [
+                            {
+                                role: "user",
+                                content: [{ type: "text", text: `Turn ${websocket.sent.length}` }],
+                            },
+                        ],
+                    },
+                    ...(tier === undefined ? {} : { serviceTier: tier }),
+                })) {
+                    if (event.type === "done") expect(event.state).toBe("normal");
+                }
+            }
+            expect(
+                websocket.connectionHeaders.map((headers) => headers["x-codex-routing-hint"]),
+            ).toEqual([
+                "model=gpt-6-astra",
+                "model=gpt-6-astra;tier=priority",
+                "model=gpt-6-astra;tier=ultrafast",
+                "model=gpt-6-astra",
+            ]);
+            expect(
+                websocket.sent
+                    .filter((request) => request.generate !== false)
+                    .map((request) => request.service_tier),
+            ).toEqual([undefined, "priority", "ultrafast", undefined]);
+        } finally {
+            await session.destroy();
+        }
+    });
+
     it.each(cases)("matches the official %s low-effort request contract", async (model, stem) => {
         const golden = await fixture(`${stem}.websocket.json`);
         expect(golden.source.capture).toBe("forwarded-live-inference");
