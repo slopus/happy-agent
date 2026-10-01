@@ -65,6 +65,8 @@ export type DrainWaitingFor = Static<typeof drainWaitingForSchema>;
 
 /** `GET /v0/health` */
 export const healthResponseSchema = Type.Object({
+    /** True only for the authenticated, window-scoped GPT-Live desktop control contract. */
+    capabilities: Type.Optional(Type.Object({ desktopLiveControl: Type.Optional(Type.Boolean()) })),
     /** Always `true`; a daemon that cannot answer does not answer. */
     healthy: Type.Boolean(),
     /** `false` while the agent system is still loading. */

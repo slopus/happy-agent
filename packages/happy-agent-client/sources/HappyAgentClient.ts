@@ -1520,7 +1520,14 @@ export class HappyAgentClient {
         });
     }
 
-    /** `POST /v0/live/sessions/:id/close` — leaves the orchestrator and its tasks running. */
+    /** Authenticated WebSocket upgrade URL. The trusted host supplies ordinary bearer headers. */
+    liveSessionControlUrl(id: Cuid2, windowId: string): string {
+        return endpointUrl(this.#endpoint, `v0/live/sessions/${encodeURIComponent(id)}/control`, {
+            windowId,
+        });
+    }
+
+    /** `POST /v0/live/sessions/:id/close` — leaves coding sessions and their tasks running. */
     async closeLiveSession(
         id: Cuid2,
         request: CloseLiveSessionRequest = {},

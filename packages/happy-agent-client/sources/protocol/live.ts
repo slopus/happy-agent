@@ -2,8 +2,12 @@
 import { type Static, Type } from "@sinclair/typebox";
 
 import { mutationIdSchema, Nullable, resourceVersionSchema, timestampSchema } from "./common.js";
-
-const liveIdSchema = Type.String({ minLength: 2, maxLength: 32, pattern: "^[a-z][a-z0-9]*$" });
+import {
+    liveContextRevisionSchema,
+    liveDesktopContextSchema,
+    liveDesktopIdSchema,
+    liveResourceIdSchema,
+} from "./liveDesktop.js";
 
 export const liveCredentialSchema = Type.Object({
     type: Type.Union([Type.Literal("codex_subscription"), Type.Literal("openai_api_key")]),
@@ -14,11 +18,6 @@ export type LiveCredential = Static<typeof liveCredentialSchema>;
 /** Request selection is closed; resource responses remain forward-compatible. */
 export const liveCredentialRequestSchema = Type.Object(liveCredentialSchema.properties, {
     additionalProperties: false,
-});
-
-export const liveWatchedAgentIdsSchema = Type.Array(liveIdSchema, {
-    maxItems: 32,
-    uniqueItems: true,
 });
 
 export const liveSessionStatusSchema = Type.Union([
@@ -37,10 +36,10 @@ export const liveSessionUsageSchema = Type.Union([
 export type LiveSessionUsage = Static<typeof liveSessionUsageSchema>;
 
 export const liveSessionSchema = Type.Object({
-    id: liveIdSchema,
-    agentId: liveIdSchema,
+    id: liveResourceIdSchema,
+    windowId: liveDesktopIdSchema,
     credential: liveCredentialSchema,
-    watchedAgentIds: liveWatchedAgentIdsSchema,
+    contextRevision: liveContextRevisionSchema,
     status: liveSessionStatusSchema,
     usage: liveSessionUsageSchema,
     error: Nullable(Type.String()),
@@ -55,11 +54,12 @@ export type LiveSession = Static<typeof liveSessionSchema>;
 export const createLiveSessionRequestSchema = Type.Object(
     {
         mutationId: Type.Optional(mutationIdSchema),
-        id: Type.Optional(liveIdSchema),
-        agentId: liveIdSchema,
+        id: Type.Optional(liveResourceIdSchema),
+        windowId: liveDesktopIdSchema,
         sdp: Type.String({ minLength: 1, maxLength: 65_536, pattern: "\\S" }),
         credential: liveCredentialRequestSchema,
-        watchedAgentIds: Type.Optional(liveWatchedAgentIdsSchema),
+        contextRevision: liveContextRevisionSchema,
+        context: liveDesktopContextSchema,
     },
     { additionalProperties: false },
 );
@@ -90,7 +90,7 @@ export const liveSessionCreatedPayloadSchema = Type.Object({
 export type LiveSessionCreatedPayload = Static<typeof liveSessionCreatedPayloadSchema>;
 
 export const liveSessionUpdatedChangesSchema = Type.Object({
-    watchedAgentIds: Type.Optional(liveWatchedAgentIdsSchema),
+    contextRevision: Type.Optional(liveContextRevisionSchema),
     status: Type.Optional(liveSessionStatusSchema),
     usage: Type.Optional(liveSessionUsageSchema),
     error: Type.Optional(Nullable(Type.String())),
@@ -100,7 +100,7 @@ export const liveSessionUpdatedChangesSchema = Type.Object({
 export type LiveSessionUpdatedChanges = Static<typeof liveSessionUpdatedChangesSchema>;
 
 export const liveSessionUpdatedPayloadSchema = Type.Object({
-    sessionId: liveIdSchema,
+    sessionId: liveResourceIdSchema,
     previousVersion: resourceVersionSchema,
     version: resourceVersionSchema,
     changes: liveSessionUpdatedChangesSchema,

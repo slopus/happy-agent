@@ -15,15 +15,28 @@ import {
     type CreateLiveSessionRequest,
     type HappyAgentEvent,
     type LiveSession,
+    type LiveDesktopContext,
 } from "../sources/index.js";
 
 const version = "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e";
 const nextVersion = "01991f3a-6d2f-7000-8000-3a0b2c4d5e6f";
+const context: LiveDesktopContext = {
+    windowId: "window-1",
+    connections: [],
+    activeConnectionId: null,
+    activeTarget: null,
+    projects: [],
+    workspaces: [],
+    sessions: [],
+    bots: [],
+    activeSession: null,
+    truncated: false,
+};
 const session: LiveSession = {
     id: "l1a2b3c4",
-    agentId: "a1b2c3d4",
+    windowId: context.windowId,
     credential: { type: "codex_subscription", providerId: "codex" },
-    watchedAgentIds: [],
+    contextRevision: 1,
     status: "starting",
     usage: { seconds: null, final: false },
     error: null,
@@ -34,7 +47,9 @@ const session: LiveSession = {
 };
 const request: CreateLiveSessionRequest = {
     id: session.id,
-    agentId: session.agentId,
+    windowId: session.windowId,
+    contextRevision: 1,
+    context,
     credential: session.credential,
     sdp: "v=0\r\n",
 };
@@ -78,24 +93,22 @@ describe("Live voice protocol", () => {
         ).toBe(false);
     });
 
-    it("bounds SDP and explicit watched IDs without making omission mean all agents", () => {
+    it("bounds SDP and requires initial desktop context", () => {
         for (const sdp of ["", " \r\n", "x".repeat(65_537)]) {
             expect(Value.Check(createLiveSessionRequestSchema, { ...request, sdp })).toBe(false);
         }
         expect(
             Value.Check(createLiveSessionRequestSchema, { ...request, sdp: "x".repeat(65_536) }),
         ).toBe(true);
-        for (const watchedAgentIds of [
-            ["same", "same"],
-            Array.from({ length: 33 }, (_, i) => `a${i}`),
-        ]) {
-            expect(
-                Value.Check(createLiveSessionRequestSchema, { ...request, watchedAgentIds }),
-            ).toBe(false);
-        }
         expect(
-            Value.Check(createLiveSessionRequestSchema, { ...request, watchedAgentIds: [] }),
-        ).toBe(true);
+            Value.Check(createLiveSessionRequestSchema, { ...request, context: undefined }),
+        ).toBe(false);
+        expect(
+            Value.Check(createLiveSessionRequestSchema, { ...request, contextRevision: 0 }),
+        ).toBe(false);
+        expect(
+            Value.Check(createLiveSessionRequestSchema, { ...request, agentId: "oldbinding" }),
+        ).toBe(false);
         expect(
             Value.Check(createLiveSessionRequestSchema, { ...request, futureOption: true }),
         ).toBe(false);
@@ -105,12 +118,6 @@ describe("Live voice protocol", () => {
         "rejects malformed ID %j",
         (id) => {
             expect(Value.Check(createLiveSessionRequestSchema, { ...request, id })).toBe(false);
-            expect(Value.Check(createLiveSessionRequestSchema, { ...request, agentId: id })).toBe(
-                false,
-            );
-            expect(
-                Value.Check(createLiveSessionRequestSchema, { ...request, watchedAgentIds: [id] }),
-            ).toBe(false);
         },
     );
 

@@ -710,6 +710,9 @@ Response — `200`:
 Fields:
 
 - `healthy` — always `true`; a daemon that cannot answer does not answer.
+- `capabilities` — optional feature support. `desktopLiveControl: true` advertises the
+  window-scoped GPT-Live control contract; missing or false means unavailable, independently
+  of protocol version or provider entitlement.
 - `ready` — `false` while starting, `true` once the agent system is loaded.
 - `status` — `"starting"` or `"ready"`; the human-readable form of `ready`.
 - `version` — one identity object. `protocol` is the wire protocol number, the client's
@@ -4975,18 +4978,19 @@ Response — `200`: `{ "bot": { ... } }` with `avatar` `null`.
 
 ## Live voice sessions
 
-GPT-Live is a voice frontend for an existing Happy orchestrator agent, not a replacement for
-its model, tools, permissions, or durable task state. The first integration creates ordinary
-sessions, bots, and workspaces through their existing operations and follows selected agents'
-text and status. It does not expose coding tools, screen capture, raw audio, private reasoning,
-or tool logs from those agents to the voice frontend.
+GPT-Live controls the initiating desktop window through a fixed set of UI-equivalent actions.
+It is not bound to a coding agent and does not receive that agent's tools. The desktop supplies
+bounded visible context, verifies each action's target and permissions, and executes it through
+its existing UI/state actions. Only public conversation text and task status are shared: no
+coding tools, screen capture, other sessions' audio, private reasoning, or tool logs.
 
 Every route uses ordinary API authentication. A session belongs to its creating principal;
-another principal receives `404` for its ID and never receives its journal events. The daemon
-validates access to the orchestrator and every watched agent before contacting the provider.
-Binding a bot never grants it admin privileges. Provider-derived transcripts and delegation
-requests remain attributed provider context, not automatically trusted human authorization.
-Required confirmations use the existing authenticated human-input and permission paths.
+another principal receives `404` for its ID and never receives its journal events. The session
+is also bound to the initiating `windowId`; its control socket must name that same window.
+The trusted desktop host binds the socket to the actual window, not a renderer-selected foreign
+window. Provider transcripts and generated action text remain attributed provider context, not
+automatically trusted human authorization. Existing permissions, role checks, and required human
+confirmations still apply. Voice cannot answer permission prompts or grant bot administration.
 
 The browser owns microphone and speaker WebRTC tracks. The daemon exchanges SDP using the
 explicitly selected server-held credential and owns the sideband, delegation identities,
@@ -4994,15 +4998,17 @@ bounded text updates, and shutdown. Credentials never enter responses, events, U
 browser. Selecting a Codex subscription credential is an explicit experimental choice, not a
 promise of entitlement; selecting an OpenAI API key explicitly opts into API billing. The
 daemon never falls back between credential kinds, accounts, or transports after a refusal.
+Use current GPT-Live only: the public `gpt-live-1` transport or Codex's native
+`gpt-live-1-codex` integration. Never fall back to older Realtime models or protocols.
 
 ### The live session object
 
 ```json
 {
     "id": "l1a2b3c4",
-    "agentId": "a1b2c3d4",
+    "windowId": "desktop-window-1",
     "credential": { "type": "codex_subscription", "providerId": "codex" },
-    "watchedAgentIds": ["a9b8c7d6"],
+    "contextRevision": 1,
     "status": "active",
     "usage": { "seconds": 12, "final": false },
     "error": null,
@@ -5014,13 +5020,12 @@ daemon never falls back between credential kinds, accounts, or transports after 
 ```
 
 - `id` — Happy's CUID2 resource ID, distinct from any provider session or delegation ID.
-- `agentId` — the existing, non-archived, user-messageable orchestrator; immutable.
+- `windowId` — the initiating desktop window's opaque lifetime identity; immutable.
 - `credential` — the immutable selection: `type` is `codex_subscription` or `openai_api_key`,
   and `providerId` names an enabled configured provider holding that exact credential kind.
   An unavailable provider, missing credential, or kind mismatch fails without trying another.
-- `watchedAgentIds` — at most 32 distinct accessible, user-visible agent IDs. Omitted at
-  creation means no watched agents, not every agent. Only these agents' text and status may
-  be shared. Orchestrator tools may change the set under the same access and permission rules.
+- `contextRevision` — the latest accepted desktop context revision, a positive safe integer.
+  Context contents and watch selection remain private to the control connection, not the journal.
 - `status` — `starting`, `active`, `closing`, `closed`, or `failed`. `active` requires a
   verified provider session and attached sideband. `closed` requires provider finalization;
   local transport loss, an interrupted start, or a finalization timeout instead means `failed`.
@@ -5042,31 +5047,47 @@ Creates one voice session. Body:
 {
     "mutationId": "start-voice-1",
     "id": "l1a2b3c4",
-    "agentId": "a1b2c3d4",
+    "windowId": "desktop-window-1",
     "sdp": "<WebRTC SDP offer>",
     "credential": { "type": "codex_subscription", "providerId": "codex" },
-    "watchedAgentIds": ["a9b8c7d6"]
+    "contextRevision": 1,
+    "context": {
+        "windowId": "desktop-window-1",
+        "connections": [],
+        "activeConnectionId": null,
+        "activeTarget": null,
+        "projects": [],
+        "workspaces": [],
+        "sessions": [],
+        "bots": [],
+        "activeSession": null,
+        "truncated": false
+    }
 }
 ```
 
-`mutationId`, `id`, and `watchedAgentIds` are optional; other fields are required. The SDP is
+`mutationId` and `id` are optional; other fields are required. The SDP is
 nonblank and at most 65,536 characters. `providerId` is nonblank and at most 128 characters.
 Raw credentials, arbitrary endpoints, model overrides, and permission overrides are not accepted.
-Creation, credential-selection, and close request objects reject unknown fields. All resource
-IDs use the ordinary CUID2 syntax (2–32 lowercase alphanumeric characters, starting with a letter).
+Creation, credential-selection, context/control, and close request objects reject unknown fields.
+The Live resource ID uses ordinary CUID2 syntax (2–32 lowercase alphanumeric characters, starting
+with a letter). Desktop window and target IDs are opaque, nonblank strings of at most 128
+characters without control characters; never derive one ID from another. The context window ID
+must equal the outer window ID. The entire creation body is limited to 384 KiB.
 The daemon chooses the supported Live model and transport for the selected credential kind.
 
 Response — `201`:
 
 ```json
 {
-    "session": { "id": "l1a2b3c4", "agentId": "a1b2c3d4", "status": "starting" },
+    "session": { "id": "l1a2b3c4", "windowId": "desktop-window-1", "status": "starting" },
     "transport": { "type": "webrtc", "sdp": "<WebRTC SDP answer>" }
 }
 ```
 
 `session` is the complete live session object. Apply the answer to the browser peer connection
-and wait for its provider-ready event before sending commands. The create request already starts
+and wait for identity-checked control `hello` followed by `status: active` before sending
+application commands. The renderer need not interpret raw provider readiness events. The create request already starts
 the call; do not send another start event. Only this response includes SDP, never GET or events.
 The response returns after upstream call allocation and sideband attachment; it must not wait
 for browser media negotiation. `starting` transitions asynchronously to `active` when the
@@ -5079,13 +5100,15 @@ never creates another upstream call. `mutationId` remains an echo, not a dedupli
 Clients should supply an ID, read it after a lost response, and close it before deliberately
 creating a replacement. An unknown upstream outcome is reported as failure, not retried.
 
-Invalid requests are `400 invalid_request`, inaccessible agents are `404 not_found`, a provider
+Invalid requests are `400 invalid_request`, a provider
 credential refusal is `403 forbidden`, and an unsupported credential transport is `501 unsupported`.
 An unavailable credential/provider or failed upstream connection is `503 live_unavailable`.
 Errors after reservation additionally carry the current `session`; errors before reservation
 create no resource or events. Call allocation and sideband attachment have a 30-second deadline;
 provider readiness after returning the answer has a separate 30-second deadline. There may be at most four
-nonterminal sessions per principal; further creates return `409 conflict` without an upstream call.
+nonterminal sessions per principal and at most one per window; further creates return
+`409 conflict` without an upstream call. The desktop must attach its control connection within
+15 seconds of creation; failure to attach ends the voice session without starting actions.
 
 ### `GET /v0/live/sessions/:id`
 
@@ -5102,10 +5125,138 @@ is harmless. Unknown or another principal's IDs return `404`. No `If-Match` is r
 
 Stop accepting delegations, send the native close command, and keep the sideband alive for up to
 15 seconds to collect final usage. Timeout or transport failure settles as `failed` with usage
-unconfirmed. Closing voice does not abort, archive, or recreate the orchestrator or its tasks.
+unconfirmed. Closing voice does not abort, archive, or recreate any coding session or its tasks.
 Daemon shutdown closes owned calls; restart marks unfinished local sessions failed and never
 replays creation or delegated mutations. Terminal records remain readable for seven days,
 bounded to the newest 1,000 per principal. Evicted records return `404`.
+
+### Desktop context and targets
+
+The initial `context` and subsequent `desktopContext` frames carry the same closed object:
+
+- `windowId` — the initiating window identity.
+- `connections` — up to 100 `{ connectionId, name, online }` entries.
+- `activeConnectionId` — an explicitly selected connection ID, or `null`.
+- `activeTarget` — one desktop target below, or `null`.
+- `projects` — up to 100 `{ target: ProjectTarget, name }` entries.
+- `workspaces` — up to 100 `{ target: WorkspaceTarget, name, status }` entries; workspace
+  status is `ready`, `preparing`, `error`, or `unknown`, not a conversation activity state.
+- `sessions` — up to 100 `{ target: SessionRef, title, status }` entries; title may be `null`.
+- `bots` — up to 100 `{ target: BotTarget, name, status }` entries.
+- `activeSession` — `null` or `{ target: SessionRef, status, messages, composerHasDraft,
+writeRefusal }`. `writeRefusal` is a bounded human-readable reason or `null`.
+- `truncated` — whether the bounded projection omitted visible entities or text.
+
+Names and titles are at most 256 characters. `writeRefusal` is at most 1,024 characters.
+Conversation status is exactly `idle`, `running`, `awaitingInput`, `waiting`, `error`, or
+`unknown`; it comes from structured application state, never text matching. `messages` contains
+at most 50 `{ id, role, text }` public messages with `role` either `user` or `assistant` and
+`text` at most 16,384 characters. Exclude private reasoning, tool arguments/results, attachments,
+files, credentials, and composer draft contents. The draft is only a boolean in context.
+
+References are namespaced; IDs from different connections never identify the same entity:
+
+- `ProjectRef`: `{ connectionId, projectId }`.
+- `GroupRef`: `{ connectionId, groupId }`.
+- `SessionRef`: `{ connectionId, groupId, sessionId }`.
+- `ProjectTarget`: `{ kind: "project", connectionId, projectId, groupId }`.
+- `WorkspaceTarget`: `{ kind: "workspace", connectionId, projectId, workspaceId, groupId }`.
+- `SessionTarget`: `{ kind: "session", connectionId, groupId, sessionId }`.
+- `BotTarget`: `{ kind: "bot", connectionId, groupId, sessionId, botId }`.
+
+A `DesktopTarget` is exactly one of those four target variants. Group IDs are supplied
+explicitly even where they currently coincide with project or workspace IDs. The desktop maps
+its internal worktree identity to wire `workspaceId` explicitly, never by parsing names or paths.
+
+### `GET /v0/live/sessions/:id/control?windowId=...`
+
+Upgrades to a full-duplex WebSocket using ordinary Happy API bearer authentication. The trusted
+desktop host attaches authentication; never put a bearer token in the URL or renderer state.
+`windowId` is required and must match the resource. Unknown/foreign resources are `404`, a
+mismatched window or an already attached controller is `409 conflict`, and a terminal resource
+cannot attach. There is only one controller per call. Frames are UTF-8 JSON, at most 256 KiB.
+Invalid/oversized frames fail the connection; raw audio and raw provider frames are not accepted.
+The whole serialized context must fit the frame budget, even when each individual field fits
+its own limit. Omit older/less relevant text and entities and set `truncated` rather than
+assuming every per-field maximum can fit simultaneously.
+
+The server first sends `{ type: "hello", sessionId, windowId, contextRevision }`. The desktop
+verifies all three identities before acting. Client-to-server frames are:
+
+- `{ type: "desktopContext", revision, context }` — a complete replacement, with strictly
+  increasing positive safe-integer `revision`. Exact same-revision duplicates are harmless;
+  older revisions are ignored; different contents at the same revision fail the connection.
+  Focus, catalog, access, and draft-presence changes advance the revision. Public text streaming
+  does not advance it token by token.
+- `{ type: "actionResult", actionId, result }` — an outcome for an action the server requested.
+- `{ type: "sessionUpdate", target: SessionRef, status, messages, truncated }` — a bounded
+  replacement public snapshot for the active session or one of at most five explicitly watched
+  sessions. Unselected or inaccessible targets are rejected. An empty selection never means all.
+  After enabling a watch, send its successful action result before the initial snapshot; the
+  server records the selection from that result before accepting the update.
+
+Server-to-client frames after hello are:
+
+- `{ type: "actionRequested", actionId, contextRevision, inputTranscriptIds, action }` — one
+  fixed desktop action. `actionId` is an opaque lifetime-stable ID; `inputTranscriptIds` contains
+  at most 32 distinct source fragment IDs for attribution, not authorization or a claimed completed turn.
+- `{ type: "status", status, error }` — `status` is `starting`, `active`, `closing`, `closed`,
+  or `failed`; `error` is a sanitized human-readable explanation or `null`.
+- `{ type: "transcript", transcriptId, role, text, startMs, endMs }` — a normalized provider
+  fragment, role `user` or `assistant`, with its real nonnegative session-relative millisecond
+  interval. IDs are stable within the call; text is at most 16,384 characters. GPT-Live deltas
+  have no inherent completed-turn boundary, so this contract invents neither `final` nor user
+  turn IDs. Preserve repeated words and whitespace. Provider-derived text is never confirmation.
+
+The fixed action union is:
+
+| `type`                | Other fields                                       | UI-equivalent behavior                                                                     |
+| --------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `desktopState`        | none                                               | Read the current bounded context.                                                          |
+| `desktopOpen`         | `target: DesktopTarget`                            | Focus/open that existing entity.                                                           |
+| `workspaceCreate`     | `project: ProjectRef`                              | Use the UI's new-workspace action and defaults; it already creates the first conversation. |
+| `sessionCreate`       | `group: GroupRef`, optional `prompt`               | Create an ordinary visible conversation, optionally populate its draft.                    |
+| `botCreate`           | `connectionId`, optional `name`, optional `prompt` | Use the ordinary new-bot UI, optionally populate its draft; never grant admin.             |
+| `sessionRead`         | `target: SessionRef`                               | Return bounded public conversation text and status.                                        |
+| `sessionSend`         | `target: SessionRef`, `text`                       | Request a provenance-preserving text submission; never answer a pending question.          |
+| `sessionWatch`        | `target: SessionRef`, `enabled`                    | Enable/disable text/status backfeed for that exact session.                                |
+| `composerDraftAppend` | `target: SessionRef`, `text`                       | Append text without replacing the existing draft or attachments.                           |
+
+Action text/prompts are nonblank and at most 16,384 characters; optional bot names are nonblank
+and at most 256. No action accepts paths, arbitrary URLs/API calls, shell commands, JavaScript,
+model or permission overrides, security settings, or permission/question answers. An optional
+creation prompt is a draft, not an automatic user-authored message. `sessionSend` must preserve
+generated-text provenance through the existing message boundary. Until that capability is
+available, the desktop refuses it or stages an explicit exact-text human confirmation; it must
+not label generated controller text as human authorization or pass it through a question-answer path.
+
+Before every action, the desktop checks current call/window, the expected context revision,
+connection/target visibility, connectivity, write eligibility, and existing permission guards.
+Cached read/navigation actions remain available offline wherever the ordinary UI permits them;
+mutations require the target connection online.
+It must not substitute the currently focused session for a stale or missing target. No operation
+executes twice for one `actionId`; remember up to 256 action IDs and results during the active
+call. The server permits one outstanding action at a time and ends the call before exhausting
+that bound instead of evicting a mutation's deduplication record.
+
+`result` is one of these closed variants:
+
+- `{ status: "succeeded", output }`, where `output` is `{ type: "ack" }`,
+  `{ type: "context", context }`, `{ type: "created", target: DesktopTarget }`, or
+  `{ type: "session", target: SessionRef, status, messages, truncated }`.
+- `{ status: "pending" }` — waiting for ordinary UI completion or explicit human confirmation;
+  it is not success. A later result for the same action ID supplies the terminal outcome.
+- `{ status: "refused" | "failed" | "cancelled", code, message }` — `code` is
+  `staleContext`, `unavailable`, `forbidden`, `draftConflict`, `notFound`, `ended`, or `failed`;
+  `message` is a sanitized explanation of at most 1,024 characters.
+
+Terminal results are immutable; duplicate identical results are harmless, conflicting results
+or results for unknown actions fail the connection. The server bounds action waiting to 60
+seconds. An uncertain or timed-out mutation is never replayed as a new action. Control socket
+loss, window disposal, or disabling voice ends this voice session and cancels controller actions
+that have not begun. Already-started UI mutations may complete; they are never undone or
+replayed, and late results are ignored after disposal. Coding tasks stay alive. V1 does not reconnect the controller automatically; the
+person explicitly starts a new call. No transcript or controller mutation is replayed on restart.
 
 ### Live updates
 
@@ -5114,15 +5265,18 @@ bounded to the newest 1,000 per principal. Evicted records return `404`.
 `changes`. Both are committed before publishing and filtered to the session owner in journal
 pull and SSE. They never contain SDP, provider credentials, transcripts, or raw provider events.
 
-Text backfeed uses existing committed agent history/status events, with stable cursor and
-delegation identities. Duplicate delivery cannot repeat an operation; late results retain their
-original destination and cannot become a newer delegation's result. Send only bounded factual
-text, not reasoning or tool data. Background progress is silent context; completion, failure,
-and requests for human input may be spoken. Each provider append respects its documented size
-limit. Queues and retained transcript windows are bounded; overflow triggers snapshot
-reconciliation or an explicit failure, never silent loss of task state.
+The desktop sends selected public text/status updates over the control connection below.
+Duplicate delivery cannot repeat an operation; late results retain their original action and
+delegation IDs. Background progress is silent context; completion, failure, and requests for
+human input may be spoken. Provider appends respect the selected GPT-Live transport's documented
+limit. Queues and transcript windows are bounded; overflow ends the call with a clear failure
+instead of replaying writes or silently losing task state.
 
-These routes and events are additive without a protocol bump. A `404` or `501` from session
+These routes and events are additive without a protocol bump. `GET /v0/health` advertises the
+optional `capabilities.desktopLiveControl` boolean. Only `true` promises this window-scoped
+contract; omission or `false` means unavailable, not an older agent-bound voice API. This
+capability does not promise provider entitlement, enabled microphone access, or API billing consent.
+A `404` or `501` from session
 creation may mean the daemon lacks Live support; clients must not mistake that for an empty
 session or silently choose a different authentication method.
 

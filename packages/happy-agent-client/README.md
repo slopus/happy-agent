@@ -125,8 +125,8 @@ values declared as TypeBox schemas and their TypeScript types derived with `Stat
 
 ## Live voice sessions
 
-`createLiveSession({ id, agentId, sdp, credential, watchedAgentIds })` binds GPT-Live to an
-existing Happy orchestrator and returns its session resource and WebRTC SDP answer. Select the
+`createLiveSession({ id, windowId, sdp, credential, contextRevision, context })` binds GPT-Live
+to the initiating desktop window and returns its resource and WebRTC SDP answer. Select the
 server-held credential explicitly as `{ providerId, type: "codex_subscription" }` or
 `{ providerId, type: "openai_api_key" }`. The former is experimental and does not promise
 subscription entitlement; the latter opts into API billing. There is no automatic fallback.
@@ -135,7 +135,7 @@ The client never receives a provider token or API key.
 ```text
 Client microphone/speaker <— WebRTC —> GPT-Live
 Client — authenticated SDP —> Happy daemon — sideband —> GPT-Live
-                                   └— existing orchestrator + selected text/status
+                                   └— typed UI actions/context <—> initiating window
 ```
 
 Use a stable caller-chosen `id`: creation is never automatically retried, and a repeated ID
@@ -147,9 +147,24 @@ through `updates()`. Refetch on gaps; `HappyReducer` does not maintain a second 
 `closeLiveSession(id)` may return `closing`. Only `closed` confirms provider finalization;
 `usage.final` distinguishes confirmed usage from the latest cumulative observation. A failed
 connection may have `usage.seconds: null`, which is unknown, not zero. Voice closure never
-aborts the orchestrator or delegated tasks. Watched IDs default to an empty set, not all sessions.
+aborts coding sessions or their tasks. The desktop explicitly selects at most five watched sessions.
 These additions do not change existing protocol compatibility. Older daemons may return `404`
 or `501`; leave voice unavailable rather than changing authentication or silently enabling billing.
+
+Require `getHealth().capabilities?.desktopLiveControl === true` before offering voice startup.
+`liveSessionControlUrl(id, windowId)` builds the authenticated WebSocket upgrade address; the
+trusted desktop host supplies bearer headers, never URL credentials. The exported
+`LiveControlClientMessage` and `LiveControlServerMessage` schemas define both directions.
+After verifying `hello` identifies the expected call/window, wait for `status: active`.
+
+The fixed `LiveDesktopAction` union contains state/open, workspace/session/bot creation,
+public session read/watch, provenance-preserving message send, and non-overwriting draft append.
+The desktop validates target namespaces, context revisions, permissions, and action identities.
+It never exposes generic shell/API/JavaScript execution or permission answers. Transcripts are
+provider-derived fragments with real timestamps, not authoritative user confirmations. Context
+contains only bounded visible names, IDs, public user/assistant text, structured status, and draft
+presence. A control disconnect ends voice; already-running coding work continues. There is no
+automatic controller reconnect or mutation replay, and no older Realtime fallback.
 
 ## Sandboxed workspace services
 
