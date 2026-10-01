@@ -5,7 +5,7 @@ settings:
   excludeLinksFromLockfile: false
 
 overrides:
-  '@slopus/happy-providers': 0.0.34
+  '@slopus/happy-providers': 0.0.35
   '@steve.kite/stdlib': 0.0.12
 
 packageExtensionsChecksum: sha256-+0PWOZzYyGh0J39IGr31jzXVhDJkMVXsQSzcdAJjSio=
@@ -124,8 +124,8 @@ importers:
         specifier: workspace:*
         version: link:../happy-agent-modules
       '@slopus/happy-providers':
-        specifier: 0.0.34
-        version: 0.0.34(ws@8.21.1)(zod@4.4.3)
+        specifier: 0.0.35
+        version: 0.0.35(ws@8.21.1)(zod@4.4.3)
       '@slopus/happy-terminal-gym':
         specifier: workspace:*
         version: link:../gym
@@ -169,8 +169,8 @@ importers:
         specifier: 0.0.13
         version: 0.0.13
       '@slopus/happy-providers':
-        specifier: 0.0.34
-        version: 0.0.34(ws@8.21.1)(zod@4.4.3)
+        specifier: 0.0.35
+        version: 0.0.35(ws@8.21.1)(zod@4.4.3)
       '@steve.kite/stdlib':
         specifier: 0.0.12
         version: 0.0.12
@@ -203,8 +203,8 @@ importers:
         specifier: ^0.34.49
         version: 0.34.49
       '@slopus/happy-providers':
-        specifier: 0.0.34
-        version: 0.0.34(ws@8.21.1)(zod@4.4.3)
+        specifier: 0.0.35
+        version: 0.0.35(ws@8.21.1)(zod@4.4.3)
       '@steve.kite/stdlib':
         specifier: 0.0.12
         version: 0.0.12
@@ -315,8 +315,8 @@ importers:
         specifier: workspace:*
         version: link:../happy-agent-modules
       '@slopus/happy-providers':
-        specifier: 0.0.34
-        version: 0.0.34(ws@8.21.1)(zod@4.4.3)
+        specifier: 0.0.35
+        version: 0.0.35(ws@8.21.1)(zod@4.4.3)
       '@steve.kite/stdlib':
         specifier: 0.0.12
         version: 0.0.12
@@ -400,8 +400,8 @@ importers:
         specifier: npm:@slopus/happy-agent-compute@0.1.20
         version: 0.1.20
       '@slopus/happy-providers':
-        specifier: 0.0.34
-        version: 0.0.34(ws@8.21.1)(zod@4.4.3)
+        specifier: 0.0.35
+        version: 0.0.35(ws@8.21.1)(zod@4.4.3)
       '@steve.kite/stdlib':
         specifier: 0.0.12
         version: 0.0.12
@@ -624,8 +624,8 @@ importers:
         specifier: 0.0.69
         version: 0.0.69
       '@slopus/happy-providers':
-        specifier: 0.0.34
-        version: 0.0.34(ws@8.21.1)(zod@4.4.3)
+        specifier: 0.0.35
+        version: 0.0.35(ws@8.21.1)(zod@4.4.3)
       '@steve.kite/stdlib':
         specifier: 0.0.12
         version: 0.0.12
@@ -2156,8 +2156,8 @@ packages:
     os: [win32]
     hasBin: true
 
-  '@slopus/happy-providers@0.0.34':
-    resolution: {integrity: sha512-BikIQTii3fnrsRxUB95ejrsRHswL9y8nYGll6ASIuCVhb3Q+E+nGpNXP3hmeni/Z7gAl2U9GgAb5p7CijjoZEg==}
+  '@slopus/happy-providers@0.0.35':
+    resolution: {integrity: sha512-frde0fYqEmTzUVOLfjdzGmMxO4oQQFRnn7RuyqKNc65jQOFl8MYcuWPkARiqD6oXqaox2tAPviQPHov7epPKOA==}
     engines: {bun: '>=1.4.0', node: '>=22.19.0'}
 
   '@smithy/abort-controller@2.2.0':
@@ -5402,7 +5402,7 @@ snapshots:
       '@libsql/client': 0.18.0(patch_hash=3bce7b073378d1b7c0380b19e5b714650a8b4710b65ab671e1608c88658e10fa)
       '@paralleldrive/cuid2': 3.3.0
       '@sinclair/typebox': 0.34.49
-      '@slopus/happy-providers': 0.0.34(ws@8.21.1)(zod@4.4.3)
+      '@slopus/happy-providers': 0.0.35(ws@8.21.1)(zod@4.4.3)
       '@steve.kite/stdlib': 0.0.12
       drizzle-orm: 0.45.2(@electric-sql/pglite@0.5.5)(@libsql/client@0.18.0(patch_hash=3bce7b073378d1b7c0380b19e5b714650a8b4710b65ab671e1608c88658e10fa))(@opentelemetry/api@1.9.1)(@types/pg@8.15.6)(postgres@3.4.9)(sql.js@1.14.1)
       postgres: 3.4.9
@@ -5486,7 +5486,7 @@ snapshots:
   '@slopus/happy-agent-supervisor@0.0.13-win32-x64':
     optional: true
 
-  '@slopus/happy-providers@0.0.34(ws@8.21.1)(zod@4.4.3)':
+  '@slopus/happy-providers@0.0.35(ws@8.21.1)(zod@4.4.3)':
     dependencies:
       '@anthropic-ai/bedrock-sdk': 0.32.0(zod@4.4.3)
       '@anthropic-ai/claude-agent-sdk': 0.3.284(@anthropic-ai/sdk@0.110.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(zod@4.4.3)
