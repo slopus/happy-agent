@@ -8,6 +8,7 @@ import {
 } from "@/core/providerUsageValues.js";
 import { GrokSessionCredential } from "@/vendors/grok/GrokSessionCredential.js";
 import { GROK_OAUTH_SCOPE, readGrokAuthStore, getGrokAuthPath } from "@/vendors/grok/impl/auth.js";
+import { GROK_BUILD_CLIENT_VERSION } from "@/vendors/grok/impl/grokConstants.js";
 
 const DEFAULT_GROK_PROXY_BASE_URL = "https://cli-chat-proxy.grok.com/v1";
 const DEFAULT_TIMEOUT_MS = 15_000;
@@ -49,7 +50,7 @@ export async function fetchGrokProviderUsage(
         const headers = new Headers({
             authorization: `Bearer ${credential.credential.token}`,
             "x-xai-token-auth": "xai-grok-cli",
-            "x-grok-client-version": options.clientVersion ?? "1.0.0",
+            "x-grok-client-version": options.clientVersion ?? GROK_BUILD_CLIENT_VERSION,
         });
         const userId = record?.["user_id"];
         if (typeof userId === "string") headers.set("x-userid", userId);

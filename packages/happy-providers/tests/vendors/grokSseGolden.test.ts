@@ -8,7 +8,10 @@ import { describe, expect, it } from "vitest";
 import type { SessionMessage } from "@/core/SessionContext.js";
 import { GrokApiKeyCredential } from "@/vendors/grok/GrokApiKeyCredential.js";
 import { GrokProvider } from "@/vendors/grok/GrokProvider.js";
-import { GROK_DEFAULT_ENDPOINT } from "@/vendors/grok/impl/grokConstants.js";
+import {
+    GROK_BUILD_CLIENT_VERSION,
+    GROK_DEFAULT_ENDPOINT,
+} from "@/vendors/grok/impl/grokConstants.js";
 import { createGrokRequestHeaders } from "@/vendors/grok/impl/createGrokRequestHeaders.js";
 import { mapOpenAIResponseStream } from "@/protocol/responses/mapOpenAIResponseStream.js";
 import { toGrokToolDefinitions } from "@/vendors/grok/impl/toGrokToolDefinitions.js";
@@ -105,6 +108,7 @@ describe("Grok SSE goldens", () => {
                 expect(capturedBody).toEqual(golden.request);
                 expect(projectHeaders(capturedHeaders!)).toEqual({
                     ...projectHeaders(golden.http.headers),
+                    ...currentClientVersionHeaders(),
                     "x-authenticateresponse": undefined,
                     "x-grok-client-mode": undefined,
                     "x-xai-token-auth": undefined,
@@ -120,6 +124,7 @@ describe("Grok SSE goldens", () => {
                     ),
                 ).toEqual({
                     ...projectHeaders(golden.http.headers),
+                    ...currentClientVersionHeaders(),
                     "content-type": undefined,
                 });
             } finally {
@@ -167,6 +172,17 @@ async function collectEvents<T>(events: AsyncIterable<T>): Promise<T[]> {
 
 async function* stream(events: readonly unknown[]): AsyncGenerator<any> {
     for (const event of events) yield event;
+}
+
+/**
+ * The goldens capture CLI 0.2.111, but the proxy now rejects clients below its minimum version,
+ * so only the client version identity is advanced past the capture.
+ */
+function currentClientVersionHeaders(): Record<string, string> {
+    return {
+        "user-agent": `grok-shell/${GROK_BUILD_CLIENT_VERSION} (<PLATFORM>)`,
+        "x-grok-client-version": GROK_BUILD_CLIENT_VERSION,
+    };
 }
 
 function projectHeaders(

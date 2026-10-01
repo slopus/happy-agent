@@ -70,7 +70,10 @@ falls back to an API key.
 - one Rig session ID is reused as the Grok agent, conversation, and session ID;
 - every HTTP attempt receives a new request UUID;
 - `x-grok-client-identifier` is `grok-shell`;
-- `x-grok-client-version` is pinned to the captured CLI version;
+- `x-grok-client-version` and the `grok-shell/<version>` user agent carry
+  `GROK_BUILD_CLIENT_VERSION`, currently `1.0.46`. The proxy rejects clients below its minimum
+  version with HTTP 426, so this identity is advanced past the 0.2.111 captures; the goldens
+  overlay only these two values;
 - `x-grok-model-override` carries `grok-4.5`;
 - ordinary turns carry `x-grok-turn-idx`;
 - compaction intentionally omits the turn index;
@@ -426,7 +429,8 @@ Grok 4.6, plus encrypted-reasoning tool continuation and structural compaction a
   implemented; invoke structural compaction at a completed outer-loop boundary.
 - Synthetic message classification is wrapper-based because Rig does not expose Grok's typed
   synthetic-reason metadata.
-- Exact behavior is pinned to CLI 0.2.111. A CLI upgrade requires new live captures and regenerated
+- Exact behavior is pinned to CLI 0.2.111, except for the client version identity described in
+  "Credentials and request identity". A CLI upgrade requires new live captures and regenerated
   prompt/tool assets before changing the production contract.
 - Unobserved Grok UI, memory, scheduler, subagent, telemetry, upload, or experimental features are
   outside this provider contract.
