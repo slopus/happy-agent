@@ -4984,6 +4984,13 @@ bounded visible context, verifies each action's target and permissions, and exec
 its existing UI/state actions. Only public conversation text and task status are shared: no
 coding tools, screen capture, other sessions' audio, private reasoning, or tool logs.
 
+The text controller uses the daemon's existing configured-default provider, model, and effort
+(the first enabled route in its ordered model catalog), selected when the call starts. This is
+separate from the explicitly selected voice credential. Each delegation runs bounded side
+inference with only the nine desktop actions below, never the coding-agent runtime. The caller
+cannot override that selection. An unavailable controller route fails with `503 live_unavailable`
+and a setup explanation; the call never silently switches models or accounts.
+
 Every route uses ordinary API authentication. A session belongs to its creating principal;
 another principal receives `404` for its ID and never receives its journal events. The session
 is also bound to the initiating `windowId`; its control socket must name that same window.
