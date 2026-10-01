@@ -180,6 +180,13 @@ export const presenceConfigSchema = Type.Object({
 });
 export type PresenceConfig = Static<typeof presenceConfigSchema>;
 
+/** One daemon-owned speed choice. A null ID clears the service tier. */
+export const serviceTierOptionSchema = Type.Object({
+    id: Nullable(serviceTierSchema),
+    label: Type.String(),
+});
+export type ServiceTierOption = Static<typeof serviceTierOptionSchema>;
+
 /** Everything a client needs to present a model, defined once. */
 export const modelDefinitionSchema = Type.Object({
     /**
@@ -193,6 +200,8 @@ export const modelDefinitionSchema = Type.Object({
     defaultEffort: effortSchema,
     efforts: Type.Array(effortSchema),
     name: Type.String(),
+    /** Complete ordered speed menu, including the default choice; absent from older daemons. */
+    serviceTierOptions: Type.Optional(Type.Array(serviceTierOptionSchema)),
     /** Empty when the model has no service tiers. */
     serviceTiers: Type.Array(serviceTierSchema),
 });
@@ -210,6 +219,8 @@ export const providerModelReferenceSchema = Type.Object({
     enabled: Type.Boolean(),
     id: Type.String(),
     name: Type.Optional(Type.String()),
+    /** Replaces the shared speed menu with this account/model's eligible choices. */
+    serviceTierOptions: Type.Optional(Type.Array(serviceTierOptionSchema)),
     serviceTiers: Type.Optional(Type.Array(serviceTierSchema)),
 });
 export type ProviderModelReference = Static<typeof providerModelReferenceSchema>;

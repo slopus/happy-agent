@@ -1021,6 +1021,12 @@ Field groups:
 - `models` — every known model, keyed by model ID. Each definition carries the display `name`,
   `contextWindow` in tokens (`null` only for a custom model whose limit is unknown), the allowed
   `efforts`, the `defaultEffort`, and the supported `serviceTiers` (empty when the model has none).
+  Optional `serviceTierOptions` is the complete ordered speed menu, with each option carrying
+  a unique opaque `id` and a human-readable English `label`. Exactly one option has `id: null` to
+  clear the service tier and select the default route; each non-null ID is a supported
+  `serviceTiers` value. Clients display these labels and submit these IDs unchanged through
+  `mode.serviceTier`, without inferring labels or supported choices from tier strings.
+  Older daemons may omit the field; clients must not invent a speed menu when it is absent.
   A definition may also carry `autoCompactWindow`: the measured conversation size in tokens at
   which the daemon compacts automatically, always below `contextWindow`. It is optional, so
   older daemons omit it, and `null` when a model has no curated threshold. A client that shows
@@ -1033,6 +1039,11 @@ Field groups:
   models, all disabled. When a provider serves a model with narrower capabilities than the
   shared definition (Bedrock resells other vendors' models without service tiers, for example),
   the reference entry overrides just those fields, such as `"serviceTiers": []`.
+  A reference may also override `serviceTierOptions`, replacing the shared menu in full with
+  that account/model's currently eligible choices, including its default option. Current
+  daemons supply the complete menu on every provider model reference, independently of shared
+  definition inheritance, and keep its non-null IDs identical to the effective `serviceTiers`;
+  eligibility changes use the existing configuration-change notification.
 - `settings` — daemon behavior toggles and tunables.
 - `theme` — terminal color assignments.
 - `workspace` — workspace lifecycle configuration: archive behavior, setup commands, and
