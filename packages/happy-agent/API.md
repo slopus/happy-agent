@@ -5034,8 +5034,12 @@ Use current GPT-Live only: the public `gpt-live-1` transport or Codex's native
 - `contextRevision` — the latest accepted desktop context revision, a positive safe integer.
   Context contents and watch selection remain private to the control connection, not the journal.
 - `status` — `starting`, `active`, `closing`, `closed`, or `failed`. `active` requires a
-  verified provider session and attached sideband. `closed` requires provider finalization;
-  local transport loss, an interrupted start, or a finalization timeout instead means `failed`.
+  verified provider session and attached sideband. `closed` means an orderly deliberate end
+  completed; it does not claim final usage. For public GPT-Live, this requires a valid
+  `session.closed` with reason `close_requested` after our close request. Other provider close
+  reasons or an unrequested terminal event are `failed`, even when final usage is confirmed.
+  Unexpected transport loss, a transport error, an interrupted start, or an applicable close
+  deadline instead means `failed`. Only `usage.final` reports confirmed final usage.
 - `usage.seconds` — the latest cumulative voice duration, or `null` before the provider reports
   it. Never sum cumulative snapshots or infer billable duration from a local clock.
 - `usage.final` — `true` only after the provider confirms final usage. It remains `false` on
@@ -5101,6 +5105,14 @@ for browser media negotiation. `starting` transitions asynchronously to `active`
 provider confirms readiness after the browser applies the answer. An already-ready call may
 instead return `active`.
 
+Readiness requires an observed, valid provider `session.started` or dialect-supported
+`session.updated` on the attached sideband. HTTP success, a socket opening, ICE negotiation,
+and the browser data channel are not readiness evidence. The native Codex adapter may send
+one native `session.update` with the already-selected instructions/settings to obtain that
+confirmation; rejection or lack of confirmation fails the call without retry. The public
+adapter must not send this native update or change immutable startup settings. If no valid
+confirmation arrives within the readiness deadline, fail with a clear startup explanation.
+
 The daemon reserves the local resource before the single upstream create attempt. Reusing its
 ID returns `409 conflict` with the current `session`, including after an uncertain outcome; it
 never creates another upstream call. `mutationId` remains an echo, not a deduplication key.
@@ -5130,9 +5142,17 @@ Response — `200`: `{ "session": { ... } }`. Records a close request and may re
 that state does not claim provider finalization. Repeating close, including on a terminal session,
 is harmless. Unknown or another principal's IDs return `404`. No `If-Match` is required.
 
-Stop accepting delegations, send the native close command, and keep the sideband alive for up to
-15 seconds to collect final usage. Timeout or transport failure settles as `failed` with usage
-unconfirmed. Closing voice does not abort, archive, or recreate any coding session or its tasks.
+Stop accepting delegations and send the selected transport's `session.close` once. Public
+GPT-Live keeps the sideband alive for up to 15 seconds for the documented `session.closed`
+event and final usage. A valid event with reason `close_requested` after our close request is
+`closed`; other reasons or an unrequested terminal event are `failed` with confirmed final
+usage when supplied. Timeout or premature transport loss is `failed` with usage unconfirmed.
+Native Codex sends its close command and closes the transport, following its native lifecycle.
+An orderly deliberate native end settles as `closed`, with the last reported duration or null
+and `usage.final: false` unless actual final provider usage was received. A local disconnect or
+normal WebSocket close never invents a provider event or final usage. A transport error or
+interrupted start remains `failed`. Closing voice does not abort, archive, or recreate any coding
+session or its tasks.
 Daemon shutdown closes owned calls; restart marks unfinished local sessions failed and never
 replays creation or delegated mutations. Terminal records remain readable for seven days,
 bounded to the newest 1,000 per principal. Evicted records return `404`.
@@ -5209,11 +5229,15 @@ Server-to-client frames after hello are:
   at most 32 distinct source fragment IDs for attribution, not authorization or a claimed completed turn.
 - `{ type: "status", status, error }` — `status` is `starting`, `active`, `closing`, `closed`,
   or `failed`; `error` is a sanitized human-readable explanation or `null`.
-- `{ type: "transcript", transcriptId, role, text, startMs, endMs }` — a normalized provider
-  fragment, role `user` or `assistant`, with its real nonnegative session-relative millisecond
-  interval. IDs are stable within the call; text is at most 16,384 characters. GPT-Live deltas
-  have no inherent completed-turn boundary, so this contract invents neither `final` nor user
-  turn IDs. Preserve repeated words and whitespace. Provider-derived text is never confirmation.
+- `{ type: "transcript", transcriptId, role, text, startMs?, endMs? }` — a normalized provider
+  fragment, role `user` or `assistant`. Include the time fields only as a pair when the provider
+  supplied its real nonnegative session-relative millisecond interval, with `startMs <= endMs`;
+  otherwise omit both. Never synthesize timing from clocks, audio offsets, or delegation offsets.
+  The daemon mints a stable call-local `transcriptId`, distinct from provider item/turn IDs.
+  Text is at most 16,384 characters; preserve repeated words and whitespace. This v1 contract
+  exposes no turn or final identity, even when a dialect reports one. Native transcript-added
+  fragments are forwarded once; its turn-done text is not appended again. Native delegation
+  input text remains attributed provider context, never human confirmation or authorization.
 
 The fixed action union is:
 
@@ -5225,17 +5249,21 @@ The fixed action union is:
 | `sessionCreate`       | `group: GroupRef`, optional `prompt`               | Create an ordinary visible conversation, optionally populate its draft.                    |
 | `botCreate`           | `connectionId`, optional `name`, optional `prompt` | Use the ordinary new-bot UI, optionally populate its draft; never grant admin.             |
 | `sessionRead`         | `target: SessionRef`                               | Return bounded public conversation text and status.                                        |
-| `sessionSend`         | `target: SessionRef`, `text`                       | Request a provenance-preserving text submission; never answer a pending question.          |
+| `sessionSend`         | `target: SessionRef`, `text`                       | Stage exact text for an independent explicit human Send; never answer a pending question.  |
 | `sessionWatch`        | `target: SessionRef`, `enabled`                    | Enable/disable text/status backfeed for that exact session.                                |
 | `composerDraftAppend` | `target: SessionRef`, `text`                       | Append text without replacing the existing draft or attachments.                           |
 
 Action text/prompts are nonblank and at most 16,384 characters; optional bot names are nonblank
 and at most 256. No action accepts paths, arbitrary URLs/API calls, shell commands, JavaScript,
 model or permission overrides, security settings, or permission/question answers. An optional
-creation prompt is a draft, not an automatic user-authored message. `sessionSend` must preserve
-generated-text provenance through the existing message boundary. Until that capability is
-available, the desktop refuses it or stages an explicit exact-text human confirmation; it must
-not label generated controller text as human authorization or pass it through a question-answer path.
+creation prompt is a draft, not an automatic user-authored message. In v1, `sessionSend` refuses
+or stages the exact text visibly and returns terminal `succeeded` with `{ type: "staged" }`.
+Staged means awaiting an independent explicit human Send, never sent or authorized, and never
+uses the action's `pending` state. The later human Send is an ordinary UI action observed through
+context or session updates, not a delayed result for the staged action. Refuse staging while the
+target has a pending question or awaits input, and recheck that guard at Send time. Never route
+generated text through a question-answer path or label it as human authorization before that
+explicit exact-text Send.
 
 Before every action, the desktop checks current call/window, the expected context revision,
 connection/target visibility, connectivity, write eligibility, and existing permission guards.
@@ -5249,10 +5277,11 @@ that bound instead of evicting a mutation's deduplication record.
 `result` is one of these closed variants:
 
 - `{ status: "succeeded", output }`, where `output` is `{ type: "ack" }`,
+  `{ type: "staged" }` (only exact-text staging for `sessionSend`, not submission),
   `{ type: "context", context }`, `{ type: "created", target: DesktopTarget }`, or
   `{ type: "session", target: SessionRef, status, messages, truncated }`.
-- `{ status: "pending" }` — waiting for ordinary UI completion or explicit human confirmation;
-  it is not success. A later result for the same action ID supplies the terminal outcome.
+- `{ status: "pending" }` — waiting for ordinary UI completion, not a v1 `sessionSend`
+  confirmation. It is not success; a later result for the same ID supplies the terminal outcome.
 - `{ status: "refused" | "failed" | "cancelled", code, message }` — `code` is
   `staleContext`, `unavailable`, `forbidden`, `draftConflict`, `notFound`, `ended`, or `failed`;
   `message` is a sanitized explanation of at most 1,024 characters.

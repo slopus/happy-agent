@@ -199,6 +199,7 @@ export type LiveDesktopAction = Static<typeof liveDesktopActionSchema>;
 
 export const liveDesktopActionOutputSchema = Type.Union([
     Type.Object({ type: Type.Literal("ack") }, closed),
+    Type.Object({ type: Type.Literal("staged") }, closed),
     Type.Object({ type: Type.Literal("context"), context: liveDesktopContextSchema }, closed),
     Type.Object({ type: Type.Literal("created"), target: liveDesktopTargetSchema }, closed),
     Type.Object({ type: Type.Literal("session"), ...sessionSnapshotProperties }, closed),
@@ -298,6 +299,15 @@ export const liveControlServerMessageSchema = Type.Union([
             text,
             startMs: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
             endMs: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
+        },
+        closed,
+    ),
+    Type.Object(
+        {
+            type: Type.Literal("transcript"),
+            transcriptId: liveDesktopIdSchema,
+            role: Type.Union([Type.Literal("user"), Type.Literal("assistant")]),
+            text,
         },
         closed,
     ),

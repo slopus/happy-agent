@@ -144,8 +144,8 @@ an uncertain outcome, use `getLiveSession(id)` and close before deliberately rep
 Follow owner-private `live.session.created` and version-chained `live.session.updated` events
 through `updates()`. Refetch on gaps; `HappyReducer` does not maintain a second voice store.
 
-`closeLiveSession(id)` may return `closing`. Only `closed` confirms provider finalization;
-`usage.final` distinguishes confirmed usage from the latest cumulative observation. A failed
+`closeLiveSession(id)` may return `closing`. `closed` means a deliberate end completed, not
+that usage was finalized; only `usage.final` confirms the final provider duration. A failed
 connection may have `usage.seconds: null`, which is unknown, not zero. Voice closure never
 aborts coding sessions or their tasks. The desktop explicitly selects at most five watched sessions.
 These additions do not change existing protocol compatibility. Older daemons may return `404`
@@ -158,10 +158,13 @@ trusted desktop host supplies bearer headers, never URL credentials. The exporte
 After verifying `hello` identifies the expected call/window, wait for `status: active`.
 
 The fixed `LiveDesktopAction` union contains state/open, workspace/session/bot creation,
-public session read/watch, provenance-preserving message send, and non-overwriting draft append.
+public session read/watch, exact-text message staging, and non-overwriting draft append.
 The desktop validates target namespaces, context revisions, permissions, and action identities.
 It never exposes generic shell/API/JavaScript execution or permission answers. Transcripts are
-provider-derived fragments with real timestamps, not authoritative user confirmations. Context
+provider-derived fragments, not authoritative user confirmations. Both interval fields are present
+only when the provider supplies real timing; native untimed fragments omit both. A `sessionSend`
+result with output `{ type: "staged" }` means the text awaits an independent human Send, never that
+it was submitted. Context
 contains only bounded visible names, IDs, public user/assistant text, structured status, and draft
 presence. A control disconnect ends voice; already-running coding work continues. There is no
 automatic controller reconnect or mutation replay, and no older Realtime fallback.

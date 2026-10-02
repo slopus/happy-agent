@@ -327,6 +327,59 @@ describe("GPT-Live desktop control protocol", () => {
         ).toBe(false);
     });
 
+    it("accepts untimed native fragments without accepting half an interval", () => {
+        const fragment = {
+            type: "transcript",
+            transcriptId: "native-fragment-1",
+            role: "assistant",
+            text: " the the ",
+        };
+        expect(Value.Check(liveControlServerMessageSchema, fragment)).toBe(true);
+        for (const interval of [
+            { startMs: 100 },
+            { endMs: 200 },
+            { startMs: null, endMs: null },
+            { startMs: -1, endMs: 100 },
+            { startMs: 0, endMs: Number.MAX_SAFE_INTEGER + 1 },
+        ]) {
+            expect(Value.Check(liveControlServerMessageSchema, { ...fragment, ...interval })).toBe(
+                false,
+            );
+        }
+        for (const extra of [
+            { final: true },
+            { turnId: "native-turn" },
+            { providerItemId: "i1" },
+        ]) {
+            expect(Value.Check(liveControlServerMessageSchema, { ...fragment, ...extra })).toBe(
+                false,
+            );
+        }
+        expect(
+            Value.Check(liveControlServerMessageSchema, { ...fragment, text: "x".repeat(16_385) }),
+        ).toBe(false);
+    });
+
+    it("distinguishes terminal text staging from pending work and a sent message", () => {
+        const result = { status: "succeeded", output: { type: "staged" } };
+        expect(Value.Check(liveDesktopActionResultSchema, result)).toBe(true);
+        expect(
+            Value.Check(liveControlClientMessageSchema, {
+                type: "actionResult",
+                actionId: "stage-1",
+                result,
+            }),
+        ).toBe(true);
+        expect(Value.Check(liveDesktopActionResultSchema, { status: "pending" })).toBe(true);
+        for (const invalid of [
+            { status: "pending", output: { type: "staged" } },
+            { status: "succeeded", output: { type: "staged", sent: true } },
+            { status: "succeeded", output: { type: "sent" } },
+        ]) {
+            expect(Value.Check(liveDesktopActionResultSchema, invalid)).toBe(false);
+        }
+    });
+
     it("keeps capability detection optional on older health responses", () => {
         const health = {
             healthy: true,
