@@ -54,6 +54,7 @@ import { loadConfiguredProviderUsage } from "./impl/loadConfiguredProviderUsage.
 import { discoverGithubCliToken, githubTokenSchema } from "./impl/discoverGithubCliToken.js";
 import { ProviderEnablement, providerRegistryUntil } from "./impl/providerRegistryUntil.js";
 import { ProviderServiceTiers } from "./impl/ProviderServiceTiers.js";
+import { RoundRobinRouterProvider } from "./impl/RoundRobinRouterProvider.js";
 import { readGlobalInstructions } from "./impl/readGlobalInstructions.js";
 import { HAPPY_TOML_TEMPLATE, MCP_TOML_TEMPLATE } from "./impl/userConfigurationTemplate.js";
 import { readSecurityDocument } from "./impl/readSecurityDocument.js";
@@ -69,7 +70,11 @@ import {
     teamJwtTomlSchema,
     teamOwnerUserIdSchema,
 } from "./TeamJwtConfig.js";
-import { connectionIdSchema, nodeNameSchema } from "@slopus/happy-agent-client";
+import {
+    connectionIdSchema,
+    nodeNameSchema,
+    type LiveCredential,
+} from "@slopus/happy-agent-client";
 import { resolveDefaultNodeName } from "./impl/resolveDefaultNodeName.js";
 
 const MAX_PATH_LENGTH = 4_096;
@@ -1714,6 +1719,60 @@ export class ConfigModule implements AgentModule {
 
     get providerIds(): readonly string[] {
         return this.#providerSource().ids;
+    }
+
+    /** Live alone requires a frozen route: smart routing must not rotate its controller account. */
+    async liveControllerRoute(): Promise<{ provider: BaseProvider; model: AgentModel }> {
+        const model = this.models[0];
+        if (model === undefined)
+            throw new Error("Configure an enabled default model before starting voice.");
+        const provider = await this.providers.resolve(model.providerId, model.id);
+        if (provider === null || provider instanceof RoundRobinRouterProvider) {
+            throw new Error(
+                "Voice needs a concrete enabled default model account; smart routing is not supported for its controller.",
+            );
+        }
+        return { provider, model: { ...model } };
+    }
+
+    /** Reload only the selected account from its provider-owned store, without network refresh or fallback. */
+    async liveCredential(selection: LiveCredential): Promise<{
+        type: LiveCredential["type"];
+        token: string;
+        accountId?: string;
+    }> {
+        const provider = await this.providers.resolve(selection.providerId, undefined);
+        if (!(provider instanceof CodexProvider) || provider.bedrockTransport !== undefined) {
+            throw new Error("Select an enabled OpenAI account for voice.");
+        }
+        const endpoint = new URL(provider.endpoint);
+        const native = selection.type === "codex_subscription";
+        const expected = native ? "https://chatgpt.com" : "https://api.openai.com";
+        if (endpoint.origin !== expected || endpoint.username || endpoint.password) {
+            throw new Error(
+                "Voice requires an official OpenAI account endpoint; custom endpoints are not supported.",
+            );
+        }
+        const credential = provider.credential;
+        if (native && credential.name === "codex-session") {
+            const current = await credential.reloadForUnauthorized();
+            if (current === undefined)
+                throw new Error("Sign in to the selected Codex account again.");
+            const { accessToken, accountId } = current.credential;
+            if (!accessToken.trim())
+                throw new Error("The selected voice account is not signed in.");
+            return {
+                type: selection.type,
+                token: accessToken,
+                ...(accountId === undefined ? {} : { accountId }),
+            };
+        }
+        if (!native && credential.name === "codex-api-key") {
+            if (!credential.credential.apiKey.trim())
+                throw new Error("The selected voice account has no API key.");
+            return { type: selection.type, token: credential.credential.apiKey };
+        }
+        throw new Error("The selected account does not hold the requested voice credential type.");
     }
 
     /** The current daemon-owned Tailcat setting, including live runtime mutations. */

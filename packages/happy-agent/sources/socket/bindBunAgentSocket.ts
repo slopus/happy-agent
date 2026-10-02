@@ -6,6 +6,8 @@ import {
     socketRejectionBody,
     type PreparedHappyAgentRuntime,
     type PreparedTerminalSocket,
+    type PreparedLiveSocket,
+    type LiveControlBinding,
 } from "@slopus/happy-agent-modules";
 import { WebSocketDuplex } from "@slopus/happy-agent-modules/transport";
 
@@ -32,18 +34,29 @@ import { forwardBunAttachment } from "./forwardBunAttachment.js";
 const MAX_TERMINAL_WIRE_MESSAGE_BYTES = 4 * 1024 * 1024 + 20;
 
 interface TerminalWebSocketData extends BunWebSocketState {
+    readonly kind?: "terminal";
     readonly prepared: Extract<PreparedTerminalSocket, { readonly attach: unknown }>;
 }
 
+interface LiveWebSocketData {
+    readonly kind: "live";
+    readonly prepared: Extract<PreparedLiveSocket, { readonly attach: unknown }>;
+    binding?: LiveControlBinding;
+}
+
 interface BunTerminalWebSocket extends BunServerWebSocket {
-    data: TerminalWebSocketData;
+    data: TerminalWebSocketData | LiveWebSocketData;
+    send(data: string | Uint8Array, compress?: boolean): number;
 }
 
 export interface BunWebSocketServer {
     readonly hostname: string;
     readonly port: number;
     stop(closeActiveConnections?: boolean): Promise<void> | void;
-    upgrade(request: Request, options: { readonly data: TerminalWebSocketData }): boolean;
+    upgrade(
+        request: Request,
+        options: { readonly data: TerminalWebSocketData | LiveWebSocketData },
+    ): boolean;
     timeout(request: Request, seconds: number): void;
 }
 
@@ -150,7 +163,28 @@ export function startBunHttpServer(
                     );
                 }
             }
-            const pathname = new URL(request.url).pathname;
+            const url = new URL(request.url);
+            const live = await prepared.api.prepareLiveSocket(
+                prepared.context("bun-live-websocket-upgrade"),
+                url,
+                request.headers.get("authorization") ?? undefined,
+            );
+            if (live.handled) {
+                if ("rejection" in live)
+                    return Response.json(socketRejectionBody(live.rejection), {
+                        headers: { "cache-control": "no-store" },
+                        status: live.rejection.status,
+                    });
+                try {
+                    if (server.upgrade(request, { data: { kind: "live", prepared: live } }))
+                        return undefined;
+                } catch {
+                    // Admission is single-use, including a failed WebSocket upgrade.
+                }
+                live.failed();
+                return socketResponse(500, "internal", "The voice upgrade could not be completed.");
+            }
+            const pathname = url.pathname;
             const terminal = await prepared.api.prepareTerminalSocket(
                 prepared.context("bun-websocket-upgrade"),
                 pathname,
@@ -172,6 +206,26 @@ export function startBunHttpServer(
         websocket: {
             maxPayloadLength: MAX_TERMINAL_WIRE_MESSAGE_BYTES,
             open(webSocket: BunTerminalWebSocket) {
+                if (webSocket.data.kind === "live") {
+                    try {
+                        webSocket.data.binding = webSocket.data.prepared.attach({
+                            send: (text) => {
+                                if (
+                                    webSocket.getBufferedAmount() > 256 * 1024 ||
+                                    webSocket.send(text, false) === 0
+                                )
+                                    throw new Error(
+                                        "The voice control connection is unavailable or too slow.",
+                                    );
+                            },
+                            close: (code, reason) => webSocket.close(code, reason),
+                        });
+                    } catch {
+                        webSocket.data.prepared.failed();
+                        webSocket.close(1011, "Voice could not be attached.");
+                    }
+                    return;
+                }
                 try {
                     webSocket.data.prepared.attach(
                         new WebSocketDuplex(createBunBinaryWebSocket(webSocket, webSocket.data)),
@@ -184,6 +238,14 @@ export function startBunHttpServer(
                 }
             },
             message(webSocket: BunTerminalWebSocket, message: string | Uint8Array) {
+                if (webSocket.data.kind === "live") {
+                    webSocket.data.binding?.message(
+                        typeof message === "string" && Buffer.byteLength(message) <= 256 * 1024
+                            ? message
+                            : "",
+                    );
+                    return;
+                }
                 if (typeof message === "string") {
                     webSocket.data.handlers?.error(
                         new Error("Remote terminal WebSocket messages must be binary."),
@@ -194,9 +256,17 @@ export function startBunHttpServer(
                 webSocket.data.handlers?.message(Buffer.from(message));
             },
             close(webSocket: BunTerminalWebSocket) {
+                if (webSocket.data.kind === "live") {
+                    webSocket.data.binding?.closed();
+                    return;
+                }
                 webSocket.data.handlers?.close();
             },
             error(webSocket: BunTerminalWebSocket, error: Error) {
+                if (webSocket.data.kind === "live") {
+                    webSocket.data.binding?.message("");
+                    return;
+                }
                 webSocket.data.handlers?.error(error);
             },
         },

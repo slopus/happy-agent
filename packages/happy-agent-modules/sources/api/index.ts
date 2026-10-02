@@ -22,6 +22,7 @@ export {
     type ApiDrainSource,
     type ApiSocketRejection,
     type PreparedTerminalSocket,
+    type PreparedLiveSocket,
     type PreparedWorkspaceProxySocket,
     socketRejectionBody,
 } from "./ApiModule.js";

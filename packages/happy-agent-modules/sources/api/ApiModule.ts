@@ -8,9 +8,18 @@ import { dirname, join } from "node:path";
 import { ConnectionsModule, RemoteConnectionError } from "../connections/index.js";
 import { GlobalSkillsModule, GlobalSkillsError } from "../skills/index.js";
 import { teamDraftMigration } from "./persistence/migrations/001-team-drafts.js";
+import {
+    LiveModule,
+    LiveError,
+    type LiveControlSocket,
+    type LiveControlBinding,
+} from "../live/index.js";
 
 import { createId } from "@paralleldrive/cuid2";
 import {
+    createLiveSessionRequestSchema,
+    closeLiveSessionRequestSchema,
+    liveDesktopIdSchema,
     createSecretRequestSchema,
     secretAttachmentMutationRequestSchema,
     updateSecretRequestSchema,
@@ -252,6 +261,15 @@ export type PreparedTerminalSocket =
           readonly handled: true;
       };
 
+export type PreparedLiveSocket =
+    | { readonly handled: false }
+    | { readonly handled: true; readonly rejection: ApiSocketRejection }
+    | {
+          readonly handled: true;
+          readonly attach: (socket: LiveControlSocket) => LiveControlBinding;
+          readonly failed: () => void;
+      };
+
 export type PreparedWorkspaceProxySocket =
     | { readonly handled: false }
     | { readonly handled: true; readonly rejection: ApiSocketRejection }
@@ -305,6 +323,7 @@ export class ApiModule implements AgentModule {
     readonly #compactions: CompactionsModule;
     readonly #bots: BotsModule;
     readonly #subtasks: SubtasksModule | undefined;
+    readonly #live: LiveModule | undefined;
     readonly #projects: ProjectsModule;
     readonly #workspaces: WorkspacesModule;
     readonly #terminals: TerminalsModule;
@@ -349,6 +368,11 @@ export class ApiModule implements AgentModule {
         perMessageDeflate: false,
     });
     readonly #workspaceProxy = new WorkspaceProxy();
+    readonly #liveWebSockets = new WebSocketServer({
+        maxPayload: 256 * 1024,
+        noServer: true,
+        perMessageDeflate: false,
+    });
     readonly #serviceTunnels = new Map<ServiceHttpTunnel, string>();
     readonly #serviceAdmissions = new Map<string, number>();
     #serviceAttachmentCount = 0;
@@ -412,6 +436,7 @@ export class ApiModule implements AgentModule {
         globalSkills?: GlobalSkillsModule,
         services?: ServicesModule,
         subtasks?: SubtasksModule,
+        live?: LiveModule,
     ) {
         this.#abort = abort;
         this.#config = config;
@@ -441,6 +466,7 @@ export class ApiModule implements AgentModule {
         this.#globalSkills = globalSkills;
         this.#services = services;
         this.#subtasks = subtasks;
+        this.#live = live;
     }
 
     readonly beforeStart = async (
@@ -561,6 +587,8 @@ export class ApiModule implements AgentModule {
         this.#backgroundScope.emitDestroy();
         for (const client of this.#webSockets.clients) client.terminate();
         this.#webSockets.close();
+        for (const client of this.#liveWebSockets.clients) client.terminate();
+        this.#liveWebSockets.close();
         await this.#workspaceProxy.close();
     }
 
@@ -608,6 +636,59 @@ export class ApiModule implements AgentModule {
                     );
                 }
                 finishMutation = this.#admitMutation(request, url);
+            }
+            if (
+                url.pathname === "/v0/live/sessions" ||
+                url.pathname.startsWith("/v0/live/sessions/")
+            ) {
+                if (this.#live === undefined)
+                    throw unsupported("Desktop voice control is unavailable.");
+                const ownerId = teamUser(ctx)?.id ?? "standalone";
+                if (request.method === "POST" && url.pathname === "/v0/live/sessions") {
+                    const body = await bodyAs(
+                        request,
+                        createLiveSessionRequestSchema,
+                        "voice request",
+                        384 * 1024,
+                    );
+                    const reserved = await this.#live.reserve(ctx, ownerId, body);
+                    const sdp = await reserved.allocated;
+                    const session = await this.#live.get(ctx, ownerId, reserved.session.id);
+                    if (session.status !== "starting" && session.status !== "active")
+                        throw new LiveError(
+                            503,
+                            "live_unavailable",
+                            "Voice ended before startup completed.",
+                            session,
+                        );
+                    sendJson(response, 201, {
+                        session,
+                        transport: { type: "webrtc", sdp },
+                    });
+                    return;
+                }
+                const match = /^\/v0\/live\/sessions\/([a-z][a-z0-9]{1,31})(\/close)?$/.exec(
+                    url.pathname,
+                );
+                if (match !== null && request.method === "GET" && match[2] === undefined) {
+                    sendJson(response, 200, {
+                        session: await this.#live.get(ctx, ownerId, match[1]!),
+                    });
+                    return;
+                }
+                if (match !== null && request.method === "POST" && match[2] === "/close") {
+                    const body = await bodyAs(
+                        request,
+                        closeLiveSessionRequestSchema,
+                        "voice close request",
+                        4096,
+                    );
+                    sendJson(response, 200, {
+                        session: await this.#live.close(ctx, ownerId, match[1]!, body.mutationId),
+                    });
+                    return;
+                }
+                throw notFound("The requested voice endpoint does not exist.");
             }
             if (url.pathname === "/v0/skills" || url.pathname.startsWith("/v0/skills/")) {
                 const skills = this.#globalSkills;
@@ -1273,9 +1354,16 @@ export class ApiModule implements AgentModule {
             this.#sendError(
                 ctx,
                 response,
-                error instanceof GlobalSkillsError
-                    ? new ApiError(error.status, error.code, error.message, error.details)
-                    : error,
+                error instanceof LiveError
+                    ? new ApiError(
+                          error.status,
+                          error.code,
+                          error.message,
+                          error.session === undefined ? {} : { session: error.session },
+                      )
+                    : error instanceof GlobalSkillsError
+                      ? new ApiError(error.status, error.code, error.message, error.details)
+                      : error,
             );
         } finally {
             finishMutation?.();
@@ -1289,6 +1377,45 @@ export class ApiModule implements AgentModule {
         head: Buffer,
     ): Promise<boolean> {
         if (await this.handleRemoteAttachment(ctx, request, socket, head)) return true;
+        const live = await this.prepareLiveSocket(
+            ctx,
+            requestUrl(request),
+            request.headers.authorization,
+        );
+        if (live.handled) {
+            if ("rejection" in live) {
+                writeSocketError(socket, live.rejection);
+                return true;
+            }
+            const upgradeFailed = () => live.failed();
+            socket.once("close", upgradeFailed);
+            socket.once("error", upgradeFailed);
+            try {
+                this.#liveWebSockets.handleUpgrade(request, socket, head, (webSocket) => {
+                    socket.off("close", upgradeFailed);
+                    socket.off("error", upgradeFailed);
+                    const binding = live.attach({
+                        send: (text) => {
+                            if (webSocket.bufferedAmount > 256 * 1024)
+                                throw new Error("The voice control connection is too slow.");
+                            webSocket.send(text);
+                        },
+                        close: (code, reason) => webSocket.close(code, reason),
+                    });
+                    webSocket.on("message", (data, binary) =>
+                        binding.message(binary ? "" : data.toString()),
+                    );
+                    webSocket.on("close", () => binding.closed());
+                    webSocket.on("error", () => binding.message(""));
+                });
+            } catch {
+                socket.off("close", upgradeFailed);
+                socket.off("error", upgradeFailed);
+                live.failed();
+                socket.destroy();
+            }
+            return true;
+        }
         const prepared = await this.prepareTerminalSocket(
             ctx,
             requestUrl(request).pathname,
@@ -1432,6 +1559,47 @@ export class ApiModule implements AgentModule {
         return true;
     }
 
+    async prepareLiveSocket(
+        ctx: Context,
+        url: URL,
+        authorization: string | string[] | undefined,
+    ): Promise<PreparedLiveSocket> {
+        const match = /^\/v0\/live\/sessions\/([a-z][a-z0-9]{1,31})\/control$/.exec(url.pathname);
+        if (match === null) return { handled: false };
+        try {
+            ctx = await this.#authenticate(ctx, authorization);
+            this.#assertTeamUser(ctx);
+            this.#assertSocketReady();
+            if (this.#live === undefined)
+                throw unsupported("Desktop voice control is unavailable.");
+            const windowId = url.searchParams.get("windowId");
+            if (
+                !Value.Check(liveDesktopIdSchema, windowId) ||
+                url.searchParams.getAll("windowId").length !== 1 ||
+                [...url.searchParams.keys()].some((key) => key !== "windowId")
+            )
+                throw invalidRequest("The voice window identity is invalid.");
+            return {
+                handled: true,
+                ...(await this.#live.prepareControl(
+                    ctx,
+                    teamUser(ctx)?.id ?? "standalone",
+                    match[1]!,
+                    windowId,
+                )),
+            };
+        } catch (error) {
+            const failure =
+                error instanceof LiveError
+                    ? new ApiError(error.status, error.code, error.message)
+                    : error;
+            return {
+                handled: true,
+                rejection: this.#socketRejection(ctx, failure, "The voice session was not found."),
+            };
+        }
+    }
+
     async prepareTerminalSocket(
         ctx: Context,
         pathname: string,
@@ -1529,6 +1697,19 @@ export class ApiModule implements AgentModule {
 
     #subscribeToModules(ctx: Context): void {
         if (this.#unsubscribe.length > 0) return;
+        if (this.#live !== undefined)
+            this.#unsubscribe.push(
+                this.#live.onEvent((event) => {
+                    this.#mutationIds.exit(() =>
+                        this.#journal.append(
+                            event.type,
+                            event.payload,
+                            undefined,
+                            event.ownerId === "standalone" ? undefined : event.ownerId,
+                        ),
+                    );
+                }),
+            );
         if (this.#services !== undefined)
             this.#unsubscribe.push(
                 this.#services.onEvent((event) => {
@@ -5664,6 +5845,7 @@ export class ApiModule implements AgentModule {
             drainWaitingFor: this.#drainWaitingFor(ctx),
             shuttingDown: gracefulShutdown?.shuttingDown ?? false,
             status: this.#ready ? "ready" : "starting",
+            capabilities: { desktopLiveControl: this.#live !== undefined },
             version: {
                 protocol: API_PROTOCOL_VERSION,
                 daemon: this.#config.configuration.version,

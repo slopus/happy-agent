@@ -27,6 +27,7 @@ import type { LibSQLDatabase } from "drizzle-orm/libsql";
 
 import { AbortModule } from "../abort/index.js";
 import { ApiModule } from "../api/index.js";
+import { LiveModule } from "../live/index.js";
 import { AutoModule } from "../auto/index.js";
 import { BotsModule } from "../bots/index.js";
 import { CollaborationModule } from "../collaboration/index.js";
@@ -127,6 +128,7 @@ export interface PreparedHappyAgentRuntime {
 
 /** Every capability in the runtime, addressable by its owning module. */
 export interface HappyAgentRuntimeModules {
+    readonly live: LiveModule;
     readonly abort: AbortModule;
     readonly api: ApiModule;
     readonly auto: AutoModule;
@@ -530,6 +532,7 @@ export async function startHappyAgentRuntime(
             await system?.close(shutdownCtx);
             await codeMode.close();
         });
+        const live = new LiveModule(config, durableFunctions);
         const apiModule = new ApiModule(
             abort,
             config,
@@ -559,10 +562,12 @@ export async function startHappyAgentRuntime(
             globalSkills,
             services,
             subtasks,
+            live,
         );
         api = apiModule;
 
         const modules: HappyAgentRuntimeModules = {
+            live,
             abort,
             api: apiModule,
             auto: autoModule,
@@ -645,6 +650,7 @@ export async function startHappyAgentRuntime(
             git,
             durableFunctions,
             globalSkills,
+            live,
             bots,
             node,
             skillFolders,

@@ -645,3 +645,4 @@ export * from "./profile/index.js";
 
 // Provider discovery, live enablement, and verification.
 export * from "./providerScan/index.js";
+export * from "./live/index.js";
