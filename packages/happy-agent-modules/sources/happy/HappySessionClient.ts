@@ -344,6 +344,19 @@ export class HappySessionClient {
         await this.#avatarSync?.catch(() => undefined);
     }
 
+    /** Releases a mobile subscription while preserving the conversation and its live turn. */
+    async unsubscribe(): Promise<void> {
+        if (this.#closed) return;
+        this.#closed = true;
+        this.#clearRetry();
+        this.#clearAvatarRetry();
+        this.#closeController.abort();
+        this.#socket?.disconnect();
+        this.#socket = undefined;
+        await this.#syncPromise?.catch(() => undefined);
+        await this.#avatarSync?.catch(() => undefined);
+    }
+
     async #runSyncLoop(): Promise<void> {
         do {
             this.#needsAnotherSync = false;

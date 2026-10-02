@@ -96,7 +96,7 @@ import {
     type HappyReadFileAtRevisionResponse,
 } from "./HappyWorkspaceRead.js";
 
-/** How many agents one daemon keeps connected to Happy at once. */
+/** How many session subscriptions one Happy connection keeps live at once. */
 const MAX_CONNECTED_AGENTS = 64;
 
 /** How many archived messages a newly attached Happy session receives as its initial context. */
@@ -146,6 +146,11 @@ interface ConnectedAgent {
     readonly mapper: HappyMessageMapper;
 }
 
+interface AttachmentState {
+    readonly agents: Map<string, ConnectedAgent>;
+    readonly unsubscribedMappers: Map<string, HappyMessageMapper>;
+}
+
 export type HappyIntegrationListener = (
     ctx: Context,
     integration: HappyIntegration,
@@ -177,6 +182,9 @@ export class HappyIntegrationStartError extends Error {
  */
 export class HappyConnection implements HappySessionOperations, HappySpawnOperations {
     readonly #agents = new Map<string, ConnectedAgent>();
+    /** Recently unsubscribed turn mappers, bounded by the live connection budget. */
+    readonly #unsubscribedMappers = new Map<string, HappyMessageMapper>();
+    readonly #transactionAttachments = new WeakMap<object, AttachmentState>();
     readonly #config: ConfigModule;
     readonly #bots: BotsModule;
     readonly #botUpdates = mapAsyncLock<string>();
@@ -276,7 +284,7 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
         onEventTransactional: async (ctx: Context, event: AgentEvent): Promise<void> => {
             if (event.agentId === undefined) return;
             if (this.#configuration === undefined) return;
-            const attached = await this.#attach(ctx, event.agentId);
+            const attached = await this.#attach(ctx, event.agentId, true);
             if (attached === undefined) return;
             const accepted =
                 event.type !== "message.accepted" ||
@@ -947,6 +955,7 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
         await this.#settleTasks();
         const connected = [...this.#agents.values()];
         this.#agents.clear();
+        this.#unsubscribedMappers.clear();
         this.#served.clear();
         this.#archivingAgents.clear();
         this.#retiredAgents.clear();
@@ -1374,7 +1383,7 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
         } else {
             await this.#attachSpawnOwner(ctx, request.sessionId, owner);
         }
-        await this.#attach(ctx, request.sessionId);
+        await ctx.inTx(async (txCtx) => await this.#attach(txCtx, request.sessionId, true));
         return { agentId: request.sessionId, type: "ready" };
     }
 
@@ -1418,7 +1427,7 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
         // second finds the client the first one made rather than making another.
         const agentId = creation.bot.agentId;
         await this.#botUpdates.runInLock(ctx, agentId, async () => {
-            await this.#attach(ctx, agentId);
+            await ctx.inTx(async (txCtx) => await this.#attach(txCtx, agentId, true));
         });
         return { agentId, type: "ready" };
     }
@@ -1715,19 +1724,33 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
         }
     }
 
-    async #attach(ctx: Context, agentId: string): Promise<ConnectedAgent | undefined> {
+    async #attach(
+        ctx: Context,
+        agentId: string,
+        replaceOldest = false,
+    ): Promise<ConnectedAgent | undefined> {
         if (this.#stopping) return undefined;
         if (this.#archivingAgents.has(agentId)) return undefined;
-        const existing = this.#agents.get(agentId);
+        const pending = this.#transactionAttachments.get(ctx.db);
+        const agents = pending?.agents ?? this.#agents;
+        const existing = agents.get(agentId);
         if (existing !== undefined) return existing;
         const configuration = this.#configuration;
         const context = this.#context;
         if (configuration === undefined || context === undefined) return undefined;
-        if (this.#agents.size >= MAX_CONNECTED_AGENTS) return undefined;
+        if (agents.size >= MAX_CONNECTED_AGENTS && !replaceOldest) return undefined;
         if (!(await this.#userVisible(ctx, agentId))) return undefined;
+        const state = pending ?? this.#attachmentState(ctx);
         const session = await this.session(ctx, agentId);
         if (session === undefined) return undefined;
         const localProjectId = session.project?.id;
+        // A newly publishing conversation must finish its first relay request before another
+        // creation can replace it. If every slot is publishing, a retry remains truly pending.
+        const oldest =
+            state.agents.size >= MAX_CONNECTED_AGENTS
+                ? await this.#oldestSubscription(ctx, state.agents)
+                : undefined;
+        if (state.agents.size >= MAX_CONNECTED_AGENTS && oldest === undefined) return undefined;
         await this.#sync.ensureSession(
             ctx,
             {
@@ -1739,7 +1762,9 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
             },
             Date.now(),
         );
-        const mapper = new HappyMessageMapper(this.#connectionOwner?.id);
+        const mapper =
+            state.unsubscribedMappers.get(agentId) ??
+            new HappyMessageMapper(this.#connectionOwner?.id);
         await this.#backfill(ctx, agentId, mapper);
         const attached: ConnectedAgent = {
             client: new HappySessionClient({
@@ -1763,8 +1788,32 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
             await attached.client.close();
             return undefined;
         }
-        this.#agents.set(agentId, attached);
+        // Every caller holds the database transaction, so concurrent creation and activity
+        // cannot select the same slot or exceed the budget. Catalog reconciliation never
+        // replaces a subscription: only a requested conversation or a new agent event does.
+        if (oldest !== undefined) {
+            state.agents.delete(oldest.agentId);
+            state.unsubscribedMappers.delete(oldest.agentId);
+            state.unsubscribedMappers.set(oldest.agentId, oldest.attached.mapper);
+            while (state.unsubscribedMappers.size > MAX_CONNECTED_AGENTS) {
+                const first = state.unsubscribedMappers.keys().next().value;
+                if (first === undefined) break;
+                state.unsubscribedMappers.delete(first);
+            }
+        }
+        state.unsubscribedMappers.delete(agentId);
+        state.agents.set(agentId, attached);
         afterCommit(ctx, () => {
+            // Unsubscribe disconnects synchronously before waiting for outstanding work.
+            // It neither archives the relay session nor ends the agent's turn.
+            if (oldest !== undefined) {
+                this.#forgetGitAgent(oldest.agentId);
+                this.#runTask(async () => await oldest.attached.client.unsubscribe());
+            }
+            if (this.#stopping || this.#agents.get(agentId) !== attached) {
+                void attached.client.unsubscribe();
+                return;
+            }
             attached.client.start();
             if (localProjectId !== undefined) {
                 this.#runTask(async () => {
@@ -1776,6 +1825,58 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
             }
         });
         return attached;
+    }
+
+    /** A rolled-back transaction must not evict a working mobile connection. */
+    #attachmentState(ctx: Context): AttachmentState {
+        // The published Agent Base carries its active transaction in the database facade.
+        // All attachment entry points participate in that transaction.
+        const database = ctx.db;
+        const existing = this.#transactionAttachments.get(database);
+        if (existing !== undefined) return existing;
+        const state = {
+            agents: new Map(this.#agents),
+            unsubscribedMappers: new Map(this.#unsubscribedMappers),
+        };
+        this.#transactionAttachments.set(database, state);
+        afterCommit(ctx, () => {
+            this.#transactionAttachments.delete(database);
+            if (this.#stopping) return;
+            this.#agents.clear();
+            for (const [id, attached] of state.agents) {
+                if (this.#archivingAgents.has(id) || this.#retiredAgents.has(id)) continue;
+                this.#agents.set(id, attached);
+            }
+            this.#unsubscribedMappers.clear();
+            for (const [id, mapper] of state.unsubscribedMappers) {
+                if (this.#archivingAgents.has(id) || this.#retiredAgents.has(id)) continue;
+                this.#unsubscribedMappers.set(id, mapper);
+            }
+        });
+        return state;
+    }
+
+    /** Durable agent update time, independent of reconnect order and relay keep-alives. */
+    async #oldestSubscription(ctx: Context, agents: ReadonlyMap<string, ConnectedAgent>) {
+        let oldest: { agentId: string; attached: ConnectedAgent; updatedAt: number } | undefined;
+        for (const [agentId, attached] of agents) {
+            if ((await this.#sync.readSession(ctx, agentId))?.remoteSessionId === undefined)
+                continue;
+            const latest = await this.#events.latestAgentEvent(ctx, agentId);
+            const config =
+                latest === undefined ? await this.#system().config(ctx, agentId) : undefined;
+            const updatedAt =
+                latest?.occurredAt ??
+                (typeof config?.metadata?.updatedAt === "number" ? config.metadata.updatedAt : 0);
+            if (
+                oldest === undefined ||
+                updatedAt < oldest.updatedAt ||
+                (updatedAt === oldest.updatedAt && agentId < oldest.agentId)
+            ) {
+                oldest = { agentId, attached, updatedAt };
+            }
+        }
+        return oldest;
     }
 
     /**
@@ -1949,6 +2050,7 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
                 return;
             }
             this.#agents.delete(agentId);
+            this.#unsubscribedMappers.delete(agentId);
             this.#forgetGitAgent(agentId);
             const archiving = this.#runTask(async () => {
                 try {

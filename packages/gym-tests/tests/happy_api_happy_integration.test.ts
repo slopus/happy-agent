@@ -42,6 +42,101 @@ afterEach(async () => {
 });
 
 describe("Happy integration API", () => {
+    it("creates a mobile bot at the session limit by replacing only the oldest subscription", async () => {
+        const happy = await startProtocolHappyServer({ authorizePairing: true });
+        const gym = await createAgentGym({
+            environment: { HAPPY_AGENT_HAPPY_SERVER_URL: happy.url },
+            inference: [
+                { content: [{ type: "text", text: "Saved earlier answer." }] },
+                { content: [{ type: "text", text: "Reactivated conversation." }] },
+            ],
+            timeoutMs: 20_000,
+        });
+        gyms.add(gym);
+        // One built-in bot and the gym's ordinary conversation already exist.
+        for (let index = 0; index < 62; index += 1) {
+            await gym.client.createBot({ name: `Capacity bot ${index}` });
+        }
+        const before = await gym.client.listBots();
+        await gym.client.startHappyIntegration();
+        await waitForIntegration(gym, "connected");
+        await gym.waitUntil(
+            () =>
+                (happy.sessions.length === 64 &&
+                    happy.sessions.every((session) => happy.hasRpc(`${session.id}:abort`))) ||
+                undefined,
+            "all 64 mobile sessions to connect",
+            30_000,
+        );
+        // Deliberately make the newest bot the least recently updated conversation, proving
+        // replacement follows durable updates rather than creation or connection order.
+        const oldest = happy.sessions.find(
+            (session) => session.metadata.bot?.id === before.bots.at(-1)!.id,
+        )!;
+        await gym.send("Save this conversation before replacing its subscription.", {
+            sessionId: oldest.tag.slice(4),
+        });
+        for (const session of happy.sessions) {
+            if (session.id === oldest.id) continue;
+            await gym.client.saveAgentDraft(session.tag.slice(4), {
+                draft: { ...gym.selection, permissionMode: "auto", text: "Refreshed on desktop." },
+                updatedAt: Date.now(),
+            });
+        }
+        const oldHistory = await gym.history(oldest.tag.slice(4));
+        expect(JSON.stringify(oldHistory)).toContain("Saved earlier answer.");
+        const request = {
+            type: "happy-agent-spawn",
+            clientRequestId: "capacity-bot-request",
+            target: { kind: "bot", name: "Blocked bot" },
+        };
+        const result = await happy.spawn(request);
+        expect(result).toMatchObject({ type: "success", sessionId: expect.any(String) });
+        const after = await gym.client.listBots();
+        expect(after.bots).toHaveLength(before.bots.length + 1);
+        expect(after.bots.filter((bot) => bot.name === "Blocked bot")).toHaveLength(1);
+        expect(await happy.spawn(request)).toEqual(result);
+        expect(happy.sessions).toHaveLength(65);
+        await gym.waitUntil(
+            () => happy.connectedSessions.length === 64 || undefined,
+            "the mobile subscription count to remain at 64",
+        );
+        expect(happy.endedSessions).toEqual([]);
+        expect(happy.connectedSessions).not.toContain(oldest.id);
+        expect((await gym.history(oldest.tag.slice(4))).runs).toEqual(oldHistory.runs);
+        for (const bot of before.bots) {
+            expect(await gym.client.getBot(bot.id)).toMatchObject({ bot: { status: "active" } });
+        }
+        const concurrent = await Promise.all(
+            ["one", "two"].map((suffix) =>
+                happy.spawn({
+                    ...request,
+                    clientRequestId: `capacity-concurrent-${suffix}`,
+                    target: { kind: "bot", name: `Concurrent bot ${suffix}` },
+                }),
+            ),
+        );
+        expect(concurrent).toEqual([
+            { type: "success", sessionId: expect.any(String) },
+            { type: "success", sessionId: expect.any(String) },
+        ]);
+        await gym.waitUntil(
+            () => happy.connectedSessions.length === 64 || undefined,
+            "64 subscriptions after concurrent creation",
+        );
+        // A new local event reactivates the same relay identity and resumes its durable history.
+        await gym.send("Reactivate this conversation.", { sessionId: oldest.tag.slice(4) });
+        await gym.waitUntil(
+            () => happy.hasRpc(`${oldest.id}:abort`) || undefined,
+            "the evicted conversation to reconnect",
+        );
+        expect(JSON.stringify(await gym.history(oldest.tag.slice(4)))).toContain(
+            "Reactivated conversation.",
+        );
+        expect(new Set(happy.sessions.map((session) => session.id)).size).toBe(67);
+        expect(happy.endedSessions).toEqual([]);
+    }, 90_000);
+
     it("distinguishes unborn and clean native comparisons without widening a subfolder project", async () => {
         const happy = await startProtocolHappyServer({ authorizePairing: true });
         const gym = await createAgentGym({
@@ -1123,6 +1218,9 @@ function sendJson(response: ServerResponse, body: unknown, status = 200): void {
 interface ProtocolHappyServer {
     hasRpc(method: string): boolean;
     rpc(sessionId: string, method: string, params: unknown): Promise<unknown>;
+    spawn(params: unknown): Promise<unknown>;
+    readonly connectedSessions: readonly string[];
+    readonly endedSessions: readonly string[];
     readonly metadata: ReadonlyMap<string, Record<string, unknown>>;
     metadataVersion(sessionId: string): number;
     /** Writes merged metadata as a phone would; `shape` may re-serialize it the way another client would. */
@@ -1158,6 +1256,8 @@ async function startProtocolHappyServer(options: {
     const rpcSockets = new Map<string, WebSocket>();
     const rpcAnswers = new Map<string, (value: string) => void>();
     let nextRpc = 0;
+    let machineId: string | undefined;
+    const endedSessions: string[] = [];
     const sessions: {
         id: string;
         tag: string;
@@ -1214,6 +1314,7 @@ async function startProtocolHappyServer(options: {
                 }
                 if (request.method === "POST" && url.pathname === "/v1/machines") {
                     machineRegistrations += 1;
+                    machineId = (JSON.parse(body) as { id: string }).id;
                     const token = bearerToken(request.headers.authorization);
                     const status = options.registrationStatus?.(token, machineRegistrations) ?? 200;
                     if (status !== 200) {
@@ -1328,6 +1429,7 @@ async function startProtocolHappyServer(options: {
                 ];
                 if (event === "rpc-register" && payload.method)
                     rpcSockets.set(payload.method, socket);
+                if (event === "session-end" && payload.sid) endedSessions.push(payload.sid);
                 let answer: Record<string, unknown> = {
                     result: "success",
                     version: (payload.expectedVersion ?? 0) + 1,
@@ -1360,7 +1462,33 @@ async function startProtocolHappyServer(options: {
     await once(server, "listening");
     const address = server.address() as AddressInfo;
     return {
-        hasRpc: (method) => rpcSockets.has(method),
+        hasRpc: (method) => rpcSockets.get(method)?.readyState === 1,
+        get connectedSessions() {
+            return [...rpcSockets]
+                .filter(([method, socket]) => method.endsWith(":abort") && socket.readyState === 1)
+                .map(([method]) => method.slice(0, -6));
+        },
+        endedSessions,
+        spawn: async (params) => {
+            const method = `${machineId}:spawn-happy-session`;
+            const socket = rpcSockets.get(method);
+            if (!socket) throw new Error("The machine RPC socket is not connected.");
+            const id = String(++nextRpc);
+            return await new Promise((resolve, reject) => {
+                const timeout = setTimeout(() => {
+                    rpcAnswers.delete(id);
+                    reject(new Error("The machine RPC timed out."));
+                }, 20_000);
+                rpcAnswers.set(id, (answer) => {
+                    clearTimeout(timeout);
+                    rpcAnswers.delete(id);
+                    resolve(decode(answer));
+                });
+                socket.send(
+                    `42${id}${JSON.stringify(["rpc-request", { method, params: encode(params) }])}`,
+                );
+            });
+        },
         rpc: async (sessionId, method, params) => {
             const socket = rpcSockets.get(`${sessionId}:abort`);
             if (!socket) throw new Error("The session RPC socket is not connected.");

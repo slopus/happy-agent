@@ -85,6 +85,18 @@ one message it cannot carry.
 
 ## Session state
 
+- The 64-session budget limits live mobile subscriptions, not bot creation or agent execution.
+  Silently refusing attachment after saving a bot left the spawn RPC permanently pending.
+  A requested conversation or a new agent event now replaces the subscription with the oldest
+  durable agent update, with agent ID breaking ties. Startup and catalog reconciliation cannot
+  displace current subscriptions merely by rediscovering older conversations. Replacement
+  commits with its caller's transaction and disconnects only the old mobile client: it preserves
+  the bot, running work, relay identity, sync cursor, queued messages, and history, and sends no
+  session-end or archive signal. A bounded cache retains the most recently unsubscribed turn
+  mappers so immediate reactivation preserves message and turn identities. The existing mobile
+  protocol has no reopen RPC; a new local agent event reactivates the subscription, while opening
+  an unsubscribed idle conversation on the phone alone does not.
+
 - Bot pictures travel as encrypted relay session avatars, not synthetic projects. Ordinary project
   sessions leave this field unset so mobile can inherit project artwork. The local bot catalog
   remains the image authority, including removal. Image uploads run independently of message and

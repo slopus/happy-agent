@@ -1521,6 +1521,22 @@ describe("answering what the phone asks of a session", () => {
 });
 
 describe("ending a session", () => {
+    it("unsubscribes without ending the turn, archiving, or changing its durable cursor", async () => {
+        const socket = new FakeSocket();
+        const server = fakeServer();
+        const session = client({ operations: fakeOperations().operations, server, socket });
+        await session.settle();
+        const before = await sync.readSession(store.context, AGENT_ID);
+        await session.unsubscribe();
+        expect(socket.connected).toBe(false);
+        expect(socket.emittedValues("session-end")).toEqual([]);
+        expect(server.posted("/v1/sessions/remote-1/archive")).toEqual([]);
+        expect(await sync.readSession(store.context, AGENT_ID)).toEqual(before);
+        // Ordinary cleanup cannot turn an earlier unsubscribe into a session end.
+        await session.close();
+        expect(socket.emittedValues("session-end")).toEqual([]);
+    });
+
     it("settles archive metadata after the relay echoes its own update", async () => {
         const socket = new FakeSocket();
         const server = fakeServer();
