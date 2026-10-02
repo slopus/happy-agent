@@ -187,6 +187,7 @@ for (let round = 0; round < 2; round++) {
                           handled: true,
                           rejection: { status: 401, code: "unauthorized", message: "Unauthorized" },
                       },
+            prepareLiveSocket: async () => ({ handled: false }),
             prepareTerminalSocket: async (_ctx: unknown, _path: string, authorization: string) => {
                 await new Promise((resolve) => setImmediate(resolve));
                 return authorization === `Bearer ${token}`
