@@ -1,0 +1,17 @@
+{
+    "provenance": "live-backend-response",
+    "capturedAt": "2026-09-30T16:07:52Z",
+    "note": "Harmless GPT-6 Luna request with Daybreak Red. Message redacted; cookies, quota/account metadata, request and turn identifiers omitted. Content length omitted because the body was redacted. The original response had no content-type or x-should-retry header.",
+    "status": 400,
+    "headers": {
+        "date": "Wed, 30 Sep 2026 16:07:52 GMT"
+    },
+    "body": {
+        "error": {
+            "code": "invalid_access_program",
+            "param": "access_programs.cyber",
+            "type": "invalid_request_error",
+            "message": "[redacted]"
+        }
+    }
+}

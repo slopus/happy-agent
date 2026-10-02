@@ -4,12 +4,14 @@ import type { SessionTool } from "@/core/SessionTool.js";
 import { createOpenAIResponseRequest } from "@/protocol/responses/createOpenAIResponseRequest.js";
 import { createResponsesLiteRequest } from "@/protocol/responsesLite/createResponsesLiteRequest.js";
 import type { CodexResponseRequest } from "@/vendors/codex/impl/CodexResponseRequest.js";
+import type { CodexAccessProgram } from "@/vendors/codex/impl/codexAccessProgram.js";
 import type { CodexServiceTier } from "@/vendors/codex/impl/codexServiceTier.js";
 import { isCodexV2Model } from "@/vendors/codex/impl/isCodexV2Model.js";
 import { toCodexToolDefinitions } from "@/vendors/codex/impl/toCodexToolDefinitions.js";
 
 export function createCodexCliRequest(options: {
     context: SessionContext;
+    cyberAccessProgram?: CodexAccessProgram;
     clientMetadata: Readonly<Record<string, string>>;
     effort?: SessionReasoningEffort;
     model: string;
@@ -22,6 +24,9 @@ export function createCodexCliRequest(options: {
     const request: CodexResponseRequest = createOpenAIResponseRequest(options);
     request.tool_choice = "auto";
     request.client_metadata = { ...options.clientMetadata };
+    if (options.cyberAccessProgram !== undefined) {
+        request.access_programs = { cyber: options.cyberAccessProgram };
+    }
     if (options.serviceTier !== undefined) request.service_tier = options.serviceTier;
     const useResponsesLite = isCodexV2Model(options.model) && options.parallelToolCalls !== true;
     if (useResponsesLite) {

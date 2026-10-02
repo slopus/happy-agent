@@ -1,5 +1,4 @@
 import type { ProviderModality } from "@/core/ProviderModality.js";
-import type { SessionOptions } from "@/core/SessionOptions.js";
 import {
     createInferenceMaxRetriesResolver,
     sessionInferenceMaxRetriesResolver,
@@ -13,6 +12,13 @@ import {
     bedrockRuntimeOpenAIEndpoint,
 } from "@/vendors/bedrock/impl/bedrockConstants.js";
 import { CodexSession } from "@/vendors/codex/CodexSession.js";
+import type { CodexProviderSessionOptions } from "@/vendors/codex/CodexSession.js";
+import {
+    assertCodexAccessProgramCredential,
+    codexAccessPrograms,
+    parseCodexAccessProgram,
+    type CodexAccessProgram,
+} from "@/vendors/codex/impl/codexAccessProgram.js";
 import {
     codexModelServiceTiers,
     codexServiceTierAccountKey,
@@ -36,6 +42,7 @@ import {
 export interface CodexProviderOptions extends InferenceRetryOptions {
     bedrockTransport?: CodexBedrockTransport;
     credential: CodexProviderCredential;
+    cyberAccessProgram?: CodexAccessProgram;
     endpoint?: string;
     model?: string;
     /** Enables multi-call batches; Codex v2 uses standard Responses instead of Responses Lite. */
@@ -52,10 +59,12 @@ export type CodexBedrockTransport = "mantle" | "runtime";
 
 export class CodexProvider extends ResponsesProvider {
     static override readonly name = "codex";
+    static readonly cyberAccessPrograms: readonly CodexAccessProgram[] = codexAccessPrograms;
     static override readonly inputTypes: readonly ProviderModality[] = ["text", "image"];
     static override readonly outputTypes: readonly ProviderModality[] = ["text"];
 
     readonly credential: CodexProviderCredential;
+    readonly cyberAccessProgram: CodexAccessProgram | undefined;
     readonly bedrockTransport: CodexBedrockTransport | undefined;
     readonly endpoint: string;
     readonly model: string | undefined;
@@ -71,6 +80,8 @@ export class CodexProvider extends ResponsesProvider {
         super();
         assertCodexCredential(options.credential);
         this.credential = options.credential;
+        this.cyberAccessProgram = parseCodexAccessProgram(options.cyberAccessProgram);
+        assertCodexAccessProgramCredential(this.cyberAccessProgram, this.credential);
         const isBedrock = isBedrockCredential(options.credential);
         const region =
             options.region?.trim() ||
@@ -139,7 +150,13 @@ export class CodexProvider extends ResponsesProvider {
         });
     }
 
-    override async session(id: string, options: SessionOptions): Promise<CodexSession> {
+    override async session(
+        id: string,
+        options: CodexProviderSessionOptions,
+    ): Promise<CodexSession> {
+        const cyberAccessProgram =
+            parseCodexAccessProgram(options.cyberAccessProgram) ?? this.cyberAccessProgram;
+        assertCodexAccessProgramCredential(cyberAccessProgram, this.credential);
         const installationId = await resolveCodexInstallationId();
         const userAgent = this.userAgent ?? (await resolveCodexUserAgent());
         return new CodexSession(id, {
@@ -148,6 +165,7 @@ export class CodexProvider extends ResponsesProvider {
                 ? {}
                 : { bedrockTransport: this.bedrockTransport }),
             credential: this.credential,
+            ...(cyberAccessProgram === undefined ? {} : { cyberAccessProgram }),
             endpoint: this.endpoint,
             installationId,
             ...(this.model === undefined ? {} : { model: this.model }),
