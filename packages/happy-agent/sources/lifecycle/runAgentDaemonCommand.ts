@@ -1,6 +1,7 @@
 import { HappyAgentClient, type HealthResponse } from "@slopus/happy-agent-client";
 
 import { AgentDaemonError } from "./AgentDaemonError.js";
+import { assertReloadCallerOutsideDaemon } from "./assertReloadCallerOutsideDaemon.js";
 import { createUnixSocketFetch } from "./createUnixSocketFetch.js";
 import { isDaemonProcessRunning, killDaemonFromPidFile, readDaemonPid } from "./daemonPid.js";
 import { readDaemonTokenIfPresent } from "./daemonToken.js";
@@ -83,6 +84,7 @@ export async function runAgentDaemonCommand(
     const connection = await connectToExistingDaemon();
     if (command === "reload") {
         if (connection !== undefined) {
+            await assertReloadCallerOutsideDaemon(await readDaemonPid(paths.pidPath));
             await stopLocalProtocolServer(connection.client, paths, { onDrainProgress: log });
         } else {
             await assertNoUnresponsiveDaemon(paths.pidPath);

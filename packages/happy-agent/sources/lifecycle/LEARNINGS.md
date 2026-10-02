@@ -1,5 +1,15 @@
 # Daemon lifecycle learnings
 
+## Reload must outlive the daemon it replaces
+
+A session ran foreground `happy-agent reload` while adding a provider account. Draining waited
+for the session, then API shutdown stopped the daemon without starting its replacement. Desktop
+returned 502 until an independent caller restarted the selected binary. Session-owned processes
+die with their daemon, so reload now checks the caller's process ancestry before draining and
+rejects a caller owned by the target daemon. An unavailable ancestry check also leaves it running.
+External reloads still wait for shutdown and replacement readiness. Preserve the database and
+verify session progress after recovery; a working session may legitimately await a question.
+
 ## A runtime safeguard needs verification against the installed build
 
 Bun 1.4.2 passes the reduced optimizer regression that crashes Bun 1.4.0. That
