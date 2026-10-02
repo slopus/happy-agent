@@ -115,7 +115,10 @@ on a workspace being able to answer "which branch?" and "which folder?" without 
 `reserve` → the module cuts the worktree or copies the folder → `recordInitialization` (base commit
 and common dir) → the first file replication and setup commands → `markReady`. Setup commands are
 best-effort: an install or another project-owned command may fail and write a warning without
-discarding the valid checkout. Git, folder creation, parent validation, and initial file replication
+discarding the valid checkout. The list the project root's `happy.toml` names is also recorded on
+the project through `ProjectsModule.recordWorkspaceSetupCommands` — once the project is ready, at
+startup, and whenever the watched file changes — so a client can show what a new workspace will
+run; the commands a workspace actually runs are still read from its own checkout. Git, folder creation, parent validation, and initial file replication
 still use `markInitializationFailed` when they fail; `markFailed` is the terminal form.
 `applyGitFacts` and `applyProbe` fold in what a later scan observed — `applyProbe` is ignored unless
 the workspace is ready, so a probe racing initialization cannot resurrect a row, and both are

@@ -298,6 +298,16 @@ export class WorkspacesModule implements AgentModule {
             if (event.type !== "project_archived") return;
             await this.#archiveProjectWorkspaces(txCtx, event.project.id);
         });
+        // A project's own configuration is read as soon as the project is usable, so the setup
+        // commands it names are shown before the first workspace is ever cut from it. Reading a
+        // file and arming a watch are not part of the catalog's transaction, so this waits for
+        // the commit — and for this catalog to have opened, since startup looks at every project.
+        projects.onEvent(async (_ctx, event) => {
+            if (event.type !== "project_state_changed") return;
+            if (event.reason !== "initialization_ready") return;
+            if (this.#syncContext === undefined) return;
+            this.#scheduleSync(event.project.id);
+        });
     }
 
     /** Takes a subscriber that runs inside the transaction the change commits in. */
@@ -844,12 +854,15 @@ export class WorkspacesModule implements AgentModule {
     }
 
     /**
-     * Starts the live file replication watch for every ready workspace. Durable Functions owns
-     * interrupted provisioning and archival recovery before this hook runs.
+     * Looks at every live project once: its configuration names the setup commands the project
+     * shows, and its sync paths are replicated into whatever ready workspaces it has. The watch
+     * that keeps both current is armed by the same pass. Durable Functions owns interrupted
+     * provisioning and archival recovery before this hook runs.
      */
     async open(ctx: Context): Promise<void> {
-        for (const workspace of await this.#allWorkspaces(ctx)) {
-            if (workspace.status === "ready") this.#scheduleSync(workspace.projectRef);
+        for (const project of await this.#allProjects(ctx)) {
+            if (project.status === "archived") continue;
+            this.#scheduleSync(project.id);
         }
     }
 
@@ -1636,15 +1649,31 @@ export class WorkspacesModule implements AgentModule {
         this.#syncStops.delete(projectId);
         if (this.#closed) return;
         const project = await this.#project(ctx, projectId);
+        // An archived project has no workspaces to sync into and nothing left to show; a folder
+        // that is not there cannot be read or watched until setup brings it back.
+        if (
+            project === undefined ||
+            project.status === "archived" ||
+            project.presence === "missing"
+        ) {
+            return;
+        }
         const workspaces = (await this.#allWorkspaces(ctx, projectId)).filter(
             (workspace) => workspace.status === "ready",
         );
-        if (project === undefined || workspaces.length === 0) return;
+        // The home folder is a project only so work outside any repository has somewhere to be
+        // filed. It states no workspace configuration of its own, and a watch on a person's home
+        // directory would observe every file they own for nothing.
+        if (project.kind === "home" && workspaces.length === 0) return;
         const settings = await this.#folderSettings(project.repositoryRef);
+        if (project.kind !== "home") {
+            await this.#recordSetupCommands(ctx, projectId, settings.setupCommands);
+        }
         const syncPaths = [...new Set([...settings.sync, ...settings.protectedSync])];
         if (this.#closed) return;
-        // The watch is armed even with nothing to sync: it also observes the project configuration
-        // file, so a sync list added later is picked up without a restart.
+        // The watch is armed even with nothing to sync and no workspace to sync into: it also
+        // observes the project configuration file, so a sync list or a setup command added later
+        // is picked up — and the project's recorded commands follow — without a restart.
         this.#syncStops.set(
             projectId,
             watchWorkspaceSyncPaths({
@@ -1672,6 +1701,30 @@ export class WorkspacesModule implements AgentModule {
             } catch {
                 // Best-effort replication: the workspace converges on the next pass.
             }
+        }
+    }
+
+    /**
+     * Publishes the setup commands the project's own configuration names, so a client can show
+     * what a new workspace will run. The projects catalog writes only when the list changed. A
+     * list the catalog cannot hold — too long, or a command no shell could be handed — is still
+     * run as written when a workspace is prepared; it is only not shown.
+     */
+    async #recordSetupCommands(
+        ctx: Context,
+        projectId: string,
+        commands: readonly string[],
+    ): Promise<void> {
+        try {
+            await this.#projects.recordWorkspaceSetupCommands(ctx, {
+                projectId,
+                commands: [...commands],
+            });
+        } catch (error) {
+            ctx.log.warn(
+                { error, projectId },
+                "The project's workspace setup commands could not be recorded.",
+            );
         }
     }
 
@@ -1745,6 +1798,21 @@ export class WorkspacesModule implements AgentModule {
             cursor = page.nextCursor;
         } while (cursor !== undefined);
         return workspaces;
+    }
+
+    /** Every project in the catalog, following every page so a long catalog hides none. */
+    async #allProjects(ctx: Context): Promise<readonly Project[]> {
+        const projects: Project[] = [];
+        let cursor: string | undefined;
+        do {
+            const page = await this.#projects.listCatalogPage(ctx, {
+                includeArchived: true,
+                ...(cursor === undefined ? {} : { cursor }),
+            });
+            projects.push(...page.projects);
+            cursor = page.nextCursor;
+        } while (cursor !== undefined);
+        return projects;
     }
 
     /** One workspace, but only if it belongs to the project the caller named. */

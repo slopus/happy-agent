@@ -61,6 +61,9 @@ export {
     projectSetDefaultBranchInputSchema,
     projectStatusSchema,
     projectStorageKeySchema,
+    projectWorkspaceSetupCommandSchema,
+    projectWorkspaceSetupCommandsInputSchema,
+    projectWorkspaceSetupCommandsSchema,
     projectTimestampSchema,
     projectVersionSchema,
     projectWorktreeSupportSchema,
@@ -85,6 +88,8 @@ export {
     type ProjectGitFactsInput,
     type ProjectGitRef,
     type ProjectId,
+    type ProjectWorkspaceSetupCommands,
+    type ProjectWorkspaceSetupCommandsInput,
     type ProjectInitializationFailureInput,
     type ProjectInitializationStatus,
     type ProjectKind,
@@ -153,6 +158,9 @@ export {
     type ProjectSettingsUpdateInput,
     type ProjectSettingsView,
     type ProjectWorkspaceCompute,
+    MAX_PROJECT_WORKSPACE_INITIAL_PROMPT_LENGTH,
+    projectWorkspaceInitialPromptSchema,
+    type ProjectWorkspaceInitialPrompt,
 } from "./ProjectSettings.js";
 export {
     assertProjectAvatarAsset,

@@ -90,11 +90,15 @@ export function projectResourceWithSettings(
                         thumbhash: project.avatar.thumbhash,
                     },
         description: project.description ?? null,
+        // Empty until the workspaces catalog has read the project's `happy.toml`; a client
+        // shows "nothing to run" either way, and the list arrives with the next update.
+        workspaceSetupCommands: project.workspaceSetupCommands ?? [],
         settings: {
             defaultWorkspaceCompute:
                 defaultWorkspaceCompute === undefined || defaultWorkspaceCompute.type === "local"
                     ? { type: "host" }
                     : defaultWorkspaceCompute,
+            workspaceInitialPrompt: settings.workspaceInitialPrompt ?? null,
         },
         orderKey: project.orderKey,
         version: apiResourceVersion(project.updatedAt, project.version, project.id),

@@ -42,6 +42,11 @@ export type ProjectAvatar = Static<typeof projectAvatarSchema>;
 export const projectSettingsSchema = Type.Object({
     /** Where new workspaces of this project run. */
     defaultWorkspaceCompute: computeSelectionSchema,
+    /**
+     * What a client sends as the first user message to the first agent in every new workspace
+     * of this project; `null` when the project says nothing. Absent on older daemons.
+     */
+    workspaceInitialPrompt: Type.Optional(Nullable(Type.String())),
 });
 export type ProjectSettings = Static<typeof projectSettingsSchema>;
 
@@ -77,6 +82,11 @@ export const projectSchema = Type.Object({
     ]),
     /** Accompanies `worktreeSupport` of `"unsupported"`. */
     worktreeUnsupportedReason: Type.Optional(Type.String()),
+    /**
+     * The ordered shell commands a new workspace of this project runs once its checkout exists,
+     * as the daemon last read them from the project's `happy.toml`. Absent on older daemons.
+     */
+    workspaceSetupCommands: Type.Optional(Type.Array(Type.String())),
 });
 export type Project = Static<typeof projectSchema>;
 
@@ -128,6 +138,8 @@ export type RenameProjectRequest = Static<typeof renameProjectRequestSchema>;
 export const replaceProjectSettingsRequestSchema = Type.Object({
     defaultWorkspaceCompute: computeSelectionSchema,
     mutationId: Type.Optional(mutationIdSchema),
+    /** Omitted, `null`, or blank leaves the project with nothing to tell a new workspace's agent. */
+    workspaceInitialPrompt: Type.Optional(Nullable(Type.String())),
 });
 export type ReplaceProjectSettingsRequest = Static<typeof replaceProjectSettingsRequestSchema>;
 

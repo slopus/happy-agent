@@ -46,6 +46,7 @@ import {
     projectRepositoryRefSchema,
     projectSetAvatarInputSchema,
     projectSetDefaultBranchInputSchema,
+    projectWorkspaceSetupCommandsInputSchema,
     type Project,
     type ProjectAdoptRemoteNameInput,
     type ProjectAvatarAsset,
@@ -61,6 +62,7 @@ import {
     type ProjectReorderInput,
     type ProjectSetAvatarInput,
     type ProjectSetDefaultBranchInput,
+    type ProjectWorkspaceSetupCommandsInput,
 } from "./Project.js";
 import { projectAgentAttachmentSchema, type ProjectAgentOrder } from "./ProjectAgentAssociation.js";
 import {
@@ -181,6 +183,7 @@ const PROJECT_STATE_FIELDS = [
     "gitBranch",
     "gitHead",
     "gitUpstream",
+    "workspaceSetupCommands",
 ] as const satisfies readonly (keyof Project)[];
 
 /**
@@ -1857,6 +1860,33 @@ export class ProjectsModule implements AgentModule {
             projectId,
             git: projectGitFactsFrom(facts),
         });
+    }
+
+    /**
+     * Records the setup commands the workspaces catalog read from the project's own `happy.toml`,
+     * so a client can show what a new workspace will run without reading the file itself. The
+     * row moves only when the list actually changed, and a project whose file has never been
+     * read is not handed an empty list it never stated.
+     */
+    async recordWorkspaceSetupCommands(
+        ctx: Context,
+        input: ProjectWorkspaceSetupCommandsInput,
+    ): Promise<Project> {
+        this.#assertInput(
+            projectWorkspaceSetupCommandsInputSchema,
+            input,
+            "workspace setup commands",
+        );
+        const normalized = structuredClone(input);
+        return await this.#changeState(
+            ctx,
+            normalized.projectId,
+            "workspace_setup_commands",
+            (project) =>
+                sameJson(project.workspaceSetupCommands ?? [], normalized.commands)
+                    ? undefined
+                    : { workspaceSetupCommands: normalized.commands },
+        );
     }
 
     async #applyProjectProbe(

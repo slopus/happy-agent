@@ -38,6 +38,7 @@ export const projectStateChangeReasonSchema = Type.Union([
     Type.Literal("initialization_failed"),
     Type.Literal("initialization_retried"),
     Type.Literal("refresh"),
+    Type.Literal("workspace_setup_commands"),
 ]);
 
 export const projectEventSchema = Type.Union([

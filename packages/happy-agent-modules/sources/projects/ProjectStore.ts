@@ -21,6 +21,7 @@ import {
     projectRequiredSecretKindSchema,
     projectSchema,
     projectVersionSchema,
+    projectWorkspaceSetupCommandsSchema,
     projectWorktreeSupportSchema,
     type Project,
 } from "./Project.js";
@@ -136,6 +137,7 @@ export const projectStateChangesSchema = Type.Object(
         presence: Type.Optional(projectPresenceSchema),
         worktreeSupport: Type.Optional(projectWorktreeSupportSchema),
         worktreeUnsupportedReason: Type.Optional(Type.Union([projectErrorSchema, Type.Null()])),
+        workspaceSetupCommands: Type.Optional(projectWorkspaceSetupCommandsSchema),
     },
     { additionalProperties: false },
 );
