@@ -21,6 +21,8 @@ import {
 import type { HappyConnectionConfiguration, HappyEncryptionVariant } from "./HappyCredentials.js";
 import type { HappyModel } from "./HappySession.js";
 import type { HappySocket } from "./HappySessionClient.js";
+import type { HappyContextWindowResponse } from "./readHappyContextWindow.js";
+import { HAPPY_RPC_MAX_JSON_BYTES } from "./HappyWorkspaceRead.js";
 
 const HTTP_TIMEOUT_MS = 15_000;
 const RETRY_INTERVAL_MS = 5_000;
@@ -39,6 +41,7 @@ export interface HappyMachineClientOptions {
     readonly onConnectionChanged?: (event: HappyMachineConnectionEvent) => void;
     /** The session Happy should open, once Happy Agent has published it. */
     readonly remoteSessionId: (agentId: string) => Promise<string | undefined>;
+    readonly contextWindow?: (params: unknown) => Promise<HappyContextWindowResponse>;
     /** Only a test supplies this; left out, the client opens its own connection to Happy. */
     readonly socketFactory?: (url: string, options: Record<string, unknown>) => HappySocket;
     readonly version: string;
@@ -306,6 +309,7 @@ export class HappyMachineClient {
             if (!this.#isCurrent(generation)) return;
             this.#announce({ status: "connected" });
             socket.emit("rpc-register", { method: `${this.#machineId}:spawn-happy-session` });
+            socket.emit("rpc-register", { method: `${this.#machineId}:session-context-window` });
             this.#syncMetadata(socket, generation, metadataVersion, 0);
             this.#syncDaemonState(socket, generation, daemonStateVersion, 0);
             this.#sendAlive(socket);
@@ -359,6 +363,24 @@ export class HappyMachineClient {
     }
 
     async #handleRpcRequest(request: unknown, callback: (response: string) => void): Promise<void> {
+        if (
+            Value.Check(rpcRequestSchema, request) &&
+            request.method === `${this.#machineId}:session-context-window`
+        ) {
+            let response: HappyContextWindowResponse;
+            try {
+                response = (await this.#options.contextWindow?.(this.#decode(request.params))) ?? {
+                    type: "error",
+                    reason: "unsupported",
+                };
+            } catch {
+                response = { type: "error", reason: "unreadable" };
+            }
+            if (Buffer.byteLength(JSON.stringify(response)) > HAPPY_RPC_MAX_JSON_BYTES)
+                response = { type: "error", reason: "unreadable" };
+            callback(this.#encode(response));
+            return;
+        }
         let answer: HappySpawnResult;
         if (
             !Value.Check(rpcRequestSchema, request) ||

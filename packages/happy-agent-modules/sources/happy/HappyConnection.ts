@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
+import { readHappyContextWindow } from "./readHappyContextWindow.js";
 import { mkdir, rm } from "node:fs/promises";
 import { basename, resolve } from "node:path";
 
@@ -805,6 +806,14 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
             operations: this,
             remoteSessionId: async (agentId) =>
                 (await this.#sync.readSession(ctx, agentId))?.remoteSessionId,
+            contextWindow: async (params) =>
+                await readHappyContextWindow({
+                    ctx,
+                    ownerId: this.#connectionOwner?.id ?? "",
+                    fingerprint: fingerprint(configuration),
+                    params,
+                    config: (readCtx, agentId) => this.#system().config(readCtx, agentId),
+                }),
             version: this.#config.configuration.version,
         });
         this.#machine = machine;

@@ -1,5 +1,8 @@
 import { createRootContext } from "@steve.kite/stdlib";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { contextRequest, contextWindowFixture } from "./contextWindowFixture.js";
+import type { HappyContextWindowResponse } from "../../sources/happy/readHappyContextWindow.js";
+import { HAPPY_RPC_MAX_JSON_BYTES } from "../../sources/happy/HappyWorkspaceRead.js";
 
 import {
     decryptHappyPayload,
@@ -56,21 +59,20 @@ const MODELS: readonly HappyModel[] = [
     },
 ];
 
-function decode(value: string): Record<string, unknown> {
+function decode(value: string, variant: "legacy" | "dataKey" = "legacy"): Record<string, unknown> {
     return decryptHappyPayload(
         new Uint8Array(KEY),
-        "legacy",
+        variant,
         new Uint8Array(Buffer.from(value, "base64")),
     ) as Record<string, unknown>;
 }
 
-function encode(value: unknown): string {
-    return Buffer.from(encryptHappyPayload(new Uint8Array(KEY), "legacy", value)).toString(
-        "base64",
-    );
+function encode(value: unknown, variant: "legacy" | "dataKey" = "legacy"): string {
+    return Buffer.from(encryptHappyPayload(new Uint8Array(KEY), variant, value)).toString("base64");
 }
 
 class FakeSocket implements HappySocket {
+    constructor(readonly variant: "legacy" | "dataKey" = "legacy") {}
     readonly #listeners = new Map<string, (...values: any[]) => void>();
     readonly emitted: { event: string; value: unknown }[] = [];
     acknowledgements: unknown[] = [];
@@ -111,8 +113,8 @@ class FakeSocket implements HappySocket {
         const listener = this.#listeners.get("rpc-request");
         if (listener === undefined) throw new Error("The client registered no RPC listener.");
         return await new Promise((resolve) => {
-            listener({ method, params: encode(params) }, (answer: string) => {
-                resolve(decode(answer));
+            listener({ method, params: encode(params, this.variant) }, (answer: string) => {
+                resolve(decode(answer, this.variant));
             });
         });
     }
@@ -121,7 +123,7 @@ class FakeSocket implements HappySocket {
     published(): Record<string, unknown>[] {
         return this.emitted
             .filter((one) => one.event === "machine-update-metadata")
-            .map((one) => decode((one.value as { metadata: string }).metadata));
+            .map((one) => decode((one.value as { metadata: string }).metadata, this.variant));
     }
 }
 
@@ -133,6 +135,8 @@ afterEach(() => {
 });
 
 function client(options: {
+    configuration?: HappyConnectionConfiguration;
+    contextWindow?: (params: unknown) => Promise<HappyContextWindowResponse>;
     fetch: typeof fetch;
     onConnectionChanged?: (event: HappyMachineConnectionEvent) => void;
     operations?: HappySpawnOperations;
@@ -141,8 +145,9 @@ function client(options: {
 }): HappyMachineClient {
     const { socket } = options;
     const machine = new HappyMachineClient({
-        configuration: CONFIGURATION,
+        configuration: options.configuration ?? CONFIGURATION,
         context: createRootContext().named("happy-machine-test"),
+        ...(options.contextWindow === undefined ? {} : { contextWindow: options.contextWindow }),
         fetch: options.fetch,
         models: () => MODELS,
         ...(options.onConnectionChanged === undefined
@@ -171,17 +176,34 @@ const REGISTERED = () =>
 
 async function connected(
     options: {
+        variant?: "legacy" | "dataKey";
+        contextWindow?: (params: unknown) => Promise<HappyContextWindowResponse>;
         operations?: HappySpawnOperations;
         remoteSessionId?: (agentId: string) => Promise<string | undefined>;
     } = {},
 ): Promise<{ socket: FakeSocket }> {
-    const socket = new FakeSocket();
+    const socket = new FakeSocket(options.variant);
     const machine = client({
+        configuration:
+            options.variant === "dataKey"
+                ? {
+                      ...CONFIGURATION,
+                      credentials: {
+                          token: "fixture-token",
+                          encryption: {
+                              type: "dataKey",
+                              machineKey: new Uint8Array(KEY),
+                              publicKey: new Uint8Array(KEY),
+                          },
+                      },
+                  }
+                : CONFIGURATION,
         fetch: (async () =>
             Response.json({
                 machine: { daemonStateVersion: 1, id: "machine-1", metadataVersion: 4 },
             })) as unknown as typeof fetch,
         ...(options.operations === undefined ? {} : { operations: options.operations }),
+        ...(options.contextWindow === undefined ? {} : { contextWindow: options.contextWindow }),
         ...(options.remoteSessionId === undefined
             ? {}
             : { remoteSessionId: options.remoteSessionId }),
@@ -193,6 +215,69 @@ async function connected(
 }
 
 describe("starting Happy Agent work through the machine RPC", () => {
+    it.each(["legacy", "dataKey"] as const)(
+        "reads native SQLite through the encrypted existing Context window RPC and retries (%s)",
+        async (variant) => {
+            const fixture = await contextWindowFixture();
+            try {
+                const { socket } = await connected({ contextWindow: fixture.read, variant });
+                expect(socket.emitted).toContainEqual({
+                    event: "rpc-register",
+                    value: { method: "machine-1:session-context-window" },
+                });
+                const before = await fixture.persistence.load(fixture.ctx);
+                const result = await socket.rpc("machine-1:session-context-window", contextRequest);
+                expect(result).toEqual(await fixture.read());
+                expect(await fixture.persistence.load(fixture.ctx)).toEqual(before);
+                await fixture.persistence.clearRecords(fixture.ctx);
+                expect(
+                    await socket.rpc("machine-1:session-context-window", contextRequest),
+                ).toEqual({
+                    type: "error",
+                    reason: "missing",
+                });
+                for (const record of before) await fixture.persistence.append(fixture.ctx, record);
+                expect(
+                    await socket.rpc("machine-1:session-context-window", contextRequest),
+                ).toEqual(result);
+                expect(
+                    await socket.rpc("machine-1:session-context-window", {
+                        ...contextRequest,
+                        sessionId: "nativeagent",
+                    }),
+                ).toEqual({ type: "error", reason: "missing" });
+            } finally {
+                await fixture.close();
+            }
+        },
+    );
+
+    it("answers unsupported, unreadable and relay-size overflow without partial content", async () => {
+        const unsupported = await connected();
+        expect(
+            await unsupported.socket.rpc("machine-1:session-context-window", contextRequest),
+        ).toEqual({ type: "error", reason: "unsupported" });
+        const unreadable = await connected({
+            contextWindow: async () => {
+                throw new Error("private local path must not leak");
+            },
+        });
+        expect(
+            await unreadable.socket.rpc("machine-1:session-context-window", contextRequest),
+        ).toEqual({ type: "error", reason: "unreadable" });
+        const oversized = await connected({
+            contextWindow: async () => ({
+                type: "success",
+                provider: "rig",
+                entries: [{ kind: "context.user", content: "x".repeat(HAPPY_RPC_MAX_JSON_BYTES) }],
+                limitations: ["rig_runtime_input_not_recorded"],
+            }),
+        });
+        expect(
+            await oversized.socket.rpc("machine-1:session-context-window", contextRequest),
+        ).toEqual({ type: "error", reason: "unreadable" });
+    });
+
     it("routes the new discriminator through the existing spawn-happy-session method", async () => {
         const started: HappySpawnRequest[] = [];
         const served = new Map<string, HappySpawnResult>();

@@ -1,0 +1,27 @@
+{
+    "type": "success",
+    "provider": "rig",
+    "entries": [
+        {
+            "kind": "context.compaction",
+            "content": "{\"type\":\"compaction\",\"contextToolIds\":[],\"messages\":[{\"role\":\"compaction\",\"content\":\"Sanitized summary of the earlier request.\",\"encryptedContent\":\"fixture-opaque-checkpoint\"},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Retained request from before compaction.\"}]}]}"
+        },
+        {
+            "kind": "context.user",
+            "content": "{\"type\":\"user\",\"id\":\"fixtureinjected\",\"message\":{\"role\":\"system\",\"content\":[{\"type\":\"text\",\"text\":\"Recorded hidden instruction: inspect the fixture only.\"}]},\"metadata\":{\"hideFromUser\":true}}"
+        },
+        {
+            "kind": "context.block",
+            "content": "{\"type\":\"block\",\"block\":{\"type\":\"text\",\"text\":\"Full retained response after compaction. END_OF_NATIVE_FIXTURE\"}}"
+        },
+        {
+            "kind": "context.block",
+            "content": "{\"type\":\"block\",\"id\":\"fixturebasecall\",\"block\":{\"type\":\"tool_call\",\"callId\":\"fixture-provider-call\",\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\\\"fixture.txt\\\"}\"}}"
+        },
+        {
+            "kind": "context.tool",
+            "content": "{\"type\":\"tool\",\"id\":\"fixturebasecall\",\"message\":{\"role\":\"tool\",\"callId\":\"fixture-provider-call\",\"content\":[{\"type\":\"text\",\"text\":\"Sanitized retained native tool line 1\\nSanitized retained native tool line 2\\nSanitized retained native tool line 3\\nSanitized retained native tool line 4\\nSanitized retained native tool line 5\\nSanitized retained native tool line 6\\nSanitized retained native tool line 7\\nSanitized retained native tool line 8\\nSanitized retained native tool line 9\\nSanitized retained native tool line 10\\nSanitized retained native tool line 11\\nSanitized retained native tool line 12\\nSanitized retained native tool line 13\\nSanitized retained native tool line 14\\nSanitized retained native tool line 15\\nSanitized retained native tool line 16\\nSanitized retained native tool line 17\\nSanitized retained native tool line 18\\nSanitized retained native tool line 19\\nSanitized retained native tool line 20\\nSanitized retained native tool line 21\\nSanitized retained native tool line 22\\nSanitized retained native tool line 23\\nSanitized retained native tool line 24\\nSanitized retained native tool line 25\\nSanitized retained native tool line 26\\nSanitized retained native tool line 27\\nSanitized retained native tool line 28\\nSanitized retained native tool line 29\\nSanitized retained native tool line 30\\nSanitized retained native tool line 31\\nSanitized retained native tool line 32\\nSanitized retained native tool line 33\\nSanitized retained native tool line 34\\nSanitized retained native tool line 35\\nSanitized retained native tool line 36\\nSanitized retained native tool line 37\\nSanitized retained native tool line 38\\nSanitized retained native tool line 39\\nSanitized retained native tool line 40\\nSanitized retained native tool line 41\\nSanitized retained native tool line 42\\nSanitized retained native tool line 43\\nSanitized retained native tool line 44\\nSanitized retained native tool line 45\\nSanitized retained native tool line 46\\nSanitized retained native tool line 47\\nSanitized retained native tool line 48\\nSanitized retained native tool line 49\\nSanitized retained native tool line 50\\nSanitized retained native tool line 51\\nSanitized retained native tool line 52\\nSanitized retained native tool line 53\\nSanitized retained native tool line 54\\nSanitized retained native tool line 55\\nSanitized retained native tool line 56\\nSanitized retained native tool line 57\\nSanitized retained native tool line 58\\nSanitized retained native tool line 59\\nSanitized retained native tool line 60\\nSanitized retained native tool line 61\\nSanitized retained native tool line 62\\nSanitized retained native tool line 63\\nSanitized retained native tool line 64\\nSanitized retained native tool line 65\\nSanitized retained native tool line 66\\nSanitized retained native tool line 67\\nSanitized retained native tool line 68\\nSanitized retained native tool line 69\\nSanitized retained native tool line 70\\nSanitized retained native tool line 71\\nSanitized retained native tool line 72\\nSanitized retained native tool line 73\\nSanitized retained native tool line 74\\nSanitized retained native tool line 75\\nSanitized retained native tool line 76\\nSanitized retained native tool line 77\\nSanitized retained native tool line 78\\nSanitized retained native tool line 79\\nSanitized retained native tool line 80\\nEND_OF_FULL_NATIVE_TOOL_CONTENT\"}]}}"
+        }
+    ],
+    "limitations": ["rig_runtime_input_not_recorded"]
+}

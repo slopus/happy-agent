@@ -1,5 +1,18 @@
 # Happy module learnings
 
+## Experimental Context window reads native retained context
+
+The same encrypted machine RPC can expose the daemon's retained Agent Base records without
+changing transcripts. Resolve its remote session ID through the connection owner's current
+account/server fingerprint, then check the original configured working directory in the same
+database transaction. A native agent ID, sibling CLI home, or caller-supplied state home is not
+authority. Read `happy_agent_records` in position order and preserve each stored JSON record,
+including compaction replacement messages, hidden-message metadata, and opaque provider fields.
+The History archive is separate and must never be substituted for the current context. Runtime
+instructions, hook additions, tool definitions, and provider-assembled requests cannot be recovered
+from this store. Missing, unsupported, unreadable, and relay-size-limited reads return unavailable
+instead of partial content; Retry performs a new read. This adds no direct Happy Agent API surface.
+
 ## Mobile reads are a transport adapter, not another file API
 
 The first native bridge duplicated file readers, Git response mapping and output schemas. It now
