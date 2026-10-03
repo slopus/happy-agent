@@ -221,6 +221,22 @@ import { WorkspaceProxy } from "./WorkspaceProxy.js";
 import { SubtasksModule } from "../subtasks/index.js";
 
 const API_PROTOCOL_VERSION = 25;
+
+/**
+ * How many archived agents the desktop bootstrap carries. Recent history is what the desktop
+ * shows on launch; everything older stays readable by ID, and the bound keeps the composed
+ * snapshot from growing with every chat a user has ever closed.
+ */
+const DESKTOP_BOOTSTRAP_ARCHIVED_AGENT_LIMIT = 200;
+
+/** An archived agent met while building an owner's series, kept for the bootstrap history. */
+interface ArchivedOwnerAgent {
+    readonly agentId: string;
+    readonly ownerId: string;
+    readonly orderKey: string | null;
+    readonly config: AgentConfig;
+    readonly archivedAt: number;
+}
 const MAX_JSON_BODY_BYTES = 48 * 1024 * 1024;
 const MAX_SSE_BUFFER_BYTES = 64 * 1024 * 1024;
 const HEARTBEAT_MS = 15_000;
@@ -3794,16 +3810,13 @@ export class ApiModule implements AgentModule {
         workspaceId: string,
         orderKey?: string | null,
         options: {
-            readonly activeOnly?: boolean;
             readonly config?: AgentConfig;
             readonly userVisible?: boolean;
             readonly subtaskDepth?: number;
         } = {},
     ): Promise<Record<string, unknown> | undefined> {
         const config = options.config ?? (await this.#agentSystem().config(ctx, agentId));
-        if (config === undefined || (options.activeOnly && agentArchivedAt(config) !== null)) {
-            return undefined;
-        }
+        if (config === undefined) return undefined;
         // Owner-series entries and bot projections already establish visibility. Only an
         // unscoped resource needs a bot lookup; never infer ancestry from owner membership.
         const userVisible =
@@ -5190,10 +5203,14 @@ export class ApiModule implements AgentModule {
         return workspaces;
     }
 
-    async #projectWithAgents(ctx: Context, project: Project): Promise<Record<string, unknown>> {
+    async #projectWithAgents(
+        ctx: Context,
+        project: Project,
+        archived?: ArchivedOwnerAgent[],
+    ): Promise<Record<string, unknown>> {
         return {
             ...(await projectResource(ctx, this.#projects, project)),
-            agents: await this.#agentsForProject(ctx, project.id),
+            agents: await this.#agentsForProject(ctx, project.id, archived),
         };
     }
 
@@ -5208,46 +5225,102 @@ export class ApiModule implements AgentModule {
     async #agentsForProject(
         ctx: Context,
         projectId: string,
+        archived?: ArchivedOwnerAgent[],
     ): Promise<readonly Record<string, unknown>[]> {
-        const associations = await this.#projects.listAgents(ctx, projectId);
-        const resources = await Promise.all(
-            associations.map(
-                async (association) =>
-                    await this.#buildAgentResource(
-                        ctx,
-                        association.agentId,
-                        projectId,
-                        association.orderKey,
-                        { activeOnly: true },
-                    ),
-            ),
-        );
-        return resources.filter(
-            (resource): resource is Record<string, unknown> =>
-                resource !== undefined && resource["archivedAt"] === null,
+        return await this.#ownerAgentSeries(
+            ctx,
+            projectId,
+            await this.#projects.listAgents(ctx, projectId),
+            archived,
         );
     }
 
     async #agentsForWorkspace(
         ctx: Context,
         workspaceId: string,
+        archived?: ArchivedOwnerAgent[],
     ): Promise<readonly Record<string, unknown>[]> {
-        const associations = await this.#workspaces.listAgents(ctx, workspaceId);
+        return await this.#ownerAgentSeries(
+            ctx,
+            workspaceId,
+            await this.#workspaces.listAgents(ctx, workspaceId),
+            archived,
+        );
+    }
+
+    /**
+     * Builds one owner's active agent series from its ordered associations. Every attached
+     * agent's configuration is read exactly once, here: archival is decided from it before any
+     * detail read, and the same configuration is handed on to the resource projection. An
+     * archived association stays out of the series; when the caller collects archived agents,
+     * its configuration and order are recorded there so a later projection needs no second read.
+     */
+    async #ownerAgentSeries(
+        ctx: Context,
+        ownerId: string,
+        associations: readonly { readonly agentId: string; readonly orderKey: string | null }[],
+        archived?: ArchivedOwnerAgent[],
+    ): Promise<readonly Record<string, unknown>[]> {
         const resources = await Promise.all(
-            associations.map(
-                async (association) =>
+            associations.map(async (association) => {
+                const config = await this.#agentSystem().config(ctx, association.agentId);
+                if (config === undefined) return undefined;
+                const archivedAt = agentArchivedAt(config);
+                if (archivedAt !== null) {
+                    archived?.push({
+                        agentId: association.agentId,
+                        ownerId,
+                        orderKey: association.orderKey,
+                        config,
+                        archivedAt,
+                    });
+                    return undefined;
+                }
+                return await this.#buildAgentResource(
+                    ctx,
+                    association.agentId,
+                    ownerId,
+                    association.orderKey,
+                    { config },
+                );
+            }),
+        );
+        return resources.filter(
+            (resource): resource is Record<string, unknown> => resource !== undefined,
+        );
+    }
+
+    /**
+     * Projects the most recently archived agents met while building the bootstrap's owner
+     * series, newest first with the agent ID as the tie-breaker, bounded so the snapshot stays
+     * small. Only the agents inside the bound are projected; the rest cost nothing beyond the
+     * configuration read that decided their archival.
+     */
+    async #archivedAgentResources(
+        ctx: Context,
+        archived: readonly ArchivedOwnerAgent[],
+    ): Promise<readonly Record<string, unknown>[]> {
+        const newest = [...archived]
+            .sort(
+                (left, right) =>
+                    right.archivedAt - left.archivedAt ||
+                    (left.agentId < right.agentId ? -1 : left.agentId > right.agentId ? 1 : 0),
+            )
+            .slice(0, DESKTOP_BOOTSTRAP_ARCHIVED_AGENT_LIMIT);
+        const resources = await Promise.all(
+            newest.map(
+                async (entry) =>
                     await this.#buildAgentResource(
                         ctx,
-                        association.agentId,
-                        workspaceId,
-                        association.orderKey,
-                        { activeOnly: true },
+                        entry.agentId,
+                        entry.ownerId,
+                        entry.orderKey,
+                        { config: entry.config },
                     ),
             ),
         );
         return resources.filter(
-            (resource): resource is Record<string, unknown> =>
-                resource !== undefined && resource["archivedAt"] === null,
+            (resource): resource is Record<string, unknown> => resource !== undefined,
         );
     }
 
@@ -5626,14 +5699,23 @@ export class ApiModule implements AgentModule {
         const shallow = workspaces.filter(
             (workspace: Workspace) => workspace.parentId === workspace.projectRef,
         );
+        // Every owner series built below drops its archived agents in here, so the history the
+        // desktop shows is drawn from the same single configuration read that filtered them out.
+        const archived: ArchivedOwnerAgent[] = [];
         const projectResources = await Promise.all(
             projects.map(async (project) => {
-                const resource = await this.#projectWithAgents(ctx, project);
+                const resource = await this.#projectWithAgents(ctx, project, archived);
                 return {
                     project: resource,
                     workspace: { ...rootWorkspaceResource(project), agents: resource["agents"] },
                 };
             }),
+        );
+        const shallowResources = await Promise.all(
+            shallow.map(async (workspace: Workspace) => ({
+                ...workspaceResource(workspace),
+                agents: await this.#agentsForWorkspace(ctx, workspace.id, archived),
+            })),
         );
         return {
             config: await this.#sanitizedConfig(ctx),
@@ -5645,13 +5727,9 @@ export class ApiModule implements AgentModule {
             projects: projectResources.map((resource) => resource.project),
             workspaces: [
                 ...projectResources.map((resource) => resource.workspace),
-                ...(await Promise.all(
-                    shallow.map(async (workspace: Workspace) => ({
-                        ...workspaceResource(workspace),
-                        agents: await this.#agentsForWorkspace(ctx, workspace.id),
-                    })),
-                )),
+                ...shallowResources,
             ],
+            archivedAgents: await this.#archivedAgentResources(ctx, archived),
             cursor,
         };
     }

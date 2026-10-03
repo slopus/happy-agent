@@ -5906,6 +5906,9 @@ Response — `200`:
     "bots": [
         /* all bot objects, catalog order */
     ],
+    "archivedAgents": [
+        /* the most recently archived agents of those projects and workspaces, newest first */
+    ],
     "cursor": "01991f3a-6d2f-7000-8000-3a0b2c4d5e6f"
 }
 ```
@@ -5924,11 +5927,20 @@ Response — `200`:
 - `projects` — every active project.
 - `workspaces` — deliberately shallow: each project's root workspace and the workspaces
   directly under it. Each returned project and workspace embeds its active top-level `agents`
-  series. Deeper nesting and archived resources are loaded on demand through their owner or
-  resource endpoints when the user opens a project.
+  series. Deeper nesting and archived workspaces are loaded on demand through the workspace
+  endpoints when the user opens a project; the archived agents of the included owners arrive in
+  `archivedAgents`.
 - `bots` — every bot, archived ones included, in catalog order, exactly as `GET /v0/bots`
   returns them, each embedding its one agent. This additive field may be absent on an older
   compatible daemon, which does not serve the bot endpoints either.
+- `archivedAgents` — the archived agents that would otherwise belong to the included projects'
+  and workspaces' `agents` series, as full agent objects, newest `archivedAt` first with the
+  agent ID as the tie-breaker. Each carries the `workspaceId` of its owner, which is the
+  project's ID for a root-owned agent. The list is bounded to the 200 most recently archived
+  agents across the whole snapshot, so a client showing recent history reads it here without a
+  per-owner fan-out; older archived agents remain readable by ID. Agents owned by archived
+  projects or workspaces and ordinary hidden subagents are not included. This additive field
+  may be absent on an older compatible daemon, which carries no archived agents in bootstrap.
 - Every included full agent embeds its recursive `subtasks` tree. This includes each bot's agent
   and every agent in a project or workspace series, so shared-filesystem and workspace-bound
   subtasks are available on initial load without fetching activity for every agent. Workspace
@@ -5939,8 +5951,9 @@ Response — `200`:
   `GET /v0/events/stream` from here and everything it just read stays current; there is no
   window for a change to fall between the snapshot and the stream.
 
-There is no standalone agent collection in bootstrap or a global agent-list endpoint. Agents
-are discovered through the ordered `agents` arrays embedded in projects and workspaces — and,
-for bots, through the single agent embedded in each bot object. Active subtask descendants are
-included recursively on those same agent objects, not in a new top-level collection. An
+There is no global agent-list endpoint and no standalone collection of active agents in
+bootstrap. Active agents are discovered through the ordered `agents` arrays embedded in projects
+and workspaces — and, for bots, through the single agent embedded in each bot object. Active
+subtask descendants are included recursively on those same agent objects, not in a new top-level
+collection. `archivedAgents` is the one flat collection, and it holds only archived agents. An
 individual agent's history is loaded by ID.
