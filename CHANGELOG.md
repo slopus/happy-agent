@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Added slices: the common `create_slice` tool lays a gitignore-style mask — source, include,
+  exclude, and paths pinned by name with reasons and line ranges — over the acting agent's
+  workspace and hands the transcript a `slice` presentation carrying the whole definition and its
+  workspace. Nothing is stored; `POST /v0/workspaces/:workspaceId/files/match` evaluates a mask
+  over the daemon's complete change list or the working tree, and a mask that holds nothing fails
+  the tool call with the rules that matched nothing.
 - Added required local-plugin author/category metadata and an authenticated, generation-bound PNG
   icon capability for local and remote `rig-connect` catalog clients. This is a hard protocol 5
   cut: older Happy clients are incompatible, legacy manifests without `author`, `category`, or a

@@ -82,6 +82,7 @@ import { NodeModule } from "../node/index.js";
 import { CloudModule, CloudOperationError } from "../cloud/index.js";
 import { EventsModule, eventIdSchema, type AgentEvent } from "../events/index.js";
 import {
+    fileMatchRequestSchema,
     fileReadQuerySchema,
     fileRevisionQuerySchema,
     fileSearchQuerySchema,
@@ -4811,12 +4812,17 @@ export class ApiModule implements AgentModule {
             return false;
         }
         const fileRoute =
-            /^\/v0\/workspaces\/([a-z][a-z0-9]*)\/(files|file-tree|file|file-revision)$/.exec(
+            /^\/v0\/workspaces\/([a-z][a-z0-9]*)\/(files\/match|files|file-tree|file|file-revision)$/.exec(
                 url.pathname,
             );
         if (fileRoute !== null) {
             const workspaceId = fileRoute[1] as string;
-            const kind = fileRoute[2] as "files" | "file-tree" | "file" | "file-revision";
+            const kind = fileRoute[2] as
+                | "files/match"
+                | "files"
+                | "file-tree"
+                | "file"
+                | "file-revision";
             const { projectId, childWorkspaceId } = await this.#resolveWorkspaceScope(
                 ctx,
                 workspaceId,
@@ -4840,6 +4846,11 @@ export class ApiModule implements AgentModule {
                     "file search",
                 );
                 sendJson(response, 200, await this.#files.search(root, query));
+                return true;
+            }
+            if (kind === "files/match" && request.method === "POST") {
+                const body = await bodyAs(request, fileMatchRequestSchema, "file match request");
+                sendJson(response, 200, await this.#files.match(root, body));
                 return true;
             }
             if (kind === "file-tree" && request.method === "GET") {

@@ -23,6 +23,12 @@ import { GitRevisionFileTooLargeError, type GitModule } from "../git/index.js";
 import type { BotsModule } from "../bots/index.js";
 import type { ProjectsModule } from "../projects/index.js";
 import type { WorkspacesModule } from "../workspaces/index.js";
+import {
+    matchFileMask,
+    MAX_FILE_MASK_RULE_LENGTH,
+    MAX_FILE_MASK_RULES,
+} from "./impl/matchFileMask.js";
+import { walkFolderFiles } from "./impl/walkFolderFiles.js";
 import { ProjectFileWatcher } from "./ProjectFileWatcher.js";
 import { WorkspaceFileIndex } from "./WorkspaceFileIndex.js";
 
@@ -30,6 +36,12 @@ const MAX_FILE_BYTES = 44 * 1024 * 1024;
 const MAX_CHANGED_PATHS = 256;
 const MAX_SEARCH_RESULTS = 50;
 const MAX_TREE_ENTRIES = 500;
+const MAX_MATCH_RESULTS = 2_000;
+const DEFAULT_MATCH_RESULTS = 500;
+const MAX_MATCH_PINNED_PATHS = 200;
+const MAX_MATCH_PATH_LENGTH = 1_024;
+const MAX_MATCH_REASON_LENGTH = 500;
+const MAX_MATCH_LINE_RANGES = 32;
 
 export const relativeFilePathSchema = Type.String({
     maxLength: 16_384,
@@ -52,6 +64,35 @@ export const fileTreeQuerySchema = Type.Object(
 );
 export const fileReadQuerySchema = Type.Object(
     { path: relativeFilePathSchema },
+    { additionalProperties: false },
+);
+const fileMatchRuleSchema = Type.String({ minLength: 1, maxLength: MAX_FILE_MASK_RULE_LENGTH });
+const fileMatchLineNumberSchema = Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER });
+export const fileMatchLineRangeSchema = Type.Object(
+    { start: fileMatchLineNumberSchema, end: fileMatchLineNumberSchema },
+    { additionalProperties: false },
+);
+export const fileMatchPinnedPathSchema = Type.Object(
+    {
+        path: Type.String({ minLength: 1, maxLength: MAX_MATCH_PATH_LENGTH }),
+        reason: Type.Optional(Type.String({ maxLength: MAX_MATCH_REASON_LENGTH })),
+        lines: Type.Optional(
+            Type.Array(fileMatchLineRangeSchema, { maxItems: MAX_MATCH_LINE_RANGES }),
+        ),
+    },
+    { additionalProperties: false },
+);
+/** A gitignore-style mask to lay over the working tree's changes or its whole file list. */
+export const fileMatchRequestSchema = Type.Object(
+    {
+        source: Type.Union([Type.Literal("changes"), Type.Literal("all")]),
+        include: Type.Optional(Type.Array(fileMatchRuleSchema, { maxItems: MAX_FILE_MASK_RULES })),
+        exclude: Type.Optional(Type.Array(fileMatchRuleSchema, { maxItems: MAX_FILE_MASK_RULES })),
+        paths: Type.Optional(
+            Type.Array(fileMatchPinnedPathSchema, { maxItems: MAX_MATCH_PINNED_PATHS }),
+        ),
+        limit: Type.Optional(Type.Integer({ minimum: 1, maximum: MAX_MATCH_RESULTS })),
+    },
     { additionalProperties: false },
 );
 const fileReadInputSchema = Type.Object(
@@ -104,6 +145,18 @@ export const projectFilesEventSchema = Type.Object(
 
 export type FileTreeQuery = Static<typeof fileTreeQuerySchema>;
 export type FileSearchQuery = Static<typeof fileSearchQuerySchema>;
+export type FileMatchRequest = Static<typeof fileMatchRequestSchema>;
+export type FileMatchPinnedPath = Static<typeof fileMatchPinnedPathSchema>;
+export interface FileMatchResult {
+    /** The matched paths, sorted, up to the requested limit. */
+    readonly files: readonly string[];
+    /** How many paths the mask holds in all. */
+    readonly total: number;
+    /** Whether `files` is shorter than `total`, or the source itself was cut short. */
+    readonly truncated: boolean;
+    /** Include and exclude rules, and pinned paths, that matched nothing, as written. */
+    readonly unmatchedRules: readonly string[];
+}
 export type FileReadQuery = Static<typeof fileReadQuerySchema>;
 export type FileRevisionQuery = Static<typeof fileRevisionQuerySchema>;
 export type FileWriteInput = Static<typeof fileWriteSchema>;
@@ -343,6 +396,66 @@ export class ProjectFilesModule implements AgentModule {
                 offset + selected.length < entries.length ? String(offset + selected.length) : null,
             path,
         };
+    }
+
+    /**
+     * Lay a gitignore-style mask over the workspace and answer what it holds right now.
+     *
+     * `changes` is the daemon's complete list of changed files, not the bounded snapshot clients
+     * page; `all` is what Git tracks or would track, and a folder that is not a repository is
+     * walked instead. Nothing is stored: the definition is the slice, and evaluating it here is
+     * what keeps the tool that wrote it and the app that shows it in agreement.
+     */
+    async match(
+        root: ProjectFileRoot,
+        request: FileMatchRequest,
+        signal?: AbortSignal,
+    ): Promise<FileMatchResult> {
+        assertSchema(fileMatchRequestSchema, request, "file match request");
+        for (const pinned of request.paths ?? []) {
+            this.#assertRelativePath(pinned.path);
+            for (const range of pinned.lines ?? []) {
+                if (range.start > range.end) {
+                    throw new ProjectFileError(
+                        400,
+                        "invalid",
+                        `Line range ${String(range.start)}-${String(range.end)} in "${pinned.path}" must have start <= end.`,
+                    );
+                }
+            }
+        }
+        const source =
+            request.source === "changes"
+                ? await this.#git.changedPaths({
+                      path: root.root,
+                      ...(signal === undefined ? {} : { signal }),
+                  })
+                : await this.#workingTreeFiles(root.root, signal);
+        const match = matchFileMask(source.paths, {
+            include: request.include ?? [],
+            exclude: request.exclude ?? [],
+            paths: (request.paths ?? []).map((pinned) => pinned.path),
+        });
+        const limit = request.limit ?? DEFAULT_MATCH_RESULTS;
+        return {
+            files: match.files.slice(0, limit),
+            total: match.files.length,
+            truncated: source.truncated || match.files.length > limit,
+            unmatchedRules: match.unmatchedRules,
+        };
+    }
+
+    /** Git's ignore-aware listing when the folder is a repository; a plain walk otherwise. */
+    async #workingTreeFiles(
+        root: string,
+        signal?: AbortSignal,
+    ): Promise<{ readonly paths: readonly string[]; readonly truncated: boolean }> {
+        const listed = await this.#git.listWorkingTreeFiles({
+            path: root,
+            ...(signal === undefined ? {} : { signal }),
+        });
+        if (listed.paths.length > 0 || listed.truncated) return listed;
+        return await walkFolderFiles(root);
     }
 
     /** Smaller transports may lower the ordinary file limit. HTTP paths remain relative. */

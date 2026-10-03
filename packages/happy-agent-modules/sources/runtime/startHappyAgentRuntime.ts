@@ -68,6 +68,7 @@ import { SchedulingModule } from "../scheduling/index.js";
 import { SearchModule } from "../search/index.js";
 import { SecretsModule } from "../secrets/index.js";
 import { ServicesModule } from "../services/index.js";
+import { SlicesModule } from "../slices/index.js";
 import { SlashCommandsModule } from "../slashCommands/index.js";
 import { SkillsModule, GlobalSkillsModule, SkillFoldersModule } from "../skills/index.js";
 import { SystemPromptModule } from "../systemPrompt/index.js";
@@ -167,6 +168,7 @@ export interface HappyAgentRuntimeModules {
     readonly search: SearchModule;
     readonly secrets: SecretsModule;
     readonly services: ServicesModule;
+    readonly slices: SlicesModule;
     readonly slashCommands: SlashCommandsModule;
     readonly skills: SkillsModule;
     readonly globalSkills: GlobalSkillsModule;
@@ -456,6 +458,7 @@ export async function startHappyAgentRuntime(
         const terminals = new TerminalsModule(projects, workspaces, bots);
         registerShutdown("terminals", async () => await terminals.close());
         const files = new ProjectFilesModule(projects, workspaces, git, bots);
+        const slices = new SlicesModule(config, bots, projects, workspaces, files);
         registerShutdown("files", async () => await files.close());
 
         const profile = new ProfileModule<LibSQLDatabase>(config, bots);
@@ -606,6 +609,7 @@ export async function startHappyAgentRuntime(
             search,
             secrets,
             services,
+            slices,
             slashCommands,
             skills: compute.skillsModule,
             globalSkills,
@@ -661,6 +665,7 @@ export async function startHappyAgentRuntime(
             titles,
             workspaces,
             files,
+            slices,
             secrets,
             collaboration,
             subtasks,

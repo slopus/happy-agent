@@ -119,6 +119,33 @@ describe("HappyAgentClient", () => {
         expect(request?.method).toBe("GET");
     });
 
+    it("evaluates a file mask through the workspace's match route", async () => {
+        const answer = {
+            files: ["packages/api/routes.ts", "packages/api/schema.ts"],
+            total: 2,
+            truncated: false,
+            unmatchedRules: ["__snapshots__/"],
+        };
+        const { fetch, requests } = stubFetch(() => json(answer));
+        const client = new HappyAgentClient({ endpoint: "http://agent.local", token: "t", fetch });
+
+        const response = await client.matchFiles("w9x8y7z6", {
+            source: "changes",
+            include: ["packages/api/**"],
+            exclude: ["*.test.ts", "__snapshots__/"],
+        });
+
+        expect(response).toEqual(answer);
+        expect(requests.map((request) => `${request.method} ${request.url}`)).toEqual([
+            "POST http://agent.local/v0/workspaces/w9x8y7z6/files/match",
+        ]);
+        expect(JSON.parse(requests[0]?.body ?? "null")).toEqual({
+            source: "changes",
+            include: ["packages/api/**"],
+            exclude: ["*.test.ts", "__snapshots__/"],
+        });
+    });
+
     it("enters daemon draining through its dedicated lifecycle route", async () => {
         const response = { draining: true as const, pid: 12345 };
         const { fetch, requests } = stubFetch(() => json(response, 202));

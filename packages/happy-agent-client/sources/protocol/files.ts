@@ -85,3 +85,50 @@ export interface FileRevisionResponse {
     /** Base64 file content as of the revision. */
     content: string;
 }
+
+/** Which files a mask is laid over: the working tree's changes, or every file it holds. */
+export type FileMatchSource = "changes" | "all";
+
+/** A one-based, inclusive run of lines of interest in a pinned file. */
+export interface FileMatchLineRange {
+    start: number;
+    end: number;
+}
+
+/** One path an agent pinned into a slice by name, with why and where. */
+export interface FileMatchPinnedPath {
+    /** Workspace-relative, forward-slash separated. */
+    path: string;
+    reason?: string;
+    /** Ranges of interest; absent or empty when the whole file is meant. */
+    lines?: FileMatchLineRange[];
+}
+
+/**
+ * `POST /v0/workspaces/:workspaceId/files/match` — a gitignore-style mask to
+ * evaluate against the workspace. Nothing is stored; the answer is what the
+ * mask holds right now.
+ */
+export interface FileMatchRequest {
+    source: FileMatchSource;
+    /** Rules a file must match; an empty or absent list includes every file. */
+    include?: string[];
+    /** Rules that take a file back out, applied after `include`. */
+    exclude?: string[];
+    /** Paths named outright; in the slice whenever the source holds them. */
+    paths?: FileMatchPinnedPath[];
+    /** Maximum paths returned, from 1 through 2000. The daemon defaults to 500. */
+    limit?: number;
+}
+
+/** `POST /v0/workspaces/:workspaceId/files/match` */
+export interface FileMatchResponse {
+    /** The matched paths, sorted, up to `limit`. */
+    files: string[];
+    /** How many paths the mask holds in all. */
+    total: number;
+    /** Whether `files` is shorter than `total`, or the source itself was cut short. */
+    truncated: boolean;
+    /** Include and exclude rules, and pinned paths, that matched nothing, as written. */
+    unmatchedRules: string[];
+}

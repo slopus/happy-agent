@@ -8,6 +8,7 @@ import {
     explorationPresentationSchema,
     fileDiffPresentationSchema,
     searchPresentationSchema,
+    slicePresentationSchema,
     toolPresentationSchema,
     type ToolPresentation,
 } from "../sources/protocol/messages.js";
@@ -77,6 +78,23 @@ const presentations = [
         },
         agentId: "tz4a98xxat96iws9zmbrgj3b",
     },
+    {
+        type: "slice",
+        workspaceId: "tz4a98xxat96iws9zmbrgj3b",
+        root: "/Users/ada/Projects/happy",
+        title: "API schema changes, without tests",
+        source: "changes",
+        include: ["packages/api/**"],
+        exclude: ["*.test.ts"],
+        paths: [
+            {
+                path: "packages/api/schema.ts",
+                reason: "Defines the new resource.",
+                lines: [{ start: 12, end: 48 }],
+            },
+        ],
+        fileCount: 3,
+    },
 ] satisfies ToolPresentation[];
 
 describe("tool presentation schemas", () => {
@@ -88,14 +106,30 @@ describe("tool presentation schemas", () => {
             fileDiffPresentationSchema,
             searchPresentationSchema,
             agentSpawnPresentationSchema,
+            slicePresentationSchema,
         ];
 
         expect(
             presentations.map((presentation) => Value.Check(toolPresentationSchema, presentation)),
-        ).toEqual([true, true, true, true, true, true]);
+        ).toEqual([true, true, true, true, true, true, true]);
         expect(
             presentations.map((presentation, index) => Value.Check(schemas[index]!, presentation)),
-        ).toEqual([true, true, true, true, true, true]);
+        ).toEqual([true, true, true, true, true, true, true]);
+    });
+
+    it("requires a slice to carry its whole definition and its workspace", () => {
+        const slice = presentations[6]!;
+        expect(Value.Check(slicePresentationSchema, slice)).toBe(true);
+        for (const invalid of [
+            { type: "slice" },
+            { ...slice, workspaceId: undefined },
+            { ...slice, title: "" },
+            { ...slice, source: "recent" },
+            { ...slice, include: undefined },
+            { ...slice, paths: [{ path: "a.ts", lines: [{ start: 0, end: 1 }] }] },
+        ]) {
+            expect(Value.Check(toolPresentationSchema, invalid)).toBe(false);
+        }
     });
 
     it("accepts unresolved and running spawns but rejects partial or malformed model identity", () => {
