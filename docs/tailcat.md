@@ -34,7 +34,8 @@ repository's `happy.toml` cannot enable Tailcat.
 `port` defaults to the fixed, IANA-unassigned port `24779`. Override it with any nonzero TCP port
 when the default conflicts with another local service. Happy Agent binds the configured loopback
 port exactly and never substitutes a random one, so both the Tailcat address and port remain stable
-for another node's configuration. Changing the port requires restarting the daemon.
+for another node's configuration. Changing the port requires
+[reloading the daemon](configuration.md#applying-configuration-changes).
 
 To change it while the daemon is running, ask the active admin bot—initially the built-in Chief of
 Staff—to enable or disable Tailcat. Admin bots receive these tools:

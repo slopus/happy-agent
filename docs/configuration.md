@@ -45,6 +45,36 @@ brand = "ansi:202"
 accent = "cyan"
 ```
 
+## Applying configuration changes
+
+Some settings apply without a restart. Network policy is reread before every sandboxed command,
+and MCP servers are reloaded online with `reload_mcp_servers` (see [MCP](MCP.md)). The daemon
+reads everything else in the user `happy.toml` only at startup. That includes providers and
+their accounts, `hidden`, smart providers, the `[gemini]` key, Ethan mode, heap snapshots, and
+the Tailcat port. Reload the daemon after changing any of these:
+
+```sh
+happy-terminal daemon reload    # or: happy-agent reload
+```
+
+Reload is graceful. It drains the daemon first: new mutations are rejected and running turns are
+never cancelled. An inference already in flight finishes, and a tool batch already running
+finishes and commits, but no further inference starts. Tool calls that have not started and
+queued messages stay durable for the new daemon. The old daemon then shuts down. That stops
+terminal processes, background shell commands, and workspace services, and disconnects clients.
+Reload then starts a fresh daemon, which inherits the environment of the shell that ran the
+command. `happy-terminal daemon status` reports drain progress and the new process ID. A team or
+other supervised deployment restarts through its supervisor instead, such as
+`systemctl restart`.
+
+An agent cannot reload the daemon it runs on. Its shell commands belong to that daemon, so
+shutdown kills the reload before it can start the replacement, and Happy stays down until
+something else starts it. `happy-agent reload` refuses such a caller. `happy-terminal daemon reload`
+has no such check, so never run it from a session, even with full access. An agent that changed
+the configuration should first validate the file, because a daemon cannot start with a `happy.toml`
+it cannot parse. It should then tell the user which running work the reload will interrupt and ask
+them to run the reload from a terminal outside Happy.
+
 ## Standalone profile bootstrap
 
 For an unattended personal deployment, put the existing local name and email in the **remote
@@ -79,7 +109,7 @@ works.
 Only a deliberate stop ends it. Explicit cancellation, provider disablement, and daemon shutdown
 still stop active work.
 
-Enable it only in the user-wide configuration, then restart the daemon:
+Enable it only in the user-wide configuration, then [reload the daemon](#applying-configuration-changes):
 
 ```toml
 [settings.ethan]
@@ -488,7 +518,7 @@ Mantle in regions where both the endpoint and model are available in-region,
 then fall back to Bedrock Runtime regional or global inference profiles. A full
 `endpoint` URL overrides the endpoint selected for that model and bypasses
 Happy Agent's regional availability list for the selected transport. The resolved region is still used for regional
-inference-profile IDs and request metadata. Restart the local daemon after
+inference-profile IDs and request metadata. [Reload the daemon](#applying-configuration-changes) after
 changing providers. Repository `happy.toml` files cannot change these
 machine-level choices or credential paths.
 
@@ -509,8 +539,8 @@ api_key = "your-gemini-api-key"
 Gemini powers these tools rather than chat models, so it has no `[providers.*]`
 entry. No other Gemini or Google credential variable is used. Repository
 `happy.toml` files cannot set the key. These tools are additional to each
-provider's native tools, including Claude's unchanged `WebSearch` tool. Restart
-the local daemon after adding or changing the key.
+provider's native tools, including Claude's unchanged `WebSearch` tool. [Reload
+the daemon](#applying-configuration-changes) after adding or changing the key.
 
 ## Extra skill folders
 
@@ -549,7 +579,7 @@ A missing or invalid project file adds nothing and hides nothing.
 ### Hiding providers
 
 To keep an account available behind a smart provider without allowing direct selection, set `hidden = true`
-in its table in the user-wide `happy.toml`, then restart the daemon:
+in its table in the user-wide `happy.toml`, then [reload the daemon](#applying-configuration-changes):
 
 ```toml
 [providers.codex]
@@ -579,8 +609,11 @@ continue normally for enabled hidden accounts. Vendor quota readings remain atta
 accounts; a smart provider does not synthesize a combined quota. Consumed-token accounting is not
 duplicated between the smart provider and its backing accounts.
 
-Set `hidden = false` or remove the setting and restart to restore direct selection. Unhiding does
-not force an otherwise disabled provider to become enabled.
+Set `hidden = false` or remove the setting and reload the daemon to restore direct selection.
+Unhiding does not force an otherwise disabled provider to become enabled.
+
+The [multiple accounts recipe](recipe/multiple-accounts.md) walks through adding an account and
+pooling accounts behind a smart provider, and lists the common pitfalls.
 
 ## Docker-backed sessions
 
@@ -741,8 +774,8 @@ Happy Agent uses `AWS_REGION`, then `AWS_DEFAULT_REGION`, and otherwise defaults
 bearer token first and then the ambient AWS chain (`AWS_PROFILE`, environment
 credentials, shared files, ECS, and EC2 metadata). Optional `config_file` and
 `credentials_file` settings select nonstandard shared files; when `profile` is
-omitted with either file, Happy Agent uses the `default` profile. Restart an
-already-running daemon after changing these settings or variables.
+omitted with either file, Happy Agent uses the `default` profile. [Reload an
+already-running daemon](#applying-configuration-changes) after changing these settings or variables.
 The available model list follows AWS regional availability. GPT-5.6 Sol, Terra,
 and Luna use Amazon Bedrock's Responses API and its 272,000-token context limit.
 Sol is available in `us-east-1` and `us-east-2`; Terra and Luna are also
@@ -788,7 +821,7 @@ explanatory `crash-reports-unavailable.txt` file in that directory.
 Full heap snapshots near the memory limit are opt-in because they are large and
 can contain prompts, tool results, credentials held in memory, and other
 sensitive process data. Enable them only in the machine-level config and then
-restart the daemon:
+[reload the daemon](#applying-configuration-changes):
 
 ```toml
 [settings]
