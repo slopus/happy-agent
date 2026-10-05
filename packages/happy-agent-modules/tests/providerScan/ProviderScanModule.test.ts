@@ -244,6 +244,42 @@ describe("ProviderScanModule", () => {
         });
     });
 
+    it.each(["claude", "claude_work"])(
+        "verifies %s with Sonnet when premium Fable inference requires extra credits",
+        async (providerId) => {
+            const installationRoot = await root();
+            const requests: SessionRunRequest[] = [];
+            const providers = new AgentProviders();
+            providers.add(providerId, new SubscriptionProvider(requests), "claude");
+            const models = [
+                { ...MODEL, id: "anthropic/opus-5-5", name: "Opus 5.5", providerId },
+                { ...MODEL, id: "anthropic/fable-5-1", name: "Fable 5.1", providerId },
+                { ...MODEL, id: "anthropic/sonnet-5", name: "Sonnet 5", providerId },
+            ];
+            const config = await testConfigRootedAt(
+                installationRoot,
+                `[providers.${providerId}]\ntype = "claude"\ncredential_isolation = true\n`,
+                { inference: { models, providers } },
+            );
+
+            const result = await new ProviderScanModule(config).verify(
+                createRootContext(),
+                providerId,
+                "inference",
+            );
+
+            expect(result).toMatchObject({
+                modelId: "anthropic/sonnet-5",
+                performedLevel: "inference",
+                providerId,
+                requestedLevel: "inference",
+                status: "passed",
+            });
+            expect(requests).toHaveLength(1);
+            expect(requests[0]).toMatchObject({ model: "anthropic/sonnet-5", effort: "off" });
+        },
+    );
+
     it("does not apply a live override when its durable write fails", async () => {
         const { config } = await scriptedConfig();
         const scan = new ProviderScanModule(config);
@@ -320,6 +356,25 @@ class PassingSession extends BaseSession {
     }
 
     destroy(): void {}
+}
+
+class SubscriptionProvider extends BaseProvider {
+    constructor(readonly requests: SessionRunRequest[]) {
+        super();
+    }
+
+    async session(id: string, _options: SessionOptions): Promise<BaseSession> {
+        const requests = this.requests;
+        return new (class extends PassingSession {
+            override run(ctx: Context, request: SessionRunRequest): SessionStream {
+                requests.push(request);
+                if (request.model !== "anthropic/sonnet-5") {
+                    throw new Error("This premium model requires extra usage credits.");
+                }
+                return super.run(ctx, request);
+            }
+        })(id);
+    }
 }
 
 function deferred<T>(): {
