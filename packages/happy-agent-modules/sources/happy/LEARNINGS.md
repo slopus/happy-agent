@@ -82,6 +82,7 @@ one message it cannot carry.
 - Unlinking owns only this daemon's credential copy and live clients. It must not edit the external Happy CLI installation, and repeated unlink or cancel requests must be no-ops without duplicate events.
 - A Socket.IO connection error is not proof that credentials are bad. Abandon that socket and repeat authenticated HTTP machine registration; only an HTTP 401 or 403 invalidates credentials, while other failures remain retryable.
 - Explicit retry must reload credentials and retry machine-identity creation instead of reusing a cached configuration that already lacks an identity.
+- The sync store keys sessions by the account, not the token. Keying by `sha256(token + serverUrl)` made every re-pairing look like a new account, so the daemon dropped its session records and minted new session keys the phone could not read. The identity is now `sha256(encryption.publicKey + normalized serverUrl)`, the same one `readHappyCliMachineId` uses to recognize Happy CLI's account; a legacy account is keyed by its secret. Do not work around a mismatched fingerprint by reusing the previous session key: a different account must get a fresh key.
 
 ## Session state
 

@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
 import { basename, resolve } from "node:path";
 
@@ -48,6 +48,7 @@ import {
     inspectDaemonHappyCredentials,
     readExternalHappyCredentialFingerprint,
 } from "./credentials/importHappyCredentials.js";
+import { createHappyAccountFingerprint } from "./credentials/createHappyAccountFingerprint.js";
 import { getHappyPaths } from "./credentials/getHappyPaths.js";
 import {
     resolveHappyConnectionTarget,
@@ -2369,13 +2370,14 @@ function checkedSelection(
     return selection;
 }
 
+/**
+ * What the sync store keys this connection's sessions by: the account, not its current token.
+ * A re-paired account keeps its records and their session keys; a different account starts
+ * fresh. Sessions recorded under the old token-based identity read as a different account once
+ * and are recreated, which is the one reset this change accepts.
+ */
 function fingerprint(configuration: HappyConnectionConfiguration): string {
-    return createHash("sha256")
-        .update(configuration.credentials.token)
-        .update("\0")
-        .update(configuration.serverUrl)
-        .digest("hex")
-        .slice(0, 32);
+    return createHappyAccountFingerprint(configuration.credentials, configuration.serverUrl);
 }
 
 function pairingError(error: unknown): HappyIntegrationError {
