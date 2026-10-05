@@ -266,7 +266,11 @@ export class ProviderScanModule implements AgentModule {
         providerId: string,
         signal: AbortSignal,
     ): Promise<{ readonly modelId: string | null; readonly passed: boolean }> {
-        const model = verificationModel(this.#config.offeredModels, providerId);
+        const model = verificationModel(
+            this.#config.offeredModels,
+            providerId,
+            this.#config.providers.typeOf(providerId),
+        );
         if (model === undefined) return { modelId: null, passed: false };
         let session: BaseSession | undefined;
         try {
@@ -329,15 +333,16 @@ export class ProviderNotFoundError extends Error {
 function verificationModel(
     models: readonly AgentModel[],
     providerId: string,
+    providerType: string | null,
 ): AgentModel | undefined {
     const preferred: Readonly<Record<string, string>> = {
         bedrock: "anthropic/fable-5",
-        claude: "anthropic/fable-5-1",
+        claude: "anthropic/sonnet-5",
         codex: "openai/gpt-5.6-luna",
         grok: "xai/grok-composer-2.5-fast",
     };
     const routes = models.filter((model) => model.providerId === providerId);
-    return routes.find((model) => model.id === preferred[providerId]) ?? routes[0];
+    return routes.find((model) => model.id === preferred[providerType ?? providerId]) ?? routes[0];
 }
 
 function verificationEffort(model: AgentModel): SessionReasoningEffort {
