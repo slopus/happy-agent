@@ -136,6 +136,39 @@ A provider may independently narrow delegation with `include_subagent_models` an
 Collaboration applies them when it builds the model-facing creation tool and again when it validates
 every new collaborator, including one started by a workflow.
 
+Codex profiles can select native access independently with `cyber_access_program`:
+`"standard"`, `"daybreak_blue"`, or `"daybreak_red"`. Omit it for ordinary access. Use separate
+provider IDs to select the mode for each agent through the existing `provider` option:
+
+```toml
+[providers.codex]
+enabled = true
+
+[providers.codex-blue]
+type = "codex"
+enabled = true
+cyber_access_program = "daybreak_blue"
+
+[providers.codex-red]
+type = "codex"
+enabled = true
+cyber_access_program = "daybreak_red"
+```
+
+Keep the main agent's provider as `codex`, and select `codex-blue` or `codex-red` when creating
+a helper (for example, `provider: "codex-blue", model: "openai/gpt-6-sol"`). Each profile may
+use the same native login or its own `auth_file`. Explicit access selection requires ChatGPT
+Codex session credentials; API-key and Bedrock credentials do not support it. OpenAI still
+decides account/model availability. The SDK can switch only the rejected session to Standard
+with a visible retry notice before output starts; other agents keep their selected modes.
+
+Happy checks the published SDK's advertised access-program support before offering these profiles
+or constructing them. Unsupported profiles are omitted from the model catalog, excluded from
+smart routing, and direct construction fails visibly rather than ignoring the setting. Update
+all exact SDK dependency pins after publishing the SDK release that implements access programs.
+Smart routes only combine Codex profiles selecting the same access program; omitted and explicit
+Standard are compatible.
+
 When a scan first detects credentials, configuration writes `auto_enable = true` into that
 provider's generated runtime table. The value remains true across later missing scans. A person may
 set it to false to prevent automatic use; a provider with no `auto_enable` value receives the true

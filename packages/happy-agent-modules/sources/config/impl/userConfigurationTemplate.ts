@@ -162,10 +162,24 @@ export const HAPPY_TOML_TEMPLATE = `# Happy configuration for Happy Agent.
 # auth_file = "/absolute/path/to/auth.json"
 # base_url = "https://api.openai.com/v1"
 # transport = "auto"
+# Native Codex access for this profile: "standard", "daybreak_blue", or "daybreak_red".
+# Requires ChatGPT session credentials and a published SDK supporting access programs.
+# cyber_access_program = "standard"
 # include_models = ["openai/gpt-5.6-sol"]
 # exclude_models = []
 # include_subagent_models = ["openai/gpt-5.6-terra"]
 # exclude_subagent_models = []
+
+# To choose a mode per agent, define separate profiles and select their provider IDs.
+# Keep the main agent on "codex"; helpers can select "codex-blue" or "codex-red".
+# [providers.codex-blue]
+# type = "codex"
+# enabled = true
+# cyber_access_program = "daybreak_blue"
+# [providers.codex-red]
+# type = "codex"
+# enabled = true
+# cyber_access_program = "daybreak_red"
 
 # [providers.claude]
 # type = "claude"

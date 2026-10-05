@@ -11,6 +11,7 @@ const REUSED_PROPERTIES = [
     "stream",
     "include",
     "service_tier",
+    "access_programs",
     "prompt_cache_key",
     "text",
 ] as const;

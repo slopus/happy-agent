@@ -12,6 +12,7 @@ import {
     createResponsesLiteWebSocketInferenceRequest,
 } from "@/protocol/responsesLite/createResponsesLiteRequest.js";
 import type { CodexResponseRequest } from "@/vendors/codex/impl/CodexResponseRequest.js";
+import { preserveCodexAccessProgramErrors } from "@/vendors/codex/impl/codexAccessProgram.js";
 import type { CodexTurnState } from "@/vendors/codex/impl/CodexTurnState.js";
 import {
     CodexWebSocketClosedBeforeRequestError,
@@ -110,7 +111,9 @@ export class CodexWebSocketConnection {
                     ? createResponsesLiteWarmupRequest(request, toCodexToolDefinitions(tools))
                     : { ...structuredClone(request), input: [], generate: false };
             setCodexRequestKind(warmup, "prewarm");
-            for await (const event of this.send(client, warmup, signal)) {
+            for await (const event of preserveCodexAccessProgramErrors(
+                this.send(client, warmup, signal),
+            )) {
                 turnState.observe(event);
                 if (event.type === "response.completed")
                     this.previousResponseId = event.response.id;

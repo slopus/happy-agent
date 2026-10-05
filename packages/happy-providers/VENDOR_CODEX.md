@@ -290,6 +290,48 @@ Rig likewise builds it dynamically from the installed Codex version, OS, archite
 terminal. Golden tests may inject the captured value so host identity does not make request-shape
 tests nondeterministic.
 
+## Access programs
+
+Codex 0.156.1's native Responses request carries the optional
+`access_programs: { cyber: "standard" | "daybreak_blue" | "daybreak_red" }` field
+([source](https://github.com/openai/codex/blob/rust-v0.156.1/codex-rs/codex-api/src/common.rs)).
+Rig's vendor-specific `cyberAccessProgram` option is resolved when a session is created: a
+session selection takes precedence over the provider default, including an explicit Standard
+override. The shared session protocol is unchanged. Native session credentials are required;
+API-key and Bedrock routes reject explicit selections before sending a request.
+
+`CodexProvider.cyberAccessPrograms` is frozen capability metadata derived from the same TypeBox
+union used for validation. Happy uses it to gate named profiles against the published SDK; it
+describes implemented serialization, not account or model entitlement.
+
+The selection survives standard Responses and Responses Lite shaping, SSE, WebSocket prewarm,
+inference, and compaction. WebSocket continuation compares `access_programs` along with other
+request properties so a response chain cannot cross access selections. Omitting the option
+preserves the prior envelope.
+
+Rig adds one recovery for unavailable Daybreak selections. An `invalid_access_program` code,
+with HTTP 400/403 (or a streaming error without a status), can switch a Blue/Red session to
+explicit Standard access. A supplied parameter must name `access_programs` or
+`access_programs.cyber`; a parameter alone does not establish program unavailability.
+The classifier excludes account, quota, abort, and content-policy errors. This is an availability
+recovery, not a response to a model's refusal. Only the native `invalid_request_error` and
+`permission_error` categories (or the streaming `error` wrapper / omitted type) qualify;
+unknown error categories are excluded even when the access-program code is present.
+A rejected Standard selection is terminal.
+
+The recovery uses the shared retry budget, runs at most once per session and only before output
+has begun, and emits a `retrying` notice naming the program and switch. It clears the WebSocket
+and sticky turn state and replays the complete context with the same model and effort. Later
+turns and compaction retain Standard without changing sibling sessions or the provider default.
+Standalone compaction has no streaming notice channel and therefore does not initiate this
+switch. The deterministic transport tests cover availability failures and their exclusions.
+
+The sanitized `tests/vendors/fixtures/codexAccessProgramUnavailable.json` records a 2026-09-30
+native HTTP 400 response to a harmless GPT-6 Luna request with Red selected. It retains the
+status, code, parameter, and error type; the message is redacted. On that account, a Blue request
+completed, and a Red session using this recovery emitted the notice and completed in Standard.
+This account-specific probe does not establish availability for other accounts or models.
+
 ## SSE
 
 SSE sends the complete rebuilt request context on every attempt. It has no

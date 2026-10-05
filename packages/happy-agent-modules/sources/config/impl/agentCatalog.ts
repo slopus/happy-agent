@@ -22,6 +22,10 @@ import {
 } from "@slopus/happy-providers";
 import type { HappyAgentConfigValues, HappyAgentConfiguration } from "../ConfigModule.js";
 import { RoundRobinRouterProvider } from "./RoundRobinRouterProvider.js";
+import {
+    createConfiguredCodexProvider,
+    supportsCodexAccessProgram,
+} from "./codexAccessPrograms.js";
 
 type ConfiguredProvider = HappyAgentConfigValues["providers"][string];
 type ConcreteConfiguredProvider = Exclude<ConfiguredProvider, { readonly type: "smart" }>;
@@ -322,8 +326,20 @@ export function smartProviderRoute(
         );
     const type = concrete[0]?.[1].type;
     if (type === undefined) return undefined;
+    const firstProvider = concrete[0]?.[1];
+    const accessProgram =
+        firstProvider?.type === "codex"
+            ? (firstProvider.cyberAccessProgram ?? "standard")
+            : undefined;
     const compatibleIds = new Set(
-        concrete.filter(([, provider]) => provider.type === type).map(([id]) => id),
+        concrete
+            .filter(
+                ([, provider]) =>
+                    provider.type === type &&
+                    (provider.type !== "codex" ||
+                        (provider.cyberAccessProgram ?? "standard") === accessProgram),
+            )
+            .map(([id]) => id),
     );
     const orderedModels: string[] = [];
     const routes = new Map<
@@ -493,6 +509,8 @@ const BEDROCK_MANTLE_REGIONS: Readonly<Record<string, readonly string[]>> = Obje
  * Runtime inference profiles have separate availability; never silently switch transport/region.
  */
 function modelAvailableOnProvider(provider: ConcreteConfiguredProvider, modelId: string): boolean {
+    if (provider.type === "codex" && provider.cyberAccessProgram !== undefined)
+        return supportsCodexAccessProgram(provider.cyberAccessProgram);
     if (provider.type !== "bedrock") return true;
     const mantleRegions = BEDROCK_MANTLE_REGIONS[modelId];
     if (mantleRegions === undefined) return true;
@@ -551,20 +569,23 @@ async function createProvider(
               (provider.authFile === undefined
                   ? null
                   : await CodexSessionCredential.tryLoad({ authFile: provider.authFile })));
-        return new CodexProvider({
-            credential: required(credential, "Codex", id),
-            parallelToolCalls: true,
-            ...(provider.baseUrl === undefined ? {} : { endpoint: provider.baseUrl }),
-            ...(provider.transport === undefined || provider.transport === "auto"
-                ? {}
-                : {
-                      transport:
-                          provider.transport === "websocket-cached"
-                              ? ("websocket" as const)
-                              : provider.transport,
-                  }),
-            ...retries,
-        });
+        return createConfiguredCodexProvider(
+            {
+                credential: required(credential, "Codex", id),
+                parallelToolCalls: true,
+                ...(provider.baseUrl === undefined ? {} : { endpoint: provider.baseUrl }),
+                ...(provider.transport === undefined || provider.transport === "auto"
+                    ? {}
+                    : {
+                          transport:
+                              provider.transport === "websocket-cached"
+                                  ? ("websocket" as const)
+                                  : provider.transport,
+                      }),
+                ...retries,
+            },
+            provider.cyberAccessProgram,
+        );
     }
 
     if (provider.type === "claude") {
