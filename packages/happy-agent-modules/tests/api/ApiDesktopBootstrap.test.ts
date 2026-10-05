@@ -4,7 +4,7 @@ import { Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentConfig } from "@slopus/happy-agent-base";
-import type { DesktopBootstrapResponse } from "@slopus/happy-agent-client";
+import type { Agent, DesktopBootstrapResponse } from "@slopus/happy-agent-client";
 import { createRootContext, withTracer, type Context } from "@steve.kite/stdlib";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -13,6 +13,10 @@ import { recordingTracer } from "../support/recordingTracer.js";
 
 const cleanups: (() => Promise<void>)[] = [];
 const token = "t".repeat(43);
+
+// The published client does not carry the archived collection yet; widen the response until
+// the client release that does is consumed here.
+type Bootstrap = DesktopBootstrapResponse & { readonly archivedAgents?: readonly Agent[] };
 
 afterEach(async () => {
     for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
@@ -32,21 +36,107 @@ describe("desktop bootstrap resource reads", () => {
         expect(fixture.serviceTierListeners.size).toBe(0);
     });
 
-    it("reads archived metadata once and materializes the shared project/root series once", async () => {
+    it("reads each attached agent's configuration once and materializes the shared project/root series once", async () => {
         const fixture = await createFixture();
-        const bootstrap = await fixture.get<DesktopBootstrapResponse>("/v0/bootstrap/desktop");
+        const bootstrap = await fixture.get<Bootstrap>("/v0/bootstrap/desktop");
         expect(bootstrap.projects[0]?.agents.map((agent) => agent.id)).toEqual(["activeagent"]);
         expect(bootstrap.workspaces[0]?.agents).toEqual(bootstrap.projects[0]?.agents);
+        // Every archived agent is within the bound, so each is projected once from the
+        // configuration already read, and no agent's configuration is read twice.
+        expect(bootstrap.archivedAgents?.map((agent) => agent.id)).toEqual(
+            Array.from({ length: 129 }, (_, index) => `archived${index}`).sort(),
+        );
+        expect(bootstrap.archivedAgents?.[0]).toMatchObject({
+            workspaceId: "projectone",
+            archivedAt: 1,
+            orderKey: "b0",
+            userVisible: true,
+            canSendMessages: false,
+        });
         expect(fixture.projects.list).toHaveBeenCalledTimes(1);
         expect(fixture.projects.listAgents).toHaveBeenCalledTimes(1);
         expect(fixture.agents.config).toHaveBeenCalledTimes(130);
-        expect(fixture.agents.childOf).toHaveBeenCalledTimes(1);
-        expect(fixture.agents.parentOf).toHaveBeenCalledTimes(1);
-        expect(fixture.events.latestAgentEvent).toHaveBeenCalledTimes(1);
-        expect(fixture.processes).toHaveBeenCalledTimes(1);
-        expect(fixture.questions).toHaveBeenCalledTimes(1);
-        expect(fixture.runningRun).toHaveBeenCalledTimes(1);
+        expect(fixture.agents.childOf).toHaveBeenCalledTimes(130);
+        expect(fixture.agents.parentOf).toHaveBeenCalledTimes(130);
+        expect(fixture.events.latestAgentEvent).toHaveBeenCalledTimes(130);
+        expect(fixture.processes).toHaveBeenCalledTimes(130);
+        expect(fixture.questions).toHaveBeenCalledTimes(130);
+        expect(fixture.runningRun).toHaveBeenCalledTimes(130);
         expect(fixture.bots.forAgent).not.toHaveBeenCalled();
+    });
+
+    it("orders archived agents newest first with the ID as the tie-breaker", async () => {
+        const fixture = await createFixture();
+        fixture.projects.listAgents.mockResolvedValue([
+            { agentId: "activeagent", orderKey: "a0" },
+            { agentId: "early", orderKey: "a1" },
+            { agentId: "tie", orderKey: "a2" },
+            { agentId: "late", orderKey: "a3" },
+        ]);
+        fixture.configs.set("early", { metadata: { archivedAt: 3 } });
+        fixture.configs.set("tie", { metadata: { archivedAt: 9 } });
+        fixture.configs.set("late", { metadata: { archivedAt: 9, title: "Closed last" } });
+
+        const bootstrap = await fixture.get<Bootstrap>("/v0/bootstrap/desktop");
+        expect(bootstrap.projects[0]?.agents.map((agent) => agent.id)).toEqual(["activeagent"]);
+        expect(bootstrap.archivedAgents?.map((agent) => agent.id)).toEqual([
+            "late",
+            "tie",
+            "early",
+        ]);
+        expect(bootstrap.archivedAgents?.[0]).toMatchObject({
+            id: "late",
+            title: "Closed last",
+            workspaceId: "projectone",
+            orderKey: "a3",
+            archivedAt: 9,
+        });
+        expect(fixture.agents.config).toHaveBeenCalledTimes(4);
+    });
+
+    it("carries a child workspace's archived agents under that workspace", async () => {
+        const fixture = await createFixture();
+        fixture.workspaces.listPage.mockResolvedValue({ workspaces: [fixture.workspace] });
+        fixture.workspaces.listAgents.mockResolvedValue([
+            { agentId: "childactive", orderKey: "a0" },
+            { agentId: "childclosed", orderKey: "a1" },
+        ]);
+        fixture.configs.set("childactive", {});
+        fixture.configs.set("childclosed", { metadata: { archivedAt: 7 } });
+
+        const bootstrap = await fixture.get<Bootstrap>("/v0/bootstrap/desktop");
+        const child = bootstrap.workspaces.find((workspace) => workspace.id === "workspaceone");
+        expect(child?.agents.map((agent) => agent.id)).toEqual(["childactive"]);
+        expect(bootstrap.archivedAgents?.[0]).toMatchObject({
+            id: "childclosed",
+            workspaceId: "workspaceone",
+            orderKey: "a1",
+            archivedAt: 7,
+        });
+        expect(bootstrap.archivedAgents?.slice(1).every((agent) => agent.archivedAt === 1)).toBe(
+            true,
+        );
+    });
+
+    it("bounds the archived collection to the most recently archived agents", async () => {
+        const fixture = await createFixture();
+        const associations = [{ agentId: "activeagent", orderKey: "a0" }];
+        for (let index = 0; index < 250; index += 1) {
+            const agentId = `closed${String(index).padStart(3, "0")}`;
+            fixture.configs.set(agentId, { metadata: { archivedAt: index + 1 } });
+            associations.push({ agentId, orderKey: `c${index}` });
+        }
+        fixture.projects.listAgents.mockResolvedValue(associations);
+
+        const bootstrap = await fixture.get<Bootstrap>("/v0/bootstrap/desktop");
+        expect(bootstrap.archivedAgents).toHaveLength(200);
+        expect(bootstrap.archivedAgents?.[0]?.id).toBe("closed249");
+        expect(bootstrap.archivedAgents?.[199]?.id).toBe("closed050");
+        // Archival is still decided from one configuration read per attached agent, and only
+        // the agents inside the bound pay for their detail reads.
+        expect(fixture.agents.config).toHaveBeenCalledTimes(251);
+        expect(fixture.processes).toHaveBeenCalledTimes(201);
+        expect(fixture.processes.mock.calls.map(([, id]) => id)).not.toContain("closed049");
     });
 
     it.each(["/v0/projects", "/v0/workspaces"])(
@@ -100,12 +190,16 @@ describe("desktop bootstrap resource reads", () => {
             pendingQuestionId: "questionone",
             orderKey: "a0",
         });
-        expect(fixture.agents.childOf.mock.calls.map(([, id]) => id).sort()).toEqual([
-            "activeagent",
-            "managedagent",
-            "secondagent",
-        ]);
-        expect(fixture.processes).toHaveBeenCalledTimes(3);
+        // Archived agents are projected for the bootstrap's own history collection; the active
+        // series still reads each of its agents' details exactly once.
+        const active = (id: string): boolean => !id.startsWith("archived");
+        expect(
+            fixture.agents.childOf.mock.calls
+                .map(([, id]) => id)
+                .filter(active)
+                .sort(),
+        ).toEqual(["activeagent", "managedagent", "secondagent"]);
+        expect(fixture.processes.mock.calls.map(([, id]) => id).filter(active)).toHaveLength(3);
         expect(fixture.bots.forAgent).not.toHaveBeenCalled();
     });
 
@@ -116,10 +210,13 @@ describe("desktop bootstrap resource reads", () => {
         fixture.configs.set("archived0", { metadata: { archivedAt: null } });
         fixture.processes.mockClear();
 
-        const next = await fixture.get<DesktopBootstrapResponse>("/v0/bootstrap/desktop");
+        const next = await fixture.get<Bootstrap>("/v0/bootstrap/desktop");
         expect(next.projects[0]?.agents.map((agent) => agent.id)).toEqual(["archived0"]);
         expect(next.workspaces[0]?.agents).toEqual(next.projects[0]?.agents);
-        expect(fixture.processes.mock.calls.map(([, id]) => id)).toEqual(["archived0"]);
+        expect(next.archivedAgents?.map((agent) => agent.id)).toContain("activeagent");
+        expect(next.archivedAgents?.map((agent) => agent.id)).not.toContain("archived0");
+        expect(fixture.processes.mock.calls.map(([, id]) => id)).toContain("archived0");
+        expect(fixture.processes.mock.calls.map(([, id]) => id)).toContain("activeagent");
     });
 
     it("preserves archived bot resources while reusing their known ownership", async () => {

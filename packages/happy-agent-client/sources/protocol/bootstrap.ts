@@ -2,7 +2,13 @@
 
 import { type Static, Type } from "@sinclair/typebox";
 
-import type { Agent, AgentDraftResponse, AgentModeResponse, AgentResponse } from "./agents.js";
+import {
+    type Agent,
+    type AgentDraftResponse,
+    type AgentModeResponse,
+    type AgentResponse,
+    agentSchema,
+} from "./agents.js";
 import { botSchema } from "./bots.js";
 import { cloudSchema } from "./cloud.js";
 import { type EventCursor, eventCursorSchema } from "./common.js";
@@ -37,11 +43,18 @@ export interface AgentBootstrapResponse
  * `GET /v0/bootstrap/desktop`
  *
  * A composition of other endpoints' objects; nothing here has a shape of its
- * own. There is no separate global agent list: each included project and
- * workspace carries its own ordered top-level agents. Every full agent may embed its recursive
+ * own. There is no separate list of active agents: each included project and
+ * workspace carries its own ordered active top-level agents, and the archived agents of those
+ * owners arrive together in `archivedAgents`. Every full agent may embed its recursive
  * active subtask tree, including each bot's agent and shared-filesystem subtasks.
  */
 export const desktopBootstrapResponseSchema = Type.Object({
+    /**
+     * The archived agents of the included projects and workspaces, newest `archivedAt` first
+     * with the agent ID as the tie-breaker, bounded to the most recently archived ones. Absent
+     * on older compatible daemons, which carry no archived agents in bootstrap.
+     */
+    archivedAgents: Type.Optional(Type.Array(agentSchema)),
     /** Every bot, archived ones included. Absent on older compatible daemons. */
     bots: Type.Optional(Type.Array(botSchema)),
     config: daemonConfigSchema,
