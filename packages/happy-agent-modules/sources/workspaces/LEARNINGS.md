@@ -110,3 +110,16 @@ the complete tree without a second hierarchy representation.
 Workspace list and detail tools return at most 50 rows. Their TypeBox schemas use that same bound
 so models paginate from the returned cursor instead of repeatedly requesting an advertised 100-row
 page that execution must reject.
+
+## The project shows its setup commands without owning the file
+
+A client had no way to tell what a new workspace would run: `[workspace] setup_commands` lived
+only in the repository's `happy.toml`, which the API never exposed. This module is the only reader
+of that file, so it records the list on the project through
+`ProjectsModule.recordWorkspaceSetupCommands` — from the sync pass, which now runs for every live
+project rather than only for one with ready workspaces, and keeps its configuration watch armed
+regardless. The projects catalog writes only when the list changed and never hands a never-read
+project an empty list, so startup does not emit an update per project. The file remains the source
+of truth and the API does not write it; a list the catalog cannot hold is still run as written and
+only not shown. The home project is left alone: it states no workspace configuration, and a watch
+on a person's home directory would observe everything they own for nothing.

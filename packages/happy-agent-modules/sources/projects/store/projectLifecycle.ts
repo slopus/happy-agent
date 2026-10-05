@@ -104,6 +104,11 @@ export function createProjectLifecycle(): Pick<ProjectStore, "archive" | "restor
                         git_branch = ${after.gitBranch ?? null},
                         git_head = ${after.gitHead ?? null},
                         git_upstream = ${after.gitUpstream ?? null},
+                        workspace_setup_commands_json = ${
+                            after.workspaceSetupCommands === undefined
+                                ? null
+                                : JSON.stringify(after.workspaceSetupCommands)
+                        },
                         updated_at = ${updatedAt},
                         version = version + 1
                     WHERE id = ${input.projectId} AND version = ${before.version}
@@ -145,6 +150,9 @@ function withStateChanges(project: Project, changes: ProjectStateChanges): Proje
     if (changes.gitBranch !== undefined) setOptional(next, "gitBranch", changes.gitBranch);
     if (changes.gitHead !== undefined) setOptional(next, "gitHead", changes.gitHead);
     if (changes.gitUpstream !== undefined) setOptional(next, "gitUpstream", changes.gitUpstream);
+    if (changes.workspaceSetupCommands !== undefined) {
+        next.workspaceSetupCommands = structuredClone(changes.workspaceSetupCommands);
+    }
     return next;
 }
 

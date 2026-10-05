@@ -4,9 +4,11 @@ import {
     projectAvatarSchema,
     projectRemoteSourceSchema,
     projectSchema,
+    projectWorkspaceSetupCommandsSchema,
     type Project,
     type ProjectAvatar,
     type ProjectRemoteSource,
+    type ProjectWorkspaceSetupCommands,
 } from "./Project.js";
 import { projectSettingsSchema, type ProjectSettings } from "./ProjectSettings.js";
 
@@ -34,6 +36,7 @@ export type ProjectRow = {
     readonly git_branch: string | null;
     readonly git_head: string | null;
     readonly git_upstream: string | null;
+    readonly workspace_setup_commands_json: string | null;
     readonly order_key: string;
     readonly version: number | string;
     readonly avatar_json: string | null;
@@ -80,6 +83,13 @@ export function projectFromRow(row: ProjectRow): Project {
         ...(row.git_branch === null ? {} : { gitBranch: row.git_branch }),
         ...(row.git_head === null ? {} : { gitHead: row.git_head }),
         ...(row.git_upstream === null ? {} : { gitUpstream: row.git_upstream }),
+        ...(row.workspace_setup_commands_json === null
+            ? {}
+            : {
+                  workspaceSetupCommands: parseProjectWorkspaceSetupCommands(
+                      row.workspace_setup_commands_json,
+                  ),
+              }),
         orderKey: row.order_key,
         version: Number(row.version),
         ...(row.avatar_json === null ? {} : { avatar: parseProjectAvatar(row.avatar_json) }),
@@ -114,6 +124,14 @@ export function parseProjectAvatar(value: string): ProjectAvatar {
     const parsed = parseJson(value, "avatar");
     if (!Value.Check(projectAvatarSchema, parsed)) {
         throw new Error("Project avatar storage contains an invalid value.");
+    }
+    return structuredClone(parsed);
+}
+
+export function parseProjectWorkspaceSetupCommands(value: string): ProjectWorkspaceSetupCommands {
+    const parsed = parseJson(value, "workspace setup commands");
+    if (!Value.Check(projectWorkspaceSetupCommandsSchema, parsed)) {
+        throw new Error("Project workspace setup command storage contains an invalid value.");
     }
     return structuredClone(parsed);
 }

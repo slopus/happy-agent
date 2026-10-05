@@ -4209,6 +4209,12 @@ export class ApiModule implements AgentModule {
                                 body.defaultWorkspaceCompute.type === "host"
                                     ? { type: "local" }
                                     : body.defaultWorkspaceCompute,
+                            // Blank is nothing to say; the text itself is kept as typed.
+                            ...(body.workspaceInitialPrompt === undefined ||
+                            body.workspaceInitialPrompt === null ||
+                            body.workspaceInitialPrompt.trim().length === 0
+                                ? {}
+                                : { workspaceInitialPrompt: body.workspaceInitialPrompt }),
                         },
                     }),
             );

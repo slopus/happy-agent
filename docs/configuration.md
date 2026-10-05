@@ -258,7 +258,11 @@ skips the remaining commands, and prevents sessions and inference from starting
 there. These commands are trusted project lifecycle code and run with full
 filesystem and network access. Each command has a 30-minute limit.
 The same setting can provide a user-wide default in the user `happy.toml`; a
-repository list replaces that default for its workspaces.
+repository list replaces that default for its workspaces. The daemon records
+the list it reads from a project's own `happy.toml` on that project
+(`workspaceSetupCommands` in the API) and re-reads the file when it changes, so
+a client such as Happy can show what a new workspace will run. The file stays
+the source of truth; the API does not write it.
 
 ## Managed network access
 

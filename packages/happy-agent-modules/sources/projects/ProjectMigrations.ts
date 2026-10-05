@@ -319,4 +319,19 @@ export const projectMigrations = [
             );
         },
     ],
+    [
+        "009-project-workspace-setup-commands",
+        /**
+         * The setup commands a project's `happy.toml` names for its new workspaces are recorded
+         * on the row so clients can show them. NULL means the file has not been read yet, which
+         * is not the same as a file that names no command.
+         */
+        async (_ctx: Context, database: AgentDatabase): Promise<void> => {
+            await agentDatabaseRun(
+                database,
+                sql`ALTER TABLE ${sql.raw(PROJECTS_TABLE)}
+                    ADD COLUMN workspace_setup_commands_json TEXT`,
+            );
+        },
+    ],
 ] as const;

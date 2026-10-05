@@ -98,6 +98,8 @@ worktree/<branch key> <path> <commit>`, then Git's answer is verified — the
    without Full access.
 5. **Setup commands run** — `workspace.setup_commands` from the configuration
    loaded inside the new workspace (for example `pnpm install --frozen-lockfile`).
+   The list the project root's `happy.toml` names is also recorded on the
+   project as `workspaceSetupCommands`, so a client can show it in advance.
 6. The workspace is marked `ready`. A failure at any step marks it `failed`.
 
 Two consequences worth remembering:

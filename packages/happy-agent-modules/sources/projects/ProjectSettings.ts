@@ -3,6 +3,18 @@ import { Type, type Static } from "@sinclair/typebox";
 import { projectIdSchema, projectVersionSchema } from "./Project.js";
 
 export const MAX_PROJECT_DOCKER_IMAGE_LENGTH = 512;
+export const MAX_PROJECT_WORKSPACE_INITIAL_PROMPT_LENGTH = 32_000;
+
+/**
+ * What the first agent in every new workspace of this project is told, verbatim. It is prose a
+ * person wrote for a model, so line breaks are ordinary; NUL is the one character refused. The
+ * setting is absent rather than empty when there is nothing to say.
+ */
+export const projectWorkspaceInitialPromptSchema = Type.String({
+    minLength: 1,
+    maxLength: MAX_PROJECT_WORKSPACE_INITIAL_PROMPT_LENGTH,
+    pattern: "^[^\\u0000]+$",
+});
 
 /**
  * Where new workspaces of this project run. Settings are a small, closed
@@ -27,6 +39,7 @@ export const projectWorkspaceComputeSchema = Type.Union([
 export const projectSettingsSchema = Type.Object(
     {
         defaultWorkspaceCompute: Type.Optional(projectWorkspaceComputeSchema),
+        workspaceInitialPrompt: Type.Optional(projectWorkspaceInitialPromptSchema),
     },
     { additionalProperties: false },
 );
@@ -50,6 +63,7 @@ export const projectSettingsUpdateInputSchema = Type.Object(
 );
 
 export type ProjectWorkspaceCompute = Static<typeof projectWorkspaceComputeSchema>;
+export type ProjectWorkspaceInitialPrompt = Static<typeof projectWorkspaceInitialPromptSchema>;
 export type ProjectSettings = Static<typeof projectSettingsSchema>;
 export type ProjectSettingsView = Static<typeof projectSettingsViewSchema>;
 export type ProjectSettingsUpdateInput = Static<typeof projectSettingsUpdateInputSchema>;

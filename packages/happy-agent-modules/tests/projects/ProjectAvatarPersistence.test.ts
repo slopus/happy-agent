@@ -9,7 +9,7 @@ import { projectsModuleFor } from "../support/projectsModule.js";
 
 describe("project avatar persistence", () => {
     it("atomically persists normalized bytes, public metadata, and exact lifecycle events", async () => {
-        expect(projectMigrations.at(-1)?.[0]).toBe("008-project-avatar-assets");
+        expect(projectMigrations.map(([key]) => key)).toContain("008-project-avatar-assets");
         const database = moduleDatabase(projectMigrations, "project-avatar-persistence");
         await database.ready;
         try {

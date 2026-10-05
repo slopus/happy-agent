@@ -118,6 +118,17 @@ Project and root-agent ordering now use decimal fractional keys. A reorder compu
 the destination neighbours, guards and versions only the moved resource, and emits one event that
 tells the whole truth. Neighbour rows remain byte-for-byte unchanged.
 
+## A project carries what a new workspace starts with
+
+Two things about a new workspace were invisible to clients: the setup commands its repository's
+`happy.toml` names, and anything the person wanted the first agent told. The commands are recorded
+on the row by the workspaces module, which is the only reader of that file, through
+`recordWorkspaceSetupCommands`; the field stays absent until the file has been read once so a
+never-read project is not given an empty list it never stated. The initial prompt is an ordinary
+optional setting, `workspaceInitialPrompt`, stored in the settings JSON and sent by the client, not
+the daemon. Both are additive optional API fields; the settings body still replaces the settings,
+so an omitted or blank prompt clears it.
+
 ## A remote port is digits
 
 The remote URL pattern accepted `https://github.com:bad/repo`, a URL no clone can resolve. The host
