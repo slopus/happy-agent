@@ -80,6 +80,8 @@ import type {
 } from "./protocol/events.js";
 import type {
     FileContentResponse,
+    FileMatchRequest,
+    FileMatchResponse,
     FileRevisionQuery,
     FileRevisionResponse,
     FileSearchQuery,
@@ -1404,6 +1406,24 @@ export class HappyAgentClient {
             method: "GET",
             path: `v0/workspaces/${encodeURIComponent(workspaceId)}/files`,
             query: { query: query.query, limit: query.limit },
+            signal: options.signal,
+        });
+    }
+
+    /**
+     * `POST /v0/workspaces/:workspaceId/files/match` — evaluates a gitignore-style
+     * mask against the workspace's changed files or its whole tree. Stateless:
+     * the answer is what the mask holds right now.
+     */
+    async matchFiles(
+        workspaceId: Cuid2,
+        request: FileMatchRequest,
+        options: RequestOptions = {},
+    ): Promise<FileMatchResponse> {
+        return await this.#json({
+            method: "POST",
+            path: `v0/workspaces/${encodeURIComponent(workspaceId)}/files/match`,
+            json: request,
             signal: options.signal,
         });
     }

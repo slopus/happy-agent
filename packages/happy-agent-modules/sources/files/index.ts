@@ -1,4 +1,7 @@
 export {
+    fileMatchLineRangeSchema,
+    fileMatchPinnedPathSchema,
+    fileMatchRequestSchema,
     fileReadQuerySchema,
     fileRevisionQuerySchema,
     fileSearchQuerySchema,
@@ -9,6 +12,9 @@ export {
     relativeFilePathSchema,
     ProjectFileError,
     ProjectFilesModule,
+    type FileMatchPinnedPath,
+    type FileMatchRequest,
+    type FileMatchResult,
     type FileReadQuery,
     type FileReadResult,
     type FileRevisionQuery,
