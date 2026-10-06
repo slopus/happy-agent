@@ -953,6 +953,7 @@ Response — `200`:
             "claude": {
                 "type": "claude",
                 "enabled": true,
+                "hidden": false,
                 "models": [
                     { "id": "anthropic/opus-5", "enabled": true },
                     { "id": "anthropic/sonnet-5", "enabled": true },
@@ -963,6 +964,7 @@ Response — `200`:
             "codex": {
                 "type": "codex",
                 "enabled": true,
+                "hidden": false,
                 "models": [
                     { "id": "openai/gpt-5.6-sol", "enabled": true },
                     { "id": "openai/gpt-5.6-terra", "enabled": true },
@@ -972,6 +974,7 @@ Response — `200`:
             "grok": {
                 "type": "grok",
                 "enabled": false,
+                "hidden": false,
                 "models": [
                     { "id": "xai/grok-build", "enabled": false },
                     { "id": "xai/grok-4.5", "enabled": false },
@@ -1047,6 +1050,18 @@ Field groups:
   daemons supply the complete menu on every provider model reference, independently of shared
   definition inheritance, and keep its non-null IDs identical to the effective `serviceTiers`;
   eligibility changes use the existing configuration-change notification.
+
+    A provider entry also carries `hidden`, `true` when the machine configuration sets
+    `hidden = true` for that provider. It is display-only: clients omit hidden providers and their
+    models from model pickers, and the daemon omits them from the model choices offered for new
+    subagents. `enabled` never includes `hidden`; it says only whether the account is on and may be
+    routed to. Messages, turns, and compaction for an agent already on a hidden provider are
+    accepted exactly as on a visible one, and a smart provider keeps routing through enabled hidden
+    members. Removing an account entirely means deleting it from the configuration. Hiding is
+    file-only configuration; there is no mutation for it. `hidden` is additive and does not
+    increment the protocol version. Older daemons omit it and instead report hidden providers as
+    disabled; clients treat a missing value as `false`.
+
 - `settings` — daemon behavior toggles and tunables.
 - `theme` — terminal color assignments.
 - `workspace` — workspace lifecycle configuration: archive behavior, setup commands, and

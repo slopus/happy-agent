@@ -229,7 +229,13 @@ export type ProviderModelReference = Static<typeof providerModelReferenceSchema>
 
 /** One configured inference provider and the models it serves. */
 export const providerConfigSchema = Type.Object({
+    /** Whether the account is on and may be routed to. It never includes `hidden`. */
     enabled: Type.Boolean(),
+    /**
+     * Display-only: omit this provider and its models from model pickers. Absent means false on
+     * older daemons, which report hidden providers as disabled instead.
+     */
+    hidden: Type.Optional(Type.Boolean()),
     models: Type.Array(providerModelReferenceSchema),
     /** The canonical provider key: `"claude"`, `"codex"`, `"grok"`, … */
     type: Type.String(),
