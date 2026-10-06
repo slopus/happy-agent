@@ -484,7 +484,8 @@ async function startGym(
     files: Readonly<Record<string, string | Uint8Array>> = {},
     permissionMode: "workspace_write" | "auto" = "workspace_write",
 ): Promise<Gym> {
-    return await createGym({
+    let proxyAuthority = "";
+    const gym = await createGym({
         mode: "docker",
         entrypoint: [
             "/bin/bash",
@@ -523,8 +524,27 @@ exit "$gym_cli_status"`,
                     : []),
             ].join("\n"),
         },
-        httpProxy: { handler },
+        httpProxy: {
+            handler: (request, index) => {
+                if (request.method === "CONNECT") {
+                    if (request.url !== "bedrock.gym.test:80") {
+                        return {
+                            response: {
+                                status: 403,
+                                body: "Only the scripted Bedrock HTTP tunnel is allowed.",
+                            },
+                        };
+                    }
+                    if (proxyAuthority.length === 0)
+                        throw new Error("The scripted Bedrock HTTP tunnel is not ready.");
+                    return { request: { url: proxyAuthority } };
+                }
+                return handler(request, index);
+            },
+        },
     });
+    proxyAuthority = new URL(gym.httpProxy!.localUrl).host;
+    return gym;
 }
 
 function intercept(
@@ -642,11 +662,29 @@ function assertToolHistory(request: ChatRequest, expected: readonly ToolCall[]):
 }
 
 async function waitForCompletion(gym: Gym, marker: string): Promise<void> {
-    const screen = await gym.terminal.waitUntil(
-        (snapshot) => snapshot.text.includes(marker) && !snapshot.text.includes("esc to interrupt"),
-        marker,
-        30_000,
-    );
+    const screen = await gym.terminal
+        .waitUntil(
+            (snapshot) =>
+                snapshot.text.includes(marker) && !snapshot.text.includes("esc to interrupt"),
+            marker,
+            30_000,
+        )
+        .catch((error: unknown) => {
+            const exchanges = gym.httpProxy?.exchanges.slice(-8).map((exchange) => ({
+                method: exchange.request.method,
+                url: exchange.request.url,
+                forwardedUrl: exchange.forwardedRequest?.url,
+                status: exchange.response?.status,
+                source: exchange.responseSource,
+                response: Buffer.from(exchange.response?.body ?? [])
+                    .toString()
+                    .slice(0, 2000),
+            }));
+            throw new Error(
+                `Native Bedrock inference did not complete. Recent HTTP exchanges: ${JSON.stringify(exchanges)}`,
+                { cause: error },
+            );
+        });
     expect(screen.text).not.toContain("without a matching start");
     expect(screen.text).not.toContain("Authentication with Amazon Bedrock failed");
 }

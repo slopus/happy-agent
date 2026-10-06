@@ -1,5 +1,7 @@
 import { createServer, request } from "node:http";
+import { execFile } from "node:child_process";
 import { connect } from "node:net";
+import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { InterceptingHttpProxy } from "./InterceptingHttpProxy.js";
@@ -12,6 +14,54 @@ afterEach(async () => {
 });
 
 describe("InterceptingHttpProxy", () => {
+    it.runIf(Number(process.versions.node.split(".")[0]) >= 24)(
+        "serves a native fetch HTTP fixture by redirecting its CONNECT tunnel to the interceptor",
+        async () => {
+            const proxy: InterceptingHttpProxy = new InterceptingHttpProxy((intercepted) => {
+                if (intercepted.method === "CONNECT") {
+                    expect(intercepted.url).toBe("bedrock.gym.test:80");
+                    return { request: { url: new URL(proxy.localUrl).host } };
+                }
+                expect(intercepted.method).toBe("POST");
+                expect(intercepted.url).toBe("http://bedrock.gym.test/openai/v1/chat/completions");
+                return {
+                    response: { status: 201, body: Buffer.from(intercepted.body).toString() },
+                };
+            });
+            running.add(proxy);
+            await proxy.start();
+            const { stdout } = await promisify(execFile)(
+                process.execPath,
+                [
+                    "--input-type=module",
+                    "--eval",
+                    `const response = await fetch("http://bedrock.gym.test/openai/v1/chat/completions", {
+                    method: "POST", body: "native fetch body", signal: AbortSignal.timeout(5000)
+                });
+                process.stdout.write(JSON.stringify({ status: response.status, body: await response.text() }));`,
+                ],
+                {
+                    env: {
+                        ...process.env,
+                        HTTP_PROXY: proxy.localUrl,
+                        http_proxy: proxy.localUrl,
+                        HTTPS_PROXY: proxy.localUrl,
+                        https_proxy: proxy.localUrl,
+                        NO_PROXY: "",
+                        no_proxy: "",
+                        NODE_USE_ENV_PROXY: "1",
+                    },
+                    timeout: 7000,
+                },
+            );
+            expect(JSON.parse(stdout)).toEqual({ status: 201, body: "native fetch body" });
+            expect(proxy.exchanges.map((exchange) => exchange.request.method)).toEqual([
+                "CONNECT",
+                "POST",
+            ]);
+        },
+    );
+
     it("records requests and can replace responses without contacting the target", async () => {
         const proxy = new InterceptingHttpProxy((intercepted) => ({
             response: {
