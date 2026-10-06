@@ -61,6 +61,12 @@ keys in another order bumped the version, and the catalog check in `ProjectsModu
 the write because the store's `changed` disagreed with the canonical comparison. Avatar equality
 also includes the normalized image's content hash, not only its public metadata.
 
+## Version conflicts survive image processing
+
+Version checks after image normalization must retain the project's typed conflict and current
+snapshot. A plain storage error made a concurrent setup or edit return HTTP 500 after the initial
+If-Match check passed. Malformed versions and violated storage invariants remain internal errors.
+
 ## Avatar metadata and bytes are one change
 
 Keeping only an avatar description on the project while writing its bytes to an independent file

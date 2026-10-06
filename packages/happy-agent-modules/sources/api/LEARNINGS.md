@@ -1,5 +1,11 @@
 # API module learnings
 
+## Project conflicts can happen after the header check
+
+An upload can pass If-Match before image processing and lose its version before the store writes.
+Project state conflicts carry the current snapshot through the existing lifecycle error; the API
+awaits its normal project projection and returns HTTP 409 with the project and currentVersion.
+
 ## Message history reads a page in a fixed number of queries
 
 The traced messages request showed width, not depth: one page of 41 short runs made 297 spans,

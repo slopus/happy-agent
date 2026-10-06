@@ -6,6 +6,7 @@ import type { Context } from "@steve.kite/stdlib";
 import { projectOrderKeySchema, projectVersionSchema, type Project } from "../Project.js";
 import { PROJECTS_TABLE, PROJECT_SETTINGS_TABLE } from "../ProjectMigrations.js";
 import { projectFromRow, type ProjectRow } from "../ProjectRow.js";
+import { ProjectLifecycleError } from "../ProjectLifecycleError.js";
 
 export function databaseFor(ctx: Context): AgentDatabase {
     return ctx.db;
@@ -162,12 +163,8 @@ export function assertExpectedProjectVersion(
     message: string,
 ): void {
     if (expectedVersion === undefined) return;
-    if (
-        !Value.Check(projectVersionSchema, expectedVersion) ||
-        project.version !== expectedVersion
-    ) {
-        throw new Error(message);
-    }
+    if (!Value.Check(projectVersionSchema, expectedVersion)) throw new Error(message);
+    if (project.version !== expectedVersion) throw new ProjectLifecycleError(message, project);
 }
 
 /** Writes a complete new project row and its empty settings row. */

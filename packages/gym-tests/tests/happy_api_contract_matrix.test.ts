@@ -836,10 +836,13 @@ describe("Happy Agent API contract closure matrix", () => {
     );
 
     it(
-        "contract-050 removes the legacy secrets route",
+        "contract-050 exposes the safe global secrets catalog",
         async () => {
             const gym = await start(gyms);
-            await expectRemoved(gym, "/v0/secrets");
+            await expect(gym.client.listSecrets()).resolves.toEqual({
+                secrets: [],
+                nextCursor: null,
+            });
         },
         TEST_TIMEOUT_MS,
     );

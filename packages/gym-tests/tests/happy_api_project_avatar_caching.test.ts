@@ -24,9 +24,10 @@ describe("project avatar HTTP caching", () => {
             files: { "avatar-project/README.md": "Avatar fixture" },
         });
         running.push(gym);
-        const { project } = await gym.client.registerProject({
+        const { project: registered } = await gym.client.registerProject({
             path: join(gym.workspacePath, "avatar-project"),
         });
+        const project = await readyProject(gym, registered.id);
         const uploaded = await gym.client.setProjectAvatar(
             project.id,
             { contentType: "image/png", data: images[0]! },
@@ -72,7 +73,7 @@ describe("project avatar HTTP caching", () => {
         expect(changed.headers.get("vary")).toBe("Authorization");
         const newEtag = changed.headers.get("etag")!;
         expect(newEtag).not.toBe(etag);
-        expect(await changed.arrayBuffer()).not.toEqual(bytes);
+        expect(new Uint8Array(await changed.arrayBuffer())).not.toEqual(new Uint8Array(bytes));
 
         await gym.client.deleteProjectAvatar(project.id, { ifMatch: replaced.project.version });
         const removed = await fetch(url, {
@@ -90,9 +91,10 @@ describe("project avatar HTTP caching", () => {
             files: { "avatar-project/README.md": "Avatar fixture" },
         });
         running.push(gym);
-        const { project } = await gym.client.registerProject({
+        const { project: registered } = await gym.client.registerProject({
             path: join(gym.workspacePath, "avatar-project"),
         });
+        const project = await readyProject(gym, registered.id);
         const path = `/v0/projects/${project.id}/avatar`;
         const missing = await gym.raw.get(path);
         expect(missing.status).toBe(404);
@@ -112,3 +114,13 @@ describe("project avatar HTTP caching", () => {
         expect(gym.errors).toEqual([]);
     });
 });
+
+async function readyProject(gym: AgentGym, id: string) {
+    return await gym.waitUntil(async () => {
+        const { project } = await gym.client.getProject(id);
+        if (project.initialization.status === "failed") {
+            throw new Error("The avatar fixture project failed to initialize.");
+        }
+        return project.initialization.status === "ready" ? project : undefined;
+    }, "the avatar fixture project to finish initialization");
+}

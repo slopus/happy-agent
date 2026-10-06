@@ -9,6 +9,7 @@ import { createRootContext, withTracer, type Context } from "@steve.kite/stdlib"
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ApiModule } from "../../sources/api/ApiModule.js";
+import { ProjectLifecycleError } from "../../sources/projects/index.js";
 import { recordingTracer } from "../support/recordingTracer.js";
 
 const cleanups: (() => Promise<void>)[] = [];
@@ -343,7 +344,7 @@ describe("message history request tracing", () => {
         ]);
     });
 
-    it("ends failed history and request spans without changing the HTTP error", async () => {
+    it("preserves internal failures and returns the current project for state conflicts", async () => {
         const fixture = await createFixture(true);
         const failure = new Error("history read failed");
         fixture.history.runs.mockRejectedValue(failure);
@@ -355,6 +356,20 @@ describe("message history request tracing", () => {
         ]);
         expect(fixture.spans.map((span) => span.errors)).toEqual([[failure], [], [failure]]);
         expect(fixture.spans.every((span) => span.ends === 1)).toBe(true);
+
+        const current = await fixture.get<{ project: { version: string } }>(
+            "/v0/projects/projectone",
+        );
+        const { projects } = await fixture.projects.list();
+        fixture.projects.get.mockRejectedValueOnce(
+            new ProjectLifecycleError("The project has changed.", projects[0] as never),
+        );
+        const conflict = await fixture.get("/v0/projects/projectone", 409);
+        expect(conflict).toMatchObject({
+            code: "conflict",
+            currentVersion: current.project.version,
+            project: current.project,
+        });
     });
 
     it("keeps the response identical when tracing is disabled", async () => {
@@ -418,6 +433,7 @@ async function createFixture(tracing = false) {
     };
     const projects = {
         onEvent: subscribe,
+        get: vi.fn(async () => project),
         list: vi.fn(async () => ({ projects: [project] })),
         listAgents: vi.fn(async () => associations),
         readSettings: vi.fn(async () => ({})),

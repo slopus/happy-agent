@@ -251,7 +251,16 @@ describe("public agent state and subagent matrix", () => {
             options: subagentOptions(),
             run: async (gym) => {
                 const subagent = await spawnSubagent(gym);
-                const history = await gym.client.getMessages(subagent.id);
+                const history = await gym.waitUntil(
+                    async () => {
+                        const current = await gym.client.getMessages(subagent.id);
+                        return current.runs.some((run) => run.status === "completed")
+                            ? current
+                            : undefined;
+                    },
+                    "the collaborator's completed history",
+                    30_000,
+                );
                 expect(history.runs.length).toBeGreaterThanOrEqual(1);
                 expect(history.runs.every((run) => run.id.length > 0)).toBe(true);
             },

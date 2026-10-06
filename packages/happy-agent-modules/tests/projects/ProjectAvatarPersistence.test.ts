@@ -2,7 +2,11 @@ import sharp from "sharp";
 import { describe, expect, it } from "vitest";
 
 import { GitModule } from "../../sources/git/index.js";
-import { type ProjectEvent, projectMigrations } from "../../sources/projects/index.js";
+import {
+    type ProjectEvent,
+    ProjectLifecycleError,
+    projectMigrations,
+} from "../../sources/projects/index.js";
 import { temporaryTestConfig } from "../support/configModule.js";
 import { moduleDatabase } from "../support/moduleDatabase.js";
 import { projectsModuleFor } from "../support/projectsModule.js";
@@ -59,6 +63,19 @@ describe("project avatar persistence", () => {
 
             const reopened = projectsModuleFor(config, new GitModule());
             await expect(reopened.avatarAsset(database.context, created.id)).resolves.toEqual(
+                firstAsset,
+            );
+
+            const stale = projects.setAvatar(database.context, {
+                bytes: await png(40, 80, 220),
+                contentType: "image/png",
+                expectedVersion: created.version,
+                projectId: created.id,
+                source: "user",
+            });
+            await expect(stale).rejects.toBeInstanceOf(ProjectLifecycleError);
+            await expect(stale).rejects.toMatchObject({ current: first });
+            await expect(projects.avatarAsset(database.context, created.id)).resolves.toEqual(
                 firstAsset,
             );
 

@@ -347,12 +347,19 @@ describe("Happy Agent onboarding and usage matrix", () => {
             ]);
             const claude = providers.find((provider) => provider.providerId === "claude");
             expect(claude?.models).toEqual([
+                { id: "anthropic/opus-5-5", enabled: false },
                 { id: "anthropic/opus-5", enabled: true },
+                { id: "anthropic/sonnet-5-5", enabled: false },
                 { id: "anthropic/sonnet-5", enabled: false },
+                { id: "anthropic/fable-5-1", enabled: false },
                 { id: "anthropic/fable-5", enabled: false },
                 { id: "anthropic/opus-4-8", enabled: false },
             ]);
             expect(providers.find((provider) => provider.providerId === "codex")?.models).toEqual([
+                { id: "openai/gpt-6.1-sol", enabled: false },
+                { id: "openai/gpt-6-astra", enabled: false },
+                { id: "openai/gpt-6-sol", enabled: false },
+                { id: "openai/gpt-6-luna", enabled: false },
                 { id: "openai/gpt-5.6-sol", enabled: false },
                 { id: "openai/gpt-5.6-terra", enabled: false },
                 { id: "openai/gpt-5.6-luna", enabled: false },

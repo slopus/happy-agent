@@ -1367,7 +1367,7 @@ export class ApiModule implements AgentModule {
             }
             throw notFound("The requested endpoint does not exist.");
         } catch (error: unknown) {
-            this.#sendError(
+            await this.#sendError(
                 ctx,
                 response,
                 error instanceof LiveError
@@ -6139,7 +6139,7 @@ export class ApiModule implements AgentModule {
         }
     }
 
-    #sendError(ctx: Context, response: ServerResponse, error: unknown): void {
+    async #sendError(ctx: Context, response: ServerResponse, error: unknown): Promise<void> {
         error = serviceApiError(error) ?? error;
         if (response.headersSent) {
             response.end();
@@ -6266,9 +6266,14 @@ export class ApiModule implements AgentModule {
         // arrived and the caller simply lost the race, so it reads as a conflict rather than a
         // daemon fault the person can do nothing about.
         if (error instanceof ProjectLifecycleError || error instanceof WorkspaceLifecycleError) {
+            const project =
+                error instanceof ProjectLifecycleError && error.current !== undefined
+                    ? await this.#projectWithAgents(ctx, error.current)
+                    : undefined;
             sendJson(response, 409, {
                 error: error.message,
                 code: "conflict",
+                ...(project === undefined ? {} : { currentVersion: project["version"], project }),
             });
             return;
         }

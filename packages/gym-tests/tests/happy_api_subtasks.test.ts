@@ -63,6 +63,15 @@ async function harness() {
         title: string,
         workspace?: { projectId: string; name: string },
     ) {
+        if (workspace !== undefined) {
+            await gym.waitUntil(async () => {
+                const { project } = await gym.client.getProject(workspace.projectId);
+                if (project.initialization.status === "failed") {
+                    throw new Error("The subtask fixture project failed to initialize.");
+                }
+                return project.initialization.status === "ready" ? true : undefined;
+            }, "the subtask fixture project to finish initialization");
+        }
         const result = await call(parentId, "create_subtask", {
             title,
             text: `Work on ${title}.`,
@@ -304,7 +313,7 @@ describe("user-interactive subtasks", () => {
             const instructions = gym.inference.requests.find(
                 (request) => request.sessionId === id,
             )!.instructions;
-            expect(instructions).toContain("Prefer create_subtask by default");
+            expect(instructions).toContain("substantial, distinct workstreams");
             expect(instructions).toContain(
                 "If the user explicitly asks for a subtask, use create_subtask",
             );
