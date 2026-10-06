@@ -1,5 +1,16 @@
 # System prompt learnings
 
+## Kimi K3 and GLM 5.3 follow their documented harnesses
+
+Kimi K3 uses Moonshot's Kimi Code system prompt, with Happy's identity and environment sections.
+Kimi's native environment claims an unsandboxed shell and its own secret-file guards, which do not
+describe Happy, so those sections belong to Happy's environment module instead. GLM 5.3's official
+model card names Claude Code 2.1.207 for its coding evaluations; its prompt follows that version's
+default non-Claude lean base. Z.ai does not publish a separate GLM coding prompt or disclose whether
+its benchmark runs override the lean default. Keep that provenance explicit rather than inventing
+a GLM-specific prompt. Reference copies in the provider package remain vendor text; these product
+copies remove unsupported hooks and replace only identity and environment-owned material.
+
 ## Windows guidance must describe the executing shell
 
 Agent configuration captured `SHELL`, which is commonly absent on Windows or inherited from Git

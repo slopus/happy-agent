@@ -43,6 +43,7 @@ Supported providers:
 - **OpenAI Codex** — Responses, Responses Lite, and OpenAI on Bedrock
 - **OpenAI API** — any generic Responses-compatible endpoint with your own key
 - **Grok Build** — xAI's Responses-compatible protocol
+- **Kimi K3 and GLM 5.3** — OpenAI-compatible Chat Completions on Bedrock Runtime
 
 If you only remember one thing, make it the last section of this document:
 [a session is a stateful, managed endpoint](#the-most-important-part-sessions-are-stateful-and-managed).
@@ -147,6 +148,8 @@ needed for the next turn.
 | `CodexProvider`     | OpenAI Responses, Responses Lite, or OpenAI on Bedrock | Codex session, OpenAI API key, Bedrock bearer token, or AWS credentials           |
 | `GrokProvider`      | Grok Responses-compatible protocol                     | Grok session or xAI API key                                                       |
 | `ResponsesProvider` | Any generic Responses-compatible endpoint              | Explicit endpoint and API key                                                     |
+| `KimiProvider`      | Kimi K3 on Bedrock Runtime                             | Bedrock bearer token or AWS credentials                                           |
+| `GlmProvider`       | GLM 5.3 on Bedrock Runtime                             | Bedrock bearer token or AWS credentials                                           |
 
 You always choose the credential; the library never picks an account for you. Each vendor
 credential class has a `tryLoad()` that accepts explicit values or reads the native client's
@@ -180,6 +183,14 @@ login files observed after the exchange are not overwritten. Failures do not rep
 
 Model catalogs are curated in source. The library never fetches a model list during startup or
 session creation.
+
+Kimi and GLM currently support Bedrock Runtime only. Both accept `credential`, optional `region`,
+`endpoint`, `model`, `userAgent`, `fetch`, and the ordinary inference retry settings. Defaults are
+`us-east-1` and that region's `/openai/v1` Runtime endpoint. Canonical models are
+`moonshotai/kimi-k3` and `zai/glm-5.3`; the providers select US/global inference profiles and accept
+explicit profile IDs. Both always reason, with `low`, `high`, and `max` effort (default `max`).
+Kimi accepts text and images; GLM accepts text only. Compaction uses each documented harness's
+summary prompt and continuation contract. AWS determines account and regional availability.
 
 ## Configuring a session
 

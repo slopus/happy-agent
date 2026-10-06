@@ -108,6 +108,8 @@ export type {
 export type { ProviderModality } from "@/core/ProviderModality.js";
 export { PROVIDER_MODALITIES } from "@/core/ProviderModality.js";
 export { GrokProvider, type GrokProviderOptions } from "@/vendors/grok/GrokProvider.js";
+export { KimiProvider, type KimiProviderOptions } from "@/vendors/kimi/KimiProvider.js";
+export { GlmProvider, type GlmProviderOptions } from "@/vendors/glm/GlmProvider.js";
 export {
     AnthropicProvider,
     type AnthropicCredentialProviderOptions,

@@ -2,7 +2,7 @@ import { providerModelFamily } from "@/core/providerModelFamily.js";
 
 export type ProviderModelCompatibilityType = "bedrock" | "claude" | "codex" | "grok" | "gym";
 
-export type ProviderModelFamily = "claude" | "codex" | "grok";
+export type ProviderModelFamily = "claude" | "codex" | "grok" | "kimi" | "glm";
 
 export interface ProviderModelSelection {
     modelId: string;
@@ -21,7 +21,7 @@ export const PROVIDER_MODEL_COMPATIBILITY_MATRIX: Readonly<
     >
 > = {
     bedrock: {
-        bedrock: ["claude", "codex"],
+        bedrock: ["claude", "codex", "kimi", "glm"],
     },
     claude: {
         claude: ["claude"],
@@ -33,7 +33,7 @@ export const PROVIDER_MODEL_COMPATIBILITY_MATRIX: Readonly<
         grok: ["grok"],
     },
     gym: {
-        gym: ["claude", "codex", "grok"],
+        gym: ["claude", "codex", "grok", "kimi", "glm"],
     },
 };
 
