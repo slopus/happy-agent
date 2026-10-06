@@ -3610,7 +3610,7 @@ function normalizeProvider(id: string, value: Record<string, unknown>): Record<s
         case "smart":
             return {
                 ...normalizeProviderCommon(value),
-                providers: value["providers"],
+                ...(value["providers"] === undefined ? {} : { providers: value["providers"] }),
                 strategy: value["strategy"] ?? "round_robin",
                 type: inferred,
             };

@@ -240,3 +240,12 @@ project entry is dropped from the merged machine values and parsed separately fo
 module. Machine folders are scanned only on the daemon's native filesystem, since they name paths
 on this machine; project folders are read through the agent's compute. Configured folders rank
 below the standard roots for a same-named skill.
+
+## Smart runtime overrides preserve account routes on restart
+
+The daemon persists smart provider enablement as a partial runtime table containing its type
+and automatic enablement. Normalization previously emitted an undefined `providers` property
+for that table, overwriting the valid global account list and preventing configuration loading
+on the next restart or update. Omitted route fields must stay omitted so layer merging retains
+lower-priority accounts. Test the actual runtime writer followed by repeated configuration loads;
+valid existing runtime files must load without a migration or user configuration rewrite.

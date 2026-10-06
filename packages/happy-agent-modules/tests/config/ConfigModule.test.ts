@@ -1126,6 +1126,59 @@ describe("ConfigModule", () => {
         });
     });
 
+    it("reloads smart routes after persisting automatic provider enablement", async () => {
+        const root = await mkdtemp(join(tmpdir(), "happy-smart-runtime-reload-"));
+        temporaryDirectories.push(root);
+        const happyHome = join(root, ".happy");
+        const folder = join(root, process.platform === "darwin" ? "Happy/Config" : "happy/config");
+        await mkdir(folder, { recursive: true });
+        await mkdir(join(happyHome, "agent"), { recursive: true });
+        await writeFile(
+            join(folder, "happy.toml"),
+            [
+                "[providers.codex]",
+                "enabled = true",
+                "hidden = true",
+                "[providers.extra]",
+                'type = "codex"',
+                "enabled = true",
+                "hidden = true",
+                "[providers.pool]",
+                'type = "smart"',
+                "enabled = true",
+                'providers = ["codex", "extra"]',
+            ].join("\n"),
+        );
+        await writeFile(
+            join(happyHome, "agent", "runtime.toml"),
+            "[settings]\nshow_usage = true\n",
+        );
+        const config = await ConfigModule.load(happyHome);
+        const before = config.configuration.values.providers.pool;
+        const models = config.catalog.filter((model) => model.providerId === "pool");
+        expect(models.length).toBeGreaterThan(0);
+        await config.updateRuntimeProviderStates(createRootContext(), {
+            pool: { autoEnable: true },
+        });
+        const runtimePath = config.configuration.paths.runtimeConfigPath;
+        const runtimeBefore = await readFile(runtimePath, "utf8");
+        expect(parseHappyAgentConfigToml(runtimeBefore).values.providers?.pool).toEqual({
+            type: "smart",
+            auto_enable: true,
+        });
+        for (let restart = 0; restart < 2; restart++) {
+            const reloaded = await ConfigModule.load(happyHome);
+            expect(reloaded.configuration.values.providers.pool).toEqual({
+                ...before,
+                autoEnable: true,
+            });
+            expect(reloaded.catalog.filter((model) => model.providerId === "pool")).toEqual(models);
+            expect(reloaded.configuration.values.providers.codex?.hidden).toBe(true);
+            expect(reloaded.configuration.values.settings.showUsage).toBe(true);
+            expect(await readFile(runtimePath, "utf8")).toBe(runtimeBefore);
+        }
+    });
+
     it("rewrites daemon runtime state without losing other runtime settings", async () => {
         const root = await mkdtemp(join(tmpdir(), "happy-agent-runtime-state-"));
         temporaryDirectories.push(root);
