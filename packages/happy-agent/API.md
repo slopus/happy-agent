@@ -2080,17 +2080,53 @@ Response — `200`: `{ "integration": { ... } }`. A cancelled pairing emits one
 
 ### `DELETE /v0/integrations/happy`
 
-Unlinks the selected owner's mobile connection from Happy. The operation cancels pairing, closes
-that owner's live Happy connection, and removes their daemon-owned credentials. In standalone
-mode it also suppresses re-import of the exact external credential present when the person
-unlinked. It never changes or deletes external Happy CLI credentials or another team user's
+Unlinks the selected owner's mobile connection from Happy and removes this computer from their
+Happy account. The operation cancels pairing and closes that owner's live Happy connection, so
+nothing is published while it runs. When the owner holds credentials and the integration is
+enabled, the daemon then uses those credentials to delete, in order:
+
+1. this daemon's own Happy machine registration. Happy deletes the sessions it attributes to that
+   machine with it, the same as when the computer is deleted from Happy Mobile;
+2. every remaining Happy session this daemon created for that owner on the current account, as
+   recorded in its own synchronization state. This covers sessions published before Happy
+   attributed sessions to machines and Happy servers that do not delete them with the machine.
+
+Sessions the daemon did not record as its own, such as Happy CLI sessions or another computer's
+sessions on the same account, are never deleted. A session or machine Happy no longer has counts
+as already deleted. Once Happy confirms both steps, the daemon forgets its machine identity, so a
+later pairing registers a new computer, and removes the owner's daemon-owned credentials. In
+standalone mode it also suppresses re-import of the exact external credential present when the
+person unlinked. It never changes or deletes external Happy CLI credentials or another team user's
 credentials. The operation is idempotent and has no request body.
 
-The resulting snapshot is unconfigured, with no authorization or error. Its status is
-`"disabled"` when the integration is disabled in configuration and `"disconnected"` otherwise.
+If Happy cannot confirm the removal because it is unreachable, times out, or answers with an
+error, the request returns `503` with code `happy_unavailable` and the current `integration`
+object. That snapshot is `"failed"`, still `configured`, and carries a `happy_unavailable` error.
+The credentials and machine identity are kept and the connection stays closed while the daemon
+runs. Repeating the request resumes the removal and skips what is already gone. Starting the
+integration instead keeps the link and reconnects, which republishes this computer's sessions; a
+daemon restart does the same. If Happy had already deleted the machine, reconnecting finds it
+deleted and completes the unlink as described below. The daemon never falls back to a local-only
+unlink on its own. If Happy rejects the credentials, they can no longer remove anything, so the
+daemon completes the unlink locally and keeps the machine identity. When the integration is
+disabled in configuration, unlinking makes no Happy requests and only removes the local
+credentials.
+
+Deleting this computer from Happy, for example from Happy Mobile, has the same effect as this
+operation. A connected daemon learns of the deletion immediately, and a daemon that was not
+running learns of it when it next connects with the same credentials. Either way it completes this
+unlink and publishes the same unconfigured snapshot, without an error. Pairing again is the person
+asking for the computer back, so a deletion never unlinks a connection that was just paired. This
+relies on a Happy server that reports deleted computers; with an older server, a deletion made
+elsewhere removes only the machine, and the daemon registers it again when it next connects.
+
+The resulting snapshot of a completed unlink is unconfigured, with no authorization or error. Its
+status is `"disabled"` when the integration is disabled in configuration and `"disconnected"`
+otherwise.
 
 Response — `200`: `{ "integration": { ... } }`. A changed snapshot emits one
-`happy.integration.updated`; an already-unlinked snapshot emits nothing.
+`happy.integration.updated`; an already-unlinked snapshot emits nothing. A removal failure emits the
+`"failed"` snapshot before the `503` response.
 
 ### `POST /v0/integrations/happy/re-pair`
 
@@ -2102,9 +2138,11 @@ operation replaced.
 Response — `200`: `{ "integration": { ... } }` with the fresh `"pairing"` snapshot. Unlinking and
 starting the new attempt each emit their own complete `happy.integration.updated` snapshot when
 they change state. When disabled, the request returns `503` with code `unsupported` and the current
-integration. When Happy cannot create the fresh authorization request, it returns `503` with code
-`happy_unavailable` and the now-unlinked `"disconnected"` integration; the previous credentials
-remain removed so a later retry cannot silently reconnect the account the person chose to replace.
+integration. When Happy cannot confirm removing this computer, the request returns the unlink's
+`503` `happy_unavailable` failure unchanged and starts no attempt. When Happy cannot create the
+fresh authorization request, it returns `503` with code `happy_unavailable` and the now-unlinked
+`"disconnected"` integration; the previous credentials remain removed so a later retry cannot
+silently reconnect the account the person chose to replace.
 
 ## Secrets
 

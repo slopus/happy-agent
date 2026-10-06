@@ -46,10 +46,19 @@ export async function replaceHappyMachineId(
     refusedId: string,
     createId: () => string = randomUUID,
 ): Promise<string | undefined> {
-    if ((await readMachineId(path)) === refusedId) {
+    await forgetHappyMachineId(path, refusedId);
+    return await loadOrCreateHappyMachineId(path, createId);
+}
+
+/**
+ * Forgets a machine identity Happy no longer has, so the next pairing registers a new computer.
+ *
+ * Only that exact identity is removed; one a concurrent pairing already replaced it with stays.
+ */
+export async function forgetHappyMachineId(path: string, machineId: string): Promise<void> {
+    if ((await readMachineId(path)) === machineId) {
         await rm(path, { force: true }).catch(() => undefined);
     }
-    return await loadOrCreateHappyMachineId(path, createId);
 }
 
 async function readMachineId(path: string): Promise<string | undefined> {

@@ -50,7 +50,10 @@ import {
 } from "./credentials/importHappyCredentials.js";
 import { createHappyAccountFingerprint } from "./credentials/createHappyAccountFingerprint.js";
 import { getHappyPaths } from "./credentials/getHappyPaths.js";
-import { replaceHappyMachineId } from "./credentials/loadOrCreateHappyMachineId.js";
+import {
+    forgetHappyMachineId,
+    replaceHappyMachineId,
+} from "./credentials/loadOrCreateHappyMachineId.js";
 import {
     resolveHappyConnectionTarget,
     type HappyConnectionTarget,
@@ -87,6 +90,7 @@ import { createHappySyncDatabase } from "./HappySyncDatabase.js";
 import { createHappyProjectSyncDatabase } from "./HappyProjectSyncDatabase.js";
 import { HappyMessageMapper } from "./mapHappyMessages.js";
 import { happyAuthorOf, type HappyAuthor } from "./HappyProtocol.js";
+import { removeHappyComputer, type HappyComputerRemoval } from "./removeHappyComputer.js";
 import { resolveHappyUserInputAnswers } from "./resolveHappyUserInputAnswers.js";
 import {
     HAPPY_READ_MAX_BYTES,
@@ -112,6 +116,10 @@ const MAX_REAPED_SYNC_SESSIONS = 4_096;
 
 /** Keeps Happy-owned Git subscriptions inside GitModule's bounded lease. */
 const GIT_TRACK_RENEWAL_MS = 60_000;
+
+/** Shown when Happy did not confirm an unlink; the link and its credentials are kept. */
+const UNLINK_UNCONFIRMED_MESSAGE =
+    "Happy Agent couldn't remove this computer from Happy Mobile. Check your internet connection and try again. This computer stays linked until it is removed.";
 
 const happySelectionSchema = Type.Object(
     {
@@ -159,7 +167,8 @@ export type HappyIntegrationListener = (
     ownerId?: string,
 ) => Promise<void> | void;
 
-export class HappyIntegrationStartError extends Error {
+/** An integration request Happy Agent refused, carrying the snapshot the client should show. */
+export class HappyIntegrationRequestError extends Error {
     readonly code: "happy_unavailable" | "unsupported";
     readonly integration: HappyIntegration;
 
@@ -169,7 +178,7 @@ export class HappyIntegrationStartError extends Error {
         integration: HappyIntegration,
     ) {
         super(message);
-        this.name = "HappyIntegrationStartError";
+        this.name = "HappyIntegrationRequestError";
         this.code = code;
         this.integration = integration;
     }
@@ -216,6 +225,11 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
     readonly #gitAgentsByEntity = new Map<string, Set<string>>();
     #agentSystem: AgentSystemRef<LibSQLDatabase> | undefined;
     #configuration: HappyConnectionConfiguration | undefined;
+    /**
+     * Credentials kept because Happy did not confirm removing this computer during an unlink.
+     * Nothing is published with them; a repeated unlink resumes the removal and a start reconnects.
+     */
+    #unlinkRetained: HappyConnectionConfiguration | undefined;
     #context: Context | undefined;
     #fingerprint = "";
     #integration: HappyIntegration;
@@ -540,7 +554,7 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
     /** Starts or joins Happy authorization and connection work. */
     async startIntegration(ctx: Context): Promise<HappyIntegration> {
         if (!this.#config.configuration.values.settings.happyIntegration) {
-            throw new HappyIntegrationStartError(
+            throw new HappyIntegrationRequestError(
                 "unsupported",
                 "The Happy integration is disabled in this daemon.",
                 this.#integration,
@@ -561,12 +575,15 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
     async #startIntegration(ctx: Context, generation: number): Promise<HappyIntegration> {
         if (this.#stopping || generation !== this.#pairingGeneration) return this.#integration;
         if (this.#pairing !== undefined) return this.#integration;
-        if (this.#configuration !== undefined) {
+        // Credentials kept by an unconfirmed unlink reconnect: starting means keeping the link.
+        if (this.#configuration !== undefined || this.#unlinkRetained !== undefined) {
             if (this.#machine === undefined) {
                 const outcome = await this.#withLifecycleUpdate(async () => {
                     if (this.#stopping || generation !== this.#pairingGeneration) return "stale";
                     if (this.#pairing !== undefined) return "activated";
-                    if (this.#configuration === undefined) return "pair";
+                    if (this.#configuration === undefined && this.#unlinkRetained === undefined) {
+                        return "pair";
+                    }
                     if (this.#machine !== undefined) {
                         this.#machine.start();
                         return "activated";
@@ -581,6 +598,7 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
                         environment: this.#config.happyEnvironment,
                     });
                     if (this.#stopping || generation !== this.#pairingGeneration) return "stale";
+                    this.#unlinkRetained = undefined;
                     if (refreshed === undefined) {
                         this.#configuration = undefined;
                         return "pair";
@@ -620,7 +638,14 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
         });
     }
 
-    /** Unlinks the daemon-owned Happy account without changing the external Happy CLI. */
+    /**
+     * Unlinks the daemon-owned Happy account and removes this computer from it, without changing
+     * the external Happy CLI.
+     *
+     * The credentials are forgotten only after Happy confirms the computer is gone. Until then they
+     * are kept, nothing is published with them, and the failure is the person's to retry: falling
+     * back to a local-only unlink would leave the computer on their phone with no way to remove it.
+     */
     async disconnectIntegration(ctx: Context): Promise<HappyIntegration> {
         this.#pairingGeneration += 1;
         this.#integrationStart = undefined;
@@ -635,10 +660,32 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
                 return this.#integration;
             }
             const context = this.#context ?? ctx;
-            await this.#rememberUnlinkedCredentials(context, true);
+            const configuration = this.#configuration ?? this.#unlinkRetained;
+            // Nothing may publish while the computer is removed, or a session client could
+            // recreate a session that was just deleted.
             await this.#closeHappyClients();
             this.#configuration = undefined;
             this.#fingerprint = "";
+            this.#unlinkRetained = undefined;
+            if (
+                configuration !== undefined &&
+                this.#config.configuration.values.settings.happyIntegration &&
+                (await this.#removeComputer(context, configuration)) === undefined
+            ) {
+                this.#unlinkRetained = configuration;
+                const failed = await this.#setIntegration(context, {
+                    authorization: null,
+                    configured: true,
+                    error: { code: "happy_unavailable", message: UNLINK_UNCONFIRMED_MESSAGE },
+                    status: "failed",
+                });
+                throw new HappyIntegrationRequestError(
+                    "happy_unavailable",
+                    UNLINK_UNCONFIRMED_MESSAGE,
+                    failed,
+                );
+            }
+            await this.#rememberUnlinkedCredentials(context, true, configuration);
             const credentialsPath = getHappyPaths(this.#dataDirectory).credentialsPath;
             await rm(credentialsPath, { force: true }).catch((error: unknown) => {
                 context.log.debug(
@@ -658,10 +705,45 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
         });
     }
 
+    /**
+     * Deletes the sessions this connection published on the account, then its machine, and
+     * forgets the machine identity once Happy confirms it is gone.
+     *
+     * Returns `undefined` when Happy did not confirm the removal. Each confirmed session is
+     * forgotten immediately, so a retry asks only about what is left.
+     */
+    async #removeComputer(
+        ctx: Context,
+        configuration: HappyConnectionConfiguration,
+    ): Promise<HappyComputerRemoval | undefined> {
+        let removal: HappyComputerRemoval;
+        try {
+            removal = await removeHappyComputer({
+                configuration,
+                onSessionRemoved: async (session) =>
+                    await this.#sync.removeSession(ctx, session.agentId),
+                sessions: await this.#sync.listPublishedSessions(ctx, fingerprint(configuration)),
+                version: this.#config.configuration.version,
+            });
+        } catch (error: unknown) {
+            ctx.log.debug("Happy did not confirm removing this computer.", {}, error);
+            return undefined;
+        }
+        // Rejected credentials cannot delete anything, so the machine Happy still lists keeps its
+        // identity: pairing that account again shows the same computer instead of a duplicate.
+        if (removal === "removed" && configuration.machineId !== undefined) {
+            await forgetHappyMachineId(
+                getHappyPaths(this.#dataDirectory).machinePath,
+                configuration.machineId,
+            );
+        }
+        return removal;
+    }
+
     /** Replaces any current Happy authorization with a fresh QR attempt. */
     async rePairIntegration(ctx: Context): Promise<HappyIntegration> {
         if (!this.#config.configuration.values.settings.happyIntegration) {
-            throw new HappyIntegrationStartError(
+            throw new HappyIntegrationRequestError(
                 "unsupported",
                 "The Happy integration is disabled in this daemon.",
                 this.#integration,
@@ -696,7 +778,7 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
                 return this.#integration;
             }
             ctx.log.debug("Happy authorization could not be started.", {}, error);
-            throw new HappyIntegrationStartError(
+            throw new HappyIntegrationRequestError(
                 "happy_unavailable",
                 "Happy is unavailable. Please try again.",
                 this.#integration,
@@ -750,7 +832,7 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
                     );
                 }
                 this.#pairing = undefined;
-                await this.#activate(this.#context ?? ctx, configuration);
+                await this.#activate(this.#context ?? ctx, configuration, true);
             });
         } catch (error: unknown) {
             await this.#withLifecycleUpdate(async () => {
@@ -772,7 +854,15 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
         }
     }
 
-    async #activate(ctx: Context, configuration: HappyConnectionConfiguration): Promise<void> {
+    /**
+     * Connects with these credentials. `afterPairing` says the person just paired, so a computer
+     * their account deleted is registered again; otherwise that deletion unlinks this daemon.
+     */
+    async #activate(
+        ctx: Context,
+        configuration: HappyConnectionConfiguration,
+        afterPairing = false,
+    ): Promise<void> {
         await this.#closeHappyClients();
         this.#configuration = configuration;
         this.#fingerprint = fingerprint(configuration);
@@ -796,6 +886,7 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
         }
         let machine!: HappyMachineClient;
         machine = new HappyMachineClient({
+            afterPairing,
             configuration,
             context: ctx,
             models: () => this.models(),
@@ -822,6 +913,10 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
         machine.start();
         this.#watchCatalog(ctx);
         const reconcile = (async () => {
+            // Only a computer Happy accepted, or could not answer for yet, restores its sessions.
+            // One Happy refused is about to be unlinked or re-registered under a new identity.
+            const registration = await machine.firstRegistration();
+            if (registration !== "registered" && registration !== "happy_unavailable") return;
             await this.#reconcileProjects(ctx);
             await this.#reapArchived(ctx);
             await this.#reconcile(ctx);
@@ -870,6 +965,18 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
             await this.#withLifecycleUpdate(
                 async () => await this.#replaceMachineIdentity(ctx, machine, event.message),
             );
+            return;
+        }
+        if (event.reason === "machine_deleted") {
+            // Deleting this computer from Happy, on the phone or anywhere else, means the same as
+            // unlinking it here, so the daemon finishes exactly that unlink.
+            await this.disconnectIntegration(ctx).catch((error: unknown) => {
+                ctx.log.debug(
+                    "Happy Agent could not finish unlinking a deleted computer.",
+                    {},
+                    error,
+                );
+            });
             return;
         }
         await this.#setIntegration(ctx, {
@@ -923,7 +1030,7 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
     ): Promise<void> {
         if (this.#machine !== machine) return;
         const credentialsPath = this.#configuration?.credentialsPath;
-        await this.#rememberUnlinkedCredentials(ctx, false);
+        await this.#rememberUnlinkedCredentials(ctx, false, this.#configuration);
         await this.#closeHappyClients();
         this.#configuration = undefined;
         this.#fingerprint = "";
@@ -962,6 +1069,7 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
     async #rememberUnlinkedCredentials(
         ctx: Context,
         suppressCurrentExternalCredential: boolean,
+        configuration: HappyConnectionConfiguration | undefined,
     ): Promise<void> {
         const owned = await inspectDaemonHappyCredentials({
             dataDirectory: this.#dataDirectory,
@@ -974,7 +1082,7 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
                   })
                 : undefined;
         const ownedFingerprints = [
-            this.#configuration?.credentialFingerprint,
+            configuration?.credentialFingerprint,
             owned?.credentialFingerprint,
         ].filter((value): value is string => value !== undefined);
         const fingerprints = [
@@ -1996,7 +2104,15 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
      */
     async #reconcile(ctx: Context): Promise<void> {
         const attach = async (agentId: string): Promise<boolean> => {
-            if (this.#stopping || this.#agents.size >= MAX_CONNECTED_AGENTS) return false;
+            // A connection that is closing, such as one Happy said was deleted, restores nothing:
+            // each session attached now would reappear on the phone only to be removed again.
+            if (
+                this.#stopping ||
+                this.#machine === undefined ||
+                this.#agents.size >= MAX_CONNECTED_AGENTS
+            ) {
+                return false;
+            }
             try {
                 await ctx.inTx(async (txCtx) => await this.#attach(txCtx, agentId));
             } catch (error) {

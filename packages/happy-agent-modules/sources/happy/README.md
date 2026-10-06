@@ -52,8 +52,27 @@ Starting the integration creates a two-minute, process-local authorization
 request and returns its opaque `happy://` data for a QR code. The daemon saves
 the credentials only after the phone authorizes that exact ephemeral key. An
 initial server failure never exposes a QR code that cannot work. The same API
-can cancel a pairing attempt, unlink only this daemon, or unlink and start a
-fresh pairing attempt. Unlinking never changes the external Happy CLI login.
+can cancel a pairing attempt, unlink this daemon, or unlink and start a fresh
+pairing attempt. Unlinking never changes the external Happy CLI login.
+
+Unlinking removes this computer from the person's Happy account. With every
+Happy client closed, the daemon deletes its own machine, which on current Happy
+servers also deletes every session published for it, then deletes any session
+its sync state still records as published on the current account. Only then does
+it forget its machine identity and credentials, so the phone stops listing the
+computer and its chats and the next pairing registers a new computer. Sessions it
+did not publish, such as Happy CLI sessions on the same account, stay. If Happy
+does not confirm the removal, the credentials are kept, nothing is published,
+and the request fails so the person can retry; starting the integration instead
+keeps the link.
+
+Deleting the computer from the phone does the same thing. Each session the
+daemon publishes names its machine, so Happy deletes those sessions with the
+machine. A connected daemon hears the deletion on its machine socket, and one
+that was off learns it when its next registration is refused as deleted; both
+then finish the ordinary unlink. The first registration after a fresh pairing
+asks Happy to bring a deleted machine back instead, since pairing is the person
+asking for it.
 
 An account uses one of two encryption formats for its whole lifetime. A
 `legacy` account encrypts every payload with the account secret. A `dataKey`
@@ -318,7 +337,10 @@ message. Other fresh agents and subagents start with a null draft and timestamp.
 
 Each daemon owns a machine identity so Happy can tell two daemons on one
 computer apart. It is created once by publishing a file and linking it into
-place, so a race resolves to whichever daemon landed first.
+place, so a race resolves to whichever daemon landed first. It is forgotten
+only when an unlink has deleted that machine from Happy, including an unlink the
+phone started by deleting the computer, or replaced when Happy says another
+account owns it.
 
 A daemon with a machine identity also connects a `HappyMachineClient`, which is
 what lets somebody start a session from their phone. A directory that does not

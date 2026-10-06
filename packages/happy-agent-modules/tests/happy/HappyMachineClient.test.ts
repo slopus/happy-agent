@@ -106,6 +106,11 @@ class FakeSocket implements HappySocket {
         this.#listeners.get(event)?.();
     }
 
+    /** Plays the Happy server pushing one account update to this machine connection. */
+    update(body: Record<string, unknown>): void {
+        this.#listeners.get("update")?.({ body, createdAt: 1, id: "update-1", seq: 1 });
+    }
+
     /** Plays the Happy server forwarding one machine RPC from the phone. */
     async rpc(method: string, params: unknown): Promise<Record<string, unknown>> {
         const listener = this.#listeners.get("rpc-request");
@@ -133,6 +138,7 @@ afterEach(() => {
 });
 
 function client(options: {
+    afterPairing?: boolean;
     fetch: typeof fetch;
     onConnectionChanged?: (event: HappyMachineConnectionEvent) => void;
     operations?: HappySpawnOperations;
@@ -141,6 +147,7 @@ function client(options: {
 }): HappyMachineClient {
     const { socket } = options;
     const machine = new HappyMachineClient({
+        ...(options.afterPairing === undefined ? {} : { afterPairing: options.afterPairing }),
         configuration: CONFIGURATION,
         context: createRootContext().named("happy-machine-test"),
         fetch: options.fetch,
@@ -412,6 +419,105 @@ describe("HappyMachineClient connection state", () => {
         machine.close();
     });
 });
+
+describe("a computer the account deleted", () => {
+    /** Whether each registration asked Happy not to recreate a deleted machine. */
+    function refusals(fetch: ReturnType<typeof vi.fn<typeof globalThis.fetch>>): unknown[] {
+        return fetch.mock.calls.map(
+            ([, init]) =>
+                (JSON.parse(String(init?.body)) as { failIfDeleted?: unknown }).failIfDeleted,
+        );
+    }
+
+    it("is reported instead of registered again", async () => {
+        const events: HappyMachineConnectionEvent[] = [];
+        const fetch = vi.fn<typeof globalThis.fetch>(
+            async () =>
+                new Response(
+                    JSON.stringify({ code: "machine_deleted", error: "Machine was deleted" }),
+                    { status: 410 },
+                ),
+        );
+        const machine = client({
+            fetch,
+            onConnectionChanged: (event) => events.push(event),
+            socket: new FakeSocket(),
+        });
+
+        machine.start();
+        await vi.waitFor(() => expect(events.at(-1)).toMatchObject({ reason: "machine_deleted" }));
+
+        expect(refusals(fetch)).toEqual([true]);
+        expect(events).toEqual([
+            { status: "connecting" },
+            {
+                message: "This computer was removed from Happy.",
+                reason: "machine_deleted",
+                status: "disconnected",
+            },
+        ]);
+    });
+
+    it("is registered again once, right after the person pairs it", async () => {
+        vi.useFakeTimers();
+        try {
+            const sockets: FakeSocket[] = [];
+            const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(registeredAnswer());
+            const machine = client({
+                afterPairing: true,
+                fetch,
+                socket: () => {
+                    const socket = new FakeSocket();
+                    sockets.push(socket);
+                    return socket;
+                },
+            });
+
+            machine.start();
+            await settle();
+            sockets[0]?.trigger("connect_error");
+            await settle(RETRY_INTERVAL_MS);
+
+            // After Happy has this computer again, a later deletion is never undone.
+            expect(refusals(fetch)).toEqual([false, true]);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it("is reported while connected and stops the connection", async () => {
+        const { socket, events } = await connectedWithEvents();
+        socket.update({ machineId: "another-machine", t: "delete-machine" });
+        socket.update({ id: "session-1", t: "update-session" });
+        expect(socket.disconnectCount).toBe(0);
+        expect(events.at(-1)).toEqual({ status: "connected" });
+
+        socket.update({ machineId: "machine-1", t: "delete-machine" });
+
+        expect(socket.disconnectCount).toBe(1);
+        expect(events.at(-1)).toEqual({
+            message: "This computer was removed from Happy.",
+            reason: "machine_deleted",
+            status: "disconnected",
+        });
+    });
+});
+
+async function connectedWithEvents(): Promise<{
+    events: HappyMachineConnectionEvent[];
+    socket: FakeSocket;
+}> {
+    const socket = new FakeSocket();
+    const events: HappyMachineConnectionEvent[] = [];
+    const machine = client({
+        fetch: async () => REGISTERED(),
+        onConnectionChanged: (event) => events.push(event),
+        socket,
+    });
+    machine.start();
+    await vi.waitFor(() => expect(events.at(-1)).toEqual({ status: "connected" }));
+    return { events, socket };
+}
 
 describe("HappyMachineClient socket revalidation", () => {
     beforeEach(() => {

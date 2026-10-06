@@ -30,6 +30,11 @@ const KEEP_ALIVE_INTERVAL_MS = 20_000;
 const SPAWN_PUBLISH_TIMEOUT_MS = 10_000;
 
 export interface HappyMachineClientOptions {
+    /**
+     * The person just paired this computer, so a machine their account deleted is registered again.
+     * Otherwise Happy is asked to refuse it, and the deletion is reported as `machine_deleted`.
+     */
+    readonly afterPairing?: boolean;
     readonly configuration: HappyConnectionConfiguration;
     /** The lifetime this client's own work runs on; it outlives whoever created it. */
     readonly context: Context;
@@ -56,16 +61,25 @@ export type HappyMachineConnectionEvent =
 /**
  * Why the machine is not reachable. `machine_id_taken` means another Happy account already owns
  * this machine identity, which happens after re-pairing to a different account: repeating the
- * same identity can never succeed, so the owner must mint a new one.
+ * same identity can never succeed, so the owner must mint a new one. `machine_deleted` means the
+ * account deleted this computer, from the phone or anywhere else, so the owner unlinks it.
  */
 export type HappyMachineDisconnectReason =
     | "credentials_rejected"
     | "happy_unavailable"
+    | "machine_deleted"
     | "machine_id_taken";
+
+/** How a registration ended: accepted, refused or unavailable for a reason, or never finished. */
+export type HappyMachineRegistrationOutcome =
+    | "closed"
+    | "registered"
+    | HappyMachineDisconnectReason;
 
 const REGISTRATION_FAILURE_MESSAGES: Record<HappyMachineDisconnectReason, string> = {
     credentials_rejected: "Happy rejected the saved credentials.",
     happy_unavailable: "The Happy machine connection is unavailable.",
+    machine_deleted: "This computer was removed from Happy.",
     machine_id_taken: "This computer's Happy identity belongs to another Happy account.",
 };
 
@@ -109,6 +123,16 @@ const rpcRequestSchema = Type.Object(
 
 const recordSchema = Type.Record(Type.String(), Type.Unknown());
 
+const deleteMachineUpdateSchema = Type.Object(
+    {
+        body: Type.Object(
+            { machineId: Type.String(), t: Type.Literal("delete-machine") },
+            { additionalProperties: true },
+        ),
+    },
+    { additionalProperties: true },
+);
+
 /**
  * This computer, as it appears in Happy.
  *
@@ -139,6 +163,12 @@ export class HappyMachineClient {
     #generation = 0;
     /** A registration request is in flight, so a second `start` would duplicate it. */
     #registering = false;
+    /** Happy accepted this machine once, so it never recreates it after a deletion. */
+    #registered = false;
+    #settleFirstRegistration!: (outcome: HappyMachineRegistrationOutcome) => void;
+    readonly #firstRegistration = new Promise<HappyMachineRegistrationOutcome>((resolve) => {
+        this.#settleFirstRegistration = resolve;
+    });
 
     constructor(options: HappyMachineClientOptions) {
         const machineId = options.configuration.machineId;
@@ -164,6 +194,7 @@ export class HappyMachineClient {
         void this.#registerAndConnect().then(
             () => {
                 this.#registering = false;
+                this.#settleFirstRegistration("registered");
             },
             (error: unknown) => {
                 this.#registering = false;
@@ -171,14 +202,15 @@ export class HappyMachineClient {
                     error instanceof HappyMachineRegistrationError
                         ? error.reason
                         : "happy_unavailable";
+                this.#settleFirstRegistration(reason);
                 this.#announce({
                     message: REGISTRATION_FAILURE_MESSAGES[reason],
                     reason,
                     status: "disconnected",
                 });
                 if (reason !== "happy_unavailable") {
-                    // Neither a rejected credential nor a taken identity improves by repeating
-                    // the request; the owner replaces whichever one Happy refused.
+                    // A rejected credential, a taken identity or a deleted computer never improves
+                    // by repeating the request; the owner acts on whichever Happy reported.
                     this.#options.context.log.debug(
                         "Happy machine registration was refused.",
                         { reason },
@@ -196,10 +228,21 @@ export class HappyMachineClient {
         );
     }
 
+    /**
+     * Settles with how the first registration went, or `closed` if the client closed first.
+     *
+     * A computer publishes its sessions only once Happy has answered for the computer itself, so
+     * one the account deleted never puts its sessions back on the phone before it learns that.
+     */
+    async firstRegistration(): Promise<HappyMachineRegistrationOutcome> {
+        return await this.#firstRegistration;
+    }
+
     /** Stops appearing in Happy and releases everything held for it. */
     close(): void {
         if (this.#closed) return;
         this.#closed = true;
+        this.#settleFirstRegistration("closed");
         this.#closeController.abort();
         if (this.#retryTimer !== undefined) clearTimeout(this.#retryTimer);
         this.#retryTimer = undefined;
@@ -267,6 +310,8 @@ export class HappyMachineClient {
                 body: JSON.stringify({
                     daemonState: this.#encode(this.#daemonState()),
                     ...(dataEncryptionKey === undefined ? {} : { dataEncryptionKey }),
+                    // Coming back after the account deleted this computer would undo the deletion.
+                    failIfDeleted: this.#registered || this.#options.afterPairing !== true,
                     id: this.#machineId,
                     metadata: this.#encode(metadata),
                 }),
@@ -290,6 +335,7 @@ export class HappyMachineClient {
             throw new Error("Happy returned a machine Happy Agent could not read.");
         }
         if (this.#closed) return;
+        this.#registered = true;
         const remote = this.#decode(body.machine.metadata);
         if (Value.Check(recordSchema, remote)) this.#metadataBase = remote;
         this.#connect(body.machine.metadataVersion, body.machine.daemonStateVersion);
@@ -321,6 +367,22 @@ export class HappyMachineClient {
             this.#syncMetadata(socket, generation, metadataVersion, 0);
             this.#syncDaemonState(socket, generation, daemonStateVersion, 0);
             this.#sendAlive(socket);
+        });
+        socket.on("update", (update: unknown) => {
+            if (!this.#isCurrent(generation)) return;
+            if (
+                Value.Check(deleteMachineUpdateSchema, update) &&
+                update.body.machineId === this.#machineId
+            ) {
+                // The account deleted this computer while it was connected. Nothing more is
+                // published for it; the owner unlinks, as it would after a deletion offline.
+                this.#teardownSocket();
+                this.#announce({
+                    message: REGISTRATION_FAILURE_MESSAGES.machine_deleted,
+                    reason: "machine_deleted",
+                    status: "disconnected",
+                });
+            }
         });
         socket.on("rpc-request", (request: unknown, callback: (response: string) => void) => {
             if (!this.#isCurrent(generation)) return;
@@ -552,16 +614,20 @@ export class HappyMachineClient {
     }
 }
 
-/** Reads why Happy refused a machine registration; only an explicit 409 code names the identity. */
+/** Reads why Happy refused a machine registration; only an explicit code names the identity. */
 async function registrationFailureReason(
     response: Response,
 ): Promise<HappyMachineDisconnectReason> {
     if (response.status === 401 || response.status === 403) return "credentials_rejected";
-    if (response.status !== 409) return "happy_unavailable";
+    if (response.status !== 409 && response.status !== 410) return "happy_unavailable";
     const body: unknown = await response.json().catch(() => undefined);
-    return typeof body === "object" &&
-        body !== null &&
-        (body as { code?: unknown }).code === "machine_id_taken"
-        ? "machine_id_taken"
-        : "happy_unavailable";
+    const code = Value.Check(registrationRefusalSchema, body) ? body.code : undefined;
+    if (response.status === 409 && code === "machine_id_taken") return "machine_id_taken";
+    if (response.status === 410 && code === "machine_deleted") return "machine_deleted";
+    return "happy_unavailable";
 }
+
+const registrationRefusalSchema = Type.Object(
+    { code: Type.String() },
+    { additionalProperties: true },
+);

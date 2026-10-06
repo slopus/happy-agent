@@ -5,13 +5,21 @@ import { u8, u32 } from "@noble/ciphers/utils.js";
 import { x25519 } from "@noble/curves/ed25519.js";
 import { WebSocketServer, type WebSocket } from "ws";
 
-/** A local Happy mobile protocol peer with distinct accounts and real encrypted transport. */
-export async function createMobileRelayFixture() {
+/**
+ * A local Happy mobile protocol peer with distinct accounts and real encrypted transport.
+ *
+ * Deleting a machine behaves like the current Happy server: it deletes the sessions published for
+ * that machine, remembers the deletion for registrations that ask, and tells the machine's own
+ * connection. `legacyMachineDeletion` behaves like an older server that deletes only the machine.
+ */
+export async function createMobileRelayFixture(
+    options: { readonly legacyMachineDeletion?: boolean } = {},
+) {
     const approvals = new Map<string, { token: string; response: string }>();
     const keys = new Map<string, Uint8Array>();
     const machines = new Map<string, string>();
     const machineOwners = new Map<string, string>();
-    const sockets = new Map<WebSocket, { token: string; clientType: string }>();
+    const sockets = new Map<WebSocket, { token: string; clientType: string; machineId?: string }>();
     const sessions = new Map<
         string,
         {
@@ -21,11 +29,19 @@ export async function createMobileRelayFixture() {
             metadata: string;
             version: number;
             botId?: string;
+            machineId?: string;
         }
     >();
+    /** Machines each account deleted, by id, for registrations that refuse to recreate them. */
+    const deletedMachines = new Map<string, string>();
     const incoming = new Map<string, object[]>();
     const outgoing = new Map<string, unknown[]>();
     const rejected = new Set<string>();
+    /** Every confirmed deletion, as `session:<id>` or `machine:<id>`, in the order Happy saw. */
+    const deletions: string[] = [];
+    /** Answers a DELETE with this status instead of performing it, when it returns one. */
+    const faults: { delete?: (path: string) => number | undefined } = {};
+    let nextSession = 0;
     const encode = (token: string, value: unknown) => {
         const nonce = randomBytes(24);
         return Buffer.concat([
@@ -62,6 +78,57 @@ export async function createMobileRelayFixture() {
             );
         } else if (rejected.has(token)) {
             json(response, { error: "Unauthorized" }, 401);
+        } else if (
+            request.method === "DELETE" &&
+            /^\/v1\/(?:sessions|machines)\/[^/]+$/.test(url.pathname)
+        ) {
+            const injected = faults.delete?.(url.pathname);
+            if (injected !== undefined) {
+                json(response, { error: "Injected failure" }, injected);
+                return;
+            }
+            // Like Happy, only the owning account can delete, and anything else is not found.
+            const [, , kind, id] = url.pathname.split("/");
+            if (kind === "sessions") {
+                const key = [...sessions.entries()].find(
+                    ([, session]) => session.id === id && session.token === token,
+                )?.[0];
+                if (key === undefined) {
+                    json(response, { error: "Session not found" }, 404);
+                    return;
+                }
+                sessions.delete(key);
+            } else {
+                const published = options.legacyMachineDeletion
+                    ? []
+                    : [...sessions.entries()].filter(
+                          ([, session]) => session.token === token && session.machineId === id,
+                      );
+                if (machineOwners.get(id!) !== token && published.length === 0) {
+                    json(response, { error: "Machine not found" }, 404);
+                    return;
+                }
+                for (const [key, session] of published) {
+                    sessions.delete(key);
+                    deletions.push(`session:${session.id}`);
+                }
+                if (machineOwners.get(id!) === token) {
+                    machineOwners.delete(id!);
+                    if (machines.get(token) === id) machines.delete(token);
+                    deletions.push(`machine:${id!}`);
+                    if (!options.legacyMachineDeletion) {
+                        deletedMachines.set(id!, token);
+                        const update = { body: { t: "delete-machine", machineId: id } };
+                        for (const [socket, auth] of sockets)
+                            if (auth.token === token && auth.machineId === id)
+                                socket.send(`42${JSON.stringify(["update", update])}`);
+                    }
+                }
+                json(response, { success: true });
+                return;
+            }
+            deletions.push(`session:${id!}`);
+            json(response, { success: true });
         } else if (url.pathname === "/v1/machines") {
             // Like Happy, a machine id is unique across accounts; only its first account may use it.
             const owner = machineOwners.get(body.id) ?? token;
@@ -76,6 +143,19 @@ export async function createMobileRelayFixture() {
                 );
                 return;
             }
+            if (
+                !machineOwners.has(body.id) &&
+                body.failIfDeleted === true &&
+                deletedMachines.get(body.id) === token
+            ) {
+                json(
+                    response,
+                    { code: "machine_deleted", error: "Machine was deleted from this account" },
+                    410,
+                );
+                return;
+            }
+            deletedMachines.delete(body.id);
             machineOwners.set(body.id, token);
             machines.set(token, body.id);
             json(response, { machine: { metadataVersion: 1, daemonStateVersion: 1 } });
@@ -85,7 +165,7 @@ export async function createMobileRelayFixture() {
             if (session === undefined) {
                 const metadata = decode(token, body.metadata) as { bot?: { id: string } };
                 session = {
-                    id: `remote-${sessions.size}`,
+                    id: `remote-${String(nextSession++)}`,
                     token,
                     tag: body.tag,
                     metadata: body.metadata,
@@ -93,6 +173,9 @@ export async function createMobileRelayFixture() {
                     ...(metadata.bot === undefined ? {} : { botId: metadata.bot.id }),
                 };
                 sessions.set(key, session);
+            }
+            if (typeof body.machineId === "string" && !options.legacyMachineDeletion) {
+                session.machineId = body.machineId;
             }
             json(response, {
                 session: {
@@ -192,20 +275,24 @@ export async function createMobileRelayFixture() {
     const address = server.address();
     if (address === null || typeof address === "string")
         throw new Error("Missing fixture address.");
+    const url = `http://127.0.0.1:${address.port}`;
     return {
-        url: `http://127.0.0.1:${address.port}`,
+        url,
         machines,
         sessions,
         outgoing,
         rejected,
+        deletions,
+        faults,
         activeMachines: () =>
             [...sockets.values()]
                 .filter((auth) => auth.clientType === "machine-scoped")
                 .map((auth) => auth.token)
                 .sort(),
+        /** Approves a pairing; a token approved before keeps its account key, as the same phone would. */
         authorize(qr: string, token: string) {
             const publicKey = Buffer.from(qr.split("?")[1]!, "base64url");
-            const secret = randomBytes(32);
+            const secret = keys.get(token) ?? randomBytes(32);
             keys.set(token, secret);
             const ephemeral = randomBytes(32);
             const derived = new Uint32Array(8);
@@ -222,6 +309,39 @@ export async function createMobileRelayFixture() {
                 secretbox(u8(derived), nonce).seal(secret),
             ]).toString("base64");
             approvals.set(publicKey.toString("base64"), { token, response });
+        },
+        /** A session another client, such as Happy CLI, created on the same account. */
+        addForeignSession(token: string, tag: string) {
+            const session = {
+                id: `remote-${String(nextSession++)}`,
+                token,
+                tag,
+                metadata: encode(token, { path: "/terminal" }),
+                version: 0,
+            };
+            sessions.set(`${token}:${tag}`, session);
+            return session.id;
+        },
+        /** Deletes a machine as the account's phone does, through the same Happy request. */
+        async deleteMachineFromPhone(token: string, machineId: string) {
+            const response = await fetch(`${url}/v1/machines/${machineId}`, {
+                headers: { authorization: `Bearer ${token}` },
+                method: "DELETE",
+            });
+            await response.body?.cancel();
+            return response.status;
+        },
+        /** The ids of every session the account holds. */
+        accountSessions(token: string) {
+            return [...sessions.values()]
+                .filter((session) => session.token === token)
+                .map((session) => session.id);
+        },
+        /** The ids of the account's sessions that publish a bot. */
+        botSessions(token: string, botId: string) {
+            return [...sessions.values()]
+                .filter((session) => session.token === token && session.botId === botId)
+                .map((session) => session.id);
         },
         /** The account's current session metadata as its phone would decrypt it. */
         metadata(token: string, botId: string) {

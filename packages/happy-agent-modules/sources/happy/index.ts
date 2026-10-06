@@ -133,7 +133,7 @@ export {
     type HappyPairingOptions,
 } from "./HappyPairing.js";
 export {
-    HappyIntegrationStartError,
+    HappyIntegrationRequestError,
     HappyModule,
     type HappyIntegrationListener,
 } from "./HappyModule.js";

@@ -91,7 +91,7 @@ import {
     ProjectFilesModule,
 } from "../files/index.js";
 import { GitModule } from "../git/index.js";
-import { HappyIntegrationStartError, HappyModule } from "../happy/index.js";
+import { HappyIntegrationRequestError, HappyModule } from "../happy/index.js";
 import {
     HistoryModule,
     type HistoryPendingMessage,
@@ -1111,7 +1111,7 @@ export class ApiModule implements AgentModule {
                         integration: await this.#happy.startIntegration(ctx),
                     });
                 } catch (error: unknown) {
-                    if (error instanceof HappyIntegrationStartError) {
+                    if (error instanceof HappyIntegrationRequestError) {
                         throw new ApiError(503, error.code, error.message, {
                             integration: error.integration,
                         });
@@ -1127,9 +1127,18 @@ export class ApiModule implements AgentModule {
                 return;
             }
             if (request.method === "DELETE" && url.pathname === "/v0/integrations/happy") {
-                sendJson(response, 200, {
-                    integration: await this.#happy.disconnectIntegration(ctx),
-                });
+                try {
+                    sendJson(response, 200, {
+                        integration: await this.#happy.disconnectIntegration(ctx),
+                    });
+                } catch (error: unknown) {
+                    if (error instanceof HappyIntegrationRequestError) {
+                        throw new ApiError(503, error.code, error.message, {
+                            integration: error.integration,
+                        });
+                    }
+                    throw error;
+                }
                 return;
             }
             if (request.method === "POST" && url.pathname === "/v0/integrations/happy/re-pair") {
@@ -1138,7 +1147,7 @@ export class ApiModule implements AgentModule {
                         integration: await this.#happy.rePairIntegration(ctx),
                     });
                 } catch (error: unknown) {
-                    if (error instanceof HappyIntegrationStartError) {
+                    if (error instanceof HappyIntegrationRequestError) {
                         throw new ApiError(503, error.code, error.message, {
                             integration: error.integration,
                         });

@@ -265,6 +265,29 @@ export function createHappySyncDatabase(ownerId = "") {
             return rows.map((row) => row.agent_id);
         },
 
+        /**
+         * Lists every session this connection created on one Happy account.
+         *
+         * Archived sessions keep their rows, so this is the complete set Happy holds for this
+         * computer; nothing else on the account is attributable to it.
+         */
+        async listPublishedSessions(
+            ctx: Context,
+            credentialFingerprint: string,
+        ): Promise<readonly { agentId: string; remoteSessionId: string }[]> {
+            const rows = await agentDatabaseRows<{ agent_id: string; remote_session_id: string }>(
+                ctx.db,
+                sql`SELECT agent_id, remote_session_id FROM ${sql.raw(SESSIONS_TABLE)}
+                    WHERE owner_id = ${ownerId} AND credential_fingerprint = ${credentialFingerprint}
+                        AND remote_session_id IS NOT NULL
+                    ORDER BY agent_id ASC`,
+            );
+            return rows.map((row) => ({
+                agentId: row.agent_id,
+                remoteSessionId: row.remote_session_id,
+            }));
+        },
+
         /** Records the session Happy created for this agent. */
         async setRemoteSession(
             ctx: Context,

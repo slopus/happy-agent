@@ -487,6 +487,10 @@ export class HappySessionClient {
                 body: JSON.stringify({
                     agentState: null,
                     dataEncryptionKey: wrappedKey,
+                    // Deleting this computer from Happy deletes the sessions it published.
+                    ...(this.#options.configuration.machineId === undefined
+                        ? {}
+                        : { machineId: this.#options.configuration.machineId }),
                     metadata: encoded,
                     ...(this.#options.projectId === undefined ? {} : { projectId }),
                     tag: current.tag,

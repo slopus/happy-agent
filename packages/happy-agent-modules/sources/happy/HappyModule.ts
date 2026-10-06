@@ -28,7 +28,7 @@ import { happySyncMigrations } from "./HappySyncDatabase.js";
 import { happyIntegrationMigrations } from "./HappyIntegrationDatabase.js";
 import { happyProjectSyncMigrations } from "./HappyProjectSyncDatabase.js";
 
-export { HappyIntegrationStartError, type HappyIntegrationListener } from "./HappyConnection.js";
+export { HappyIntegrationRequestError, type HappyIntegrationListener } from "./HappyConnection.js";
 
 /** One feature owns the standalone connection or all personal team connections. */
 export class HappyModule extends HappyConnection implements AgentModule<AnyAgentTool> {
