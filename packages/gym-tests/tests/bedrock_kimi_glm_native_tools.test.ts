@@ -465,7 +465,7 @@ describe("Bedrock Runtime native Kimi and GLM tools", () => {
                     }
                     await expect(gym.readFile(".git/unreviewed.txt")).rejects.toThrow();
                     expect(toolResult(requests[2]!, "auto-restored").content).toMatch(
-                        /denied|permission|not permitted/iu,
+                        /denied|permission|not permitted|read-only file system/iu,
                     );
                     assertToolHistory(requests[2]!, [elevatedCall, sandboxCall]);
                     expect(gym.inference.requests).toHaveLength(0);
@@ -491,7 +491,7 @@ async function startGym(
         entrypoint: [
             "/bin/bash",
             "-c",
-            `node /app/packages/happy-terminal/dist/main.js "$@"
+            `${permissionMode === "auto" ? 'git -c init.defaultBranch=main init --quiet /workspace || exit "$?"\n' : ""}node /app/packages/happy-terminal/dist/main.js "$@"
 gym_cli_status=$?
 if [ "$gym_cli_status" -ne 0 ] && [ -f /home/happy-terminal/.happy/agent/daemon.log ]; then
     printf '\\nDaemon startup log (last 32000 bytes):\\n' >&2
