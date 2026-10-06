@@ -54,8 +54,37 @@ Lost accounts, phone reinstalls, and conflicting saved accounts require a delibe
 conversation. Preserve both sides until the user chooses the account to keep. Do not initiate
 notifications or an older-user promotion campaign as part of repair.
 
+## Unlink or switch phone account
+
+Use this when someone wants this computer off their phone, wants to start over, or wants the
+computer on a different Happy account. Adding another phone to the same account is not an
+unlink: restore the account on the new phone instead.
+
+- Unlinking (**Settings → Mobile Access → Disconnect this computer**, or the Happy integration
+  unlink action) removes this computer from the Happy account. The computer and the chats this
+  computer published disappear from the phone. Local history stays on this computer. Happy CLI
+  sessions on the same account and the terminal CLI login are not touched. Before unlinking, make
+  sure the person understands their chats leave the phone; do not unlink as routine
+  troubleshooting.
+- Deleting the computer on the phone (the machine's **Delete** action) does the same thing. Happy
+  Agent notices, or notices when it next starts, and Mobile Access returns to **Not set up**. To
+  use the phone again, link again from this computer.
+- If unlinking reports that Happy Agent couldn't remove this computer, Happy was not reachable and
+  nothing was forgotten. The computer stays linked but offline. Check the connection and run the
+  unlink again; it resumes where it stopped. If the person would rather keep the link, start
+  Mobile Access again to reconnect. Never delete `access.key` or `machine.json` by hand to force a
+  local-only unlink: that leaves the computer on their phone with nothing left that can remove it.
+- To switch accounts, unlink, then choose **Connect phone** and scan the QR code with the phone
+  signed in to the account they want. This computer joins that account as a new computer and
+  republishes its current chats with recent history; the old account no longer lists it. Older
+  Happy Agent versions only dropped the local login and left the computer on the old account.
+- The terminal CLI keeps its own login, which may be a different account. Manage it separately
+  with **Remove saved terminal login**; unlinking the phone does not change it.
+
 ## Completion checks
 
 Confirm the intended account remains in place, native status is truthful, and terminal daemon
-setup completed. Where real devices and authority are available, verify a Claude/Codex start
+setup completed. After an unlink, Mobile Access shows **Not set up**; ask the person to confirm the
+computer is gone from their phone. After switching accounts, confirm the computer appears on the
+new account's phone. Where real devices and authority are available, verify a Claude/Codex start
 and resume from the phone. Do not claim a real-device check from build or unit-test results.
