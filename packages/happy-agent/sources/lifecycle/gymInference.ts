@@ -58,7 +58,7 @@ export function createGymInferenceFromEnvironment(
     // The configuration decides which providers exist and which models they serve, exactly as
     // in production; the gym only replaces how each of those accounts serves inference. A
     // provider the configuration aims at an explicit base URL keeps its real implementation only
-    // for a scenario-owned loopback fixture or an explicitly opted-in live test.
+    // for a scenario-owned loopback/proxy fixture or an explicitly opted-in live test.
     return (real, configuration) => {
         const providers = new AgentProviders();
         providers.add("gym", new GymHttpProvider({ endpoint, providerId: "gym", token }), "gym");
@@ -69,6 +69,30 @@ export function createGymInferenceFromEnvironment(
                 configured?.type === "codex" || configured?.type === "grok"
                     ? configured.baseUrl
                     : undefined;
+            if (configured?.type === "bedrock") {
+                const mock = new GymHttpProvider({ endpoint, providerId, token });
+                providers.add(
+                    providerId,
+                    async (selection) => {
+                        const selectedEndpoint =
+                            selection.model === undefined
+                                ? undefined
+                                : configured.modelOverrides?.[selection.model]?.endpoint;
+                        if (selectedEndpoint === undefined) return mock;
+                        assertGymProviderEndpointAllowed(selectedEndpoint, liveInference);
+                        const provider = await real.providers.resolve(
+                            selection.id,
+                            selection.model,
+                        );
+                        if (provider === null) {
+                            throw new Error(`Provider "${selection.id}" is not registered.`);
+                        }
+                        return provider;
+                    },
+                    gymProviderType(real.providers, providerId, configured.type),
+                );
+                continue;
+            }
             if (configuredBaseUrl !== undefined) {
                 assertGymProviderEndpointAllowed(configuredBaseUrl, liveInference);
                 providers.add(
@@ -99,18 +123,21 @@ export function createGymInferenceFromEnvironment(
 
 /** Keep deterministic gyms off external provider endpoints unless the scenario explicitly opts in. */
 export function assertGymProviderEndpointAllowed(value: string, liveInference: boolean): void {
-    if (liveInference || isLoopbackUrl(value)) return;
+    if (liveInference || isScenarioUrl(value)) return;
     throw new Error(`Non-live Gym inference cannot use external provider endpoint "${value}".`);
 }
 
-function isLoopbackUrl(value: string): boolean {
+function isScenarioUrl(value: string): boolean {
     try {
-        const hostname = new URL(value).hostname.toLowerCase();
+        const url = new URL(value);
+        const hostname = url.hostname.toLowerCase();
         return (
             hostname === "localhost" ||
             hostname === "127.0.0.1" ||
             hostname === "::1" ||
-            hostname === "[::1]"
+            hostname === "[::1]" ||
+            // The gym HTTP proxy owns this reserved .test namespace; no live DNS endpoint exists.
+            (url.protocol === "http:" && hostname.endsWith(".gym.test"))
         );
     } catch {
         return false;

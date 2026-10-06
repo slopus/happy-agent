@@ -44,6 +44,12 @@ const requestSchema = Type.Object({
 });
 type ChatRequest = Static<typeof requestSchema>;
 type ToolCall = Static<typeof callSchema>;
+const unavailableReviewerRequestSchema = Type.Object({
+    model: Type.Literal("openai.gpt-5.4"),
+    stream: Type.Literal(true),
+    instructions: Type.String(),
+    input: Type.Array(Type.Unknown()),
+});
 
 const models = [
     {
@@ -415,6 +421,7 @@ describe("Bedrock Runtime native Kimi and GLM tools", () => {
                 });
                 const requests: ChatRequest[] = [];
                 const reviews: string[] = [];
+                const unavailableReviews: string[] = [];
                 const gym = await startGym(
                     model,
                     intercept(
@@ -423,7 +430,7 @@ describe("Bedrock Runtime native Kimi and GLM tools", () => {
                             index < 2
                                 ? responseFor({ call: index === 0 ? elevatedCall : sandboxCall })
                                 : responseFor({ text: "AUTO_BOUNDARY_COMPLETE" }),
-                        { outcome, reviews },
+                        { outcome, reviews, unavailableReviews },
                     ),
                     {},
                     "auto",
@@ -435,6 +442,7 @@ describe("Bedrock Runtime native Kimi and GLM tools", () => {
                     gym.terminal.press("enter");
                     await waitForCompletion(gym, "AUTO_BOUNDARY_COMPLETE");
                     expect(requests).toHaveLength(3);
+                    expect(unavailableReviews).toHaveLength(1);
                     expect(reviews).toHaveLength(1);
                     expect(reviews[0]).toContain("unrestricted filesystem");
                     expect(reviews[0]).toContain("network access");
@@ -478,6 +486,18 @@ async function startGym(
 ): Promise<Gym> {
     return await createGym({
         mode: "docker",
+        entrypoint: [
+            "/bin/bash",
+            "-c",
+            `node /app/packages/happy-terminal/dist/main.js "$@"
+gym_cli_status=$?
+if [ "$gym_cli_status" -ne 0 ] && [ -f /home/happy-terminal/.happy/agent/daemon.log ]; then
+    printf '\\nDaemon startup log (last 32000 bytes):\\n' >&2
+    tail -c 32000 /home/happy-terminal/.happy/agent/daemon.log >&2
+fi
+exit "$gym_cli_status"`,
+            "gym-startup-diagnostics",
+        ],
         providerId: "bedrock",
         modelId: model.model,
         permissionMode,
@@ -494,6 +514,13 @@ async function startGym(
                 `include_models = ["${model.model}"]`,
                 `[providers.bedrock.model_overrides."${model.model}"]`,
                 'endpoint = "http://bedrock.gym.test/openai/v1"',
+                ...(permissionMode === "auto"
+                    ? [
+                          '[providers.bedrock.model_overrides."openai/gpt-5.4"]',
+                          'endpoint = "http://bedrock.gym.test/openai/v1"',
+                          'transport = "mantle"',
+                      ]
+                    : []),
             ].join("\n"),
         },
         httpProxy: { handler },
@@ -503,9 +530,36 @@ async function startGym(
 function intercept(
     requests: ChatRequest[],
     respond: (index: number) => HttpResponseReplacement,
-    review?: { outcome: "allow" | "deny"; reviews: string[] },
+    review?: { outcome: "allow" | "deny"; reviews: string[]; unavailableReviews: string[] },
 ): HttpInterceptHandler {
     return (request) => {
+        if (
+            review !== undefined &&
+            request.method === "POST" &&
+            new URL(request.url).pathname === "/openai/v1/responses"
+        ) {
+            expect(request.headers.authorization).toBe("Bearer gym-placeholder-token");
+            const text = Buffer.from(request.body).toString();
+            const body: unknown = JSON.parse(text);
+            Value.Assert(unavailableReviewerRequestSchema, body);
+            expect(body.instructions).toContain("You are judging one planned coding-agent action.");
+            expect(review.unavailableReviews).toHaveLength(0);
+            expect(review.reviews).toHaveLength(0);
+            review.unavailableReviews.push(text);
+            return {
+                response: {
+                    status: 404,
+                    headers: { "content-type": "application/json" },
+                    body: JSON.stringify({
+                        error: {
+                            message: "The model 'openai.gpt-5.4' does not exist.",
+                            type: "invalid_request_error",
+                            code: "model_not_found",
+                        },
+                    }),
+                },
+            };
+        }
         if (
             request.method !== "POST" ||
             new URL(request.url).pathname !== "/openai/v1/chat/completions"
@@ -525,6 +579,11 @@ function intercept(
         if (text.includes("You are judging one planned coding-agent action.")) {
             if (review === undefined)
                 throw new Error("Unexpected Auto review for a workspace-write scenario.");
+            expect(review.unavailableReviews).toHaveLength(1);
+            const body: unknown = JSON.parse(text);
+            Value.Assert(requestSchema, body);
+            expect(body.model).toBe(requests[0]!.model);
+            expect(body.reasoning_effort).toBe(requests[0]!.reasoning_effort);
             review.reviews.push(text);
             return {
                 response: responseFor({

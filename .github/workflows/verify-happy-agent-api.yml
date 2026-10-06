@@ -103,6 +103,7 @@ jobs:
                   pnpm --filter @slopus/happy-terminal-gym-tests check
 
             - name: Run the Linux Files and Git preflight
+              if: ${{ github.event_name != 'workflow_dispatch' || !inputs.bedrock_models || inputs.exhaustive }}
               run: |
                   pnpm --filter @slopus/happy-terminal-gym-tests exec vitest run \
                     tests/happy_api_chaos_files.test.ts \
