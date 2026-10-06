@@ -51,11 +51,12 @@ Keep bots on Windows by default and connect a separate Happy Agent in the chosen
 through the existing remote connection. Reuse the Linux user's projects and provider login; do not
 copy the Windows daemon database or run Windows project tools against a Linux project path.
 
-## Provider accounts
+## Accounts and models
 
-Read [Add and pool provider accounts](multiple-accounts.md) when the user wants a second Claude,
-Codex, Grok, or Bedrock account, or wants to pool accounts. The Chief of Staff edits `happy.toml`
-and validates it, but the user reloads the daemon from outside Happy.
+Read [Accounts, models, effort, and service tier](accounts-and-models.md) when the user wants to add
+or pool provider accounts, limit models, change default model, effort, or service tier, or move
+sessions to another provider. The Chief of Staff edits and validates `happy.toml`; applying the
+change follows the configuration reload section.
 
 ## Happy teams
 

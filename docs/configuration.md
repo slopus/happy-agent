@@ -612,8 +612,8 @@ duplicated between the smart provider and its backing accounts.
 Set `hidden = false` or remove the setting and reload the daemon to restore direct selection.
 Unhiding does not force an otherwise disabled provider to become enabled.
 
-The [multiple accounts recipe](recipe/multiple-accounts.md) walks through adding an account and
-pooling accounts behind a smart provider, and lists the common pitfalls.
+The [accounts and models recipe](recipe/accounts-and-models.md) walks through adding an account and
+pooling accounts behind a smart provider, and covers model filters, defaults, and switching sessions.
 
 ## Docker-backed sessions
 
