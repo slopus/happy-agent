@@ -44,7 +44,8 @@ permissions:
     contents: read
 
 concurrency:
-    group: verify-happy-agent-api-${{ github.ref }}
+    # A push must not cancel a manually requested verification gate halfway through its build.
+    group: verify-happy-agent-api-${{ github.ref }}-${{ github.event_name }}-${{ inputs.exhaustive || false }}-${{ inputs.bedrock_models || false }}
     cancel-in-progress: true
 
 jobs:
