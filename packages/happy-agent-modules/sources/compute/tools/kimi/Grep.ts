@@ -9,6 +9,9 @@ export function kimiGrepTool(compute: Compute) {
     return defineAgentTool({
         name: "Grep",
         defer: false,
+        capabilities: [
+            "Read and modify files, run shell commands, inspect images, and manage background processes.",
+        ],
         description:
             "Search text file contents with JavaScript regular expressions in a bounded filesystem scan. Use Read for a known file's contents. path selects a file or directory. glob matches relative paths under the search root; bare patterns match at any depth. Supports a bounded subset of .gitignore rules; include_ignored, .ignore, and .rgignore are unavailable. output_mode defaults to files_with_matches; content shows lines, count_matches shows path:count entries. -C overrides -A and -B. head_limit defaults to 250; 0 removes the entry limit within a 10000-entry cap. offset is capped at 100000. Matching lines are capped at 400 characters, output at 40000 characters, and source files at 1 million bytes. Scan and regex work limits may leave incomplete results, reported as truncated. This tool does not use ripgrep.",
         parameters: Type.Object(

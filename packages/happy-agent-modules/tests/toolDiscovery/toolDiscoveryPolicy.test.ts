@@ -42,7 +42,7 @@ describe("tool discovery policy", () => {
         }
     });
 
-    it.each(["claude", "codex", "grok"] as const)(
+    it.each(["claude", "codex", "grok", "kimi", "glm"] as const)(
         "keeps every %s compute and reviewer tool eager",
         (vendor) => {
             const compute = {} as never;

@@ -15,6 +15,9 @@ export function kimiReadMediaFileTool(compute: Compute, reads: FileReadLog) {
     return defineAgentTool({
         name: "ReadMediaFile",
         defer: false,
+        capabilities: [
+            "Read and modify files, run shell commands, inspect images, and manage background processes.",
+        ],
         description:
             "Read a PNG, JPEG, WebP, or GIF image from the filesystem. This Bedrock model does not support video; session attachment URLs are unavailable. Source limit: 20 MiB and 40 million decoded pixels. Output limit: 3 MiB. By default images are resized to at most 2048 pixels per edge and delivered as PNG. region selects original-image pixels and preserves crop resolution. full_resolution skips resizing; oversized output returns an error asking for a smaller region. Animated images show their first frame. Original and delivered dimensions are reported; add region offsets when converting crop coordinates to original-image pixels. Re-read generated or edited images before continuing.",
         parameters: Type.Object(

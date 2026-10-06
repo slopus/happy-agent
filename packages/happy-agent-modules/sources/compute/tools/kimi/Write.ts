@@ -13,6 +13,9 @@ export function kimiWriteTool(compute: Compute, reads: FileReadLog) {
     return defineAgentTool({
         name: "Write",
         defer: false,
+        capabilities: [
+            "Read and modify files, run shell commands, inspect images, and manage background processes.",
+        ],
         description:
             "Create or completely overwrite a UTF-8 file, or append raw text with mode: append. Missing parent directories are created. No newline is added. Use Edit for incremental changes. A remembered file changed on disk is refused until Read refreshes it. Existing and resulting files are limited to 8 MiB; binary replacement is not supported.",
         parameters: Type.Object(

@@ -9,6 +9,9 @@ export function kimiReadTool(compute: Compute, reads: FileReadLog) {
     return defineAgentTool({
         name: "Read",
         defer: false,
+        capabilities: [
+            "Read and modify files, run shell commands, inspect images, and manage background processes.",
+        ],
         description:
             "Read a UTF-8 text file, with line numbers. Relative paths resolve against the working directory. Directories and binary files return errors. Source files are limited to 8 MiB. line_offset is 1-based; negative values begin at the last N lines, paging forward. n_lines selects the number of lines. max_chars defaults to 100000, with an effective range of 1024 to 500000 characters including status. Long lines may be fragmented: copy the Next Read arguments to resume without gaps. column_offset is a zero-based character offset in the first displayed line; it is only supported for forward reads. Pure CRLF files display LF; Edit preserves their CRLF endings. Other carriage returns display as \\r; use actual carriage returns in Edit arguments. For images, use ReadMediaFile. Session attachment URLs and UTF-16 decoding are not supported.",
         parameters: Type.Object(

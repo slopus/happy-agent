@@ -8,6 +8,9 @@ export function kimiGlobTool(compute: Compute) {
     return defineAgentTool({
         name: "Glob",
         defer: false,
+        capabilities: [
+            "Read and modify files, run shell commands, inspect images, and manage background processes.",
+        ],
         description:
             "Find files by glob pattern, newest modified first. A bare pattern like *.ts searches at any depth. Supports *, **, ?, and brace alternatives. path is the search directory, default working directory. Results are files only; .git directories and symbolic links are skipped. This bounded filesystem scan includes ignored files and does not implement ripgrep ignore rules. head_limit defaults to 100; 0 removes the page-count limit within the 10000-file retention bound. offset skips matched paths. Output is bounded to 60000 characters; follow next_offset when more collected matches remain. Scan limits may leave uncollected files; narrow the search when the scan is incomplete.",
         parameters: Type.Object(

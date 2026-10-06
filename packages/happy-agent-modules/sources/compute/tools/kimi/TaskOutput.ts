@@ -8,6 +8,9 @@ export function kimiTaskOutputTool(compute: Compute) {
     return defineAgentTool({
         name: "TaskOutput",
         defer: false,
+        capabilities: [
+            "Read and modify files, run shell commands, inspect images, and manage background processes.",
+        ],
         description:
             "Read the current status and new output of a shell task started by Bash. Always non-blocking. Completion is reported automatically; use this for a progress check you will act on. Only output since the previous read is returned, bounded to 60000 characters. This tool manages shell tasks only; no full-log output_path is provided.",
         parameters: Type.Object(

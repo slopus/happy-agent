@@ -10,6 +10,9 @@ export function kimiBashTool(compute: Compute) {
     return defineAgentTool({
         name: "Bash",
         defer: false,
+        capabilities: [
+            "Read and modify files, run shell commands, inspect images, and manage background processes.",
+        ],
         description:
             "Execute a command in the environment's shell. Each call starts in the primary working directory; cwd selects another directory for this call. Prefer Read, Write, Edit, Glob, and Grep for file work. timeout is the foreground wait in seconds, default 60, maximum 300. A command that outlives the wait keeps running in the background and returns a task_id. run_in_background starts it in the background immediately, watching about three seconds for startup. Read new output with TaskOutput, send characters with TaskInput, and stop the process tree with TaskStop. Completion notifications arrive automatically. secrets selects attached secret bundles for this command; selection is reviewed independently of sandbox escalation.",
         parameters: Type.Object(

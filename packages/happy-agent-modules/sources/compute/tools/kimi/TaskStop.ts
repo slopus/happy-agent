@@ -8,6 +8,9 @@ export function kimiTaskStopTool(compute: Compute) {
     return defineAgentTool({
         name: "TaskStop",
         defer: false,
+        capabilities: [
+            "Read and modify files, run shell commands, inspect images, and manage background processes.",
+        ],
         description:
             "Stop a background shell task and its process tree. Shutdown is requested first, then forced after the normal grace period. Use only when the task must be cancelled. A task that already ended returns stopped: false. This manages shell tasks only.",
         parameters: Type.Object(

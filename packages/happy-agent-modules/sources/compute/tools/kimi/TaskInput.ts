@@ -8,6 +8,9 @@ export function kimiTaskInputTool(compute: Compute) {
     return defineAgentTool({
         name: "TaskInput",
         defer: false,
+        capabilities: [
+            "Read and modify files, run shell commands, inspect images, and manage background processes.",
+        ],
         description:
             "Happy extension: send characters to a running shell task and collect new output. End a line with a newline; use \\u0003 for Ctrl-C. timeout is a wait in milliseconds, default 250, maximum 30000. Input is reviewed and stays inside the process's existing boundary, including its selected secret environment.",
         parameters: Type.Object(

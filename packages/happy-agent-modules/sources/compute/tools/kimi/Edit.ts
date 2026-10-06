@@ -13,6 +13,9 @@ export function kimiEditTool(compute: Compute, reads: FileReadLog) {
     return defineAgentTool({
         name: "Edit",
         defer: false,
+        capabilities: [
+            "Read and modify files, run shell commands, inspect images, and manage background processes.",
+        ],
         description:
             "Replace exact text in an existing UTF-8 file. Copy text from Read without line-number prefixes. old_string must appear once unless replace_all is true. For pure CRLF files, use the LF view from Read; Edit preserves CRLF. For other carriage returns, include actual carriage returns where Read shows \\r. Remembered files changed on disk are refused until Read refreshes them. Existing and resulting files are limited to 8 MiB, with at most 10000 occurrences per edit.",
         parameters: Type.Object(
