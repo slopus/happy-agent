@@ -276,6 +276,25 @@ describe("gitReferenceChangeAffectsSnapshot", () => {
         expect(gitReferenceChangeAffectsSnapshot(snapshot, "tags/v1.0.0")).toBe(false);
         expect(gitReferenceChangeAffectsSnapshot(snapshot, undefined)).toBe(true);
     });
+
+    it("watches the local default branch and any origin ref without a remote base", () => {
+        const feature = {
+            ...stampedSnapshot(),
+            facts: { ahead: 0, behind: 0, branch: "feature", detached: false },
+        };
+        const localBase = { ...feature, baseRef: "refs/heads/master" };
+        expect(gitReferenceChangeAffectsSnapshot(localBase, "heads/master")).toBe(true);
+        expect(gitReferenceChangeAffectsSnapshot(localBase, "heads/main")).toBe(false);
+        expect(gitReferenceChangeAffectsSnapshot(localBase, "heads/other")).toBe(false);
+        expect(gitReferenceChangeAffectsSnapshot(localBase, "remotes/origin/main")).toBe(true);
+
+        const { baseRef: _baseRef, ...headBase } = feature;
+        expect(gitReferenceChangeAffectsSnapshot(headBase, "heads/main")).toBe(true);
+        expect(gitReferenceChangeAffectsSnapshot(headBase, "heads/master")).toBe(true);
+        expect(gitReferenceChangeAffectsSnapshot(headBase, "heads/other")).toBe(false);
+        expect(gitReferenceChangeAffectsSnapshot(headBase, "remotes/origin/trunk")).toBe(true);
+        expect(gitReferenceChangeAffectsSnapshot(headBase, "remotes/upstream/main")).toBe(false);
+    });
 });
 
 interface TestScan {
@@ -421,6 +440,7 @@ async function waitForSettled(
 function stampedSnapshot(): GitChangeSnapshot {
     const state: GitChangeState = {
         base: HEAD,
+        baseRef: "refs/remotes/origin/main",
         changedFiles: 0,
         comparison: "ready",
         conflicted: false,

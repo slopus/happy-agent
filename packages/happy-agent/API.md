@@ -3212,8 +3212,10 @@ The git state object:
 
 - `facts` — where the repository stands: branch (absent when `detached`), `head`, the
   `upstream` it tracks, and how far `ahead`/`behind` it is.
-- `comparison`, `base` — what the changes are measured against. `"unavailable"` when no
-  sensible base exists yet (no upstream, unborn branch); then only `facts` are meaningful.
+- `comparison`, `base` — what the changes are measured against: the merge base with
+  `origin/<default branch>`, else the merge base with the local default branch, else `HEAD`,
+  else (no commits yet) the empty tree. `"unavailable"` only when the repository could not be
+  read; then only `facts` are meaningful.
 - `changedFiles`, `insertions`, `deletions`, `countsExact` — the summary numbers; `countsExact`
   is `false` when a large tree made the daemon estimate.
 - `files` — per-file changes: `status` is `"added"`, `"modified"`, `"deleted"`, `"renamed"`,

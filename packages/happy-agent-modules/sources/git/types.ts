@@ -74,6 +74,8 @@ export type GitFileChange = Static<typeof gitFileChangeSchema>;
 export const gitChangeStateSchema = Type.Object(
     {
         base: Type.Optional(Type.String()),
+        /** The full branch ref `base` was measured from; absent for HEAD and the empty tree. */
+        baseRef: Type.Optional(Type.String()),
         changedFiles: Type.Integer({ minimum: 0 }),
         comparison: Type.Union([Type.Literal("ready"), Type.Literal("unavailable")]),
         conflicted: Type.Boolean(),

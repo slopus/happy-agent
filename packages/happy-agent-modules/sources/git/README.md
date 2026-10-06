@@ -48,14 +48,16 @@ collection still works — it takes a lifetime of its own.
 
 ## Behavior worth knowing
 
-A snapshot compares the branch with its merge base against `origin/main`; local `main` is never
-used. It combines committed, staged, unstaged, conflicted and untracked work, detects binary files,
+A snapshot compares the branch with the first base that exists: its merge base with
+`origin/<default branch>`, its merge base with the local default branch when the remote has none,
+HEAD itself, or the empty tree for a repository without commits. It combines committed, staged, unstaged, conflicted and untracked work, detects binary files,
 keeps totals separate from the capped display list, omits files larger than the display limit, and
 carries both old and new bytes for binary deltas that remain displayable.
 
 Watching is a subscription, not a scan. Worktrees share physical watchers for their common Git
 directory and refs, while ref events fan out only to worktrees whose branch, upstream, or
-`origin/main` comparison can change. Windows uses the runtime's built-in recursive
+comparison base can change. A worktree without a remote base also hears its local default branch
+and every `origin` ref, since either can become its next base. Windows uses the runtime's built-in recursive
 `fs.watch`; macOS and Linux use the patched `@parcel/watcher` with FSEvents, Watchman, or inotify. Directories Git
 ignores are excluded from the Linux watch itself, which keeps `node_modules` from
 spending thousands of inotify watches. The ignore list is re-derived when `.gitignore` changes or

@@ -737,18 +737,32 @@ export function gitReferenceChangeAffectsSnapshot(
 ): boolean {
     if (entry === undefined || snapshot === undefined) return true;
     const normalized = entry.replaceAll("\\", "/").replace(/\.lock$/, "");
+    // A remote base is the narrow, shared case. Without one, any origin branch or the local
+    // default branch appearing or moving can change which base the next scan picks.
+    const base = snapshot.baseRef?.replace(/^refs\//, "");
+    const remoteBase = base?.startsWith("remotes/") === true ? base : undefined;
     if (normalized.startsWith("heads/")) {
         const branch = snapshot.facts.branch;
-        return branch === undefined || referenceEventMatches(`heads/${branch}`, normalized);
+        return (
+            branch === undefined ||
+            referenceEventMatches(`heads/${branch}`, normalized) ||
+            (remoteBase === undefined &&
+                (base === undefined
+                    ? referenceEventMatches("heads/main", normalized) ||
+                      referenceEventMatches("heads/master", normalized)
+                    : referenceEventMatches(base, normalized)))
+        );
     }
     if (normalized.startsWith("remotes/")) {
-        const originMain = "remotes/origin/main";
         const upstream =
             snapshot.facts.upstream === undefined
                 ? undefined
                 : `remotes/${snapshot.facts.upstream}`;
         return (
-            referenceEventMatches(originMain, normalized) ||
+            (remoteBase === undefined
+                ? referenceEventMatches("remotes/origin", normalized) ||
+                  normalized.startsWith("remotes/origin/")
+                : referenceEventMatches(remoteBase, normalized)) ||
             (upstream !== undefined && referenceEventMatches(upstream, normalized))
         );
     }

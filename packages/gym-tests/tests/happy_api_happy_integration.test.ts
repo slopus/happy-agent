@@ -162,9 +162,21 @@ describe("Happy integration API", () => {
             () => happy.hasRpc(`${session.id}:gitState`) || undefined,
             "native Git registration",
         );
-        expect(await happy.rpc(session.id, "gitState", {})).toMatchObject({
+        const unborn = await gym.waitUntil(async () => {
+            const result = (await happy.rpc(session.id, "gitState", {})) as {
+                git?: { comparison: string };
+            };
+            return result.git?.comparison === "ready" ? result : undefined;
+        }, "an unborn repository compared with the empty tree");
+        expect(unborn).toMatchObject({
             success: true,
-            git: { comparison: "unavailable", base: null, countsExact: false },
+            git: {
+                base: "4b825dc642cb6eb9a060e54bf8d69288fbee4904",
+                files: expect.arrayContaining([
+                    expect.objectContaining({ path: "outside.txt", status: "untracked" }),
+                    expect.objectContaining({ path: "selected/inside.txt", status: "untracked" }),
+                ]),
+            },
         });
         await git("add", ".");
         await git("commit", "-m", "base");
@@ -172,9 +184,11 @@ describe("Happy integration API", () => {
         await git("update-ref", "refs/remotes/origin/main", base);
         const clean = await gym.waitUntil(async () => {
             const result = (await happy.rpc(session.id, "gitState", {})) as {
-                git?: { comparison: string };
+                git?: { base: string | null; comparison: string };
             };
-            return result.git?.comparison === "ready" ? result : undefined;
+            return result.git?.comparison === "ready" && result.git.base === base
+                ? result
+                : undefined;
         }, "a ready clean comparison");
         expect(clean).toMatchObject({
             success: true,
@@ -425,14 +439,18 @@ describe("Happy integration API", () => {
                 revision: "HEAD",
             }),
         ).toMatchObject({ success: false, code: "invalid" });
+        // Without origin/main, the moved local main becomes the base.
+        const topic = await git("rev-parse", "HEAD");
         await git("update-ref", "-d", "refs/remotes/origin/main");
         await gym.waitUntil(async () => {
             const result = (await happy.rpc(session.id, "gitState", {})) as {
                 success: boolean;
-                git?: { comparison: string };
+                git?: { base: string | null; comparison: string };
             };
-            return result.git?.comparison === "unavailable" ? result : undefined;
-        }, "missing origin/main to make comparison unavailable");
+            return result.git?.comparison === "ready" && result.git.base === topic
+                ? result
+                : undefined;
+        }, "missing origin/main to fall back to local main");
     }, 60_000);
 
     it("bounds native reads and refuses symlink escapes and FIFOs without blocking", async () => {

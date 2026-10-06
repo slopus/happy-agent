@@ -76,7 +76,7 @@ export interface HappySessionMetadata {
     homeDir: string;
     host: string;
     hostPid: number;
-    /** Rig's branch/worktree line delta against the merge base with origin/main. */
+    /** Rig's branch/worktree line delta against its Git comparison base. */
     git?: {
         changedFiles: number;
         countsExact: boolean;

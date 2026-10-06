@@ -7,12 +7,26 @@ Classifying each event launched an unnecessary sandboxed PowerShell/Git command.
 now stay with the dedicated metadata watchers; ordinary source changes still reach Git status.
 Direct Git operations and clones explicitly hide their background console windows.
 
-## An unborn branch has no comparison base
+## Every repository has a comparison base
 
-Using the empty tree when HEAD did not exist made an unborn repository look comparable without
-any relationship to origin/main. Comparison is now unavailable until HEAD and its merge base with
-origin/main exist. Local main and empty-tree baselines are never substitutes, so the badge and
-changed-file readers cannot claim a ready comparison against different histories.
+Comparison used to require a merge base with a literal `origin/main`, and an unborn branch had
+none on purpose. That left Changes and the sidebar counts empty for every project the agent
+creates in a new folder (no commits, no remote), for `master` and other default branches, and
+for branches unrelated to origin/main — new projects, exactly where users look first, showed
+nothing. The user reversed the earlier decision.
+
+The base is now the first that exists: the merge base with `origin/<default branch>` (from
+`detectGitDefaultBranch`), the merge base with the local default branch when the remote has none
+(matching how workspaces are cut without a remote), HEAD itself (uncommitted work only), and for
+an unborn branch the empty tree, named by `git hash-object -t tree /dev/null` so sha256
+repositories work. A remote base still wins whenever it exists, so a moved local main never
+replaces it. Comparison is unavailable only when Git itself cannot be read. Because the base can
+now come from a local branch or appear later, a snapshot records `baseRef`, and a worktree
+without a remote base also rescans on its local default branch and on any `origin` ref.
+
+A typed "why unavailable" field for clients was proposed alongside this and dropped: with these
+fallbacks the only cause left is a failed Git read, which a client's "temporarily unavailable"
+message already describes correctly, so the protocol did not change.
 
 ## A missing revision is not a missing file
 

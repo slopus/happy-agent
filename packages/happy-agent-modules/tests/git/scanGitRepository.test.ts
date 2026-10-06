@@ -62,12 +62,58 @@ describe("scanGitRepository", () => {
         expect(snapshot.filesTruncated).toBe(true);
     });
 
-    it("reports an unavailable comparison without origin/main", async () => {
+    it("compares a repository without a remote against its local default branch", async () => {
         const repository = await createRepository();
-        await commitFile(repository, "a.txt", "one\n");
+        const base = await commitFile(repository, "a.txt", "one\n");
+        await git(repository, ["checkout", "--quiet", "-b", "feature"]);
+        await commitFile(repository, "b.txt", "two\n");
+        await writeFile(join(repository, "a.txt"), "one\nmore\n");
+
         const snapshot = await scanGitRepository({ path: repository });
-        expect(snapshot.comparison).toBe("unavailable");
-        expect(snapshot.error).toContain("remote main branch is unavailable");
+        expect(snapshot).toMatchObject({
+            base,
+            baseRef: "refs/heads/main",
+            changedFiles: 2,
+            comparison: "ready",
+            insertions: 2,
+        });
+    });
+
+    it("shows uncommitted work on the default branch without a remote", async () => {
+        const repository = await createRepository();
+        const head = await commitFile(repository, "a.txt", "one\n");
+        await writeFile(join(repository, "a.txt"), "one\ntwo\n");
+
+        const snapshot = await scanGitRepository({ path: repository });
+        expect(snapshot).toMatchObject({ base: head, changedFiles: 1, comparison: "ready" });
+        expect(snapshot.files.map((file) => file.status)).toEqual(["modified"]);
+    });
+
+    it("shows every file in a repository without commits as new", async () => {
+        const repository = await createRepository();
+        await writeFile(join(repository, "staged.txt"), "s1\ns2\n");
+        await git(repository, ["add", "staged.txt"]);
+        await writeFile(join(repository, "untracked.txt"), "u1\n");
+        // Binary files read their old side at the base, which must work for the empty tree.
+        await writeFile(join(repository, "image.bin"), Buffer.from([0, 1, 2]));
+        await git(repository, ["add", "image.bin"]);
+
+        const snapshot = await scanGitRepository({ path: repository });
+        expect(snapshot).toMatchObject({
+            base: "4b825dc642cb6eb9a060e54bf8d69288fbee4904",
+            changedFiles: 3,
+            comparison: "ready",
+            insertions: 3,
+        });
+        expect(snapshot.baseRef).toBeUndefined();
+        expect(snapshot.files.map((file) => [file.path, file.status, file.staged])).toEqual([
+            ["image.bin", "added", true],
+            ["staged.txt", "added", true],
+            ["untracked.txt", "untracked", false],
+        ]);
+        const image = snapshot.files.find((file) => file.path === "image.bin");
+        expect(image?.oldBytes).toBeUndefined();
+        expect(Buffer.from(image?.newBytes ?? [])).toEqual(Buffer.from([0, 1, 2]));
     });
 
     it.runIf(process.platform !== "win32")(

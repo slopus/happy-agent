@@ -261,6 +261,7 @@ async function scanOnce(
     }
     const state: GitChangeState = {
         base: comparison.base,
+        ...(comparison.baseRef === undefined ? {} : { baseRef: comparison.baseRef }),
         changedFiles: changes.length,
         comparison: "ready",
         conflicted,

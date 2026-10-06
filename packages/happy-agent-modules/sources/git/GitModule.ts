@@ -133,7 +133,8 @@ interface CachedSnapshot {
  * Git itself rather than being handed a runner, and unattended reads go
  * through the hardened read-only scanner while mutations and network work use the foreground one.
  *
- * Snapshots compare against the merge base with origin/main, include committed, staged, unstaged,
+ * Snapshots compare against the merge base with the default branch (origin's when it has one,
+ * otherwise the local one), HEAD, or the empty tree, include committed, staged, unstaged,
  * and untracked work, detect binary files, omit large files, and retain both sides of displayed
  * binary deltas.
  */
@@ -348,7 +349,8 @@ export class GitModule implements AgentModule {
     /**
      * The merge base a branch's changes are measured from.
      *
-     * The baseline is always the merge base with `origin/main`; local `main` is never used.
+     * The merge base with `origin/<default branch>` comes first; the local default branch is used
+     * only when the remote has none, then HEAD, then the empty tree for an unborn branch.
      */
     async resolveComparisonBase(
         cwd: string,

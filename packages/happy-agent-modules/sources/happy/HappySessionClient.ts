@@ -109,7 +109,7 @@ export interface HappySessionOperations {
     /** Dismisses a question the person chose not to answer. */
     cancelQuestion: (ctx: Context, agentId: string, requestId: string) => Promise<void>;
 
-    /** The session workspace's changes since its merge base with origin/main. */
+    /** The session workspace's changes against its Git comparison base. */
     gitState: (ctx: Context, agentId: string) => Promise<HappyGitStateResponse>;
 
     /** Every model the phone may offer, across providers. */
