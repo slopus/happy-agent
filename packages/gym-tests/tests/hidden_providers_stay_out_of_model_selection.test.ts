@@ -100,4 +100,33 @@ describe("hidden provider configuration", () => {
             true,
         );
     });
+
+    it("keeps running turns for a session already on a hidden provider", async () => {
+        const gym = await createGym({
+            providerId: "codex",
+            modelId: "openai/gpt-5.6-sol",
+            homeFiles: {
+                "happy/config/happy.toml": [
+                    "[providers]",
+                    "default_enable = false",
+                    "[providers.codex]",
+                    "enabled = true",
+                    "hidden = true",
+                    "credential_isolation = true",
+                ].join("\n"),
+            },
+            inference(request, callIndex) {
+                expect(request.providerId).toBe("codex");
+                return {
+                    content: [{ text: `Hidden provider turn ${callIndex + 1}.`, type: "text" }],
+                };
+            },
+        });
+        running.add(gym);
+        for (let turn = 1; turn <= 2; turn += 1) {
+            gym.terminal.type(`Run hidden provider turn ${turn}.`);
+            gym.terminal.press("enter");
+            await gym.terminal.waitForText(`Hidden provider turn ${turn}.`, 30_000);
+        }
+    });
 });

@@ -594,23 +594,22 @@ enabled = true
 
 `hidden` defaults to `false` and works for built-in, named, and smart providers. It is a
 machine-wide, file-only setting: repository configuration cannot change it, and there is no
-API field or mutation for hiding.
+mutation for hiding. `GET /v0/config` reports it as each provider's `hidden` field.
 
-A hidden provider and its known models remain in the catalog with the existing `enabled = false`
-state, so clients omit them from model selection. Its credentials, model filters, and history are
-retained. New turns and subagents cannot select it directly, even by explicitly naming its provider
-ID. In the example above, select `router`: it can still run inference through the hidden `codex`
-account. Hiding does not disable the underlying account. Set `enabled = false` to prevent both
-direct and routed inference through that account.
+Hiding is display-only. Clients omit a hidden provider and its models from model selection, the
+daemon leaves it out of the model guidance and the model choices for new subagents, and a default
+never falls back to it. `enabled` is unaffected: it says only whether the account is on and may be
+routed to. Sessions already on a hidden provider keep running turns and compaction as before. In
+the example above, select `router`: it routes through the hidden `codex` account. Set
+`enabled = false` to stop both direct and routed inference through an account, and delete its table
+to remove it entirely.
 
-Credential scans and runtime enable overrides control whether the account can serve the router;
-they do not unhide it for direct selection. Account-quota polling and explicit provider verification
-continue normally for enabled hidden accounts. Vendor quota readings remain attached to concrete
-accounts; a smart provider does not synthesize a combined quota. Consumed-token accounting is not
-duplicated between the smart provider and its backing accounts.
+Account-quota polling and explicit provider verification continue normally for hidden accounts.
+Vendor quota readings remain attached to concrete accounts; a smart provider does not synthesize a
+combined quota. Consumed-token accounting is not duplicated between the smart provider and its
+backing accounts.
 
-Set `hidden = false` or remove the setting and reload the daemon to restore direct selection.
-Unhiding does not force an otherwise disabled provider to become enabled.
+Set `hidden = false` or remove the setting and reload the daemon to show the provider again.
 
 The [accounts and models recipe](recipe/accounts-and-models.md) walks through adding an account and
 pooling accounts behind a smart provider, and covers model filters, defaults, and switching sessions.

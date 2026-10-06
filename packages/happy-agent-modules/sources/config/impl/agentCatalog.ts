@@ -221,16 +221,25 @@ export function agentModels(
     isAccountEnabled?: (id: string) => boolean,
 ): readonly CatalogAgentModel[] {
     const values = configuration.values;
-    const available = agentModelCatalog(configuration, isProviderEnabled, isAccountEnabled)
+    const hidden = (candidate: { providerId: string }) =>
+        values.providers[candidate.providerId]?.hidden === true;
+    const enabled = agentModelCatalog(configuration, isProviderEnabled, isAccountEnabled)
         .filter((candidate) => candidate.enabled)
         .map(({ enabled: _enabled, ...candidate }) => candidate as CatalogAgentModel);
+    // Hidden routes stay valid for existing sessions but never stand in as the default.
+    const available = [
+        ...enabled.filter((candidate) => !hidden(candidate)),
+        ...enabled.filter(hidden),
+    ];
     const wantedModel = values.defaults.modelId;
     const wantedProvider = values.defaults.providerId;
     const chosen =
         available.find(
             (candidate) =>
                 candidate.id === wantedModel &&
-                (wantedProvider === undefined || candidate.providerId === wantedProvider),
+                (wantedProvider === undefined
+                    ? !hidden(candidate)
+                    : candidate.providerId === wantedProvider),
         ) ?? undefined;
     if (chosen === undefined) {
         const standIn = available[0];
@@ -265,8 +274,7 @@ export function agentModels(
 export function agentModelCatalog(
     configuration: HappyAgentConfiguration,
     isProviderEnabled: (id: string) => boolean = (id) =>
-        configuration.values.providers[id]?.enabled !== false &&
-        configuration.values.providers[id]?.hidden !== true,
+        configuration.values.providers[id]?.enabled !== false,
     isAccountEnabled: (id: string) => boolean = (id) =>
         configuration.values.providers[id]?.enabled !== false,
 ): readonly ConfiguredAgentModel[] {

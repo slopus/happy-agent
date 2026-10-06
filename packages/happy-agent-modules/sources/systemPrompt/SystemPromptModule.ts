@@ -103,7 +103,7 @@ export class SystemPromptModule implements AgentModule {
      * the daemon is running, so it is rebuilt for each inference.
      */
     get #models(): readonly SystemPromptAvailableModel[] {
-        const models = this.#config.models.map(({ id, name, providerId }) => ({
+        const models = this.#config.visibleModels.map(({ id, name, providerId }) => ({
             id,
             name,
             providerId,

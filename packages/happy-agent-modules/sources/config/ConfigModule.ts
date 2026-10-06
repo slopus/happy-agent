@@ -1834,12 +1834,19 @@ export class ConfigModule implements AgentModule {
         });
     }
 
-    /** Public availability means direct selection; hidden accounts can still back smart routes. */
+    /** Whether the account is on and may be routed to. Hiding never changes this. */
     isProviderEnabled(providerId: string): boolean {
-        return (
-            this.configuration.values.providers[providerId]?.hidden !== true &&
-            this.#isAccountEnabled(providerId)
-        );
+        return this.#isAccountEnabled(providerId);
+    }
+
+    /** Display-only: a hidden provider stays out of model pickers and new-subagent choices. */
+    isProviderHidden(providerId: string): boolean {
+        return this.configuration.values.providers[providerId]?.hidden === true;
+    }
+
+    /** The enabled models a picker offers, which leaves out hidden providers. */
+    get visibleModels(): readonly AgentModel[] {
+        return this.models.filter((model) => !this.isProviderHidden(model.providerId));
     }
 
     #isAccountEnabled(providerId: string): boolean {
@@ -1860,7 +1867,7 @@ export class ConfigModule implements AgentModule {
     isSubagentModelAllowed(providerId: string, modelId: string): boolean {
         const provider = this.configuration.values.providers[providerId];
         return (
-            provider?.hidden !== true &&
+            !this.isProviderHidden(providerId) &&
             provider?.includeSubagentModels?.includes(modelId) !== false &&
             provider?.excludeSubagentModels?.includes(modelId) !== true
         );

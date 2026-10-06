@@ -6024,6 +6024,7 @@ export class ApiModule implements AgentModule {
                             : compatibility
                         : provider.type,
                 enabled: this.#config.isProviderEnabled(providerId),
+                hidden: this.#config.isProviderHidden(providerId),
                 models: [],
             };
         }
@@ -6035,6 +6036,7 @@ export class ApiModule implements AgentModule {
                     type:
                         compatibility === null || compatibility === "gym" ? "codex" : compatibility,
                     enabled: this.#config.isProviderEnabled(route.providerId),
+                    hidden: this.#config.isProviderHidden(route.providerId),
                     models: [],
                 };
                 providers[route.providerId] = provider;
@@ -6508,6 +6510,7 @@ interface ApiModelDefinition {
 interface ApiProviderDefinition {
     readonly type: string;
     readonly enabled: boolean;
+    readonly hidden: boolean;
     readonly models: ApiProviderModelReference[];
 }
 

@@ -164,7 +164,7 @@ export class RemoteAgent implements CodingAssistantAgentBackend {
 
     get modelChoices(): readonly CodingAssistantModelChoice[] {
         return Object.entries(this.#config.providers).flatMap(([providerId, provider]) =>
-            provider.enabled
+            provider.enabled && provider.hidden !== true
                 ? this.#modelsForProvider(providerId).map((model) => ({ model, providerId }))
                 : [],
         );

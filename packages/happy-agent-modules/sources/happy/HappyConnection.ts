@@ -1063,7 +1063,7 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
 
     /** Every model the phone may offer, across providers. */
     models(): readonly HappyModel[] {
-        return this.#config.models.map((model) => ({
+        return this.#config.visibleModels.map((model) => ({
             defaultEffort: model.defaultEffort,
             effortLevels: [...model.effortLevels],
             id: model.id,

@@ -41,8 +41,9 @@ describe("hidden providers", () => {
                 "enabled = true",
             ].join("\n"),
         );
-        expect(config.models.some((model) => model.providerId === "router")).toBe(true);
-        expect(config.models.some((model) => model.providerId === "codex")).toBe(false);
+        expect(config.visibleModels.some((model) => model.providerId === "router")).toBe(true);
+        expect(config.visibleModels.some((model) => model.providerId === "codex")).toBe(false);
+        expect(config.models.some((model) => model.providerId === "codex")).toBe(true);
         const read = vi.spyOn(config, "readProviderUsageUnchecked").mockResolvedValue(null);
         const ctx = createRootContext();
         await config.readProviderUsage(ctx, "codex");
@@ -63,37 +64,52 @@ describe("hidden providers", () => {
         },
     );
 
-    it("keeps hidden providers and their models in the catalog but closes direct selection", async () => {
+    it("reports hidden separately from enabled and keeps existing work running", async () => {
         const config = await configuration("[providers.codex]\nenabled = true\nhidden = true\n");
         expect(config.configuration.values.providers.codex).toMatchObject({
             enabled: true,
             hidden: true,
         });
         expect(config.providerIds).toContain("codex");
+        expect(config.isProviderHidden("codex")).toBe(true);
+        expect(config.isProviderEnabled("codex")).toBe(true);
         const catalog = config.catalog.filter((model) => model.providerId === "codex");
         expect(catalog.length).toBeGreaterThan(0);
-        expect(catalog.every((model) => !model.enabled)).toBe(true);
-        expect(config.models.some((model) => model.providerId === "codex")).toBe(false);
-        expect(config.offeredModels.some((model) => model.providerId === "codex")).toBe(true);
+        expect(catalog.every((model) => model.enabled)).toBe(true);
+        expect(config.models.some((model) => model.providerId === "codex")).toBe(true);
+        expect(config.visibleModels.some((model) => model.providerId === "codex")).toBe(false);
         expect(config.isSubagentModelAllowed("codex", "openai/gpt-5.6-sol")).toBe(false);
-        const providers = config.providers;
-        config.setProviderEnabled("codex", true);
-        expect(config.isProviderEnabled("codex")).toBe(false);
-        await expect(providers.resolve("codex", "openai/gpt-5.6-sol")).rejects.toThrow("disabled");
     });
 
-    it("retains the startup and historical catalog when every provider is hidden", async () => {
+    it("never lets a hidden account stand in as the default", async () => {
+        const config = await configuration(
+            [
+                "[providers.claude]",
+                "enabled = true",
+                "hidden = true",
+                "[providers.codex]",
+                "enabled = true",
+                "[defaults]",
+                'model = "anthropic/opus-5"',
+            ].join("\n"),
+        );
+        expect(config.models[0]?.providerId).toBe("codex");
+        expect(config.models.some((model) => model.providerId === "claude")).toBe(true);
+    });
+
+    it("keeps every route usable when every provider is hidden", async () => {
         const ids = ["bedrock", "claude", "codex", "grok"];
         const config = await configuration(
             ids.map((id) => `[providers.${id}]\nenabled = true\nhidden = true`).join("\n"),
         );
-        expect(config.models).toEqual([]);
+        expect(config.visibleModels).toEqual([]);
+        expect(config.models.length).toBeGreaterThan(0);
         expect(config.offeredModels.length).toBeGreaterThan(0);
-        expect(config.catalog.every((model) => !model.enabled)).toBe(true);
+        expect(config.catalog.every((model) => model.enabled)).toBe(true);
         expect(config.providerIds).toEqual(expect.arrayContaining(ids));
     });
 
-    it("does not let scans or persisted enable overrides unhide a provider", async () => {
+    it("keeps hiding independent of scans and persisted enable overrides", async () => {
         const config = await configuration("[providers.codex]\nhidden = true\n");
         const ctx = createRootContext();
         const scan = new ProviderScanModule(config);
@@ -103,11 +119,12 @@ describe("hidden providers", () => {
         const result = await scan.scan(ctx);
         expect(result.providers.find((entry) => entry.providerId === "codex")).toMatchObject({
             credentials: "available",
-            enabled: false,
+            enabled: true,
             remembered: true,
         });
         const restarted = await ConfigModule.load(config.configuration.paths.happyHome);
-        expect(restarted.isProviderEnabled("codex")).toBe(false);
+        expect(restarted.isProviderEnabled("codex")).toBe(true);
+        expect(restarted.isProviderHidden("codex")).toBe(true);
         expect(restarted.configuration.values.providers.codex).toMatchObject({
             hidden: true,
             enabled: true,
@@ -119,6 +136,7 @@ describe("hidden providers", () => {
         );
         const visible = await ConfigModule.load(config.configuration.paths.happyHome);
         expect(visible.isProviderEnabled("codex")).toBe(true);
+        expect(visible.isProviderHidden("codex")).toBe(false);
     });
 
     it("preserves a runtime hidden setting when generated runtime state is rewritten", async () => {
@@ -136,7 +154,7 @@ describe("hidden providers", () => {
             "hidden = true",
         );
         const restarted = await ConfigModule.load(config.configuration.paths.happyHome);
-        expect(restarted.isProviderEnabled("codex")).toBe(false);
+        expect(restarted.isProviderHidden("codex")).toBe(true);
     });
 
     it("excludes hidden smart providers but offers visible routes backed by hidden accounts", async () => {
@@ -159,17 +177,17 @@ describe("hidden providers", () => {
             ].join("\n"),
         );
         expect(config.catalog.some((model) => model.providerId === "router")).toBe(true);
-        expect(config.models.some((model) => model.providerId === "router")).toBe(true);
+        expect(config.visibleModels.some((model) => model.providerId === "router")).toBe(true);
         expect(
-            config.models.every(
+            config.visibleModels.every(
                 (model) => model.providerId === "claude" || model.providerId === "router",
             ),
         ).toBe(true);
-        config.setProviderEnabled("hidden_router", true);
-        expect(config.isProviderEnabled("hidden_router")).toBe(false);
+        expect(config.models.some((model) => model.providerId === "hidden_router")).toBe(true);
+        expect(config.isSubagentModelAllowed("hidden_router", "anthropic/opus-5")).toBe(false);
     });
 
-    it("gates direct scripted selection without preventing explicit verification", async () => {
+    it("keeps a hidden scripted account usable directly and verifiable", async () => {
         const config = await configuration("[providers.codex]\nenabled = true\nhidden = true\n");
         const source = new AgentProviders();
         const resolve = vi.fn(() => new TestProvider());
@@ -184,19 +202,19 @@ describe("hidden providers", () => {
         const scripted = await ConfigModule.load(config.configuration.paths.happyHome, {
             inference: { providers: source, models: [model] },
         });
-        expect(scripted.models).toEqual([]);
+        expect(scripted.models).toEqual([model]);
+        expect(scripted.visibleModels).toEqual([]);
         expect(scripted.offeredModels).toEqual([model]);
         expect(scripted.catalog).toContainEqual(
-            expect.objectContaining({ id: model.id, enabled: false }),
+            expect.objectContaining({ id: model.id, enabled: true }),
         );
-        await expect(scripted.providers.resolve("codex", model.id)).rejects.toThrow("disabled");
-        expect(resolve).not.toHaveBeenCalled();
+        await expect(scripted.providers.resolve("codex", model.id)).resolves.not.toBeNull();
         const scan = new ProviderScanModule(scripted);
         vi.spyOn(scripted, "probeLocalProviderCredentials").mockResolvedValue("available");
         await expect(scan.verify(createRootContext(), "codex", "inference")).resolves.toMatchObject(
             { status: "passed", modelId: model.id },
         );
-        expect(resolve).toHaveBeenCalledOnce();
+        expect(resolve).toHaveBeenCalled();
     });
 
     it("runs a real smart router over hidden scripted accounts and honors account disablement", async () => {
@@ -219,8 +237,7 @@ describe("hidden providers", () => {
             inference: (real) => ({ models: real.models, providers: source }),
         });
         const model = "openai/gpt-5.6-sol";
-        expect(scripted.models.some((entry) => entry.providerId === "router")).toBe(true);
-        await expect(scripted.providers.resolve("codex", model)).rejects.toThrow("disabled");
+        expect(scripted.visibleModels.some((entry) => entry.providerId === "router")).toBe(true);
         const router = await scripted.providers.resolve("router", model);
         expect(router).not.toBeNull();
         const session = await router!.session("agent", { instructions: "", tools: [] });

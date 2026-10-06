@@ -116,19 +116,17 @@ and do not disable an account or affect a running turn. The provider library sha
 with inference recovery and bounds each exchange. An exchange already rotating a token may
 finish saving it after shutdown cancels the maintenance observer.
 
-Set `hidden = true` in a machine's `[providers.<id>]` table to prevent direct account selection
-while allowing an enabled account to back a smart provider. The default is `false`. Hidden providers and their complete model lists
-remain in the public catalog with the existing `enabled = false` values, so clients omit them from
-model selection without a new API field. New turns, subagents, and direct internal inference cannot
-select them. Smart routing, account-quota polling, and explicit verification remain available;
-the underlying `enabled` state controls whether an account can serve a router. Disabling an account
-also aborts routed inference through it. Credential scans and runtime enable overrides do not
-unhide an account. The saved enablement preference is retained:
-set `hidden = false` or remove the setting and restart to restore ordinary enablement rules.
-Hiding is file-only configuration and takes effect on daemon restart; there is no API mutation for it.
-The internal `offeredModels` catalog also retains hidden routes so startup and stored agents remain
-valid even when every account is hidden; the direct-selection gate prevents starting work on those
-account IDs. The independent account gate controls router eligibility and cancellation.
+Set `hidden = true` in a machine's `[providers.<id>]` table to keep a provider out of model
+pickers. The default is `false`. Hiding is display-only: `isProviderEnabled` and every catalog
+`enabled` value ignore it and describe only whether the account is on and routable, and
+`isProviderHidden` answers the flag separately for the public config's `hidden` field. `models`
+therefore still contains hidden routes, so existing sessions keep running turns and compaction on
+them. `visibleModels` is the picker view: phone model lists and the model guidance in the system
+prompt read it, and `isSubagentModelAllowed` rejects hidden providers for new subagents. When the
+default model has no explicit provider, or no default matches, visible routes win, so a hidden
+account never becomes the default by accident. Smart routing, account-quota polling, and explicit
+verification are unchanged. Hiding is file-only configuration and takes effect on daemon restart;
+there is no API mutation for it.
 
 A provider may independently narrow delegation with `include_subagent_models` and
 `exclude_subagent_models`. These use the same exact model IDs and exclusion precedence as

@@ -57,15 +57,15 @@ enabled = true
 | Failure after output started   | Not replayed on another account.                                             |
 | Not supported                  | Weights, usage-aware or priority routing, time windows, UI or API for pools. |
 
-| Setting           | Effect                                              |
-| ----------------- | --------------------------------------------------- |
-| `hidden = true`   | Not selectable directly; still routed to by a pool. |
-| `enabled = false` | Off entirely, including routing through pools.      |
-| Delete the table  | Removes the account.                                |
+| Setting           | Effect                                                |
+| ----------------- | ----------------------------------------------------- |
+| `hidden = true`   | Left out of model pickers; still routed to by a pool. |
+| `enabled = false` | Off entirely, including routing through pools.        |
+| Delete the table  | Removes the account.                                  |
 
-- Sessions already on a hidden provider are currently rejected. Switch them to the pool first
-  (see [Switching existing sessions](#switching-existing-sessions)), and update `defaults.provider`
-  if it names a hidden account.
+- Sessions already on a hidden provider keep working. Move them to the pool with
+  [Switching existing sessions](#switching-existing-sessions) if they should rotate, and update
+  `defaults.provider` if it names a hidden account.
 - A hidden account that no pool lists goes unused.
 - Pools combine only same-type accounts, and Bedrock only within one region; other members are
   skipped silently.
