@@ -66,6 +66,10 @@ provider happens to be serving that model. A Claude model served over Bedrock st
 tools. Only when the model says nothing does it fall back to `scope.agent.providerKind`, and only
 when that says nothing either does it default to Codex.
 
+`moonshotai/kimi-k3` selects Kimi's own tools. `zai/glm-5.3` selects an explicit GLM surface
+with Claude-shaped tools and a text-only Read. Both decisions follow the model family when
+served through Bedrock.
+
 `assembleComputeTools` (`tools/assembleComputeTools.ts`) then switches exhaustively over the vendor
 and builds that vendor's array. `instructions()` picks its text the same way: each vendor's rules
 are written in terms of that vendor's own tool names, since instructions that name `write_file` to
@@ -80,10 +84,20 @@ Each directory under `tools/` has its own README describing every tool it ships.
 | Claude | `BashOutput`, `Bash`, `Read`, `Edit`, `Write`, `Glob`, `Grep`, `BashStop`, `BashInput`                                                                                 | [`tools/claude/README.md`](./tools/claude/README.md) |
 | Codex  | `exec_command`, `write_stdin`, `kill_session`, `apply_patch`, `view_image`                                                                                             | [`tools/codex/README.md`](./tools/codex/README.md)   |
 | Grok   | `run_terminal_command`, `read_file`, `write`, `search_replace`, `list_dir`, `grep`, `get_command_or_subagent_output`, `kill_command_or_subagent`, `send_command_input` | [`tools/grok/README.md`](./tools/grok/README.md)     |
+| Kimi   | `Bash`, `Read`, `Write`, `Edit`, `Glob`, `Grep`, `ReadMediaFile`, `TaskOutput`, `TaskInput`, `TaskStop`                                                                | [`tools/kimi/README.md`](./tools/kimi/README.md)     |
+| GLM    | Claude-shaped shell and file tools, with text-only `Read`                                                                                                              | [`tools/glm/README.md`](./tools/glm/README.md)       |
 
 The vendor descriptors under `packages/happy-providers/sources/vendors/*/tools/` are the truth these
 surfaces are matched against — names, argument names, defaults, and the wording models were trained
 on. These departures from that truth are deliberate:
+
+- **Kimi implements a documented native subset.** Its own fixed array adds shell-only TaskOutput
+  and TaskStop plus the product TaskInput extension. Bash backgrounds on timeout using the shared
+  process lifecycle. Search uses bounded filesystem traversal and JavaScript regex, and media
+  accepts filesystem images only. See [the Kimi tools](./tools/kimi/README.md) for bounds,
+  supported arguments, and native differences. Provider reference descriptors remain unchanged.
+- **GLM's Claude-shaped Read returns text only.** Its model rejects image input, so the fixed
+  GLM array refuses image paths before producing image blocks. See [the GLM tools](./tools/glm/README.md).
 
 - **File mutations accept explicit elevation.** Codex `apply_patch` accepts optional
   `sandbox_permissions: "require_escalated"` and `justification`; Claude `Write` and `Edit` accept
@@ -211,8 +225,9 @@ top) and the tail for a command (whose newest lines say how it went).
 - `dispose(ctx)` — disposes every cached compute at host shutdown.
 
 Also exported from the package: `computeToolVendor`, `computeToolSelectionSchema`,
-`computeToolVendorSchema`, `assembleComputeTools`, and the three per-vendor assemblers
-(`assembleClaudeComputeTools`, `assembleCodexComputeTools`, `assembleGrokComputeTools`) for a host
+`computeToolVendorSchema`, `assembleComputeTools`, and the five per-vendor assemblers
+(`assembleClaudeComputeTools`, `assembleCodexComputeTools`, `assembleGrokComputeTools`,
+`assembleKimiComputeTools`, `assembleGlmComputeTools`) for a host
 that needs one vendor's array directly.
 
 Archiving one agent disposes only that agent's cached compute. An explicit abort keeps the compute

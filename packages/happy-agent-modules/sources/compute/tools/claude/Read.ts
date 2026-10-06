@@ -73,13 +73,30 @@ const claudeReadResultSchema = Type.Union([
 
 /** Claude's `Read`: a numbered page of a file, an image, or a plain refusal to parse a format. */
 export function claudeReadTool(compute: Compute, reads: FileReadLog) {
+    return createClaudeReadTool(compute, reads, true);
+}
+
+/** The same Claude-shaped reader for GLM's text-only fixed tool array. */
+export function claudeTextReadTool(compute: Compute, reads: FileReadLog) {
+    return createClaudeReadTool(compute, reads, false);
+}
+
+function createClaudeReadTool(compute: Compute, reads: FileReadLog, images: boolean) {
     return defineAgentTool({
         name: "Read",
         defer: false,
         capabilities: [
             "Read and modify files, run shell commands, inspect images, and manage background processes.",
         ],
-        description: CLAUDE_READ_DESCRIPTION,
+        description: images
+            ? CLAUDE_READ_DESCRIPTION
+            : CLAUDE_READ_DESCRIPTION.replace(
+                  "- This tool reads common image formats (for example PNG and JPG) and presents them visually.",
+                  "- This tool reads text files. Image input is not supported by the current model.",
+              ).replace(
+                  "- You will regularly be asked to read screenshots. If the user provides a path to a screenshot, ALWAYS use this tool to view the file at the path. This tool will work with all temporary file paths.\n",
+                  "",
+              ),
         parameters: Type.Object(
             {
                 file_path: Type.String({ description: "The absolute path to the file to read" }),
@@ -129,6 +146,13 @@ export function claudeReadTool(compute: Compute, reads: FileReadLog) {
                 };
             }
             if (imageMediaTypeForPath(filePath) !== undefined) {
+                if (!images) {
+                    return {
+                        outcome: "unsupported" as const,
+                        path: filePath,
+                        text: "This model does not support image input. Convert the image to text before reading it.",
+                    };
+                }
                 const permissions = computePermissionsForContext(ctx);
                 const image = await readImageForModel(compute, reads, ctx, permissions, filePath);
                 return { outcome: "image" as const, path: filePath, image };

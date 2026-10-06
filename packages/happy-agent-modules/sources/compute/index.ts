@@ -70,3 +70,5 @@ export { assembleComputeTools } from "./tools/assembleComputeTools.js";
 export { assembleClaudeComputeTools } from "./tools/claude/assembleClaudeComputeTools.js";
 export { assembleCodexComputeTools } from "./tools/codex/assembleCodexComputeTools.js";
 export { assembleGrokComputeTools } from "./tools/grok/assembleGrokComputeTools.js";
+export { assembleKimiComputeTools } from "./tools/kimi/assembleKimiComputeTools.js";
+export { assembleGlmComputeTools } from "./tools/glm/assembleGlmComputeTools.js";

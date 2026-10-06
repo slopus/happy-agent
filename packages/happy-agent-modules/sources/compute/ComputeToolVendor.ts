@@ -7,6 +7,8 @@ export const computeToolVendorSchema = Type.Union([
     Type.Literal("claude"),
     Type.Literal("codex"),
     Type.Literal("grok"),
+    Type.Literal("kimi"),
+    Type.Literal("glm"),
 ]);
 
 /** The TypeScript type inferred from {@link computeToolVendorSchema}. */

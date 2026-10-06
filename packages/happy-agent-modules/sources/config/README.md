@@ -159,6 +159,14 @@ AWS credential provider, so process credentials are renewed without storing retu
 When no authentication source is named, Bedrock tries its bearer-token environment variable first
 and then the ambient AWS credential chain.
 
+Kimi K3 (`moonshotai/kimi-k3`) and GLM 5.3 (`zai/glm-5.3`) are available only through Bedrock
+Runtime. Both use the Runtime Chat Completions API and the account's existing AWS or bearer
+credentials. The provider resolves the US or global inference profile for the selected region;
+AWS account eligibility and regional availability still apply. A per-model `transport = "mantle"`
+override is rejected. Both expose low, high, and max reasoning effort and a 1M context window.
+Kimi defaults to high effort and uses Kimi Code's prompt and tools, including image reads.
+GLM defaults to max effort and uses the published Claude Code coding harness with text-only reads.
+
 A virtual smart provider uses `type = "smart"`, `strategy = "round_robin"`, and an ordered
 `providers` array. For each exact model, the first valid concrete member establishes the provider
 kind; missing providers, nested smart providers, other kinds, unsupported models, and incompatible

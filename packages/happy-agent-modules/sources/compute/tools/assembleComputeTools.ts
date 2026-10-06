@@ -6,6 +6,8 @@ import type { FileReadLog } from "../../impl/FileReadLog.js";
 import { assembleClaudeComputeTools } from "./claude/assembleClaudeComputeTools.js";
 import { assembleCodexComputeTools } from "./codex/assembleCodexComputeTools.js";
 import { assembleGrokComputeTools } from "./grok/assembleGrokComputeTools.js";
+import { assembleKimiComputeTools } from "./kimi/assembleKimiComputeTools.js";
+import { assembleGlmComputeTools } from "./glm/assembleGlmComputeTools.js";
 
 /**
  * The one place a machine becomes a tool surface.
@@ -26,5 +28,9 @@ export function assembleComputeTools(
             return assembleCodexComputeTools(compute, reads);
         case "grok":
             return assembleGrokComputeTools(compute, reads);
+        case "kimi":
+            return assembleKimiComputeTools(compute, reads);
+        case "glm":
+            return assembleGlmComputeTools(compute, reads);
     }
 }

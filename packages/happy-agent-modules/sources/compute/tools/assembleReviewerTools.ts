@@ -6,6 +6,8 @@ import type { FileReadLog } from "../../impl/FileReadLog.js";
 import { assembleClaudeReviewerTools } from "./claude/assembleClaudeReviewerTools.js";
 import { assembleCodexReviewerTools } from "./codex/assembleCodexReviewerTools.js";
 import { assembleGrokReviewerTools } from "./grok/assembleGrokReviewerTools.js";
+import { assembleKimiReviewerTools } from "./kimi/assembleKimiComputeTools.js";
+import { assembleGlmReviewerTools } from "./glm/assembleGlmComputeTools.js";
 
 /**
  * The one place the automatic permission reviewer becomes a tool surface.
@@ -30,5 +32,9 @@ export function assembleReviewerTools(
             return assembleCodexReviewerTools(compute);
         case "grok":
             return assembleGrokReviewerTools(compute, reads);
+        case "kimi":
+            return assembleKimiReviewerTools(compute, reads);
+        case "glm":
+            return assembleGlmReviewerTools(compute, reads);
     }
 }

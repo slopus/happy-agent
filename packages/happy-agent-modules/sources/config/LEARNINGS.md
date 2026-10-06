@@ -1,5 +1,16 @@
 # Config module learnings
 
+## Kimi K3 and GLM 5.3 are Bedrock Runtime routes
+
+AWS documents Kimi K3 and GLM 5.3 on the Runtime Chat Completions API. Their curated entries
+use the canonical IDs `moonshotai/kimi-k3` and `zai/glm-5.3`; the provider resolves the US or
+global inference profile while preserving explicit region and endpoint overrides. A forced
+Mantle override hides that route and fails visibly if requested directly. Both offer only
+low, high, and max effort. Kimi defaults to its coding harness's high effort; GLM defaults
+to the API's max effort. Their 1M windows compact at 850k: Kimi's published strategy triggers
+at 85%, and the same threshold leaves GLM room for its documented 128k output and a summary.
+They remain absent from native Codex, Claude, and Grok catalogs.
+
 ## Inference speed preserves the provider tier
 
 Regular, Fast, and Ultrafast are distinct choices: Regular clears the tier, Fast sends

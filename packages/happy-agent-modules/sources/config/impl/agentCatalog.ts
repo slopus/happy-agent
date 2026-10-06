@@ -14,6 +14,8 @@ import {
     GrokApiKeyCredential,
     GrokProvider,
     GrokSessionCredential,
+    KimiProvider,
+    GlmProvider,
     loadCodexCredential,
     resolveClaudeCodeExecutablePath,
     type BaseProvider,
@@ -62,6 +64,14 @@ const CLAUDE_CONTEXT_WINDOW = 1_000_000;
 const CLAUDE_AUTO_COMPACT_WINDOW = 400_000;
 
 const MODEL_CONTEXTS: Readonly<Record<string, AgentModelContext>> = Object.freeze({
+    "moonshotai/kimi-k3": Object.freeze({
+        contextWindow: 1_000_000,
+        autoCompactWindow: 850_000,
+    }),
+    "zai/glm-5.3": Object.freeze({
+        contextWindow: 1_000_000,
+        autoCompactWindow: 850_000,
+    }),
     "anthropic/fable-5-1": Object.freeze({
         contextWindow: CLAUDE_CONTEXT_WINDOW,
         autoCompactWindow: CLAUDE_AUTO_COMPACT_WINDOW,
@@ -195,7 +205,7 @@ const BEDROCK_RESOLD_MODEL_IDS: ReadonlySet<string> = new Set([
     "anthropic/opus-4-8",
 ]);
 
-/** Bedrock resells a documented subset of the native catalogs and adds one model of its own. */
+/** Bedrock resells a documented subset and adds models supported only through AWS. */
 const BEDROCK_CATALOG: readonly CatalogAgentModel[] = [
     ...CATALOG.filter((candidate) => BEDROCK_RESOLD_MODEL_IDS.has(candidate.id)).map(
         (candidate) => {
@@ -204,6 +214,8 @@ const BEDROCK_CATALOG: readonly CatalogAgentModel[] = [
         },
     ),
     model("bedrock", "openai/gpt-5.4", "GPT-5.4", ["off", "low", "medium", "high", "xhigh"]),
+    model("bedrock", "moonshotai/kimi-k3", "Kimi K3", ["low", "high", "max"], "high"),
+    model("bedrock", "zai/glm-5.3", "GLM 5.3", ["low", "high", "max"], "max"),
 ];
 
 /**
@@ -502,6 +514,11 @@ const BEDROCK_MANTLE_REGIONS: Readonly<Record<string, readonly string[]>> = Obje
  */
 function modelAvailableOnProvider(provider: ConcreteConfiguredProvider, modelId: string): boolean {
     if (provider.type !== "bedrock") return true;
+    if (
+        (modelId === "moonshotai/kimi-k3" || modelId === "zai/glm-5.3") &&
+        provider.modelOverrides?.[modelId]?.transport === "mantle"
+    )
+        return false;
     const mantleRegions = BEDROCK_MANTLE_REGIONS[modelId];
     if (mantleRegions === undefined) return true;
     if (resolveAnthropicBedrockTransport(provider, modelId) !== "mantle") return true;
@@ -701,6 +718,19 @@ async function createProvider(
             : { region: override?.region ?? provider.region }),
         ...retries,
     };
+    if (
+        selectedModel?.startsWith("moonshotai/") === true ||
+        selectedModel?.startsWith("zai/") === true
+    ) {
+        if (override?.transport === "mantle") {
+            throw new Error(
+                `${selectedModel === "moonshotai/kimi-k3" ? "Kimi K3" : "GLM 5.3"} requires Bedrock Runtime.`,
+            );
+        }
+        return selectedModel.startsWith("moonshotai/")
+            ? new KimiProvider(shared)
+            : new GlmProvider(shared);
+    }
     return selectedModel?.startsWith("anthropic/") === true
         ? new AnthropicProvider({
               ...shared,

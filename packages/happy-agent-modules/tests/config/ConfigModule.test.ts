@@ -858,6 +858,8 @@ describe("ConfigModule", () => {
             "anthropic/fable-5",
             "anthropic/opus-4-8",
             "openai/gpt-5.4",
+            "moonshotai/kimi-k3",
+            "zai/glm-5.3",
         ]);
     });
 

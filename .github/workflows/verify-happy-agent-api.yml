@@ -34,6 +34,11 @@ on:
                 required: true
                 default: false
                 type: boolean
+            bedrock_models:
+                description: Run the targeted Kimi K3 and GLM 5.3 tool gym
+                required: false
+                default: false
+                type: boolean
 
 permissions:
     contents: read
@@ -103,6 +108,20 @@ jobs:
                     tests/happy_api_chaos_files.test.ts \
                     tests/happy_api_files_git.test.ts \
                     tests/happy_api_git_matrix.test.ts \
+                    --maxWorkers=1 \
+                    --retry=0
+
+            - name: Build the Bedrock tool gym image
+              if: ${{ github.event_name == 'workflow_dispatch' && inputs.bedrock_models }}
+              run: pnpm build:gym
+
+            - name: Verify Kimi K3 and GLM 5.3 tools through Bedrock Runtime
+              if: ${{ github.event_name == 'workflow_dispatch' && inputs.bedrock_models }}
+              env:
+                  HAPPY_TERMINAL_GYM_SKIP_BUILD: "1"
+              run: |
+                  pnpm --filter @slopus/happy-terminal-gym-tests exec vitest run \
+                    tests/bedrock_kimi_glm_native_tools.test.ts \
                     --maxWorkers=1 \
                     --retry=0
 

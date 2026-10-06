@@ -71,6 +71,8 @@ export async function searchComputeFileContents(
         readonly outputMode?: ComputeSearchOutputMode;
         readonly caseInsensitive?: boolean;
         readonly multiline?: boolean;
+        /** Count each occurrence rather than each matching line for native count_matches tools. */
+        readonly countOccurrences?: boolean;
         readonly before?: number;
         readonly after?: number;
         readonly lineNumbers?: boolean;
@@ -138,7 +140,7 @@ export async function searchComputeFileContents(
         const { matchingLineNumbers, totalMatches } =
             options.multiline === true
                 ? scanWholeFile(expression, content, ctx, regexBudget)
-                : scanLines(expression, lines, ctx, regexBudget);
+                : scanLines(expression, lines, ctx, regexBudget, options.countOccurrences === true);
         if (regexBudget.incomplete || regexBudget.exhausted) outputTruncated = true;
         if (totalMatches === 0) {
             if (regexBudget.exhausted) break;
@@ -196,6 +198,7 @@ function scanLines(
     lines: readonly string[],
     ctx: Context,
     budget: SearchRegexBudget,
+    countOccurrences = false,
 ): FileScan {
     const matchingLineNumbers: number[] = [];
     let totalMatches = 0;
@@ -205,7 +208,20 @@ function scanLines(
             if (budget.exhausted) break;
             continue;
         }
-        totalMatches += 1;
+        if (countOccurrences) {
+            const candidate = line.slice(0, MAX_REGEX_LINE_CHARACTERS);
+            const everyMatch = new RegExp(expression.source, `${expression.flags}g`);
+            for (const _match of candidate.matchAll(everyMatch)) {
+                totalMatches += 1;
+                budget.remaining -= 1;
+                if (budget.remaining <= 0) {
+                    budget.exhausted = true;
+                    break;
+                }
+            }
+        } else {
+            totalMatches += 1;
+        }
         if (matchingLineNumbers.length < MAX_RETAINED_MATCHING_LINES_PER_FILE) {
             matchingLineNumbers.push(index);
         }

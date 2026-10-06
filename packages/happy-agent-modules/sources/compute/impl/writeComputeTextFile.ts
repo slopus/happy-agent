@@ -6,6 +6,7 @@ import { computePermissionsForContext } from "./computePermissionsForContext.js"
 import { createWholeFileDiff } from "./createTextEditFileDiff.js";
 import type { FileReadLog } from "../../impl/FileReadLog.js";
 import { parentComputePath, resolveComputePath } from "./resolveComputePath.js";
+import { readComputeTextSnapshot } from "./readComputeTextSnapshot.js";
 
 /** What became of one whole-file write. */
 export interface ComputeTextFileWrite {
@@ -35,6 +36,10 @@ export async function writeComputeTextFile(
         readonly path: string;
         readonly content: string;
         readonly requireRead?: boolean;
+        readonly append?: boolean;
+        /** Bound both the actual mutation source and the resulting UTF-8 file. */
+        readonly maxBytes?: number;
+        readonly expectedSource?: { readonly content: string; readonly mtimeMs: number };
     },
 ): Promise<ComputeTextFileWrite> {
     const permissions = computePermissionsForContext(ctx);
@@ -43,18 +48,48 @@ export async function writeComputeTextFile(
         await reads.assertRead(ctx, compute.fs, permissions, filePath);
     }
     const existed = await compute.fs.exists(permissions, filePath);
-    const previousContent = existed ? await compute.fs.readFile(permissions, filePath) : undefined;
+    if (!existed && options.expectedSource !== undefined)
+        throw new Error("The file changed before the modification. Read it again.");
+    const snapshot =
+        existed && options.maxBytes !== undefined
+            ? await readComputeTextSnapshot(
+                  compute,
+                  ctx,
+                  filePath,
+                  options.maxBytes,
+                  options.expectedSource,
+              )
+            : undefined;
+    const previousContent =
+        snapshot?.content ??
+        (existed ? await compute.fs.readFile(permissions, filePath) : undefined);
+    const content =
+        options.append === true ? (previousContent ?? "") + options.content : options.content;
+    if (
+        options.maxBytes !== undefined &&
+        (Buffer.byteLength(content) > options.maxBytes || content.includes("\0"))
+    )
+        throw new Error("The resulting file is not text within the byte limit.");
     const parent = parentComputePath(filePath);
     if (parent !== filePath) await compute.fs.mkdir(permissions, parent, { recursive: true });
-    await compute.fs.writeFile(permissions, filePath, options.content);
+    if (options.maxBytes !== undefined) {
+        const existsNow = await compute.fs.exists(permissions, filePath);
+        if (
+            existsNow !== existed ||
+            (snapshot !== undefined &&
+                (await compute.fs.stat(permissions, filePath)).mtimeMs !== snapshot.mtimeMs)
+        )
+            throw new Error("The file changed before the modification. Read it again.");
+    }
+    await compute.fs.writeFile(permissions, filePath, content);
     await reads.record(ctx, filePath, (await compute.fs.stat(permissions, filePath)).mtimeMs);
     return {
         path: filePath,
         created: !existed,
-        characters: options.content.length,
+        characters: content.length,
         presentation: {
             type: "file_diff",
-            files: [createWholeFileDiff(filePath, previousContent, options.content)],
+            files: [createWholeFileDiff(filePath, previousContent, content)],
         },
     };
 }

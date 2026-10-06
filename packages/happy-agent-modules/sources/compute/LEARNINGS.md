@@ -1,5 +1,35 @@
 # Compute module learnings
 
+## Kimi and GLM select their harness surfaces by model family
+
+Unknown model families previously fell back to Codex tools, which would give Kimi and GLM
+argument names from the wrong harness when served through Bedrock. Kimi now gets its own fixed
+array using Bash, Read, Write, Edit, Glob, Grep, ReadMediaFile, and shell Task tools. GLM gets an
+explicit Claude-shaped array with a text-only Read, because a successful image read followed by
+a provider rejection would break the next inference. Ordinary and reviewer arrays make that
+choice explicitly; the agent loop and permission model remain shared.
+
+Kimi Bash's timeout is a wait in seconds, and commands that outlive it become background tasks.
+TaskOutput is non-blocking and consumes only new output; TaskInput is a reviewed product extension
+that stays inside the process's existing boundary. TaskStop uses the same process-tree cleanup as
+other vendors. Kimi's production search and media descriptions state the bounded filesystem,
+JavaScript regex, and image behavior actually implemented, while provider reference descriptors
+retain the native harness text unchanged.
+
+## Bounded mutation reads stay bounded through the write
+
+An initial bounded inspection followed by the shared helpers' unbounded reread could admit a file
+that grew or changed between reads, and an append assembled from the first copy could discard
+new content. Shared text mutations now optionally bound the actual source reread, compare it with
+the inspected content and timestamp, and bound the resulting UTF-8 bytes. Append is assembled
+inside that checked mutation. Kimi uses these bounds for its 8 MiB text limit; existing callers
+retain their current behavior. The final timestamp check narrows concurrent-change races without
+claiming an atomic compare-and-write filesystem operation.
+
+Bounded edits also cap occurrence collection and check replacement expansion before allocating
+the resulting string, so a short repeated token cannot multiply an 8 MiB source into an unbounded
+output before the byte check runs.
+
 ## Shell descriptions follow the execution environment
 
 Claude's Bash tool used to promise a Bash interpreter on native Windows while Compute ran
