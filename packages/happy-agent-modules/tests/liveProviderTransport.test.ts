@@ -147,7 +147,11 @@ describe("Live provider dialect and lifecycle", () => {
         expect(f.attachUrl()).toBe("wss://api.openai.com/v1/live/sessions/sess_test/attach");
         expect(JSON.parse(String(f.requests[0]!.options?.body))).toMatchObject({
             transport: { type: "webrtc", sdp: "v=offer\r\n" },
-            session: { model: "gpt-live-1", delegation: { type: "client" } },
+            session: {
+                model: "gpt-live-1",
+                audio: { output: { voice: "cove" } },
+                delegation: { type: "client" },
+            },
         });
         expect(f.events).toEqual([]);
         await expect(
@@ -180,7 +184,7 @@ describe("Live provider dialect and lifecycle", () => {
         );
         expect(JSON.parse(String(f.requests[0]!.options?.body))).toMatchObject({
             sdp: "v=offer\r\n",
-            session: { model: "gpt-live-1-codex" },
+            session: { model: "gpt-live-1-codex", audio: { output: { voice: "cove" } } },
         });
         f.ready();
         for (let i = 0; i < 2; i++)
@@ -211,6 +215,51 @@ describe("Live provider dialect and lifecycle", () => {
         await closing;
         expect(f.events.at(-1)).toEqual({ type: "ended", orderly: true, error: null });
         expect(f.events.some((event) => event.type === "usage")).toBe(false);
+    });
+    test("tolerates observed native timing, handoff metadata, usage and audio echoes", async () => {
+        const f = fixture(true);
+        const transport = await f.start();
+        f.ready();
+        f.socket.event({
+            type: "input_transcript.added",
+            start_ms: 1600,
+            end_ms: 1800,
+            item: { id: "input", type: "input_transcript", text: " Open" },
+        });
+        f.socket.event({
+            type: "output_transcript.added",
+            start_ms: 1800,
+            end_ms: 2000,
+            item: { id: "output", type: "output_transcript", text: "Sure." },
+        });
+        f.socket.event({
+            type: "delegation.created",
+            offset_ms: 6400,
+            item: {
+                id: "delegation",
+                type: "delegation",
+                target: "client",
+                content: [{ type: "input_text", text: "Open the project." }],
+                handoff_id: "handoff_1",
+                user_bidi_turn_id: "turn",
+            },
+        });
+        f.socket.event({
+            type: "session.usage.updated",
+            usage: { audio_duration_ms: 6800, backend_model_usage: [] },
+            usage_limit: { status: null, reset_seconds: null },
+        });
+        f.socket.event({ type: "session.input_audio.append", audio: "AAAA" });
+        f.socket.event({ type: "turn.created", turn: { id: "turn", transcript: " Open" } });
+        f.socket.event({ type: "turn.delta", turn: { id: "turn", transcript: " Open" } });
+        f.socket.event({ type: "turn.done", turn: { id: "turn", transcript: " Open" } });
+        expect(f.events).toEqual([
+            { type: "ready" },
+            { type: "transcript", role: "user", text: " Open" },
+            { type: "transcript", role: "assistant", text: "Sure." },
+            { type: "delegation", delegationId: "delegation", text: "Open the project." },
+        ]);
+        transport.dispose();
     });
     test("cumulative usage snapshots are not summed and final usage precedes failed close", async () => {
         const f = fixture();

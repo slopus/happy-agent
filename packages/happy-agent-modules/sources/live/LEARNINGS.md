@@ -17,8 +17,8 @@ and that later Send. Voice never routes generated text through the question-answ
 
 HTTP success and connected media are not provider readiness. Native attachment follows Codex's
 passive existing-call path and waits for an actual started or updated event; public startup settings
-are immutable. Native transcript fragments
-have no timestamps and must remain untimed, without duplicate turn-done text. Native orderly close
+are immutable. Native transcript fragments may include provider timestamps; the adapter currently
+emits the supported untimed variant and ignores aggregate turn events to avoid duplicate text. Native orderly close
 does not prove usage finalization; public close requires its actual terminal event. Neither path
 retries allocation or silently switches credential, model, account, or transport.
 
@@ -50,3 +50,10 @@ advance it before the controller continues. Transcript attribution remains fixed
 A failed WebSocket upgrade now ends its single-use claim immediately. Losing an attached desktop
 controller tears down provider media but settles failed, even if native transport closes normally.
 An already requested close remains deliberate, and final usage still requires actual provider proof.
+
+## GPT-Live refuses Realtime voices as an access error
+
+Sending the Realtime voice `marin` made every subscription call connect and then fail with
+`Voice session access denied.` (`forbidden`), which looked like a missing entitlement. Official
+Codex succeeded with the same account because it sends a GPT-Live voice (`cove`). GPT-Live voices
+are juniper, maple, spruce, ember, vale, breeze, arbor, sol and cove; Live sends `cove`.

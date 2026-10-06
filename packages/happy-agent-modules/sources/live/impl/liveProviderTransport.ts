@@ -284,7 +284,9 @@ export async function createLiveProviderTransport(
     const session = {
         model: native ? "gpt-live-1-codex" : "gpt-live-1",
         instructions,
-        audio: { output: { voice: "marin" } },
+        // GPT-Live accepts only its own voices; a Realtime voice such as "marin" is refused as
+        // "Voice session access denied." (code forbidden) after the call connects.
+        audio: { output: { voice: "cove" } },
         delegation: { type: "client" },
     };
     let answer: string, sessionId: string;
