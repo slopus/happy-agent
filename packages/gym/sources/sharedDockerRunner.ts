@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
-const SHARED_DOCKER_RUNNER_VERSION = "4";
+const SHARED_DOCKER_RUNNER_VERSION = "5";
 const runners = new Map<string, Promise<SharedDockerRunner>>();
 
 export interface SharedDockerRunner {
@@ -131,6 +131,10 @@ async function startSharedDockerRunner(options: {
             // makes for each scenario; hosts without AppArmor ignore this option.
             "--security-opt",
             "apparmor=unconfined",
+            // Docker's masked /proc entries prevent the real supervisor from mounting its own
+            // private procfs. The supervisor still installs and enforces the scenario's sandbox.
+            "--security-opt",
+            "systempaths=unconfined",
             "--add-host",
             "host.docker.internal:host-gateway",
             "--env",

@@ -485,6 +485,7 @@ async function startGym(
     permissionMode: "workspace_write" | "auto" = "workspace_write",
 ): Promise<Gym> {
     let proxyAuthority = "";
+    let handlerFailures: Error[] = [];
     const gym = await createGym({
         mode: "docker",
         entrypoint: [
@@ -507,6 +508,7 @@ exit "$gym_cli_status"`,
         environment: { AWS_BEARER_TOKEN_BEDROCK: "gym-placeholder-token" },
         homeFiles: {
             "happy/config/happy.toml": [
+                ...(permissionMode === "auto" ? ["[settings]", "inference_max_retries = 0"] : []),
                 "[providers]",
                 "default_enable = false",
                 "[providers.bedrock]",
@@ -525,24 +527,34 @@ exit "$gym_cli_status"`,
             ].join("\n"),
         },
         httpProxy: {
-            handler: (request, index) => {
-                if (request.method === "CONNECT") {
-                    if (request.url !== "bedrock.gym.test:80") {
-                        return {
-                            response: {
-                                status: 403,
-                                body: "Only the scripted Bedrock HTTP tunnel is allowed.",
-                            },
-                        };
+            handler: async (request, index) => {
+                try {
+                    if (request.method === "CONNECT") {
+                        if (request.url !== "bedrock.gym.test:80") {
+                            return {
+                                response: {
+                                    status: 403,
+                                    body: "Only the scripted Bedrock HTTP tunnel is allowed.",
+                                },
+                            };
+                        }
+                        if (proxyAuthority.length === 0)
+                            throw new Error("The scripted Bedrock HTTP tunnel is not ready.");
+                        return { request: { url: proxyAuthority } };
                     }
-                    if (proxyAuthority.length === 0)
-                        throw new Error("The scripted Bedrock HTTP tunnel is not ready.");
-                    return { request: { url: proxyAuthority } };
+                    return await handler(request, index);
+                } catch (error) {
+                    if (handlerFailures.length === 0)
+                        handlerFailures.push(
+                            error instanceof Error ? error : new Error(String(error)),
+                        );
+                    throw error;
                 }
-                return handler(request, index);
             },
         },
     });
+    gym.inference.handlerFailures.push(...handlerFailures);
+    handlerFailures = gym.inference.handlerFailures;
     proxyAuthority = new URL(gym.httpProxy!.localUrl).host;
     return gym;
 }
