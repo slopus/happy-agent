@@ -4,7 +4,10 @@ import { join } from "node:path";
 
 import { afterEach, expect, it } from "vitest";
 
-import { loadOrCreateHappyMachineId } from "../../sources/happy/credentials/loadOrCreateHappyMachineId.js";
+import {
+    loadOrCreateHappyMachineId,
+    replaceHappyMachineId,
+} from "../../sources/happy/credentials/loadOrCreateHappyMachineId.js";
 
 const directories: string[] = [];
 
@@ -21,6 +24,18 @@ it("keeps one persistent machine identity", async () => {
 
     expect(await loadOrCreateHappyMachineId(path, () => "machine-1")).toBe("machine-1");
     expect(await loadOrCreateHappyMachineId(path, () => "machine-2")).toBe("machine-1");
+});
+
+it("replaces only the identity Happy refused", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "happy-machine-replace-"));
+    directories.push(directory);
+    const path = join(directory, "happy", "machine.json");
+    await loadOrCreateHappyMachineId(path, () => "machine-1");
+
+    expect(await replaceHappyMachineId(path, "machine-1", () => "machine-2")).toBe("machine-2");
+    // Another daemon already replaced it; a late refusal of the old identity keeps the new one.
+    expect(await replaceHappyMachineId(path, "machine-1", () => "machine-3")).toBe("machine-2");
+    expect(await loadOrCreateHappyMachineId(path, () => "machine-4")).toBe("machine-2");
 });
 
 it("returns the persisted winner when daemons create the identity concurrently", async () => {

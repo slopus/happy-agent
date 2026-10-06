@@ -103,6 +103,7 @@ export {
     HappyMachineClient,
     type HappyMachineClientOptions,
     type HappyMachineConnectionEvent,
+    type HappyMachineDisconnectReason,
 } from "./HappyMachineClient.js";
 export {
     HappyProjectClient,

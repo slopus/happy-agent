@@ -378,6 +378,39 @@ describe("HappyMachineClient connection state", () => {
         ]);
         machine.close();
     });
+
+    it("reports an identity owned by another account instead of registering it forever", async () => {
+        const events: HappyMachineConnectionEvent[] = [];
+        const fetch = vi.fn<typeof globalThis.fetch>(
+            async () =>
+                new Response(
+                    JSON.stringify({
+                        code: "machine_id_taken",
+                        error: "Machine id is registered to another account",
+                    }),
+                    { status: 409 },
+                ),
+        );
+        const machine = client({
+            fetch,
+            onConnectionChanged: (event) => events.push(event),
+            socket: new FakeSocket(),
+        });
+
+        machine.start();
+        await vi.waitFor(() => expect(events.at(-1)).toMatchObject({ reason: "machine_id_taken" }));
+
+        expect(fetch).toHaveBeenCalledTimes(1);
+        expect(events).toEqual([
+            { status: "connecting" },
+            {
+                message: "This computer's Happy identity belongs to another Happy account.",
+                reason: "machine_id_taken",
+                status: "disconnected",
+            },
+        ]);
+        machine.close();
+    });
 });
 
 describe("HappyMachineClient socket revalidation", () => {

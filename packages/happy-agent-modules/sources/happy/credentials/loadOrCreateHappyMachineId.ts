@@ -35,6 +35,23 @@ export async function loadOrCreateHappyMachineId(
     }
 }
 
+/**
+ * Replaces a machine identity Happy refused because another account owns it.
+ *
+ * Only the refused identity is removed, so a daemon that already replaced it keeps the newer one,
+ * and the next identity is created exactly as a first one would be.
+ */
+export async function replaceHappyMachineId(
+    path: string,
+    refusedId: string,
+    createId: () => string = randomUUID,
+): Promise<string | undefined> {
+    if ((await readMachineId(path)) === refusedId) {
+        await rm(path, { force: true }).catch(() => undefined);
+    }
+    return await loadOrCreateHappyMachineId(path, createId);
+}
+
 async function readMachineId(path: string): Promise<string | undefined> {
     try {
         const stored = JSON.parse(await readFile(path, "utf8")) as unknown;

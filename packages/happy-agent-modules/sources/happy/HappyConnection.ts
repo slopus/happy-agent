@@ -50,6 +50,7 @@ import {
 } from "./credentials/importHappyCredentials.js";
 import { createHappyAccountFingerprint } from "./credentials/createHappyAccountFingerprint.js";
 import { getHappyPaths } from "./credentials/getHappyPaths.js";
+import { replaceHappyMachineId } from "./credentials/loadOrCreateHappyMachineId.js";
 import {
     resolveHappyConnectionTarget,
     type HappyConnectionTarget,
@@ -865,12 +866,54 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
             );
             return;
         }
+        if (event.reason === "machine_id_taken") {
+            await this.#withLifecycleUpdate(
+                async () => await this.#replaceMachineIdentity(ctx, machine, event.message),
+            );
+            return;
+        }
         await this.#setIntegration(ctx, {
             authorization: null,
             configured: true,
             error: { code: "happy_unavailable", message: event.message },
             status: "disconnected",
         });
+    }
+
+    /**
+     * Mints a new machine identity when Happy says another account owns this one.
+     *
+     * A daemon re-paired to a different account keeps the identity it registered under the first,
+     * and Happy will never let the second account claim it. The credentials are fine, so they are
+     * kept; only the identity is replaced and the connection activated again with it.
+     */
+    async #replaceMachineIdentity(
+        ctx: Context,
+        machine: HappyMachineClient,
+        message: string,
+    ): Promise<void> {
+        const configuration = this.#configuration;
+        if (this.#machine !== machine || this.#stopping || configuration === undefined) return;
+        const refusedId = configuration.machineId;
+        const machineId =
+            refusedId === undefined
+                ? undefined
+                : await replaceHappyMachineId(
+                      getHappyPaths(this.#dataDirectory).machinePath,
+                      refusedId,
+                  );
+        if (this.#machine !== machine || this.#stopping) return;
+        if (machineId === undefined || machineId === refusedId) {
+            await this.#setIntegration(ctx, {
+                authorization: null,
+                configured: true,
+                error: { code: "happy_unavailable", message },
+                status: "disconnected",
+            });
+            return;
+        }
+        ctx.log.debug("Happy machine identity was replaced after another account claimed it.");
+        await this.#activate(ctx, { ...configuration, machineId });
     }
 
     async #invalidateCredentials(

@@ -10,6 +10,7 @@ export async function createMobileRelayFixture() {
     const approvals = new Map<string, { token: string; response: string }>();
     const keys = new Map<string, Uint8Array>();
     const machines = new Map<string, string>();
+    const machineOwners = new Map<string, string>();
     const sockets = new Map<WebSocket, { token: string; clientType: string }>();
     const sessions = new Map<
         string,
@@ -62,6 +63,20 @@ export async function createMobileRelayFixture() {
         } else if (rejected.has(token)) {
             json(response, { error: "Unauthorized" }, 401);
         } else if (url.pathname === "/v1/machines") {
+            // Like Happy, a machine id is unique across accounts; only its first account may use it.
+            const owner = machineOwners.get(body.id) ?? token;
+            if (owner !== token) {
+                json(
+                    response,
+                    {
+                        code: "machine_id_taken",
+                        error: "Machine id is registered to another account",
+                    },
+                    409,
+                );
+                return;
+            }
+            machineOwners.set(body.id, token);
             machines.set(token, body.id);
             json(response, { machine: { metadataVersion: 1, daemonStateVersion: 1 } });
         } else if (url.pathname === "/v1/sessions") {

@@ -49,21 +49,33 @@ export type HappyMachineConnectionEvent =
     | { readonly status: "connecting" }
     | {
           readonly message: string;
-          readonly reason: "credentials_rejected" | "happy_unavailable";
+          readonly reason: HappyMachineDisconnectReason;
           readonly status: "disconnected";
       };
 
-class HappyMachineRegistrationError extends Error {
-    readonly credentialsRejected: boolean;
+/**
+ * Why the machine is not reachable. `machine_id_taken` means another Happy account already owns
+ * this machine identity, which happens after re-pairing to a different account: repeating the
+ * same identity can never succeed, so the owner must mint a new one.
+ */
+export type HappyMachineDisconnectReason =
+    | "credentials_rejected"
+    | "happy_unavailable"
+    | "machine_id_taken";
 
-    constructor(credentialsRejected: boolean) {
-        super(
-            credentialsRejected
-                ? "Happy rejected the saved credentials."
-                : "The Happy machine connection is unavailable.",
-        );
+const REGISTRATION_FAILURE_MESSAGES: Record<HappyMachineDisconnectReason, string> = {
+    credentials_rejected: "Happy rejected the saved credentials.",
+    happy_unavailable: "The Happy machine connection is unavailable.",
+    machine_id_taken: "This computer's Happy identity belongs to another Happy account.",
+};
+
+class HappyMachineRegistrationError extends Error {
+    readonly reason: HappyMachineDisconnectReason;
+
+    constructor(reason: HappyMachineDisconnectReason) {
+        super(REGISTRATION_FAILURE_MESSAGES[reason]);
         this.name = "HappyMachineRegistrationError";
-        this.credentialsRejected = credentialsRejected;
+        this.reason = reason;
     }
 }
 
@@ -155,19 +167,21 @@ export class HappyMachineClient {
             },
             (error: unknown) => {
                 this.#registering = false;
-                const credentialsRejected =
-                    error instanceof HappyMachineRegistrationError && error.credentialsRejected;
+                const reason =
+                    error instanceof HappyMachineRegistrationError
+                        ? error.reason
+                        : "happy_unavailable";
                 this.#announce({
-                    message: credentialsRejected
-                        ? "Happy rejected the saved credentials."
-                        : "The Happy machine connection is unavailable.",
-                    reason: credentialsRejected ? "credentials_rejected" : "happy_unavailable",
+                    message: REGISTRATION_FAILURE_MESSAGES[reason],
+                    reason,
                     status: "disconnected",
                 });
-                if (credentialsRejected) {
+                if (reason !== "happy_unavailable") {
+                    // Neither a rejected credential nor a taken identity improves by repeating
+                    // the request; the owner replaces whichever one Happy refused.
                     this.#options.context.log.debug(
-                        "Happy machine registration rejected the saved credentials.",
-                        {},
+                        "Happy machine registration was refused.",
+                        { reason },
                         error,
                     );
                 } else {
@@ -269,9 +283,7 @@ export class HappyMachineClient {
             },
         );
         if (!response.ok) {
-            throw new HappyMachineRegistrationError(
-                response.status === 401 || response.status === 403,
-            );
+            throw new HappyMachineRegistrationError(await registrationFailureReason(response));
         }
         const body: unknown = await response.json();
         if (!Value.Check(machineSchema, body)) {
@@ -538,4 +550,18 @@ export class HappyMachineClient {
     #variant(): HappyEncryptionVariant {
         return this.#options.configuration.credentials.encryption.type;
     }
+}
+
+/** Reads why Happy refused a machine registration; only an explicit 409 code names the identity. */
+async function registrationFailureReason(
+    response: Response,
+): Promise<HappyMachineDisconnectReason> {
+    if (response.status === 401 || response.status === 403) return "credentials_rejected";
+    if (response.status !== 409) return "happy_unavailable";
+    const body: unknown = await response.json().catch(() => undefined);
+    return typeof body === "object" &&
+        body !== null &&
+        (body as { code?: unknown }).code === "machine_id_taken"
+        ? "machine_id_taken"
+        : "happy_unavailable";
 }

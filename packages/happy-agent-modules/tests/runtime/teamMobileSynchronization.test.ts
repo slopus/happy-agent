@@ -291,6 +291,20 @@ describe("parallel personal mobile synchronization", () => {
                     ),
                 { timeout: 10_000 },
             );
+            // Pairing Alice's daemon to another phone account must not reuse the machine id the
+            // first account owns; Happy refuses it, so a fresh one is registered instead.
+            const repairing = await alice.startHappyIntegration();
+            relay.authorize(repairing.integration.authorization!.data, "alice-second");
+            await vi.waitFor(
+                async () => {
+                    expect((await alice.getHappyIntegration()).integration.status).toBe(
+                        "connected",
+                    );
+                    expect(relay.activeMachines()).toEqual(["alice-second", "bob-mobile"]);
+                },
+                { timeout: 10_000 },
+            );
+            expect(relay.machines.get("alice-second")).not.toBe(relay.machines.get("alice-mobile"));
             expect(await readFile(join(happyHome, "access.key"), "utf8")).toBe(external);
         } finally {
             await runtime?.close();
