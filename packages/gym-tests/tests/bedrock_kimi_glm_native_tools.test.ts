@@ -573,15 +573,23 @@ function intercept(
         }
         expect(request.headers.authorization).toBe("Bearer gym-placeholder-token");
         const text = Buffer.from(request.body).toString();
-        if (text.includes("Create a concise session title")) {
-            return { response: responseFor({ text: "Native Bedrock session" }) };
+        const body: unknown = JSON.parse(text);
+        Value.Assert(requestSchema, body);
+        const instructions = body.messages.find((message) => message.role === "system")?.content;
+        if (
+            typeof instructions === "string" &&
+            (instructions.startsWith("You name a piece of work from its first user message.") ||
+                instructions.startsWith(
+                    "You are looking at a saved chat that already has a title.",
+                ) ||
+                instructions.startsWith("Name a persistent assistant from the function"))
+        ) {
+            return { response: responseFor({ text: "<title>Native Bedrock session</title>" }) };
         }
         if (text.includes("You are judging one planned coding-agent action.")) {
             if (review === undefined)
                 throw new Error("Unexpected Auto review for a workspace-write scenario.");
             expect(review.unavailableReviews).toHaveLength(1);
-            const body: unknown = JSON.parse(text);
-            Value.Assert(requestSchema, body);
             expect(body.model).toBe(requests[0]!.model);
             expect(body.reasoning_effort).toBe(requests[0]!.reasoning_effort);
             review.reviews.push(text);
@@ -591,8 +599,6 @@ function intercept(
                 }),
             };
         }
-        const body: unknown = JSON.parse(text);
-        Value.Assert(requestSchema, body);
         requests.push(body);
         if (requests.length > 10)
             return { response: { status: 500, body: "Unexpected repeated inference." } };
