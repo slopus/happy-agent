@@ -14,7 +14,10 @@ multiplexer. Follow-ups use existing agent messaging. Only the direct coordinati
 may archive through the tool; users retain the agent API. Archival marks only the selected agent,
 stops its running descendants, and preserves history and workspace. Metadata, cancellation, and
 durable compute-cleanup intent commit together; cleanup starts after commit and restoration cancels
-pending cleanup. A workspace identifies its resident subtask, whose parent identifies the coordinator.
+pending cleanup. User archival through `POST /v0/agents/:id/archive` takes the same path: the
+route commits only `archivedAt` and lets this module's hook abort and record cleanup in that
+transaction. It previously aborted and disposed compute before persisting archival, so a
+disposal failure could leave a stopped subtask still active. A workspace identifies its resident subtask, whose parent identifies the coordinator.
 Sharing the parent's filesystem does not add a second workspace association.
 
 ## Subtasks are substantial workstreams, not small steps

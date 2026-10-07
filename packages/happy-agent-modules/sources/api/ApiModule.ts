@@ -3199,7 +3199,9 @@ export class ApiModule implements AgentModule {
                     (operation === "unarchive" && archived);
                 if (shouldChange) {
                     await this.#withMutationId(body.mutationId, async () => {
-                        if (operation === "archive") {
+                        // A subtask's archival commits atomically with its abort and durable
+                        // cleanup intent through the subtasks module, exactly like archive_subtask.
+                        if (operation === "archive" && this.#subtasks?.isSubtask(config) !== true) {
                             await this.#abort.abort(ctx, agentId);
                             await this.#compute.archiveAgent(ctx, agentId);
                         }
