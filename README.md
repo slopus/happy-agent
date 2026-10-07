@@ -7,13 +7,18 @@
 <p>Part of <a href="https://happy.engineering/">Happy</a>. Main repository: <a href="https://github.com/slopus/happy">slopus/happy</a>.</p>
 
 <p>
+  The open-source agent runtime behind the
+  <a href="https://happy.engineering/">Happy</a> desktop app
+  (<a href="https://github.com/slopus/happy-desktop">source</a>).
   Use model-native prompts and tools with provider access already configured on
   your machine. Happy Agent adds no account or subscription of its own, never pools or
-  resells provider access, and leaves provider terms and limits in force. 
-  
-  Built by the authors of
-  <a href="https://github.com/slopus/happy">Happy</a> and
-  <a href="https://github.com/slopus/happy2">Happy 2</a>.
+  resells provider access, and leaves provider terms and limits in force.
+</p>
+
+<p>
+  Built by the authors of the
+  <a href="https://github.com/slopus/happy-desktop">Happy desktop app</a> and the
+  <a href="https://github.com/slopus/happy">original Happy CLI</a>.
 </p>
 
 https://github.com/user-attachments/assets/99a7dee6-36ef-4110-95b2-e236633640a4
@@ -37,26 +42,28 @@ runtime: the right prompts and tools for each model, useful defaults, safe
 execution, durable sessions, subagents, MCP, and a friendly terminal interface.
 
 Happy Agent is the headless daemon: it owns agents, tools, permissions, durable
-state, and the public API. Happy Terminal is its official TUI. The `happy` CLI
-integrates that TUI, Happy Desktop can host it, and any Node.js application can
-embed the same `@slopus/happy-terminal` package.
+state, and the public API. The [Happy desktop app](https://happy.engineering/)
+runs on it and connects through `@slopus/happy-agent-client`. Happy Terminal is
+its official TUI: the standalone `happy-terminal` command, which any Node.js
+application can also embed through the `@slopus/happy-terminal` package.
+
+**Most people should install the desktop app** from
+[happy.engineering](https://happy.engineering/). Open it and setup runs itself:
+Happy starts its own agent runtime and picks up the Claude, Codex, and Grok
+sign-ins already on your machine. The rest of this README is for developers who
+want to run Happy Agent directly or build on it.
 
 ## Quick start
 
-### Step 1: Choose a client
-
-Use `happy` when Happy CLI is installed:
-
-```sh
-happy
-```
-
-Or install Happy Terminal directly:
+### Step 1: Install Happy Terminal
 
 ```sh
 npm install -g @slopus/happy-terminal
 happy-terminal
 ```
+
+The `happy` command in your terminal belongs to the original Happy CLI, not to
+Happy Terminal or the desktop app.
 
 ### Step 2: Sign in to the agents you want to use
 
@@ -86,7 +93,7 @@ Ask for what you want in plain English. Happy Agent can inspect the repository, 
 files, run commands, delegate work, and verify the result. Use `/model` at any
 time to choose an available model.
 
-### Optional: Connect Happy mobile
+### Optional: Connect the Happy mobile app
 
 Happy synchronization is enabled by default in the Happy Agent daemon. Disable it machine-wide in
 `~/Happy/Config/happy.toml` on macOS or `~/happy/config/happy.toml` on Linux,
@@ -99,24 +106,28 @@ happy_integration = false
 
 Repository `happy.toml` files cannot enable or disable this machine-level
 integration. When enabled, Happy Agent automatically imports newer credentials from
-`~/.happy` when its daemon starts. Desktop and other API clients can read the
+the original Happy CLI's `~/.happy` when its daemon starts. Desktop and other API clients can read the
 current integration status, subscribe to connection updates, and start pairing
 through the daemon API; the start response includes opaque `happy://` data to
 render as a QR code. Clients can also cancel pairing, unlink this daemon, or
 deliberately re-pair it. Happy is available alongside onboarding in desktop
-bootstrap, but remains optional and never blocks onboarding completion. To
-authenticate from the standalone terminal client, run:
+bootstrap, but remains optional and never blocks onboarding completion. In the
+desktop app, pair from Settings → Mobile Access. To authenticate from the
+standalone terminal client, run:
 
 ```sh
 happy-terminal happy auth
 ```
 
-Scan the QR code with Happy. Terminals with Kitty or iTerm2 image support show
-a PNG QR code; other terminals get Happy's compact text QR. Every primary Happy Agent
-session you open is then synchronized live with Happy. Mobile messages enter
+Scan the QR code with Happy for
+[iOS](https://apps.apple.com/us/app/happy-claude-code-client/id6748571505) or
+[Android](https://play.google.com/store/apps/details?id=com.ex3ndr.happy).
+Terminals with Kitty or iTerm2 image support show a PNG QR code; other
+terminals get Happy's compact text QR. Every primary Happy Agent session you
+open is then synchronized live with the mobile app. Mobile messages enter
 the same session and permission boundary as terminal messages; there is no
 separate local/remote control mode.
-Happy can also send encrypted image attachments, stop the active turn, and
+The mobile app can also send encrypted image attachments, stop the active turn, and
 select any provider-qualified Happy Agent model and supported reasoning level.
 
 ## Why Happy Agent?
@@ -142,7 +153,7 @@ without making you rebuild the setup for every model, machine, or repository.
   execution boundaries visible.
 
 The official terminal client, package, and canonical standalone command share one name:
-**Happy Terminal**. Happy CLI exposes the TUI through `happy`.
+**Happy Terminal**.
 
 ## Embed in another Node.js project
 

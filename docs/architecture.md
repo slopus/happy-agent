@@ -38,8 +38,8 @@ inference is implemented by the separately published, Node-only
 ## 2. Process architecture
 
 Happy Agent is the long-lived headless daemon. Clients connect to it through the public API.
-Happy Terminal is the official TUI client, available through the `happy` CLI, its own
-`happy-terminal` command, Happy Desktop, or an embedded Node.js host. A standalone
+Happy Terminal is the official TUI client, available through its own `happy-terminal` command
+or an embedded Node.js host. The Happy desktop app is a separate client of the same API. A standalone
 Happy Terminal installation also locates and starts a compatible Happy Agent release.
 
 ```text

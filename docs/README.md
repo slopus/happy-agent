@@ -18,8 +18,8 @@ Provider access requires no Happy Agent account. Happy Agent uses the credential
 by the coding agents installed on the machine, and it never pools or resells provider access. An
 optional team deployment authenticates members of one WorkOS organization separately from those
 provider credentials. The headless daemon holds durable sessions. Happy Terminal is the reusable
-Pi TUI client, used by the `happy` CLI, its standalone `happy-terminal` command, embedded Node.js
-applications, and Happy Desktop. Other clients attach through `@slopus/happy-agent-client`.
+Pi TUI client, used by its standalone `happy-terminal` command and embedded Node.js applications.
+The Happy desktop app and other clients attach through `@slopus/happy-agent-client`.
 
 The deeper idea: **agents never die**. Every conversation, every subagent, is a
 durable session that can always receive another message and resume with its
@@ -29,19 +29,19 @@ delegate work into isolated Git workspaces.
 
 ## What is Happy?
 
-Happy is a family of two products, built by the same authors as Happy Agent, that put
-people in touch with their coding agents:
+Happy is the open-source desktop app for coding agents, built by the same authors as Happy Agent
+and running on it ([happy.engineering](https://happy.engineering/),
+[source](https://github.com/slopus/happy-desktop)):
 
-- **Happy** is end-to-end encrypted remote access to your agents. A mobile and
-  web client lets you watch and steer agents running on your own machine from
-  anywhere; the relay in between carries only ciphertext and can read nothing.
-- **Happy 2** is its desktop collaborative sibling: a self-hosted, Slack-like
-  workspace where people and coding agents build together — conversations,
-  files, documents, workspaces, and agents in one web and desktop app, started
-  with a single `npx happy2` command, with all state kept locally under
-  `.happy2`. It runs its agents on Happy Agent: a private Happy Agent runtime, each agent
-  conversation bound to a sandboxed container, Happy Agent sessions, terminals, and
-  tools surfaced in its UI.
+- **Happy** (the desktop app) runs Claude, Codex, and Grok in one harness, keeps sessions alive
+  and shareable, and puts conversations beside the files, diffs, terminals, and previews the work
+  touches. It starts its own Happy Agent runtime and talks to it through
+  `@slopus/happy-agent-client`.
+- **Happy for iOS and Android** is the companion: pair it with the desktop app to follow, steer,
+  and approve agents from anywhere. The relay in between carries only ciphertext and can read
+  nothing.
+- **The original Happy CLI** ([source](https://github.com/slopus/happy)) is in maintenance mode.
+  Its `happy` command wraps Claude Code and Codex for the mobile app; it is not Happy Terminal.
 
 When you are driven through either of them rather than a terminal,
 [happy.md](happy.md) explains what changes for you.

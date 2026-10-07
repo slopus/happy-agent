@@ -1,8 +1,8 @@
 # Happy Terminal
 
 Happy Terminal is the terminal interface for Happy Agent. The published `@slopus/happy-terminal`
-package can be installed as a command, embedded directly in another Node.js application, used by
-the `happy` CLI, or hosted by Happy Desktop.
+package can be installed as a command or embedded directly in another Node.js application. Most
+people use Happy Agent through the [Happy desktop app](https://happy.engineering/) instead.
 
 ## Command line
 
@@ -11,7 +11,7 @@ pnpm add --global @slopus/happy-terminal
 happy-terminal
 ```
 
-The separate Happy CLI also integrates Happy Terminal and exposes it through `happy`.
+The `happy` command belongs to the original Happy CLI, not to Happy Terminal.
 
 Use `/speed` to choose Regular, Fast, or Ultrafast from the selected model's advertised
 capabilities, or `/speed regular`, `/speed fast`, and `/speed ultrafast` directly. Regular
