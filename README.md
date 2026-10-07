@@ -4,6 +4,8 @@
 
 <h3>The best of Pi, Codex, Claude Code, and Grok Build — unified in one coding-agent harness.</h3>
 
+<p>Part of <a href="https://happy.engineering/">Happy</a>. Main repository: <a href="https://github.com/slopus/happy">slopus/happy</a>.</p>
+
 <p>
   Use model-native prompts and tools with provider access already configured on
   your machine. Happy Agent adds no account or subscription of its own, never pools or

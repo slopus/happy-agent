@@ -313,10 +313,17 @@ replayed through the real transport to keep the parsers honest.
 Quota observation is best-effort, bounded, and cached, and surfaces through
 `/usage` and the `get_provider_usage` tool.
 
-Automatic routing across multiple accounts of the same vendor is a direction, not
-a feature. Today the pieces that exist are multiple configured provider
-instances, model/provider compatibility checks, and usage reporting; account
-selection is still the user's or the caller's choice.
+Smart providers route across multiple accounts of the same vendor automatically.
+A `type = "smart"` provider with `strategy = "round_robin"` lists concrete
+accounts of one kind. Each agent starts on a random compatible member, stays on
+it across turns, and moves to the next member only after a typed authentication
+or quota-exhaustion failure; a failure after visible output is never replayed on
+another account. Members of another kind, members without the model, and
+Bedrock accounts in another region are skipped. `hidden = true` is display-only:
+it keeps an account out of model selection and new-subagent choices while smart
+providers can still route to it, and `enabled = false` turns the account off
+entirely. See [Hiding providers](configuration.md#hiding-providers) and the
+[accounts and models recipe](recipe/accounts-and-models.md).
 
 ## 6. Tools
 
@@ -482,10 +489,8 @@ matters in practice, it is worth naming:
   Codex, Claude, and Grok surfaces. The implemented vendor tool surfaces are
   Claude, Codex, and Grok; Pi appears as the TUI library
   (`@earendil-works/pi-tui`), not as a provider or toolset.
-- **Account routing** is not implemented. Multiple accounts can be configured as
-  separate provider instances and chosen explicitly; automatic round-robin,
-  weighted, or usage-aware routing between compatible accounts does not exist
-  yet.
+- **Account routing** ships as round-robin smart providers. Weights, usage-aware
+  or priority routing, time windows, and a UI or API for pools do not exist yet.
 - **`fork` on `BaseSession`** is part of the provider contract but is not yet
   implemented, so there is currently no supported way to branch a provider
   session — including the compact-on-a-fork flow that motivates it.
