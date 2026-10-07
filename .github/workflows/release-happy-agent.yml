@@ -35,15 +35,15 @@ jobs:
         permissions:
             contents: read
             id-token: write
-        needs: verify
+        needs: validate
         uses: ./.github/workflows/build-windows.yml
         with:
             version: ${{ inputs.version }}
 
-    verify:
-        name: Verify release inputs and source
+    validate:
+        name: Validate release inputs
         runs-on: ubuntu-24.04
-        timeout-minutes: 45
+        timeout-minutes: 5
 
         steps:
             - name: Check out main
@@ -88,6 +88,18 @@ jobs:
                       exit 1
                   fi
 
+    verify:
+        name: Verify release source
+        needs: validate
+        runs-on: ubuntu-24.04
+        timeout-minutes: 45
+
+        steps:
+            - name: Check out the release commit
+              uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+              with:
+                  fetch-depth: 0
+
             - name: Set up pnpm
               uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
 
@@ -97,6 +109,20 @@ jobs:
                   node-version: "24"
                   package-manager-cache: false
 
+            - name: Locate the pnpm store
+              id: pnpm-store
+              shell: bash
+              run: |
+                  echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+                  echo "abi=$(node -p 'process.versions.modules')" >> "$GITHUB_OUTPUT"
+                  echo "image=$(node -p '[process.env.ImageOS, process.env.ImageVersion].join("-")')" >> "$GITHUB_OUTPUT"
+
+            - name: Cache dependency downloads
+              uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+              with:
+                  path: ${{ steps.pnpm-store.outputs.path }}
+                  key: pnpm-store-v1-${{ runner.os }}-${{ runner.arch }}-node${{ steps.pnpm-store.outputs.abi }}-${{ steps.pnpm-store.outputs.image }}-${{ hashFiles('pnpm-lock.yaml', 'package.json', 'pnpm-workspace.yaml', 'patches/**') }}
+
             - name: Enable Linux user namespaces
               run: |
                   if [[ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]]; then
@@ -104,7 +130,8 @@ jobs:
                   fi
 
             - name: Install dependencies
-              run: pnpm install --frozen-lockfile
+              # Cache downloads only; patched native addons must run their install scripts again.
+              run: pnpm install --frozen-lockfile --config.side-effects-cache=false
 
             - name: Build Happy Agent JavaScript
               run: |
@@ -129,7 +156,7 @@ jobs:
 
     build:
         name: Build ${{ matrix.target }}
-        needs: verify
+        needs: validate
         runs-on: ${{ matrix.runner }}
         timeout-minutes: 60
         env:
@@ -165,6 +192,20 @@ jobs:
                   node-version: "24"
                   package-manager-cache: false
 
+            - name: Locate the pnpm store
+              id: pnpm-store
+              shell: bash
+              run: |
+                  echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+                  echo "abi=$(node -p 'process.versions.modules')" >> "$GITHUB_OUTPUT"
+                  echo "image=$(node -p '[process.env.ImageOS, process.env.ImageVersion].join("-")')" >> "$GITHUB_OUTPUT"
+
+            - name: Cache dependency downloads
+              uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+              with:
+                  path: ${{ steps.pnpm-store.outputs.path }}
+                  key: pnpm-store-v1-${{ runner.os }}-${{ runner.arch }}-node${{ steps.pnpm-store.outputs.abi }}-${{ steps.pnpm-store.outputs.image }}-${{ hashFiles('pnpm-lock.yaml', 'package.json', 'pnpm-workspace.yaml', 'patches/**') }}
+
             - name: Enable Linux user namespaces
               if: runner.os == 'Linux'
               run: |
@@ -173,7 +214,8 @@ jobs:
                   fi
 
             - name: Install dependencies
-              run: pnpm install --frozen-lockfile
+              # Cache downloads only; patched native addons must run their install scripts again.
+              run: pnpm install --frozen-lockfile --config.side-effects-cache=false
 
             - name: Build Happy Agent JavaScript
               run: |
@@ -255,10 +297,24 @@ jobs:
               env:
                   TARGET: ${{ matrix.target }}
 
-            - name: Build the pinned native database binding
+            - name: Identify the native database build inputs
+              id: libsql-inputs
+              shell: bash
               run: |
-                  rustup toolchain install 1.95.0 --profile minimal
-                  pnpm --filter @slopus/happy-agent build:native:libsql
+                  toolchain="$(node -p 'JSON.parse(require("node:fs").readFileSync("packages/happy-agent/native/libsql/source.json")).toolchain')"
+                  rustup toolchain install "$toolchain" --profile minimal
+                  echo "key=$(node scripts/release/nativeLibsqlCacheKey.mjs)" >> "$GITHUB_OUTPUT"
+
+            - name: Restore the unsigned native database binding
+              id: libsql-cache
+              uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+              with:
+                  path: packages/happy-agent/native/target/${{ matrix.target }}/libsql.node
+                  key: ${{ steps.libsql-inputs.outputs.key }}
+
+            - name: Build the pinned native database binding
+              if: steps.libsql-cache.outputs.cache-hit != 'true'
+              run: pnpm --filter @slopus/happy-agent build:native:libsql
 
             - name: Verify native database lifetimes under Node and Bun
               shell: bash
@@ -274,6 +330,13 @@ jobs:
                       fi
                       "${command[@]}" packages/happy-agent/scripts/verify-native-libsql.mjs
                   done
+
+            - name: Cache the verified unsigned native database binding
+              if: steps.libsql-cache.outputs.cache-hit != 'true'
+              uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+              with:
+                  path: packages/happy-agent/native/target/${{ matrix.target }}/libsql.node
+                  key: ${{ steps.libsql-inputs.outputs.key }}
 
             - name: Verify patched Parcel callback lifetimes under Node and Bun
               run: pnpm --filter @slopus/happy-agent test:native:watcher

@@ -9,6 +9,16 @@ Releases go out through GitHub Actions using trusted publishing. Never publish f
 npm credentials, and never create or push a release tag by hand — the workflow creates the
 tag, and it only does so after the build and publication have succeeded.
 
+The [release master plan](../../../master-plans/25-releases.md#coordinating-requested-releases)
+coordinates Agent, Desktop native, and hosted renderer releases. Preserve the
+user's authorized scope across handoffs under the runtime's trusted authorization
+policy. Do not re-ask preemptively for authorized work. If the runtime denies an
+action, stop it, explain the denial, and follow its rules for fresh approval.
+Publish and verify changed SDKs before updating consumers, then
+prepare and dispatch independent products in parallel once their dependencies
+are ready. Wait only at actual dependency gates, and verify every requested
+product before reporting completion.
+
 ## Which product, which version
 
 An unqualified "release" means **a Happy Agent preview**. Production must be explicit.
@@ -122,6 +132,10 @@ For production, supply the stable version and `-F prerelease=false`. Happy Termi
 `release-happy-terminal.yml` with a stable version and notes, without a prerelease input.
 CI builds, tests, signs, and publishes the same artifacts within one workflow run.
 Do not introduce a separate prepare/publish dispatch or bump commit between those jobs.
+Source verification and platform builds overlap after release-input validation;
+publication still waits for all gates. Retries reuse verified unsigned native
+outputs when all native inputs match; native checks and final binary tests,
+signing, and notarization still run for each release.
 
 ## Verifying
 

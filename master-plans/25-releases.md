@@ -28,7 +28,7 @@ preview. A push does not publish previews. Preserve source checks, signing,
 tests, checksums, and protection against replacing published assets.
 
 Desktop native previews use the existing signed app build and publication
-workflow, with a version/notes/prerelease input and Nightly-only artifacts.
+workflow, with a version/notes/prerelease input and both app flavors' artifacts.
 Stable releases still ship both app flavors. Nightly's native updater must
 accept previews and later stable versions through its existing install action.
 Renderer previews use the existing hosted build/Pages deployment workflow,
@@ -70,6 +70,27 @@ must still resolve until workspace use changes.
 
 Do not redesign Terminal or stable library publishing. Use existing CLI commands
 and small necessary helpers, not custom workflow-run tracking or artifact stores.
+
+## Coordinating requested releases
+
+This plan ties the products together; the [Agent and Terminal skill](../.agent/skills/release-agent/SKILL.md)
+and [Desktop native and renderer guide](https://github.com/slopus/happy-desktop/blob/main/docs/releases.md)
+own their release commands. Publish changed SDKs first, verify npm availability,
+then update every consumer's exact pins and lockfile before its implementation
+and verification. Once those dependencies are ready, overlap independent Agent,
+Desktop native, and hosted renderer preparation and dispatches; wait only at
+actual dependency gates. Within Agent CI, source verification and platform builds
+may overlap after input validation, but publication requires every existing gate.
+Reuse unsigned native outputs only for identical native inputs; rerun their
+checks and each final product's tests, signing, and publication verification.
+
+Keep the user's authorized product, channel, and push/release scope across
+handoffs under the runtime's trusted authorization policy. Do not re-ask
+preemptively for authorized work. If the runtime denies an action, stop it,
+explain the denial, and follow its rules for fresh approval. Completion
+requires each requested product's gates and published-result verification,
+including its working-feature acceptance; a foundation release alone does not
+complete a requested feature.
 
 ## Separate contributor-development direction
 

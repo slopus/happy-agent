@@ -11,9 +11,7 @@ async function workflowStep(name: string): Promise<string> {
     const workflow = await readFile(workflowUrl, "utf8");
     const start = workflow.indexOf(`- name: ${name}\n`);
     assert.notEqual(start, -1, `Missing workflow step: ${name}`);
-    const script = workflow
-        .slice(start)
-        .match(/ {14}run: \|\n([\s\S]*?)(?=\n {12}- name:|$)/u)?.[1];
+    const script = workflow.slice(start).match(/ {14}run: \|\n((?: {18}[^\n]*(?:\n|$)|\n)*)/u)?.[1];
     assert.notEqual(script, undefined, `Missing Bash script: ${name}`);
     return script!
         .split("\n")
