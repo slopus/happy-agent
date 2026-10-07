@@ -1,5 +1,14 @@
 # Daemon lifecycle learnings
 
+## Runtime restarts must hide their Windows console
+
+The safe Bun runtime restart inherited its caller's standard streams but omitted
+`windowsHide`. A desktop launch can have no visible terminal, so stream inheritance
+alone does not keep a Windows console application hidden. The restart now explicitly
+hides its console while preserving arguments, JIT settings, signals and exit status.
+Git probes and other background launchers still need their own hiding options; a
+parent's launch options do not apply automatically to later child processes.
+
 ## Reload must outlive the daemon it replaces
 
 A session ran foreground `happy-agent reload` while adding a provider account. Draining waited

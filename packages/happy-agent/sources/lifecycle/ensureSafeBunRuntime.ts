@@ -35,7 +35,11 @@ export async function ensureSafeBunRuntime(): Promise<void> {
 
     // Windows has no execve. Lifecycle commands pass these settings on to the
     // detached daemon, so only the short-lived launcher normally needs this shim.
-    const child = spawn(process.execPath, args, { env: environment, stdio: "inherit" });
+    const child = spawn(process.execPath, args, {
+        env: environment,
+        stdio: "inherit",
+        windowsHide: true,
+    });
     const interrupt = () => child.kill("SIGINT");
     const terminate = () => child.kill("SIGTERM");
     process.on("SIGINT", interrupt);
