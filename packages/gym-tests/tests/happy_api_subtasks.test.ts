@@ -229,6 +229,66 @@ describe("user-interactive subtasks", () => {
         expect(gym.errors).toEqual([]);
     }, 60_000);
 
+    it("lists every subtask workspace and owner-series entry once in the desktop bootstrap", async () => {
+        const { gym, bot, create } = await harness();
+        const project = (await gym.client.listProjects()).projects.find((item) =>
+            item.agents.some((agent) => agent.id === gym.defaultSessionId),
+        )!;
+        const main = await create(bot.agent.id, "Main listed task", {
+            projectId: project.id,
+            name: "Main listed",
+        });
+        await gym.waitUntil(
+            async () =>
+                (await gym.client.getWorkspace(main.workspaceId)).workspace.initialization
+                    .status === "ready"
+                    ? true
+                    : undefined,
+            "main task workspace readiness",
+        );
+        const internal = await create(main.id, "Internal listed task", {
+            projectId: project.id,
+            name: "Internal listed",
+        });
+        const shared = await create(main.id, "Shared listed task");
+        const bootstrap = await gym.client.getDesktopBootstrap();
+        const ids = (items: readonly { id: string }[]) => items.map((item) => item.id);
+        const unique = (values: readonly string[]) => [...new Set(values)];
+
+        const workspaceIds = ids(bootstrap.workspaces);
+        expect(workspaceIds).toEqual(unique(workspaceIds));
+        expect(ids(bootstrap.projects)).toEqual(unique(ids(bootstrap.projects)));
+        for (const owner of [...bootstrap.projects, ...bootstrap.workspaces]) {
+            expect(ids(owner.agents)).toEqual(unique(ids(owner.agents)));
+        }
+        // Each workspace-bound subtask is an owner-series entry of its own workspace only, and a
+        // shared-filesystem subtask belongs to no series. Every other appearance is the
+        // coordinator's nested tree, which clients reconcile by ID.
+        const seriesOwners = (agentId: string) =>
+            bootstrap.workspaces
+                .filter((workspace) => workspace.agents.some((agent) => agent.id === agentId))
+                .map((workspace) => workspace.id);
+        expect(seriesOwners(main.id)).toEqual([main.workspaceId]);
+        expect(seriesOwners(shared.id)).toEqual([]);
+        const listedProject = bootstrap.projects.find((item) => item.id === project.id)!;
+        expect(ids(listedProject.agents)).not.toContain(main.id);
+        expect(ids(listedProject.agents)).not.toContain(internal.id);
+        expect(seriesOwners(internal.id)).toEqual([internal.workspaceId]);
+        expect(bootstrap.workspaces.find((item) => item.id === internal.workspaceId)).toMatchObject(
+            {
+                parentId: project.id,
+                subtaskAgentId: internal.id,
+            },
+        );
+        const listed = ids((await gym.client.listWorkspaces({ projectId: project.id })).workspaces);
+        expect(listed).toEqual(unique(listed));
+
+        const root = bootstrap.bots!.find((item) => item.id === bot.id)!.agent;
+        expect(ids(root.subtasks!)).toEqual([main.id]);
+        expect(ids(root.subtasks![0]!.subtasks!).sort()).toEqual([internal.id, shared.id].sort());
+        expect(gym.errors).toEqual([]);
+    }, 60_000);
+
     it("lets only the direct coordinator archive a subtask without deleting its workspace or descendants", async () => {
         const { gym, bot, create, call } = await harness();
         const project = (await gym.client.listProjects()).projects.find((item) =>
