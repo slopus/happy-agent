@@ -25,6 +25,7 @@ import type {
     CreateAgentRequest,
     MutationOnlyRequest,
     ReorderAgentRequest,
+    ReorderSubtaskRequest,
     SaveAgentDraftRequest,
 } from "./protocol/agents.js";
 import {
@@ -1770,6 +1771,20 @@ export class HappyAgentClient {
         return await this.#json({
             method: "POST",
             path: `v0/agents/${encodeURIComponent(agentId)}/reorder`,
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /** `POST /v0/agents/:agentId/subtask-reorder` — moves a subtask among its siblings. */
+    async reorderSubtask(
+        agentId: Cuid2,
+        request: ReorderSubtaskRequest,
+        options: RequestOptions = {},
+    ): Promise<AgentResponse> {
+        return await this.#json({
+            method: "POST",
+            path: `v0/agents/${encodeURIComponent(agentId)}/subtask-reorder`,
             json: request,
             signal: options.signal,
         });

@@ -1,6 +1,7 @@
 import { Value } from "@sinclair/typebox/value";
 import { describe, expect, expectTypeOf, it } from "vitest";
 
+import { HappyAgentClient } from "../sources/HappyAgentClient.js";
 import { agentSchema, type Agent } from "../sources/protocol/agents.js";
 import {
     desktopBootstrapResponseSchema,
@@ -129,6 +130,40 @@ describe("subtask protocol", () => {
 
     it.each([null, "true", 1, {}])("rejects non-boolean subtask flag %j", (subtask) => {
         expect(Value.Check(agentSchema, { ...agent, subtask })).toBe(false);
+    });
+
+    it.each(["5", null, undefined])("accepts additive sibling order key %j", (subtaskOrderKey) => {
+        expect(Value.Check(agentSchema, { ...agent, subtaskOrderKey })).toBe(true);
+    });
+
+    it.each([1, true, {}])("rejects invalid sibling order key %j", (subtaskOrderKey) => {
+        expect(Value.Check(agentSchema, { ...agent, subtaskOrderKey })).toBe(false);
+    });
+
+    it("moves a subtask among its siblings through its own route", async () => {
+        const requests: Request[] = [];
+        const client = new HappyAgentClient({
+            endpoint: "http://agent.local",
+            token: "t",
+            fetch: async (input, init) => {
+                requests.push(new Request(input, init));
+                return new Response(JSON.stringify({ agent }), {
+                    headers: { "content-type": "application/json" },
+                });
+            },
+        });
+        await expect(
+            client.reorderSubtask("subtask/1", { afterId: null, mutationId: "move-1" }),
+        ).resolves.toEqual({ agent });
+        await client.reorderSubtask("subtask1", { afterId: "sibling1" });
+        expect(requests.map((request) => [request.method, request.url])).toEqual([
+            ["POST", "http://agent.local/v0/agents/subtask%2F1/subtask-reorder"],
+            ["POST", "http://agent.local/v0/agents/subtask1/subtask-reorder"],
+        ]);
+        expect(await Promise.all(requests.map(async (request) => await request.json()))).toEqual([
+            { afterId: null, mutationId: "move-1" },
+            { afterId: "sibling1" },
+        ]);
     });
 
     it.each([agent.id, null, undefined])(

@@ -106,6 +106,8 @@ export const agentSchema = Type.Recursive((agent) =>
         subtask: Type.Optional(Type.Boolean()),
         /** Direct non-archived subtasks, recursively. Absent on older compatible daemons. */
         subtasks: Type.Optional(Type.Array(agent)),
+        /** Order among the subtask's siblings; `null` until ordered, absent on older daemons. */
+        subtaskOrderKey: Type.Optional(Nullable(Type.String())),
         title: Nullable(Type.String()),
         /** `"idle"` while no title has been generated yet. */
         titleStatus: Type.Union([Type.Literal("idle"), Type.Literal("ready")]),
@@ -189,6 +191,13 @@ export interface AbortAgentRequest {
 /** `POST /v0/agents/:agentId/reorder` */
 export interface ReorderAgentRequest {
     /** The agent to place this one after, or `null` to move it first. */
+    afterId: Cuid2 | null;
+    mutationId?: string;
+}
+
+/** `POST /v0/agents/:agentId/subtask-reorder` */
+export interface ReorderSubtaskRequest {
+    /** The sibling subtask to place this one after, or `null` to move it first. */
     afterId: Cuid2 | null;
     mutationId?: string;
 }

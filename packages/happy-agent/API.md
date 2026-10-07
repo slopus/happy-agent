@@ -255,6 +255,13 @@ subtasks, recursively. Current daemons emit it on every full agent object, inclu
 on leaves; older daemons may omit it. Omission means the tree was not supplied, not that a client
 should discard already-known children. This addition does not increment the protocol version.
 
+Subtask sibling order is additive and does not increment the protocol version. The optional agent
+field `subtaskOrderKey` and `POST /v0/agents/:agentId/subtask-reorder` let a person arrange a
+coordinator's subtasks. Until someone reorders them, `subtasks` keeps its previous newest-first
+order, so older clients see the same arrays they always did. Older daemons omit the field and
+answer the route with `404`; clients then keep the order the daemon supplies and offer no
+subtask reordering.
+
 By explicit product decision, the unused managed-root creation option is removed from both the
 client and daemon as a one-off exception to additive compatibility. `POST /v0/agents` rejects
 `parentAgentId` as an unknown request field with `400 invalid_request`; it creates only
@@ -3323,7 +3330,8 @@ files and checkouts, independently of agent ancestry.
 Subtasks accept user messages, drafts, read markers, archival, and unarchival through the existing
 agent routes. They report `userVisible: true` and `managedByAnotherAgent: true`, and
 `canSendMessages: true` while active. Reordering requires an owner-series entry, so a
-shared-filesystem subtask returns `409` on `reorder`. Archived subtasks accept no new messages or
+shared-filesystem subtask returns `409` on `reorder`. Order among a coordinator's subtasks is
+separate and moves with `subtask-reorder`, for either form. Archived subtasks accept no new messages or
 child creation. Archiving a subtask keeps its history and does not archive its workspace.
 Subtask creation is asynchronous delegation: it never waits for completion. Existing agent
 messaging tools deliver follow-ups, and `archive_subtask` exposes archival to the coordinator;
@@ -3353,6 +3361,7 @@ guarding the whole row. The version exists for event chaining and newer-copy com
     "parentAgentId": null,
     "subtask": false,
     "subtasks": [],
+    "subtaskOrderKey": null,
     "userVisible": true,
     "managedByAnotherAgent": false,
     "canSendMessages": true,
@@ -3385,14 +3394,22 @@ Fields:
   `true` identifies a user-interactive subtask, whether sharing its parent's filesystem or rooted
   in its own project workspace. The parent relationship remains `parentAgentId`.
 - `subtasks` — optional additive array of full agent objects for this agent's direct children
-  with `subtask: true` and `archivedAt: null`, newest `createdAt` first, with ascending `id` as a
-  tie-breaker. Each child recursively carries its own `subtasks`. Idle and finished-but-unarchived
+  with `subtask: true` and `archivedAt: null`, in sibling order: children with a
+  `subtaskOrderKey` first, by ascending key; then children without one, newest `createdAt` first;
+  ascending `id` breaks any tie. Each child recursively carries its own `subtasks`. Idle and finished-but-unarchived
   subtasks are included; ordinary hidden subagents and archived children are not. Leaves emit
   `[]`; older daemons may omit the field. Every child's `parentAgentId` names the containing
   agent, and its `workspaceId` remains its actual workspace. The existing two-level bot-rooted
   limit bounds recursion, not sibling count. Do not flatten grandchildren across an archived
   child: archiving removes that branch from the containing tree without deleting its history
   or changing independently stored descendants. Focused reads and activity remain available.
+- `subtaskOrderKey` — optional additive opaque sort key among the subtask's siblings under the
+  same `parentAgentId`, compared like `orderKey`. Current daemons always emit it: a string on a
+  subtask created by a current daemon or moved with `subtask-reorder`, and `null` on every
+  non-subtask and on an older subtask that has never been ordered. A new subtask receives a key
+  before every existing sibling's key, so it appears first. The key is independent of
+  `orderKey`, which places a workspace-bound subtask in its workspace's agent series; moving one
+  never moves the other. Archival keeps the key, so a restored subtask returns to its place.
 - `userVisible` — optional additive flag, always emitted by current daemons. `true` when the agent
   is a subtask, a bot's own agent, or explicitly attached to a project or workspace root-agent
   series. Ordinary subagents are `false`; subtasks are `true`.
@@ -4492,6 +4509,29 @@ Response — `200`: `{ "agent": { ... }, "profiles": [ ... ], "slashCommands": [
 only the moved agent emits an `agent.updated` reorder event. Its owning project or workspace also
 advances because the embedded ordered agent list changed.
 
+### `POST /v0/agents/:agentId/subtask-reorder`
+
+Moves an active subtask among its siblings: the active subtasks that share its `parentAgentId`.
+
+Request: `{ "afterId": "pfh0haxfpzowht3oi213cqos", "mutationId": "..." }` — the sibling subtask
+to place this one after, or `null` to move it first.
+
+Response — `200`: `{ "agent": { ... }, "profiles": [ ... ], "slashCommands": [ ... ] }`. The
+moved subtask receives a `subtaskOrderKey` between its destination neighbours. When a sibling
+has no key yet, the daemon first assigns keys to every active sibling in their current order,
+in the same transaction, so the result is exactly the requested order. Moving a subtask to
+where it already is changes nothing and emits nothing.
+
+Each subtask whose key changed emits `agent.updated` with its `subtaskOrderKey`. The parent
+emits `agent.updated` with `changes.subtasks`, the complete replacement snapshot of its direct
+active subtasks in the new order, and its version advances. The subtask's workspace, its
+workspace's agent series, and its `orderKey` are unchanged. Concurrent reorders and subtask
+creation under one parent are serialized; each sees the order the previous one committed.
+
+Errors: `404` when the agent does not exist. `409` with code `conflict` when the agent is not a
+subtask or is archived, or when `afterId` names the agent itself or anything other than an
+active subtask with the same parent.
+
 ### `GET /v0/agents/:agentId/draft`
 
 Returns the current composer draft as separate current state. A draft is the text plus the exact
@@ -5590,7 +5630,7 @@ services are an on-demand workspace surface.
 - `agent.updated` — any change to the agent object. This is the agent **state-change** event:
   every `status` move between `"idle"`, `"thinking"`, `"working"`, `"generating_tools"`, and
   `"running_tools"` is one of these, as is every change to the `subagents` and `processes`
-  counts, `pendingQuestionId`, title generation, unread, reorder, archive
+  counts, `pendingQuestionId`, title generation, unread, reorder, subtask reorder, archive
   and unarchive. `changes` carries exactly the fields that moved — a status flip is
   `{ "status": "running_tools", "updatedAt": ... }`, nothing more.
     - `agentId` (ID string), `previousVersion`, `version`, `changes`.
