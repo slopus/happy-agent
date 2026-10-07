@@ -55,6 +55,7 @@ import { discoverGithubCliToken, githubTokenSchema } from "./impl/discoverGithub
 import { ProviderEnablement, providerRegistryUntil } from "./impl/providerRegistryUntil.js";
 import { ProviderServiceTiers } from "./impl/ProviderServiceTiers.js";
 import { RoundRobinRouterProvider } from "./impl/RoundRobinRouterProvider.js";
+import { modelServiceTierOptions } from "./impl/modelServiceTierOptions.js";
 import { readGlobalInstructions } from "./impl/readGlobalInstructions.js";
 import { HAPPY_TOML_TEMPLATE, MCP_TOML_TEMPLATE } from "./impl/userConfigurationTemplate.js";
 import { readSecurityDocument } from "./impl/readSecurityDocument.js";
@@ -74,6 +75,7 @@ import {
     connectionIdSchema,
     nodeNameSchema,
     type LiveCredential,
+    type ServiceTierOption,
 } from "@slopus/happy-agent-client";
 import { resolveDefaultNodeName } from "./impl/resolveDefaultNodeName.js";
 
@@ -1643,7 +1645,9 @@ export class ConfigModule implements AgentModule {
     }
 
     /** Every configured provider/model route, including disabled and filtered catalog entries. */
-    get catalog(): readonly ConfiguredAgentModel[] {
+    get catalog(): readonly (ConfiguredAgentModel & {
+        readonly serviceTierOptions: readonly ServiceTierOption[];
+    })[] {
         const scripted = this.#scriptedModels();
         const scriptedProviderIds = new Set(scripted?.map((model) => model.providerId) ?? []);
         const catalog = agentModelCatalog(
@@ -1663,9 +1667,15 @@ export class ConfigModule implements AgentModule {
                 catalog.push(entry);
             }
         }
-        return catalog.map((model) =>
-            scriptedProviderIds.has(model.providerId) ? model : this.#serviceTiers.apply(model),
-        );
+        return catalog.map((model) => {
+            const effective = scriptedProviderIds.has(model.providerId)
+                ? model
+                : this.#serviceTiers.apply(model);
+            return {
+                ...effective,
+                serviceTierOptions: modelServiceTierOptions(effective.serviceTiers),
+            };
+        });
     }
 
     /** Curated context limits for one enabled provider/model route. */

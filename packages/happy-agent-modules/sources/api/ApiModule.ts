@@ -42,6 +42,7 @@ import {
     type AuthenticationResponse,
     type DrainWaitingFor,
     type MessageMode,
+    type ServiceTierOption,
 } from "@slopus/happy-agent-client";
 import {
     cuid2Schema,
@@ -6009,6 +6010,7 @@ export class ApiModule implements AgentModule {
                 efforts: [...route.effortLevels],
                 defaultEffort: route.defaultEffort,
                 serviceTiers: [...(route.serviceTiers ?? [])],
+                serviceTierOptions: [...route.serviceTierOptions],
             };
             const existing = models[route.id];
             if (
@@ -6057,6 +6059,7 @@ export class ApiModule implements AgentModule {
             provider.models.push({
                 id: route.id,
                 enabled: route.enabled,
+                serviceTierOptions: [...route.serviceTierOptions],
                 ...(sameStrings(efforts, definition.efforts) ? {} : { efforts }),
                 ...(route.defaultEffort === definition.defaultEffort
                     ? {}
@@ -6514,6 +6517,7 @@ interface ApiModelDefinition {
     readonly efforts: string[];
     readonly defaultEffort: string;
     readonly serviceTiers: string[];
+    readonly serviceTierOptions: ServiceTierOption[];
 }
 
 interface ApiProviderDefinition {
@@ -6530,6 +6534,7 @@ interface ApiProviderModelReference {
     readonly defaultEffort?: string;
     readonly name?: string;
     readonly serviceTiers?: string[];
+    readonly serviceTierOptions: ServiceTierOption[];
 }
 
 function sameStrings(left: readonly string[], right: readonly string[]): boolean {

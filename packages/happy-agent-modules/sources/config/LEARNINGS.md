@@ -13,6 +13,13 @@ They remain absent from native Codex, Claude, and Grok catalogs.
 
 ## Inference speed preserves the provider tier
 
+Configuration supplies each account/model's complete ordered speed menu with explicit IDs and
+English labels after applying eligibility. Regular carries `null`, Fast carries `priority`, and
+Ultrafast carries `ultrafast`; a newly curated tier needs its own configured label. The API forwards
+the menu on every provider model reference so shared definitions cannot restore an unavailable
+account choice. Clients render and submit the supplied choices unchanged instead of understanding
+provider tier names.
+
 Regular, Fast, and Ultrafast are distinct choices: Regular clears the tier, Fast sends
 `priority`, and Ultrafast sends `ultrafast`. Configuration accepts the Ultrafast preference;
 clients must preserve it rather than converting every non-default tier to Fast. Advertise a
