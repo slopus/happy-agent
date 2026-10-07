@@ -289,6 +289,119 @@ describe("user-interactive subtasks", () => {
         expect(gym.errors).toEqual([]);
     }, 60_000);
 
+    it("persists a person's subtask order among siblings without moving workspace series", async () => {
+        const { gym, bot, create } = await harness();
+        const project = (await gym.client.listProjects()).projects.find((item) =>
+            item.agents.some((agent) => agent.id === gym.defaultSessionId),
+        )!;
+        const first = await create(bot.agent.id, "First ordered");
+        const second = await create(bot.agent.id, "Second ordered", {
+            projectId: project.id,
+            name: "Second ordered",
+        });
+        const third = await create(bot.agent.id, "Third ordered");
+        const order = async () =>
+            (await gym.client.getAgent(bot.agent.id)).agent.subtasks!.map((item) => item.id);
+        expect(await order()).toEqual([third.id, second.id, first.id]);
+        const workspaceBefore = (await gym.client.getWorkspace(second.workspaceId)).workspace;
+        const parentBefore = (await gym.client.getAgent(bot.agent.id)).agent;
+
+        const moved = await gym.client.reorderSubtask(first.id, {
+            afterId: null,
+            mutationId: "subtask-first",
+        });
+        expect(moved.agent).toMatchObject({ id: first.id, subtaskOrderKey: expect.any(String) });
+        expect(await order()).toEqual([first.id, third.id, second.id]);
+        const childEvent = await gym.waitForEvent(
+            (event) =>
+                event.type === "agent.updated" &&
+                event.payload.agentId === first.id &&
+                event.payload.mutationId === "subtask-first",
+            "the moved subtask's update",
+        );
+        expect(childEvent.payload).toMatchObject({
+            version: moved.agent.version,
+            changes: { subtaskOrderKey: moved.agent.subtaskOrderKey },
+        });
+        const parentEvent = await gym.waitForEvent(
+            (event) =>
+                event.type === "agent.updated" &&
+                event.payload.agentId === bot.agent.id &&
+                event.payload.mutationId === "subtask-first",
+            "the parent's replacement subtask list",
+        );
+        const parentPayload = parentEvent.payload as {
+            previousVersion: string;
+            version: string;
+            changes: { subtasks: { id: string }[] };
+        };
+        // Settling subtask runs also advance the parent, so only the chain itself is stable here.
+        expect(parentPayload.previousVersion).not.toBe(parentPayload.version);
+        expect(parentPayload.previousVersion >= parentBefore.version).toBe(true);
+        expect(parentPayload.changes.subtasks.map((item) => item.id)).toEqual([
+            first.id,
+            third.id,
+            second.id,
+        ]);
+
+        await gym.client.reorderSubtask(second.id, { afterId: first.id });
+        expect(await order()).toEqual([first.id, second.id, third.id]);
+        await gym.client.reorderSubtask(second.id, { afterId: first.id, mutationId: "no-op" });
+        await gym.client.reorderSubtask(third.id, { afterId: null, mutationId: "after-no-op" });
+        await gym.waitForEvent(
+            (event) => event.type === "agent.updated" && event.payload.mutationId === "after-no-op",
+            "the move after the no-op",
+        );
+        expect(await order()).toEqual([third.id, first.id, second.id]);
+        const events = await gym.events();
+        expect(
+            events.filter(
+                (event) => "mutationId" in event.payload && event.payload.mutationId === "no-op",
+            ),
+        ).toEqual([]);
+        expect(
+            events.filter(
+                (event) =>
+                    event.type === "workspace.updated" &&
+                    event.payload.workspaceId === second.workspaceId &&
+                    typeof event.payload.mutationId === "string",
+            ),
+        ).toEqual([]);
+        const workspaceAfter = (await gym.client.getWorkspace(second.workspaceId)).workspace;
+        expect(workspaceAfter.agents[0]?.orderKey).toBe(workspaceBefore.agents[0]?.orderKey);
+        await gym.client.reorderSubtask(third.id, { afterId: second.id });
+
+        for (const [agentId, afterId] of [
+            [second.id, second.id],
+            [second.id, bot.agent.id],
+            [bot.agent.id, null],
+        ] as const) {
+            await expect(gym.client.reorderSubtask(agentId, { afterId })).rejects.toMatchObject({
+                status: 409,
+            });
+        }
+        await expect(
+            gym.client.reorderSubtask("missingagent", { afterId: null }),
+        ).rejects.toMatchObject({ status: 404 });
+
+        const fourth = await create(bot.agent.id, "Fourth ordered");
+        expect(await order()).toEqual([fourth.id, first.id, second.id, third.id]);
+        await gym.client.archiveAgent(second.id);
+        await expect(
+            gym.client.reorderSubtask(first.id, { afterId: second.id }),
+        ).rejects.toMatchObject({ status: 409 });
+        expect(await order()).toEqual([fourth.id, first.id, third.id]);
+        await gym.client.unarchiveAgent(second.id);
+        await gym.restart();
+        expect(await order()).toEqual([fourth.id, first.id, second.id, third.id]);
+        expect(
+            (await gym.client.getDesktopBootstrap())
+                .bots!.find((item) => item.id === bot.id)!
+                .agent.subtasks!.map((item) => item.id),
+        ).toEqual([fourth.id, first.id, second.id, third.id]);
+        expect(gym.errors).toEqual([]);
+    }, 60_000);
+
     it("lets only the direct coordinator archive a subtask without deleting its workspace or descendants", async () => {
         const { gym, bot, create, call } = await harness();
         const project = (await gym.client.listProjects()).projects.find((item) =>
