@@ -73,8 +73,12 @@ Creating one workspace must never produce two sidebar entries.
 ## Tracking changes
 
 The changed-file list and deltas for the current branch cover every change
-made since the branch diverged from main. The baseline is always the branch's
-merge base with `origin/main`; local `main` must never be used.
+made since the branch diverged from the default branch. The baseline is the
+first of these that exists: the merge base with `origin/<default branch>`;
+when the remote has none, the merge base with the local default branch;
+otherwise HEAD itself (uncommitted work only); and for a repository with no
+commits, the empty tree, so every file shows as new. A remote baseline always
+wins when it exists, so a moved local `main` never replaces it.
 
 With Git we must track file changes line by line. We must detect file types —
 detect binary files versus text, and detect and not show large files. The file
