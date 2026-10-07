@@ -81,7 +81,12 @@ import { ComputeModule, type ComputeProcessEvent } from "../compute/index.js";
 import { ConfigModule } from "../config/index.js";
 import { NodeModule } from "../node/index.js";
 import { CloudModule, CloudOperationError } from "../cloud/index.js";
-import { EventsModule, eventIdSchema, type AgentEvent } from "../events/index.js";
+import {
+    EventsModule,
+    eventIdSchema,
+    type AgentEvent,
+    type LatestAgentEvent,
+} from "../events/index.js";
 import {
     fileReadQuerySchema,
     fileRevisionQuerySchema,
@@ -219,7 +224,7 @@ import {
     workspaceCreateBodySchema,
 } from "./ApiSchemas.js";
 import { WorkspaceProxy } from "./WorkspaceProxy.js";
-import { SubtasksModule } from "../subtasks/index.js";
+import { SubtaskInputError, SubtasksModule } from "../subtasks/index.js";
 
 const API_PROTOCOL_VERSION = 25;
 
@@ -2407,11 +2412,18 @@ export class ApiModule implements AgentModule {
                           true) &&
                   update["archivedAt"] === null
                 : undefined;
-            await this.#appendAgentUpdate(
-                ctx,
-                event,
-                agentMetadataChanges(update, event.occurredAt, canSendMessages),
-            );
+            // A reordered parent carries its complete new subtask list, so clients need no refetch.
+            const subtasks = Object.hasOwn(update, "subtasksOrderedAt")
+                ? await this.#subtaskResources(
+                      ctx,
+                      await this.#agentSystem().childOf(ctx, agentId),
+                      0,
+                  )
+                : undefined;
+            await this.#appendAgentUpdate(ctx, event, {
+                ...agentMetadataChanges(update, event.occurredAt, canSendMessages),
+                ...(subtasks === undefined ? {} : { subtasks }),
+            });
             return;
         }
         if (event.type === "provider.event" || event.type === "tool.completed") {
@@ -3083,7 +3095,7 @@ export class ApiModule implements AgentModule {
             return true;
         }
         const action =
-            /^\/v0\/agents\/([a-z][a-z0-9]*)\/(send|messages|question|abort|compact|read|archive|unarchive|reorder|draft|usage|mode|bootstrap|activity)$/.exec(
+            /^\/v0\/agents\/([a-z][a-z0-9]*)\/(send|messages|question|abort|compact|read|archive|unarchive|reorder|subtask-reorder|draft|usage|mode|bootstrap|activity)$/.exec(
                 url.pathname,
             );
         if (action !== null) {
@@ -3264,6 +3276,29 @@ export class ApiModule implements AgentModule {
                                 orderKey,
                             }),
                     );
+                }
+                sendJson(response, 200, await this.#focusedAgentResponse(ctx, agentId));
+                return true;
+            }
+            if (operation === "subtask-reorder" && request.method === "POST") {
+                const body = await bodyAs(request, reorderBodySchema, "subtask reorder");
+                if ((await this.#agentSystem().config(ctx, agentId)) === undefined) {
+                    throw notFound("The agent was not found.");
+                }
+                if (this.#subtasks === undefined) {
+                    throw new ApiError(409, "conflict", "Only an active subtask can be reordered.");
+                }
+                const subtasks = this.#subtasks;
+                try {
+                    await this.#withMutationId(
+                        body.mutationId,
+                        async () => await subtasks.reorder(ctx, agentId, body.afterId),
+                    );
+                } catch (error: unknown) {
+                    if (error instanceof SubtaskInputError) {
+                        throw new ApiError(409, "conflict", error.message);
+                    }
+                    throw error;
                 }
                 sendJson(response, 200, await this.#focusedAgentResponse(ctx, agentId));
                 return true;
@@ -3825,6 +3860,7 @@ export class ApiModule implements AgentModule {
             readonly config?: AgentConfig;
             readonly userVisible?: boolean;
             readonly subtaskDepth?: number;
+            readonly latestEvent?: LatestAgentEvent | null;
         } = {},
     ): Promise<Record<string, unknown> | undefined> {
         const config = options.config ?? (await this.#agentSystem().config(ctx, agentId));
@@ -3852,10 +3888,12 @@ export class ApiModule implements AgentModule {
         return await agentResource(ctx, this.#agentSystem(), this.#events, agentId, workspaceId, {
             config,
             children,
+            ...(options.latestEvent === undefined ? {} : { latestEvent: options.latestEvent }),
             ...(orderKey === undefined ? {} : { orderKey }),
             userVisible,
             subtask: this.#subtasks?.isSubtask(config) ?? false,
             subtasks,
+            subtaskOrderKey: this.#subtasks?.siblingOrderKey(config) ?? null,
             pendingQuestionId: questions.requests[0]?.id ?? null,
             runningProcesses: processes.filter((process) => process.status === "running").length,
             runningSubagents,
@@ -3869,24 +3907,25 @@ export class ApiModule implements AgentModule {
         depth: number,
     ): Promise<Record<string, unknown>[]> {
         if (this.#subtasks === undefined || depth >= 2) return [];
-        const active: { id: string; config: AgentConfig }[] = [];
+        const active: { id: string; config: AgentConfig; latestEvent: LatestAgentEvent | null }[] =
+            [];
         for (const id of children) {
+            // Read the version before the state. A change committing between the two reads then
+            // pairs newer state with an older version, which that change's own event corrects;
+            // the reverse would label stale state, such as an old sibling key, with a new version.
+            const latestEvent = (await this.#events.latestAgentEvent(ctx, id)) ?? null;
             const config = await this.#agentSystem().config(ctx, id);
             if (
                 config !== undefined &&
                 this.#subtasks.isSubtask(config) &&
                 agentArchivedAt(config) === null
             ) {
-                active.push({ id, config });
+                active.push({ id, config, latestEvent });
             }
         }
-        active.sort(
-            (a, b) =>
-                (b.config.provenance?.createdAt ?? 0) - (a.config.provenance?.createdAt ?? 0) ||
-                (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
-        );
+        const subtasks = this.#subtasks;
         return await Promise.all(
-            active.map(async ({ id, config }) => {
+            subtasks.sortSiblings(active).map(async ({ id, config, latestEvent }) => {
                 const workspaceId = await this.#workspaceIdForAgent(ctx, id);
                 if (workspaceId === undefined)
                     throw notFound("The subtask workspace was not found.");
@@ -3897,6 +3936,7 @@ export class ApiModule implements AgentModule {
                     await this.#agentOrderKey(ctx, id),
                     {
                         config,
+                        latestEvent,
                         subtaskDepth: depth + 1,
                     },
                 ))!;
@@ -6827,6 +6867,7 @@ function agentMetadataChanges(
         "pendingQuestionId",
         "processes",
         "subagents",
+        "subtaskOrderKey",
         "title",
         "unread",
     ]) {

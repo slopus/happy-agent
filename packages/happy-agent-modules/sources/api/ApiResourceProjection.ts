@@ -11,7 +11,7 @@ import { ProjectsModule, type Project, type ProjectSettings } from "../projects/
 import type { Terminal } from "../terminals/index.js";
 import type { UserInputRequest } from "../userInput/index.js";
 import type { Workspace } from "../workspaces/index.js";
-import { EventsModule } from "../events/index.js";
+import { EventsModule, type LatestAgentEvent } from "../events/index.js";
 
 /** Deterministic, time-ordered UUIDv7 projection of a module's numeric resource version. */
 export function apiResourceVersion(updatedAt: number, version: number, resourceId: string): string {
@@ -353,13 +353,19 @@ export async function agentResource(
         readonly userVisible?: boolean;
         readonly subtask?: boolean;
         readonly subtasks?: readonly Record<string, unknown>[];
+        readonly subtaskOrderKey?: string | null;
+        /** Read before `config`, so the version can only trail the state it is paired with. */
+        readonly latestEvent?: LatestAgentEvent | null;
     } = {},
 ): Promise<Record<string, unknown> | undefined> {
     const config = state.config ?? (await agents.config(ctx, agentId));
     if (config === undefined) return undefined;
     const parentAgentId = await agents.parentOf(ctx, agentId);
     const children = state.children ?? (await agents.childOf(ctx, agentId));
-    const latestEvent = await events.latestAgentEvent(ctx, agentId);
+    const latestEvent =
+        state.latestEvent === undefined
+            ? await events.latestAgentEvent(ctx, agentId)
+            : (state.latestEvent ?? undefined);
     const metadata = config.metadata ?? {};
     const createdAt = config.provenance?.createdAt ?? 0;
     const updatedAt = Math.max(
@@ -377,6 +383,7 @@ export async function agentResource(
         parentAgentId,
         subtask: state.subtask ?? false,
         subtasks: state.subtasks ?? [],
+        subtaskOrderKey: state.subtaskOrderKey ?? null,
         userVisible: state.userVisible ?? state.orderKey != null,
         managedByAnotherAgent,
         canSendMessages: (!managedByAnotherAgent || state.subtask === true) && archivedAt === null,

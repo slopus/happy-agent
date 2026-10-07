@@ -28,6 +28,16 @@ projects, while small steps stay inline and hidden subagents handle internal res
 subtask requests are honored within eligibility and depth limits. Second-level subtasks should
 usually be explicitly requested by the user. These are prompt defaults, not new runtime restrictions.
 
+## People arrange sibling subtasks themselves
+
+Users wanted to drag subtasks into their own order in the sidebar, but `subtasks` was fixed newest
+first. Each subtask now carries a `subtaskOrderKey` among its siblings. It is separate from the
+workspace-series `orderKey`, because siblings can span workspaces and shared-filesystem subtasks
+have no series entry. New subtasks are keyed before every sibling, archived ones included, so the
+default stays newest first. A reorder keys unkeyed or tied siblings in their current order first,
+so the result is exact. The parent then records `subtasksOrderedAt`, which publishes its complete
+new list.
+
 ## Titles are short sidebar labels
 
 Subtask session titles were too long for the sidebar. The creation tool now asks for 2–3 words,

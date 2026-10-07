@@ -1,9 +1,11 @@
 import { Value } from "@sinclair/typebox/value";
 import { toolPresentationSchema } from "@slopus/happy-agent-client";
-import { describe, expect, it } from "vitest";
+import type { AgentSystemRef } from "@slopus/happy-agent-base";
+import { createRootContext } from "@steve.kite/stdlib";
+import { describe, expect, it, vi } from "vitest";
 
-import { eventIdSchema } from "../../sources/events/index.js";
-import { apiResourceVersion } from "../../sources/api/ApiResourceProjection.js";
+import { eventIdSchema, type EventsModule } from "../../sources/events/index.js";
+import { agentResource, apiResourceVersion } from "../../sources/api/ApiResourceProjection.js";
 import {
     messageHiddenFromUser,
     messageResource,
@@ -43,6 +45,34 @@ describe("apiResourceVersion", () => {
 
     it("keeps resource identities distinct at the same timestamp and counter", () => {
         expect(apiResourceVersion(1, 1, "a")).not.toBe(apiResourceVersion(1, 1, "b"));
+    });
+});
+
+describe("agentResource", () => {
+    const agents = {
+        parentOf: async () => "parent",
+        childOf: async () => [],
+    } as unknown as AgentSystemRef;
+    const config = { provenance: { createdAt: 1 }, metadata: { subtask: true } };
+
+    it("labels state with the version read before it instead of a later one", async () => {
+        const latestAgentEvent = vi.fn(async () => ({ cursor: "later", occurredAt: 9 }));
+        const events = { latestAgentEvent } as unknown as EventsModule;
+        const ctx = createRootContext();
+        const resource = await agentResource(ctx, agents, events, "child", "space", {
+            config,
+            subtask: true,
+            subtaskOrderKey: "2",
+            latestEvent: { cursor: "earlier", occurredAt: 5 } as never,
+        });
+        expect(latestAgentEvent).not.toHaveBeenCalled();
+        expect(resource).toMatchObject({
+            version: "earlier",
+            lastCursor: "earlier",
+            subtaskOrderKey: "2",
+        });
+        const unread = await agentResource(ctx, agents, events, "child", "space", { config });
+        expect(unread).toMatchObject({ version: "later", subtaskOrderKey: null });
     });
 });
 

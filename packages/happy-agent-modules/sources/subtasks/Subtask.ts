@@ -65,6 +65,10 @@ export const workspaceSubtaskMetadataSchema = Type.Object({
 export const archivedMetadataSchema = Type.Object({ archivedAt: Type.Number() });
 export const restoredMetadataSchema = Type.Object({ archivedAt: Type.Null() });
 export const versionedMetadataSchema = Type.Object({ version: Type.Integer({ minimum: 1 }) });
+export const orderedSubtaskMetadataSchema = Type.Object({
+    subtask: Type.Literal(true),
+    subtaskOrderKey: Type.String({ minLength: 1, pattern: "^[0-9]+$" }),
+});
 export const archiveSubtaskInputSchema = Type.Object(
     { agentId: subtaskIdSchema },
     { additionalProperties: false },

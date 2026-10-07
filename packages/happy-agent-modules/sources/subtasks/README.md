@@ -15,6 +15,7 @@ The two-level limit counts ancestry, not siblings. Ordinary agents cannot create
 Creation commits the agent, optional workspace association, and Durable Functions startup intent
 together. Initial delivery waits for workspace readiness and uses the agent ID as its durable
 message identity. Every full API agent includes its active direct subtasks recursively, including
-in bootstrap. Workspace-bound subtasks also appear in the workspace's ordered agent series.
+in bootstrap, in sibling order that `reorder` moves. Workspace-bound subtasks also appear in the
+workspace's ordered agent series, whose order is separate.
 Archival stops the target and descendants but marks only the target archived, preserving its
 workspace and history. Durable Functions owns post-commit compute cleanup. Agent Base remains unchanged.

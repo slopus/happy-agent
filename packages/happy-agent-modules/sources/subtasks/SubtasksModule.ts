@@ -19,6 +19,7 @@ import { WorkspacesModule } from "../workspaces/index.js";
 import {
     archivedMetadataSchema,
     archiveSubtaskInputSchema,
+    orderedSubtaskMetadataSchema,
     restoredMetadataSchema,
     versionedMetadataSchema,
     SUBTASK_ARCHIVE_FUNCTION,
@@ -34,6 +35,7 @@ import {
     type SubtaskResult,
     type SubtaskStart,
 } from "./Subtask.js";
+import { subtaskOrderKeyBetween } from "./subtaskOrderKeyBetween.js";
 import { createSubtaskTool } from "./tools/create_subtask.js";
 import { archiveSubtaskTool } from "./tools/archive_subtask.js";
 
@@ -92,6 +94,121 @@ export class SubtasksModule implements AgentModule {
 
     isSubtask(config: AgentConfig | AgentModuleAgent | undefined): boolean {
         return Value.Check(subtaskMetadataSchema, config?.metadata);
+    }
+
+    /** The subtask's place among its siblings, or `null` for a non-subtask or an unordered one. */
+    siblingOrderKey(config: AgentConfig | undefined): string | null {
+        return Value.Check(orderedSubtaskMetadataSchema, config?.metadata)
+            ? config.metadata.subtaskOrderKey
+            : null;
+    }
+
+    /**
+     * Sibling order: keyed subtasks by ascending key, then unkeyed ones newest first. A new
+     * subtask is keyed before every sibling, so unreordered siblings keep newest-first order.
+     */
+    sortSiblings<Sibling extends { readonly id: string; readonly config: AgentConfig }>(
+        siblings: readonly Sibling[],
+    ): Sibling[] {
+        return [...siblings].sort((a, b) => {
+            const aKey = this.siblingOrderKey(a.config);
+            const bKey = this.siblingOrderKey(b.config);
+            if (aKey !== bKey) {
+                if (aKey === null) return 1;
+                if (bKey === null) return -1;
+                return aKey < bKey ? -1 : 1;
+            }
+            // Equal keys, reachable when a restored subtask meets one moved onto its old key,
+            // fall straight to the identifier; only unkeyed siblings use creation time.
+            const byCreation =
+                aKey === null
+                    ? (b.config.provenance?.createdAt ?? 0) - (a.config.provenance?.createdAt ?? 0)
+                    : 0;
+            return byCreation || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+        });
+    }
+
+    /**
+     * Move an active subtask after an active sibling, or first for `null`. Returns whether the
+     * order changed. Unkeyed or tied siblings are first keyed in their current order, so the
+     * result is exactly the requested order; the parent records the move so it can publish
+     * its new subtask list.
+     */
+    async reorder(ctx: Context, agentId: string, afterId: string | null): Promise<boolean> {
+        if (
+            !Value.Check(subtaskIdSchema, agentId) ||
+            (afterId !== null && !Value.Check(subtaskIdSchema, afterId))
+        ) {
+            throw new SubtaskInputError("The subtask reorder request is invalid.");
+        }
+        const agents = this.#requireAgents();
+        return await ctx.inTx(async (txCtx) => {
+            const target = await agents.config(txCtx, agentId);
+            if (!this.isSubtask(target) || Value.Check(archivedMetadataSchema, target?.metadata)) {
+                throw new SubtaskInputError("Only an active subtask can be reordered.");
+            }
+            const parentAgentId = await agents.parentOf(txCtx, agentId);
+            if (parentAgentId === null) {
+                throw new SubtaskInputError("Only an active subtask can be reordered.");
+            }
+            const siblings = this.sortSiblings(
+                (await this.#subtaskChildren(txCtx, parentAgentId)).filter(
+                    (sibling) => !Value.Check(archivedMetadataSchema, sibling.config.metadata),
+                ),
+            );
+            if (
+                afterId !== null &&
+                (afterId === agentId || !siblings.some((sibling) => sibling.id === afterId))
+            ) {
+                throw new SubtaskInputError(
+                    "A subtask can only be placed after an active sibling subtask.",
+                );
+            }
+            const others = siblings.filter((sibling) => sibling.id !== agentId);
+            const insertAt =
+                afterId === null ? 0 : others.findIndex((sibling) => sibling.id === afterId) + 1;
+            const moved = [
+                ...others.slice(0, insertAt),
+                siblings.find((sibling) => sibling.id === agentId)!,
+                ...others.slice(insertAt),
+            ];
+            if (moved.every((sibling, index) => sibling.id === siblings[index]?.id)) return false;
+
+            const keys = new Map(
+                siblings.map((sibling) => [sibling.id, this.siblingOrderKey(sibling.config)]),
+            );
+            const strictlyOrdered = siblings.every((sibling, index) => {
+                const key = keys.get(sibling.id) ?? null;
+                const previous = index === 0 ? "" : (keys.get(siblings[index - 1]!.id) ?? null);
+                return key !== null && previous !== null && previous < key;
+            });
+            if (!strictlyOrdered) {
+                let previous: string | null = null;
+                for (const sibling of siblings) {
+                    previous = subtaskOrderKeyBetween(previous, null);
+                    keys.set(sibling.id, previous);
+                }
+            }
+            const before = insertAt === 0 ? null : keys.get(moved[insertAt - 1]!.id)!;
+            const after = insertAt + 1 < moved.length ? keys.get(moved[insertAt + 1]!.id)! : null;
+            keys.set(agentId, subtaskOrderKeyBetween(before, after));
+
+            const now = Date.now();
+            for (const sibling of siblings) {
+                const key = keys.get(sibling.id)!;
+                if (key === this.siblingOrderKey(sibling.config)) continue;
+                await this.#updateVersionedMetadata(txCtx, sibling.id, sibling.config, now, {
+                    subtaskOrderKey: key,
+                });
+            }
+            const parent = await agents.config(txCtx, parentAgentId);
+            if (parent !== undefined) {
+                await this.#updateVersionedMetadata(txCtx, parentAgentId, parent, now, {
+                    subtasksOrderedAt: now,
+                });
+            }
+            return true;
+        });
     }
 
     modelDescription(): string {
@@ -160,6 +277,12 @@ export class SubtasksModule implements AgentModule {
             if (requestedWorkspace !== undefined && workspace === undefined) {
                 throw new Error("The subtask's project was not found.");
             }
+            // Archived siblings keep their keys for restoration, so a new subtask goes before them too.
+            const siblingKeys = (await this.#subtaskChildren(txCtx, parentAgentId))
+                .map((sibling) => this.siblingOrderKey(sibling.config))
+                .filter((key) => key !== null)
+                .sort();
+            const subtaskOrderKey = subtaskOrderKeyBetween(null, siblingKeys[0] ?? null);
             const now = Date.now();
             const config: AgentConfig = {
                 provenance: { createdAt: now },
@@ -186,6 +309,7 @@ export class SubtasksModule implements AgentModule {
                 metadata: {
                     title: input.title,
                     subtask: true,
+                    subtaskOrderKey,
                     updatedAt: now,
                     version: 1,
                     ...(workspaceId === undefined ? {} : { subtaskWorkspaceId: workspaceId }),
@@ -403,6 +527,37 @@ export class SubtasksModule implements AgentModule {
                 task,
                 request.agentId,
             );
+        });
+    }
+
+    /** Every direct subtask child of one agent, archived ones included, read in this context. */
+    async #subtaskChildren(
+        ctx: Context,
+        parentAgentId: string,
+    ): Promise<{ readonly id: string; readonly config: AgentConfig }[]> {
+        const agents = this.#requireAgents();
+        const children: { readonly id: string; readonly config: AgentConfig }[] = [];
+        for (const id of await agents.childOf(ctx, parentAgentId)) {
+            const config = await agents.config(ctx, id);
+            if (config !== undefined && this.isSubtask(config)) children.push({ id, config });
+        }
+        return children;
+    }
+
+    async #updateVersionedMetadata(
+        ctx: Context,
+        agentId: string,
+        config: AgentConfig,
+        now: number,
+        update: Record<string, unknown>,
+    ): Promise<void> {
+        const version = Value.Check(versionedMetadataSchema, config.metadata)
+            ? config.metadata.version
+            : 1;
+        await this.#requireAgents().updateMetadata(ctx, agentId, {
+            ...update,
+            updatedAt: now,
+            version: version + 1,
         });
     }
 
