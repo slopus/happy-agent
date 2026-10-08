@@ -18,6 +18,9 @@ interface Compute {
     readonly fs: ComputeFileSystem;
     readonly shell: ComputeShell;
     readonly services?: ComputeServices;
+    readonly processes?: ComputeProcesses;
+    readonly watcher?: ComputeWatcher;
+    readonly network?: ComputeNetwork;
     dispose(ctx: Context): Promise<void>;
 }
 ```
@@ -90,6 +93,29 @@ Reading and stopping a session take no permissions: they act on a command whose 
 when it started, and re-deciding it afterwards could only disagree with the process already there.
 `writeSession` is the exception and does take them, because input is new instruction reaching a
 process that may hold credentials.
+
+## The product's own work
+
+The shell is the agent's. Happy itself also has work to do on the machine — Git, terminals a person
+opens, stdio MCP servers, watching a project for changes, previewing a web app — and when that
+machine is a runner, it has to happen there too. Three optional capabilities carry it:
+
+- `processes.start(ctx, { command, args, cwd, environment, terminal })` runs one program on pipes,
+  or under Bun's pseudo-terminal when `terminal` gives a size. Output arrives through `onStdout` and
+  `onStderr` and is held until someone listens; `write` resolves `false` when the caller should wait
+  for the program to catch up; `pause` stops reading so a slow consumer slows the program down;
+  `signal` reaches the whole process group.
+- `watcher.watch(ctx, { path, ignore })` reports changed paths in batches. A batch marked
+  `overflow` means some changes were not itemized and the reader should rescan.
+- `network.connect(ctx, { host, port })` opens a TCP connection from the compute's machine, so a
+  web app listening on a runner's loopback can be proxied from the daemon. `network.listen(ctx)`
+  goes the other way: a loopback port on the compute's machine whose connections arrive at the
+  caller, which is how Git on a runner reaches a credential proxy that never leaves the daemon.
+
+These are the product's actions, not the agent's: they take no permissions, and the agent sandbox
+does not apply to them. Callers must not hand them commands an agent chose. The host backend and
+the runner backend provide all three; a backend without one leaves it undefined, and callers
+refuse the feature rather than routing it somewhere else.
 
 ## The backends
 
@@ -183,6 +209,20 @@ const compute = createJustBashCompute({ storage: "memory", cwd: "/work" });
 const compute = createJustBashCompute({ storage: "folder", cwd: "/work", folder: "/some/path" });
 ```
 
+**Runner** (`runner`) — a filesystem, shell, processes, file watching, and connections on a separate
+machine dedicated to running work, so the daemon's own machine, with its database and provider
+credentials, never runs agent code. The
+runner serves a host compute behind the same native supervisor; the daemon reaches it through a
+`RunnerLink` over whatever authenticated channel the runner dialed in on. A runner compute needs a
+live link rather than a configuration value, so it is built directly instead of through the
+provider registry. See [the runner protocol](sources/runner/README.md).
+
+```ts
+const link = new RunnerLink(ctx, { name: "Build box", instanceId: daemonInstanceId });
+await link.accept(channelTheRunnerOpened);
+const compute = await createRunnerCompute(ctx, { link, computeId: agentId, cwd: "/srv/work/app" });
+```
+
 ## Choosing a backend at runtime
 
 `ComputeProviders` is the one place a machine is built from a name. Configuration arrives as
@@ -264,7 +304,11 @@ pnpm test:live         # live tests against the real host, Docker, and just-bash
 pnpm test:live:host    # one backend at a time
 pnpm test:live:docker
 pnpm test:live:just-bash
+pnpm test:bun          # processes and runners under Bun, the runtime Happy Agent ships on
 ```
+
+Terminals for the product's own programs use Bun's pseudo-terminal, so their tests run only under
+`pnpm test:bun`; under Node, `processes.start` refuses a terminal with `ENOTSUP`.
 
 The live tests exercise real sandboxes and a real Docker daemon, so they are opt-in through
 `HAPPY_AGENT_COMPUTE_LIVE_TEST` and are not part of the default run.

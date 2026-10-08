@@ -2,6 +2,24 @@
 
 export { type Compute, type ComputeKind } from "./Compute.js";
 export {
+    type ComputeConnectOptions,
+    type ComputeListener,
+    type ComputeNetwork,
+} from "./ComputeNetwork.js";
+export {
+    type ComputeProcess,
+    type ComputeProcesses,
+    type ComputeProcessExit,
+    type ComputeProcessSignal,
+    type ComputeProcessStartOptions,
+} from "./ComputeProcesses.js";
+export {
+    type ComputeWatch,
+    type ComputeWatchBatch,
+    type ComputeWatcher,
+    type ComputeWatchOptions,
+} from "./ComputeWatcher.js";
+export {
     computeServiceExecutionSchema,
     computeServicePathSchema,
     computeServiceSandboxSchema,
@@ -95,3 +113,6 @@ export * from "./network/index.js";
 
 // Native supervisor policy translation used by restricted host and Docker commands.
 export * from "./supervisor/index.js";
+
+// The runner protocol: computes on a dedicated machine, driven by a daemon on another one.
+export * from "./runner/index.js";

@@ -1,8 +1,11 @@
 import type { Context } from "@steve.kite/stdlib";
 
 import type { ComputeFileSystem } from "./ComputeFileSystem.js";
+import type { ComputeNetwork } from "./ComputeNetwork.js";
+import type { ComputeProcesses } from "./ComputeProcesses.js";
 import type { ComputeShell } from "./ComputeShell.js";
 import type { ComputeServices } from "./ComputeServices.js";
+import type { ComputeWatcher } from "./ComputeWatcher.js";
 
 /**
  * What sort of machine a compute is, as opposed to which provider built it.
@@ -47,6 +50,12 @@ export interface Compute {
     readonly shell: ComputeShell;
     /** Mandatory isolated services, when this backend can enforce that separate boundary. */
     readonly services?: ComputeServices;
+    /** The product's own programs, such as Git and terminals, when this backend can start them. */
+    readonly processes?: ComputeProcesses;
+    /** Notifications about files changing, when this backend can watch them. */
+    readonly watcher?: ComputeWatcher;
+    /** Connections from this machine's network, when this backend can make them. */
+    readonly network?: ComputeNetwork;
     /** Stop everything this compute started and release what it holds. */
     dispose(ctx: Context): Promise<void>;
 }

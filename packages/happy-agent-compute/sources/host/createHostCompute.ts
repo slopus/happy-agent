@@ -7,6 +7,9 @@ import type { Compute } from "../Compute.js";
 import type { ComputeHostPolicy } from "../ComputeHostPolicy.js";
 import { NativeProcessManager } from "../processes/index.js";
 import { createHostFileSystem } from "./createHostFileSystem.js";
+import { createHostNetwork } from "./createHostNetwork.js";
+import { createHostProcesses } from "./createHostProcesses.js";
+import { createHostWatcher } from "./createHostWatcher.js";
 import { createHostShell } from "./createHostShell.js";
 import { createHostServices } from "../services/createHostServices.js";
 import { runCleanupSteps } from "../sandbox/impl/runCleanupSteps.js";
@@ -81,6 +84,15 @@ export function createHostCompute(options: HostComputeOptions): Compute {
             : { cgroupParent: options.serviceCgroupParent }),
     });
 
+    const processes = createHostProcesses({
+        cwd,
+        ...(options.environment === undefined ? {} : { environment: options.environment }),
+    });
+    const watcher = createHostWatcher({
+        cwd,
+        ...(options.platform === undefined ? {} : { platform: options.platform }),
+    });
+
     return {
         id: "host",
         kind: "host",
@@ -88,11 +100,16 @@ export function createHostCompute(options: HostComputeOptions): Compute {
         fs,
         shell,
         services,
+        processes,
+        watcher,
+        network: createHostNetwork(),
         async dispose(ctx: Context) {
             shell.setSessionExitListener?.(undefined);
             shell.setActiveSessionCountListener?.(undefined);
+            watcher.dispose();
             await runCleanupSteps("host compute", [
                 () => services.dispose(ctx),
+                () => processes.dispose(),
                 async () => {
                     await shell.killAllSessions?.();
                 },

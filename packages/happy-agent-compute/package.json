@@ -27,6 +27,7 @@
         "build": "node --eval \"import('node:fs/promises').then(({ rm }) => rm('dist', { force: true, recursive: true }))\" && tsc -p tsconfig.build.json",
         "check": "tsc --noEmit",
         "test": "vitest run --passWithNoTests",
+        "test:bun": "bun --bun node_modules/vitest/vitest.mjs run tests/host/createHostProcesses.test.ts tests/runner",
         "test:live": "HAPPY_AGENT_COMPUTE_LIVE_TEST=1 vitest run tests/live",
         "test:live:docker": "HAPPY_AGENT_COMPUTE_LIVE_TEST=1 vitest run tests/live/dockerBackend.live.test.ts",
         "test:live:host": "HAPPY_AGENT_COMPUTE_LIVE_TEST=1 vitest run tests/live/hostSandbox.live.test.ts",
