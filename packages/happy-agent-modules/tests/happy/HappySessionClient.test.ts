@@ -44,6 +44,7 @@ const MODELS: readonly HappyModel[] = [
         id: "gpt-5.6-sol",
         name: "GPT-5.6 Sol",
         providerId: "codex",
+        providerType: "codex",
         serviceTiers: [],
     },
     {
@@ -52,6 +53,7 @@ const MODELS: readonly HappyModel[] = [
         id: "anthropic/opus-5",
         name: "Opus 5",
         providerId: "claude",
+        providerType: "claude",
         serviceTiers: [],
     },
 ];
@@ -169,6 +171,7 @@ function fakeOperations(overrides: Partial<HappySessionOperations> = {}): {
         permissionMode: "auto",
         projectName: "rig",
         providerId: "codex",
+        providerType: "codex",
         sessionId: SESSION_ID,
         status: "running",
         title: "A session",
@@ -372,6 +375,7 @@ describe("keeping one session in step with Happy", () => {
                         username: "assistant",
                         workspaceId: "w",
                         orderKey: "1",
+                        systemKey: null,
                     },
                 }),
             },
@@ -419,6 +423,7 @@ describe("keeping one session in step with Happy", () => {
                         username: "assistant",
                         workspaceId: "w",
                         orderKey: "1",
+                        systemKey: null,
                     },
                 }),
             },
@@ -466,7 +471,14 @@ describe("keeping one session in step with Happy", () => {
                 session: async () => ({
                     ...snapshot,
                     avatarVersion: 1,
-                    bot: { id: "b", name, username: "assistant", workspaceId: "w", orderKey: "1" },
+                    bot: {
+                        id: "b",
+                        name,
+                        username: "assistant",
+                        workspaceId: "w",
+                        orderKey: "1",
+                        systemKey: null,
+                    },
                 }),
             },
         });
@@ -506,6 +518,7 @@ describe("keeping one session in step with Happy", () => {
             username: "assistant",
             workspaceId: "w",
             orderKey: "1",
+            systemKey: null,
         };
         const socket = new FakeSocket();
         const session = client({
@@ -570,6 +583,7 @@ describe("keeping one session in step with Happy", () => {
                                       username: "bot",
                                       workspaceId: "w",
                                       orderKey: "1",
+                                      systemKey: null,
                                   },
                               }),
                     }),
@@ -1350,6 +1364,7 @@ describe("keeping one session in step with Happy", () => {
             username: "assistant",
             workspaceId: "bot-workspace",
             orderKey: "1",
+            systemKey: null,
         };
         const session = client({
             operations: { ...operations, session: async () => ({ ...snapshot, bot }) },

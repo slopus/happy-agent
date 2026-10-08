@@ -1883,6 +1883,19 @@ export class ConfigModule implements AgentModule {
         return this.models.filter((model) => !this.isProviderHidden(model.providerId));
     }
 
+    /**
+     * The provider type every client sees for an account, such as `claude` for `claude_extra`.
+     *
+     * A configured account reports its own type; a smart alias, or an account only the registry
+     * knows, reports the type it is compatible with. Null when no such provider exists.
+     */
+    providerType(providerId: string): string | null {
+        const configured = this.configuration.values.providers[providerId]?.type;
+        if (configured !== undefined && configured !== "smart") return configured;
+        const compatibility = this.providers.typeOf(providerId);
+        return compatibility === "gym" ? "codex" : compatibility;
+    }
+
     #isAccountEnabled(providerId: string): boolean {
         return this.#providerEnabled.get(providerId) === true;
     }

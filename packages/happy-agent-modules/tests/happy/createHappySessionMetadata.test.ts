@@ -27,6 +27,7 @@ const MODELS: readonly HappyModel[] = [
         id: "gpt-5.6-sol",
         name: "GPT-5.6 Sol",
         providerId: "codex",
+        providerType: "codex",
         serviceTiers: ["priority"],
     },
     {
@@ -35,6 +36,7 @@ const MODELS: readonly HappyModel[] = [
         id: "opus-5",
         name: "Opus 5",
         providerId: "claude",
+        providerType: "claude",
         serviceTiers: [],
     },
 ];
@@ -51,6 +53,7 @@ function snapshot(overrides: Partial<HappySessionSnapshot> = {}): HappySessionSn
         permissionMode: "auto",
         projectName: "rig",
         providerId: "codex",
+        providerType: "codex",
         sessionId: "session-1",
         status: "running",
         title: "Porting the Happy module",
@@ -78,12 +81,33 @@ describe("describing a Happy Agent session in Happy's own terms", () => {
             username: "research_assistant",
             workspaceId: "bot-workspace-1",
             orderKey: "0001",
+            systemKey: null,
         };
         const published = metadata({ ...snapshot(), bot });
         expect(published).toMatchObject({ bot, name: bot.name });
         expect(published.summary?.text).toBe(bot.name);
         expect(published).not.toHaveProperty("project");
         expect(published).not.toHaveProperty("workspace");
+    });
+
+    it("always writes the bot's system key as a string or null, surviving serialization", () => {
+        const bot = {
+            id: "bot-1",
+            name: "Chief of Staff",
+            username: "chief_of_staff",
+            workspaceId: "bot-workspace-1",
+            orderKey: "0001",
+        };
+        // The phone reads a missing key as metadata that predates it, and null as a person's bot.
+        for (const systemKey of ["chief_of_staff", null] as const) {
+            const wire = JSON.parse(
+                JSON.stringify(metadata({ ...snapshot(), bot: { ...bot, systemKey } })),
+            );
+            expect(wire.bot).toHaveProperty("systemKey", systemKey);
+            expect(wire.bot.systemKey === null || typeof wire.bot.systemKey === "string").toBe(
+                true,
+            );
+        }
     });
 
     it("mirrors stored composer state without picker aliases, including a clear", () => {
@@ -123,6 +147,59 @@ describe("describing a Happy Agent session in Happy's own terms", () => {
             provider: { id: "codex", kind: "codex", name: "OpenAI Codex" },
             session: { modelLocked: false, permissionMode: "auto", status: "running" },
         });
+    });
+
+    it("names the session's provider by its type, so a second Claude account is still Claude", () => {
+        const published = createHappySessionMetadata({
+            configuration: CONFIGURATION,
+            models: [
+                { ...MODELS[1]!, providerId: "claude_extra", providerType: "claude" },
+                { ...MODELS[1]!, providerId: "east", providerType: "bedrock" },
+            ],
+            session: snapshot({
+                modelId: "opus-5",
+                providerId: "claude_extra",
+                providerType: "claude",
+            }),
+            summaryUpdatedAt: 5_000,
+            version: "1.2.3",
+        });
+        expect(published.provider).toEqual({
+            id: "claude_extra",
+            kind: "claude",
+            name: "Anthropic Claude",
+        });
+        expect(published.providers.map((provider) => provider.kind)).toEqual(["claude", "bedrock"]);
+        expect(published.models.map((model) => model.providerKind)).toEqual(["claude", "bedrock"]);
+    });
+
+    it("gives every provider a string kind, even an account that is no longer configured", () => {
+        // The phone discards the whole session's metadata over one provider without a string kind.
+        const published = createHappySessionMetadata({
+            configuration: CONFIGURATION,
+            models: [...MODELS, { ...MODELS[1]!, providerId: "gone", providerType: null }],
+            session: snapshot({ providerId: "gone", providerType: null }),
+            summaryUpdatedAt: 5_000,
+            version: "1.2.3",
+        });
+        const wire = JSON.parse(JSON.stringify(published)) as typeof published;
+        const providers = [wire.provider, ...wire.providers, ...wire.models.map((m) => m.provider)];
+        expect(providers.length).toBe(1 + 3 + 3);
+        for (const provider of providers) expect(typeof provider.kind).toBe("string");
+        expect(wire.models.every((model) => typeof model.providerKind === "string")).toBe(true);
+        expect(wire.provider).toEqual({ id: "gone", kind: "unknown", name: "Gone" });
+        expect(wire.models.at(-1)).toMatchObject({ providerKind: "unknown" });
+    });
+
+    it("publishes only how deep a session sits, and nothing when that is unknown", () => {
+        const published = metadata(snapshot({ depth: 1 }));
+        expect(published.depth).toBe(1);
+        expect(metadata(snapshot({ depth: 0 })).depth).toBe(0);
+        expect(metadata()).not.toHaveProperty("depth");
+        const wire = JSON.stringify(published);
+        for (const key of ["parentAgentId", "parentId", "parentTitle"]) {
+            expect(wire).not.toContain(key);
+        }
     });
 
     it("never describes activity, which the phone reserves for its own counters", () => {

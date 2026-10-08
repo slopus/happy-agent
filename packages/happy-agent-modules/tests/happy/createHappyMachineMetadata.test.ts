@@ -20,6 +20,7 @@ const MODELS: readonly HappyModel[] = [
         id: "gpt-5.6-sol",
         name: "GPT-5.6 Sol",
         providerId: "codex",
+        providerType: "codex",
         serviceTiers: ["priority"],
     },
 ];
@@ -68,5 +69,30 @@ describe("describing this computer to Happy", () => {
         expect(published.capabilities.newSession).toBe(true);
         expect(published.models.map((model) => model.id)).toEqual(["gpt-5.6-sol"]);
         expect(published.defaults).toMatchObject({ modelId: "gpt-5.6-sol", providerId: "codex" });
+    });
+
+    it("names each account's provider by its type, as configured, never as custom", () => {
+        const model = MODELS[0]!;
+        const published = createHappyMachineMetadata({
+            configuration: CONFIGURATION,
+            models: [
+                { ...model, id: "opus-5", providerId: "claude_extra", providerType: "claude" },
+                { ...model, id: "opus-5", providerId: "east", providerType: "bedrock" },
+                { ...model, id: "mystery", providerId: "gone", providerType: null },
+            ],
+            version: "1.2.3",
+        });
+        expect(published.providers).toEqual([
+            { id: "claude_extra", kind: "claude", name: "Anthropic Claude" },
+            { id: "east", kind: "bedrock", name: "East" },
+            { id: "gone", kind: "unknown", name: "Gone" },
+        ]);
+        // The phone drops the machine's whole model list over one model without a string kind.
+        const wire = JSON.parse(JSON.stringify(published)) as typeof published;
+        expect(wire.models.map((entry) => [entry.provider.kind, entry.providerKind])).toEqual([
+            ["claude", "claude"],
+            ["bedrock", "bedrock"],
+            ["unknown", "unknown"],
+        ]);
     });
 });

@@ -3,7 +3,11 @@ import { homedir, hostname, platform, release } from "node:os";
 import type { MessageMode } from "@slopus/happy-agent-client";
 import type { HappyComposerDraft } from "./HappyComposerDraft.js";
 
-import { describeHappyProvider, type HappyProviderDescriptor } from "./describeHappyProvider.js";
+import {
+    describeHappyProvider,
+    describeHappyProviders,
+    type HappyProviderDescriptor,
+} from "./describeHappyProvider.js";
 import { HAPPY_PERMISSION_MODES, type HappyPermissionModeKind } from "./happyPermissionModes.js";
 import { HAPPY_SESSION_RPC_METHODS } from "./handleHappySessionRpc.js";
 import type { HappyConnectionConfiguration } from "./HappyCredentials.js";
@@ -48,6 +52,8 @@ export interface HappySessionMetadata {
         steering: boolean;
     };
     client: { id: "rig"; name: "Happy Agent"; version: string };
+    /** 0 for a top-level session, 1 for a subtask, 2 below that; absent when unknown. */
+    depth?: number;
     /** The same composer fields Happy Agent stores locally; clears retain their timestamp. */
     draft: HappyComposerDraft | null;
     draftUpdatedAt: number | null;
@@ -150,10 +156,10 @@ export function createHappySessionMetadata(options: {
     const selected = models.find(
         (model) => model.id === session.modelId && model.providerId === session.providerId,
     );
-    const providerIds = [...new Set(models.map((model) => model.providerId))];
-    const providers = (providerIds.length === 0 ? [session.providerId] : providerIds).map(
-        describeHappyProvider,
-    );
+    const providers =
+        models.length === 0
+            ? [describeHappyProvider(session.providerId, session.providerType)]
+            : describeHappyProviders(models);
     const efforts = selected?.effortLevels ?? [];
     const title = session.bot?.name ?? session.title;
     return {
@@ -180,6 +186,7 @@ export function createHappySessionMetadata(options: {
             steering: true,
         },
         client: { id: "rig", name: "Happy Agent", version: options.version },
+        ...(session.depth === undefined ? {} : { depth: session.depth }),
         draft: session.draft.value === null ? null : { ...session.draft.value },
         draftUpdatedAt: session.draft.updatedAt,
         lastMode: session.lastMode === null ? null : { ...session.lastMode },
@@ -189,7 +196,7 @@ export function createHappySessionMetadata(options: {
         currentOperatingModeCode: session.permissionMode,
         ...(session.effort === undefined ? {} : { currentThoughtLevelCode: session.effort }),
         permissionMode: session.permissionMode,
-        provider: describeHappyProvider(session.providerId),
+        provider: describeHappyProvider(session.providerId, session.providerType),
         flavor: session.providerId,
         happyHomeDir: configuration.happyHome,
         homeDir: homedir(),
@@ -200,7 +207,7 @@ export function createHappySessionMetadata(options: {
             ? {}
             : { lastMeaningfulMessageAt: session.lastMeaningfulMessageAt }),
         ...(configuration.machineId === undefined ? {} : { machineId: configuration.machineId }),
-        models: models.map(publishModel),
+        models: models.map(publishHappyModel),
         ...(title === undefined ? {} : { name: title }),
         operatingModes: HAPPY_PERMISSION_MODES.map((mode) => ({ ...mode })),
         os: `${platform()} ${release()}`,
@@ -252,8 +259,9 @@ export function createHappySessionMetadata(options: {
     };
 }
 
-function publishModel(model: HappyModel): HappyPublishedModel {
-    const provider = describeHappyProvider(model.providerId);
+/** One model as both machine and session metadata publish it. */
+export function publishHappyModel(model: HappyModel): HappyPublishedModel {
+    const provider = describeHappyProvider(model.providerId, model.providerType);
     return {
         code: model.id,
         ...(model.contextWindow === undefined ? {} : { contextWindow: model.contextWindow }),

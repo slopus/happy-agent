@@ -6065,17 +6065,9 @@ export class ApiModule implements AgentModule {
         }
 
         const providers: Record<string, ApiProviderDefinition> = {};
-        for (const [providerId, provider] of Object.entries(
-            this.#config.configuration.values.providers,
-        )) {
-            const compatibility = this.#config.providers.typeOf(providerId);
+        for (const providerId of Object.keys(this.#config.configuration.values.providers)) {
             providers[providerId] = {
-                type:
-                    provider.type === "smart"
-                        ? compatibility === null || compatibility === "gym"
-                            ? "codex"
-                            : compatibility
-                        : provider.type,
+                type: this.#config.providerType(providerId) ?? "codex",
                 enabled: this.#config.isProviderEnabled(providerId),
                 hidden: this.#config.isProviderHidden(providerId),
                 models: [],
@@ -6084,10 +6076,8 @@ export class ApiModule implements AgentModule {
         for (const route of routes) {
             let provider = providers[route.providerId];
             if (provider === undefined) {
-                const compatibility = this.#config.providers.typeOf(route.providerId);
                 provider = {
-                    type:
-                        compatibility === null || compatibility === "gym" ? "codex" : compatibility,
+                    type: this.#config.providerType(route.providerId) ?? "codex",
                     enabled: this.#config.isProviderEnabled(route.providerId),
                     hidden: this.#config.isProviderHidden(route.providerId),
                     models: [],

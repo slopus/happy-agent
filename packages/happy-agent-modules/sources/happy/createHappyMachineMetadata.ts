@@ -1,11 +1,11 @@
 import { homedir, hostname, platform } from "node:os";
 
-import { describeHappyProvider, type HappyProviderDescriptor } from "./describeHappyProvider.js";
+import { describeHappyProviders, type HappyProviderDescriptor } from "./describeHappyProvider.js";
 import { HAPPY_PERMISSION_MODES, type HappyPermissionModeKind } from "./happyPermissionModes.js";
 import { HAPPY_SPAWN_RETRY_MS } from "./handleHappySpawnSession.js";
 import type { HappyConnectionConfiguration } from "./HappyCredentials.js";
 import type { HappyModel } from "./HappySession.js";
-import type { HappyPublishedModel } from "./createHappySessionMetadata.js";
+import { publishHappyModel, type HappyPublishedModel } from "./createHappySessionMetadata.js";
 
 /**
  * What the phone knows about this computer before it opens any session on it.
@@ -95,30 +95,10 @@ export function createHappyMachineMetadata(options: {
         homeDir: homedir(),
         host,
         machineKind: "rig",
-        models: options.models.map((model) => {
-            const provider = describeHappyProvider(model.providerId);
-            return {
-                code: model.id,
-                ...(model.contextWindow === undefined
-                    ? {}
-                    : { contextWindow: model.contextWindow }),
-                defaultThinkingLevel: model.defaultEffort,
-                id: model.id,
-                name: model.name,
-                provider,
-                providerId: model.providerId,
-                providerKind: provider.kind,
-                providerName: provider.name,
-                serviceTiers: [...model.serviceTiers],
-                thinkingLevels: [...model.effortLevels],
-                value: model.name,
-            };
-        }),
+        models: options.models.map(publishHappyModel),
         operatingModes: HAPPY_PERMISSION_MODES.map((mode) => ({ ...mode })),
         platform: platform(),
-        providers: [...new Set(options.models.map((model) => model.providerId))].map(
-            describeHappyProvider,
-        ),
+        providers: describeHappyProviders(options.models),
         rigMetadataVersion: 1,
         rigOnly: true,
         ...(options.siblingMachineId === undefined

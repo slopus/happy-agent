@@ -104,6 +104,8 @@ import {
 
 /** How many session subscriptions one Happy connection keeps live at once. */
 const MAX_CONNECTED_AGENTS = 64;
+// Subtasks nest at most two below a bot; anything deeper than this is not a chain worth trusting.
+const MAX_SESSION_DEPTH = 8;
 
 /** How many archived messages a newly attached Happy session receives as its initial context. */
 const HAPPY_BACKFILL_MESSAGES = 50;
@@ -1177,6 +1179,7 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
             id: model.id,
             name: model.name,
             providerId: model.providerId,
+            providerType: this.#config.providerType(model.providerId),
             serviceTiers: model.serviceTiers === undefined ? [] : [...model.serviceTiers],
         }));
     }
@@ -2226,6 +2229,30 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
         return { completion };
     }
 
+    /**
+     * How many agents manage this one: 0 for a top-level session, 1 for a subtask, 2 for a
+     * subtask of a subtask.
+     *
+     * Undefined when the chain cannot be read, loops, or runs implausibly deep. The phone reads a
+     * missing depth as unknown, which is honest; a guessed 0 would call a subtask top-level.
+     */
+    async #depth(ctx: Context, agentId: string): Promise<number | undefined> {
+        try {
+            const seen = new Set([agentId]);
+            let current = agentId;
+            for (let depth = 0; depth <= MAX_SESSION_DEPTH; depth += 1) {
+                const parent = await this.#system().parentOf(ctx, current);
+                if (parent === null) return depth;
+                if (seen.has(parent)) return undefined;
+                seen.add(parent);
+                current = parent;
+            }
+        } catch (error) {
+            ctx.log.debug("Happy could not read a session's depth.", { agentId }, error);
+        }
+        return undefined;
+    }
+
     /** One session, described in the terms Happy publishes it. */
     async #snapshot(
         ctx: Context,
@@ -2274,8 +2301,10 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
             lastUserOrFinalAssistantTextMessageAt,
             lastQuestionAt,
         );
+        const depth = await this.#depth(ctx, agentId);
         return {
             agentId,
+            ...(depth === undefined ? {} : { depth }),
             ...(owner.bot === undefined ? {} : { bot: owner.bot }),
             ...(owner.avatarVersion === undefined ? {} : { avatarVersion: owner.avatarVersion }),
             archived: typeof config.metadata?.archivedAt === "number",
@@ -2291,6 +2320,7 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
             ...(owner.project === undefined ? {} : { project: owner.project }),
             projectName: owner.project?.name ?? basename(cwd) ?? cwd,
             providerId: selection.providerId,
+            providerType: this.#config.providerType(selection.providerId),
             sessionId: agentId,
             status: "idle",
             // An unnamed chat says nothing rather than inventing a name: Happy has its own
@@ -2372,6 +2402,7 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
                         username: bot.username,
                         workspaceId: bot.workspaceId,
                         orderKey: bot.orderKey,
+                        systemKey: bot.systemKey ?? null,
                     },
                 };
             }

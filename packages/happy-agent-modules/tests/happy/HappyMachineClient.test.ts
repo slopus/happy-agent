@@ -52,6 +52,7 @@ const MODELS: readonly HappyModel[] = [
         id: "gpt-5.6-sol",
         name: "GPT-5.6 Sol",
         providerId: "codex",
+        providerType: "codex",
         serviceTiers: [],
     },
 ];

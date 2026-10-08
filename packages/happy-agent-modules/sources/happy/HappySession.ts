@@ -19,6 +19,8 @@ export interface HappyModel {
     readonly id: string;
     readonly name: string;
     readonly providerId: string;
+    /** The provider type `/v0/config` reports for `providerId`; null when it is unknown. */
+    readonly providerType: string | null;
     readonly serviceTiers: readonly string[];
 }
 
@@ -34,10 +36,18 @@ export interface HappyGitSummary {
 export interface HappySessionSnapshot {
     /** Local bot catalog revision, used only to schedule image sync; never session metadata. */
     readonly avatarVersion?: number;
-    readonly bot?: Pick<BotRecord, "id" | "name" | "username" | "workspaceId" | "orderKey">;
+    readonly bot?: Pick<BotRecord, "id" | "name" | "username" | "workspaceId" | "orderKey"> & {
+        /**
+         * Which built-in bot this is, such as `chief_of_staff`, or null for one a person made.
+         * Always present, so the phone can tell a person's bot from metadata that predates it.
+         */
+        readonly systemKey: NonNullable<BotRecord["systemKey"]> | null;
+    };
     readonly agentId: string;
     readonly archived: boolean;
     readonly cwd: string;
+    /** 0 for a top-level session, 1 for a subtask, 2 below that; absent when unknown. */
+    readonly depth?: number;
     /** Happy Agent's authoritative, per-session composer state. */
     readonly draft: AgentDraftSnapshot;
     readonly lastMode: MessageMode | null;
@@ -63,6 +73,8 @@ export interface HappySessionSnapshot {
     };
     readonly projectName: string;
     readonly providerId: string;
+    /** The provider type `/v0/config` reports for `providerId`; null when it is unknown. */
+    readonly providerType: string | null;
     readonly serviceTier?: string;
     readonly sessionId: string;
     /** What the session is doing, in the words the daemon uses. */

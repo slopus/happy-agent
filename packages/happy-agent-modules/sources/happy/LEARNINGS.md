@@ -120,6 +120,26 @@ one message it cannot carry.
   new change: the sync loop writes forever, `archive()` never reaches remote
   archival or closure, and phones are flooded with metadata updates. An echoed
   write must converge without another write; restoration uses a new client.
+- A provider's `kind` in machine and session metadata is its provider type from
+  `ConfigModule.providerType`, the same value `/v0/config` reports. It used to be guessed from the
+  account id, so a second Claude account (`claude_extra`) and every Bedrock or smart account
+  reported `custom`, which says nothing about which provider or model ran. Types pass through
+  verbatim. An account whose type is unknown (no longer configured) is `"unknown"`.
+- The phone's schema requires every provider `kind` to be a string: session `provider`,
+  `providers[]` and `models[].provider`, and machine `models[].provider`. A missing or null kind
+  fails the parse and the phone discards the whole session metadata (title, path, models, bot) or
+  the machine's whole model list. Never omit `kind` or send null; publish `"unknown"` instead.
+- Session metadata carries `depth`, the number of Agent Base `parentOf` hops: 0 top-level, 1 a
+  subtask, 2 a subtask of a subtask. The phone had no way to tell task level otherwise. Only the
+  number is published, never parent ids or titles. A failed lookup, a cycle, or a chain deeper than
+  eight omits `depth` entirely: the phone reads a missing depth as unknown, while a guessed 0 would
+  label a subtask as top-level.
+- Session metadata `bot` always carries `systemKey`: the built-in bot's key, such as
+  `chief_of_staff`, or `null` for a bot a person made. The phone could not recognise the Chief of
+  Staff without it. Writing `null` rather than omitting the key matters: the phone reads a bot with
+  no `systemKey` as metadata from an older daemon, so only an explicit null says "a person's bot".
+  Keys pass through unchanged, with no per-bot special case, and must stay a string or null
+  because the phone's bot schema rejects anything else.
 - Bots are discovered through `BotsModule`, not project/workspace membership. Each bot projects
   its existing agent into one Happy session, with optional encrypted `bot` identity and no synthetic
   project or worktree. Startup includes idle bots; catalog events attach new bots and refresh names.

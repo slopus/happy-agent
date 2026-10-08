@@ -116,6 +116,8 @@ async function fixture() {
 
     const configs = new Map<string, AgentConfig>();
     const bots = new Map<string, BotRecord>();
+    /** Agent Base ancestry: child agent id to the agent that manages it. */
+    const parents = new Map<string, string>();
     const archivedBots: string[] = [];
     let botReadContext: Context | undefined;
     const botArchiveScopes: { read: Context | undefined; write: Context }[] = [];
@@ -186,6 +188,7 @@ async function fixture() {
         // it joins that transaction, and outside one it queues on the connection.
         config: async (ctx: Context, agentId: string) =>
             await inTx(ctx, async () => configs.get(agentId)),
+        parentOf: async (_ctx: unknown, agentId: string) => parents.get(agentId) ?? null,
         create: async (_ctx: unknown, config: AgentConfig, options: { id: string }) => {
             configs.set(options.id, config);
             return options.id;
@@ -283,6 +286,7 @@ async function fixture() {
                     providerId: "claude",
                 },
             ],
+            providerType: (providerId: string) => (providerId === "codex" ? "codex" : "claude"),
         } as never,
         {
             archiveAgent: async (_ctx: unknown, agentId: string) => {
@@ -422,6 +426,7 @@ async function fixture() {
         },
         module,
         pendingMessages,
+        parents,
         projectAgents,
         projects,
         releaseHeldWrite: () => releaseWrite?.(),
@@ -886,7 +891,7 @@ describe("Happy session activity metadata", () => {
         test.activity.working = true;
         await expect(
             test.module.session(databases.at(-1)!.context, "agent-activity"),
-        ).resolves.toMatchObject({ working: true });
+        ).resolves.toMatchObject({ providerType: "codex", working: true });
 
         test.activity.working = false;
         await expect(
@@ -916,6 +921,77 @@ describe("Happy session activity metadata", () => {
         await expect(
             test.module.session(databases.at(-1)!.context, "agent-activity"),
         ).resolves.toMatchObject({ lastMeaningfulMessageAt: 3_000 });
+    });
+
+    it("names which built-in bot a session is, and null for a bot a person made", async () => {
+        const test = await fixture();
+        const bot = {
+            id: "bot-1",
+            agentId: "agent-bot",
+            name: "Chief of Staff",
+            orderKey: "1",
+            status: "active",
+            username: "chief_of_staff",
+            version: 1,
+            workspaceId: "bot-workspace",
+        } as BotRecord;
+        test.configs.set("agent-bot", {
+            environment: {
+                osVersion: "test",
+                platform: "darwin",
+                shell: "/bin/zsh",
+                workingDirectory: "/bots/chief_of_staff",
+            },
+            metadata: { version: 1 },
+        });
+
+        test.bots.set(bot.id, { ...bot, systemKey: "chief_of_staff" });
+        await expect(
+            test.module.session(databases.at(-1)!.context, "agent-bot"),
+        ).resolves.toMatchObject({ bot: { id: "bot-1", systemKey: "chief_of_staff" } });
+
+        test.bots.set(bot.id, bot);
+        await expect(
+            test.module.session(databases.at(-1)!.context, "agent-bot"),
+        ).resolves.toMatchObject({ bot: { id: "bot-1", systemKey: null } });
+    });
+
+    it("counts how deep a subtask sits, and says nothing when the chain cannot be trusted", async () => {
+        const test = await fixture();
+        test.configs.set("agent-subtask", {
+            environment: {
+                osVersion: "test",
+                platform: "darwin",
+                shell: "/bin/zsh",
+                workingDirectory: "/projects/rig",
+            },
+            metadata: { version: 1 },
+        });
+        const session = async () =>
+            await test.module.session(databases.at(-1)!.context, "agent-subtask");
+
+        expect(await session()).toMatchObject({ depth: 0 });
+        test.parents.set("agent-subtask", "agent-task");
+        test.parents.set("agent-task", "agent-bot");
+        expect(await session()).toMatchObject({ depth: 2 });
+
+        // A loop, a chain deeper than any real one, or a failed read leaves depth unknown.
+        test.parents.set("agent-bot", "agent-task");
+        expect(await session()).not.toHaveProperty("depth");
+        test.parents.clear();
+        for (let index = 0; index < 9; index += 1) {
+            test.parents.set(
+                index === 0 ? "agent-subtask" : `agent-${index}`,
+                `agent-${index + 1}`,
+            );
+        }
+        expect(await session()).not.toHaveProperty("depth");
+        test.parents.delete("agent-8");
+        expect(await session()).toMatchObject({ depth: 8 });
+        test.agents.parentOf = async () => {
+            throw new Error("Agent Base is unavailable.");
+        };
+        expect(await session()).not.toHaveProperty("depth");
     });
 
     it("publishes the tracked project Git snapshot using the canonical line counts", async () => {
@@ -1169,6 +1245,7 @@ describe("archiving a Happy session", () => {
                         serviceTiers: [],
                     },
                 ],
+                providerType: () => "codex",
             } as never,
             { archiveAgent: async () => undefined } as never,
             { latestAgentEvent: async () => undefined, observe: () => undefined } as never,
