@@ -150,7 +150,8 @@ jobs:
               env:
                   HOME: ${{ runner.temp }}/happy-agent-test-home
               run: |
-                  mkdir -p "$HOME"
+                  mkdir -p "$HOME" .local
+                  pnpm run test:scripts
                   pnpm --filter @slopus/happy-agent-modules test
                   pnpm --filter @slopus/happy-agent test
 
