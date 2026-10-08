@@ -29,13 +29,15 @@ afterEach(async () => {
 });
 
 it.each([
-    [false, false, false],
-    [true, false, false],
-    [true, true, false],
-    [false, false, true],
+    [false, false, false, false],
+    [true, false, false, false],
+    [true, true, false, false],
+    [false, false, true, false],
+    [false, false, false, true],
+    [true, false, false, true],
 ])(
-    "runs authenticated Live HTTP, real provider/control WebSockets, sequential actions and staged results through the complete runtime (native: %s, lost controller: %s, smart default: %s)",
-    async (native, lostController, smartDefault) => {
+    "runs authenticated Live HTTP, real provider/control WebSockets, sequential actions and staged results through the complete runtime (native: %s, lost controller: %s, smart default: %s, recover controller: %s)",
+    async (native, lostController, smartDefault, recoverController) => {
         const snapshots: SessionRunRequest[] = [];
         const actualRun = ScriptedSession.prototype.run;
         vi.spyOn(ScriptedSession.prototype, "run").mockImplementation(
@@ -64,6 +66,18 @@ it.each([
         bootstrap.closeProviders();
         const target = { connectionId: "connection", groupId: "group", sessionId: "conversation" };
         const controller = new ScriptedProvider([
+            ...(recoverController
+                ? [
+                      [
+                          {
+                              type: "done",
+                              state: "error",
+                              kind: "unknown",
+                              message: "Private provider diagnostic fixture-only-key",
+                          } as const,
+                      ],
+                  ]
+                : []),
             [
                 { type: "toolcall_start", callId: "open", name: "desktopOpen" },
                 {
@@ -285,6 +299,62 @@ it.each([
         await expect
             .poll(async () => (await client.getLiveSession("livefixture")).session.status)
             .toBe("active");
+        if (recoverController) {
+            providerSockets[0]!.send(
+                JSON.stringify(
+                    native
+                        ? {
+                              type: "delegation.created",
+                              item: {
+                                  id: "failed_delegation",
+                                  type: "delegation",
+                                  target: "client",
+                                  content: [{ type: "input_text", text: "Read the desktop" }],
+                              },
+                          }
+                        : {
+                              type: "session.delegation.created",
+                              delegation: {
+                                  id: "failed_delegation",
+                                  type: "delegation",
+                                  target: "client",
+                              },
+                          },
+                ),
+            );
+            await expect
+                .poll(() => providerFrames)
+                .toContainEqual(
+                    expect.objectContaining(
+                        native
+                            ? {
+                                  type: "delegation.context.append",
+                                  delegation_item_id: "failed_delegation",
+                                  channel: "speakable",
+                                  content: [
+                                      {
+                                          type: "input_text",
+                                          text: expect.stringContaining("could not complete"),
+                                      },
+                                  ],
+                              }
+                            : {
+                                  type: "session.commentary.append",
+                                  delegation_id: "failed_delegation",
+                                  content: expect.stringContaining("could not complete"),
+                              },
+                    ),
+                );
+            expect((await client.getLiveSession("livefixture")).session).toMatchObject({
+                status: "active",
+                error: null,
+            });
+            expect(
+                frames.some((frame) => frame.type === "status" && frame.status === "failed"),
+            ).toBe(false);
+            expect(frames.some((frame) => frame.type === "actionRequested")).toBe(false);
+            expect(JSON.stringify(providerFrames)).not.toContain("Private provider diagnostic");
+        }
         providerSockets[0]!.send(
             JSON.stringify(
                 native
@@ -463,16 +533,16 @@ it.each([
         expect(JSON.stringify(journal)).not.toContain("v=fixture-offer");
         expect(JSON.stringify(journal)).not.toContain("Stage a test investigation request");
         expect(providerRequests).toHaveLength(1);
-        const captured = controller.sessions.find((session) =>
+        const captured = controller.sessions.findLast((session) =>
             session.id.startsWith("live-controller:"),
         );
         expect(captured?.options.tools).toHaveLength(9);
         expect(captured?.requests[0]?.model).toBe(
             smartDefault ? "openai/gpt-6-astra" : "fixture/controller",
         );
-        expect(snapshots).toHaveLength(4);
+        expect(snapshots).toHaveLength(recoverController ? 5 : 4);
         expect(JSON.stringify(snapshots[0])).not.toContain('"tool_call"');
-        if (!native && process.env.HAPPY_LIVE_CAPTURE_FILE !== undefined) {
+        if (!native && !recoverController && process.env.HAPPY_LIVE_CAPTURE_FILE !== undefined) {
             await writeFile(
                 process.env.HAPPY_LIVE_CAPTURE_FILE,
                 JSON.stringify(

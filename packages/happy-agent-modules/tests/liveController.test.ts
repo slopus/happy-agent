@@ -77,7 +77,7 @@ describe("bounded Live side inference", () => {
                 signal: new AbortController().signal,
                 execute: vi.fn(),
             }),
-        ).rejects.toThrow("factory failed");
+        ).rejects.toMatchObject({ category: "inference" });
         expect(vi.getTimerCount()).toBe(0);
     });
 
@@ -131,7 +131,7 @@ describe("bounded Live side inference", () => {
                 signal: new AbortController().signal,
                 execute: vi.fn(),
             }),
-        ).rejects.toThrow("context limit");
+        ).rejects.toMatchObject({ category: "limit" });
         expect(session).not.toHaveBeenCalled();
     });
     it("exposes exactly nine desktop tools and preserves staged results as data", async () => {

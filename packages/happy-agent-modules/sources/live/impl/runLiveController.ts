@@ -18,6 +18,7 @@ import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import { withLifetime, type Context } from "@steve.kite/stdlib";
 import { LIVE_CONTROLLER_INSTRUCTIONS } from "./livePrompts.js";
+import { LiveControllerError } from "./LiveControllerError.js";
 
 /** Fixed arrays are the whole controller surface: no agent/common/vendor tool assembly. */
 export const LIVE_CONTROLLER_TOOLS: readonly SessionTool[] = [
@@ -105,7 +106,7 @@ export async function runLiveController(
         },
     ];
     if (Buffer.byteLength(JSON.stringify(messages)) > 512 * 1024)
-        throw new Error("The voice controller reached its context limit.");
+        throw new LiveControllerError("limit");
     const abort = new AbortController();
     const signal = AbortSignal.any([options.signal, abort.signal]);
     const timeout = setTimeout(() => abort.abort(), 120_000);
@@ -113,7 +114,7 @@ export async function runLiveController(
     let session: BaseSession | undefined;
     const seen = new Set<string>();
     try {
-        if (signal.aborted) throw new Error("The voice controller was cancelled.");
+        if (signal.aborted) throw new LiveControllerError("deadline");
         const opening = options.provider.session(`live-controller:${createId()}`, {
             inferenceMaxRetries: 0,
             instructions: LIVE_CONTROLLER_INSTRUCTIONS,
@@ -126,7 +127,7 @@ export async function runLiveController(
             .catch(() => undefined);
         session = await untilAbort(opening, signal);
         for (let round = 0; round < 8; round += 1) {
-            if (signal.aborted) throw new Error("The voice controller was cancelled.");
+            if (signal.aborted) throw new LiveControllerError("deadline");
             let text = "";
             let call: SessionToolCallBlock | undefined;
             let finished = false;
@@ -137,8 +138,7 @@ export async function runLiveController(
             })) {
                 if (event.type === "text_delta") {
                     text += event.delta;
-                    if (text.length > 8192)
-                        throw new Error("The voice controller exceeded its response limit.");
+                    if (text.length > 8192) throw new LiveControllerError("limit");
                 } else if (event.type === "toolcall_start") {
                     if (
                         call !== undefined ||
@@ -146,9 +146,7 @@ export async function runLiveController(
                         event.namespace ||
                         seen.has(event.callId)
                     ) {
-                        throw new Error(
-                            "The voice controller requested an unsupported or repeated action.",
-                        );
+                        throw new LiveControllerError("invalidAction");
                     }
                     call = {
                         type: "tool_call",
@@ -163,7 +161,7 @@ export async function runLiveController(
                         event.incomplete ||
                         event.arguments.length > 32768
                     ) {
-                        throw new Error("The voice controller returned an incomplete action.");
+                        throw new LiveControllerError("invalidAction");
                     }
                     call = {
                         ...call,
@@ -171,30 +169,34 @@ export async function runLiveController(
                         ...(event.vendor === undefined ? {} : { vendor: event.vendor }),
                     };
                 } else if (event.type === "retrying") {
-                    throw new Error("Voice controller retries are not supported.");
+                    throw new LiveControllerError("inference");
                 } else if (event.type === "done") {
                     if (event.state !== "normal" && event.state !== "tool_call")
-                        throw new Error("The voice controller could not finish this request.");
+                        throw new LiveControllerError("inference");
                     finished = true;
                 }
             }
-            if (!finished) throw new Error("The voice controller connection ended early.");
+            if (!finished) throw new LiveControllerError("inference");
             if (call === undefined) return text.trim();
             const tool = LIVE_CONTROLLER_TOOLS.find((tool) => tool.name === call.name);
             let args: unknown;
             try {
                 args = JSON.parse(call.arguments);
             } catch {
-                throw new Error("The voice controller action was invalid.");
+                throw new LiveControllerError("invalidAction");
             }
             if (tool?.parameters === undefined || !Value.Check(tool.parameters, args))
-                throw new Error("The voice controller action was invalid.");
+                throw new LiveControllerError("invalidAction");
             const action: unknown = { ...(args as Record<string, unknown>), type: call.name };
             if (!Value.Check(liveDesktopActionSchema, action))
-                throw new Error("The voice controller action was invalid.");
+                throw new LiveControllerError("invalidAction");
             seen.add(call.callId);
-            if (signal.aborted) throw new Error("The voice controller was cancelled.");
-            const result = await untilAbort(options.execute(action), signal);
+            if (signal.aborted) throw new LiveControllerError("deadline");
+            const result = await untilAbort(options.execute(action), signal).catch((error) => {
+                throw error instanceof LiveControllerError
+                    ? error
+                    : new LiveControllerError("uncertainAction");
+            });
             messages.push(
                 { role: "assistant", content: [call] },
                 {
@@ -204,9 +206,11 @@ export async function runLiveController(
                 },
             );
             if (Buffer.byteLength(JSON.stringify(messages)) > 512 * 1024)
-                throw new Error("The voice controller reached its context limit.");
+                throw new LiveControllerError("limit");
         }
-        throw new Error("The voice controller reached its action limit.");
+        throw new LiveControllerError("limit");
+    } catch (error) {
+        throw error instanceof LiveControllerError ? error : new LiveControllerError("inference");
     } finally {
         clearTimeout(timeout);
         abort.abort();
@@ -217,8 +221,7 @@ export async function runLiveController(
 async function untilAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
     let cancel!: () => void;
     const cancelled = new Promise<never>((_resolve, reject) => {
-        cancel = () =>
-            reject(new Error("The voice controller was cancelled or exceeded its deadline."));
+        cancel = () => reject(new LiveControllerError("deadline"));
         signal.addEventListener("abort", cancel, { once: true });
         if (signal.aborted) cancel();
     });

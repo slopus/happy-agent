@@ -13,6 +13,11 @@ single allocation; a rejected sign-in never triggers another allocation or an OA
 Controller and credential setup failures have separate sanitized explanations. Selecting an
 account pool as the voice credential reports that an individual OpenAI account is required.
 
+A failed controller delegation returns a bounded safe explanation to voice and leaves the call
+active for the next request. An uncertain action is never retried; its identity remains remembered
+and late results are ignored. Connection/protocol loss, account disablement, response delivery failure,
+and the lifetime action limit still end the call. Categorized diagnostics exclude provider text.
+
 The fixed controller tool array and literal model prompts live in `impl/runLiveController.ts` and
 `impl/livePrompts.ts`. Desktop context, provider fragments, selected public session snapshots and
 native delegation text enter a JSON data envelope, never a trusted instruction or authorization.

@@ -38,6 +38,7 @@ import {
 } from "./persistence/liveSessions.js";
 import { LIVE_VOICE_INSTRUCTIONS } from "./impl/livePrompts.js";
 import { runLiveController } from "./impl/runLiveController.js";
+import { LiveControllerError } from "./impl/LiveControllerError.js";
 import {
     createLiveProviderTransport,
     LiveProviderError,
@@ -61,6 +62,7 @@ export type LiveEvent =
 interface ActionState {
     action: LiveDesktopAction;
     result?: LiveDesktopActionResult;
+    expired?: true;
     resolve: (result: LiveDesktopActionResult) => void;
     timer: ReturnType<typeof setTimeout>;
 }
@@ -523,19 +525,64 @@ export class LiveModule implements AgentModule {
                         fragments.map((fragment) => fragment.transcriptId),
                     ),
             })
+                .catch(async (error: unknown) => {
+                    if (call.session.status !== "active") return undefined;
+                    if (call.route.signal.aborted) {
+                        await this.#fail(
+                            call,
+                            "The configured desktop controller account is no longer available.",
+                        );
+                        return undefined;
+                    }
+                    const failure =
+                        error instanceof LiveControllerError
+                            ? error
+                            : new LiveControllerError("inference");
+                    for (const pending of call.actions.values()) {
+                        if (pending.result === undefined) {
+                            pending.expired = true;
+                            clearTimeout(pending.timer);
+                            pending.resolve({
+                                status: "failed",
+                                code: "failed",
+                                message:
+                                    "The controller request ended before the action's outcome was confirmed.",
+                            });
+                        }
+                    }
+                    try {
+                        this.#context().log.warn(
+                            `live:controller-request-failed session=${call.session.id} delegation=${event.delegationId} category=${failure.category} actions=${call.actions.size}`,
+                        );
+                    } catch {
+                        // Optional diagnostics cannot turn a recoverable request into a failed call.
+                    }
+                    if (failure.category === "capacity") {
+                        await this.#fail(call, failure.message);
+                        return undefined;
+                    }
+                    return failure.voiceContext;
+                })
                 .then(async (text) => {
-                    if (!terminal(call.session) && call.session.status === "active")
-                        await call.transport?.append({
+                    if (
+                        text !== undefined &&
+                        !terminal(call.session) &&
+                        call.session.status === "active"
+                    ) {
+                        if (call.transport === undefined)
+                            throw new Error("The voice transport is unavailable.");
+                        await call.transport.append({
                             delegationId: event.delegationId,
                             text: text || "The desktop request has completed.",
                             speakable: true,
                         });
+                    }
                 })
                 .catch(async () => {
                     if (call.session.status === "active")
                         await this.#fail(
                             call,
-                            "The voice controller could not safely complete the request. No uncertain action was retried.",
+                            "Voice could not deliver the desktop controller's response. Its outcome was not retried.",
                         );
                 })
                 .finally(() => {
@@ -566,6 +613,7 @@ export class LiveModule implements AgentModule {
         } else if (message.type === "actionResult") {
             const pending = call.actions.get(message.actionId);
             if (pending === undefined) throw new Error("The desktop answered an unknown action.");
+            if (pending.expired) return;
             if (pending.result !== undefined) {
                 if (!Value.Equal(pending.result, message.result))
                     throw new Error("The desktop changed a completed action result.");
@@ -661,13 +709,9 @@ export class LiveModule implements AgentModule {
         action: LiveDesktopAction,
         inputTranscriptIds: string[],
     ): Promise<LiveDesktopActionResult> {
-        if (
-            terminal(call.session) ||
-            call.session.status !== "active" ||
-            call.socket === undefined ||
-            call.actions.size >= 256
-        )
+        if (terminal(call.session) || call.session.status !== "active" || call.socket === undefined)
             throw new Error("Voice cannot start another desktop action.");
+        if (call.actions.size >= 256) throw new LiveControllerError("capacity");
         if (
             action.type === "sessionWatch" &&
             action.enabled &&
@@ -682,11 +726,9 @@ export class LiveModule implements AgentModule {
         const actionId = createId();
         const result = deferred<LiveDesktopActionResult>();
         const timer = setTimeout(() => {
-            result.reject(new Error("The desktop action timed out; its outcome is uncertain."));
-            void this.#fail(
-                call,
-                "A desktop action timed out. Its outcome is uncertain and it was not retried.",
-            );
+            const pending = call.actions.get(actionId);
+            if (pending !== undefined) pending.expired = true;
+            result.reject(new LiveControllerError("uncertainAction"));
         }, 60_000);
         timer.unref();
         call.actions.set(actionId, { action, resolve: result.resolve, timer });

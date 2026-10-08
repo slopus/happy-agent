@@ -66,6 +66,18 @@ only short status transitions enter the voice model, and optional update backpre
 Public fractional transcript times remain untimed rather than rounded into invented millisecond
 intervals. Invalid intervals still fail closed.
 
+## A failed controller request does not end voice
+
+Controller inference errors, invalid model actions, bounded-request limits, and uncertain desktop
+timeouts previously ended the entire call under one generic error. Each failed delegation now
+returns a fixed, sanitized explanation to that delegation's voice context and releases the controller
+for the next request. The explanation preserves uncertainty about earlier or still-running actions
+and never authorizes automatic replay. Timed-out action identities remain remembered, and their late
+results are ignored. Logs retain only the failure category and call/delegation identities, never raw
+provider errors or transcripts. Sending the result back is a separate operation: a delivery failure
+ends the broken transport without trying another append. Account disablement, connection loss,
+invalid desktop protocol data, and the lifetime action-capacity boundary still end the call.
+
 ## Each desktop action uses the current accepted revision
 
 Capturing one revision for an entire delegation made navigation invalidate every later action.

@@ -4,6 +4,7 @@ import type {
     LiveControlServerMessage,
 } from "@slopus/happy-agent-client";
 import type { SessionEvent } from "@slopus/happy-providers";
+import { withLogger } from "@steve.kite/stdlib";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ConfigModule, VoiceCredentialPoolError } from "../sources/config/index.js";
 import { DurableFunctionsModule } from "../sources/durableFunctions/index.js";
@@ -18,6 +19,7 @@ vi.mock("../sources/live/impl/liveProviderTransport.js", () => ({
 }));
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => {
+    vi.useRealTimers();
     for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
     vi.restoreAllMocks();
     transport.create.mockReset();
@@ -70,7 +72,17 @@ async function fixture(startDurable = true) {
     ensureAgentDatabaseConnection(db.database);
     await db.ready;
     const hooks = durable.beforeStart(db.context);
-    await live.beforeStart(db.context);
+    const warn = vi.fn();
+    await live.beforeStart(
+        withLogger(db.context, {
+            warn,
+            debug: vi.fn(),
+            error: vi.fn(),
+            fatal: vi.fn(),
+            info: vi.fn(),
+            trace: vi.fn(),
+        }),
+    );
     if (startDurable) await hooks.afterStart?.(db.context, {} as never);
     const calls: LiveProviderOptions[] = [];
     const append = vi.fn(async () => undefined);
@@ -116,10 +128,159 @@ async function fixture(startDurable = true) {
         provider,
         inferenceRequests,
         controllerLifetime,
+        warn,
     };
 }
 
 describe("window-owned Live sessions", () => {
+    it("returns a safe controller error as voice context and accepts a follow-up on the same call", async () => {
+        const f = await fixture();
+        f.provider.session.mockRejectedValueOnce(new Error("Secret token and private transcript"));
+        await f.start();
+        const attached = await f.attach();
+        f.calls[0]!.onEvent({ type: "ready" });
+        await expect
+            .poll(async () => (await f.live.get(f.db.context, "owner", "liveone")).status)
+            .toBe("active");
+        f.calls[0]!.onEvent({ type: "delegation", delegationId: "failure" });
+        await expect.poll(() => f.append.mock.calls.length).toBe(1);
+        expect(f.append).toHaveBeenCalledWith(
+            expect.objectContaining({
+                delegationId: "failure",
+                speakable: true,
+                text: expect.stringContaining("could not complete"),
+            }),
+        );
+        expect(JSON.stringify(f.append.mock.calls)).not.toContain("Secret token");
+        expect(JSON.stringify(f.warn.mock.calls)).not.toContain("Secret token");
+        expect(f.warn).toHaveBeenCalledWith(
+            expect.anything(),
+            expect.stringContaining("category=inference"),
+        );
+        expect(await f.live.get(f.db.context, "owner", "liveone")).toMatchObject({
+            status: "active",
+            error: null,
+        });
+        expect(attached.close).not.toHaveBeenCalled();
+        f.calls[0]!.onEvent({ type: "delegation", delegationId: "followup" });
+        await expect.poll(() => f.append.mock.calls.length).toBe(2);
+        expect(f.append).toHaveBeenLastCalledWith({
+            delegationId: "followup",
+            speakable: true,
+            text: "Ready.",
+        });
+        expect(f.provider.session).toHaveBeenCalledTimes(2);
+        expect(transport.create).toHaveBeenCalledOnce();
+    });
+
+    it.each([false, true])(
+        "ends a lost response transport without attempting a second delivery (controller error: %s)",
+        async (controllerError) => {
+            const f = await fixture();
+            if (controllerError)
+                f.provider.session.mockRejectedValueOnce(
+                    new Error("Private controller diagnostic"),
+                );
+            f.append.mockRejectedValueOnce(new Error("Private socket diagnostic"));
+            await f.start();
+            const attached = await f.attach();
+            f.calls[0]!.onEvent({ type: "ready" });
+            await expect
+                .poll(async () => (await f.live.get(f.db.context, "owner", "liveone")).status)
+                .toBe("active");
+            f.calls[0]!.onEvent({ type: "delegation", delegationId: "delivery" });
+            await expect
+                .poll(async () => (await f.live.get(f.db.context, "owner", "liveone")).status)
+                .toBe("failed");
+            expect(f.append).toHaveBeenCalledOnce();
+            expect(attached.close).toHaveBeenCalledOnce();
+            expect((await f.live.get(f.db.context, "owner", "liveone")).error).toContain(
+                "could not deliver",
+            );
+        },
+    );
+
+    it("keeps a controller deadline and unavailable diagnostic logger within the current delegation", async () => {
+        const f = await fixture();
+        f.provider.session.mockImplementationOnce(() => new Promise(() => {}));
+        f.warn.mockImplementationOnce(() => {
+            throw new Error("Logger unavailable");
+        });
+        await f.start();
+        const attached = await f.attach();
+        f.calls[0]!.onEvent({ type: "ready" });
+        await expect
+            .poll(async () => (await f.live.get(f.db.context, "owner", "liveone")).status)
+            .toBe("active");
+        vi.useFakeTimers();
+        f.calls[0]!.onEvent({ type: "delegation", delegationId: "deadline" });
+        await vi.advanceTimersByTimeAsync(120_001);
+        vi.useRealTimers();
+        await expect.poll(() => f.append.mock.calls.length).toBe(1);
+        expect(f.append).toHaveBeenCalledWith(
+            expect.objectContaining({ text: expect.stringContaining("before its deadline") }),
+        );
+        expect(attached.close).not.toHaveBeenCalled();
+        f.calls[0]!.onEvent({ type: "delegation", delegationId: "after-deadline" });
+        await expect.poll(() => f.append.mock.calls.length).toBe(2);
+        expect(f.append).toHaveBeenLastCalledWith({
+            delegationId: "after-deadline",
+            speakable: true,
+            text: "Ready.",
+        });
+    });
+
+    it("reports an uncertain desktop timeout, ignores its late result, and continues without replay", async () => {
+        const f = await fixture();
+        f.provider.session.mockImplementationOnce(async () => ({
+            destroy: vi.fn(async () => undefined),
+            run: async function* (): AsyncGenerator<SessionEvent> {
+                yield { type: "toolcall_start", callId: "read", name: "desktopState" };
+                yield { type: "toolcall_end", callId: "read", arguments: "{}" };
+                yield { type: "done", state: "tool_call", tokens: { input: 1, output: 1 } };
+            },
+        }));
+        await f.start();
+        const attached = await f.attach();
+        f.calls[0]!.onEvent({ type: "ready" });
+        await expect
+            .poll(async () => (await f.live.get(f.db.context, "owner", "liveone")).status)
+            .toBe("active");
+        vi.useFakeTimers();
+        f.calls[0]!.onEvent({ type: "delegation", delegationId: "timeout" });
+        await vi.advanceTimersByTimeAsync(0);
+        const action = attached.frames.find((frame) => frame.type === "actionRequested");
+        expect(action?.type).toBe("actionRequested");
+        await vi.advanceTimersByTimeAsync(60_001);
+        vi.useRealTimers();
+        await expect.poll(() => f.append.mock.calls.length).toBe(1);
+        expect(f.append).toHaveBeenCalledWith(
+            expect.objectContaining({
+                text: expect.stringContaining("did not return a confirmed outcome"),
+            }),
+        );
+        if (action?.type !== "actionRequested") throw new Error("Missing action");
+        attached.binding.message(
+            JSON.stringify({
+                type: "actionResult",
+                actionId: action.actionId,
+                result: { status: "succeeded", output: { type: "ack" } },
+            }),
+        );
+        f.calls[0]!.onEvent({ type: "delegation", delegationId: "after-timeout" });
+        await expect.poll(() => f.append.mock.calls.length).toBe(2);
+        expect(f.append).toHaveBeenLastCalledWith({
+            delegationId: "after-timeout",
+            speakable: true,
+            text: "Ready.",
+        });
+        expect(attached.frames.filter((frame) => frame.type === "actionRequested")).toHaveLength(1);
+        expect(await f.live.get(f.db.context, "owner", "liveone")).toMatchObject({
+            status: "active",
+            error: null,
+        });
+    });
+
     it("explains a proven voice credential pool selection before allocating a call", async () => {
         const f = await fixture();
         vi.mocked(f.config.liveCredential).mockRejectedValueOnce(new VoiceCredentialPoolError());
