@@ -33,7 +33,7 @@ const compute = new ComputeModule(config, secrets);
 const abort = new AbortModule(compute);
 const durableFunctions = new DurableFunctionsModule();
 const projects = new ProjectsModule(config, git, abort, durableFunctions);
-const workspaces = new WorkspacesModule(config, projects, git, abort, durableFunctions);
+const workspaces = new WorkspacesModule(config, projects, git, abort, durableFunctions, runners);
 const agent = await Agent.create(ctx, {
     ...options,
     modules: [secrets, compute, abort, durableFunctions, projects, workspaces],
@@ -51,6 +51,7 @@ something before the agent has started throws rather than quietly archiving over
 | [`GitModule`](../git/README.md)                           | Worktrees, branches, clones, and every path Git is handed.                                                                                                                         |
 | [`AbortModule`](../abort/README.md)                       | How the agents working in a folder are stopped, so archiving a workspace ends the work standing in it.                                                                             |
 | [`DurableFunctionsModule`](../durableFunctions/README.md) | Provisioning, archival, restart recovery, checkpoints, and per-workspace operation locks.                                                                                          |
+| [`RunnersModule`](../runners/README.md)                   | The compute of the machine the project is on, where checkouts, copies, file sync, setup commands, and removal run.                                                                 |
 
 The dependency on projects is one-way. A workspace is a branch of a project's repository, in a
 folder under that project's key, cut from the trunk that project decided on, and every worktree of
@@ -59,7 +60,7 @@ repository lock, and this catalog takes all three through it. Archiving a projec
 everything cut from it, which this module arranges by subscribing to the projects catalog's own
 events inside that transaction rather than by being called back.
 
-There is no `rootContext`, no path string, no settings object and no injected runner. Provisioning
+There is no `rootContext`, no path string, no settings object and no Git command runner. Provisioning
 and archival are registered durable functions. Their calls, checkpoints, locks, detached lifetimes,
 and restart recovery belong to `DurableFunctionsModule`; only the live file-sync watcher remains a
 workspace-owned background lifetime.
@@ -292,3 +293,11 @@ that trade is the honest one. Unique indexes cover `path`, `(project_ref, branch
 Every runtime database operation uses `ctx.db`; direct multi-step mutations use `ctx.inTx`.
 Post-commit notification uses stdlib `afterCommit(ctx, ...)`. Each mutation is one
 read-decide-write-reconcile transaction, and Agent Base owns transactional tool completion.
+
+## Runners
+
+A workspace lives on its project's machine and records it as `runnerId`, together with the Docker
+image (`dockerImage`) its agents run in when the project's `defaultWorkspaceCompute` selects one.
+Worktree creation, plain-folder copies, file sync and its watcher, setup commands, and removal all
+run against `RunnersModule.machine(runnerId)`, written once for this machine and runners alike.
+`agentPlacement` tells agent creators which runner and image a new agent belongs on.

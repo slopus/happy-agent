@@ -55,3 +55,9 @@ Bot routes are available regardless of `features.workspaces`. That flag continue
 shared `/v0/workspaces` HTTP and model-tool surfaces, while bot creation, listing, lifecycle, and
 agent messaging remain usable. When workspace routes are enabled, a bot's unlisted dedicated
 workspace is addressable by ID for files, terminals, and the workspace proxy.
+
+## Runners
+
+While runners are configured, a new bot's folder is created on the default runner, recorded as the
+bot's `runnerId`, and its agent runs there. The Chief of Staff waits for the default runner to
+connect for the first time before it is seeded, because its folder has nowhere else to go.

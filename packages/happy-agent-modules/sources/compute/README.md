@@ -266,3 +266,12 @@ a restart can simply be retried — the file it left behind is already the state
 Command state itself is not persisted by this module at all: a running command's output, status,
 and delta cursor live in the compute's own `ComputeShell`, which is the host's to keep or drop when
 it disposes the compute.
+
+## Runners and containers
+
+An agent's compute configuration may name a `runnerId` and a `docker` image. Without either, the
+agent gets a host compute on this machine, refused once runners are configured. With a runner, it
+gets a machine on that runner in its workspace folder, optionally inside a container of the image;
+with only an image, a container on this machine. Commands that select attached secrets are refused
+on runners and in containers, with a message saying so, until secrets can be delivered there.
+`runnerOf(config)` tells other modules which runner an agent's folder is on.

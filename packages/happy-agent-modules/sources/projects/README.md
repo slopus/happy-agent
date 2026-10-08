@@ -18,14 +18,22 @@ import {
     DurableFunctionsModule,
     GitModule,
     ProjectsModule,
+    RunnersModule,
     SecretsModule,
 } from "@slopus/happy-agent-modules";
 
 const config = await ConfigModule.load();
+const runners = new RunnersModule(config);
 const secrets = new SecretsModule();
-const abort = new AbortModule(new ComputeModule(config, secrets));
+const abort = new AbortModule(new ComputeModule(config, secrets, runners));
 const durableFunctions = new DurableFunctionsModule();
-const projects = new ProjectsModule(config, new GitModule(), abort, durableFunctions);
+const projects = new ProjectsModule(
+    config,
+    new GitModule(config, runners),
+    abort,
+    durableFunctions,
+    runners,
+);
 ```
 
 | Module                                                    | What it answers                                                                                                                                                   |
@@ -34,12 +42,13 @@ const projects = new ProjectsModule(config, new GitModule(), abort, durableFunct
 | [`GitModule`](../git/README.md)                           | Every Git command, probe, clone and worktree, the credentials they carry, and who this copy of Git commits as.                                                    |
 | [`AbortModule`](../abort/README.md)                       | How the agents standing in a project stop when it is archived, together with everything below them.                                                               |
 | [`DurableFunctionsModule`](../durableFunctions/README.md) | Provisioning, archival, cleanup, restart recovery, checkpoints, and per-project operation locks.                                                                  |
+| [`RunnersModule`](../runners/README.md)                   | Which machine a folder is on — this one or a runner — and that machine's compute, where every folder probe, creation, and cleanup runs.                           |
 
 Both `AbortModule` and the `ComputeModule` beneath it have to be installed on the
 agent and started with it: the abort module learns the agent collection from its
 `beforeStart` hook, and asking it to cancel anything before that throws.
 
-There is no `rootContext`, no path string, no runner and no callback. Project
+There is no `rootContext`, no path string, no Git command runner and no callback. Project
 provisioning, archival, and cleanup are registered durable functions. Their calls,
 checkpoints, locks, detached lifetimes, and restart recovery belong to
 `DurableFunctionsModule`, not to a second queue in this catalog.
@@ -267,3 +276,13 @@ Migration `008-project-avatar-assets` appends the project-owned avatar table.
 Its normalized WebP, content hash, ThumbHash, and dimensions commit atomically
 with the project row. Replacing or deleting an avatar therefore cannot leave a
 durable project pointing at stale or missing bytes.
+
+## Runners
+
+A project records the runner holding its folder (`runnerId`, absent for this machine), chosen at
+registration or clone from the request or the default runner. `location(project)` answers where a
+folder is and refuses this machine once runners are configured; `compute(project)` is the API's
+never-refusing view of the same. Registration probes, managed folder creation and removal, and
+avatar discovery all run against `RunnersModule.machine(runnerId)`, one implementation for both
+kinds of machine. The home project follows the default runner's home directory while runners are
+configured.
