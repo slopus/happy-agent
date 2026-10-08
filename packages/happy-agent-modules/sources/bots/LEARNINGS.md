@@ -13,6 +13,14 @@ usually be explicitly requested by the user. These are prompt defaults, not runt
 and do not change ordinary agent or subtask prompts. Bots coordinate through existing messages
 and archive direct subtasks with `archive_subtask`, without awaiting them.
 
+## Delegated work stays with the subtask agent
+
+Bots were tempted to inspect or modify a delegated subtask's workspace directly. Bot guidance now
+keeps that work in the subtask and uses `send_agent_message` for progress, findings, diffs,
+verification, and follow-up changes. Direct access to another workspace often requires elevated
+permissions and review by the reviewer model. Asking the subtask agent keeps execution with the
+agent that owns the workspace and avoids unnecessary permission reviews.
+
 ## Making a task means creating a subtask
 
 The word "task" was ambiguous between delegated work and a task-list entry. Bot-only prompts now

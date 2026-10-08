@@ -20,6 +20,16 @@ transaction. It previously aborted and disposed compute before persisting archiv
 disposal failure could leave a stopped subtask still active. A workspace identifies its resident subtask, whose parent identifies the coordinator.
 Sharing the parent's filesystem does not add a second workspace association.
 
+## Delegated work stays in its subtask
+
+Coordinators were tempted to inspect or modify delegated work directly in another workspace.
+Bot and subtask instructions, together with the creation tool's guidance, now direct coordinators
+to ask the subtask agent for progress, findings, diffs, verification, and follow-up changes through
+`send_agent_message`. Subtasks keep their assigned work in their own workspace and report back
+through messaging. Direct access to another workspace often requires elevated permissions and
+review by the reviewer model, so messaging avoids unnecessary permission reviews and preserves
+ownership of the work.
+
 ## Subtasks are substantial workstreams, not small steps
 
 Broadly preferring interactive delegation encouraged unnecessary task splitting and nesting.
