@@ -26,8 +26,12 @@ Other modules ask this one where work runs:
 - `enabled` — once any runner is configured nothing runs on this machine, and
   `assertLocalExecution()` refuses with `409 local_execution_disabled`.
 - `place(runnerId?)` — the runner a new folder goes to: the one named, or the default.
-- `machine(runnerId)` — the product's own machine on a runner, for Git, folder management,
-  terminals, watching, and connections. It is created once per runner and kept.
+- `machine(runnerId?)` — the machine Happy's own work on a folder runs on: this machine when no
+  runner is named (refused once runners are configured), or the runner's product machine. Folder
+  management, setup commands, Git, terminals, file reads and watches, the workspace proxy, and
+  MCP stdio servers are each written once against this compute, whichever machine it is. A
+  runner's machine is created once and kept.
+- `run(ctx, runnerId, options)` — one bounded program on that machine, for Git and copying.
 - `agentMachine(ctx, …)` — one agent's machine in its workspace folder, optionally in a Docker
   container on the runner. Agent commands never run on the product machine.
 

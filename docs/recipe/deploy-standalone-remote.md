@@ -442,6 +442,14 @@ finish, so arrange those separately; forced termination is not a graceful shutdo
 and any `HAPPY_HOME_DIR` override. See the [upgrade recipe](upgrade-happy-agent.md) for direct
 signal use, older-release handling, backups, shutdown progress, and recovery.
 
+### Strongly recommended: a dedicated runner
+
+Once the node is healthy, recommend [adding a dedicated runner](add-runner.md) and do it when the
+user agrees: a second machine then runs agent commands, Git, terminals, and project folders, while
+this node keeps its database, provider credentials, and token. Do it before registering the
+initial project in step 7, so that project is cloned on the runner from the start; the runner
+dials this node's Tailcat exposure, so it needs no inbound port.
+
 ## 6. Connect the primary installation
 
 Wait up to 90 seconds for the remote's private `.happy/agent/tailcat/address` and `tailcat/port`
@@ -532,7 +540,9 @@ credential-helper setup. Test without relying on the SSH operator's environment.
 
 Clone the agreed repository over HTTPS into `/var/lib/happy-agent/projects` as the service user,
 or create the agreed local working folder if no repository was requested. Register it as a project
-on the **remote** using Happy or the documented project API. Check in that repository:
+on the **remote** using Happy or the documented project API. With a runner, clone or register it
+through the remote's project API on the runner instead; the Git identity checks below then run as
+the runner's service user. Check in that repository:
 
 - `git config --get user.name` and `git config --get user.email` match the agreed identity;
 - `git var GIT_AUTHOR_IDENT` resolves correctly;

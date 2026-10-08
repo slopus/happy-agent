@@ -147,6 +147,53 @@ address unnecessarily. A project `happy.toml` cannot enable Tailcat. An active a
 `get_tailcat_status` to read the live address and port. See [tailcat.md](tailcat.md) for the
 complete Tailcat setup and client commands.
 
+## Runners
+
+A runner is a separate machine that does a node's work, strongly recommended for every remote
+node. The daemon keeps the database, provider credentials, API token, and inference; the runner
+holds the project folders and runs agent file tools and commands, Git, workspace checkouts and
+setup, terminals, file browsing, previews, and MCP stdio servers. It reaches the daemon over one
+connection it dials, so it needs no inbound port. [Add a dedicated runner](recipe/add-runner.md)
+walks through deploying one.
+
+Runners are machine configuration in the node's `happy.toml`; project configuration cannot
+declare them:
+
+```toml
+[runners]
+default = "build-box"
+
+[runners.build-box]
+name = "Build box"
+token = "REPLACE_WITH_FRESH_43_CHARACTER_BASE64URL_TOKEN"
+```
+
+Each `[runners.<id>]` names one runner, at most 32, with an ID matching `[a-z][a-z0-9_-]{0,63}`.
+Its token uses the API token format and must differ from `[api] token`, every connection token,
+and every other runner's token. `default` picks the runner for new projects that name none, the
+home project, and bot folders; it is optional with exactly one runner. Restart the daemon after
+changing runners. Removing an entry revokes that runner, which then stops everything it held.
+
+The runner itself is `happy-agent runner`, given the daemon's endpoint and its token:
+
+```sh
+HAPPY_RUNNER_ENDPOINT=tailcat:<address>:<port> happy-agent runner
+```
+
+The endpoint is `tailcat:<address>[:<port>]` for a node's [Tailcat exposure](#tailcat-exposure),
+`https://host` or `http://host:port` over a private network, or `unix:/path` to a local socket;
+`--endpoint` sets it too. The token comes from `~/.happy-runner/token`, `--token-file <path>`, or
+`HAPPY_RUNNER_TOKEN` — never an argument. `--home <directory>` moves where the home project and
+bot folders live. The runner removes both variables from its environment once read, and agent
+commands cannot read its private directory.
+
+Once any runner is configured, the daemon runs nothing on its own machine. Projects registered
+there earlier stay listed so they can be archived, and their work fails with
+`local_execution_disabled`. Work on a folder whose runner is away fails with `runner_unavailable`;
+nothing falls back to the daemon. A runner project can run its workspaces in containers on the
+runner by setting `defaultWorkspaceCompute` to `{ "type": "docker", "image": "..." }`; the runner
+needs Docker. Attached secrets and sandboxed services are not available on runners yet.
+
 ## Team deployment mode
 
 Team mode turns one Happy Agent daemon into an organization-authenticated service. It replaces the

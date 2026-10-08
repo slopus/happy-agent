@@ -150,6 +150,14 @@ Resolve deployment failures before adding the local connection. These service ch
 that the host is running and allow direct authenticated diagnostics; the next step also tests the
 user's saved local connection and actual agent use.
 
+### Strongly recommended: a dedicated runner
+
+A shared node runs every member's agents, so recommend [adding a dedicated runner](add-runner.md)
+before members start work, and do it when the user agrees. The runner holds the team's project
+folders and runs agent commands, Git, and terminals on a separate machine; the node keeps the
+database, provider credentials, and WorkOS settings. It dials the node's Tailcat exposure with its
+own token, so neither the listener nor WorkOS authentication changes.
+
 ## 5. Add the local connection and verify it
 
 On the original standalone installation, use `list_remote_connections` with `{}` to check for an

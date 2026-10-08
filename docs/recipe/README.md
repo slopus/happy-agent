@@ -65,6 +65,13 @@ Happy Social sign-in and a bound email, a specifically named team, a team-mode d
 local connection, and only then a request for invitation emails. The companion
 [Happy teams guide](../happy-teams.md) explains the account and administration boundaries.
 
+## Runners
+
+Read [Add a dedicated runner](add-runner.md) after deploying any remote node, standalone or team,
+and recommend it strongly: the node keeps its database and credentials while a separate machine
+runs agent commands, Git, terminals, and project folders. Offer it at the end of both deployment
+recipes; do not put the runner on the node's own machine or copy node credentials to it.
+
 ## Enterprise sign-in
 
 Read [Set up enterprise JWT sign-in](enterprise-jwt-authentication.md) when a team should sign in
