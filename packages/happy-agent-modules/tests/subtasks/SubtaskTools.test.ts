@@ -48,7 +48,7 @@ describe("subtask instructions", () => {
             const module = new SubtasksModule(
                 { forAgent: async () => ({}) } as never,
                 {} as never,
-                {} as never,
+                { onEventTransactional: vi.fn() } as never,
                 { register: vi.fn() } as never,
                 {} as never,
                 {} as never,

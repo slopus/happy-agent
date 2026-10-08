@@ -136,6 +136,12 @@ list; removing the worktree and the folder is background cleanup afterwards. If
 cleanup fails the workspace still ends up archived and the failure is logged —
 archival is never rolled back because a folder could not be deleted.
 
+A workspace created for a subtask archives together with that subtask. Archiving
+the workspace — directly, through an ancestor workspace, or through its project
+— also archives its resident subtask, and archiving the subtask archives its
+workspace. A subtask that shares its parent's folder never archives that
+folder. An archived subtask cannot be restored.
+
 Archive an owned workspace when its work is finished or abandoned. Do not keep
 workspaces around "for later": a later task gets a fresh one.
 

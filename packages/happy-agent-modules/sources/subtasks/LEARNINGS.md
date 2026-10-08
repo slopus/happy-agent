@@ -12,13 +12,31 @@ two subtask levels below a bot, not two children, so one task may coordinate sev
 Subtasks use `create_subtask` and `archive_subtask`, never a wait tool or a create/archive
 multiplexer. Follow-ups use existing agent messaging. Only the direct coordinating bot or subtask
 may archive through the tool; users retain the agent API. Archival marks only the selected agent,
-stops its running descendants, and preserves history and workspace. Metadata, cancellation, and
-durable compute-cleanup intent commit together; cleanup starts after commit and restoration cancels
-pending cleanup. User archival through `POST /v0/agents/:id/archive` takes the same path: the
+stops its running descendants, and preserves history. Metadata, cancellation, and
+durable compute-cleanup intent commit together; cleanup starts after commit. User archival through `POST /v0/agents/:id/archive` takes the same path: the
 route commits only `archivedAt` and lets this module's hook abort and record cleanup in that
 transaction. It previously aborted and disposed compute before persisting archival, so a
 disposal failure could leave a stopped subtask still active. A workspace identifies its resident subtask, whose parent identifies the coordinator.
 Sharing the parent's filesystem does not add a second workspace association.
+
+## A workspace-bound subtask and its workspace archive together
+
+Archiving a subtask used to leave its workspace active, and archiving the workspace left an
+unarchived subtask whose checkout was gone. People asked for the two to move together. Both sides
+are now one durable decision in one transaction. This module's archive hook archives the workspace
+named by `subtaskWorkspaceId`, but only when that workspace still names this agent as
+`subtaskAgentId`, through `WorkspacesModule.archive` and so through descendants, cancellation, the
+service-cleanup barrier, and the keep settings. A transactional `begin_archive` listener marks the
+resident subtask archived for every workspace archival, including descendants and project archival.
+Each side skips when the other is already decided, so repetition is harmless and they never loop.
+A shared-filesystem subtask names no workspace and never archives the folder it shares.
+
+## Archival is final for a subtask
+
+Restoring a subtask once brought back a conversation whose workspace could be gone. People decided
+that subtask archival is final, for both forms: the restoration hook, which every path that clears
+`archivedAt` passes through, refuses it and the API answers `409`. Ordinary root agents and bots
+remain restorable.
 
 ## Delegated work stays in its subtask
 

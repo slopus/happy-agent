@@ -2,7 +2,7 @@
 
 User-visible, parent-managed conversations. `create_subtask` creates them and `archive_subtask`
 lets their direct coordinator archive them. Existing collaboration messaging and the agent API
-handle interaction; users may also archive and restore through the API.
+handle interaction; users may also archive through the API.
 
 ```text
 Bot
@@ -18,4 +18,7 @@ message identity. Every full API agent includes its active direct subtasks recur
 in bootstrap, in sibling order that `reorder` moves. Workspace-bound subtasks also appear in the
 workspace's ordered agent series, whose order is separate.
 Archival stops the target and descendants but marks only the target archived, preserving its
-workspace and history. Durable Functions owns post-commit compute cleanup. Agent Base remains unchanged.
+history. A workspace-bound subtask and its workspace archive together in one transaction, from
+either side; a shared-filesystem subtask never archives the folder it shares.
+Archival is final: a subtask is never restored. Durable Functions owns post-commit compute
+cleanup. Agent Base remains unchanged.

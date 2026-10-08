@@ -8,7 +8,9 @@ Workspace-bound delegation needs an explicit association without conflating work
 with agent ancestry. `subtaskAgentId` is stored at reservation and names the agent running in that
 workspace; that agent's parent names the coordinator. The binding is immutable through retries,
 renames, and archival. A shared-filesystem subtask does not replace its parent's workspace binding
-or add an entry to the workspace's agent series.
+or add an entry to the workspace's agent series. The binding also pairs archival: the subtasks
+module archives the resident subtask from this module's transactional `begin_archive` event, and
+archives the workspace when the subtask is archived. This module stays unaware of subtasks.
 
 ## Background setup has no native console window
 

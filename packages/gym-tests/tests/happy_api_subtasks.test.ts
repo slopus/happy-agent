@@ -220,12 +220,12 @@ describe("user-interactive subtasks", () => {
             (await gym.client.getAgent(bot.agent.id)).agent.subtasks?.map((item) => item.id),
         ).toEqual([sibling.id]);
         expect((await gym.client.getAgent(internal.id)).agent.archivedAt).toBeNull();
-        await gym.client.unarchiveAgent(main.id);
         await gym.restart();
         expect(
-            (await gym.client.getDesktopBootstrap()).bots!.find((item) => item.id === bot.id)?.agent
-                .subtasks?.[1]?.subtasks?.[0]?.id,
-        ).toBe(internal.id);
+            (await gym.client.getDesktopBootstrap())
+                .bots!.find((item) => item.id === bot.id)
+                ?.agent.subtasks?.map((item) => item.id),
+        ).toEqual([sibling.id]);
         expect(gym.errors).toEqual([]);
     }, 60_000);
 
@@ -386,23 +386,22 @@ describe("user-interactive subtasks", () => {
 
         const fourth = await create(bot.agent.id, "Fourth ordered");
         expect(await order()).toEqual([fourth.id, first.id, second.id, third.id]);
-        await gym.client.archiveAgent(second.id);
+        await gym.client.archiveAgent(third.id);
         await expect(
-            gym.client.reorderSubtask(first.id, { afterId: second.id }),
+            gym.client.reorderSubtask(first.id, { afterId: third.id }),
         ).rejects.toMatchObject({ status: 409 });
-        expect(await order()).toEqual([fourth.id, first.id, third.id]);
-        await gym.client.unarchiveAgent(second.id);
+        expect(await order()).toEqual([fourth.id, first.id, second.id]);
         await gym.restart();
-        expect(await order()).toEqual([fourth.id, first.id, second.id, third.id]);
+        expect(await order()).toEqual([fourth.id, first.id, second.id]);
         expect(
             (await gym.client.getDesktopBootstrap())
                 .bots!.find((item) => item.id === bot.id)!
                 .agent.subtasks!.map((item) => item.id),
-        ).toEqual([fourth.id, first.id, second.id, third.id]);
+        ).toEqual([fourth.id, first.id, second.id]);
         expect(gym.errors).toEqual([]);
     }, 60_000);
 
-    it("lets only the direct coordinator archive a subtask without deleting its workspace or descendants", async () => {
+    it("lets only the direct coordinator archive a subtask, which archives its workspace for good", async () => {
         const { gym, bot, create, call } = await harness();
         const project = (await gym.client.listProjects()).projects.find((item) =>
             item.agents.some((agent) => agent.id === gym.defaultSessionId),
@@ -450,11 +449,9 @@ describe("user-interactive subtasks", () => {
         expect(archived).toMatchObject({ canSendMessages: false, archivedAt: expect.any(Number) });
         expect((await gym.client.getAgent(bot.agent.id)).agent.subtasks).toEqual([]);
         expect((await gym.client.getAgent(internal.id)).agent.archivedAt).toBeNull();
-        expect((await gym.client.getWorkspace(task.workspaceId)).workspace).toMatchObject({
-            status: "active",
-            subtaskAgentId: task.id,
-            agents: [],
-        });
+        const archivedWorkspace = (await gym.client.getWorkspace(task.workspaceId)).workspace;
+        expect(archivedWorkspace).toMatchObject({ subtaskAgentId: task.id, agents: [] });
+        expect(["archiving", "archived"]).toContain(archivedWorkspace.status);
         await expect(gym.send("Not while archived", { sessionId: task.id })).rejects.toMatchObject({
             status: 409,
         });
@@ -472,9 +469,9 @@ describe("user-interactive subtasks", () => {
         expect((await gym.client.getAgent(task.id)).agent.archivedAt).toBe(archived.archivedAt);
         await gym.restart();
         expect((await gym.client.getAgent(task.id)).agent.archivedAt).toBe(archived.archivedAt);
-        await gym.client.unarchiveAgent(task.id);
-        await gym.send("Continue after restoration", { sessionId: task.id });
-        expect((await gym.client.getAgent(bot.agent.id)).agent.subtasks?.[0]?.id).toBe(task.id);
+        await expect(gym.client.unarchiveAgent(task.id)).rejects.toMatchObject({ status: 409 });
+        expect((await gym.client.getAgent(task.id)).agent.archivedAt).toBe(archived.archivedAt);
+        expect((await gym.client.getAgent(bot.agent.id)).agent.subtasks).toEqual([]);
         expect(gym.errors).toEqual([]);
     }, 60_000);
 
@@ -564,7 +561,7 @@ describe("user-interactive subtasks", () => {
         expect(gym.errors).toEqual([]);
     }, 60_000);
 
-    it("shares the bot filesystem, accepts user interaction, and preserves archival across restart", async () => {
+    it("shares the bot filesystem, accepts user interaction, and keeps archival final across restart", async () => {
         const { gym, bot, create, call } = await harness();
         const task = await create(bot.agent.id, "Main task");
         expect(task).toMatchObject({
@@ -629,8 +626,12 @@ describe("user-interactive subtasks", () => {
         await expect(gym.client.getAgentDraft(task.id)).resolves.toMatchObject({
             draft: { value: { text: "Continue here" } },
         });
-        expect((await gym.client.unarchiveAgent(task.id)).agent.canSendMessages).toBe(true);
-        await gym.send("Resume with your history.", { sessionId: task.id });
+        await expect(gym.client.unarchiveAgent(task.id)).rejects.toMatchObject({ status: 409 });
+        expect((await gym.client.getAgent(task.id)).agent).toMatchObject({
+            archivedAt: archived.archivedAt,
+            canSendMessages: false,
+        });
+        expect((await gym.client.getWorkspace(bot.workspaceId)).workspace.status).toBe("active");
         expect(gym.errors).toEqual([]);
     }, 60_000);
 
@@ -685,6 +686,84 @@ describe("user-interactive subtasks", () => {
         );
         expect(gym.errors).toEqual([]);
     }, 60_000);
+
+    it("archives a resident subtask with its workspace or project, once, and never restores it", async () => {
+        const { gym, bot, create } = await harness();
+        const project = (await gym.client.listProjects()).projects.find((item) =>
+            item.agents.some((agent) => agent.id === gym.defaultSessionId),
+        )!;
+        const second = (
+            await gym.client.registerProject({ path: join(gym.workspacePath, "second") })
+        ).project;
+        const task = await create(bot.agent.id, "Workspace archive", {
+            projectId: project.id,
+            name: "Workspace archive task",
+        });
+        const peer = await create(bot.agent.id, "Project archive", {
+            projectId: second.id,
+            name: "Project archive task",
+        });
+        const shared = await create(task.id, "Shared review");
+        const ready = async (workspaceId: string) =>
+            await gym.waitUntil(async () => {
+                const current = (await gym.client.getWorkspace(workspaceId)).workspace;
+                return current.initialization.status === "ready" ? current : undefined;
+            }, "the subtask workspace to be ready");
+
+        const workspace = await ready(task.workspaceId);
+        const archivedWorkspace = (
+            await gym.client.archiveWorkspace(task.workspaceId, {
+                ifMatch: workspace.version,
+                mutationId: "archive-subtask-workspace",
+            })
+        ).workspace;
+        expect(["archiving", "archived"]).toContain(archivedWorkspace.status);
+        const archived = (await gym.client.getAgent(task.id)).agent;
+        expect(archived).toMatchObject({ archivedAt: expect.any(Number), canSendMessages: false });
+        expect((await gym.client.getAgent(shared.id)).agent.archivedAt).toBeNull();
+        expect(
+            (await gym.client.getAgent(bot.agent.id)).agent.subtasks?.map((item) => item.id),
+        ).toEqual([peer.id]);
+        await gym.waitForEvent(
+            (event) =>
+                event.type === "agent.updated" &&
+                event.payload.agentId === task.id &&
+                typeof (event.payload.changes as { archivedAt?: unknown }).archivedAt === "number",
+            "the resident subtask's archival event",
+        );
+        await gym.waitForEvent(
+            (event) =>
+                event.type === "workspace.updated" &&
+                event.payload.workspaceId === task.workspaceId &&
+                event.payload.mutationId === "archive-subtask-workspace",
+            "the workspace's archival event",
+        );
+
+        // Repeating either side changes neither.
+        const current = (await gym.client.getWorkspace(task.workspaceId)).workspace;
+        await gym.client.archiveWorkspace(task.workspaceId, { ifMatch: current.version });
+        await gym.client.archiveAgent(task.id);
+        expect((await gym.client.getAgent(task.id)).agent.archivedAt).toBe(archived.archivedAt);
+        await expect(gym.client.unarchiveAgent(task.id)).rejects.toMatchObject({ status: 409 });
+        expect((await gym.client.getAgent(task.id)).agent.archivedAt).toBe(archived.archivedAt);
+
+        await ready(peer.workspaceId);
+        const project2 = (await gym.client.getProject(second.id)).project;
+        await gym.client.archiveProject(second.id, { ifMatch: project2.version });
+        expect((await gym.client.getAgent(peer.id)).agent.archivedAt).toEqual(expect.any(Number));
+        expect(["archiving", "archived"]).toContain(
+            (await gym.client.getWorkspace(peer.workspaceId)).workspace.status,
+        );
+        await gym.restart();
+        await expect(gym.client.unarchiveAgent(peer.id)).rejects.toMatchObject({ status: 409 });
+        expect((await gym.client.getAgent(task.id)).agent.archivedAt).toBe(archived.archivedAt);
+
+        // Ordinary root agents remain restorable.
+        const root = (await gym.client.createAgent({ workspaceId: project.id })).agent;
+        await gym.client.archiveAgent(root.id);
+        expect((await gym.client.unarchiveAgent(root.id)).agent.archivedAt).toBeNull();
+        expect(gym.errors).toEqual([]);
+    }, 90_000);
 
     it("coordinates separate project workspaces and lets a workspace subtask share its filesystem", async () => {
         const { gym, bot, create } = await harness();
@@ -742,11 +821,19 @@ describe("user-interactive subtasks", () => {
             task.id,
         );
         await gym.send("A human can guide the workspace task.", { sessionId: task.id });
+        // Archiving the shared-filesystem child leaves the folder it shares, and its parent, alone.
+        await gym.client.archiveAgent(internal.id);
+        expect((await gym.client.getWorkspace(task.workspaceId)).workspace).toMatchObject({
+            status: "active",
+            subtaskAgentId: task.id,
+        });
+        expect((await gym.client.getAgent(task.id)).agent.archivedAt).toBeNull();
         await gym.client.archiveAgent(task.id);
         const retained = (await gym.client.getWorkspace(task.workspaceId)).workspace;
-        expect(retained.status).toBe("active");
+        expect(["archiving", "archived"]).toContain(retained.status);
         expect(retained.subtaskAgentId).toBe(task.id);
         expect(retained.agents).toEqual([]);
+        expect((await gym.client.getWorkspace(peer.workspaceId)).workspace.status).toBe("active");
         await gym.restart();
         expect((await gym.client.getWorkspace(task.workspaceId)).workspace.subtaskAgentId).toBe(
             task.id,

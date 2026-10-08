@@ -3210,17 +3210,28 @@ export class ApiModule implements AgentModule {
                     (operation === "archive" && !archived) ||
                     (operation === "unarchive" && archived);
                 if (shouldChange) {
-                    await this.#withMutationId(body.mutationId, async () => {
-                        // A subtask's archival commits atomically with its abort and durable
-                        // cleanup intent through the subtasks module, exactly like archive_subtask.
-                        if (operation === "archive" && this.#subtasks?.isSubtask(config) !== true) {
-                            await this.#abort.abort(ctx, agentId);
-                            await this.#compute.archiveAgent(ctx, agentId);
-                        }
-                        await this.#updateAgentMetadata(ctx, agentId, {
-                            archivedAt: operation === "archive" ? Date.now() : null,
+                    try {
+                        await this.#withMutationId(body.mutationId, async () => {
+                            // A subtask's archival commits atomically with its abort, durable
+                            // cleanup intent, and workspace archival through the subtasks module,
+                            // exactly like archive_subtask. That module also refuses restoration.
+                            if (
+                                operation === "archive" &&
+                                this.#subtasks?.isSubtask(config) !== true
+                            ) {
+                                await this.#abort.abort(ctx, agentId);
+                                await this.#compute.archiveAgent(ctx, agentId);
+                            }
+                            await this.#updateAgentMetadata(ctx, agentId, {
+                                archivedAt: operation === "archive" ? Date.now() : null,
+                            });
                         });
-                    });
+                    } catch (error: unknown) {
+                        if (error instanceof SubtaskInputError) {
+                            throw new ApiError(409, "conflict", error.message);
+                        }
+                        throw error;
+                    }
                 }
                 sendJson(response, 200, await this.#focusedAgentResponse(ctx, agentId));
                 return true;

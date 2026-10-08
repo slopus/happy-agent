@@ -17,7 +17,7 @@ export function createSubtaskTool(subtasks: SubtasksModule, agentId: string, pro
             "Reserve subtasks for substantial, distinct workstreams, such as changes across projects; handle small steps inline. Usually create second-level subtasks only on explicit user request. Honor explicit subtask requests; use create_agent for internal research.",
             "Sidebar title: prefer 2–3 words; 4 at most, as a last resort. Put details in text.",
             "Omit workspace to share your filesystem, or supply workspace with projectId and a short name for a new workspace. Work starts after setup.",
-            "Returns the agent ID without waiting. Coordinate via send_agent_message and archive direct subtasks with archive_subtask. Users can message, archive, or restore them. There is no wait tool.",
+            "Returns the agent ID without waiting. Coordinate via send_agent_message and archive direct subtasks with archive_subtask. Users can message or archive them. There is no wait tool.",
             "Keep delegated work in the subtask. Ask its agent through send_agent_message for progress, findings, diffs, verification, or follow-up changes. Do not directly inspect or modify its files or run commands in its workspace. Direct access to another workspace often requires elevated permissions and review by the reviewer model; talking to its agent avoids unnecessary permission reviews.",
             "Choose a model and effort. Omitting provider uses your current provider when it offers that model.",
             subtasks.modelDescription(),

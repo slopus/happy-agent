@@ -409,7 +409,7 @@ start — see `POST /v0/agents/:agentId/send`.
 Nothing durable is ever permanently deleted through this API — that is deliberate, not an
 omission. Projects, workspaces, agents, and bots **archive**: they leave the active lists but keep
 their history and can be inspected. Only agents and bots can be unarchived for now; an archived project
-is revived by registering its path again, and an archived workspace stays archived. There are
+is revived by registering its path again, and an archived workspace or subtask stays archived. There are
 no hard-delete endpoints. The only things that end are runtime state — a terminal, a background process — and
 the transcript resets described under `message.deleted`, none of which is a client deleting a
 durable resource.
@@ -2748,7 +2748,8 @@ when the response is sent; removing the project's workspace folders and closing 
 is background work.
 
 Archiving a project archives every workspace cut from it, in the same transaction, so the work
-standing in each of them stops exactly as it does for a workspace archived on its own. Agents
+standing in each of them stops exactly as it does for a workspace archived on its own, and each
+workspace's resident subtask is archived with it. Agents
 attached to the project itself rather than to one of its workspaces are cancelled the same way,
 and no new agent can be attached to an archived project; an attachment in flight is refused with
 `409`. Archiving a project that is already archived changes nothing and stops nothing.
@@ -2971,6 +2972,11 @@ after the commit, its background processes are killed, and an open question it w
 canceled as that turn settles. No new agent can be attached to a workspace once its archival has
 committed; an attachment that was in flight is refused with `409`. Archiving a workspace that is
 already archived changes nothing and stops nothing.
+
+A workspace whose `subtaskAgentId` names a resident subtask archives that subtask in the same
+transaction, as `POST /v0/agents/:agentId/archive` would; this applies to each archived
+descendant too. The subtask emits `agent.updated` with `archivedAt` set alongside the workspace's
+`workspace.updated`. An already archived subtask is left as it is.
 
 Service-aware archival remains asynchronous and may be presented optimistically by clients.
 The archival transaction closes service admission and durably records responsibility for stopping
@@ -3479,12 +3485,18 @@ may create either form directly; a subtask may create either form within the dep
 workspace-bound siblings may target different projects. Workspace hierarchy still describes only
 files and checkouts, independently of agent ancestry.
 
-Subtasks accept user messages, drafts, read markers, archival, and unarchival through the existing
-agent routes. They report `userVisible: true` and `managedByAnotherAgent: true`, and
+Subtasks accept user messages, drafts, read markers, and archival through the existing agent
+routes. Archival is final for a subtask: `unarchive` on any subtask answers `409`, whether it is
+workspace-bound or shares its parent's filesystem. They report `userVisible: true` and `managedByAnotherAgent: true`, and
 `canSendMessages: true` while active. Reordering requires an owner-series entry, so a
 shared-filesystem subtask returns `409` on `reorder`. Order among a coordinator's subtasks is
 separate and moves with `subtask-reorder`, for either form. Archived subtasks accept no new messages or
-child creation. Archiving a subtask keeps its history and does not archive its workspace.
+child creation. Archiving a subtask keeps its history. A workspace-bound subtask and its workspace
+archive together, in the same transaction, from either side: archiving the subtask through the
+agent route or `archive_subtask` archives its workspace exactly as
+`POST /v0/workspaces/:workspaceId/archive` does, and archiving that workspace — directly, through
+an ancestor workspace, or through its project — archives the subtask. Archiving a
+shared-filesystem subtask never archives the workspace it shares.
 Subtask creation is asynchronous delegation: it never waits for completion. Existing agent
 messaging tools deliver follow-ups, and `archive_subtask` exposes archival to the coordinator;
 there is no subtask wait tool. Ordinary subagents
@@ -4638,14 +4650,16 @@ Response — `200`: `{ "agent": { ... }, "profiles": [ ... ], "slashCommands": [
 
 Archives the agent. The conversation is kept — an archived agent's history remains readable —
 but it leaves the default list and receives no messages. Archiving a working agent aborts its
-run first. Its permanent owner association and `orderKey` are retained. Idempotent.
+run first. Its permanent owner association and `orderKey` are retained. Idempotent. Archiving a
+workspace-bound subtask also archives its workspace in the same transaction; see Subtasks.
 
 Response — `200`: `{ "agent": { ... }, "profiles": [ ... ], "slashCommands": [ ... ] }` with `archivedAt` set.
 
 ### `POST /v0/agents/:agentId/unarchive`
 
 Brings an archived agent back: it reappears in the default list and can receive messages again,
-with its history, last submitted mode, owner, and order intact. Idempotent.
+with its history, last submitted mode, owner, and order intact. Idempotent. An archived subtask
+cannot be restored and answers `409`; its archival is unchanged.
 
 Response — `200`: `{ "agent": { ... }, "profiles": [ ... ], "slashCommands": [ ... ] }` with `archivedAt` `null`.
 

@@ -90,6 +90,24 @@ export class SubtasksModule implements AgentModule {
                 return null;
             },
         });
+        // A workspace-bound subtask and its workspace archive together, in one transaction. This
+        // half covers every workspace archival, including descendants and project archival.
+        workspaces.onEventTransactional(async (txCtx, event) => {
+            if (event.type !== "workspace_updated" || event.change !== "begin_archive") return;
+            const agentId = event.workspace.subtaskAgentId;
+            if (agentId === undefined) return;
+            const agents = this.#requireAgents();
+            const config = await agents.config(txCtx, agentId);
+            if (
+                !Value.Check(workspaceSubtaskMetadataSchema, config?.metadata) ||
+                config.metadata.subtaskWorkspaceId !== event.workspace.id ||
+                Value.Check(archivedMetadataSchema, config.metadata)
+            ) {
+                return;
+            }
+            const now = Date.now();
+            await this.#updateVersionedMetadata(txCtx, agentId, config, now, { archivedAt: now });
+        });
     }
 
     isSubtask(config: AgentConfig | AgentModuleAgent | undefined): boolean {
@@ -391,11 +409,29 @@ export class SubtasksModule implements AgentModule {
                         operationId: `subtask-archive:${scope.agent.id}`,
                         lockKeys: [`subtask:${scope.agent.id}`],
                     });
+                    // The other half of the pairing: the resident subtask takes its workspace
+                    // with it. A shared-filesystem subtask names no workspace and archives none.
+                    if (Value.Check(workspaceSubtaskMetadataSchema, change.metadata)) {
+                        const workspace = await this.#workspaces.get(
+                            ctx,
+                            change.metadata.subtaskWorkspaceId,
+                        );
+                        if (
+                            workspace?.subtaskAgentId === scope.agent.id &&
+                            workspace.status !== "archiving" &&
+                            workspace.status !== "archived"
+                        ) {
+                            await this.#workspaces.archive(ctx, workspace.id);
+                        }
+                    }
                 } else if (
                     this.isSubtask(scope.agent) &&
-                    Value.Check(restoredMetadataSchema, change.update)
+                    Value.Check(restoredMetadataSchema, change.update) &&
+                    Value.Check(archivedMetadataSchema, change.previousMetadata)
                 ) {
-                    await this.#durableFunctions.cancel(ctx, `subtask-archive:${scope.agent.id}`);
+                    // Archival is final for a subtask. Refusing here covers every path that
+                    // clears archival, and rolls the whole restoration back.
+                    throw new SubtaskInputError("An archived subtask cannot be restored.");
                 }
             },
             beforeAgentLoop: async (ctx, scope) => {
@@ -437,10 +473,10 @@ export class SubtasksModule implements AgentModule {
             ],
             instructions: async (ctx, scope) => {
                 if (this.isSubtask(await agents.config(ctx, scope.agent.id))) {
-                    return "You are a user-visible subtask managed by your parent; users may talk to you directly. Keep your assigned work in this subtask and its workspace, and report progress, findings, diffs, and verification to your parent through send_agent_message. Prefer create_subtask by default only for substantial, distinct workstreams, such as changes across projects; handle small steps inline. Usually create second-level subtasks only on explicit user request. If the user explicitly asks for a subtask, use create_subtask within the two-level limit below your bot; explain if blocked. Use create_agent for internal research. Coordinate via send_agent_message and archive_subtask; do not wait for subtasks. Keep delegated work in the child subtask: ask its agent for progress, findings, diffs, verification, or follow-up changes instead of directly inspecting or modifying its files or running commands in its workspace. Direct access to another workspace often requires elevated permissions and review by the reviewer model; talking to its agent avoids unnecessary permission reviews. Archival stops the task and descendants but archives only the task, preserving history and workspace.";
+                    return "You are a user-visible subtask managed by your parent; users may talk to you directly. Keep your assigned work in this subtask and its workspace, and report progress, findings, diffs, and verification to your parent through send_agent_message. Prefer create_subtask by default only for substantial, distinct workstreams, such as changes across projects; handle small steps inline. Usually create second-level subtasks only on explicit user request. If the user explicitly asks for a subtask, use create_subtask within the two-level limit below your bot; explain if blocked. Use create_agent for internal research. Coordinate via send_agent_message and archive_subtask; do not wait for subtasks. Keep delegated work in the child subtask: ask its agent for progress, findings, diffs, verification, or follow-up changes instead of directly inspecting or modifying its files or running commands in its workspace. Direct access to another workspace often requires elevated permissions and review by the reviewer model; talking to its agent avoids unnecessary permission reviews. Archival stops the task and descendants and archives the task with its own workspace, if it has one; a shared folder stays. History is kept, but archival is final.";
                 }
                 if ((await this.#bots.forAgent(ctx, scope.agent.id)) !== undefined) {
-                    return "Reserve subtasks for substantial, distinct workstreams, such as changes across projects; handle small steps inline. Usually create second-level subtasks only on explicit user request. Subtasks share your folder or use new project workspaces. Only bots and subtasks create them: at most two levels below a bot, not two siblings. Coordinate via send_agent_message and archive_subtask; do not wait. Keep delegated work in its subtask: ask its agent for progress, findings, diffs, verification, or follow-up changes instead of directly inspecting or modifying its files or running commands in its workspace. Direct access to another workspace often requires elevated permissions and review by the reviewer model; talking to its agent avoids unnecessary permission reviews. Archival stops the task and descendants but archives only the task, preserving history and workspace.";
+                    return "Reserve subtasks for substantial, distinct workstreams, such as changes across projects; handle small steps inline. Usually create second-level subtasks only on explicit user request. Subtasks share your folder or use new project workspaces. Only bots and subtasks create them: at most two levels below a bot, not two siblings. Coordinate via send_agent_message and archive_subtask; do not wait. Keep delegated work in its subtask: ask its agent for progress, findings, diffs, verification, or follow-up changes instead of directly inspecting or modifying its files or running commands in its workspace. Direct access to another workspace often requires elevated permissions and review by the reviewer model; talking to its agent avoids unnecessary permission reviews. Archival stops the task and descendants and archives the task with its own workspace, if it has one; a shared folder stays. History is kept, but archival is final.";
                 }
                 return "";
             },
