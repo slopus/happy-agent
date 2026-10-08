@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -116,7 +116,8 @@ describe.runIf(process.platform !== "win32")("host processes", () => {
 });
 
 async function hostProcesses(environment: NodeJS.ProcessEnv = {}) {
-    const folder = await mkdtemp(join(tmpdir(), "host-processes-"));
+    // The real path: `$PWD` is what the kernel says, and macOS's temporary folder is a symlink.
+    const folder = await realpath(await mkdtemp(join(tmpdir(), "host-processes-")));
     const processes: HostProcesses = createHostProcesses({
         cwd: folder,
         environment: { ...process.env, ...environment },
