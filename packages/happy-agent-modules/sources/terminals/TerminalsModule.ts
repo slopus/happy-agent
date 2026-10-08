@@ -6,7 +6,8 @@ import { detach, mapAsyncLock, type Context, type MapAsyncLock } from "@steve.ki
 
 import { createUuidV7Factory } from "../events/index.js";
 import { BotsModule } from "../bots/index.js";
-import { ProjectsModule } from "../projects/index.js";
+import { ProjectsModule, type Project } from "../projects/index.js";
+import { RunnersModule } from "../runners/index.js";
 import { WorkspacesModule } from "../workspaces/index.js";
 
 import {
@@ -26,7 +27,7 @@ import {
     type TerminalUnsubscribe,
 } from "./Terminal.js";
 import type { TerminalProcessFactory } from "./TerminalProcess.js";
-import { createHostTerminalProcessFactory } from "./impl/createHostTerminalProcessFactory.js";
+import { createMachineTerminalProcessFactory } from "./impl/createMachineTerminalProcessFactory.js";
 import { TerminalCollection } from "./impl/TerminalCollection.js";
 import type { TerminalSession } from "./impl/TerminalSession.js";
 
@@ -50,12 +51,14 @@ export class TerminalsModule {
     readonly #nextVersion = createUuidV7Factory();
     readonly #bots: BotsModule | undefined;
     readonly #projects: ProjectsModule;
+    readonly #runners: RunnersModule;
     readonly #scopes = new Map<string, TerminalCollection>();
     readonly #workspaces: WorkspacesModule;
     /** Closures started by an archival, so shutdown and tests can wait for them. */
     readonly #closures = new Set<Promise<void>>();
     #closed = false;
-    #processFactory: TerminalProcessFactory;
+    /** Replaces each folder's machine, for tests that drive the lifecycle without a shell. */
+    #processFactory: TerminalProcessFactory | undefined;
 
     /**
      * @param projects The catalog that owns where a project's checkout is. A terminal stands in a
@@ -64,12 +67,19 @@ export class TerminalsModule {
      * @param workspaces The catalog that owns where a managed worktree is and whether it is usable.
      * A workspace folder is not inside its project's, and it only exists once the catalog says the
      * workspace is ready, so both answers have to come from here.
+     * @param runners The owner of the machines folders live on. A terminal runs on its folder's
+     * machine — this one, or the runner holding the folder — and is started there the same way.
      */
-    constructor(projects: ProjectsModule, workspaces: WorkspacesModule, bots?: BotsModule) {
+    constructor(
+        projects: ProjectsModule,
+        workspaces: WorkspacesModule,
+        runners: RunnersModule,
+        bots?: BotsModule,
+    ) {
         this.#bots = bots;
         this.#projects = projects;
+        this.#runners = runners;
         this.#workspaces = workspaces;
-        this.#processFactory = createHostTerminalProcessFactory();
 
         // A terminal is a shell standing in a folder. Archiving is the decision that the folder is
         // nobody's any more and is about to be deleted, so these collections end with it. Both
@@ -144,15 +154,17 @@ export class TerminalsModule {
     /**
      * Test-only construction over one supplied pseudo-terminal boundary.
      *
-     * Production always spawns a real pseudo-terminal. A test that needs to drive the lifecycle
-     * without a shell replaces the boundary here instead of reaching into the module.
+     * Production always spawns a real pseudo-terminal on the folder's machine. A test that needs to
+     * drive the lifecycle without a shell replaces the boundary here instead of reaching into the
+     * module.
      */
     static withProcessFactory(
         projects: ProjectsModule,
         workspaces: WorkspacesModule,
+        runners: RunnersModule,
         processFactory: TerminalProcessFactory,
     ): TerminalsModule {
-        const module = new TerminalsModule(projects, workspaces);
+        const module = new TerminalsModule(projects, workspaces, runners);
         module.#processFactory = processFactory;
         return module;
     }
@@ -194,7 +206,7 @@ export class TerminalsModule {
         assertScope(scope);
         // Resolving first is what makes an unknown project or workspace a refusal rather than an
         // empty list that looks like a folder with nothing open in it.
-        await this.#root(ctx, scope);
+        await this.#folder(ctx, scope);
         return this.#scopes.get(scopeKey(scope))?.list() ?? [];
     }
 
@@ -215,7 +227,7 @@ export class TerminalsModule {
         terminalId: string,
     ): Promise<TerminalSession> {
         assertScope(scope);
-        await this.#root(ctx, scope);
+        await this.#folder(ctx, scope);
         const session = this.#scopes.get(scopeKey(scope))?.get(terminalId);
         if (session === undefined) {
             throw new TerminalError("not_found", "The terminal was not found.");
@@ -317,7 +329,7 @@ export class TerminalsModule {
      */
     async #collection(ctx: Context, scope: TerminalScope): Promise<TerminalCollection> {
         const key = scopeKey(scope);
-        await this.#root(ctx, scope);
+        await this.#folder(ctx, scope);
         return await this.#locks.runInLock(ctx, key, async () => {
             if (this.#closed) {
                 throw new TerminalError("unavailable", "The Happy agent is shutting down.");
@@ -329,14 +341,21 @@ export class TerminalsModule {
             // finds, so a folder archived while the resolution above was in flight would be
             // scanned before this collection existed and closed by nothing afterwards. Resolving
             // once more here is what makes such a create lose that race rather than win it.
-            const root = await this.#root(ctx, scope);
+            const { path, runnerId } = this.#locate(await this.#folder(ctx, scope));
             const created = new TerminalCollection({
                 nextVersion: this.#nextVersion,
                 onCreated: (terminal) => this.#emit({ terminal, type: "terminal_created" }),
                 onUpdated: (before, after) => this.#emitUpdated(before, after),
                 projectId: scope.projectId,
-                processFactory: this.#processFactory,
-                root,
+                processFactory:
+                    this.#processFactory ??
+                    createMachineTerminalProcessFactory({
+                        // The shells outlive the request that opened the folder's first one.
+                        ctx: detach(ctx).named("terminal-processes"),
+                        machine: async () => await this.#runners.machine(runnerId),
+                        platform: () => this.#runners.platform(runnerId),
+                    }),
+                root: path,
                 workspaceId: scope.workspaceId ?? scope.projectId,
             });
             this.#scopes.set(key, created);
@@ -370,15 +389,15 @@ export class TerminalsModule {
         }
     }
 
-    /** Where this folder actually is, according to the catalog that owns it. */
-    async #root(ctx: Context, scope: TerminalScope): Promise<string> {
+    /** The record behind a folder, refused when the catalog that owns it says it is unusable. */
+    async #folder(ctx: Context, scope: TerminalScope): Promise<TerminalFolder> {
         if (scope.workspaceId !== undefined) {
             const bot = await this.#bots?.forWorkspace(ctx, scope.workspaceId);
             if (bot !== undefined && bot.id === scope.projectId) {
                 if (bot.status !== "active") {
                     throw new TerminalError("conflict", "An archived bot cannot open a terminal.");
                 }
-                return bot.path;
+                return { kind: "machine", path: bot.path, runnerId: bot.runnerId };
             }
         }
         const project = await this.#projects.get(ctx, scope.projectId);
@@ -389,7 +408,7 @@ export class TerminalsModule {
             if (project.status === "archived") {
                 throw new TerminalError("conflict", "An archived project cannot open a terminal.");
             }
-            return project.repositoryRef;
+            return { kind: "project", project };
         }
         const workspace = await this.#workspaces.get(ctx, scope.workspaceId);
         if (workspace === undefined || workspace.projectRef !== scope.projectId) {
@@ -398,9 +417,21 @@ export class TerminalsModule {
         if (workspace.status !== "ready") {
             throw new TerminalError("conflict", "Only a ready workspace can open a terminal.");
         }
-        return workspace.path;
+        return { kind: "machine", path: workspace.path, runnerId: workspace.runnerId };
+    }
+
+    /** Where a folder actually is: its path, and the runner holding it when it is not here. */
+    #locate(folder: TerminalFolder): { readonly path: string; readonly runnerId?: string } {
+        if (folder.kind === "project") return this.#projects.location(folder.project);
+        return folder.runnerId === undefined
+            ? { path: folder.path }
+            : { path: folder.path, runnerId: folder.runnerId };
     }
 }
+
+type TerminalFolder =
+    | { readonly kind: "project"; readonly project: Project }
+    | { readonly kind: "machine"; readonly path: string; readonly runnerId: string | undefined };
 
 function assertScope(scope: TerminalScope): void {
     if (!Value.Check(terminalScopeSchema, scope)) {

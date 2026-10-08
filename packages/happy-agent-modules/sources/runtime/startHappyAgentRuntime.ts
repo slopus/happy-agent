@@ -469,7 +469,7 @@ export async function startHappyAgentRuntime(
         const skillFolders = new SkillFoldersModule(config, bots);
         const tailcat = new TailcatModule(config, bots, durableFunctions);
         registerShutdown("tailcat", async (shutdownCtx) => await tailcat.close(shutdownCtx));
-        const terminals = new TerminalsModule(projects, workspaces, bots);
+        const terminals = new TerminalsModule(projects, workspaces, runners, bots);
         registerShutdown("terminals", async () => await terminals.close());
         const files = new ProjectFilesModule(projects, workspaces, git, bots);
         registerShutdown("files", async () => await files.close());

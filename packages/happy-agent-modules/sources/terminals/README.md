@@ -45,40 +45,50 @@ a folder that is going away.
 
 ## What it depends on
 
-The two catalogs that own the folders, given directly:
+The two catalogs that own the folders, and the module that owns the machines they live on, given
+directly:
 
 - [`ProjectsModule`](../projects/README.md) — where a project's checkout is, and whether the
   project is archived.
 - [`WorkspacesModule`](../workspaces/README.md) — where a managed worktree is, which project it
   belongs to, and whether it is ready to be worked in.
+- [`RunnersModule`](../runners/README.md) — the machine a folder lives on: this one, or the runner
+  holding it. The shell is started there as one of that machine's product programs, under a
+  pseudo-terminal the machine's compute provides, so a runner's folders get terminals the same way
+  local ones do.
 
-Both are required. A terminal never derives a path of its own, so the catalog that decided where a
-folder is is the only thing it will ask.
+All three are required; a [`BotsModule`](../bots/README.md) is optional and adds bot folders. A
+terminal never derives a path of its own, so the catalog that decided where a folder is is the only
+thing it will ask.
 
-Everything else the module does itself. Production always spawns a real pseudo-terminal; the one
-test-only seam is `TerminalsModule.withProcessFactory(projects, workspaces, factory)`, which
-replaces that boundary so a test can drive the lifecycle without a shell. There is no constructor
-option for it, because nothing in the product supplies one.
+Production always spawns a real pseudo-terminal on the folder's machine; the one test-only seam is
+`TerminalsModule.withProcessFactory(projects, workspaces, runners, factory)`, which replaces that
+boundary so a test can drive the lifecycle without a shell. There is no constructor option for it,
+because nothing in the product supplies one.
 
 ```ts
 import {
     AbortModule,
     ComputeModule,
     ConfigModule,
+    DurableFunctionsModule,
     GitModule,
     ProjectsModule,
+    RunnersModule,
     SecretsModule,
     TerminalsModule,
     WorkspacesModule,
 } from "@slopus/happy-agent-modules";
 
 const config = await ConfigModule.load();
-const git = new GitModule();
+const runners = new RunnersModule(config);
+const git = new GitModule(config, runners);
 const secrets = new SecretsModule();
-const abort = new AbortModule(new ComputeModule(config, secrets));
-const projects = new ProjectsModule(config, git, abort);
-const workspaces = new WorkspacesModule(config, projects, git, abort);
-const terminals = new TerminalsModule(projects, workspaces);
+const durableFunctions = new DurableFunctionsModule();
+const abort = new AbortModule(new ComputeModule(config, secrets, runners));
+const projects = new ProjectsModule(config, git, abort, durableFunctions, runners);
+const workspaces = new WorkspacesModule(config, projects, git, abort, durableFunctions, runners);
+const terminals = new TerminalsModule(projects, workspaces, runners);
 ```
 
 Every module here — including the compute beneath abort — is installed on the agent. A catalog

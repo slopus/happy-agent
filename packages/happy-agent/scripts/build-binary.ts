@@ -607,16 +607,6 @@ export function resolveSourceAdapters(target: BinaryTarget): Map<string, SourceA
                 "libSQL native loader",
             ),
     });
-    addAdapter(
-        adapters,
-        join(modulesRoot, "dist", "terminals", "impl", "createHostTerminalProcessFactory.js"),
-        {
-            name: "Bun terminal process factory",
-            required: true,
-            adapt: () =>
-                'export { createBunTerminalProcessFactory as createHostTerminalProcessFactory } from "./createBunTerminalProcessFactory.js";\n',
-        },
-    );
     addAdapter(adapters, join(modulesRoot, "dist", "impl", "images", "getImageProcessor.js"), {
         name: "Bun image processor",
         required: true,

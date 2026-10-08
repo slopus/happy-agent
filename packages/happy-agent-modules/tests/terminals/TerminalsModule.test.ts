@@ -464,7 +464,10 @@ async function createWorld(name: string): Promise<World> {
     const ctx = database.context;
     const config = await temporaryTestConfig();
     const git = new GitModule();
-    const { durableFunctions, projects, start, workspaces } = workspacesCatalogFrom(config, git);
+    const { durableFunctions, projects, runners, start, workspaces } = workspacesCatalogFrom(
+        config,
+        git,
+    );
     await start(ctx);
 
     const project = await projects.create(ctx, {
@@ -494,7 +497,7 @@ async function createWorld(name: string): Promise<World> {
     });
 
     const factory = new FakeProcessFactory();
-    const module = TerminalsModule.withProcessFactory(projects, workspaces, factory);
+    const module = TerminalsModule.withProcessFactory(projects, workspaces, runners, factory);
 
     const world: World = {
         archivedProject,

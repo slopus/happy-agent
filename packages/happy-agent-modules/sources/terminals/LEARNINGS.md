@@ -29,10 +29,15 @@ and a session that arrives after that is disposed and refused rather than joinin
 nobody holds. Closing takes the same lock that installs a collection, so the two orders are the
 only two possible, and neither leaves a live shell in an archived folder.
 
-## Use the runtime's own PTY
+## A terminal runs on its folder's machine
 
-Loading node-pty's native binding in a compiled Bun executable is not enough: its JavaScript layer
-depends on Node TTY stream behavior and can terminate otherwise healthy children immediately. Node
-uses `@lydell/node-pty`; Bun uses `Bun.Terminal` and `Bun.spawn`. Bun applies terminal-protocol
-backpressure by stopping and continuing the child process because `Bun.Terminal` has no read-pause
-operation.
+Terminals used to spawn a pseudo-terminal on the daemon's machine, through node-pty under Node and
+`Bun.Terminal` under Bun. Once folders can live on runners, a shell on the daemon would stand in a
+folder that is not there. A terminal is now one of the folder's machine's product programs: the
+module asks the runners module for that machine — this one, or the runner holding the folder — and
+starts the shell with `processes.start` under a terminal. Local and runner terminals share that one
+path, and the module carries no pseudo-terminal code of its own.
+
+The compute starts terminals only under Bun, the runtime the Happy Agent binary runs on; node-pty is
+for the gym's own harness, not the product. Without a named shell, a POSIX machine runs its own
+`$SHELL`, which only that machine knows, so the terminal starts `/bin/sh` and execs it there.

@@ -35,5 +35,4 @@ export {
     type TerminalProcessOptions,
 } from "./TerminalProcess.js";
 export { TerminalsModule } from "./TerminalsModule.js";
-export { createHostTerminalProcessFactory } from "./impl/createHostTerminalProcessFactory.js";
 export { TerminalSession } from "./impl/TerminalSession.js";

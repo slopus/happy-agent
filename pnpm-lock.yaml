@@ -354,9 +354,6 @@ importers:
       '@libsql/client':
         specifier: 0.18.0
         version: 0.18.0(patch_hash=3bce7b073378d1b7c0380b19e5b714650a8b4710b65ab671e1608c88658e10fa)
-      '@lydell/node-pty':
-        specifier: 1.2.0-beta.15
-        version: 1.2.0-beta.15
       '@modelcontextprotocol/sdk':
         specifier: ^1.29.0
         version: 1.29.0(zod@4.4.3)
