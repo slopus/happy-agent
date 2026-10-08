@@ -276,4 +276,21 @@ export const workspaceMigrations = [
             );
         },
     ],
+    [
+        "010-workspace-runner-and-image",
+        /**
+         * A workspace remembers the machine its folder is on and the image its agents run in. Both
+         * are fixed when it is created; rows from before have neither, so they stay on this machine.
+         */
+        async (_ctx: Context, database: AgentDatabase): Promise<void> => {
+            await agentDatabaseRun(
+                database,
+                sql`ALTER TABLE ${sql.raw(WORKSPACES_TABLE)} ADD COLUMN runner_id TEXT`,
+            );
+            await agentDatabaseRun(
+                database,
+                sql`ALTER TABLE ${sql.raw(WORKSPACES_TABLE)} ADD COLUMN docker_image TEXT`,
+            );
+        },
+    ],
 ] as const;

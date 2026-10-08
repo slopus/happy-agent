@@ -145,6 +145,19 @@ export const workspacePathSchema = Type.String({
     pattern: ABSOLUTE_PATH_PATTERN,
 });
 
+/** The runner holding a workspace's folder; absent when the folder is on this machine. */
+export const workspaceRunnerIdSchema = Type.String({ pattern: "^[a-z][a-z0-9_-]{0,63}$" });
+
+/**
+ * The image a workspace's agents run in, fixed when the workspace is created from its project's
+ * `defaultWorkspaceCompute`. Absent when agents work directly on the folder's machine.
+ */
+export const workspaceDockerImageSchema = Type.String({
+    minLength: 1,
+    maxLength: 512,
+    pattern: "^\\S+$",
+});
+
 /** Shared Git directory the worktree belongs to, once Git discovery has run. */
 export const workspaceGitCommonDirSchema = Type.String({
     minLength: 1,
@@ -247,6 +260,8 @@ export const workspaceSchema = Type.Object(
         storageKey: workspaceStorageKeySchema,
         kind: workspaceKindSchema,
         path: workspacePathSchema,
+        runnerId: Type.Optional(workspaceRunnerIdSchema),
+        dockerImage: Type.Optional(workspaceDockerImageSchema),
         baseRef: Type.Optional(workspaceBaseRefSchema),
         baseCommit: Type.Optional(workspaceCommitSchema),
         gitCommonDir: Type.Optional(workspaceGitCommonDirSchema),
@@ -290,6 +305,9 @@ export const workspaceReserveInputSchema = Type.Object(
         name: workspaceNameSchema,
         nameConfigured: Type.Optional(Type.Boolean()),
         kind: Type.Optional(workspaceKindSchema),
+        /** The project's runner, which every workspace cut from it shares. */
+        runnerId: Type.Optional(workspaceRunnerIdSchema),
+        dockerImage: Type.Optional(workspaceDockerImageSchema),
         baseRef: Type.Optional(workspaceBaseRefSchema),
         baseCommit: Type.Optional(workspaceCommitSchema),
         gitCommonDir: Type.Optional(workspaceGitCommonDirSchema),

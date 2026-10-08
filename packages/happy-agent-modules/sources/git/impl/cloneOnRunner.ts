@@ -6,7 +6,6 @@ import {
     type Compute,
     type ComputeFileStat,
 } from "@slopus/happy-agent-compute";
-import type { Context } from "@steve.kite/stdlib";
 
 import {
     GIT_CLONE_TIMEOUT_MS,
@@ -18,7 +17,7 @@ import {
 import type { GitAuthentication } from "../GitCredentialBroker.js";
 import { redactGitAuthenticationText } from "../GitCredentialBroker.js";
 import type { GitRemoteSource } from "../types.js";
-import { runOnMachine } from "./runOnMachine.js";
+import type { RunnerRunOptions, RunnerRunResult } from "../../runners/index.js";
 
 const PRODUCT = computePermissions("full_access");
 const GIT_CLONE_OUTPUT_LIMIT = 1024 * 1024;
@@ -29,8 +28,8 @@ const GIT_CLONE_OUTPUT_LIMIT = 1024 * 1024;
  * proven, and only then is it moved into place, so a failed clone never leaves a partial project.
  */
 export async function cloneOnRunner(
-    ctx: Context,
     machine: Compute,
+    run: (options: RunnerRunOptions) => Promise<RunnerRunResult>,
     options: {
         readonly destination: string;
         readonly source: GitRemoteSource;
@@ -83,7 +82,7 @@ export async function cloneOnRunner(
     const redact = (text: string) =>
         redactGitAuthenticationText(text, options.gitAuthentication?.environment ?? {});
     try {
-        const cloned = await runOnMachine(ctx, machine, {
+        const cloned = await run({
             command: "git",
             args: ["clone", "--", remote, stagingPath],
             environment,
@@ -97,7 +96,7 @@ export async function cloneOnRunner(
             );
         }
         const git = async (args: readonly string[]): Promise<string> => {
-            const result = await runOnMachine(ctx, machine, {
+            const result = await run({
                 command: "git",
                 args: ["-C", stagingPath, ...args],
                 environment: { GIT_TERMINAL_PROMPT: "0" },

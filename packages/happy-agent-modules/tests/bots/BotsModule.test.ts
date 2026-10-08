@@ -40,7 +40,7 @@ import { workspaceMigrations } from "../../sources/workspaces/index.js";
 import { temporaryTestConfig } from "../support/configModule.js";
 import { providersOf, sharedKV, textTurn } from "../support/fixtures.js";
 import { moduleDatabase } from "../support/moduleDatabase.js";
-import { projectsModuleFor } from "../support/projectsModule.js";
+import { projectsCatalogFor } from "../support/projectsModule.js";
 import { ScriptedProvider, type ScriptedTurn } from "../support/ScriptedProvider.js";
 
 class BotAgents {
@@ -767,13 +767,14 @@ async function started(name: string, workspacesEnabled: boolean, script: Scripte
     const agents = new BotAgents();
     abort.beforeStart(database.context, agents.asRef());
     const git = new GitModule();
-    const projects = projectsModuleFor(config, git);
+    const { projects, runners } = projectsCatalogFor(config, git);
     const workspaces = new WorkspacesModule(
         config,
         projects,
         git,
         abort,
         new DurableFunctionsModule(),
+        runners,
     );
     const titles = new TitlesModule(config, new HistoryModule(), workspaces);
     const naming = vi.spyOn(titles, "suggestBotName");

@@ -116,6 +116,8 @@ export async function reserveWorkspace(
             storageKey,
             kind: input.kind,
             path,
+            ...(input.runnerId === undefined ? {} : { runnerId: input.runnerId }),
+            ...(input.dockerImage === undefined ? {} : { dockerImage: input.dockerImage }),
             ...(input.baseRef === undefined ? {} : { baseRef: input.baseRef }),
             ...(input.baseCommit === undefined ? {} : { baseCommit: input.baseCommit }),
             ...(input.gitCommonDir === undefined ? {} : { gitCommonDir: input.gitCommonDir }),
@@ -174,6 +176,9 @@ export function assertReservationStillMeans(
 ): void {
     if (existing.projectRef !== input.projectRef) {
         throw new Error("That workspace ID already names a workspace in another project.");
+    }
+    if (existing.runnerId !== input.runnerId) {
+        throw new Error("That workspace ID already names a workspace on another machine.");
     }
     if (existing.subtaskAgentId !== input.subtaskAgentId) {
         throw new Error("That workspace ID belongs to another subtask.");
@@ -273,14 +278,17 @@ function reservationProbe(
     const storageKey = hooks.isStorageKeyUnavailable?.bind(hooks);
     const path = hooks.pathForStorageKey?.bind(hooks);
     return {
+        // The caller's own observation answers when it gave one; the catalog asks the folder's
+        // machine only when it did not, so a reservation never waits on that inside its transaction
+        // for nothing.
         isBranchUnavailable: async (candidate) =>
-            (branch === undefined ? false : await availability(branch(candidate), "branch")) ||
-            catalog.isBranchUnavailable(projectRef, candidate),
+            branch === undefined
+                ? await catalog.isBranchUnavailable(projectRef, candidate)
+                : await availability(branch(candidate), "branch"),
         isStorageKeyUnavailable: async (candidate) =>
-            (storageKey === undefined
-                ? false
-                : await availability(storageKey(candidate), "folder")) ||
-            catalog.isStorageKeyUnavailable(projectRef, candidate),
+            storageKey === undefined
+                ? await catalog.isStorageKeyUnavailable(projectRef, candidate)
+                : await availability(storageKey(candidate), "folder"),
         pathForStorageKey: (candidate) =>
             path === undefined ? catalog.pathForStorageKey(projectRef, candidate) : path(candidate),
     };

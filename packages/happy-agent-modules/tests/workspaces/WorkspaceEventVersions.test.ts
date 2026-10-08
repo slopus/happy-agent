@@ -60,7 +60,8 @@ describe("workspace lifecycle event versions", () => {
         const database = moduleDatabase(workspaceMigrations, "workspace-agent-event-version-chain");
         await database.ready;
         try {
-            const { abort, config, git, projects, workspaces } = await temporaryWorkspacesCatalog();
+            const { abort, config, git, projects, runners, workspaces } =
+                await temporaryWorkspacesCatalog();
             workspaces.beforeStart(database.context, {
                 parentOf: async () => null,
             } as never);
@@ -123,6 +124,7 @@ describe("workspace lifecycle event versions", () => {
                 git,
                 abort,
                 new DurableFunctionsModule(),
+                runners,
             );
             expect(await restarted.get(database.context, first.workspace.id)).toEqual(reordered);
             expect(await restarted.get(database.context, second.workspace.id)).toEqual(

@@ -10,6 +10,7 @@ import {
 } from "../../sources/durableFunctions/index.js";
 import { GitModule } from "../../sources/git/index.js";
 import { projectMigrations, ProjectsModule } from "../../sources/projects/index.js";
+import { RunnersModule } from "../../sources/runners/index.js";
 import { SecretsModule } from "../../sources/secrets/index.js";
 import { archiveWorkspaceTool } from "../../sources/workspaces/tools/archive_workspace.js";
 import { workspaceMigrations, WorkspacesModule } from "../../sources/workspaces/index.js";
@@ -62,8 +63,16 @@ async function archivingCatalog(name: string) {
     const git = new GitModule();
     const abort = new AbortModule(new ComputeModule(config, new SecretsModule()));
     const durableFunctions = new DurableFunctionsModule();
-    const projects = new ProjectsModule(config, git, abort, durableFunctions);
-    const workspaces = new WorkspacesModule(config, projects, git, abort, durableFunctions);
+    const runners = new RunnersModule(config);
+    const projects = new ProjectsModule(config, git, abort, durableFunctions, runners);
+    const workspaces = new WorkspacesModule(
+        config,
+        projects,
+        git,
+        abort,
+        durableFunctions,
+        runners,
+    );
     const collection = new RecordingCollection();
     const database = moduleDatabase([], name);
     await database.ready;
@@ -90,6 +99,7 @@ async function archivingCatalog(name: string) {
         durableFunctions,
         git,
         projects,
+        runners,
         workspaces,
     };
 }
@@ -135,13 +145,20 @@ describe("archiving stops the work standing in a workspace", () => {
             world.collection.failingAgentId = undefined;
 
             restarted = new DurableFunctionsModule();
-            const projects = new ProjectsModule(world.config, world.git, world.abort, restarted);
+            const projects = new ProjectsModule(
+                world.config,
+                world.git,
+                world.abort,
+                restarted,
+                world.runners,
+            );
             const workspaces = new WorkspacesModule(
                 world.config,
                 projects,
                 world.git,
                 world.abort,
                 restarted,
+                world.runners,
             );
             projects.beforeStart(world.ctx, world.collection.asRef());
             workspaces.beforeStart(world.ctx, world.collection.asRef());

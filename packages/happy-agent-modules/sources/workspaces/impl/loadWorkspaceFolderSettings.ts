@@ -49,10 +49,11 @@ export const DEFAULT_WORKSPACE_FOLDER_SETTINGS: WorkspaceFolderSettings = {
 export async function loadWorkspaceFolderSettings(
     folder: string,
     defaults: WorkspaceFolderSettings = DEFAULT_WORKSPACE_FOLDER_SETTINGS,
+    read: (path: string) => Promise<string> = async (path) => await readFile(path, "utf8"),
 ): Promise<WorkspaceFolderSettings> {
     let source: string;
     try {
-        source = await readFile(join(folder, PROJECT_CONFIG_FILE_NAMES[0] ?? "happy.toml"), "utf8");
+        source = await read(join(folder, PROJECT_CONFIG_FILE_NAMES[0] ?? "happy.toml"));
     } catch {
         return defaults;
     }

@@ -1,10 +1,7 @@
-import type { Compute } from "@slopus/happy-agent-compute";
-import type { Context } from "@steve.kite/stdlib";
-
 import type { GitCommandRunner } from "../GitCommandRunner.js";
 import { redactGitAuthenticationText } from "../GitCredentialBroker.js";
 import { scanGitError, STRIPPED_ENVIRONMENT, type ScanGitRunner } from "../runScanGit.js";
-import { runOnMachine } from "./runOnMachine.js";
+import type { RunnerRunOptions, RunnerRunResult } from "../../runners/index.js";
 
 const GIT_TIMEOUT_MS = 5_000;
 const NETWORK_GIT_TIMEOUT_MS = 5 * 60 * 1_000;
@@ -23,10 +20,9 @@ const SAFE_CONFIGURATION = [
     "credential.helper=",
 ];
 
-/** Where a runner's Git runs: the runner's product machine, and the lifetime its work belongs to. */
+/** How a runner's Git runs: one program at a time on the runner's product machine. */
 export interface RunnerGitTarget {
-    readonly machine: () => Promise<Compute>;
-    readonly ctx: () => Context;
+    readonly run: (options: RunnerRunOptions) => Promise<RunnerRunResult>;
 }
 
 /**
@@ -42,7 +38,7 @@ export function runnerGitCommandRunner(
             let extra: Readonly<Record<string, string>> = {};
             try {
                 extra = await environment();
-                const result = await runOnMachine(target.ctx(), await target.machine(), {
+                const result = await target.run({
                     command: "git",
                     args: ["-C", cwd, ...args],
                     environment: { ...extra, GIT_TERMINAL_PROMPT: "0" },
@@ -103,7 +99,7 @@ export function runnerScanGit(
             ...(ceiling === undefined ? {} : { GIT_CEILING_DIRECTORIES: ceiling }),
         };
         for (const name of STRIPPED_ENVIRONMENT) environment[name] = null;
-        const result = await runOnMachine(target.ctx(), await target.machine(), {
+        const result = await target.run({
             command: "git",
             args: [
                 "-C",

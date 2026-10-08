@@ -9,7 +9,7 @@ import { computePermissions, type Compute } from "@slopus/happy-agent-compute";
 import { createRootContext, detach, type Context, type RootContext } from "@steve.kite/stdlib";
 
 import type { ConfigModule } from "../config/index.js";
-import type { RunnersModule } from "../runners/index.js";
+import type { RunnerRunOptions, RunnersModule } from "../runners/index.js";
 import type { GitCommandOptions, GitCommandResult, GitCommandRunner } from "./GitCommandRunner.js";
 import {
     GitCredentialBroker,
@@ -21,15 +21,10 @@ import { cloneRemoteRepository, remoteUrlForSource } from "./cloneRemoteReposito
 import { countUntrackedFileLines, type UntrackedFileCount } from "./countUntrackedFileLines.js";
 import { createGitWorktree } from "./createGitWorktree.js";
 import { detectGitDefaultBranch } from "./detectGitDefaultBranch.js";
-import type { GitWorkingFiles } from "./GitWorkingFiles.js";
 import { cloneOnRunner } from "./impl/cloneOnRunner.js";
 import { GitStateTracker } from "./impl/GitStateTracker.js";
-import { localGitWorkingFiles } from "./impl/localGitWorkingFiles.js";
 import { RunnerGitCredentialTunnel } from "./impl/RunnerGitCredentialTunnel.js";
-import { RunnerGitStateTracker, type RunnerGitAccess } from "./impl/RunnerGitStateTracker.js";
 import { runnerGitCommandRunner, runnerScanGit } from "./impl/runnerGitRunners.js";
-import { runnerGitWorkingFiles } from "./impl/runnerGitWorkingFiles.js";
-import { watchRunnerWorkingTree } from "./impl/watchRunnerWorkingTree.js";
 import { WorkingTreeWatcher, type WorkingTreeObserver } from "./impl/WorkingTreeWatcher.js";
 import { isGitWorktreeAt } from "./isGitWorktreeAt.js";
 import { listGitWorkingTreeFiles, type GitWorkingTreeFiles } from "./listGitWorkingTreeFiles.js";
@@ -135,7 +130,6 @@ interface GitMachine {
     foreground(credential: GitCredentialRef | undefined): GitCommandRunner;
     readonly read: GitCommandRunner;
     readonly scan: ScanGitRunner;
-    readonly files: GitWorkingFiles;
     isDirectory(path: string): Promise<boolean>;
     makeDirectory(path: string): Promise<void>;
     inspect(path: string): Promise<{ isDirectory: boolean; isSymbolicLink: boolean }>;
@@ -151,7 +145,6 @@ export type GitSnapshotObserver = (
 interface CachedSnapshot {
     readonly expiresAt: number;
     readonly root: string;
-    readonly runnerId: string | undefined;
     readonly snapshot: GitChangeSnapshot;
 }
 
@@ -180,7 +173,6 @@ export class GitModule implements AgentModule {
     readonly #runnerMachines = new Map<string, GitMachine>();
     readonly #tunnel = new RunnerGitCredentialTunnel();
     #config: ConfigModule | undefined;
-    #runnerTracker: RunnerGitStateTracker | undefined;
     /** Whether Git is reached directly, which is what makes a credential-carrying runner possible. */
     #direct = true;
     #disposed = false;
@@ -323,20 +315,9 @@ export class GitModule implements AgentModule {
     }
 
     /** The branch, head, upstream, and divergence of a repository. */
-    async facts(
-        root: string,
-        signal?: AbortSignal,
-        placement: GitPlacement = {},
-    ): Promise<GitRepositoryFacts> {
-        const machine = this.#machine(placement.runnerId);
+    async facts(root: string, signal?: AbortSignal): Promise<GitRepositoryFacts> {
         const probe = await probeGitRepository({
-            git: machine.read,
-            ...(placement.runnerId === undefined
-                ? {}
-                : {
-                      isDirectory: async (candidate: string) =>
-                          await machine.isDirectory(candidate),
-                  }),
+            git: this.#read,
             path: root,
             ...(signal === undefined ? {} : { signal }),
         });
@@ -463,17 +444,8 @@ export class GitModule implements AgentModule {
     }
 
     /** How many lines an untracked file adds, and whether it is binary or could not be counted. */
-    async countUntrackedFileLines(
-        path: string,
-        maximumBytes: number,
-        placement: GitPlacement = {},
-    ): Promise<UntrackedFileCount> {
-        if (placement.runnerId === undefined)
-            return await countUntrackedFileLines(path, maximumBytes);
-        return await this.#machine(placement.runnerId).files.countUntrackedLines(
-            path,
-            maximumBytes,
-        );
+    async countUntrackedFileLines(path: string, maximumBytes: number): Promise<UntrackedFileCount> {
+        return await countUntrackedFileLines(path, maximumBytes);
     }
 
     // --- Changing a repository -------------------------------------------------------------
@@ -502,20 +474,28 @@ export class GitModule implements AgentModule {
         if (options.runnerId !== undefined) {
             const runnerId = options.runnerId;
             const machine = await this.#runnerMachine(runnerId);
-            await cloneOnRunner(this.#root().named("runner-git-clone"), machine, {
-                destination: options.destination,
-                source: options.source,
-                ...(authentication === undefined
-                    ? {}
-                    : {
-                          gitAuthentication: await this.#throughTunnel(
-                              runnerId,
-                              machine,
-                              authentication,
-                          ),
-                      }),
-                ...(options.gitIdentity === undefined ? {} : { gitIdentity: options.gitIdentity }),
-            });
+            const runners = this.#runnersModule();
+            const cloneCtx = this.#root().named("runner-git-clone");
+            await cloneOnRunner(
+                machine,
+                async (run) => await runners.run(cloneCtx, runnerId, run),
+                {
+                    destination: options.destination,
+                    source: options.source,
+                    ...(authentication === undefined
+                        ? {}
+                        : {
+                              gitAuthentication: await this.#throughTunnel(
+                                  runnerId,
+                                  machine,
+                                  authentication,
+                              ),
+                          }),
+                    ...(options.gitIdentity === undefined
+                        ? {}
+                        : { gitIdentity: options.gitIdentity }),
+                },
+            );
             return;
         }
         await cloneRemoteRepository({
@@ -719,30 +699,18 @@ export class GitModule implements AgentModule {
     }
 
     /** One repository's change snapshot, served from a short-lived cache. */
-    async snapshot(
-        root: string,
-        key = root,
-        signal?: AbortSignal,
-        placement: GitPlacement = {},
-    ): Promise<GitChangeSnapshot> {
+    async snapshot(root: string, key = root, signal?: AbortSignal): Promise<GitChangeSnapshot> {
         const now = Date.now();
         this.#evictExpired(now);
         const cached = this.#cache.get(key);
-        if (
-            cached !== undefined &&
-            cached.expiresAt > now &&
-            cached.root === root &&
-            cached.runnerId === placement.runnerId
-        ) {
+        if (cached !== undefined && cached.expiresAt > now && cached.root === root) {
             this.#cache.delete(key);
             this.#cache.set(key, cached);
             return cached.snapshot;
         }
-        const machine = this.#machine(placement.runnerId);
         const state = await scanGitRepository({
-            files: machine.files,
             path: root,
-            runGit: machine.scan,
+            runGit: this.#scan,
             ...(signal === undefined ? {} : { signal }),
         });
         const files = state.files.slice(0, MAX_SNAPSHOT_FILES);
@@ -762,7 +730,6 @@ export class GitModule implements AgentModule {
         this.#cache.set(key, {
             expiresAt: Date.now() + SNAPSHOT_CACHE_MS,
             root,
-            runnerId: placement.runnerId,
             snapshot,
         });
         return snapshot;
@@ -770,15 +737,13 @@ export class GitModule implements AgentModule {
 
     /** Snapshots for a batch of catalog entities, addressed the way a live subscriber reads them. */
     async watch(
-        entities: readonly (GitEntity & GitPlacement & { readonly root: string })[],
+        entities: readonly (GitEntity & { readonly root: string })[],
     ): Promise<readonly GitLiveSnapshot[]> {
         const snapshots: GitLiveSnapshot[] = [];
         for (const entity of entities.slice(0, MAX_WATCH_ENTITIES)) {
             const snapshot = await this.snapshot(
                 entity.root,
                 `${entity.projectId}:${entity.workspaceId ?? ""}`,
-                undefined,
-                entity.runnerId === undefined ? {} : { runnerId: entity.runnerId },
             );
             snapshots.push(
                 liveSnapshot(
@@ -788,7 +753,6 @@ export class GitModule implements AgentModule {
                         ...(entity.workspaceId === undefined
                             ? {}
                             : { workspaceId: entity.workspaceId }),
-                        ...(entity.runnerId === undefined ? {} : { runnerId: entity.runnerId }),
                     },
                     snapshot,
                 ),
@@ -818,10 +782,6 @@ export class GitModule implements AgentModule {
      */
     track(entity: GitTrackedEntity): void {
         if (this.#disposed) return;
-        if (entity.runnerId !== undefined) {
-            this.#runnerTrackerInstance().watch({ ...entity, runnerId: entity.runnerId });
-            return;
-        }
         this.#trackerInstance().watch(entity);
     }
 
@@ -838,23 +798,16 @@ export class GitModule implements AgentModule {
             throw new Error("The Git watch entities are invalid.");
         }
         if (this.#disposed) return;
-        const local = entities.filter((entity) => entity.runnerId === undefined);
-        const remote = entities.flatMap((entity) =>
-            entity.runnerId === undefined ? [] : [{ ...entity, runnerId: entity.runnerId }],
-        );
-        if (remote.length > 0) this.#runnerTrackerInstance().replace(remote);
-        else this.#runnerTracker?.replace([]);
-        if (local.length === 0) {
+        if (entities.length === 0) {
             this.#tracker?.replace([]);
             return;
         }
-        this.#trackerInstance().replace(local);
+        this.#trackerInstance().replace(entities);
     }
 
     /** Stops watching one repository and releases its watchers and timers. */
     untrack(entity: GitTrackedEntity): void {
-        if (entity.runnerId !== undefined) this.#runnerTracker?.unwatch(entity);
-        else this.#tracker?.unwatch(entity);
+        this.#tracker?.unwatch(entity);
     }
 
     /**
@@ -865,58 +818,36 @@ export class GitModule implements AgentModule {
      * events are not arriving and the caller must poll; `onChanges(null)` means some may have
      * been missed.
      */
-    watchWorkingTree(
-        root: string,
-        observer: WorkingTreeObserver,
-        placement: GitPlacement = {},
-    ): () => void {
+    watchWorkingTree(root: string, observer: WorkingTreeObserver): () => void {
         if (this.#disposed) return () => undefined;
-        const runnerId = placement.runnerId;
-        if (runnerId !== undefined) {
-            return watchRunnerWorkingTree(
-                this.#root().named("runner-working-tree-watch"),
-                async () => await this.#runnerMachine(runnerId),
-                root,
-                observer,
-            );
-        }
         return this.#treeInstance().watch(root, observer);
     }
 
     /** Tells the watcher a repository is dirty, for a change it saw before the watcher did. */
     markChanged(entity: GitTrackedEntity): void {
-        if (entity.runnerId !== undefined) this.#runnerTracker?.markChanged(entity);
-        else this.#tracker?.markChanged(entity);
+        this.#tracker?.markChanged(entity);
     }
 
     /** What the last scan of a watched repository found, if it has been scanned at all. */
     trackedSnapshot(entity: GitTrackedEntity): GitChangeSnapshot | undefined {
-        return entity.runnerId !== undefined
-            ? this.#runnerTracker?.snapshot(entity)
-            : this.#tracker?.snapshot(entity);
+        return this.#tracker?.snapshot(entity);
     }
 
     /** Every watched repository that has a snapshot, ready to be sent to a live subscriber. */
     liveSnapshots(): readonly GitLiveSnapshot[] {
-        return [...(this.#tracker?.tracked() ?? []), ...(this.#runnerTracker?.tracked() ?? [])].map(
-            ({ entity, snapshot }) => liveSnapshot(entity, snapshot),
+        return (this.#tracker?.tracked() ?? []).map(({ entity, snapshot }) =>
+            liveSnapshot(entity, snapshot),
         );
     }
 
     /** The repositories currently being watched, most recently used first. */
     trackedKeys(): readonly string[] {
-        return [...(this.#tracker?.trackedKeys ?? []), ...(this.#runnerTracker?.trackedKeys ?? [])];
+        return this.#tracker?.trackedKeys ?? [];
     }
 
     /** Rescans one repository now, whether or not it is already watched. */
     async refresh(ctx: Context, entity: GitTrackedEntity): Promise<GitChangeSnapshot | undefined> {
         if (this.#disposed) return undefined;
-        if (entity.runnerId !== undefined) {
-            return await this.#runnerTrackerInstance().refresh(ctx, {
-                ...entity,
-                runnerId: entity.runnerId,
-            });
-        }
         return await this.#trackerInstance().refresh(ctx, entity);
     }
 
@@ -941,8 +872,6 @@ export class GitModule implements AgentModule {
         this.#tracker = undefined;
         this.#tree?.dispose();
         this.#tree = undefined;
-        this.#runnerTracker?.dispose();
-        this.#runnerTracker = undefined;
         this.#tunnel.close();
         this.#runnerMachines.clear();
         this.#observers.clear();
@@ -984,36 +913,6 @@ export class GitModule implements AgentModule {
         return this.#tracker;
     }
 
-    #runnerTrackerInstance(): RunnerGitStateTracker {
-        this.#runnerTracker ??= new RunnerGitStateTracker(
-            this.#root(),
-            {
-                deliver: async (ctx, entity, snapshot) => {
-                    const observers = Array.from(this.#observers);
-                    for (const observer of observers) await observer(ctx, entity, snapshot);
-                },
-                report: (ctx, error, entity) => {
-                    ctx.log.debug("A Git watcher could not scan a repository on a runner.", {
-                        path: entity.path,
-                        projectId: entity.projectId,
-                        runnerId: entity.runnerId,
-                    });
-                    ctx.log.debug("The Git watcher failure was:", {}, error);
-                },
-                stamp: (state) => this.#stamp(state),
-            },
-            (runnerId): RunnerGitAccess => {
-                const machine = this.#machine(runnerId);
-                return {
-                    machine: async () => await this.#runnerMachine(runnerId),
-                    scan: machine.scan,
-                    files: machine.files,
-                };
-            },
-        );
-        return this.#runnerTracker;
-    }
-
     #stamp(state: GitChangeState): GitChangeSnapshot {
         return { ...state, generation: this.#generation, version: ++this.#version };
     }
@@ -1036,7 +935,6 @@ export class GitModule implements AgentModule {
                 foreground: (credential) => this.#foregroundFor(credential),
                 read: this.#read,
                 scan: this.#scan,
-                files: localGitWorkingFiles,
                 isDirectory: async (path) =>
                     await stat(path)
                         .then((stats) => stats.isDirectory())
@@ -1055,9 +953,10 @@ export class GitModule implements AgentModule {
         }
         const existing = this.#runnerMachines.get(runnerId);
         if (existing !== undefined) return existing;
+        const runners = this.#runnersModule();
         const target = {
-            machine: async () => await this.#runnerMachine(runnerId),
-            ctx: () => this.#root().named("runner-git"),
+            run: async (options: RunnerRunOptions) =>
+                await runners.run(this.#root().named("runner-git"), runnerId, options),
         };
         const scan = runnerScanGit(target, () => this.#config?.gitCeilingDirectories);
         const plain = runnerGitCommandRunner(target);
@@ -1080,7 +979,6 @@ export class GitModule implements AgentModule {
             },
             read: gitCommandRunnerFromScanGitRunner(scan),
             scan,
-            files: runnerGitWorkingFiles(target.machine),
             isDirectory: async (path) => {
                 const machine = await this.#runnerMachine(runnerId);
                 return await machine.fs
@@ -1105,10 +1003,14 @@ export class GitModule implements AgentModule {
     }
 
     async #runnerMachine(runnerId: string): Promise<Compute> {
+        return await this.#runnersModule().machine(runnerId);
+    }
+
+    #runnersModule(): RunnersModule {
         if (this.#runners === undefined) {
             throw new Error("Git cannot reach runners without the runners module.");
         }
-        return await this.#runners.machine(runnerId);
+        return this.#runners;
     }
 
     /** The credential's environment, pointed at the runner's own way back to the proxy. */

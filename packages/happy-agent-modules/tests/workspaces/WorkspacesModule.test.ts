@@ -228,7 +228,8 @@ describe("WorkspacesModule", () => {
     });
 
     it("durably places agents in a workspace and keeps their manual order", async () => {
-        const { abort, config, git, projects, workspaces } = await temporaryWorkspacesCatalog();
+        const { abort, config, git, projects, runners, workspaces } =
+            await temporaryWorkspacesCatalog();
         const events: string[] = [];
         const unsubscribe = workspaces.onEventTransactional((_ctx, event) => {
             events.push(event.type);
@@ -275,6 +276,7 @@ describe("WorkspacesModule", () => {
                 git,
                 abort,
                 new DurableFunctionsModule(),
+                runners,
             );
             expect(await restarted.listAgents(database.context, "workspace-1")).toEqual(reordered);
 

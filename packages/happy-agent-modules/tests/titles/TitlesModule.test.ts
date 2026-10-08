@@ -23,7 +23,7 @@ import { InMemoryPersistence } from "../support/InMemoryPersistence.js";
 import { moduleDatabase } from "../support/moduleDatabase.js";
 import { primaryAgents, resolveModuleHooks } from "../support/moduleHooks.js";
 import { ScriptedProvider } from "../support/ScriptedProvider.js";
-import { projectsModuleFor } from "../support/projectsModule.js";
+import { projectsCatalogFor } from "../support/projectsModule.js";
 
 const ctx = createRootContext().named("happy-agent-modules-titles");
 const lifecycleDatabase = moduleDatabase([], "happy-agent-modules-titles-lifecycle");
@@ -65,12 +65,14 @@ async function titles(script: SessionEvent[][], catalog: AgentModel[] = models()
     // A chat outside a workspace never reaches the catalog, and one inside it is exercised where a
     // real project and a real worktree exist, so the catalog here is simply the empty one this
     // configuration's own roots describe.
+    const projectsCatalog = projectsCatalogFor(config, git);
     const workspaces = new WorkspacesModule(
         config,
-        projectsModuleFor(config, git),
+        projectsCatalog.projects,
         git,
         new AbortModule(new ComputeModule(config, new SecretsModule())),
         new DurableFunctionsModule(),
+        projectsCatalog.runners,
     );
     const module = new TitlesModule(config, new HistoryModule(), workspaces);
     return { module, provider };

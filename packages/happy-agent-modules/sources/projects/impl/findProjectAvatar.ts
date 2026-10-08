@@ -1,5 +1,10 @@
-import { lstat, readdir, readFile } from "node:fs/promises";
 import { basename, extname, join } from "node:path";
+
+import {
+    computePermissions,
+    type Compute,
+    type ComputeFileStat,
+} from "@slopus/happy-agent-compute";
 
 import type { GitModule } from "../../git/index.js";
 import {
@@ -22,6 +27,26 @@ const SKIPPED_DIRECTORIES = new Set([
 ]);
 const DISCOVERY_BUDGET_MS = 2_000;
 const DISCOVERY_ENTRY_BUDGET = 200;
+const PRODUCT = computePermissions("full_access");
+
+interface DirectoryEntry {
+    readonly name: string;
+    readonly stat: ComputeFileStat | undefined;
+}
+
+/** A directory's entries with what each one is, read on the machine the folder is on. */
+async function readEntries(
+    machine: Compute,
+    directory: string,
+): Promise<readonly DirectoryEntry[]> {
+    const names = await machine.fs.readdir(PRODUCT, directory);
+    const bounded = names.slice(0, DISCOVERY_ENTRY_BUDGET);
+    const stats = await machine.fs.lstatMany(
+        PRODUCT,
+        bounded.map((name) => join(directory, name)),
+    );
+    return bounded.map((name, index) => ({ name, stat: stats[index] }));
+}
 
 /**
  * Looks for a picture the repository already keeps of itself.
@@ -30,7 +55,10 @@ const DISCOVERY_ENTRY_BUDGET = 200;
  * predictable set of places. The search is bounded in both entries and time because it runs while
  * someone is waiting for a project to appear, and finding nothing is an ordinary outcome.
  */
-export async function findRepositoryAvatar(root: string): Promise<Buffer | undefined> {
+export async function findRepositoryAvatar(
+    machine: Compute,
+    root: string,
+): Promise<Buffer | undefined> {
     const deadline = Date.now() + DISCOVERY_BUDGET_MS;
     const candidates: { path: string; score: number }[] = [];
     const directories = [
@@ -45,7 +73,7 @@ export async function findRepositoryAvatar(root: string): Promise<Buffer | undef
         if (inspected >= DISCOVERY_ENTRY_BUDGET || Date.now() >= deadline) break;
         let entries;
         try {
-            entries = await readdir(directory, { withFileTypes: true });
+            entries = await readEntries(machine, directory);
         } catch {
             continue;
         }
@@ -53,11 +81,16 @@ export async function findRepositoryAvatar(root: string): Promise<Buffer | undef
             if (Date.now() >= deadline) break;
             inspected += 1;
             if (inspected > DISCOVERY_ENTRY_BUDGET) break;
-            if (entry.isSymbolicLink() || SKIPPED_DIRECTORIES.has(entry.name)) continue;
-            if (entry.isDirectory() && directory === join(root, "src")) {
+            if (
+                entry.stat === undefined ||
+                entry.stat.isSymbolicLink ||
+                SKIPPED_DIRECTORIES.has(entry.name)
+            )
+                continue;
+            if (entry.stat.isDirectory && directory === join(root, "src")) {
                 let children;
                 try {
-                    children = await readdir(join(directory, entry.name), { withFileTypes: true });
+                    children = await readEntries(machine, join(directory, entry.name));
                 } catch {
                     continue;
                 }
@@ -66,8 +99,7 @@ export async function findRepositoryAvatar(root: string): Promise<Buffer | undef
                     inspected += 1;
                     if (
                         inspected > DISCOVERY_ENTRY_BUDGET ||
-                        !child.isFile() ||
-                        child.isSymbolicLink() ||
+                        child.stat?.isFile !== true ||
                         !IMAGE_EXTENSIONS.has(extname(child.name).toLocaleLowerCase())
                     ) {
                         continue;
@@ -79,7 +111,10 @@ export async function findRepositoryAvatar(root: string): Promise<Buffer | undef
                 }
                 continue;
             }
-            if (!entry.isFile() || !IMAGE_EXTENSIONS.has(extname(entry.name).toLocaleLowerCase())) {
+            if (
+                !entry.stat.isFile ||
+                !IMAGE_EXTENSIONS.has(extname(entry.name).toLocaleLowerCase())
+            ) {
                 continue;
             }
             candidates.push({
@@ -93,9 +128,14 @@ export async function findRepositoryAvatar(root: string): Promise<Buffer | undef
         .slice(0, 32)) {
         if (Date.now() >= deadline) break;
         try {
-            const info = await lstat(candidate.path);
-            if (!info.isFile() || info.size > MAX_AVATAR_BYTES) continue;
-            const bytes = await readFile(candidate.path);
+            const info = await machine.fs.lstat(PRODUCT, candidate.path);
+            if (!info.isFile || info.size > MAX_AVATAR_BYTES) continue;
+            const bytes = Buffer.from(
+                await machine.fs.readFileBuffer(PRODUCT, candidate.path, {
+                    maxBytes: MAX_AVATAR_BYTES,
+                    noFollow: true,
+                }),
+            );
             await normalizeProjectAvatar(bytes);
             return bytes;
         } catch {

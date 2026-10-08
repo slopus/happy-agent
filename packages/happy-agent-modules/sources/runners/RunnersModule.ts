@@ -1,4 +1,5 @@
 import { randomUUID, timingSafeEqual } from "node:crypto";
+import { homedir } from "node:os";
 import { isDeepStrictEqual } from "node:util";
 
 import {
@@ -10,6 +11,7 @@ import {
 } from "@slopus/happy-agent-base";
 import type { Runner, RunnerListResponse } from "@slopus/happy-agent-client";
 import {
+    createHostCompute,
     createRunnerCompute,
     RunnerLink,
     RunnerUnavailableError,
@@ -21,6 +23,7 @@ import {
 import {
     afterCommit,
     asyncLock,
+    createRootContext,
     detach,
     withLifetime,
     type Context,
@@ -31,7 +34,10 @@ import type { ConfigModule } from "../config/index.js";
 import type { BinaryWebSocket } from "../transport/index.js";
 import { LocalExecutionDisabledError } from "./LocalExecutionDisabledError.js";
 import { createRunnersVersion } from "./createRunnersVersion.js";
+import { canonicalMachinePath, futureMachinePath } from "./impl/canonicalMachinePath.js";
+import { runOnMachine } from "./impl/runOnMachine.js";
 import { webSocketRunnerChannel } from "./impl/webSocketRunnerChannel.js";
+import type { RunnerRunOptions, RunnerRunResult } from "./RunnerRun.js";
 import {
     queryRunnerSnapshot,
     runnersMigrations,
@@ -64,6 +70,7 @@ export class RunnersModule implements AgentModule {
     readonly #instanceId = randomUUID();
     readonly #links = new Map<string, RunnerLink>();
     readonly #products = new Map<string, Promise<Compute>>();
+    #local: Compute | undefined;
     readonly #listeners = new Set<RunnersListener>();
     readonly #lock = asyncLock({ reentry: "block" });
     #snapshot: RunnerListResponse | undefined;
@@ -184,16 +191,36 @@ export class RunnersModule implements AgentModule {
         return this.#snapshot?.runners.find((runner) => runner.id === runnerId)?.machine?.home;
     }
 
-    /** The platform a runner last reported, which decides how its folders are named. */
-    platform(runnerId: string): string | undefined {
-        return this.#snapshot?.runners.find((runner) => runner.id === runnerId)?.machine?.platform;
+    /**
+     * The platform a folder's machine runs: this machine's, or the one a runner last reported.
+     * It decides how folders are named there and which programs the product can run.
+     */
+    platform(runnerId?: string): NodeJS.Platform | undefined {
+        if (runnerId === undefined) return process.platform;
+        const reported =
+            this.#snapshot?.runners.find((runner) => runner.id === runnerId)?.machine?.platform ??
+            this.#links.get(runnerId)?.status().runner?.platform;
+        return reported as NodeJS.Platform | undefined;
     }
 
     /**
-     * The machine Happy's own work runs on for one runner: Git, folder management, terminals, file
-     * watching, and connections. Agent commands never run here; they get machines of their own.
+     * The machine Happy's own work on a folder runs on: this machine when no runner is named, or
+     * the runner's. Folder management, setup commands, terminals, file watching, connections, and
+     * Git all run here, written once against the compute whichever machine it is. Agent commands
+     * never run here; they get machines of their own.
+     *
+     * This machine is refused once runners are configured, because then nothing runs here.
      */
-    async machine(runnerId: string): Promise<Compute> {
+    async machine(runnerId?: string): Promise<Compute> {
+        if (runnerId === undefined) {
+            this.assertLocalExecution();
+            if (this.#closed) throw new Error("The runners module is closed.");
+            this.#local ??= createHostCompute({
+                ctx: this.#named("local-product-machine"),
+                cwd: homedir(),
+            });
+            return this.#local;
+        }
         const existing = this.#products.get(runnerId);
         if (existing !== undefined) return await existing;
         const link = this.#link(runnerId);
@@ -213,6 +240,64 @@ export class RunnersModule implements AgentModule {
             if (this.#products.get(runnerId) === created) this.#products.delete(runnerId);
         });
         return await created;
+    }
+
+    /** A path on a folder's machine as that machine names it, or as written when it is absent. */
+    async canonicalPath(runnerId: string | undefined, path: string): Promise<string> {
+        return await canonicalMachinePath(await this.machine(runnerId), path);
+    }
+
+    /** Where a folder that does not exist yet will be, named the way its machine will name it. */
+    async futurePath(runnerId: string | undefined, path: string): Promise<string> {
+        return await futureMachinePath(await this.machine(runnerId), path);
+    }
+
+    /**
+     * The folder projects cloned onto a machine live under: this installation's configured folder
+     * here, or the same layout under a runner's home directory there.
+     */
+    async projectsHome(runnerId: string | undefined): Promise<string> {
+        const home =
+            runnerId === undefined
+                ? this.#config.projectsHome
+                : this.#config.projectsHomeOn(this.#knownHome(runnerId));
+        return await this.futurePath(runnerId, home);
+    }
+
+    /** The folder managed workspaces live under on a machine, laid out the same way. */
+    async workspacesHome(runnerId: string | undefined): Promise<string> {
+        const home =
+            runnerId === undefined
+                ? this.#config.workspacesHome
+                : this.#config.workspacesHomeOn(
+                      this.#knownHome(runnerId),
+                      this.platform(runnerId) ?? "linux",
+                  );
+        return await this.futurePath(runnerId, home);
+    }
+
+    /** A runner's home directory, which must be known before anything is placed under it. */
+    #knownHome(runnerId: string): string {
+        const home = this.home(runnerId) ?? this.#links.get(runnerId)?.status().runner?.home;
+        if (home === undefined) {
+            throw new RunnerUnavailableError(
+                `The runner ${this.displayName(runnerId)} has never connected, so it has nowhere to put folders yet.`,
+            );
+        }
+        return home;
+    }
+
+    /**
+     * Run one of the product's own programs on a folder's machine, such as Git, and wait
+     * for it. Output past the bound, the deadline, and the caller's signal all stop the program;
+     * the result says which instead of throwing, so a caller can read the program's diagnostics.
+     */
+    async run(
+        ctx: Context,
+        runnerId: string | undefined,
+        options: RunnerRunOptions,
+    ): Promise<RunnerRunResult> {
+        return await runOnMachine(ctx, await this.machine(runnerId), options);
     }
 
     /**
@@ -241,7 +326,9 @@ export class RunnersModule implements AgentModule {
     /** Tell every runner to release what this daemon holds, and stop accepting connections. */
     async close(): Promise<void> {
         this.#closed = true;
-        const products = [...this.#products.values()];
+        const products: Promise<Compute>[] = [...this.#products.values()];
+        if (this.#local !== undefined) products.push(Promise.resolve(this.#local));
+        this.#local = undefined;
         this.#products.clear();
         if (products.length > 0) {
             const ctx = this.#named("runners-close");
@@ -353,9 +440,9 @@ export class RunnersModule implements AgentModule {
 
     /** A new lifetime owned by this module, carrying the database its background work records in. */
     #named(name: string): Context {
-        if (this.#lifetime === undefined) {
-            throw new Error("The runners module is used before the agent system started.");
-        }
+        // A caller that uses folders without an agent collection, as a small embedding or a test
+        // does, gets a lifetime of its own.
+        this.#lifetime ??= createRootContext();
         const ctx = this.#lifetime.named(name);
         return this.#database === undefined ? ctx : withAgentDatabase(ctx, this.#database);
     }

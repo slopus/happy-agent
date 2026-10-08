@@ -1,4 +1,3 @@
-import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 import {
@@ -16,6 +15,7 @@ import {
     type WorkspaceServiceCleanup,
 } from "@slopus/happy-agent-client";
 import { Value } from "@sinclair/typebox/value";
+import { computePermissions, type Compute } from "@slopus/happy-agent-compute";
 import { backoff, detach, mapAsyncLock, type Context, type MapAsyncLock } from "@steve.kite/stdlib";
 
 import { AbortModule } from "../abort/index.js";
@@ -23,6 +23,7 @@ import { ConfigModule } from "../config/index.js";
 import { durableCheckpoint, DurableFunctionsModule } from "../durableFunctions/index.js";
 import { GitModule, type GitCredentialRef, type GitRepositoryFacts } from "../git/index.js";
 import { ProjectRegistrationError, ProjectsModule, type Project } from "../projects/index.js";
+import type { RunnerRunOptions, RunnerRunResult, RunnersModule } from "../runners/index.js";
 
 import { WorkspaceLifecycleError } from "./WorkspaceLifecycleError.js";
 import {
@@ -195,6 +196,9 @@ export interface WorkspaceReservation {
     readonly workspace: Workspace;
 }
 
+/** The catalog manages its own folders; the agent sandbox does not apply to that work. */
+const PRODUCT = computePermissions("full_access");
+
 export class WorkspacesModule implements AgentModule {
     readonly name = "workspaces";
     readonly migrations = workspaceMigrations;
@@ -213,7 +217,11 @@ export class WorkspacesModule implements AgentModule {
     readonly #durableFunctions: DurableFunctionsModule;
     readonly #git: GitModule;
     readonly #projects: ProjectsModule;
-    readonly #projectFolders = new Map<string, { path: string; storageKey: string }>();
+    readonly #runners: RunnersModule;
+    readonly #projectFolders = new Map<
+        string,
+        { path: string; storageKey: string; runnerId: string | undefined; root?: string }
+    >();
     readonly #syncLocks: MapAsyncLock<string> = mapAsyncLock();
     readonly #syncStops = new Map<string, () => void>();
     readonly #syncTimers = new Map<string, NodeJS.Timeout>();
@@ -235,6 +243,8 @@ export class WorkspacesModule implements AgentModule {
      * @param abort How work standing in a workspace is stopped. Archiving is the moment a folder
      * stops being anybody's, so the decision cancels the agents working in it rather than leaving
      * them running in a checkout that is about to be deleted.
+     * @param runners The machines workspace folders are on. A workspace is on its project's
+     * machine, and every folder operation runs there, whether that is this one or a runner.
      */
     constructor(
         config: ConfigModule,
@@ -242,8 +252,10 @@ export class WorkspacesModule implements AgentModule {
         git: GitModule,
         abort: AbortModule,
         durableFunctions: DurableFunctionsModule,
+        runners: RunnersModule,
     ) {
         this.#abort = abort;
+        this.#runners = runners;
         this.#config = config;
         this.#durableFunctions = durableFunctions;
         this.#git = git;
@@ -825,21 +837,30 @@ export class WorkspacesModule implements AgentModule {
     }
 
     /** Whether Git already holds this branch in the project's shared repository. */
-    isBranchUnavailable(projectRef: string, branch: string): boolean {
+    async isBranchUnavailable(projectRef: string, branch: string): Promise<boolean> {
         const folder = this.#projectFolders.get(projectRef);
         if (folder === undefined) return false;
-        return gitBranchExists(workspaceGitRefSnapshot(folder.path), branch);
+        try {
+            const listing = await this.#git.readOnly(
+                folder.path,
+                ["for-each-ref", "--format=%(refname)", `refs/heads/${branch}`],
+                folder.runnerId === undefined ? {} : { runnerId: folder.runnerId },
+            );
+            return listing.length > 0;
+        } catch {
+            return false;
+        }
     }
 
     /** Whether this folder key is already taken, on disk or as a worktree Git knows about. */
-    isStorageKeyUnavailable(projectRef: string, storageKey: string): boolean {
+    async isStorageKeyUnavailable(projectRef: string, storageKey: string): Promise<boolean> {
         const folder = this.#projectFolders.get(projectRef);
         if (folder === undefined) return false;
-        return workspaceStorageKeyExists(
-            workspaceGitRefSnapshot(folder.path),
-            this.#workspaceRoot(projectRef),
-            storageKey,
-        );
+        const machine = await this.#runners.machine(folder.runnerId);
+        if (await machine.fs.exists(PRODUCT, this.pathForStorageKey(projectRef, storageKey))) {
+            return true;
+        }
+        return await this.isBranchUnavailable(projectRef, `worktree/${storageKey}`);
     }
 
     /**
@@ -950,11 +971,13 @@ export class WorkspacesModule implements AgentModule {
         const projects = this.#projects;
         const project = await this.#project(ctx, projectId);
         if (project === undefined) return undefined;
+        const { runnerId } = projects.location(project);
+        const machine = await this.#runners.machine(runnerId);
         if (
             project.status !== "active" ||
             project.initializationStatus !== "ready" ||
             project.presence !== "present" ||
-            !existsSync(project.repositoryRef)
+            !(await machine.fs.exists(PRODUCT, project.repositoryRef))
         ) {
             throw new Error(
                 "The project root must be active and ready before creating a workspace.",
@@ -997,8 +1020,18 @@ export class WorkspacesModule implements AgentModule {
         }
 
         const kind = await this.#workspaceKindFor(ctx, project);
-        const workspaceRoot = this.#workspaceRoot(projectId);
-        const gitRefs = workspaceGitRefSnapshot(project.repositoryRef);
+        const workspaceRoot = await this.#workspaceRootFor(project);
+        const gitRefs = await workspaceGitRefSnapshot({
+            git: this.#git,
+            machine,
+            projectPath: project.repositoryRef,
+            repository: kind === "git_worktree",
+            ...(runnerId === undefined ? {} : { runnerId }),
+            workspaceRoot,
+        });
+        const computeSetting = (await projects.readSettings(ctx, projectId))
+            .defaultWorkspaceCompute;
+        const dockerImage = computeSetting?.type === "docker" ? computeSetting.image : undefined;
         const fallbackStorageKey = `${projects.storageKeyFor(name).slice(0, 20)}-${workspaceId}`;
 
         return await ctx.inTx(async (txCtx) => {
@@ -1013,6 +1046,8 @@ export class WorkspacesModule implements AgentModule {
                     parentId: parent?.id ?? projectId,
                     name,
                     kind,
+                    ...(runnerId === undefined ? {} : { runnerId }),
+                    ...(dockerImage === undefined ? {} : { dockerImage }),
                     ...(normalized.nameConfigured === undefined
                         ? {}
                         : { nameConfigured: normalized.nameConfigured }),
@@ -1026,7 +1061,7 @@ export class WorkspacesModule implements AgentModule {
                 {
                     isBranchUnavailable: (branch) => gitBranchExists(gitRefs, branch),
                     isStorageKeyUnavailable: (storageKey) =>
-                        workspaceStorageKeyExists(gitRefs, workspaceRoot, storageKey),
+                        workspaceStorageKeyExists(gitRefs, storageKey),
                     pathForStorageKey: (storageKey) => join(workspaceRoot, storageKey),
                 },
             );
@@ -1125,7 +1160,10 @@ export class WorkspacesModule implements AgentModule {
         }
         if (
             workspace.status === "ready" &&
-            (workspace.presence !== "present" || !existsSync(workspace.path))
+            (workspace.presence !== "present" ||
+                !(await (
+                    await this.#runners.machine(workspace.runnerId)
+                ).fs.exists(PRODUCT, workspace.path)))
         ) {
             throw new ProjectRegistrationError(
                 "managed_workspace_unavailable",
@@ -1177,23 +1215,44 @@ export class WorkspacesModule implements AgentModule {
             throw new Error("A workspace parent must belong to the same project.");
         }
         await readWorkspaceAncestorIds(ctx.db, parent);
-        this.#assertReadyProvisioningParent(parent);
+        await this.#assertReadyProvisioningParent(parent);
         return parent;
     }
 
-    #assertReadyProvisioningParent(parent: Workspace): void {
+    async #assertReadyProvisioningParent(parent: Workspace): Promise<void> {
         if (
             parent.status !== "ready" ||
             parent.presence !== "present" ||
-            !existsSync(parent.path)
+            !(await (await this.#runners.machine(parent.runnerId)).fs.exists(PRODUCT, parent.path))
         ) {
             throw new Error("A workspace parent must be active, ready, and available.");
         }
     }
 
+    /** The folder this machine's workspaces of a project live in, before anything is reserved. */
     #workspaceRoot(projectId: string): string {
-        const storageKey = this.#projectFolders.get(projectId)?.storageKey ?? projectId;
-        return join(this.#workspacesDirectory, storageKey);
+        const folder = this.#projectFolders.get(projectId);
+        return folder?.root ?? join(this.#workspacesDirectory, folder?.storageKey ?? projectId);
+    }
+
+    /**
+     * The folder a project's workspaces live in, on the machine the project is on, as that machine
+     * names it. It is remembered so a reservation can answer at once.
+     */
+    async #workspaceRootFor(project: Project): Promise<string> {
+        const { runnerId } = this.#projects.location(project);
+        const root = join(await this.#runners.workspacesHome(runnerId), project.storageKey);
+        const folder = this.#projectFolders.get(project.id);
+        if (folder !== undefined) folder.root = root;
+        return root;
+    }
+
+    /** Runs one of the product's own programs on a folder's machine. */
+    #runOn(
+        ctx: Context,
+        runnerId: string | undefined,
+    ): (options: RunnerRunOptions) => Promise<RunnerRunResult> {
+        return async (options) => await this.#runners.run(ctx, runnerId, options);
     }
 
     // --- Building a workspace ----------------------------------------------------------------
@@ -1241,15 +1300,23 @@ export class WorkspacesModule implements AgentModule {
                 if (currentProject === undefined) {
                     throw new Error("The workspace's project was not found.");
                 }
-                const rootSettings = await this.#folderSettings(currentProject.repositoryRef);
+                const machine = await this.#runners.machine(currentWorkspace.runnerId);
+                const rootSettings = await this.#folderSettings(
+                    machine,
+                    currentProject.repositoryRef,
+                );
                 await syncWorkspaceFiles({
+                    machine,
+                    platform: this.#platform(currentWorkspace.runnerId),
+                    run: this.#runOn(ctx, currentWorkspace.runnerId),
                     paths: [...rootSettings.sync, ...rootSettings.protectedSync],
                     projectPath: currentProject.repositoryRef,
                     workspacePath: currentWorkspace.path,
                 });
             });
 
-            const settings = await this.#folderSettings(currentWorkspace.path);
+            const workspaceMachine = await this.#runners.machine(currentWorkspace.runnerId);
+            const settings = await this.#folderSettings(workspaceMachine, currentWorkspace.path);
             for (const [index, command] of settings.setupCommands.entries()) {
                 await durableCheckpoint(
                     ctx,
@@ -1259,6 +1326,7 @@ export class WorkspacesModule implements AgentModule {
                         try {
                             await runWorkspaceSetupCommands(
                                 ctx,
+                                workspaceMachine,
                                 currentWorkspace.path,
                                 [command],
                                 ctx.lifetime === undefined ? {} : { signal: ctx.lifetime },
@@ -1294,10 +1362,14 @@ export class WorkspacesModule implements AgentModule {
         if (locked?.status !== "initializing") return undefined;
         const parent = await this.#initializationParent(ctx, locked);
 
+        const machine = await this.#runners.machine(locked.runnerId);
         if (locked.kind === "directory") {
-            if (existsSync(locked.path)) return locked;
+            if (await machine.fs.exists(PRODUCT, locked.path)) return locked;
             if (this.#closed) return undefined;
             await copyProjectFolder({
+                machine,
+                platform: this.#platform(locked.runnerId),
+                run: this.#runOn(ctx, locked.runnerId),
                 projectPath: parent?.path ?? project.repositoryRef,
                 workspacePath: locked.path,
             });
@@ -1306,19 +1378,20 @@ export class WorkspacesModule implements AgentModule {
 
         locked = await this.#prepareInitialization(ctx, locked, project);
         if (locked?.status !== "initializing") return undefined;
-        if (existsSync(locked.path)) {
+        if (await machine.fs.exists(PRODUCT, locked.path)) {
             const adoptable =
                 locked.gitCommonDir !== undefined &&
                 (await this.#git.isWorktreeAt({
                     commonDir: locked.gitCommonDir,
                     path: locked.path,
-                    ...this.#gitOptions(project.id),
+                    ...this.#gitOptions(project.id, locked.runnerId),
                 }));
             if (adoptable) return locked;
             // A half-made worktree is cleaned up before creation is tried again. The keep-on-
             // archive settings do not apply: this folder was never a workspace someone worked in.
             await removeWorkspaceDirectory({
                 git: this.#git,
+                machine,
                 ...this.#gitOptions(project.id),
                 keepCopiesOnArchive: false,
                 keepWorktreesOnArchive: false,
@@ -1351,7 +1424,7 @@ export class WorkspacesModule implements AgentModule {
             throw new Error("The workspace's parent belongs to another project.");
         }
         await readWorkspaceAncestorIds(ctx.db, parent);
-        this.#assertReadyProvisioningParent(parent);
+        await this.#assertReadyProvisioningParent(parent);
         return parent;
     }
 
@@ -1364,7 +1437,7 @@ export class WorkspacesModule implements AgentModule {
             return workspace;
         }
         const projects = this.#projects;
-        const gitOptions = this.#gitOptions(project.id);
+        const gitOptions = this.#gitOptions(project.id, workspace.runnerId);
         const topLevel = await this.#git.topLevel(project.repositoryRef, gitOptions);
         if (topLevel !== project.repositoryRef) {
             throw new Error("A workspace worktree needs a Git repository project.");
@@ -1404,7 +1477,7 @@ export class WorkspacesModule implements AgentModule {
             expectedCommonDir: workspace.gitCommonDir ?? "",
             projectPath,
             workspacePath: workspace.path,
-            ...this.#gitOptions(workspace.projectRef),
+            ...this.#gitOptions(workspace.projectRef, workspace.runnerId),
         });
         // A rename landing during the checkout is not moved by the branch mover, which leaves
         // workspaces that are not ready alone. The branch Git just created is the real one.
@@ -1418,8 +1491,17 @@ export class WorkspacesModule implements AgentModule {
         );
     }
 
-    async #folderSettings(folder: string): Promise<WorkspaceFolderSettings> {
-        return await loadWorkspaceFolderSettings(folder, this.#config.workspaceSettings);
+    async #folderSettings(machine: Compute, folder: string): Promise<WorkspaceFolderSettings> {
+        return await loadWorkspaceFolderSettings(
+            folder,
+            this.#config.workspaceSettings,
+            async (path) => await machine.fs.readFile(PRODUCT, path),
+        );
+    }
+
+    /** The platform of a folder's machine, which decides the programs that copy folders there. */
+    #platform(runnerId: string | undefined): NodeJS.Platform {
+        return this.#runners.platform(runnerId) ?? "linux";
     }
 
     // --- Archival ----------------------------------------------------------------------------
@@ -1531,7 +1613,8 @@ export class WorkspacesModule implements AgentModule {
         const project = await this.#project(ctx, workspace.projectRef);
         if (project === undefined) throw new Error("The workspace's project was not found.");
         await this.#confirmRemoval(ctx, workspace);
-        const settings = await this.#folderSettings(project.repositoryRef);
+        const machine = await this.#runners.machine(workspace.runnerId);
+        const settings = await this.#folderSettings(machine, project.repositoryRef);
         await backoff(
             ctx,
             async (retryCtx) => {
@@ -1544,6 +1627,7 @@ export class WorkspacesModule implements AgentModule {
                 await this.#projects.runInProjectGitLock(retryCtx, project.id, async () => {
                     await removeWorkspaceDirectory({
                         git: this.#git,
+                        machine,
                         ...this.#gitOptions(project.id),
                         keepCopiesOnArchive: settings.keepCopiesOnArchive,
                         keepWorktreesOnArchive: settings.keepWorktreesOnArchive,
@@ -1665,7 +1749,9 @@ export class WorkspacesModule implements AgentModule {
         // filed. It states no workspace configuration of its own, and a watch on a person's home
         // directory would observe every file they own for nothing.
         if (project.kind === "home" && workspaces.length === 0) return;
-        const settings = await this.#folderSettings(project.repositoryRef);
+        const { runnerId } = this.#projects.location(project);
+        const machine = await this.#runners.machine(runnerId);
+        const settings = await this.#folderSettings(machine, project.repositoryRef);
         if (project.kind !== "home") {
             await this.#recordSetupCommands(ctx, projectId, settings.setupCommands);
         }
@@ -1677,11 +1763,11 @@ export class WorkspacesModule implements AgentModule {
         this.#syncStops.set(
             projectId,
             watchWorkspaceSyncPaths({
+                machine,
                 onChange: () => {
                     this.#scheduleSync(projectId);
                 },
                 projectPath: project.repositoryRef,
-                recursive: this.#git.supportsRecursiveWorktreeWatch(),
                 syncPaths,
             }),
         );
@@ -1694,6 +1780,9 @@ export class WorkspacesModule implements AgentModule {
             }
             try {
                 await syncWorkspaceFiles({
+                    machine,
+                    platform: this.#platform(runnerId),
+                    run: this.#runOn(ctx, runnerId),
                     paths: syncPaths,
                     projectPath: project.repositoryRef,
                     workspacePath: workspace.path,
@@ -1735,7 +1824,20 @@ export class WorkspacesModule implements AgentModule {
         for (const workspace of await this.#allWorkspaces(ctx)) {
             if (this.#closed) return;
             if (workspace.status !== "ready") continue;
-            const probe = await this.#git.probe(workspace.path);
+            let probe;
+            try {
+                probe = await this.#git.probe(
+                    workspace.path,
+                    workspace.runnerId === undefined ? {} : { runnerId: workspace.runnerId },
+                );
+            } catch (error) {
+                // A workspace whose machine cannot be reached right now keeps its last facts.
+                ctx.log.debug(
+                    { error, workspaceId: workspace.id },
+                    "A workspace could not be probed.",
+                );
+                continue;
+            }
             if (this.#closed) return;
             await this.applyProbe(ctx, {
                 workspaceId: workspace.id,
@@ -1770,7 +1872,12 @@ export class WorkspacesModule implements AgentModule {
         const facts =
             workspace.presence === "missing"
                 ? undefined
-                : (await this.#git.probe(workspace.path)).facts;
+                : (
+                      await this.#git.probe(
+                          workspace.path,
+                          workspace.runnerId === undefined ? {} : { runnerId: workspace.runnerId },
+                      )
+                  ).facts;
         return {
             workspaceId,
             ahead: facts?.ahead ?? 0,
@@ -1840,9 +1947,20 @@ export class WorkspacesModule implements AgentModule {
      */
     #remember<T extends Project | undefined>(project: T): T {
         if (project !== undefined) {
+            const known = this.#projectFolders.get(project.id);
+            let runnerId: string | undefined;
+            try {
+                runnerId = this.#projects.location(project).runnerId;
+            } catch {
+                runnerId = project.runnerId;
+            }
             this.#projectFolders.set(project.id, {
                 path: project.repositoryRef,
                 storageKey: project.storageKey,
+                runnerId,
+                ...(known?.root === undefined || known.runnerId !== runnerId
+                    ? {}
+                    : { root: known.root }),
             });
         }
         return project;
@@ -1852,9 +1970,15 @@ export class WorkspacesModule implements AgentModule {
      * The credential a Git command against one project must carry. The projects catalog owns who
      * created a project, so it is what names the credential a workspace cut from it inherits.
      */
-    #gitOptions(projectId: string): { readonly credential?: GitCredentialRef } {
+    #gitOptions(
+        projectId: string,
+        runnerId?: string,
+    ): { readonly credential?: GitCredentialRef; readonly runnerId?: string } {
         const credential = this.#projects.gitCredential(projectId);
-        return credential === undefined ? {} : { credential };
+        return {
+            ...(credential === undefined ? {} : { credential }),
+            ...(runnerId === undefined ? {} : { runnerId }),
+        };
     }
 
     #runSyncInBackground(work: (workerCtx: Context) => Promise<void>): void {
@@ -2614,7 +2738,7 @@ export class WorkspacesModule implements AgentModule {
                     from: previousBranch,
                     to: workspace.branch,
                     workspacePath: workspace.path,
-                    ...this.#gitOptions(workspace.projectRef),
+                    ...this.#gitOptions(workspace.projectRef, workspace.runnerId),
                 });
             });
             return workspace;

@@ -1,15 +1,7 @@
 import type { Compute } from "@slopus/happy-agent-compute";
 import type { Context } from "@steve.kite/stdlib";
 
-/** One finished program on another machine, with output bounded the way `execFile` bounds it. */
-export interface MachineRunResult {
-    readonly code: number;
-    readonly stdout: Buffer;
-    readonly stderr: string;
-    /** Output past the bound was discarded and the program was stopped. */
-    readonly truncated: boolean;
-    readonly timedOut: boolean;
-}
+import type { RunnerRunOptions, RunnerRunResult } from "../RunnerRun.js";
 
 /**
  * Run one of the product's own programs, such as Git, on a machine and wait for it.
@@ -21,15 +13,8 @@ export interface MachineRunResult {
 export async function runOnMachine(
     ctx: Context,
     machine: Compute,
-    options: {
-        readonly command: string;
-        readonly args: readonly string[];
-        readonly environment?: Readonly<Record<string, string | null>>;
-        readonly maximumBytes: number;
-        readonly timeoutMs: number;
-        readonly signal?: AbortSignal;
-    },
-): Promise<MachineRunResult> {
+    options: RunnerRunOptions,
+): Promise<RunnerRunResult> {
     const processes = machine.processes;
     if (processes === undefined) {
         throw Object.assign(new Error("This machine cannot run the product's own programs."), {
@@ -40,6 +25,7 @@ export async function runOnMachine(
     const started = await processes.start(ctx, {
         command: options.command,
         args: options.args,
+        ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
         ...(options.environment === undefined ? {} : { environment: options.environment }),
     });
     const stdout: Buffer[] = [];

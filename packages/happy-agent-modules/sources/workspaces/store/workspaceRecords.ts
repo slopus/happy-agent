@@ -16,6 +16,8 @@ type WorkspaceRow = {
     readonly storage_key: string;
     readonly kind: string;
     readonly path: string;
+    readonly runner_id: string | null;
+    readonly docker_image: string | null;
     readonly base_ref: string | null;
     readonly base_commit: string | null;
     readonly git_common_dir: string | null;
@@ -185,7 +187,7 @@ export async function insertWorkspace(
             kind, path, base_ref, base_commit, git_common_dir, presence, status, order_key,
             version, creator_session_id, git_ahead, git_behind, git_detached, git_head,
             git_upstream, initialization_attempt, initialization_error, created_at, updated_at,
-            archived_at, service_cleanup, subtask_agent_id
+            archived_at, service_cleanup, subtask_agent_id, runner_id, docker_image
         ) VALUES (
             ${workspace.id}, ${workspace.projectRef}, ${workspace.parentId}, ${workspace.name},
             ${workspaceNameKey(workspace.name)}, ${workspace.nameConfigured ? 1 : 0},
@@ -198,7 +200,8 @@ export async function insertWorkspace(
             ${workspace.initializationAttempt}, ${workspace.initializationError ?? null},
             ${workspace.createdAt}, ${workspace.updatedAt}, ${workspace.archivedAt ?? null},
             ${workspace.serviceCleanup === undefined ? null : JSON.stringify(workspace.serviceCleanup)},
-            ${workspace.subtaskAgentId ?? null}
+            ${workspace.subtaskAgentId ?? null}, ${workspace.runnerId ?? null},
+            ${workspace.dockerImage ?? null}
         )`,
     );
 }
@@ -227,6 +230,8 @@ export async function writeWorkspace(
                 storage_key = ${workspace.storageKey},
                 kind = ${workspace.kind},
                 path = ${workspace.path},
+                runner_id = ${workspace.runnerId ?? null},
+                docker_image = ${workspace.dockerImage ?? null},
                 base_ref = ${workspace.baseRef ?? null},
                 base_commit = ${workspace.baseCommit ?? null},
                 git_common_dir = ${workspace.gitCommonDir ?? null},
@@ -301,6 +306,8 @@ function workspaceFromRow(row: WorkspaceRow): Workspace {
         storageKey: row.storage_key,
         kind: row.kind as Workspace["kind"],
         path: row.path,
+        ...(row.runner_id === null ? {} : { runnerId: row.runner_id }),
+        ...(row.docker_image === null ? {} : { dockerImage: row.docker_image }),
         ...(row.base_ref === null ? {} : { baseRef: row.base_ref }),
         ...(row.base_commit === null ? {} : { baseCommit: row.base_commit }),
         ...(row.git_common_dir === null ? {} : { gitCommonDir: row.git_common_dir }),

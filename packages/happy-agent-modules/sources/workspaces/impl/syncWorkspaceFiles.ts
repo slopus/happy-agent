@@ -1,5 +1,12 @@
-import { cp, lstat, mkdir, readlink, realpath, rm, stat } from "node:fs/promises";
-import { dirname, isAbsolute, join, parse, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
+
+import { computePermissions, type Compute } from "@slopus/happy-agent-compute";
+
+import type { RunnerRunOptions, RunnerRunResult } from "../../runners/index.js";
+
+const PRODUCT = computePermissions("full_access");
+const SYNC_TIMEOUT_MS = 5 * 60 * 1_000;
+const SYNC_OUTPUT_LIMIT = 64 * 1024;
 
 /**
  * Copies configured project files into a workspace, the root copy winning.
@@ -8,7 +15,9 @@ import { dirname, isAbsolute, join, parse, relative, resolve, sep } from "node:p
  * the project root's copy into every workspace — first when the workspace is created, then again
  * whenever the root copy changes. Replication is one-way and best-effort: the root always wins,
  * a path that cannot be read or written right now is simply skipped until the next pass, and
- * nothing is ever deleted in a workspace because it disappeared from the root.
+ * nothing is ever deleted in a workspace because it disappeared from the root. The copying runs on
+ * the machine the folders are on, with that machine's own copy program, following links in the
+ * source.
  *
  * The workspace is another party's writable space, so the destination is re-resolved before every
  * copy: a workspace that replaced a destination ancestor with a symlink pointing elsewhere gets
@@ -16,14 +25,18 @@ import { dirname, isAbsolute, join, parse, relative, resolve, sep } from "node:p
  * folder no longer exists — archived while a sync was in flight — is left alone, never recreated.
  */
 export async function syncWorkspaceFiles(options: {
+    machine: Compute;
+    platform: NodeJS.Platform;
+    run: (options: RunnerRunOptions) => Promise<RunnerRunResult>;
     /** Project-relative paths to replicate, already validated to stay inside the project. */
     paths: readonly string[];
     projectPath: string;
     workspacePath: string;
 }): Promise<void> {
+    const { machine } = options;
     let workspaceRoot: string;
     try {
-        workspaceRoot = await realpath(options.workspacePath);
+        workspaceRoot = await machine.fs.realpath(PRODUCT, options.workspacePath);
     } catch {
         return;
     }
@@ -37,22 +50,68 @@ export async function syncWorkspaceFiles(options: {
             throw new Error(`Workspace sync path "${path}" must stay inside the project.`);
         }
         try {
-            const canonicalDestination = await resolvePotentialPath(destination);
+            const canonicalDestination = await resolvePotentialPath(machine, destination);
             if (!isPathLexicallyWithin(workspaceRoot, canonicalDestination)) continue;
-            const sourceMetadata = await statOrUndefined(source);
-            if (sourceMetadata === undefined) continue;
-            await mkdir(dirname(canonicalDestination), { recursive: true });
+            let sourceMetadata;
+            try {
+                sourceMetadata = await machine.fs.stat(PRODUCT, source);
+            } catch {
+                continue;
+            }
+            await machine.fs.mkdir(PRODUCT, dirname(canonicalDestination), { recursive: true });
             // Removing first replaces the destination even when its kind changed, such as a file
             // where the root now has a directory, instead of merging or failing on the mismatch.
-            await rm(canonicalDestination, { force: true, recursive: true });
-            await cp(source, canonicalDestination, {
-                dereference: true,
-                force: true,
-                recursive: true,
-            });
+            await machine.fs.rm(PRODUCT, canonicalDestination, { force: true, recursive: true });
+            await copyFollowingLinks(
+                options,
+                source,
+                canonicalDestination,
+                sourceMetadata.isDirectory,
+            );
         } catch {
             // Best-effort per path: this one converges on a later pass, the rest still copy.
         }
+    }
+}
+
+async function copyFollowingLinks(
+    options: {
+        readonly platform: NodeJS.Platform;
+        readonly run: (options: RunnerRunOptions) => Promise<RunnerRunResult>;
+    },
+    source: string,
+    destination: string,
+    directory: boolean,
+): Promise<void> {
+    const windows = options.platform === "win32";
+    const result = await options.run(
+        windows
+            ? {
+                  command: "robocopy",
+                  args: directory
+                      ? [source, destination, "/E", "/NFL", "/NDL", "/NJH", "/NJS", "/NP"]
+                      : [
+                            dirname(source),
+                            dirname(destination),
+                            basename(source),
+                            "/NFL",
+                            "/NDL",
+                            "/NJH",
+                            "/NJS",
+                            "/NP",
+                        ],
+                  maximumBytes: SYNC_OUTPUT_LIMIT,
+                  timeoutMs: SYNC_TIMEOUT_MS,
+              }
+            : {
+                  command: "cp",
+                  args: ["-R", "-L", "--", source, destination],
+                  maximumBytes: SYNC_OUTPUT_LIMIT,
+                  timeoutMs: SYNC_TIMEOUT_MS,
+              },
+    );
+    if ((windows ? result.code >= 8 : result.code !== 0) || result.timedOut) {
+        throw new Error(result.stderr.trim() || "The sync copy failed.");
     }
 }
 
@@ -70,42 +129,19 @@ export function isPathLexicallyWithin(parent: string, target: string): boolean {
  * Canonicalizes as much of a path as exists, following symlinks, and keeps the rest verbatim. A
  * destination is usually still missing when sync decides where it may write.
  */
-export async function resolvePotentialPath(target: string, symlinkDepth = 0): Promise<string> {
-    if (symlinkDepth > 40) throw new Error(`Cannot resolve symbolic link chain for ${target}.`);
-    const pathRoot = parse(target).root;
-    const parts = target.slice(pathRoot.length).split(sep).filter(Boolean);
-    let current = pathRoot;
-    for (let index = 0; index < parts.length; index += 1) {
-        const part = parts[index];
-        if (part === undefined) continue;
-        const candidate = join(current, part);
+async function resolvePotentialPath(machine: Compute, target: string): Promise<string> {
+    const missing: string[] = [];
+    let existing = normalize(target);
+    for (;;) {
         try {
-            const metadata = await lstat(candidate);
-            if (metadata.isSymbolicLink()) {
-                const destination = resolve(dirname(candidate), await readlink(candidate));
-                return await resolvePotentialPath(
-                    join(destination, ...parts.slice(index + 1)),
-                    symlinkDepth + 1,
-                );
-            }
-            current = candidate;
+            return join(await machine.fs.realpath(PRODUCT, existing), ...missing);
         } catch (error) {
-            if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-                return join(current, ...parts.slice(index));
-            }
-            throw error;
+            const code = (error as NodeJS.ErrnoException).code;
+            if (code !== "ENOENT" && code !== "ENOTDIR") throw error;
         }
-    }
-    return current;
-}
-
-/** Reads the sync source following symlinks, treating an unreachable path as a missing one. */
-async function statOrUndefined(path: string): Promise<{ isDirectory(): boolean } | undefined> {
-    try {
-        return await stat(path);
-    } catch (error) {
-        const code = (error as NodeJS.ErrnoException).code;
-        if (code === "ENOENT" || code === "ENOTDIR") return undefined;
-        throw error;
+        const parent = dirname(existing);
+        if (parent === existing) return join(existing, ...missing);
+        missing.unshift(basename(existing));
+        existing = parent;
     }
 }

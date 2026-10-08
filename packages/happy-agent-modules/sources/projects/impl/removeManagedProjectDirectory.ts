@@ -1,33 +1,31 @@
-import { lstat, rm } from "node:fs/promises";
 import { join } from "node:path";
 
-import type { GitModule } from "../../git/index.js";
+import { computePermissions, type Compute } from "@slopus/happy-agent-compute";
+
 import type { Project } from "../Project.js";
+
+const PRODUCT = computePermissions("full_access");
 
 /** Remove only a remote project cloned into Happy Agent's exact managed-projects directory. */
 export async function removeManagedProjectDirectory(options: {
-    git: GitModule;
+    /** The machine the project's folder is on. */
+    machine: Compute;
+    /** The managed-projects directory on that machine, as the machine names it. */
     managedProjectsDirectory: string;
     project: Project;
 }): Promise<void> {
-    const { project } = options;
-    if (
-        project.remoteSource === undefined ||
-        project.repositoryRef !==
-            options.git.normalizeFuturePath(
-                join(options.managedProjectsDirectory, project.storageKey),
-            )
-    ) {
-        return;
-    }
+    const { machine, project } = options;
+    const expected = join(options.managedProjectsDirectory, project.storageKey);
+    if (project.remoteSource === undefined || project.repositoryRef !== expected) return;
+    let metadata;
     try {
-        const metadata = await lstat(project.repositoryRef);
-        if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
-            throw new Error("Refusing to archive a managed project path that is not a directory.");
-        }
+        metadata = await machine.fs.lstat(PRODUCT, expected);
     } catch (error) {
         if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
         throw error;
     }
-    await rm(project.repositoryRef, { force: true, recursive: true });
+    if (metadata.isSymbolicLink || !metadata.isDirectory) {
+        throw new Error("Refusing to archive a managed project path that is not a directory.");
+    }
+    await machine.fs.rm(PRODUCT, expected, { force: true, recursive: true });
 }

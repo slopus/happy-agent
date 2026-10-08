@@ -1,9 +1,11 @@
 import { existsSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { createId } from "@paralleldrive/cuid2";
+import { createHostCompute } from "@slopus/happy-agent-compute";
+import { createRootContext } from "@steve.kite/stdlib";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { GitModule } from "../../sources/git/index.js";
@@ -178,17 +180,13 @@ describe("plain-directory project registration", () => {
         const folder = join(root, "plain");
         await mkdir(folder);
         await writeFile(join(folder, ".git"), "invalid Git metadata\n", "utf8");
-        const topLevel = vi.fn(() =>
-            Promise.reject(Object.assign(new Error("Operation not permitted."), { code: 1 })),
-        );
-        const git = {
-            normalizeProjectCwd: () => folder,
-            topLevel,
-        };
+        const machine = createHostCompute({ ctx: createRootContext(), cwd: root });
         try {
-            await expect(validateRegistrationPath(git, folder)).resolves.toBe(folder);
-            expect(topLevel).not.toHaveBeenCalled();
+            await expect(validateRegistrationPath(machine, folder)).resolves.toBe(
+                await realpath(folder),
+            );
         } finally {
+            await machine.dispose(createRootContext());
             await rm(root, { force: true, recursive: true });
         }
     });

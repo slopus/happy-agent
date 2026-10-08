@@ -7,6 +7,7 @@ import type { ConfigModule } from "../../sources/config/index.js";
 import { DurableFunctionsModule } from "../../sources/durableFunctions/index.js";
 import { GitModule } from "../../sources/git/index.js";
 import { ProjectsModule } from "../../sources/projects/index.js";
+import { RunnersModule } from "../../sources/runners/index.js";
 import { SecretsModule } from "../../sources/secrets/index.js";
 
 /**
@@ -56,16 +57,19 @@ export function projectsCatalogFor(
     readonly agents: TestAgentCollection;
     readonly durableFunctions: DurableFunctionsModule;
     readonly projects: ProjectsModule;
+    readonly runners: RunnersModule;
 } {
     const abort = new AbortModule(new ComputeModule(config, new SecretsModule()));
     const agents = new TestAgentCollection();
     const durableFunctions = new DurableFunctionsModule();
     abort.beforeStart(createRootContext(), agents.asRef());
+    const runners = new RunnersModule(config);
     return {
         abort,
         agents,
         durableFunctions,
-        projects: new ProjectsModule(config, git, abort, durableFunctions),
+        projects: new ProjectsModule(config, git, abort, durableFunctions, runners),
+        runners,
     };
 }
 

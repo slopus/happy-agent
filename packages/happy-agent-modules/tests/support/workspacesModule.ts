@@ -5,6 +5,7 @@ import type { ConfigModule } from "../../sources/config/index.js";
 import type { DurableFunctionsModule } from "../../sources/durableFunctions/index.js";
 import { GitModule } from "../../sources/git/index.js";
 import type { ProjectsModule } from "../../sources/projects/index.js";
+import type { RunnersModule } from "../../sources/runners/index.js";
 import { WorkspacesModule } from "../../sources/workspaces/index.js";
 
 import { temporaryTestConfig, testConfigRootedAt } from "./configModule.js";
@@ -26,6 +27,7 @@ export interface WorkspacesCatalog {
     readonly durableFunctions: DurableFunctionsModule;
     readonly git: GitModule;
     readonly projects: ProjectsModule;
+    readonly runners: RunnersModule;
     /**
      * Starts both catalogs from a root context, the way the composition root does.
      *
@@ -45,8 +47,15 @@ export function workspacesCatalogFrom(
     // One abort module across both catalogs, exactly as production wires it. With two, each
     // catalog would cancel into an instance the other cannot see, and a test could pass while
     // the arrangement it claims to mirror was never built.
-    const { abort, agents, durableFunctions, projects } = projectsCatalogFor(config, git);
-    const workspaces = new WorkspacesModule(config, projects, git, abort, durableFunctions);
+    const { abort, agents, durableFunctions, projects, runners } = projectsCatalogFor(config, git);
+    const workspaces = new WorkspacesModule(
+        config,
+        projects,
+        git,
+        abort,
+        durableFunctions,
+        runners,
+    );
     return {
         abort,
         agents,
@@ -54,6 +63,7 @@ export function workspacesCatalogFrom(
         durableFunctions,
         git,
         projects,
+        runners,
         start: async (ctx: Context) => {
             const durableHooks = durableFunctions.beforeStart(ctx);
             projects.beforeStart(ctx, agents.asRef());
