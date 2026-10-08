@@ -9,7 +9,7 @@ import {
     type SessionStream,
 } from "@slopus/happy-providers";
 import { createRootContext, type Context } from "@steve.kite/stdlib";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { RoundRobinRouterProvider } from "../../sources/config/impl/RoundRobinRouterProvider.js";
 
@@ -22,6 +22,22 @@ const request: SessionRunRequest = {
 };
 
 describe("RoundRobinRouterProvider", () => {
+    it("selects only an enabled compatible account for a frozen route without opening it", () => {
+        const enabled = new Set(["second"]);
+        const resolve = vi.fn(async () => null);
+        const provider = new RoundRobinRouterProvider({
+            candidates: ["first", "second", "third"].map((providerId) => ({ providerId })),
+            model: request.model!,
+            random: () => 0.9,
+            isEnabled: (id) => enabled.has(id),
+            resolve,
+        });
+        expect(provider.selectAccount()).toBe("second");
+        enabled.clear();
+        expect(provider.selectAccount()).toBeUndefined();
+        expect(resolve).not.toHaveBeenCalled();
+    });
+
     it("keeps the random account per agent and advances after authentication failure", async () => {
         const accounts = {
             first: scriptedAccount([normal("first")]),

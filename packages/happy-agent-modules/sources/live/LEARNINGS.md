@@ -7,6 +7,33 @@ the initiating window's bounded visible context and a fixed nine-action controll
 uses one frozen configured-default model route; the explicitly selected voice credential is separate.
 No coding-agent runtime, permission answers, private reasoning, or arbitrary execution enters Live.
 
+## Default account pools resolve once
+
+Rejecting every smart default prevented voice from starting when ordinary conversations used an
+account pool. Live now selects one enabled compatible account from that default pool at startup,
+preserving the model and effort, and holds its concrete provider for the whole call. The regular
+provider registry and a call-local lifetime still enforce pool or account disablement and daemon
+shutdown. A missing credential or later failure never rotates accounts, and the explicitly selected
+voice credential stays separate.
+
+## Setup errors identify which selection failed
+
+One generic controller-and-credential error hid an invalid voice credential after the controller
+was fixed. Live now reports controller setup separately from credential setup and explicitly
+explains a proven account-pool credential selection. Only that fixed configuration-owned error is
+forwarded; arbitrary provider diagnostics stay private. A pool can select the frozen controller,
+but voice still requires an explicitly selected individual OpenAI credential.
+
+## Questions about visible state also need delegation
+
+The voice prompt previously delegated navigation and actions but omitted questions about the current
+desktop. In a real audio call, asking what it saw produced an unsupported claim about missing
+conversation context even though a named project and workspace were visible. Voice has no direct
+desktop projection. It now asks the bounded controller for current visible or selected entities,
+status, and public conversation text before describing them or claiming they are absent. The
+controller reads the accepted desktop context and can use desktopState when more context is needed,
+without screenshots or private data.
+
 ## Staging is not sending
 
 Generated voice text is not human authorization. `sessionSend` stages exact visible text and ends

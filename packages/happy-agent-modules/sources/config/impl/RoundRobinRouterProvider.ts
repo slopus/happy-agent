@@ -60,6 +60,17 @@ export class RoundRobinRouterProvider extends BaseProvider {
         this.#resolve = options.resolve;
     }
 
+    /** Choose one enabled account for a caller that must freeze its route without failover. */
+    selectAccount(): string | undefined {
+        const count = this.#candidates.length;
+        const start = randomIndex(count, this.#random());
+        for (let offset = 0; offset < count; offset += 1) {
+            const candidate = this.#candidates[(start + offset) % count]!;
+            if (this.#isEnabled(candidate.providerId)) return candidate.providerId;
+        }
+        return undefined;
+    }
+
     async session(id: string, options: SessionOptions): Promise<BaseSession> {
         let state = this.#agents.get(id);
         if (state === undefined) {

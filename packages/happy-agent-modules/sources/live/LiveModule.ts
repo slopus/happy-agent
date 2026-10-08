@@ -24,7 +24,7 @@ import {
 import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import { afterCommit, detach, shutdown, type Context } from "@steve.kite/stdlib";
-import { ConfigModule } from "../config/index.js";
+import { ConfigModule, VoiceCredentialPoolError } from "../config/index.js";
 import { DurableFunctionsModule } from "../durableFunctions/index.js";
 import { liveVersion } from "./impl/liveVersion.js";
 import { LiveError } from "./LiveError.js";
@@ -177,12 +177,22 @@ export class LiveModule implements AgentModule {
         let credential: Call["credential"];
         try {
             route = await this.#config.liveControllerRoute();
-            credential = await this.#config.liveCredential(request.credential);
         } catch {
             throw new LiveError(
                 503,
                 "live_unavailable",
-                "Voice needs the selected enabled OpenAI credential and a concrete enabled default controller model. Check account and model setup.",
+                "Voice cannot use the default controller model. Check the enabled default model and its accounts.",
+            );
+        }
+        try {
+            credential = await this.#config.liveCredential(request.credential);
+        } catch (error) {
+            throw new LiveError(
+                503,
+                "live_unavailable",
+                error instanceof VoiceCredentialPoolError
+                    ? error.message
+                    : "Voice cannot use the selected OpenAI credential. Check that the selected account is enabled, signed in, and holds the selected credential type.",
             );
         }
         return await ctx.inTx(async (tx) => {
@@ -501,7 +511,7 @@ export class LiveModule implements AgentModule {
                 provider: call.route.provider,
                 model: call.route.model.id,
                 effort: call.route.model.defaultEffort,
-                signal: call.controllerAbort.signal,
+                signal: AbortSignal.any([call.controllerAbort.signal, call.route.signal]),
                 context: structuredClone(call.context),
                 fragments,
                 sessionUpdates: [...call.updates.values()],

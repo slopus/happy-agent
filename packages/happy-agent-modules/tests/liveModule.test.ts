@@ -3,8 +3,9 @@ import type {
     CreateLiveSessionRequest,
     LiveControlServerMessage,
 } from "@slopus/happy-agent-client";
+import type { SessionEvent } from "@slopus/happy-providers";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ConfigModule } from "../sources/config/index.js";
+import { ConfigModule, VoiceCredentialPoolError } from "../sources/config/index.js";
 import { DurableFunctionsModule } from "../sources/durableFunctions/index.js";
 import { LiveModule } from "../sources/live/index.js";
 import type { LiveProviderOptions } from "../sources/live/impl/liveProviderTransport.js";
@@ -44,10 +45,11 @@ const request = (id = "liveone", windowId = "window-one"): CreateLiveSessionRequ
 
 async function fixture(startDurable = true) {
     const inferenceRequests: unknown[] = [];
+    const controllerLifetime = new AbortController();
     const provider = {
         session: vi.fn(async () => ({
             destroy: vi.fn(async () => undefined),
-            run: async function* (_ctx: unknown, request: unknown) {
+            run: async function* (_ctx: unknown, request: unknown): AsyncGenerator<SessionEvent> {
                 inferenceRequests.push(request);
                 yield { type: "text_delta", delta: "Ready." };
                 yield { type: "done", state: "normal", tokens: { input: 1, output: 1 } };
@@ -58,6 +60,7 @@ async function fixture(startDurable = true) {
         liveControllerRoute: vi.fn(async () => ({
             provider,
             model: { id: "fixture", defaultEffort: "low" },
+            signal: controllerLifetime.signal,
         })),
         liveCredential: vi.fn(async () => ({ type: "openai_api_key", token: "fake" })),
     } as unknown as ConfigModule;
@@ -112,10 +115,86 @@ async function fixture(startDurable = true) {
         append,
         provider,
         inferenceRequests,
+        controllerLifetime,
     };
 }
 
 describe("window-owned Live sessions", () => {
+    it("explains a proven voice credential pool selection before allocating a call", async () => {
+        const f = await fixture();
+        vi.mocked(f.config.liveCredential).mockRejectedValueOnce(new VoiceCredentialPoolError());
+        await expect(f.live.reserve(f.db.context, "owner", request())).rejects.toMatchObject({
+            status: 503,
+            code: "live_unavailable",
+            message:
+                "Select an individual OpenAI account for voice; account pools cannot supply voice credentials.",
+        });
+        expect(f.events).toEqual([]);
+        expect(transport.create).not.toHaveBeenCalled();
+    });
+
+    it.each(["controller", "credential"])(
+        "identifies the failing %s setup without exposing caught diagnostics or allocating a call",
+        async (stage) => {
+            const f = await fixture();
+            const error = new Error("Sensitive provider diagnostic that must stay private.");
+            if (stage === "controller")
+                vi.mocked(f.config.liveControllerRoute).mockRejectedValueOnce(error);
+            else vi.mocked(f.config.liveCredential).mockRejectedValueOnce(error);
+            await expect(f.live.reserve(f.db.context, "owner", request())).rejects.toMatchObject({
+                status: 503,
+                code: "live_unavailable",
+                message:
+                    stage === "controller"
+                        ? "Voice cannot use the default controller model. Check the enabled default model and its accounts."
+                        : "Voice cannot use the selected OpenAI credential. Check that the selected account is enabled, signed in, and holds the selected credential type.",
+            });
+            expect(f.events).toEqual([]);
+            expect(transport.create).not.toHaveBeenCalled();
+        },
+    );
+
+    it("cancels controller work when its configured route is disabled without retrying", async () => {
+        const f = await fixture();
+        let started!: () => void;
+        const running = new Promise<void>((resolve) => {
+            started = resolve;
+        });
+        let release!: () => void;
+        f.provider.session.mockImplementationOnce(async () => ({
+            destroy: vi.fn(async () => undefined),
+            run: async function* (ctx: unknown): AsyncGenerator<SessionEvent> {
+                const signal = (ctx as { lifetime: AbortSignal }).lifetime;
+                await new Promise<void>((resolve) => {
+                    release = resolve;
+                    signal.addEventListener("abort", () => resolve(), { once: true });
+                    started();
+                });
+                yield { type: "done", state: "cancelled" };
+            },
+        }));
+        await f.start();
+        await f.attach();
+        f.calls[0]!.onEvent({ type: "ready" });
+        await expect
+            .poll(async () => (await f.live.get(f.db.context, "owner", "liveone")).status)
+            .toBe("active");
+        f.calls[0]!.onEvent({ type: "delegation", delegationId: "disabled-route" });
+        await running;
+        try {
+            f.controllerLifetime.abort();
+            await expect
+                .poll(async () => (await f.live.get(f.db.context, "owner", "liveone")).status)
+                .toBe("failed");
+            expect(f.provider.session).toHaveBeenCalledTimes(1);
+        } finally {
+            release();
+            await expect
+                .poll(async () => (await f.live.get(f.db.context, "owner", "liveone")).status)
+                .toBe("failed");
+        }
+    });
+
     it("ends a claimed call immediately when its controller upgrade fails", async () => {
         const f = await fixture();
         await f.start();
@@ -139,7 +218,7 @@ describe("window-owned Live sessions", () => {
         });
         f.provider.session.mockImplementationOnce(async () => ({
             destroy: vi.fn(async () => undefined),
-            run: async function* () {
+            run: async function* (): AsyncGenerator<SessionEvent> {
                 await pending;
                 yield { type: "text_delta", delta: "Done." };
                 yield { type: "done", state: "normal", tokens: { input: 1, output: 1 } };

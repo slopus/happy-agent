@@ -249,6 +249,19 @@ Scripted inference must replace concrete accounts, not smart routing itself. Fac
 enabled hidden accounts as well as their visible smart routes; configuration rebuilds the real
 router over the substituted concrete registry so gym tests exercise selection and cancellation.
 
+## Voice freezes the configured default pool onto one account
+
+Voice previously rejected smart default providers, so enabling a pool could make an otherwise
+configured installation unable to start voice. Configuration now asks the router to choose one
+enabled compatible account at call startup, resolves it through the regular provider registry,
+and preserves the default model and effort. Live holds that concrete route and its pool/account
+lifetimes, so pool or account disablement and daemon shutdown still cancel it while credential
+failures never trigger account failover.
+The voice transport's explicit credential selection remains independent of the text controller.
+Selecting a pool as that credential is invalid, even when it has Codex compatibility. Configuration
+throws a dedicated fixed-message error for that proven selection, allowing Live to explain it
+without forwarding arbitrary credential-loading diagnostics or trying a different account.
+
 ## Extra skill folders are a plain list in `[skills]`
 
 The user asked for extra skill folders and found nothing: discovery hardcoded `~/.agents/skills`

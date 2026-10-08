@@ -55,6 +55,7 @@ import { discoverGithubCliToken, githubTokenSchema } from "./impl/discoverGithub
 import { ProviderEnablement, providerRegistryUntil } from "./impl/providerRegistryUntil.js";
 import { ProviderServiceTiers } from "./impl/ProviderServiceTiers.js";
 import { RoundRobinRouterProvider } from "./impl/RoundRobinRouterProvider.js";
+import { VoiceCredentialPoolError } from "./VoiceCredentialPoolError.js";
 import { modelServiceTierOptions } from "./impl/modelServiceTierOptions.js";
 import { readGlobalInstructions } from "./impl/readGlobalInstructions.js";
 import { HAPPY_TOML_TEMPLATE, MCP_TOML_TEMPLATE } from "./impl/userConfigurationTemplate.js";
@@ -1732,17 +1733,39 @@ export class ConfigModule implements AgentModule {
     }
 
     /** Live alone requires a frozen route: smart routing must not rotate its controller account. */
-    async liveControllerRoute(): Promise<{ provider: BaseProvider; model: AgentModel }> {
-        const model = this.models[0];
-        if (model === undefined)
+    async liveControllerRoute(): Promise<{
+        provider: BaseProvider;
+        model: AgentModel;
+        signal: AbortSignal;
+    }> {
+        const selected = this.models[0];
+        if (selected === undefined)
             throw new Error("Configure an enabled default model before starting voice.");
-        const provider = await this.providers.resolve(model.providerId, model.id);
-        if (provider === null || provider instanceof RoundRobinRouterProvider) {
-            throw new Error(
-                "Voice needs a concrete enabled default model account; smart routing is not supported for its controller.",
-            );
+        let model = { ...selected };
+        let provider = await this.providers.resolve(model.providerId, model.id);
+        if (provider instanceof RoundRobinRouterProvider) {
+            const account = provider.selectAccount();
+            if (account === undefined)
+                throw new Error(
+                    "The default model's account pool has no enabled account for voice.",
+                );
+            model = { ...model, providerId: account };
+            // Resolve through the ordinary registry so shutdown and account disablement still apply.
+            provider = await this.providers.resolve(account, model.id);
         }
-        return { provider, model: { ...model } };
+        if (provider === null)
+            throw new Error("The default model account is unavailable for voice.");
+        // The registry initialized enablement above. Freeze both the logical and concrete lifetimes
+        // for this call without changing the concrete provider shared by unrelated sessions.
+        const enablement = this.#providerEnablement!;
+        const signal = AbortSignal.any([
+            this.#providerLifetime.signal,
+            enablement.signal(selected.providerId),
+            enablement.signal(model.providerId),
+        ]);
+        if (signal.aborted)
+            throw new Error("The default model account was disabled before voice could start.");
+        return { provider, model, signal };
     }
 
     /** Reload only the selected account from its provider-owned store, without network refresh or fallback. */
@@ -1752,6 +1775,7 @@ export class ConfigModule implements AgentModule {
         accountId?: string;
     }> {
         const provider = await this.providers.resolve(selection.providerId, undefined);
+        if (provider instanceof RoundRobinRouterProvider) throw new VoiceCredentialPoolError();
         if (!(provider instanceof CodexProvider) || provider.bedrockTransport !== undefined) {
             throw new Error("Select an enabled OpenAI account for voice.");
         }

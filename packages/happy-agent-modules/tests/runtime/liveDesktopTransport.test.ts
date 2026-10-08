@@ -29,12 +29,13 @@ afterEach(async () => {
 });
 
 it.each([
-    [false, false],
-    [true, false],
-    [true, true],
+    [false, false, false],
+    [true, false, false],
+    [true, true, false],
+    [false, false, true],
 ])(
-    "runs authenticated Live HTTP, real provider/control WebSockets, sequential actions and staged results through the complete runtime (native: %s, lost controller: %s)",
-    async (native, lostController) => {
+    "runs authenticated Live HTTP, real provider/control WebSockets, sequential actions and staged results through the complete runtime (native: %s, lost controller: %s, smart default: %s)",
+    async (native, lostController, smartDefault) => {
         const snapshots: SessionRunRequest[] = [];
         const actualRun = ScriptedSession.prototype.run;
         vi.spyOn(ScriptedSession.prototype, "run").mockImplementation(
@@ -54,7 +55,11 @@ it.each([
         await mkdir(dirname(bootstrap.configuration.paths.globalConfigPath), { recursive: true });
         await writeFile(
             bootstrap.configuration.paths.globalConfigPath,
-            '[providers.controller]\ntype="codex"\nenabled=true\n[providers.voice]\ntype="codex"\nenabled=true\n',
+            '[providers.controller]\ntype="codex"\nenabled=true\n' +
+                (smartDefault
+                    ? 'hidden=true\n[providers.controller_pool]\ntype="smart"\nproviders=["controller"]\nenabled=true\n'
+                    : "") +
+                '[providers.voice]\ntype="codex"\nenabled=true\n',
         );
         bootstrap.closeProviders();
         const target = { connectionId: "connection", groupId: "group", sessionId: "conversation" };
@@ -180,18 +185,18 @@ it.each([
         );
         const runtime = await startHappyAgentRuntime({
             happyHome,
-            inference: {
+            inference: () => ({
                 providers,
                 models: [
                     {
-                        id: "fixture/controller",
+                        id: smartDefault ? "openai/gpt-6-astra" : "fixture/controller",
                         name: "Controller fixture",
-                        providerId: "controller",
+                        providerId: smartDefault ? "controller_pool" : "controller",
                         defaultEffort: "low",
                         effortLevels: ["low"],
                     },
                 ],
-            },
+            }),
         });
         cleanups.push(() => runtime.close());
         const http = createServer((request, response) => {
@@ -462,7 +467,9 @@ it.each([
             session.id.startsWith("live-controller:"),
         );
         expect(captured?.options.tools).toHaveLength(9);
-        expect(captured?.requests[0]?.model).toBe("fixture/controller");
+        expect(captured?.requests[0]?.model).toBe(
+            smartDefault ? "openai/gpt-6-astra" : "fixture/controller",
+        );
         expect(snapshots).toHaveLength(4);
         expect(JSON.stringify(snapshots[0])).not.toContain('"tool_call"');
         if (!native && process.env.HAPPY_LIVE_CAPTURE_FILE !== undefined) {

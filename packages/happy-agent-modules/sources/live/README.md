@@ -4,11 +4,14 @@
 owns WebRTC media; this module owns one credential-selected provider call, its sideband, durable
 status, a typed desktop control socket, and bounded side inference. It never creates a coding agent.
 
-The text controller takes the first enabled configured-default model route and effort once. Smart
-account rotation is refused. Voice separately uses the explicitly selected official OpenAI API key
+The text controller takes the first enabled configured-default model route and effort once. A smart
+default chooses one enabled compatible account at startup and keeps it for the entire call, without
+account rotation or failover. Voice separately uses the explicitly selected official OpenAI API key
 or Codex subscription credential. There is no credential, account, model, or old-Realtime fallback.
 Native credentials are reloaded once from the selected provider-owned sign-in store before the
 single allocation; a rejected sign-in never triggers another allocation or an OAuth refresh here.
+Controller and credential setup failures have separate sanitized explanations. Selecting an
+account pool as the voice credential reports that an individual OpenAI account is required.
 
 The fixed controller tool array and literal model prompts live in `impl/runLiveController.ts` and
 `impl/livePrompts.ts`. Desktop context, provider fragments, selected public session snapshots and

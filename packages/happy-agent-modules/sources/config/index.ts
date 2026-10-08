@@ -23,3 +23,4 @@ export {
     type RemoteConnectionConfig,
     type RemoteConnectionEntry,
 } from "./RemoteConnectionConfig.js";
+export { VoiceCredentialPoolError } from "./VoiceCredentialPoolError.js";
