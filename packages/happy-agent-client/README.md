@@ -35,6 +35,26 @@ to move one after another, or pass `afterId: null` to move it first. The respons
 `connections.updated` event carry the complete ordered roster; neighbours retain their keys.
 Older daemons may omit keys and return `404` for reordering; leave the feature unavailable there.
 
+Runners are read with `listRunners()`. The typed `runners.updated` event carries the complete
+`{ runners, version }` list, in ascending ID order, after any runner changes, connection status
+included. Keep the greater UUIDv7 version across list responses and events, ignoring duplicate or
+older lists. Capture a cursor before the initial read and follow updates after it to avoid missing
+a concurrent change; refetch on state loss or daemon replacement. Each runner reports its
+`status`, whether it is the `default`, the `machine` it last reported (or `null` before it has ever
+connected), its runner `protocol`, `since`, and the last disconnection `reason`. Tokens and
+transport addresses never appear. Runners require protocol 26: older daemons answer `404`, so
+treat runners as unavailable there.
+
+A folder on a runner has a `{ type: "runner", runnerId, path }` compute, with `path` in the
+runner's filesystem and `null` for the home project before its runner first connects. Docker
+workspace computes may carry the mounted `path` and the holding `runnerId`. `registerProject()` and
+`cloneProject()` accept an optional `runnerId`; a runner project's `defaultWorkspaceCompute` is
+`{ type: "runner", runnerId }` or `{ type: "docker", image, runnerId }`. Work on a folder whose
+runner is not connected fails with `503 runner_unavailable`; registering or using a folder on the
+daemon's own machine while runners are configured fails with `409 local_execution_disabled`. A
+compute `type` this client does not recognize means the folder is on another machine with no
+local-path actions.
+
 Installation display information is `config.node`, read through `getConfig()` and already included
 in desktop bootstrap's config. Its `avatar` is either `{ thumbhash }` or `null` when no image is set.
 Use `patchConfig({ node: { name } })` to rename the installation independently of `p2p.name`;

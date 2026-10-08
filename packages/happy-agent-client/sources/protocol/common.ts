@@ -79,21 +79,50 @@ export const hostComputeSchema = Type.Object({
 });
 export type HostCompute = Static<typeof hostComputeSchema>;
 
+/** A configured runner's ID; the same rule as remote connection IDs. */
+export const runnerIdSchema = Type.String({
+    pattern: "^[a-z][a-z0-9_-]{0,63}$",
+});
+export type RunnerId = Static<typeof runnerIdSchema>;
+
 /** A container the daemon runs work in. */
 export const dockerComputeSchema = Type.Object({
     image: Type.String(),
+    /** The workspace folder, mounted at the same place in the container. Absent on older daemons. */
+    path: Type.Optional(Type.String()),
+    /** The runner holding the folder; absent when it is on the daemon's machine. */
+    runnerId: Type.Optional(runnerIdSchema),
     type: Type.Literal("docker"),
 });
 export type DockerCompute = Static<typeof dockerComputeSchema>;
 
+/** A folder on a runner, with `path` in the runner's own filesystem. */
+export const runnerComputeSchema = Type.Object({
+    /** `null` for the home project until its runner has first connected. */
+    path: Nullable(Type.String()),
+    runnerId: runnerIdSchema,
+    type: Type.Literal("runner"),
+});
+export type RunnerCompute = Static<typeof runnerComputeSchema>;
+
 /** Where files live and where work on them executes. */
-export const computeSchema = Type.Union([hostComputeSchema, dockerComputeSchema]);
+export const computeSchema = Type.Union([
+    hostComputeSchema,
+    dockerComputeSchema,
+    runnerComputeSchema,
+]);
 export type Compute = Static<typeof computeSchema>;
 
 /** A compute chosen before anything runs, so it carries no addressing yet. */
 export const computeSelectionSchema = Type.Union([
     Type.Object({ type: Type.Literal("host") }),
-    Type.Object({ image: Type.String(), type: Type.Literal("docker") }),
+    Type.Object({
+        image: Type.String(),
+        /** Equal to the project's runner when present. */
+        runnerId: Type.Optional(runnerIdSchema),
+        type: Type.Literal("docker"),
+    }),
+    Type.Object({ runnerId: runnerIdSchema, type: Type.Literal("runner") }),
 ]);
 export type ComputeSelection = Static<typeof computeSelectionSchema>;
 

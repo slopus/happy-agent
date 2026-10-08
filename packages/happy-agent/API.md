@@ -199,6 +199,9 @@ carries an `authentication` object whose `methods` are the same as those returne
 }
 ```
 
+A runner token from `[runners.<id>] token` authenticates only `GET /v0/runners/connect`, in both
+standalone and team mode, and no other credential is accepted on that route. See Runners.
+
 `GET /v0/authentication` is the only unauthenticated endpoint. Every other endpoint, health
 included, requires a valid bearer token.
 
@@ -206,7 +209,7 @@ included, requires a valid bearer token.
 
 All routes are prefixed with `/v0`. Independently of the path version, every daemon advertises
 its identity through the health endpoint as a single `version` object: a numeric `protocol`
-(integer, currently 25) and the `daemon` product version string. Protocol versions from 22 onward
+(integer, currently 26) and the `daemon` product version string. Protocol versions from 22 onward
 are backward-compatible and additive. Clients support that compatibility range for existing
 capabilities instead of requiring equality with their own protocol number. A client may require
 a newer protocol for a capability it needs and must explain that an upgrade is required when the
@@ -221,6 +224,15 @@ changing the daemon's support for older clients' existing requests.
 
 Protocol 25 adds optional `workspaceId` and `agentId` to bot creation. Clients relying on these
 identities require protocol 25 or newer; older daemons may ignore or reject them.
+
+Protocol 26 adds runners: the `"runner"` compute on projects, workspaces, and bots, the optional
+`runnerId` on project registration and cloning, `GET /v0/runners`, and `runners.updated`. It also
+runs Docker workspaces in their containers, adding the optional `path` and `runnerId` to the
+`"docker"` compute. Clients
+that show runners or create projects on them require protocol 26 or newer. An older compatible
+daemon answers `GET /v0/runners` with `404` and never returns a runner compute. A client that meets
+a compute `type` it does not recognize treats the folder as being on another machine and offers no
+local-path actions for it.
 
 The global skills catalog, parsed skill documents, enablement, file reads, and live
 `skills.updated` invalidations are additive and do not increment the protocol version. Clients
@@ -313,7 +325,9 @@ Failed requests return an appropriate 4xx/5xx status with a JSON body:
   events `409`), `hash_mismatch` (the file-write `409`), `not_initialized` (a workspace still
   building), `forbidden` (403), `cloud_not_authenticated` (409), `cloud_unauthorized` (409),
   `cloud_unavailable` (503), `draining` (503, the daemon no longer
-  admits mutations),
+  admits mutations), `runner_unavailable` (503, the folder's runner is not connected or no longer
+  configured), `local_execution_disabled` (409, runners are configured, so nothing runs on the
+  daemon's own machine),
   `too_large` (413), `unsupported` (501), `internal` (500).
 
 An error body may carry additional fields alongside `error` and `code` when the endpoint
@@ -647,6 +661,131 @@ fetch transport. All existing methods and attachment URLs then address the remot
 no local replica state in common with its parent; consumers create a separate reducer when needed.
 Child creation performs no network request and validates the connection ID. Protocol compatibility
 is checked against the remote's health response, independently of the main daemon.
+
+### Runners
+
+A runner is a separate machine that does this installation's work. It holds project folders and
+runs everything that touches them — agent file tools and commands, Git, workspace checkouts,
+terminals, services, and the workspace proxy — while the daemon keeps the database, provider
+credentials, and inference. A runner holds no provider credentials, no Happy data, and no API
+token; it reaches the daemon only through `GET /v0/runners/connect`. Runners are optional. Once any
+runner is configured, the daemon runs nothing on its own machine.
+
+Runners are machine configuration, like remote connections. Whoever deploys a node generates each
+runner's token and writes it both to the node's machine `happy.toml` and to the runner machine, so
+a runner can be provisioned before the node first starts and without an API call. There is no
+invitation or join step. Project configuration cannot declare runners or tokens.
+
+```toml
+[runners]
+default = "build-box"
+
+[runners.build-box]
+name = "Build box"
+token = "REPLACE_WITH_FRESH_43_CHARACTER_BASE64URL_TOKEN"
+```
+
+- `[runners.<id>]` — one entry per runner. IDs match `[a-z][a-z0-9_-]{0,63}`; `name` has 1–128
+  printable characters; `token` uses the standalone token format and must differ from
+  `[api] token`, every connection token, and every other runner's token. At most 32 runners.
+- `default` — the runner used for a project registration or clone that names none, for the home
+  project, and for bot folders. Optional when exactly one runner is configured, which is then the
+  default; required when there are several. It must name a configured runner.
+
+An invalid entry fails configuration loading with a human-readable message. Tokens never appear
+in the API, events, errors, or logs. Removing an entry and restarting the daemon revokes that
+runner: the daemon refuses its token and tells the runner to stop everything it held. Replacing a
+token likewise disconnects the runner until it is given the new one.
+
+The runner software is given the daemon's endpoint and its own token. It dials the daemon, so it
+needs no inbound port and works behind NAT; a standalone daemon is reached through its Tailcat
+exposure, a team daemon through its listener. It keeps one connection open and reconnects when it
+drops. Nothing a daemon starts on a runner outlives the daemon process: when the daemon restarts,
+removes the runner, or stays away longer than the runner's lease, the runner stops everything it
+held for it.
+
+While runners are configured:
+
+- Projects, workspaces, bot folders, and the home project live on runners. The home project is the
+  default runner's home directory.
+- Registering or cloning a project without a runner, or using a folder that lives on this machine,
+  fails with `409 local_execution_disabled`. Projects registered on this machine before runners
+  were configured remain listed so they can be archived; their work fails the same way.
+- Work on a folder whose runner is not connected, or is no longer configured, fails with
+  `503 runner_unavailable`, naming the runner. Nothing falls back to this machine.
+- Repository tokens never reach a runner. Git on a runner reaches the remote through a loopback
+  address on the runner that leads back over the runner connection to the daemon, which adds the
+  token itself, exactly as it does for Git on this machine. Attached secrets stay on the daemon:
+  an agent command on a runner that selects attached secrets is refused, with a message saying
+  secrets are not available on runners yet.
+- A runner project can run its workspaces in containers on the runner: with
+  `defaultWorkspaceCompute` `{ "type": "docker", "image": "..." }`, every new workspace's agent
+  file tools and commands run in a container of that image on the runner, with the workspace
+  folder mounted at the same path. Git, terminals, and the workspace proxy work on the runner's
+  copy of the same folder. The runner needs Docker; without it the agent's first tool call fails
+  with a message naming the runner.
+
+#### The runner object
+
+```json
+{
+    "id": "build-box",
+    "name": "Build box",
+    "default": true,
+    "status": "connected",
+    "machine": {
+        "version": "0.4.70",
+        "platform": "linux",
+        "arch": "x64",
+        "hostname": "build-1",
+        "home": "/home/happy-runner"
+    },
+    "protocol": 1,
+    "since": 1755300000000,
+    "reason": null
+}
+```
+
+- `default` — whether this is the configured default runner.
+- `status` — `"connected"` or `"disconnected"`.
+- `machine` — what the runner reported when it last connected, kept across daemon restarts, or
+  `null` before it has ever connected. For display and diagnostics, except `home`, which places
+  the home project and bot folders.
+- `protocol` — the runner protocol version in use, or `null` while disconnected.
+- `since` — Unix milliseconds of the last status change.
+- `reason` — a human-readable reason for the last disconnection, or `null`.
+
+#### `GET /v0/runners`
+
+Returns the configured runners in ascending ID order. Requires normal API authentication and, in
+team mode, local profile onboarding. Response — `200`:
+
+```json
+{
+    "version": "01991f3a-6d2f-7000-8000-3a0b2c4d5e6f",
+    "runners": [
+        /* runner objects */
+    ]
+}
+```
+
+`version` is a UUIDv7 that advances whenever any runner object changes, including connection
+status. `runners.updated` carries the same complete list after every change. To close the
+snapshot/stream race, clients obtain an event cursor first, then fetch the list, then follow events
+after that cursor, replacing their list only with a greater version. On a cursor gap or daemon
+replacement they refetch. Tokens and transport addresses never appear. Older compatible daemons
+answer `404`; clients treat runners as unavailable.
+
+`HappyAgentClient.listRunners()` reads the list.
+
+#### `GET /v0/runners/connect`
+
+A WebSocket upgrade used only by the runner software. `Authorization: Bearer <runner token>`
+identifies the runner; no other credential is accepted on this route, and a runner token is
+accepted on no other route. An unknown token is refused with `401` before the upgrade. Binary
+frames carry the runner protocol specified in `@slopus/happy-agent-compute`
+(`sources/runner/README.md`), which is versioned independently of this API; a text frame closes
+the connection. A newer connection with the same token replaces the older one.
 
 ### `GET /`
 
@@ -2443,10 +2582,12 @@ Fields:
 - `name`, `nameSource` — display name and where it came from: `"folder"` (derived from the
   path) or `"user"` (explicitly renamed). A user-chosen name is never overwritten by derivation.
 - `compute` — where the project's files live and where work on them executes. A `"host"`
-  compute is a folder on this machine and carries its `path`. Non-local computes (such as a
-  Docker container) carry their own addressing instead of a host path; Git state is deliberately
-  not part of compute — it describes the repository, not where it runs — so `git` stays a
-  separate field.
+  compute is a folder on this machine and carries its `path`. A `"runner"` compute,
+  `{ "type": "runner", "runnerId": "build-box", "path": "/srv/projects/rig" }`, is a folder on that
+  runner, with `path` in the runner's own filesystem; the home project's `path` is `null` until its
+  runner has first connected. Non-local computes (such as a Docker container) carry their own
+  addressing instead of a host path; Git state is deliberately not part of compute — it describes
+  the repository, not where it runs — so `git` stays a separate field.
 - `status` — `"active"` or `"archived"`.
 - `initialization` — the setup state: `status` is `"initializing"`, `"ready"`, or `"failed"`;
   `attempt` counts setup runs; `error` is a human-readable message when setup failed.
@@ -2470,10 +2611,13 @@ Fields:
   source of truth, and the daemon re-reads it when it changes, publishing the new list through
   `project.updated`. Empty until the file has been read once or when it names no command.
 - `settings` — per-project settings. `defaultWorkspaceCompute` chooses where new workspaces
-  run (`{ "type": "host" }` or `{ "type": "docker", "image": "..." }`). `workspaceInitialPrompt`
-  is the text a client sends as the first user message to the first agent in every new workspace
-  of the project, or `null` when the project says nothing; the daemon stores it and does not send
-  it itself.
+  run (`{ "type": "host" }` or `{ "type": "docker", "image": "..." }`). A project on a runner
+  reports `{ "type": "runner", "runnerId": "..." }` or `{ "type": "docker", "image": "...",
+"runnerId": "..." }` here, and its workspaces are created on the same runner. Its settings accept
+  either of those shapes, with `runnerId` optional on `"docker"` and equal to the project's runner
+  when present; any other `defaultWorkspaceCompute` is `400 invalid_request`. `workspaceInitialPrompt` is the text a client sends as the first user
+  message to the first agent in every new workspace of the project, or `null` when the project
+  says nothing; the daemon stores it and does not send it itself.
 - `agents` — active user-visible root agents owned by the project, in `orderKey` order. Because
   the project is also its root workspace, `GET /v0/workspaces/:projectId` exposes this same
   series. Archived agents and ordinary hidden subagents are excluded. A user-visible root managed
@@ -2501,6 +2645,9 @@ Request:
 ```
 
 - `path` — the folder to register. Must exist and be a directory.
+- `runnerId` — optional; the runner whose filesystem `path` belongs to, which then validates it.
+  Without it, the default runner is used while runners are configured, and this machine otherwise.
+  An unknown runner is `400 invalid_request`.
 - `projectId` — optional client-supplied ID, for callers that need to know the ID before the
   daemon answers. Omitted, the daemon mints one.
 
@@ -2530,6 +2677,7 @@ Request:
 "https://..." }`. Only plain HTTPS remotes without embedded credentials are accepted.
 - `secret` — optional; names the stored credential kind to clone with (currently
   `{ "kind": "github" }`).
+- `runnerId` — optional; the runner to clone onto, chosen as in registration.
 - `projectId` — optional client-supplied ID, as in registration.
 
 Response — `202`: `{ "project": { ... } }`. The clone runs in the background: the project row
@@ -2703,7 +2851,11 @@ Fields:
   a Git worktree, `"copy"` for a plain folder copy (used when the project cannot support
   worktrees), `"bot"` for a bot's plain created folder.
 - `compute` — where the workspace's files live and where work executes, same shape as on the
-  project.
+  project. A workspace of a runner project is always on that project's runner. A workspace created
+  while its project's `defaultWorkspaceCompute` was `"docker"` reports
+  `{ "type": "docker", "image": "...", "path": "...", "runnerId": "..." }`: agent work runs in a
+  container of that image with `path` mounted at the same place, and `runnerId` names the runner
+  holding the folder, or is absent when it is on this machine. Older daemons omit `path`.
 - `status` — `"active"`, `"archiving"`, or `"archived"`. `"archiving"` is the window where the
   decision is durable but folder removal is still running.
 - `initialization` — the checkout state, same shape as on the project: a workspace answers
@@ -4929,9 +5081,11 @@ Fields:
   additive and may be absent when talking to an older protocol-22-compatible daemon.
 - `workspaceId` — the bot's dedicated workspace, its own distinct ID. The workspace object is
   fetched from `GET /v0/workspaces/:workspaceId` like any other; it is simply not listed.
-- `compute` — where the bot's folder lives, same shape as on projects and workspaces. Currently
-  always a `"host"` compute carrying the resolved `path`. It mirrors the workspace's compute so
-  a bot list renders without fetching workspaces.
+- `compute` — where the bot's folder lives, same shape as on projects and workspaces. A `"host"`
+  compute carrying the resolved `path`, or, while runners are configured, a `"runner"` compute on
+  the default runner. Creating a bot while the default runner has never connected is
+  `503 runner_unavailable`. It mirrors the workspace's compute so a bot list renders without
+  fetching workspaces.
 - `status` — `"active"` or `"archived"`.
 - `avatar` — the bot's picture, or `null`; the same shape and byte-fetching model as a project
   avatar, served from `GET /v0/bots/:botId/avatar`.
@@ -5769,6 +5923,10 @@ version rules. Snapshot-to-stream cursor and version-gap recovery rules remain u
   policy. This includes changes to `config.node.name` or the node avatar through config mutations
   or admin tools. It is a nudge to refetch the config endpoints whenever convenient; clients
   displaying the node avatar also conditionally refetch its image bytes.
+- `runners.updated` — payload `{ "runners": [...], "version": "<UUIDv7>" }`, a complete
+  replacement of the runner list in the same shape as `GET /v0/runners`, published after any
+  runner object changes, including connection status. Clients keep the greater version across
+  reads and events. Tokens and transport addresses are absent.
 - `connections.updated` — payload `{ "connections": [...], "version": "<UUIDv7>" }`, a
   complete replacement of the public remote roster, in the same shape as `GET /v0/connections`
   with `version` always present. An empty array clears the roster. A changed public roster is

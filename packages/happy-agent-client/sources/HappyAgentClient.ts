@@ -6,6 +6,7 @@ import {
     type ReorderConnectionRequest,
     type ReorderConnectionResponse,
 } from "./protocol/connections.js";
+import type { RunnerListResponse } from "./protocol/runners.js";
 import type {
     BinaryContent,
     ConditionalRequestOptions,
@@ -263,6 +264,11 @@ export class HappyAgentClient {
     /** `GET /v0/connections` — the main daemon's configured remote roster. */
     async listConnections(options: RequestOptions = {}): Promise<ConnectionListResponse> {
         return await this.#json({ method: "GET", path: "v0/connections", signal: options.signal });
+    }
+
+    /** `GET /v0/runners` — the configured runners; older daemons answer `404`. */
+    async listRunners(options: RequestOptions = {}): Promise<RunnerListResponse> {
+        return await this.#json({ method: "GET", path: "v0/runners", signal: options.signal });
     }
 
     /** `POST /v0/connections/:id/reorder` — guarded by the complete roster's version. */

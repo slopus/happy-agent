@@ -11,6 +11,7 @@ import {
     mutationIdSchema,
     Nullable,
     resourceVersionSchema,
+    runnerIdSchema,
     timestampSchema,
 } from "./common.js";
 import { agentSchema } from "./agents.js";
@@ -40,7 +41,10 @@ export type ProjectAvatar = Static<typeof projectAvatarSchema>;
 
 /** Per-project preferences that new work inherits. */
 export const projectSettingsSchema = Type.Object({
-    /** Where new workspaces of this project run. */
+    /**
+     * Where new workspaces of this project run. A runner project reports a `"runner"` or a
+     * `"docker"` selection naming its runner, and its workspaces stay on that runner.
+     */
     defaultWorkspaceCompute: computeSelectionSchema,
     /**
      * What a client sends as the first user message to the first agent in every new workspace
@@ -111,6 +115,11 @@ export const registerProjectRequestSchema = Type.Object({
     path: Type.String(),
     /** Optional client-supplied ID, for callers that need it before the answer. */
     projectId: Type.Optional(cuid2Schema),
+    /**
+     * The runner whose filesystem `path` belongs to. Omitted, the default runner is used while
+     * runners are configured, and the daemon's machine otherwise. Requires protocol 26.
+     */
+    runnerId: Type.Optional(runnerIdSchema),
     mutationId: Type.Optional(mutationIdSchema),
 });
 export type RegisterProjectRequest = Static<typeof registerProjectRequestSchema>;
@@ -121,6 +130,8 @@ export const cloneProjectRequestSchema = Type.Object({
     name: Type.String(),
     projectId: Type.Optional(cuid2Schema),
     mutationId: Type.Optional(mutationIdSchema),
+    /** The runner to clone onto, chosen as in registration. Requires protocol 26. */
+    runnerId: Type.Optional(runnerIdSchema),
     /** Names the stored credential kind to clone with. */
     secret: Type.Optional(Type.Object({ kind: Type.Literal("github") })),
     source: remoteSourceSchema,

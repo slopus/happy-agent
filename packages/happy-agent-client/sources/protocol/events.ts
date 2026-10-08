@@ -39,6 +39,7 @@ import type { AgentContextUsage } from "./usage.js";
 import type { Workspace } from "./workspaces.js";
 import type { SlashCommand } from "./slashCommands.js";
 import { connectionListResponseSchema } from "./connections.js";
+import { runnerListResponseSchema } from "./runners.js";
 import type { SkillsUpdatedPayload } from "./skills.js";
 import type { WorkspaceServiceCreatedPayload, WorkspaceServiceUpdatedPayload } from "./services.js";
 import type { LiveSessionCreatedPayload, LiveSessionUpdatedPayload } from "./live.js";
@@ -270,6 +271,10 @@ export type ConfigUpdatedPayload = Record<string, never>;
 export const connectionsUpdatedPayloadSchema = Type.Required(connectionListResponseSchema);
 export type ConnectionsUpdatedPayload = Static<typeof connectionsUpdatedPayloadSchema>;
 
+/** Complete runner list replacement; keep the greater version across snapshots and events. */
+export const runnersUpdatedPayloadSchema = runnerListResponseSchema;
+export type RunnersUpdatedPayload = Static<typeof runnersUpdatedPayloadSchema>;
+
 /** A standalone full-profile replacement or a team-wide identity-only invalidation. */
 export type ProfileUpdatedPayload = MutationEcho &
     ({ profile: Profile; userId?: never } | { profile?: never; userId: Cuid2 });
@@ -336,6 +341,7 @@ export type HappyAgentEvent =
     | EventEnvelope<"message.deleted", MessageDeletedPayload>
     | EventEnvelope<"config.updated", ConfigUpdatedPayload>
     | EventEnvelope<"connections.updated", ConnectionsUpdatedPayload>
+    | EventEnvelope<"runners.updated", RunnersUpdatedPayload>
     | EventEnvelope<"profile.updated", ProfileUpdatedPayload>
     | EventEnvelope<"cloud.updated", CloudUpdatedPayload>
     | EventEnvelope<"happy.integration.updated", HappyIntegrationUpdatedPayload>;
