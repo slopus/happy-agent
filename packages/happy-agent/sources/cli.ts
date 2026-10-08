@@ -24,6 +24,11 @@ Commands:
   status   Report whether the daemon is running.
   reload   Stop the running daemon, then start a fresh one.
   run      Run the daemon in the foreground of this process.
+  runner   Run this machine as a runner for a daemon on another machine.
+           --endpoint <address>  The daemon: https://host, http://host:port, or unix:/socket.
+           --token-file <path>   The runner's token (default ~/.happy-runner/token), or set
+                                 HAPPY_RUNNER_TOKEN.
+           --home <directory>    Where the home project and bot folders live (default: home).
   sandbox setup [--retry]  Set up the Windows sandbox, or explicitly retry setup.
   sandbox status          Report Windows sandbox configuration without changing it.`;
 
@@ -40,6 +45,16 @@ async function main(): Promise<void> {
     }
     if (command === "--version" || command === "-v") {
         console.log(`Happy Agent ${getDaemonIdentity().version}`);
+        return;
+    }
+    if (command === "runner") {
+        if (rest[0] === "--help" || rest[0] === "-h") {
+            console.log(USAGE);
+            return;
+        }
+        // Only the runner's own pieces load; a runner never opens the daemon runtime.
+        const { runRunner } = await import("./runner/runRunner.js");
+        await runRunner(rest);
         return;
     }
     if (command === "sandbox") {

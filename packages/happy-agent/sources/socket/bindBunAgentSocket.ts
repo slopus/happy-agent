@@ -5,10 +5,12 @@ import { isWindowsNamedPipe, readAgentSocketInformation } from "./agentSocketPat
 import {
     socketRejectionBody,
     type PreparedHappyAgentRuntime,
+    type PreparedRunnerSocket,
     type PreparedTerminalSocket,
     type PreparedLiveSocket,
     type LiveControlBinding,
 } from "@slopus/happy-agent-modules";
+import { MAX_RUNNER_FRAME_BYTES } from "@slopus/happy-agent-compute";
 import { WebSocketDuplex } from "@slopus/happy-agent-modules/transport";
 
 import {
@@ -38,6 +40,11 @@ interface TerminalWebSocketData extends BunWebSocketState {
     readonly prepared: Extract<PreparedTerminalSocket, { readonly attach: unknown }>;
 }
 
+interface RunnerWebSocketData extends BunWebSocketState {
+    readonly kind: "runner";
+    readonly prepared: Extract<PreparedRunnerSocket, { readonly attach: unknown }>;
+}
+
 interface LiveWebSocketData {
     readonly kind: "live";
     readonly prepared: Extract<PreparedLiveSocket, { readonly attach: unknown }>;
@@ -45,7 +52,7 @@ interface LiveWebSocketData {
 }
 
 interface BunTerminalWebSocket extends BunServerWebSocket {
-    data: TerminalWebSocketData | LiveWebSocketData;
+    data: TerminalWebSocketData | LiveWebSocketData | RunnerWebSocketData;
     send(data: string | Uint8Array, compress?: boolean): number;
 }
 
@@ -55,7 +62,7 @@ export interface BunWebSocketServer {
     stop(closeActiveConnections?: boolean): Promise<void> | void;
     upgrade(
         request: Request,
-        options: { readonly data: TerminalWebSocketData | LiveWebSocketData },
+        options: { readonly data: TerminalWebSocketData | LiveWebSocketData | RunnerWebSocketData },
     ): boolean;
     timeout(request: Request, seconds: number): void;
 }
@@ -164,6 +171,28 @@ export function startBunHttpServer(
                 }
             }
             const url = new URL(request.url);
+            const runner = prepared.api.prepareRunnerSocket(
+                url.pathname,
+                request.headers.get("authorization") ?? undefined,
+            );
+            if (runner.handled) {
+                if ("rejection" in runner)
+                    return Response.json(socketRejectionBody(runner.rejection), {
+                        headers: { "cache-control": "no-store" },
+                        status: runner.rejection.status,
+                    });
+                const data: RunnerWebSocketData = {
+                    handlers: undefined,
+                    kind: "runner",
+                    prepared: runner,
+                };
+                if (server.upgrade(request, { data })) return undefined;
+                return socketResponse(
+                    500,
+                    "internal",
+                    "The runner upgrade could not be completed.",
+                );
+            }
             const live = await prepared.api.prepareLiveSocket(
                 prepared.context("bun-live-websocket-upgrade"),
                 url,
@@ -204,8 +233,15 @@ export function startBunHttpServer(
             return socketResponse(500, "internal", "The terminal upgrade could not be completed.");
         },
         websocket: {
-            maxPayloadLength: MAX_TERMINAL_WIRE_MESSAGE_BYTES,
+            // Runner frames may carry a whole file; terminal messages keep their own bound below.
+            maxPayloadLength: MAX_RUNNER_FRAME_BYTES,
             open(webSocket: BunTerminalWebSocket) {
+                if (webSocket.data.kind === "runner") {
+                    webSocket.data.prepared.attach(
+                        createBunBinaryWebSocket(webSocket, webSocket.data),
+                    );
+                    return;
+                }
                 if (webSocket.data.kind === "live") {
                     try {
                         webSocket.data.binding = webSocket.data.prepared.attach({
@@ -251,6 +287,14 @@ export function startBunHttpServer(
                         new Error("Remote terminal WebSocket messages must be binary."),
                     );
                     webSocket.close(1003, "Binary messages are required.");
+                    return;
+                }
+                if (
+                    webSocket.data.kind !== "runner" &&
+                    message.byteLength > MAX_TERMINAL_WIRE_MESSAGE_BYTES
+                ) {
+                    webSocket.data.handlers?.error(new Error("The terminal message is too large."));
+                    webSocket.close(1009, "The message is too large.");
                     return;
                 }
                 webSocket.data.handlers?.message(Buffer.from(message));

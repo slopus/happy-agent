@@ -29,6 +29,7 @@ export * from "./bots/index.js";
 // Tailcat: stable account-free internet exposure, controlled only by active admin bots.
 export * from "./tailcat/index.js";
 export * from "./connections/index.js";
+export * from "./runners/index.js";
 export * from "./node/index.js";
 
 // Happy: the optional mobile connection and its durable remote projection.

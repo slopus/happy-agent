@@ -1,6 +1,7 @@
 import { ensurePrivateDirectory } from "@slopus/happy-agent-compute";
 import { chmod, mkdir } from "node:fs/promises";
 import { ConnectionsModule } from "../connections/index.js";
+import { RunnersModule } from "../runners/index.js";
 
 import {
     AgentStorage,
@@ -141,6 +142,7 @@ export interface HappyAgentRuntimeModules {
     readonly compute: ComputeModule;
     readonly config: ConfigModule;
     readonly connections: ConnectionsModule;
+    readonly runners: RunnersModule;
     readonly contextWindow: ContextWindowModule;
     readonly durableFunctions: DurableFunctionsModule;
     readonly events: EventsModule;
@@ -386,6 +388,8 @@ export async function startHappyAgentRuntime(
         };
 
         const secrets = new SecretsModule();
+        const runners = new RunnersModule(config);
+        registerShutdown("runners", async () => await runners.close());
         const suppliedCompute = options.compute;
         const computeModule =
             suppliedCompute === undefined
@@ -563,6 +567,7 @@ export async function startHappyAgentRuntime(
             services,
             subtasks,
             live,
+            runners,
         );
         api = apiModule;
 
@@ -581,6 +586,7 @@ export async function startHappyAgentRuntime(
             config,
             contextWindow,
             connections,
+            runners,
             durableFunctions,
             events,
             files,
@@ -629,6 +635,7 @@ export async function startHappyAgentRuntime(
             abort,
             cloud,
             config,
+            runners,
             providerScan,
             observation,
             systemPrompt,

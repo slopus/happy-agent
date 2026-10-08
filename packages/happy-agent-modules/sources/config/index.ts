@@ -23,4 +23,11 @@ export {
     type RemoteConnectionConfig,
     type RemoteConnectionEntry,
 } from "./RemoteConnectionConfig.js";
+export {
+    MAX_RUNNERS,
+    runnerConfigSchema,
+    runnersConfigSchema,
+    type RunnerConfig,
+    type RunnersConfig,
+} from "./RunnerConfig.js";
 export { VoiceCredentialPoolError } from "./VoiceCredentialPoolError.js";

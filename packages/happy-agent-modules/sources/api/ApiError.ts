@@ -29,6 +29,8 @@ export const apiErrorCodeSchema = Type.Union([
     Type.Literal("service_unavailable"),
     Type.Literal("output_unavailable"),
     Type.Literal("reader_limit"),
+    Type.Literal("runner_unavailable"),
+    Type.Literal("local_execution_disabled"),
 ]);
 
 export type ApiErrorCode = Static<typeof apiErrorCodeSchema>;

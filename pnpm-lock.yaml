@@ -163,8 +163,8 @@ importers:
         specifier: 0.0.75
         version: 0.0.75
       '@slopus/happy-agent-compute':
-        specifier: 0.1.20
-        version: 0.1.20
+        specifier: 0.1.22
+        version: 0.1.22
       '@slopus/happy-agent-modules':
         specifier: workspace:*
         version: link:../happy-agent-modules
@@ -177,10 +177,16 @@ importers:
       '@steve.kite/stdlib':
         specifier: 0.0.12
         version: 0.0.12
+      ws:
+        specifier: ^8.21.1
+        version: 8.21.1
     devDependencies:
       '@types/node':
         specifier: ^24.0.10
         version: 24.13.3
+      '@types/ws':
+        specifier: ^8.18.1
+        version: 8.18.1
       jose:
         specifier: ^6.2.10
         version: 6.2.10
@@ -312,8 +318,8 @@ importers:
         specifier: 0.0.75
         version: 0.0.75
       '@slopus/happy-agent-compute':
-        specifier: npm:@slopus/happy-agent-compute@0.1.20
-        version: 0.1.20
+        specifier: npm:@slopus/happy-agent-compute@0.1.22
+        version: 0.1.22
       '@slopus/happy-agent-modules':
         specifier: workspace:*
         version: link:../happy-agent-modules
@@ -400,8 +406,8 @@ importers:
         specifier: 0.0.75
         version: 0.0.75
       '@slopus/happy-agent-compute':
-        specifier: npm:@slopus/happy-agent-compute@0.1.20
-        version: 0.1.20
+        specifier: npm:@slopus/happy-agent-compute@0.1.22
+        version: 0.1.22
       '@slopus/happy-providers':
         specifier: 0.0.37
         version: 0.0.37(ws@8.21.1)(zod@4.4.3)
@@ -2116,8 +2122,8 @@ packages:
     resolution: {integrity: sha512-IpG6MNmdk04tDwn/oiOc9qi9HfcaJRMsUZa4/sx2exeNN7kOjGenjxydXVhuJlQwF1pp+E7KoHcdPow+PzfA5A==}
     engines: {node: '>=20'}
 
-  '@slopus/happy-agent-compute@0.1.20':
-    resolution: {integrity: sha512-XjecJKL9YnVK2ZcRo+n/56Axh+P/bh4oevfI/UGrmhJAviyBm+vhu6bWv6Xirmtj8ysMfjKB7+Sjo360cKzt9A==}
+  '@slopus/happy-agent-compute@0.1.22':
+    resolution: {integrity: sha512-Qww5zuS23v3gDxw5h6MQlg0H5bq+/UObjgfe9WxyOrObQjFvO7wiAmbNJPAp/FTxRL4j2XVvJ7sHgQPCWVyDlw==}
     engines: {node: '>=22.19.0'}
 
   '@slopus/happy-agent-supervisor@0.0.13':
@@ -5447,7 +5453,7 @@ snapshots:
     dependencies:
       '@sinclair/typebox': 0.34.49
 
-  '@slopus/happy-agent-compute@0.1.20':
+  '@slopus/happy-agent-compute@0.1.22':
     dependencies:
       '@lydell/node-pty': 1.2.0-beta.15
       '@sinclair/typebox': 0.34.49

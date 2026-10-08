@@ -61,6 +61,13 @@ import { readGlobalInstructions } from "./impl/readGlobalInstructions.js";
 import { HAPPY_TOML_TEMPLATE, MCP_TOML_TEMPLATE } from "./impl/userConfigurationTemplate.js";
 import { readSecurityDocument } from "./impl/readSecurityDocument.js";
 import {
+    MAX_RUNNERS,
+    runnerConfigSchema,
+    runnersConfigSchema,
+    type RunnerConfig,
+    type RunnersConfig,
+} from "./RunnerConfig.js";
+import {
     apiConfigSchema,
     remoteConnectionsConfigSchema,
     remoteConnectionEntrySchema,
@@ -431,6 +438,7 @@ const partialValuesSchema = Type.Object(
         profile: Type.Optional(profileBootstrapSchema),
         api: Type.Optional(apiConfigSchema),
         connections: Type.Optional(remoteConnectionsConfigSchema),
+        runners: Type.Optional(runnersConfigSchema),
         docker: Type.Optional(dockerInputSchema),
         defaults: Type.Optional(defaultsInputSchema),
         features: Type.Optional(
@@ -766,6 +774,7 @@ const resolvedValuesSchema = Type.Object(
         profile: Type.Optional(profileBootstrapSchema),
         api: Type.Optional(apiConfigSchema),
         connections: Type.Optional(remoteConnectionsConfigSchema),
+        runners: Type.Optional(runnersConfigSchema),
         docker: Type.Optional(
             Type.Object(
                 {
@@ -1835,6 +1844,22 @@ export class ConfigModule implements AgentModule {
         return this.configuration.values.feature.tailcat.port;
     }
 
+    /**
+     * The runners this installation works on, and the one new folders go to. Empty when none are
+     * configured, which is when this machine still runs its own work.
+     */
+    get runners(): {
+        readonly defaultId?: string;
+        readonly entries: Readonly<Record<string, RunnerConfig>>;
+    } {
+        const runners = this.configuration.values.runners;
+        if (runners === undefined) return { entries: {} };
+        return {
+            ...(runners.default === undefined ? {} : { defaultId: runners.default }),
+            entries: structuredClone(runners.entries),
+        };
+    }
+
     /** Machine-owned remote roster; callers never receive mutable configuration state. */
     get connections(): Readonly<Record<string, RemoteConnectionEntry>> {
         return structuredClone(this.#connections);
@@ -2871,6 +2896,7 @@ export function parseHappyAgentConfigToml(source: string): {
         "connections",
         "defaults",
         "docker",
+        "runners",
         "feature",
         "features",
         "mcp_servers",
@@ -2899,6 +2925,7 @@ export function parseHappyAgentConfigToml(source: string): {
     const gemini = readGemini(table.gemini, recordUnknown);
     const workspace = readWorkspace(table.workspace, recordUnknown);
     const docker = readDocker(table.docker, recordUnknown);
+    const runners = readRunners(table.runners);
     const mcpServers = readMcpServers(table.mcp_servers, recordUnknown);
     const network = readNetwork(table.network, recordUnknown);
     const observation = readObservation(table.observation, recordUnknown);
@@ -2918,6 +2945,7 @@ export function parseHappyAgentConfigToml(source: string): {
         ...(table.profile === undefined ? {} : { profile: table.profile }),
         ...(table.api === undefined ? {} : { api: table.api }),
         ...(table.connections === undefined ? {} : { connections: table.connections }),
+        ...(runners === undefined ? {} : { runners }),
         ...(defaults === undefined ? {} : { defaults }),
         ...(features === undefined ? {} : { features }),
         ...(feature === undefined ? {} : { feature }),
@@ -3117,6 +3145,17 @@ function mergeValues(...partials: readonly PartialValues[]): HappyAgentConfigVal
         if (partial.api !== undefined) merged.api = { ...merged.api, ...partial.api };
         if (partial.connections !== undefined)
             merged.connections = { ...merged.connections, ...partial.connections };
+        if (partial.runners !== undefined) {
+            merged.runners = {
+                ...(merged.runners?.default === undefined
+                    ? {}
+                    : { default: merged.runners.default }),
+                ...(partial.runners.default === undefined
+                    ? {}
+                    : { default: partial.runners.default }),
+                entries: { ...merged.runners?.entries, ...partial.runners.entries },
+            };
+        }
         if (partial.docker !== undefined) merged.docker = normalizeDocker(partial.docker);
         if (partial.defaults !== undefined) {
             const defaults = normalizeDefaults(partial.defaults);
@@ -3206,6 +3245,7 @@ function mergeValues(...partials: readonly PartialValues[]): HappyAgentConfigVal
     if (merged.feature.team.enabled && merged.profile !== undefined) {
         throw new Error("Team deployments cannot configure a shared standalone profile.");
     }
+    if (merged.runners !== undefined) merged.runners = validateRunners(merged.runners, merged);
     if (!Value.Check(happyAgentConfigValuesSchema, merged)) {
         throw new Error("The merged Happy Agent configuration is invalid.");
     }
@@ -3729,6 +3769,7 @@ function withoutProjectMachineSettings(values: PartialValues): PartialValues {
         skill_enablement: _skillEnablement,
         api: _api,
         connections: _connections,
+        runners: _runners,
         docker: _docker,
         // A credential is this machine's, never a repository's: a checked-in project file must not
         // choose which Gemini account this installation's tools bill against.
@@ -4165,6 +4206,90 @@ function readDocker(
         throw new Error("docker contains an invalid value.");
     }
     return sanitized;
+}
+
+/**
+ * `[runners]` holds the default and one table per runner. Unknown keys are refused rather than
+ * reported, because a mistyped runner setting would otherwise leave a machine silently unused.
+ */
+function readRunners(value: TomlValue | undefined): RunnersConfig | undefined {
+    if (value === undefined) return undefined;
+    if (!isTable(value)) throw new Error("runners must be a TOML table.");
+    let defaultId: string | undefined;
+    const entries: Record<string, RunnerConfig> = {};
+    for (const [key, item] of Object.entries(value)) {
+        if (key === "default") {
+            if (typeof item !== "string" || !/^[a-z][a-z0-9_-]{0,63}$/u.test(item)) {
+                throw new Error("runners.default must name a runner.");
+            }
+            defaultId = item;
+            continue;
+        }
+        if (!/^[a-z][a-z0-9_-]{0,63}$/u.test(key)) {
+            throw new Error(
+                `Runner ID "${key.slice(0, 64)}" must start with a lowercase letter and use only lowercase letters, digits, "-", and "_".`,
+            );
+        }
+        if (!isTable(item)) throw new Error(`runners.${key} must be a TOML table.`);
+        for (const field of Object.keys(item)) {
+            if (field !== "name" && field !== "token") {
+                throw new Error(`runners.${key}.${field.slice(0, 64)} is not a runner setting.`);
+            }
+        }
+        if (!Value.Check(runnerConfigSchema.properties.name, item.name)) {
+            throw new Error(`runners.${key}.name must be 1 to 128 printable characters.`);
+        }
+        if (!Value.Check(runnerConfigSchema.properties.token, item.token)) {
+            throw new Error(
+                `runners.${key}.token must be 43 characters of letters, digits, "-", and "_".`,
+            );
+        }
+        entries[key] = { name: item.name as string, token: item.token as string };
+    }
+    if (Object.keys(entries).length > MAX_RUNNERS) {
+        throw new Error(`At most ${String(MAX_RUNNERS)} runners may be configured.`);
+    }
+    return { ...(defaultId === undefined ? {} : { default: defaultId }), entries };
+}
+
+/** The rules that span runners and the rest of the configuration. */
+function validateRunners(
+    runners: RunnersConfig,
+    values: Static<typeof resolvedValuesSchema>,
+): RunnersConfig {
+    const ids = Object.keys(runners.entries);
+    if (ids.length === 0) {
+        if (runners.default !== undefined) {
+            throw new Error(
+                `runners.default names "${runners.default}", but no runner is configured.`,
+            );
+        }
+        return runners;
+    }
+    if (runners.default !== undefined && runners.entries[runners.default] === undefined) {
+        throw new Error(
+            `runners.default names "${runners.default}", which is not a configured runner.`,
+        );
+    }
+    if (runners.default === undefined && ids.length > 1) {
+        throw new Error(
+            "runners.default must name the default runner when several are configured.",
+        );
+    }
+    const tokens = new Set<string>();
+    if (values.api?.token !== undefined) tokens.add(values.api.token);
+    for (const entry of Object.values(values.connections ?? {})) {
+        if ("token" in entry && entry.token !== undefined) tokens.add(entry.token);
+    }
+    for (const [id, entry] of Object.entries(runners.entries)) {
+        if (tokens.has(entry.token)) {
+            throw new Error(
+                `runners.${id}.token must differ from the API token, every connection token, and every other runner's token.`,
+            );
+        }
+        tokens.add(entry.token);
+    }
+    return { default: runners.default ?? (ids[0] as string), entries: runners.entries };
 }
 
 function readNetwork(

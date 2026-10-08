@@ -6,6 +6,7 @@ import { AsyncLocalStorage, AsyncResource } from "node:async_hooks";
 import type { Socket } from "node:net";
 import { dirname, join } from "node:path";
 import { ConnectionsModule, RemoteConnectionError } from "../connections/index.js";
+import { LocalExecutionDisabledError, RunnersModule } from "../runners/index.js";
 import { GlobalSkillsModule, GlobalSkillsError } from "../skills/index.js";
 import { teamDraftMigration } from "./persistence/migrations/001-team-drafts.js";
 import {
@@ -56,6 +57,7 @@ import {
 import { Type, type Static, type TSchema } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import { afterCommit, shutdown, withLifetime, type Context } from "@steve.kite/stdlib";
+import { MAX_RUNNER_FRAME_BYTES, RunnerUnavailableError } from "@slopus/happy-agent-compute";
 import { WebSocketServer } from "ws";
 
 import { AbortModule } from "../abort/index.js";
@@ -160,6 +162,7 @@ import {
 import {
     createNodeBinaryWebSocket,
     createSseWriter,
+    type BinaryWebSocket,
     type SseWriter,
     WebSocketDuplex,
 } from "../transport/index.js";
@@ -292,6 +295,15 @@ export type PreparedLiveSocket =
           readonly failed: () => void;
       };
 
+/** `GET /v0/runners/connect`, admitted by a runner token and nothing else. */
+export type PreparedRunnerSocket =
+    | { readonly handled: false }
+    | { readonly handled: true; readonly rejection: ApiSocketRejection }
+    | {
+          readonly attach: (webSocket: BinaryWebSocket) => void;
+          readonly handled: true;
+      };
+
 export type PreparedWorkspaceProxySocket =
     | { readonly handled: false }
     | { readonly handled: true; readonly rejection: ApiSocketRejection }
@@ -346,6 +358,7 @@ export class ApiModule implements AgentModule {
     readonly #bots: BotsModule;
     readonly #subtasks: SubtasksModule | undefined;
     readonly #live: LiveModule | undefined;
+    readonly #runners: RunnersModule | undefined;
     readonly #projects: ProjectsModule;
     readonly #workspaces: WorkspacesModule;
     readonly #terminals: TerminalsModule;
@@ -390,6 +403,12 @@ export class ApiModule implements AgentModule {
         perMessageDeflate: false,
     });
     readonly #workspaceProxy = new WorkspaceProxy();
+    /** A runner frame may carry a whole file, so runner messages get the protocol's own bound. */
+    readonly #runnerWebSockets = new WebSocketServer({
+        maxPayload: MAX_RUNNER_FRAME_BYTES,
+        noServer: true,
+        perMessageDeflate: false,
+    });
     readonly #liveWebSockets = new WebSocketServer({
         maxPayload: 256 * 1024,
         noServer: true,
@@ -459,6 +478,7 @@ export class ApiModule implements AgentModule {
         services?: ServicesModule,
         subtasks?: SubtasksModule,
         live?: LiveModule,
+        runners?: RunnersModule,
     ) {
         this.#abort = abort;
         this.#config = config;
@@ -489,6 +509,7 @@ export class ApiModule implements AgentModule {
         this.#services = services;
         this.#subtasks = subtasks;
         this.#live = live;
+        this.#runners = runners;
     }
 
     readonly beforeStart = async (
@@ -611,6 +632,7 @@ export class ApiModule implements AgentModule {
         this.#webSockets.close();
         for (const client of this.#liveWebSockets.clients) client.terminate();
         this.#liveWebSockets.close();
+        this.#runnerWebSockets.close();
         await this.#workspaceProxy.close();
     }
 
@@ -812,6 +834,14 @@ export class ApiModule implements AgentModule {
             }
             if (request.method === "GET" && url.pathname === "/v0/connections") {
                 sendJson(response, 200, await this.#connections.getSnapshot(ctx));
+                return;
+            }
+            if (
+                request.method === "GET" &&
+                url.pathname === "/v0/runners" &&
+                this.#runners !== undefined
+            ) {
+                sendJson(response, 200, await this.#runners.getSnapshot(ctx));
                 return;
             }
             const connectionReorder = /^\/v0\/connections\/([a-z][a-z0-9_-]{0,63})\/reorder$/.exec(
@@ -1407,6 +1437,20 @@ export class ApiModule implements AgentModule {
         socket: Socket,
         head: Buffer,
     ): Promise<boolean> {
+        const runner = this.prepareRunnerSocket(
+            requestUrl(request).pathname,
+            request.headers.authorization,
+        );
+        if (runner.handled) {
+            if ("rejection" in runner) {
+                writeSocketError(socket, runner.rejection);
+                return true;
+            }
+            this.#runnerWebSockets.handleUpgrade(request, socket, head, (webSocket) => {
+                runner.attach(createNodeBinaryWebSocket(webSocket));
+            });
+            return true;
+        }
         if (await this.handleRemoteAttachment(ctx, request, socket, head)) return true;
         const live = await this.prepareLiveSocket(
             ctx,
@@ -1631,6 +1675,42 @@ export class ApiModule implements AgentModule {
         }
     }
 
+    /**
+     * A runner's connection. Only a configured runner token is accepted here, and it is accepted
+     * nowhere else; an unknown token is refused before the upgrade. Runners are not team users, so
+     * neither team sign-in nor the local API token applies.
+     */
+    prepareRunnerSocket(
+        pathname: string,
+        authorization: string | string[] | undefined,
+    ): PreparedRunnerSocket {
+        if (pathname !== "/v0/runners/connect" || this.#runners === undefined) {
+            return { handled: false };
+        }
+        const runnerId = this.#runners.authenticate(authorization);
+        if (runnerId === undefined) {
+            return {
+                handled: true,
+                rejection: { code: "unauthorized", message: "Unauthorized", status: 401 },
+            };
+        }
+        if (!this.#ready) {
+            return {
+                handled: true,
+                rejection: {
+                    code: "not_initialized",
+                    message: "Happy Agent is still starting.",
+                    status: 503,
+                },
+            };
+        }
+        const runners = this.#runners;
+        return {
+            handled: true,
+            attach: (webSocket) => runners.acceptWebSocket(runnerId, webSocket),
+        };
+    }
+
     async prepareTerminalSocket(
         ctx: Context,
         pathname: string,
@@ -1776,6 +1856,13 @@ export class ApiModule implements AgentModule {
             this.#node.onUpdated(() => {
                 this.#journal.append("config.updated", {});
             }),
+            ...(this.#runners === undefined
+                ? []
+                : [
+                      this.#runners.onUpdated((_eventCtx, snapshot) => {
+                          this.#journal.appendOutsideMutation("runners.updated", snapshot);
+                      }),
+                  ]),
             this.#connections.onUpdated((_eventCtx, snapshot, mutationId) => {
                 this.#journal.appendOutsideMutation(
                     "connections.updated",
@@ -6226,6 +6313,14 @@ export class ApiModule implements AgentModule {
             sendJson(response, 400, { code: "invalid_request", error: error.message });
             return;
         }
+        if (error instanceof RunnerUnavailableError) {
+            sendJson(response, 503, { code: "runner_unavailable", error: error.message });
+            return;
+        }
+        if (error instanceof LocalExecutionDisabledError) {
+            sendJson(response, 409, { code: "local_execution_disabled", error: error.message });
+            return;
+        }
         if (error instanceof BotNotFoundError) {
             sendJson(response, 404, { code: "not_found", error: error.message });
             return;
@@ -6375,6 +6470,12 @@ export class ApiModule implements AgentModule {
         }
         if (error instanceof TerminalError && error.code === "not_found") {
             return { code: "not_found", message: notFoundMessage, status: 404 };
+        }
+        if (error instanceof RunnerUnavailableError) {
+            return { code: "runner_unavailable", message: error.message, status: 503 };
+        }
+        if (error instanceof LocalExecutionDisabledError) {
+            return { code: "local_execution_disabled", message: error.message, status: 409 };
         }
         ctx.log.error("The Happy Agent socket attachment failed.", {}, error);
         return {
