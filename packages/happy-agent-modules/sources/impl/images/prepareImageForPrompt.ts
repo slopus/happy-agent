@@ -18,6 +18,8 @@ export interface PreparedPromptImage {
     bytes: Buffer;
     height: number;
     mediaType: PromptImageMediaType;
+    originalHeight: number;
+    originalWidth: number;
     width: number;
 }
 
@@ -27,9 +29,13 @@ export interface PreparedPromptImage {
  * An image an edit is built from is sent at its own resolution wherever that already fits, so the
  * picture the person meant is the picture the provider sees. Only an image too large to send at
  * all is rescaled, and its bytes are re-encoded rather than passed through, so a file that merely
- * claims to be an image cannot reach the provider unexamined.
+ * claims to be an image cannot reach the provider unexamined. A caller whose provider accepts less
+ * than the original detail supplies its own limits.
  */
-export async function prepareImageForPrompt(bytes: Uint8Array): Promise<PreparedPromptImage> {
+export async function prepareImageForPrompt(
+    bytes: Uint8Array,
+    limits: PromptImageResizeLimits = ORIGINAL_DETAIL_LIMITS,
+): Promise<PreparedPromptImage> {
     const input = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     if (input.length === 0) {
         throw new ImageProcessingError("Image file is empty.");
@@ -60,7 +66,7 @@ export async function prepareImageForPrompt(bytes: Uint8Array): Promise<Prepared
                     ? "image/webp"
                     : undefined;
 
-        const target = promptImageOutputDimensions(width, height, ORIGINAL_DETAIL_LIMITS);
+        const target = promptImageOutputDimensions(width, height, limits);
         const shouldResize = target.width !== width || target.height !== height;
 
         if (!shouldResize && preservableMediaType !== undefined) {
@@ -68,7 +74,14 @@ export async function prepareImageForPrompt(bytes: Uint8Array): Promise<Prepared
                 autoOrient: false,
                 maxPixels: MAX_DECODED_PIXELS,
             });
-            return { bytes: input, height, mediaType: preservableMediaType, width };
+            return {
+                bytes: input,
+                height,
+                mediaType: preservableMediaType,
+                originalHeight: height,
+                originalWidth: width,
+                width,
+            };
         }
 
         const outputMediaType = preservableMediaType ?? "image/png";
@@ -100,6 +113,8 @@ export async function prepareImageForPrompt(bytes: Uint8Array): Promise<Prepared
             bytes: result.data,
             height: result.height,
             mediaType: outputMediaType,
+            originalHeight: height,
+            originalWidth: width,
             width: result.width,
         };
     } catch (error) {

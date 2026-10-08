@@ -21,6 +21,15 @@ const MAX_LINES_TO_READ = 2_000;
 /** How much text one read may carry, however few lines that turns out to be. */
 const MAX_CHARACTERS = 60_000;
 
+/**
+ * The longest side of an image Read shows, as in Claude Code.
+ *
+ * Claude refuses any image larger than this once a request carries more than 20 images. Every read
+ * image stays in the history each later request replays, so a single larger screenshot would make
+ * the conversation fail permanently as soon as enough images accumulate.
+ */
+const MAX_IMAGE_DIMENSION = 2_000;
+
 const exact = { additionalProperties: false } as const;
 
 // Notebook and PDF parsing are deliberately outside this surface. Both are refused in a sentence
@@ -154,7 +163,9 @@ function createClaudeReadTool(compute: Compute, reads: FileReadLog, images: bool
                     };
                 }
                 const permissions = computePermissionsForContext(ctx);
-                const image = await readImageForModel(compute, reads, ctx, permissions, filePath);
+                const image = await readImageForModel(compute, reads, ctx, permissions, filePath, {
+                    maxDimension: MAX_IMAGE_DIMENSION,
+                });
                 return { outcome: "image" as const, path: filePath, image };
             }
 
@@ -184,8 +195,15 @@ function createClaudeReadTool(compute: Compute, reads: FileReadLog, images: bool
         },
         toLLM: (result) => {
             if (result.outcome === "image") {
+                const resized = result.image.resized;
                 return [
-                    { type: "text", text: `Image: ${result.path}` },
+                    {
+                        type: "text",
+                        text:
+                            resized === undefined
+                                ? `Image: ${result.path}`
+                                : `Image: ${result.path} (original ${String(resized.original_width)}×${String(resized.original_height)}, shown at ${String(resized.width)}×${String(resized.height)})`,
+                    },
                     { type: "image", data: result.image.data, mimeType: result.image.mime_type },
                 ];
             }

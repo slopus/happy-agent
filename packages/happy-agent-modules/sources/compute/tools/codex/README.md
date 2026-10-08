@@ -26,7 +26,7 @@ that switches models does not lose the right to change a file it already read.
 | `write_stdin`  | `writeComputeCommandInput`, `readComputeCommand` | Empty `chars` is a poll with a long default wait; non-empty is typed input with a short one.              |
 | `kill_session` | `stopComputeCommand`                             | Stopping a session that already ended is reported, not refused.                                           |
 | `apply_patch`  | `impl/applyCodexPatch.ts`                        | Every file goes through the shared write, move, and delete helpers.                                       |
-| `view_image`   | `readImageForModel`                              | `detail` is carried into the result; the module never rescales.                                           |
+| `view_image`   | `readImageForModel`                              | `detail` is carried into the result; this tool never rescales.                                            |
 
 `exec_command` and `write_stdin` answer with Codex's own unified exec shape, defined in
 [`impl/unifiedExecOutput.ts`](impl/unifiedExecOutput.ts). That schema is Codex's, not the module's.

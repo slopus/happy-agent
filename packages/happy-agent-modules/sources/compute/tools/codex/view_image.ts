@@ -21,7 +21,7 @@ const viewImageResultSchema = Type.Object(
 /**
  * Codex's own tool for looking at an image already on the machine.
  *
- * `detail` is carried through to the answer but changes nothing: the module never rescales an
+ * `detail` is carried through to the answer but changes nothing: this tool never rescales an
  * image, so every image is shown at the resolution it was stored at. Saying so in the result is
  * more honest than accepting the field and quietly ignoring it.
  */

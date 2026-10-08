@@ -173,3 +173,12 @@ empty files and protects metadata directories before releasing a restricted comm
 Windows metadata names belong to the file-tool policy. Existing content is preserved, missing
 denies outside writable roots remain absent, and macOS/Linux behavior stays unchanged. This is
 the explicitly approved Windows exception to the general no-placeholder rule.
+
+## Claude's Read fits images within 2000 pixels
+
+Claude's Read used to send images exactly as stored. Claude rejects any image wider or taller than
+2000 pixels once a request carries more than 20 images, and every read image stays in the history
+each later request replays, so one large screenshot made the conversation fail permanently once
+enough images accumulated. Read now decodes the image and scales a longer side down to 2000 pixels,
+as Claude Code does, and tells the model the original and shown sizes. A file that does not decode
+as an image is refused rather than sent. Codex `view_image` still shows images as stored.

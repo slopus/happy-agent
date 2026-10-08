@@ -1,4 +1,5 @@
 import { createRootContext } from "@steve.kite/stdlib";
+import sharp from "sharp";
 import { describe, expect, it } from "vitest";
 
 import { FakeCompute } from "../support/FakeCompute.js";
@@ -13,6 +14,15 @@ const ctx = createRootContext().named("happy-agent-modules-claude-compute-files"
 async function machine() {
     const compute = new FakeCompute();
     return { compute, ...(await computeToolset(ctx, compute, { model: CLAUDE_MODEL })) };
+}
+
+/** A real PNG of the given size, like a screenshot. */
+async function png(width: number, height: number): Promise<Buffer> {
+    return await sharp({
+        create: { width, height, channels: 3, background: { r: 208, g: 208, b: 208 } },
+    })
+        .png()
+        .toBuffer();
 }
 
 /** The text the model would actually see for one result. */
@@ -69,16 +79,67 @@ describe("Claude's Read", () => {
 
     it("shows a PNG as an image rather than as text", async () => {
         const { compute, tool, call } = await machine();
-        compute.writeBuffer("/workspace/shot.png", new Uint8Array([1, 2, 3, 4]));
+        const shot = await png(1280, 800);
+        compute.writeBuffer("/workspace/shot.png", shot);
 
         const result = await tool("Read").execute(ctx, { file_path: "/workspace/shot.png" }, call);
 
         expect(result.outcome).toBe("image");
         expect(result.image.mime_type).toBe("image/png");
+        expect(result.image.resized).toBeUndefined();
+        expect(Buffer.from(result.image.data, "base64").equals(shot)).toBe(true);
         expect(tool("Read").toLLM(result)).toEqual([
             { type: "text", text: "Image: /workspace/shot.png" },
             { type: "image", data: result.image.data, mimeType: "image/png" },
         ]);
+    });
+
+    it("scales a screenshot larger than 2000 pixels down to fit, and says so", async () => {
+        const { compute, tool, call } = await machine();
+        compute.writeBuffer("/workspace/retina.png", await png(2400, 1350));
+
+        const result = await tool("Read").execute(
+            ctx,
+            { file_path: "/workspace/retina.png" },
+            call,
+        );
+
+        expect(result.outcome).toBe("image");
+        expect(result.image.resized).toEqual({
+            original_width: 2400,
+            original_height: 1350,
+            width: 2000,
+            height: 1125,
+        });
+        const shown = await sharp(Buffer.from(result.image.data, "base64")).metadata();
+        expect({ format: shown.format, width: shown.width, height: shown.height }).toEqual({
+            format: "png",
+            width: 2000,
+            height: 1125,
+        });
+        expect(result.image.bytes).toBe(Buffer.from(result.image.data, "base64").byteLength);
+        expect(modelText(tool("Read"), result)).toBe(
+            "Image: /workspace/retina.png (original 2400×1350, shown at 2000×1125)",
+        );
+    });
+
+    it("bounds the longer side of a tall image too", async () => {
+        const { compute, tool, call } = await machine();
+        compute.writeBuffer("/workspace/page.png", await png(1000, 5000));
+
+        const result = await tool("Read").execute(ctx, { file_path: "/workspace/page.png" }, call);
+
+        expect(result.outcome).toBe("image");
+        expect(result.image.resized).toMatchObject({ width: 400, height: 2000 });
+    });
+
+    it("refuses a file that is not really an image instead of sending it to the model", async () => {
+        const { compute, tool, call } = await machine();
+        compute.writeBuffer("/workspace/fake.png", new Uint8Array([1, 2, 3, 4]));
+
+        await expect(
+            tool("Read").execute(ctx, { file_path: "/workspace/fake.png" }, call),
+        ).rejects.toThrow("Image /workspace/fake.png cannot be shown.");
     });
 
     it("explains a notebook and a PDF instead of failing on them", async () => {
