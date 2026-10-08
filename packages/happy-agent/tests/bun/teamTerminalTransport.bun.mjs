@@ -38,6 +38,7 @@ test("team terminal upgrades survive asynchronous authentication and carry binar
                 return Promise.resolve();
             },
             prepareTerminalSocket,
+            prepareRunnerSocket: () => ({ handled: false }),
             prepareLiveSocket: async () => ({ handled: false }),
             handleUpgrade: async (ctx, request, socket, head) => {
                 await prepareTerminalSocket(ctx, request.url, request.headers.authorization);

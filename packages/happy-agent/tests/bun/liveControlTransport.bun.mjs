@@ -19,6 +19,7 @@ async function fixture() {
             listenWorkspaceProxyTcp: (token) => proxy.listenTcp(token),
             handleRequest: async (_ctx, _request, response) => response.end("healthy"),
             prepareTerminalSocket: async () => ({ handled: false }),
+            prepareRunnerSocket: () => ({ handled: false }),
             prepareLiveSocket: async (_ctx, url, authorization) => {
                 await setImmediate();
                 if (authorization !== "Bearer live-fixture-token")
