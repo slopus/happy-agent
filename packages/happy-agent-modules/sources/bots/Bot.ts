@@ -28,6 +28,8 @@ export const botRecordSchema = Type.Object(
         workspaceUpdatedAt: botTimestampSchema,
         agentId: cuid2Schema,
         path: botPathSchema,
+        /** The runner the bot's folder is on; absent when it is on this machine. */
+        runnerId: Type.Optional(Type.String({ pattern: "^[a-z][a-z0-9_-]{0,63}$" })),
         status: botStatusSchema,
         avatar: Type.Optional(botAvatarSchema),
         orderKey: botOrderKeySchema,

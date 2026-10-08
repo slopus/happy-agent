@@ -117,4 +117,14 @@ export const botMigrations = [
             );
         },
     ],
+    [
+        "006-bot-runner",
+        /** A bot's folder may be on a runner. Bots from before are on this machine. */
+        async (_ctx: Context, database: AgentDatabase): Promise<void> => {
+            await agentDatabaseRun(
+                database,
+                sql`ALTER TABLE ${sql.raw(BOTS_TABLE)} ADD COLUMN runner_id TEXT`,
+            );
+        },
+    ],
 ] as const;

@@ -11,6 +11,7 @@ import {
     withAgentDatabase,
 } from "@slopus/happy-agent-base";
 import {
+    createDockerCompute,
     createHostCompute,
     computeServiceStartSchema,
     HOST_SESSION_STOP_GRACE_MS,
@@ -36,6 +37,7 @@ import {
 } from "@steve.kite/stdlib";
 
 import type { ConfigModule } from "../config/index.js";
+import type { RunnersModule } from "../runners/index.js";
 import { FileReadLog } from "../impl/FileReadLog.js";
 import type { SecretsModule } from "../secrets/index.js";
 import type {
@@ -54,6 +56,7 @@ import { computeInstructionsForVendor } from "./impl/computeInstructionsForVendo
 import { computePermissionsForContext } from "./impl/computePermissionsForContext.js";
 import { createAttachedSecretsHostShell } from "./impl/createAttachedSecretsHostShell.js";
 import { describeComputePathAction } from "./impl/describeComputePathAction.js";
+import { refuseAttachedSecrets } from "./impl/refuseAttachedSecrets.js";
 import {
     basenameComputePath,
     parentComputePath,
@@ -140,8 +143,11 @@ const computeShellSchema = Type.Object(
     exact,
 );
 
-/** The host compute resolved for one agent. */
-export type HostCompute = Compute & { readonly kind: "host" };
+/**
+ * The machine resolved for one agent: this computer, a runner, or a container on either. Every
+ * module and tool serving the agent is written against the same interface whichever it is.
+ */
+export type HostCompute = Compute;
 
 export const hostComputeSchema = Type.Unsafe<HostCompute>(
     Type.Object(
@@ -168,6 +174,21 @@ export const agentComputeConfigSchema = Type.Object(
     {
         cwd: Type.String({ minLength: 1, maxLength: 4_096 }),
         providerId: Type.Optional(Type.Literal("host")),
+        /** The runner the agent's folder is on; absent when it is on this machine. */
+        runnerId: Type.Optional(Type.String({ pattern: "^[a-z][a-z0-9_-]{0,63}$" })),
+        /** Run the agent's files and commands in a container of this image, the folder mounted. */
+        docker: Type.Optional(
+            Type.Object(
+                {
+                    image: Type.String({
+                        minLength: 1,
+                        maxLength: 512,
+                        pattern: "^[^\\u0000-\\u0020]+$",
+                    }),
+                },
+                exact,
+            ),
+        ),
         secretScope: Type.Optional(
             Type.Object(
                 {
@@ -237,6 +258,7 @@ export class ComputeModule implements AgentModule {
     readonly name = "compute";
     readonly #config: ConfigModule;
     readonly #secrets: SecretsModule;
+    readonly #runners: RunnersModule | undefined;
     /** Present only for the named alternate construction used by scripted machines. */
     #provider: HostComputeProvider | undefined;
     readonly #computes = new Map<string, CachedCompute>();
@@ -264,9 +286,14 @@ export class ComputeModule implements AgentModule {
     #closed = false;
     #disposePromise: Promise<void> | undefined;
 
-    constructor(config: ConfigModule, secrets: SecretsModule) {
+    /**
+     * @param runners Where an agent's folder is when it is not on this machine. An agent whose
+     * configuration names a runner gets a machine there; without this module, it gets none.
+     */
+    constructor(config: ConfigModule, secrets: SecretsModule, runners?: RunnersModule) {
         this.#config = config;
         this.#secrets = secrets;
+        this.#runners = runners;
         this.#provider = undefined;
     }
 
@@ -282,12 +309,13 @@ export class ComputeModule implements AgentModule {
         config: ConfigModule,
         secrets: SecretsModule,
         provider: HostComputeProvider,
+        runners?: RunnersModule,
     ): ComputeModule {
         const candidate = { id: provider.id, create: provider.create };
         if (!Value.Check(hostComputeProviderSchema, candidate)) {
             throw new Error("The host compute provider is invalid.");
         }
-        const module = new ComputeModule(config, secrets);
+        const module = new ComputeModule(config, secrets, runners);
         module.#provider = provider;
         return module;
     }
@@ -321,12 +349,10 @@ export class ComputeModule implements AgentModule {
                     return existing.compute;
                 }
 
-                const created = await this.#create(
-                    lockCtx,
-                    config,
-                    `compute.agent.${agentId}`,
-                    agentId,
-                );
+                const created =
+                    config.runnerId === undefined && config.docker === undefined
+                        ? await this.#createHere(lockCtx, config, agentId)
+                        : await this.#createElsewhere(lockCtx, config, agentId);
                 const { compute } = created;
                 if (this.#closed) {
                     await compute.dispose(lockCtx);
@@ -841,6 +867,79 @@ export class ComputeModule implements AgentModule {
                     ...values.workspace.protectedSync,
                 ]),
             ],
+        };
+    }
+
+    /** An agent's machine on this computer, refused once runners are configured. */
+    async #createHere(
+        ctx: Context,
+        config: AgentComputeConfig,
+        agentId: string,
+    ): Promise<{
+        readonly compute: HostCompute;
+        readonly processContext: Context;
+        readonly processManager: NativeProcessManager | undefined;
+    }> {
+        this.#runners?.assertLocalExecution();
+        return await this.#create(ctx, config, `compute.agent.${agentId}`, agentId);
+    }
+
+    /**
+     * An agent's machine somewhere else: on the runner its folder is on, or in a container of the
+     * workspace's image, on that runner or on this computer. The machine is built before this
+     * resolves, so a runner that is away or a missing Docker fails here, naming what is missing.
+     */
+    async #createElsewhere(
+        ctx: Context,
+        config: AgentComputeConfig,
+        agentId: string,
+    ): Promise<{
+        readonly compute: HostCompute;
+        readonly processContext: Context;
+        readonly processManager: NativeProcessManager | undefined;
+    }> {
+        const detachedProcessContext = detach(ctx).named(`compute.agent.${agentId}`);
+        const database = agentDatabase(ctx);
+        const processContext =
+            database === undefined
+                ? detachedProcessContext
+                : withAgentDatabase(detachedProcessContext, database);
+        let compute: Compute;
+        if (config.runnerId !== undefined) {
+            if (this.#runners === undefined) {
+                throw new Error(
+                    "This agent works on a runner, but runners are not available here.",
+                );
+            }
+            compute = await this.#runners.agentMachine(processContext, {
+                runnerId: config.runnerId,
+                agentId,
+                cwd: config.cwd,
+                policy: {
+                    protectedProjectFiles: [...(this.hostPolicy.protectedProjectFiles ?? [])],
+                },
+                ...(config.docker === undefined ? {} : { docker: config.docker }),
+            });
+        } else {
+            this.#runners?.assertLocalExecution();
+            compute = createDockerCompute({
+                docker: {
+                    image: config.docker!.image,
+                    workingDirectory: config.cwd,
+                    mounts: [{ source: config.cwd, target: config.cwd }],
+                },
+                sessionId: `agent-${agentId}`,
+                hostPolicy: this.hostPolicy,
+            });
+        }
+        if (compute.cwd !== config.cwd) {
+            await compute.dispose(ctx);
+            throw new Error("The agent's machine opened in another folder.");
+        }
+        return {
+            compute: refuseAttachedSecrets(compute),
+            processContext,
+            processManager: undefined,
         };
     }
 

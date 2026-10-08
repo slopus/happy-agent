@@ -1,5 +1,4 @@
 import { AsyncResource } from "node:async_hooks";
-import { mkdir, stat } from "node:fs/promises";
 
 import { createId } from "@paralleldrive/cuid2";
 import {
@@ -14,11 +13,13 @@ import {
     type AnyAgentTool,
 } from "@slopus/happy-agent-base";
 import { Value } from "@sinclair/typebox/value";
+import { computePermissions, RunnerUnavailableError } from "@slopus/happy-agent-compute";
 import { afterCommit, detach, type Context, type RootContext } from "@steve.kite/stdlib";
 
 import { AbortModule } from "../abort/index.js";
 import { ConfigModule } from "../config/index.js";
 import { ProjectsModule } from "../projects/index.js";
+import type { RunnersModule } from "../runners/index.js";
 import { WorkspacesModule } from "../workspaces/index.js";
 import { senderAgentIdMetadata } from "../impl/messageOrigin.js";
 import { MAX_NAMING_MESSAGE_CHARS, TitlesModule } from "../titles/index.js";
@@ -67,6 +68,9 @@ import { setBotAvatarTool } from "./tools/set_bot_avatar.js";
 const BOT_NAME_ATTEMPTED_KEY = "bot-name-attempted";
 
 /** Persistent single-conversation assistants and the dedicated folders they own. */
+/** The catalog manages its bots' folders; the agent sandbox does not apply to that work. */
+const PRODUCT = computePermissions("full_access");
+
 export class BotsModule implements AgentModule {
     readonly name = "bots";
     readonly migrations = botMigrations;
@@ -79,6 +83,7 @@ export class BotsModule implements AgentModule {
     readonly #listeners = new Set<BotEventListener>();
     readonly #namingTasks = new Map<string, Promise<void>>();
     readonly #titles: TitlesModule;
+    readonly #runners: RunnersModule;
     #agents: AgentSystemRef | undefined;
     #closed = false;
     #lifetime: RootContext | undefined;
@@ -89,8 +94,10 @@ export class BotsModule implements AgentModule {
         titles: TitlesModule,
         projects: ProjectsModule,
         workspaces: WorkspacesModule,
+        runners: RunnersModule,
     ) {
         this.#config = config;
+        this.#runners = runners;
         this.#abort = abort;
         this.#titles = titles;
         this.#projects = projects;
@@ -99,7 +106,7 @@ export class BotsModule implements AgentModule {
 
     readonly #hooks: AgentModuleHooks = {
         afterStart: async (ctx: Context): Promise<void> => {
-            await this.#ensureChiefOfStaff(ctx);
+            await this.#ensureChiefOfStaffWhenPossible(ctx);
         },
         instructions: async (ctx: Context, scope: AgentModuleScope): Promise<string> => {
             const bot = await readBotByAgent(ctx, scope.agent.id);
@@ -239,7 +246,10 @@ export class BotsModule implements AgentModule {
             const agentId = input.agentId ?? (await this.#unusedIdentity(txCtx, reserved));
             const name = input.name ?? "New Bot";
             const username = await this.#chooseUsername(txCtx, input.name ?? "bot", input.username);
-            const path = this.#config.botPath(username);
+            // A bot's folder goes to the default runner once runners are configured, under that
+            // runner's own home; otherwise it is in this installation's public folder.
+            const runnerId = this.#runners.enabled ? this.#runners.defaultRunnerId : undefined;
+            const path = this.#botPath(runnerId, username);
             const now = Date.now();
             const config: AgentConfig = {
                 provenance: { createdAt: now },
@@ -254,6 +264,7 @@ export class BotsModule implements AgentModule {
                 modules: {
                     compute: {
                         cwd: path,
+                        ...(runnerId === undefined ? {} : { runnerId }),
                         secretScope: { workspaceId },
                     },
                 },
@@ -272,6 +283,7 @@ export class BotsModule implements AgentModule {
                 workspaceUpdatedAt: now,
                 agentId: agent.id,
                 path,
+                ...(runnerId === undefined ? {} : { runnerId }),
                 status: "active",
                 ...(initialAvatar === undefined
                     ? {}
@@ -294,14 +306,17 @@ export class BotsModule implements AgentModule {
             // The unique username, path, workspace, and agent columns have all accepted this bot
             // by now, so the folder is the last thing that can fail. An existing directory is the
             // folder of a creation that was rolled back after making it, and is taken up again.
-            const existingFolder = await stat(path).catch((error: NodeJS.ErrnoException) => {
-                if (error.code === "ENOENT") return undefined;
-                throw error;
-            });
-            if (existingFolder !== undefined && !existingFolder.isDirectory()) {
+            const machine = await this.#runners.machine(runnerId);
+            const existingFolder = await machine.fs
+                .stat(PRODUCT, path)
+                .catch((error: NodeJS.ErrnoException) => {
+                    if (error.code === "ENOENT") return undefined;
+                    throw error;
+                });
+            if (existingFolder !== undefined && !existingFolder.isDirectory) {
                 throw new BotConflictError("The bot folder path is already in use.");
             }
-            await mkdir(path, { recursive: true, mode: 0o755 });
+            await machine.fs.mkdir(PRODUCT, path, { recursive: true });
             this.#publish(txCtx, {
                 eventId: globalThis.crypto.randomUUID(),
                 at: now,
@@ -310,6 +325,51 @@ export class BotsModule implements AgentModule {
             });
             return { bot: structuredClone(bot), created: true };
         });
+    }
+
+    /** A bot's folder on the machine it goes to. */
+    #botPath(runnerId: string | undefined, username: string): string {
+        if (runnerId === undefined) return this.#config.botPath(username);
+        const home = this.#runners.home(runnerId);
+        if (home === undefined) {
+            throw new RunnerUnavailableError(
+                `The runner ${this.#runners.displayName(runnerId)} has never connected, so it has nowhere to put a bot's folder yet.`,
+            );
+        }
+        return this.#config.botPathOn(home, this.#runners.platform(runnerId) ?? "linux", username);
+    }
+
+    /**
+     * Seed the built-in coordinator now, or once the default runner has connected when its folder
+     * has to go there and the runner has never been seen. Startup never waits on a runner.
+     */
+    async #ensureChiefOfStaffWhenPossible(ctx: Context): Promise<void> {
+        try {
+            await this.#ensureChiefOfStaff(ctx);
+        } catch (error) {
+            if (!(error instanceof RunnerUnavailableError)) throw error;
+            ctx.log.info("The Chief of Staff will be created once the default runner connects.");
+            const unsubscribe = this.#runners.onUpdated(() => {
+                const lifetime = this.#lifetime;
+                if (this.#closed || lifetime === undefined) {
+                    unsubscribe();
+                    return;
+                }
+                void this.#ensureChiefOfStaff(lifetime.named("chief-of-staff-seed")).then(
+                    () => unsubscribe(),
+                    (seedError: unknown) => {
+                        if (!(seedError instanceof RunnerUnavailableError)) {
+                            unsubscribe();
+                            lifetime.log.warn(
+                                "The Chief of Staff could not be created.",
+                                {},
+                                seedError,
+                            );
+                        }
+                    },
+                );
+            });
+        }
     }
 
     /** Seed the installation's built-in coordinator once; archival deliberately keeps it seeded. */

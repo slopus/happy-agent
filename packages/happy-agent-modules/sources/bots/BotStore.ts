@@ -25,6 +25,7 @@ interface BotRow {
     readonly workspace_updated_at: number | string;
     readonly agent_id: string;
     readonly path: string;
+    readonly runner_id: string | null;
     readonly status: string;
     readonly avatar_source: string | null;
     readonly avatar_thumbhash: string | null;
@@ -92,7 +93,7 @@ export async function insertBot(ctx: Context, bot: BotRecord): Promise<void> {
             id, is_admin, system_key, name, name_configured, username,
             workspace_id, workspace_version, workspace_updated_at,
             agent_id, path, status, avatar_source,
-            avatar_thumbhash, order_key, version, created_at, updated_at, archived_at
+            avatar_thumbhash, order_key, version, created_at, updated_at, archived_at, runner_id
         ) VALUES (
             ${bot.id}, ${bot.isAdmin ? 1 : 0}, ${bot.systemKey ?? null}, ${bot.name},
             ${bot.nameConfigured ? 1 : 0},
@@ -100,7 +101,7 @@ export async function insertBot(ctx: Context, bot: BotRecord): Promise<void> {
             ${bot.workspaceVersion}, ${bot.workspaceUpdatedAt}, ${bot.agentId},
             ${bot.path}, ${bot.status}, ${bot.avatar?.source ?? null},
             ${bot.avatar?.thumbhash ?? null}, ${bot.orderKey}, ${bot.version},
-            ${bot.createdAt}, ${bot.updatedAt}, ${bot.archivedAt ?? null}
+            ${bot.createdAt}, ${bot.updatedAt}, ${bot.archivedAt ?? null}, ${bot.runnerId ?? null}
         )`,
     );
 }
@@ -208,6 +209,7 @@ function botFromRow(row: BotRow): BotRecord {
         workspaceUpdatedAt: Number(row.workspace_updated_at),
         agentId: row.agent_id,
         path: row.path,
+        ...(row.runner_id === null ? {} : { runnerId: row.runner_id }),
         status: row.status as BotRecord["status"],
         ...(hasAvatar
             ? {

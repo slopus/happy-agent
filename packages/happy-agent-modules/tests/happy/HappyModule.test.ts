@@ -233,6 +233,7 @@ async function fixture() {
         },
     };
     const workspaceModule = {
+        agentPlacement: async () => ({}),
         attachAgent: async (_ctx: unknown, workspaceId: string, agentId: string) => {
             workspaceAgents.set(agentId, workspaceId);
         },

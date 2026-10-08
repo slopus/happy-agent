@@ -317,6 +317,12 @@ export class SubtasksModule implements AgentModule {
                               ...parent.modules,
                               compute: {
                                   cwd: workspace.path,
+                                  ...(workspace.runnerId === undefined
+                                      ? {}
+                                      : { runnerId: workspace.runnerId }),
+                                  ...(workspace.dockerImage === undefined
+                                      ? {}
+                                      : { docker: { image: workspace.dockerImage } }),
                                   secretScope: {
                                       projectId: workspace.projectRef,
                                       workspaceId: workspace.id,

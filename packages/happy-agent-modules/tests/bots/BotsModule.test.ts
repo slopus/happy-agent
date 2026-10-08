@@ -778,7 +778,7 @@ async function started(name: string, workspacesEnabled: boolean, script: Scripte
     );
     const titles = new TitlesModule(config, new HistoryModule(), workspaces);
     const naming = vi.spyOn(titles, "suggestBotName");
-    const bots = new BotsModule(config, abort, titles, projects, workspaces);
+    const bots = new BotsModule(config, abort, titles, projects, workspaces, runners);
     const hooks = bots.beforeStart(database.context, agents.asRef());
     const events: BotEvent[] = [];
     const agentKVs = new Map<string, AgentKV>();

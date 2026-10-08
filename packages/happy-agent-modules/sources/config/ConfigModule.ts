@@ -2577,6 +2577,17 @@ export class ConfigModule implements AgentModule {
         return getManagedProjectsDirectory({}, home);
     }
 
+    /**
+     * A bot's folder on a runner with this home and platform, laid out the way this installation
+     * lays out its own public folder.
+     */
+    botPathOn(home: string, platform: NodeJS.Platform, username: string): string {
+        if (!/^[a-z][a-z0-9_]{0,63}$/.test(username)) {
+            throw new Error("The bot username cannot name a folder.");
+        }
+        return join(home, platform === "darwin" ? "Happy" : "happy", "Bots", username);
+    }
+
     /** The folder managed workspaces live under on a runner with this home and platform. */
     workspacesHomeOn(home: string, platform: NodeJS.Platform): string {
         return getManagedWorkspacesDirectory({}, home, platform);

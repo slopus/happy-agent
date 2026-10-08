@@ -167,6 +167,7 @@ export {
     MAX_PROJECT_OUTPUT_CHARACTERS,
     PROJECT_PAGE_SIZE,
     ProjectsModule,
+    type ProjectCompute,
 } from "./ProjectsModule.js";
 export { projectGitFactsFrom } from "./projectGitFacts.js";
 export {

@@ -125,6 +125,7 @@ import {
     ProjectLifecycleError,
     ProjectsModule,
     type Project,
+    type ProjectCompute,
     type ProjectEvent,
 } from "../projects/index.js";
 import { ProviderUsageModule } from "../providerUsage/index.js";
@@ -2100,7 +2101,10 @@ export class ApiModule implements AgentModule {
                 "workspace.created",
                 {
                     workspace: {
-                        ...rootWorkspaceResource(event.project),
+                        ...rootWorkspaceResource(
+                            event.project,
+                            this.#projects.compute(event.project),
+                        ),
                         agents: resource["agents"],
                     },
                 },
@@ -2146,10 +2150,13 @@ export class ApiModule implements AgentModule {
         at: number,
     ): void {
         const resource: Record<string, unknown> = {
-            ...rootWorkspaceResource(project),
+            ...rootWorkspaceResource(project, this.#projects.compute(project)),
             agents,
         };
-        const previous = rootWorkspaceResource(previousProject);
+        const previous = rootWorkspaceResource(
+            previousProject,
+            this.#projects.compute(previousProject),
+        );
         this.#journal.append(
             "workspace.updated",
             {
@@ -3125,6 +3132,10 @@ export class ApiModule implements AgentModule {
                 modules: {
                     compute: {
                         cwd: ownership.root,
+                        ...(ownership.runnerId === undefined
+                            ? {}
+                            : { runnerId: ownership.runnerId }),
+                        ...(ownership.docker === undefined ? {} : { docker: ownership.docker }),
                         secretScope: {
                             projectId: ownership.projectId,
                             workspaceId: body.workspaceId,
@@ -4294,6 +4305,7 @@ export class ApiModule implements AgentModule {
                     await this.#projects.register(ctx, {
                         path: body.path,
                         ...(body.projectId === undefined ? {} : { projectId: body.projectId }),
+                        ...(body.runnerId === undefined ? {} : { runnerId: body.runnerId }),
                     }),
             );
             sendJson(response, 200, { project: await this.#projectWithAgents(ctx, project) });
@@ -4309,6 +4321,7 @@ export class ApiModule implements AgentModule {
                         source: body.source,
                         ...(body.secret === undefined ? {} : { secret: body.secret }),
                         ...(body.projectId === undefined ? {} : { projectId: body.projectId }),
+                        ...(body.runnerId === undefined ? {} : { runnerId: body.runnerId }),
                     }),
             );
             sendJson(response, 202, { project: await this.#projectWithAgents(ctx, project) });
@@ -4348,6 +4361,10 @@ export class ApiModule implements AgentModule {
             const projectId = settings[1] as string;
             const body = await bodyAs(request, projectSettingsBodySchema, "project settings");
             const current = await this.#requireProjectMatch(ctx, request, projectId);
+            const defaultWorkspaceCompute = storedWorkspaceCompute(
+                body.defaultWorkspaceCompute,
+                this.#projects.compute(current),
+            );
             await this.#withMutationId(
                 body.mutationId,
                 async () =>
@@ -4355,10 +4372,7 @@ export class ApiModule implements AgentModule {
                         projectId,
                         expectedVersion: current.version,
                         settings: {
-                            defaultWorkspaceCompute:
-                                body.defaultWorkspaceCompute.type === "host"
-                                    ? { type: "local" }
-                                    : body.defaultWorkspaceCompute,
+                            defaultWorkspaceCompute,
                             // Blank is nothing to say; the text itself is kept as typed.
                             ...(body.workspaceInitialPrompt === undefined ||
                             body.workspaceInitialPrompt === null ||
@@ -4848,7 +4862,7 @@ export class ApiModule implements AgentModule {
         if (project !== undefined) {
             if (project.status === "archived" || project.archivedAt !== undefined) {
                 return {
-                    ...rootWorkspaceResource(project),
+                    ...rootWorkspaceResource(project, this.#projects.compute(project)),
                     agents: await this.#agentsForProject(ctx, project.id),
                 };
             }
@@ -4866,7 +4880,7 @@ export class ApiModule implements AgentModule {
                 throw new ApiError(409, "conflict", "The root workspace is not available.");
             }
             return {
-                ...rootWorkspaceResource(project),
+                ...rootWorkspaceResource(project, this.#projects.compute(project)),
                 agents: await this.#agentsForProject(ctx, project.id),
             };
         }
@@ -5076,7 +5090,9 @@ export class ApiModule implements AgentModule {
         const git = /^\/v0\/workspaces\/([a-z][a-z0-9]*)\/git$/.exec(url.pathname);
         if (git !== null && request.method === "GET") {
             const workspaceId = git[1] as string;
-            const { root } = await this.#resolveWorkspaceScope(ctx, workspaceId);
+            const { root, runnerId } = await this.#resolveWorkspaceScope(ctx, workspaceId);
+            // Live Git state is read only for folders on this machine.
+            if (runnerId !== undefined) throw notFound("Git state is not tracked on runners.");
             const snapshot = await this.#git.snapshot(root, workspaceId);
             sendJson(response, 200, { git: this.#git.resource(snapshot) });
             return true;
@@ -5100,10 +5116,10 @@ export class ApiModule implements AgentModule {
             readonly workspaceId: string;
         }[] = [];
         for (const workspaceId of body.workspaceIds) {
-            const { projectId, childWorkspaceId, root } = await this.#resolveWorkspaceScope(
-                ctx,
-                workspaceId,
-            );
+            const { projectId, childWorkspaceId, root, runnerId } =
+                await this.#resolveWorkspaceScope(ctx, workspaceId);
+            // A folder on a runner has no live Git state; it is simply absent from the answer.
+            if (runnerId !== undefined) continue;
             const entity = {
                 path: root,
                 projectId,
@@ -5125,8 +5141,10 @@ export class ApiModule implements AgentModule {
     ): Promise<{
         readonly botId?: string;
         readonly childWorkspaceId?: string;
+        readonly docker?: { readonly image: string };
         readonly projectId: string;
         readonly root: string;
+        readonly runnerId?: string;
         readonly scope: TerminalScope;
     }> {
         const bot = await this.#bots.forWorkspace(ctx, workspaceId);
@@ -5139,6 +5157,7 @@ export class ApiModule implements AgentModule {
                 childWorkspaceId: bot.workspaceId,
                 projectId: bot.id,
                 root: bot.path,
+                ...(bot.runnerId === undefined ? {} : { runnerId: bot.runnerId }),
                 scope: { projectId: bot.id, workspaceId: bot.workspaceId },
             };
         }
@@ -5149,9 +5168,11 @@ export class ApiModule implements AgentModule {
             if (project.status !== "active") {
                 throw new ApiError(409, "conflict", "The workspace is not available.");
             }
+            const location = this.#projects.location(project);
             return {
                 projectId: project.id,
-                root: project.repositoryRef,
+                root: location.path,
+                ...(location.runnerId === undefined ? {} : { runnerId: location.runnerId }),
                 scope: { projectId: project.id },
             };
         }
@@ -5165,8 +5186,12 @@ export class ApiModule implements AgentModule {
         }
         return {
             childWorkspaceId: workspace.id,
+            ...(workspace.dockerImage === undefined
+                ? {}
+                : { docker: { image: workspace.dockerImage } }),
             projectId: workspace.projectRef,
             root: workspace.path,
+            ...(workspace.runnerId === undefined ? {} : { runnerId: workspace.runnerId }),
             scope: { projectId: workspace.projectRef, workspaceId: workspace.id },
         };
     }
@@ -5307,7 +5332,7 @@ export class ApiModule implements AgentModule {
         const workspaces = await this.#allWorkspaces(ctx, projectId, includeArchived);
         const roots = await Promise.all(
             projects.map(async (project) => ({
-                ...rootWorkspaceResource(project),
+                ...rootWorkspaceResource(project, this.#projects.compute(project)),
                 agents: await this.#agentsForProject(ctx, project.id),
             })),
         );
@@ -5863,7 +5888,10 @@ export class ApiModule implements AgentModule {
                 const resource = await this.#projectWithAgents(ctx, project, archived);
                 return {
                     project: resource,
-                    workspace: { ...rootWorkspaceResource(project), agents: resource["agents"] },
+                    workspace: {
+                        ...rootWorkspaceResource(project, this.#projects.compute(project)),
+                        agents: resource["agents"],
+                    },
                 };
             }),
         );
@@ -7072,4 +7100,48 @@ function isCloudOrganizationRoute(pathname: string): boolean {
 
 function stringValue(value: unknown): string | undefined {
     return typeof value === "string" ? value : undefined;
+}
+
+/**
+ * The stored form of a project's workspace compute choice, refusing one that does not fit where the
+ * project is. A runner project's workspaces stay on its runner, so it accepts only that runner,
+ * directly or as the runner a container runs on; a project here accepts this machine or a
+ * container on it.
+ */
+function storedWorkspaceCompute(
+    requested:
+        | { readonly type: "host" }
+        | { readonly type: "docker"; readonly image: string; readonly runnerId?: string }
+        | { readonly type: "runner"; readonly runnerId: string },
+    compute: ProjectCompute,
+): { readonly type: "local" } | { readonly type: "docker"; readonly image: string } {
+    const runnerId = compute.type === "runner" ? compute.runnerId : undefined;
+    if (requested.type === "host") {
+        if (runnerId !== undefined) {
+            throw new ApiError(
+                400,
+                "invalid_request",
+                "This project is on a runner, so its workspaces cannot run on this machine.",
+            );
+        }
+        return { type: "local" };
+    }
+    if (requested.type === "runner") {
+        if (requested.runnerId !== runnerId) {
+            throw new ApiError(
+                400,
+                "invalid_request",
+                "A project's workspaces can only run on the runner its folder is on.",
+            );
+        }
+        return { type: "local" };
+    }
+    if (requested.runnerId !== undefined && requested.runnerId !== runnerId) {
+        throw new ApiError(
+            400,
+            "invalid_request",
+            "A project's workspace containers can only run on the runner its folder is on.",
+        );
+    }
+    return { type: "docker", image: requested.image };
 }

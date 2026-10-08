@@ -196,6 +196,12 @@ export interface WorkspaceReservation {
     readonly workspace: Workspace;
 }
 
+/** Where an agent in a workspace runs, as its compute configuration records it. */
+export interface WorkspaceAgentPlacement {
+    readonly runnerId?: string;
+    readonly docker?: { readonly image: string };
+}
+
 /** The catalog manages its own folders; the agent sandbox does not apply to that work. */
 const PRODUCT = computePermissions("full_access");
 
@@ -1075,6 +1081,31 @@ export class WorkspacesModule implements AgentModule {
             }
             return reserved.workspace;
         });
+    }
+
+    /**
+     * Where an agent working in a project, or in one of its workspaces, runs: the runner the
+     * folder is on, and the image its commands run in when the workspace was created for one.
+     */
+    async agentPlacement(
+        ctx: Context,
+        owner: { readonly projectId: string; readonly workspaceId?: string },
+    ): Promise<WorkspaceAgentPlacement> {
+        if (owner.workspaceId !== undefined && owner.workspaceId !== owner.projectId) {
+            const workspace = await this.get(ctx, owner.workspaceId);
+            if (workspace !== undefined) {
+                return {
+                    ...(workspace.runnerId === undefined ? {} : { runnerId: workspace.runnerId }),
+                    ...(workspace.dockerImage === undefined
+                        ? {}
+                        : { docker: { image: workspace.dockerImage } }),
+                };
+            }
+        }
+        const project = await this.#projects.get(ctx, owner.projectId);
+        if (project === undefined) return {};
+        const { runnerId } = this.#projects.location(project);
+        return runnerId === undefined ? {} : { runnerId };
     }
 
     /**

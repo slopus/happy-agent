@@ -433,6 +433,7 @@ async function createFixture(tracing = false) {
     };
     const projects = {
         onEvent: subscribe,
+        compute: vi.fn(() => ({ type: "host" as const, path: project.repositoryRef })),
         get: vi.fn(async () => project),
         list: vi.fn(async () => ({ projects: [project] })),
         listAgents: vi.fn(async () => associations),

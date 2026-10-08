@@ -13,6 +13,9 @@ export {
 
 import { createTerminalInputSchema, resizeTerminalInputSchema } from "../terminals/index.js";
 
+/** A configured runner's ID. */
+const runnerIdSchema = Type.String({ pattern: "^[a-z][a-z0-9_-]{0,63}$" });
+
 export const apiIdSchema = Type.String({
     minLength: 2,
     maxLength: 96,
@@ -33,6 +36,7 @@ export const projectRegisterBodySchema = Type.Object(
         mutationId: Type.Optional(mutationIdSchema),
         path: Type.String({ minLength: 1, maxLength: 4_096 }),
         projectId: Type.Optional(apiIdSchema),
+        runnerId: Type.Optional(runnerIdSchema),
     },
     { additionalProperties: false },
 );
@@ -59,6 +63,7 @@ export const projectCloneBodySchema = Type.Object(
         mutationId: Type.Optional(mutationIdSchema),
         name: Type.String({ minLength: 1, maxLength: 500 }),
         projectId: Type.Optional(apiIdSchema),
+        runnerId: Type.Optional(runnerIdSchema),
         secret: Type.Optional(
             Type.Object({ kind: Type.Literal("github") }, { additionalProperties: false }),
         ),
@@ -95,8 +100,13 @@ export const projectSettingsBodySchema = Type.Object(
             Type.Object(
                 {
                     image: Type.String({ minLength: 1, maxLength: 4_096 }),
+                    runnerId: Type.Optional(runnerIdSchema),
                     type: Type.Literal("docker"),
                 },
+                { additionalProperties: false },
+            ),
+            Type.Object(
+                { runnerId: runnerIdSchema, type: Type.Literal("runner") },
                 { additionalProperties: false },
             ),
         ]),

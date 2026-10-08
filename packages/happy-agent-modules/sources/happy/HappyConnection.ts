@@ -36,7 +36,7 @@ import { ProjectsModule, type Project } from "../projects/index.js";
 import { ProviderUsageModule } from "../providerUsage/index.js";
 import { SchedulingModule } from "../scheduling/index.js";
 import { UserInputModule, type UserInputRequest } from "../userInput/index.js";
-import { WorkspacesModule } from "../workspaces/index.js";
+import { WorkspacesModule, type WorkspaceAgentPlacement } from "../workspaces/index.js";
 import { TeamModule, type TeamUser } from "../team/index.js";
 import { ConfigModule } from "../config/index.js";
 import type { SessionInputBlock, SessionUserMessage } from "@slopus/happy-providers";
@@ -1519,10 +1519,11 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
         // to decide the session is already made.
         if (existing === undefined) {
             const draftOwner = this.#draftOwner();
+            const placement = await this.#workspaces.agentPlacement(ctx, owner);
             await ctx.inTx(async (txCtx) => {
                 await system.create(
                     txCtx,
-                    agentConfigFor(cwd, selection, owner, draftOwner === undefined),
+                    agentConfigFor(cwd, selection, owner, draftOwner === undefined, placement),
                     { id: request.sessionId },
                 );
                 if (draftOwner !== undefined) {
@@ -2474,6 +2475,7 @@ function agentConfigFor(
     selection: HappySelection,
     owner: { readonly projectId: string; readonly workspaceId?: string },
     seedDraft: boolean,
+    placement: WorkspaceAgentPlacement,
 ): AgentConfig {
     return {
         environment: { ...currentAgentEnvironment(), workingDirectory: cwd },
@@ -2487,6 +2489,8 @@ function agentConfigFor(
             compute: {
                 cwd,
                 providerId: "host",
+                ...(placement.runnerId === undefined ? {} : { runnerId: placement.runnerId }),
+                ...(placement.docker === undefined ? {} : { docker: placement.docker }),
                 secretScope: {
                     projectId: owner.projectId,
                     workspaceId: owner.workspaceId ?? owner.projectId,

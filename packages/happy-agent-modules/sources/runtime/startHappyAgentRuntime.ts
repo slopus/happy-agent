@@ -393,12 +393,17 @@ export async function startHappyAgentRuntime(
         const suppliedCompute = options.compute;
         const computeModule =
             suppliedCompute === undefined
-                ? new ComputeModule(config, secrets)
-                : ComputeModule.withProvider(config, secrets, {
-                      id: "host",
-                      create: async (computeCtx: Context, computeConfig: HostComputeConfig) =>
-                          (await suppliedCompute(computeCtx, computeConfig)) as HostCompute,
-                  });
+                ? new ComputeModule(config, secrets, runners)
+                : ComputeModule.withProvider(
+                      config,
+                      secrets,
+                      {
+                          id: "host",
+                          create: async (computeCtx: Context, computeConfig: HostComputeConfig) =>
+                              (await suppliedCompute(computeCtx, computeConfig)) as HostCompute,
+                      },
+                      runners,
+                  );
         const durableFunctions = new DurableFunctionsModule();
         const globalSkills = new GlobalSkillsModule(config, durableFunctions);
         const compute = createComputeModules(computeModule, globalSkills, config);
@@ -450,7 +455,7 @@ export async function startHappyAgentRuntime(
             runners,
         );
         const titles = new TitlesModule(config, history, workspaces);
-        const bots = new BotsModule(config, abort, titles, projects, workspaces);
+        const bots = new BotsModule(config, abort, titles, projects, workspaces, runners);
         const services = new ServicesModule(
             config,
             compute.computeModule,

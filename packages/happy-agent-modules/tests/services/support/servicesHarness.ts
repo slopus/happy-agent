@@ -163,7 +163,7 @@ export async function servicesHarness(dispatch = true) {
         const workspaces = new WorkspacesModule(config, projects, git, abort, durable, runners);
         const events = new EventsModule();
         const titles = new TitlesModule(config, new HistoryModule(events), workspaces);
-        const bots = new BotsModule(config, abort, titles, projects, workspaces);
+        const bots = new BotsModule(config, abort, titles, projects, workspaces, runners);
         const services = new ServicesModule(
             config,
             compute,

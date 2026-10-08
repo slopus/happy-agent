@@ -7,7 +7,12 @@ import { Value } from "@sinclair/typebox/value";
 
 import type { BotRecord } from "../bots/index.js";
 import type { Profile } from "../profile/index.js";
-import { ProjectsModule, type Project, type ProjectSettings } from "../projects/index.js";
+import {
+    ProjectsModule,
+    type Project,
+    type ProjectCompute,
+    type ProjectSettings,
+} from "../projects/index.js";
 import type { Terminal } from "../terminals/index.js";
 import type { UserInputRequest } from "../userInput/index.js";
 import type { Workspace } from "../workspaces/index.js";
@@ -39,14 +44,50 @@ export async function projectResource(
     project: Project,
 ): Promise<Record<string, unknown>> {
     const settings = await projects.readSettings(ctx, project.id);
-    return projectResourceWithSettings(project, settings);
+    return projectResourceWithSettings(project, settings, projects.compute(project));
+}
+
+/** Where new workspaces of a project run, as clients are shown it. */
+function workspaceComputeSelection(
+    settings: ProjectSettings,
+    compute: ProjectCompute,
+): Record<string, unknown> {
+    const selected = settings.defaultWorkspaceCompute;
+    if (compute.type === "runner") {
+        return selected?.type === "docker"
+            ? { type: "docker", image: selected.image, runnerId: compute.runnerId }
+            : { type: "runner", runnerId: compute.runnerId };
+    }
+    return selected === undefined || selected.type === "local" ? { type: "host" } : selected;
+}
+
+/** Where a workspace's files are and where its agents work. */
+function workspaceCompute(workspace: Workspace): Record<string, unknown> {
+    if (workspace.dockerImage !== undefined) {
+        return {
+            type: "docker",
+            image: workspace.dockerImage,
+            path: workspace.path,
+            ...(workspace.runnerId === undefined ? {} : { runnerId: workspace.runnerId }),
+        };
+    }
+    return workspace.runnerId === undefined
+        ? { type: "host", path: workspace.path }
+        : { type: "runner", runnerId: workspace.runnerId, path: workspace.path };
+}
+
+/** Where a bot's folder is. */
+function botCompute(bot: BotRecord): Record<string, unknown> {
+    return bot.runnerId === undefined
+        ? { type: "host", path: bot.path }
+        : { type: "runner", runnerId: bot.runnerId, path: bot.path };
 }
 
 export function projectResourceWithSettings(
     project: Project,
     settings: ProjectSettings,
+    compute: ProjectCompute = { type: "host", path: project.repositoryRef },
 ): Record<string, unknown> {
-    const defaultWorkspaceCompute = settings.defaultWorkspaceCompute;
     const hasGit =
         project.gitBranch !== undefined ||
         project.gitHead !== undefined ||
@@ -56,7 +97,7 @@ export function projectResourceWithSettings(
         id: project.id,
         name: project.name,
         nameSource: project.nameSource === "user" ? "user" : "folder",
-        compute: { type: "host", path: project.repositoryRef },
+        compute,
         status: project.status,
         initialization: {
             status: project.initializationStatus,
@@ -94,10 +135,7 @@ export function projectResourceWithSettings(
         // shows "nothing to run" either way, and the list arrives with the next update.
         workspaceSetupCommands: project.workspaceSetupCommands ?? [],
         settings: {
-            defaultWorkspaceCompute:
-                defaultWorkspaceCompute === undefined || defaultWorkspaceCompute.type === "local"
-                    ? { type: "host" }
-                    : defaultWorkspaceCompute,
+            defaultWorkspaceCompute: workspaceComputeSelection(settings, compute),
             workspaceInitialPrompt: settings.workspaceInitialPrompt ?? null,
         },
         orderKey: project.orderKey,
@@ -125,7 +163,7 @@ export function workspaceResource(
         name: workspace.name,
         nameSource: workspace.nameConfigured ? "user" : "generated",
         kind: workspace.kind === "git_worktree" ? "worktree" : "copy",
-        compute: { type: "host", path: workspace.path },
+        compute: workspaceCompute(workspace),
         status: workspaceStatus(workspace.status),
         initialization: {
             status: workspaceInitializationStatus(workspace.status),
@@ -172,7 +210,7 @@ export function botResource(
         name: bot.name,
         username: bot.username,
         workspaceId: bot.workspaceId,
-        compute: { type: "host", path: bot.path },
+        compute: botCompute(bot),
         status: bot.status,
         systemKey: bot.systemKey ?? null,
         avatar: bot.avatar ?? null,
@@ -198,7 +236,7 @@ export function botWorkspaceResource(
         name: bot.username,
         nameSource: "user",
         kind: "bot",
-        compute: { type: "host", path: bot.path },
+        compute: botCompute(bot),
         status: bot.status,
         initialization: { status: "ready", attempt: 0, error: null },
         base: null,
@@ -214,7 +252,10 @@ export function botWorkspaceResource(
     };
 }
 
-export function rootWorkspaceResource(project: Project): Record<string, unknown> {
+export function rootWorkspaceResource(
+    project: Project,
+    compute: ProjectCompute = { type: "host", path: project.repositoryRef },
+): Record<string, unknown> {
     return {
         subtaskAgentId: null,
         id: project.id,
@@ -224,7 +265,7 @@ export function rootWorkspaceResource(project: Project): Record<string, unknown>
         name: project.name,
         nameSource: project.nameSource === "user" ? "user" : "generated",
         kind: "root",
-        compute: { type: "host", path: project.repositoryRef },
+        compute,
         status: project.status,
         initialization: {
             status: project.initializationStatus,

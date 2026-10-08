@@ -157,6 +157,11 @@ import {
     type ProjectProvisionResult,
 } from "./ProjectDurableFunctions.js";
 
+/** Where a project's folder is, as clients are shown it. */
+export type ProjectCompute =
+    | { readonly type: "host"; readonly path: string }
+    | { readonly type: "runner"; readonly runnerId: string; readonly path: string | null };
+
 /** The product manages its own folders; the agent sandbox does not apply to that work. */
 const PRODUCT = computePermissions("full_access");
 
@@ -1359,6 +1364,24 @@ export class ProjectsModule implements AgentModule {
             );
         }
         return { runnerId: project.runnerId, path: project.repositoryRef };
+    }
+
+    /**
+     * Where a project's folder is, as the API shows it: a folder on this machine, or one on a
+     * runner. Unlike {@link location} it never refuses, so a project whose machine is unavailable
+     * is still listed; the home project's runner folder is unknown until that runner connects.
+     */
+    compute(project: Project): ProjectCompute {
+        const runners = this.#runners;
+        if (project.kind === "home" && runners.enabled) {
+            const runnerId = runners.defaultRunnerId;
+            if (runnerId !== undefined) {
+                return { type: "runner", runnerId, path: runners.home(runnerId) ?? null };
+            }
+        }
+        return project.runnerId === undefined
+            ? { type: "host", path: project.repositoryRef }
+            : { type: "runner", runnerId: project.runnerId, path: project.repositoryRef };
     }
 
     /** The machine a project's folder is on, where everything that touches the folder runs. */

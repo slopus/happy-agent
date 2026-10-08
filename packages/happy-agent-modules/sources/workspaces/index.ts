@@ -160,6 +160,7 @@ export {
     WORKSPACE_PAGE_SIZE,
     WorkspacesModule,
     type ResolvedProjectOwnership,
+    type WorkspaceAgentPlacement,
     type WorkspaceReservation,
 } from "./WorkspacesModule.js";
 export {
