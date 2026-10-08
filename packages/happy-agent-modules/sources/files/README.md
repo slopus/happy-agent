@@ -27,3 +27,20 @@ the operating system provides them.
 Smaller transports pass an optional byte limit to `read` or `readRevision`; the default remains
 44 MiB. Current reads verify a contained regular file and stream at most the limit plus one byte.
 Revision callers may request strict errors; the HTTP preview retains its nullable default.
+
+## Folders on runners
+
+A folder may live on a runner instead of this machine. The root then carries the runner's ID, and
+every read, tree page, and write runs on that machine through the same compute calls a local
+folder uses, with the same containment and compare-and-swap rules. Two things differ, because they
+lean on this machine's own disk:
+
+- Search lists the folder on the runner — Git's ignore-aware view of the working tree, or a bounded
+  walk outside a repository — and ranks the names here. Each of the eight most recently searched
+  runner folders keeps one listing, listed again after its watch reports a change, or after two
+  seconds when nothing watches it.
+- Watching uses the runner's own recursive watcher for the whole folder, skipping dependency and
+  repository directories, for at most eight recently read runner folders. A runner that disconnects
+  ends its watches; the next read arms them again.
+
+Live Git state stays local, so writes to a runner folder do not touch the Git module's caches.

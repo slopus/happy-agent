@@ -25,7 +25,9 @@ import {
     type ProjectFileRoot,
 } from "../../sources/files/index.js";
 import type { ProjectsModule } from "../../sources/projects/index.js";
+import { RunnersModule } from "../../sources/runners/index.js";
 import type { WorkspacesModule } from "../../sources/workspaces/index.js";
+import { temporaryTestConfig } from "../support/configModule.js";
 
 let directory: string;
 let files: ProjectFilesModule;
@@ -33,12 +35,14 @@ let invalidateGit: ReturnType<typeof vi.fn>;
 let markGitChanged: ReturnType<typeof vi.fn>;
 let readGitFileAtRevision: ReturnType<typeof vi.fn>;
 let root: ProjectFileRoot;
+let runners: RunnersModule;
 
 beforeEach(async () => {
     directory = await mkdtemp(join(tmpdir(), "happy-agent-files-"));
     invalidateGit = vi.fn();
     markGitChanged = vi.fn();
     readGitFileAtRevision = vi.fn();
+    runners = new RunnersModule(await temporaryTestConfig());
     files = new ProjectFilesModule(
         {} as ProjectsModule,
         {} as WorkspacesModule,
@@ -47,12 +51,14 @@ beforeEach(async () => {
             markChanged: markGitChanged,
             readFileAtRevision: readGitFileAtRevision,
         } as unknown as GitModule,
+        runners,
     );
     root = { projectId: "project-1", root: await realpath(directory) };
 });
 
 afterEach(async () => {
     await files.close();
+    await runners.close();
     await rm(directory, { force: true, recursive: true });
 });
 

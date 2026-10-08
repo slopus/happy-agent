@@ -471,7 +471,7 @@ export async function startHappyAgentRuntime(
         registerShutdown("tailcat", async (shutdownCtx) => await tailcat.close(shutdownCtx));
         const terminals = new TerminalsModule(projects, workspaces, runners, bots);
         registerShutdown("terminals", async () => await terminals.close());
-        const files = new ProjectFilesModule(projects, workspaces, git, bots);
+        const files = new ProjectFilesModule(projects, workspaces, git, runners, bots);
         registerShutdown("files", async () => await files.close());
 
         const profile = new ProfileModule<LibSQLDatabase>(config, bots);

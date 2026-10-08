@@ -1208,6 +1208,13 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
     /** The same branch comparison the workspace API and the phone's badge describe. */
     async gitState(ctx: Context, agentId: string): Promise<HappyGitStateResponse> {
         const root = await this.#readRoot(ctx, agentId);
+        // Live Git state is read only for folders on this machine.
+        if (root.runnerId !== undefined) {
+            throw new HappyReadRefused(
+                "unsupported",
+                "Changes are not tracked for runner folders.",
+            );
+        }
         const topLevel = await this.#git.topLevel(root.root).catch(() => undefined);
         if (topLevel !== root.root) {
             throw new HappyReadRefused(

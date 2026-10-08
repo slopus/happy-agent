@@ -8,16 +8,21 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { GitModule, type WorkingTreeObserver } from "../../sources/git/index.js";
 import { ProjectFilesModule, type ProjectFileRoot } from "../../sources/files/index.js";
 import type { ProjectsModule } from "../../sources/projects/index.js";
+import { RunnersModule } from "../../sources/runners/index.js";
 import type { WorkspacesModule } from "../../sources/workspaces/index.js";
 import { gitRunner } from "../git/helpers.js";
+import { temporaryTestConfig } from "../support/configModule.js";
 
 const directories = new Set<string>();
 const modules = new Set<ProjectFilesModule>();
 const gits = new Set<GitModule>();
+const runnerModules = new Set<RunnersModule>();
 
 afterEach(async () => {
     await Promise.all([...modules].map(async (module) => await module.close()));
     modules.clear();
+    await Promise.all([...runnerModules].map(async (runners) => await runners.close()));
+    runnerModules.clear();
     for (const git of gits) git.dispose();
     gits.clear();
     await Promise.all(
@@ -38,7 +43,7 @@ describe("ProjectFilesModule index", () => {
         await mkdir(join(root, "sources", "components"), { recursive: true });
         await writeFile(join(root, "sources", "components", "ChatComposer.tsx"), "export {};");
         await writeFile(join(root, "README.md"), "Happy Agent");
-        const files = createFiles();
+        const files = await createFiles();
 
         const result = await files.search(await fileRoot(root), { query: "chtcomp" });
 
@@ -52,7 +57,7 @@ describe("ProjectFilesModule index", () => {
         const root = await workspace();
         await mkdir(join(root, "src"), { recursive: true });
         await writeFile(join(root, "src", "mention-target.ts"), "export {};");
-        const files = createFiles();
+        const files = await createFiles();
 
         const result = await files.search(await fileRoot(root), { query: "" });
 
@@ -72,7 +77,7 @@ describe("ProjectFilesModule index", () => {
             join(root, "node_modules", "dependency", "index.js"),
             "module.exports = {};",
         );
-        const files = createFiles();
+        const files = await createFiles();
         const resolvedRoot = await fileRoot(root);
 
         const tree = await files.tree(resolvedRoot, { limit: 50 });
@@ -90,7 +95,7 @@ describe("ProjectFilesModule index", () => {
     it("refreshes the warm tree and autocomplete index after an API write", async () => {
         const root = await workspace();
         await writeFile(join(root, "README.md"), "workspace");
-        const files = createFiles();
+        const files = await createFiles();
         const resolvedRoot = await fileRoot(root);
         await files.tree(resolvedRoot, { limit: 50 });
 
@@ -112,7 +117,7 @@ describe("ProjectFilesModule index", () => {
     it("rescans a warm index when a direct read proves an external path exists", async () => {
         const root = await workspace();
         await writeFile(join(root, "README.md"), "workspace");
-        const files = createFiles();
+        const files = await createFiles();
         const resolvedRoot = await fileRoot(root);
         await files.search(resolvedRoot, { query: "readme" });
 
@@ -129,7 +134,7 @@ describe("ProjectFilesModule index", () => {
     it("rescans when the watched tree reports an unseen external file", async () => {
         const root = await workspace();
         await writeFile(join(root, "README.md"), "workspace");
-        const files = createFiles();
+        const files = await createFiles();
         const resolvedRoot = await fileRoot(root);
         await files.search(resolvedRoot, { query: "readme" });
 
@@ -157,7 +162,13 @@ describe("ProjectFilesModule index", () => {
                 return () => undefined;
             },
         } as unknown as GitModule;
-        const files = new ProjectFilesModule({} as ProjectsModule, {} as WorkspacesModule, git);
+        const files = new ProjectFilesModule(
+            {} as ProjectsModule,
+            {} as WorkspacesModule,
+            git,
+            // Search on this machine's folders never asks for a machine.
+            {} as RunnersModule,
+        );
         modules.add(files);
         const resolvedRoot = await fileRoot(root);
         await files.search(resolvedRoot, { query: "readme" });
@@ -174,7 +185,7 @@ describe("ProjectFilesModule index", () => {
     it("does not rescan an idle watched workspace however old its index is", async () => {
         const root = await workspace();
         await writeFile(join(root, "README.md"), "workspace");
-        const files = createFiles();
+        const files = await createFiles();
         const resolvedRoot = await fileRoot(root);
         await files.search(resolvedRoot, { query: "readme" });
         // Let the watch arm. Going live rescans once, since the first scan predates the watch;
@@ -196,11 +207,18 @@ describe("ProjectFilesModule index", () => {
     });
 });
 
-function createFiles(): ProjectFilesModule {
+async function createFiles(): Promise<ProjectFilesModule> {
     // A real Git module, so the index follows the same shared working-tree watch as production.
     const git = GitModule.withRunner(gitRunner);
     gits.add(git);
-    const files = new ProjectFilesModule({} as ProjectsModule, {} as WorkspacesModule, git);
+    const runners = new RunnersModule(await temporaryTestConfig());
+    runnerModules.add(runners);
+    const files = new ProjectFilesModule(
+        {} as ProjectsModule,
+        {} as WorkspacesModule,
+        git,
+        runners,
+    );
     modules.add(files);
     return files;
 }

@@ -1,16 +1,32 @@
 import { watch, type FSWatcher } from "node:fs";
 
+import type { Compute, ComputeWatch } from "@slopus/happy-agent-compute";
 import type { Context } from "@steve.kite/stdlib";
 
 const MAX_CHANGED_PATHS = 256;
 const MAX_PATH_LENGTH = 16_384;
 const MAX_WATCHED_DIRECTORIES = 256;
+const MAX_WATCHED_TREES = 8;
+/** Directory names a runner folder's watch never descends into. */
+const UNWATCHED_DIRECTORIES = [
+    ".cache",
+    ".git",
+    ".hg",
+    ".next",
+    ".svn",
+    ".turbo",
+    ".venv",
+    "__pycache__",
+    "node_modules",
+    "venv",
+];
 const CHANGE_DEBOUNCE_MS = 75;
 const MAXIMUM_DEBOUNCE_MS = 300;
 
 export interface ProjectFileWatchRoot {
     readonly projectId: string;
     readonly root: string;
+    readonly runnerId?: string;
     readonly workspaceId?: string;
 }
 
@@ -24,6 +40,13 @@ export type ProjectFileChangeObserver = (
 interface DirectoryWatch {
     readonly directory: string;
     readonly watcher: FSWatcher;
+}
+
+interface TreeWatch {
+    ended: boolean;
+    readonly root: string;
+    readonly runnerId: string;
+    watch: ComputeWatch | undefined;
 }
 
 interface PendingChange {
@@ -43,12 +66,17 @@ interface PendingChange {
  * One non-recursive watch keeps a rendered file or expanded tree branch current without turning
  * dependency folders into a second recursive index. Watches are retained in least-recently-used
  * order and eviction closes the native handle immediately.
+ *
+ * A folder on a runner is watched as a whole through that runner's own watcher instead, skipping
+ * dependency and repository directories, because each watch there is a request to another machine
+ * rather than a native handle. Only the few most recently read runner folders are watched.
  */
 export class ProjectFileWatcher {
     readonly #changes = new Map<string, PendingChange>();
     readonly #ctx: Context;
     readonly #inFlight = new Set<Promise<void>>();
     readonly #onChange: ProjectFileChangeObserver;
+    readonly #trees = new Map<string, TreeWatch>();
     readonly #watches = new Map<string, DirectoryWatch>();
     #closed = false;
 
@@ -87,6 +115,66 @@ export class ProjectFileWatcher {
         }
     }
 
+    /** Watches a whole folder on a runner through that runner's watcher. */
+    watchTree(root: ProjectFileWatchRoot & { readonly runnerId: string }, machine: Compute): void {
+        const watcher = machine.watcher;
+        if (this.#closed || watcher === undefined) return;
+        const key = root.workspaceId ?? root.projectId;
+        const existing = this.#trees.get(key);
+        if (existing?.root === root.root && existing.runnerId === root.runnerId) {
+            this.#trees.delete(key);
+            this.#trees.set(key, existing);
+            return;
+        }
+        if (existing !== undefined) this.#removeTree(key);
+        const entry: TreeWatch = {
+            ended: false,
+            root: root.root,
+            runnerId: root.runnerId,
+            watch: undefined,
+        };
+        this.#trees.set(key, entry);
+        while (this.#trees.size > MAX_WATCHED_TREES) {
+            const oldestKey = this.#trees.keys().next().value as string | undefined;
+            if (oldestKey === undefined) break;
+            this.#removeTree(oldestKey);
+        }
+        const forget = (): void => {
+            entry.ended = true;
+            if (this.#trees.get(key) === entry) this.#trees.delete(key);
+        };
+        watcher.watch(this.#ctx, { path: root.root, ignore: UNWATCHED_DIRECTORIES }).then(
+            (watch) => {
+                if (entry.ended) {
+                    watch.close();
+                    return;
+                }
+                entry.watch = watch;
+                watch.onChange((batch) => {
+                    if (batch.overflow) {
+                        this.#observed(root, null, true);
+                        return;
+                    }
+                    for (const path of batch.paths) {
+                        this.#observed(root, changedPath("", path), true);
+                    }
+                });
+                // A runner that went away ends its watches; the next read arms a new one.
+                void watch.closed.then(forget);
+            },
+            (error: unknown) => {
+                forget();
+                this.#ctx.log.warn("A runner folder could not be watched.", { key }, error);
+            },
+        );
+    }
+
+    /** Whether a runner folder's watch is live, so its listing is current until it reports. */
+    watchingTree(root: ProjectFileWatchRoot): boolean {
+        const entry = this.#trees.get(root.workspaceId ?? root.projectId);
+        return entry?.root === root.root && entry.watch !== undefined && !entry.ended;
+    }
+
     /** Announces a successful module-owned write even when its directory was not already watched. */
     changed(root: ProjectFileWatchRoot, path: string): void {
         if (this.#closed) return;
@@ -98,6 +186,7 @@ export class ProjectFileWatcher {
         this.#closed = true;
         for (const { watcher } of this.#watches.values()) closeWatcher(watcher);
         this.#watches.clear();
+        for (const key of [...this.#trees.keys()]) this.#removeTree(key);
         for (const change of this.#changes.values()) {
             if (change.timer !== undefined) clearTimeout(change.timer);
             change.timer = undefined;
@@ -188,6 +277,14 @@ export class ProjectFileWatcher {
             });
         change.inFlight = task;
         this.#inFlight.add(task);
+    }
+
+    #removeTree(key: string): void {
+        const entry = this.#trees.get(key);
+        if (entry === undefined) return;
+        this.#trees.delete(key);
+        entry.ended = true;
+        entry.watch?.close();
     }
 
     #removeWatch(key: string): void {

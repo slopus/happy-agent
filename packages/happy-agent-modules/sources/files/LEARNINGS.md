@@ -63,3 +63,14 @@ The project-files API is an authenticated client surface for browsing, previewin
 human edits. Every valid path inside the selected root is available there, including `.git`,
 `AGENTS.md` and `AGENTS_SECURITY.md`; traversal and symlink escapes remain forbidden. Restrictions
 on model writes belong to the compute sandbox and its host policy, not to the file viewer.
+
+## Runner folders use the same calls, not a second implementation
+
+Folders on runners need the file viewer too. Rather than a runner-specific copy of every read and
+write, all filesystem work now goes through the folder's machine compute: this machine's when no
+runner is named, the runner's otherwise. The O_NOFOLLOW open and the device/inode identity check
+became `readFileBuffer` with `noFollow`, preceded by a regular-file check and followed by a fresh
+resolution that must land on the same path. Replaced files keep their permission bits and new files
+get the machine's default mode, instead of both inheriting the temporary file's `0600`. Only search and watching differ, because FFF and
+non-recursive native watches read this machine's disk: runner folders are listed and watched by the
+runner itself.

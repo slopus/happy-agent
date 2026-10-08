@@ -1,30 +1,26 @@
 import { createHash, randomUUID } from "node:crypto";
-import { constants } from "node:fs";
-import {
-    mkdir,
-    open,
-    lstat,
-    readdir,
-    readFile,
-    realpath,
-    rename,
-    stat,
-    unlink,
-    writeFile,
-} from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { buffer } from "node:stream/consumers";
 
 import type { AgentModule } from "@slopus/happy-agent-base";
+import {
+    computePermissions,
+    RunnerUnavailableError,
+    type Compute,
+} from "@slopus/happy-agent-compute";
 import { Type, type Static } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import { createRootContext, detach, type Context, type RootContext } from "@steve.kite/stdlib";
 import { GitRevisionFileTooLargeError, type GitModule } from "../git/index.js";
 import type { BotsModule } from "../bots/index.js";
 import type { ProjectsModule } from "../projects/index.js";
+import { LocalExecutionDisabledError, type RunnersModule } from "../runners/index.js";
 import type { WorkspacesModule } from "../workspaces/index.js";
+import { MachineFileIndex } from "./impl/MachineFileIndex.js";
 import { ProjectFileWatcher } from "./ProjectFileWatcher.js";
 import { WorkspaceFileIndex } from "./WorkspaceFileIndex.js";
+
+/** Folder files are the product's own work, so the agent sandbox does not apply to them. */
+const PRODUCT = computePermissions("full_access");
 
 const MAX_FILE_BYTES = 44 * 1024 * 1024;
 const MAX_CHANGED_PATHS = 256;
@@ -119,6 +115,8 @@ export interface ProjectFileRoot {
     readonly projectId: string;
     readonly workspaceId?: string;
     readonly root: string;
+    /** The runner holding the folder, when it is not on this machine. */
+    readonly runnerId?: string;
 }
 
 export interface FileTreeResult {
@@ -181,22 +179,31 @@ export class ProjectFilesModule implements AgentModule {
     readonly #listeners = new Set<ProjectFilesEventListener>();
     readonly #projects: ProjectsModule;
     readonly #index: WorkspaceFileIndex;
+    readonly #machineIndex: MachineFileIndex;
+    readonly #runners: RunnersModule;
     readonly #workspaces: WorkspacesModule;
     readonly #writeLocks = new Map<string, Promise<void>>();
     #closed = false;
     #lifetime: RootContext | undefined;
     #watcher: ProjectFileWatcher | undefined;
 
+    /**
+     * @param runners The owner of the machines folders live on. Every read, listing, and write runs
+     * on the folder's machine — this one, or the runner holding it — through the same calls.
+     */
     constructor(
         projects: ProjectsModule,
         workspaces: WorkspacesModule,
         git: GitModule,
+        runners: RunnersModule,
         bots?: BotsModule,
     ) {
         this.#bots = bots;
         this.#git = git;
         this.#index = new WorkspaceFileIndex(git);
+        this.#machineIndex = new MachineFileIndex(git);
         this.#projects = projects;
+        this.#runners = runners;
         this.#workspaces = workspaces;
     }
 
@@ -220,6 +227,7 @@ export class ProjectFilesModule implements AgentModule {
         this.#closed = true;
         this.#listeners.clear();
         this.#index.close();
+        this.#machineIndex.close();
         await this.#watcher?.close();
         this.#watcher = undefined;
     }
@@ -233,9 +241,9 @@ export class ProjectFilesModule implements AgentModule {
         if (project === undefined) {
             throw new ProjectFileError(404, "missing", "The project was not found.");
         }
-        const projectRoot = await this.#canonicalRoot(project.repositoryRef);
         if (workspaceId === undefined) {
-            return { projectId, root: projectRoot };
+            const { path, runnerId } = this.#projects.location(project);
+            return { projectId, ...(await this.#canonicalRoot(runnerId, path)) };
         }
         const workspace = await this.#workspaces.get(ctx, workspaceId);
         if (workspace === undefined || workspace.projectRef !== projectId) {
@@ -255,10 +263,11 @@ export class ProjectFilesModule implements AgentModule {
             return {
                 projectId,
                 workspaceId,
-                root: await this.#canonicalRoot(workspace.path),
+                ...(await this.#canonicalRoot(workspace.runnerId, workspace.path)),
             };
         } catch (error) {
             if (error instanceof ProjectFileError && error.status === 403) throw error;
+            if (isMachineRefusal(error)) throw error;
             throw new ProjectFileError(
                 409,
                 "conflict",
@@ -279,21 +288,32 @@ export class ProjectFilesModule implements AgentModule {
         return {
             projectId: bot.id,
             workspaceId: bot.workspaceId,
-            root: await this.#canonicalRoot(bot.path),
+            ...(await this.#canonicalRoot(bot.runnerId, bot.path)),
         };
     }
 
     async search(root: ProjectFileRoot, query: FileSearchQuery): Promise<FileSearchResult> {
         assertSchema(fileSearchQuerySchema, query, "file search query");
+        const limit = query.limit ?? MAX_SEARCH_RESULTS;
         try {
+            // The native index reads this machine's disk; a runner lists its folder itself.
+            if (root.runnerId === undefined) {
+                return { files: await this.#index.search(root.root, query.query, limit) };
+            }
+            const machine = await this.#machine(root);
+            const folder = { root: root.root, runnerId: root.runnerId };
+            this.#watcherInstance().watchTree({ ...root, runnerId: root.runnerId }, machine);
             return {
-                files: await this.#index.search(
-                    root.root,
+                files: await this.#machineIndex.search(
+                    machine,
+                    folder,
                     query.query,
-                    query.limit ?? MAX_SEARCH_RESULTS,
+                    limit,
+                    this.#watcherInstance().watchingTree(root),
                 ),
             };
-        } catch {
+        } catch (error) {
+            if (isMachineRefusal(error)) throw error;
             throw new ProjectFileError(
                 503,
                 "unavailable",
@@ -305,42 +325,43 @@ export class ProjectFilesModule implements AgentModule {
     async tree(root: ProjectFileRoot, query: FileTreeQuery): Promise<FileTreeResult> {
         assertSchema(fileTreeQuerySchema, query, "file tree query");
         const path = query.path ?? "";
-        const directory = await this.#resolveExisting(root.root, path, true);
-        const information = await lstat(directory);
-        if (!information.isDirectory()) {
-            throw new ProjectFileError(400, "invalid", "The file-tree path must be a directory.");
-        }
-        this.#watcherInstance().watchDirectory(root, path, directory);
-        const entries = await readdir(directory, { withFileTypes: true });
         const offset = parseCursor(query.cursor);
         const limit = query.limit ?? 100;
-        const selected = entries
-            .sort((left, right) => left.name.localeCompare(right.name))
-            .slice(offset, offset + limit);
-        const result = await Promise.all(
-            selected.map(async (entry) => {
-                const relativePath = path === "" ? entry.name : `${path}/${entry.name}`;
-                const entryPath = join(directory, entry.name);
-                const entryInformation = await lstat(entryPath);
-                return {
-                    modified: Math.trunc(entryInformation.mtimeMs),
-                    name: entry.name,
-                    path: relativePath,
-                    size: entryInformation.isFile() ? entryInformation.size : 0,
-                    type: entry.isDirectory()
+        const machine = await this.#machine(root);
+        const directory = await this.#resolveExisting(machine, root.root, path, true);
+        this.#watch(root, machine, path, directory);
+        const names = [...(await machine.fs.readdir(PRODUCT, directory))].sort((left, right) =>
+            left.localeCompare(right),
+        );
+        const selected = names.slice(offset, offset + limit);
+        const information = await machine.fs.lstatMany(
+            PRODUCT,
+            selected.map((name) => join(directory, name)),
+        );
+        // A name that disappeared between listing and inspecting it is simply gone.
+        const entries = selected.flatMap((name, index) => {
+            const entry = information[index];
+            if (entry === undefined) return [];
+            return [
+                {
+                    modified: Math.trunc(entry.mtimeMs),
+                    name,
+                    path: path === "" ? name : `${path}/${name}`,
+                    size: entry.isFile ? entry.size : 0,
+                    type: entry.isDirectory
                         ? ("directory" as const)
-                        : entry.isFile()
+                        : entry.isFile
                           ? ("file" as const)
-                          : entry.isSymbolicLink()
+                          : entry.isSymbolicLink
                             ? ("symlink" as const)
                             : ("other" as const),
-                };
-            }),
-        );
+                },
+            ];
+        });
         return {
-            entries: result,
+            entries,
             nextCursor:
-                offset + selected.length < entries.length ? String(offset + selected.length) : null,
+                offset + selected.length < names.length ? String(offset + selected.length) : null,
             path,
         };
     }
@@ -365,49 +386,43 @@ export class ProjectFilesModule implements AgentModule {
             this.#assertWithinRoot(relativePath, root.root);
             relativePath = relative(root.root, relativePath).split(sep).join("/");
         }
-        const path = await this.#resolveExisting(root.root, relativePath, false);
-        const handle = await open(
-            path,
-            constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
-        );
+        const machine = await this.#machine(root);
+        const path = await this.#resolveExisting(machine, root.root, relativePath, false);
+        const information = await machine.fs.lstat(PRODUCT, path);
+        // Checking first is what keeps a FIFO or a device from being opened and read at all.
+        if (!information.isFile)
+            throw new ProjectFileError(400, "invalid", "The requested path is not a regular file.");
+        this.#assertSize(information.size, maximumBytes);
+        let bytes: Buffer;
         try {
-            const information = await handle.stat();
-            if (!information.isFile())
-                throw new ProjectFileError(
-                    400,
-                    "invalid",
-                    "The requested path is not a regular file.",
-                );
-            const current = await this.#resolveExisting(root.root, relativePath, false);
-            const currentInformation = await stat(current);
-            if (
-                current !== path ||
-                information.dev !== currentInformation.dev ||
-                information.ino !== currentInformation.ino
-            ) {
-                throw new ProjectFileError(
-                    403,
-                    "forbidden",
-                    "The file location changed while it was being opened.",
-                );
-            }
-            this.#assertSize(information.size, maximumBytes);
-            // end is inclusive: the extra byte detects growth without buffering the whole file.
-            const bytes = await buffer(
-                handle.createReadStream({ autoClose: false, end: maximumBytes }),
+            // The final component must not have become a link since it was resolved.
+            bytes = Buffer.from(
+                await machine.fs.readFileBuffer(PRODUCT, path, {
+                    maxBytes: maximumBytes,
+                    noFollow: true,
+                }),
             );
-            this.#assertSize(bytes.byteLength, maximumBytes);
-            const relativeDirectory = dirname(relativePath);
-            this.#watcherInstance().watchDirectory(
-                root,
-                relativeDirectory === "." ? "" : relativeDirectory,
-                dirname(path),
-            );
-            this.#index.ensure(root.root, relativePath);
-            return { content: bytes.toString("base64"), hash: sha256(bytes) };
-        } finally {
-            await handle.close();
+        } catch (error) {
+            if (isMachineRefusal(error)) throw error;
+            if (errorCode(error) === "ELOOP") throw locationChanged();
+            const grown = await machine.fs.lstat(PRODUCT, path).catch(() => undefined);
+            if (grown !== undefined) this.#assertSize(grown.size, maximumBytes);
+            throw error;
         }
+        this.#assertSize(bytes.byteLength, maximumBytes);
+        // A parent folder swapped for a link during the read would have served another tree.
+        if ((await this.#resolveExisting(machine, root.root, relativePath, false)) !== path) {
+            throw locationChanged();
+        }
+        const relativeDirectory = dirname(relativePath);
+        this.#watch(
+            root,
+            machine,
+            relativeDirectory === "." ? "" : relativeDirectory,
+            dirname(path),
+        );
+        if (root.runnerId === undefined) this.#index.ensure(root.root, relativePath);
+        return { content: bytes.toString("base64"), hash: sha256(bytes) };
     }
 
     /** Strict callers distinguish missing paths from failed reads; HTTP keeps its preview default. */
@@ -428,6 +443,7 @@ export class ProjectFilesModule implements AgentModule {
                 path: root.root,
                 relativePath: query.path,
                 revision: query.revision,
+                ...(root.runnerId === undefined ? {} : { runnerId: root.runnerId }),
             });
             if (!file.found) return { content: null, hash: null };
             const bytes = Buffer.from(file.content);
@@ -452,33 +468,40 @@ export class ProjectFilesModule implements AgentModule {
         this.#assertRelativePath(input.path);
         const bytes = decodeBase64(input.content);
         this.#assertSize(bytes.byteLength);
-        const target = await this.#resolveWritePath(root.root, input.path);
+        const machine = await this.#machine(root);
+        const target = await this.#resolveWritePath(machine, root.root, input.path);
         this.#assertWithinRoot(target, root.root);
         const result = await this.#withWriteLock(
-            target,
-            async () => await this.#writeCompared(target, input, bytes),
+            `${root.runnerId ?? ""}\0${target}`,
+            async () => await this.#writeCompared(machine, target, input, bytes),
         );
-        this.#git.invalidate(root.root);
-        this.#git.markChanged({
-            path: root.root,
-            projectId: root.projectId,
-            ...(root.workspaceId === undefined ? {} : { workspaceId: root.workspaceId }),
-        });
-        if (result.created) this.#index.refresh(root.root);
+        if (root.runnerId === undefined) {
+            // Live Git state and the native index follow folders on this machine only.
+            this.#git.invalidate(root.root);
+            this.#git.markChanged({
+                path: root.root,
+                projectId: root.projectId,
+                ...(root.workspaceId === undefined ? {} : { workspaceId: root.workspaceId }),
+            });
+            if (result.created) this.#index.refresh(root.root);
+        } else if (result.created) {
+            this.#machineIndex.refresh(root.runnerId, root.root);
+        }
         this.#watcherInstance().changed(root, input.path);
         return { hash: result.hash };
     }
 
     async #writeCompared(
+        machine: Compute,
         target: string,
         input: FileWriteInput,
         bytes: Buffer,
     ): Promise<ComparedWriteResult> {
         let current: Buffer | undefined;
         try {
-            current = await readFile(target);
+            current = Buffer.from(await machine.fs.readFileBuffer(PRODUCT, target));
         } catch (error) {
-            if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+            if (errorCode(error) !== "ENOENT") throw error;
         }
         if (input.expectedHash === null && current !== undefined) {
             throw new ProjectFileError(
@@ -499,13 +522,18 @@ export class ProjectFilesModule implements AgentModule {
                 );
             }
         }
-        await mkdir(dirname(target), { recursive: true, mode: 0o755 });
-        const temporary = `${target}.${process.pid}.${randomUUID()}.tmp`;
+        await machine.fs.mkdir(PRODUCT, dirname(target), { recursive: true });
+        // A replaced file keeps its permissions; the temporary name is unguessable, so writing it
+        // cannot land on someone else's file.
+        const mode =
+            current === undefined ? undefined : (await machine.fs.stat(PRODUCT, target)).mode;
+        const temporary = `${target}.${randomUUID()}.tmp`;
         try {
-            await writeFile(temporary, bytes, { flag: "wx", mode: 0o600 });
-            await rename(temporary, target);
+            await machine.fs.writeFile(PRODUCT, temporary, bytes);
+            if (mode !== undefined) await machine.fs.chmod(PRODUCT, temporary, mode & 0o7777);
+            await machine.fs.move(PRODUCT, temporary, target);
         } finally {
-            await unlink(temporary).catch(() => undefined);
+            await machine.fs.rm(PRODUCT, temporary, { force: true }).catch(() => undefined);
         }
         return { created: current === undefined, hash: sha256(bytes) };
     }
@@ -542,12 +570,16 @@ export class ProjectFilesModule implements AgentModule {
      * one tree's files under another tree's name. Refusing is the only answer that cannot be
      * wrong; the record is corrected by re-probing the project, not by reading through the link.
      */
-    async #canonicalRoot(path: string): Promise<string> {
+    async #canonicalRoot(
+        runnerId: string | undefined,
+        path: string,
+    ): Promise<{ readonly root: string; readonly runnerId?: string }> {
+        const machine = await this.#runners.machine(runnerId);
         let canonical: string;
         try {
-            canonical = await realpath(path);
-            const information = await stat(canonical);
-            if (!information.isDirectory()) {
+            canonical = await machine.fs.realpath(PRODUCT, path);
+            const information = await machine.fs.stat(PRODUCT, canonical);
+            if (!information.isDirectory) {
                 throw new ProjectFileError(
                     403,
                     "forbidden",
@@ -555,7 +587,7 @@ export class ProjectFilesModule implements AgentModule {
                 );
             }
         } catch (error) {
-            if (error instanceof ProjectFileError) throw error;
+            if (error instanceof ProjectFileError || isMachineRefusal(error)) throw error;
             throw new ProjectFileError(404, "missing", "The selected root does not exist.");
         }
         if (canonical !== resolve(path)) {
@@ -565,10 +597,28 @@ export class ProjectFilesModule implements AgentModule {
                 "The recorded folder now points somewhere else.",
             );
         }
-        return canonical;
+        return runnerId === undefined ? { root: canonical } : { root: canonical, runnerId };
     }
 
-    async #resolveExisting(root: string, path: string, directory: boolean): Promise<string> {
+    async #machine(root: ProjectFileRoot): Promise<Compute> {
+        return await this.#runners.machine(root.runnerId);
+    }
+
+    /** Keeps what a client just looked at current, in the way the folder's machine allows. */
+    #watch(root: ProjectFileRoot, machine: Compute, relativeDirectory: string, directory: string) {
+        if (root.runnerId === undefined) {
+            this.#watcherInstance().watchDirectory(root, relativeDirectory, directory);
+        } else {
+            this.#watcherInstance().watchTree({ ...root, runnerId: root.runnerId }, machine);
+        }
+    }
+
+    async #resolveExisting(
+        machine: Compute,
+        root: string,
+        path: string,
+        directory: boolean,
+    ): Promise<string> {
         this.#assertRelativePath(path);
         const candidate = resolve(root, path);
         if (!isWithin(root, candidate)) {
@@ -576,30 +626,32 @@ export class ProjectFilesModule implements AgentModule {
         }
         let canonical: string;
         try {
-            canonical = await realpath(candidate);
-        } catch {
+            canonical = await machine.fs.realpath(PRODUCT, candidate);
+        } catch (error) {
+            if (isMachineRefusal(error)) throw error;
             throw new ProjectFileError(404, "missing", "The requested path was not found.");
         }
         this.#assertWithinRoot(canonical, root);
-        const information = await lstat(canonical);
-        if (directory && !information.isDirectory()) {
+        const information = await machine.fs.lstat(PRODUCT, canonical);
+        if (directory && !information.isDirectory) {
             throw new ProjectFileError(400, "invalid", "The requested path is not a directory.");
         }
         return canonical;
     }
 
-    async #resolveWritePath(root: string, path: string): Promise<string> {
+    async #resolveWritePath(machine: Compute, root: string, path: string): Promise<string> {
         const candidate = resolve(root, path);
         if (!isWithin(root, candidate)) {
             throw new ProjectFileError(403, "forbidden", "The path is outside the selected root.");
         }
         try {
-            return await realpath(candidate);
-        } catch {
+            return await machine.fs.realpath(PRODUCT, candidate);
+        } catch (error) {
+            if (isMachineRefusal(error)) throw error;
             const suffix = [basename(candidate)];
             let ancestor = dirname(candidate);
             for (;;) {
-                const parent = await realpath(ancestor).catch(() => undefined);
+                const parent = await machine.fs.realpath(PRODUCT, ancestor).catch(() => undefined);
                 if (parent !== undefined) return join(parent, ...suffix);
                 const next = dirname(ancestor);
                 if (next === ancestor) {
@@ -644,7 +696,10 @@ export class ProjectFilesModule implements AgentModule {
         this.#watcher ??= new ProjectFileWatcher(
             this.#root().named("project-file-watcher"),
             async (ctx, root, paths, structural) => {
-                if (structural) this.#index.refresh(root.root);
+                if (structural) {
+                    if (root.runnerId === undefined) this.#index.refresh(root.root);
+                    else this.#machineIndex.refresh(root.runnerId, root.root);
+                }
                 await this.#publish(ctx, root.workspaceId ?? root.projectId, paths);
             },
         );
@@ -719,6 +774,25 @@ function isWithin(root: string, candidate: string): boolean {
     const rootPath = resolve(root);
     const candidatePath = resolve(candidate);
     return candidatePath === rootPath || candidatePath.startsWith(`${rootPath}${sep}`);
+}
+
+/** A refusal from the folder's machine itself, which the caller reports as it stands. */
+function isMachineRefusal(error: unknown): boolean {
+    return error instanceof RunnerUnavailableError || error instanceof LocalExecutionDisabledError;
+}
+
+function errorCode(error: unknown): unknown {
+    return typeof error === "object" && error !== null
+        ? (error as { code?: unknown }).code
+        : undefined;
+}
+
+function locationChanged(): ProjectFileError {
+    return new ProjectFileError(
+        403,
+        "forbidden",
+        "The file location changed while it was being opened.",
+    );
 }
 
 function sha256(bytes: Buffer): string {
