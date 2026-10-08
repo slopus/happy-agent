@@ -106,6 +106,8 @@ export const gitTrackedEntitySchema = Type.Object(
         path: Type.String({ minLength: 1 }),
         projectId: Type.String({ minLength: 1 }),
         workspaceId: Type.Optional(Type.String({ minLength: 1 })),
+        /** The runner the repository lives on; absent for a repository on this machine. */
+        runnerId: Type.Optional(Type.String({ minLength: 1, maxLength: 64 })),
     },
     { additionalProperties: false },
 );

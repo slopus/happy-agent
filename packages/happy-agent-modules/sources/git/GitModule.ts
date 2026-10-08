@@ -1,12 +1,15 @@
 import { randomUUID } from "node:crypto";
+import { lstat, mkdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 
 import { Type, type Static } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import type { AgentModule } from "@slopus/happy-agent-base";
+import { computePermissions, type Compute } from "@slopus/happy-agent-compute";
 import { createRootContext, detach, type Context, type RootContext } from "@steve.kite/stdlib";
 
 import type { ConfigModule } from "../config/index.js";
+import type { RunnersModule } from "../runners/index.js";
 import type { GitCommandOptions, GitCommandResult, GitCommandRunner } from "./GitCommandRunner.js";
 import {
     GitCredentialBroker,
@@ -18,7 +21,15 @@ import { cloneRemoteRepository, remoteUrlForSource } from "./cloneRemoteReposito
 import { countUntrackedFileLines, type UntrackedFileCount } from "./countUntrackedFileLines.js";
 import { createGitWorktree } from "./createGitWorktree.js";
 import { detectGitDefaultBranch } from "./detectGitDefaultBranch.js";
+import type { GitWorkingFiles } from "./GitWorkingFiles.js";
+import { cloneOnRunner } from "./impl/cloneOnRunner.js";
 import { GitStateTracker } from "./impl/GitStateTracker.js";
+import { localGitWorkingFiles } from "./impl/localGitWorkingFiles.js";
+import { RunnerGitCredentialTunnel } from "./impl/RunnerGitCredentialTunnel.js";
+import { RunnerGitStateTracker, type RunnerGitAccess } from "./impl/RunnerGitStateTracker.js";
+import { runnerGitCommandRunner, runnerScanGit } from "./impl/runnerGitRunners.js";
+import { runnerGitWorkingFiles } from "./impl/runnerGitWorkingFiles.js";
+import { watchRunnerWorkingTree } from "./impl/watchRunnerWorkingTree.js";
 import { WorkingTreeWatcher, type WorkingTreeObserver } from "./impl/WorkingTreeWatcher.js";
 import { isGitWorktreeAt } from "./isGitWorktreeAt.js";
 import { listGitWorkingTreeFiles, type GitWorkingTreeFiles } from "./listGitWorkingTreeFiles.js";
@@ -105,10 +116,29 @@ export type GitCredentialRef = Static<typeof gitCredentialRefSchema>;
 export type GitChangedFile = GitFileChange;
 export type { GitChangeSnapshot, GitLiveSnapshot, GitRepositoryFacts };
 
-/** How one Git operation runs: whose credential it carries and when it must give up. */
-export interface GitOperationOptions {
+/** Where a repository lives: the runner holding it, or this machine when absent. */
+export interface GitPlacement {
+    readonly runnerId?: string;
+}
+
+/** How one Git operation runs: where, whose credential it carries, and when it must give up. */
+export interface GitOperationOptions extends GitPlacement {
     readonly credential?: GitCredentialRef;
     readonly signal?: AbortSignal;
+}
+
+/** The product reads and writes its own folders; the agent sandbox does not apply here. */
+const PRODUCT = computePermissions("full_access");
+
+/** Everything Git work needs on one machine. */
+interface GitMachine {
+    foreground(credential: GitCredentialRef | undefined): GitCommandRunner;
+    readonly read: GitCommandRunner;
+    readonly scan: ScanGitRunner;
+    readonly files: GitWorkingFiles;
+    isDirectory(path: string): Promise<boolean>;
+    makeDirectory(path: string): Promise<void>;
+    inspect(path: string): Promise<{ isDirectory: boolean; isSymbolicLink: boolean }>;
 }
 
 /** What a live snapshot subscriber is told each time a watched repository changes. */
@@ -121,6 +151,7 @@ export type GitSnapshotObserver = (
 interface CachedSnapshot {
     readonly expiresAt: number;
     readonly root: string;
+    readonly runnerId: string | undefined;
     readonly snapshot: GitChangeSnapshot;
 }
 
@@ -145,6 +176,11 @@ export class GitModule implements AgentModule {
     readonly #credentials = new GitCredentialBroker();
     readonly #generation = randomUUID();
     readonly #observers = new Set<GitSnapshotObserver>();
+    readonly #runners: RunnersModule | undefined;
+    readonly #runnerMachines = new Map<string, GitMachine>();
+    readonly #tunnel = new RunnerGitCredentialTunnel();
+    #config: ConfigModule | undefined;
+    #runnerTracker: RunnerGitStateTracker | undefined;
     /** Whether Git is reached directly, which is what makes a credential-carrying runner possible. */
     #direct = true;
     #disposed = false;
@@ -156,7 +192,9 @@ export class GitModule implements AgentModule {
     #tree: WorkingTreeWatcher | undefined;
     #version = 0;
 
-    constructor(config?: ConfigModule) {
+    constructor(config?: ConfigModule, runners?: RunnersModule) {
+        this.#config = config;
+        this.#runners = runners;
         this.#foreground = directGitCommandRunner;
         this.#scan =
             config === undefined
@@ -237,10 +275,10 @@ export class GitModule implements AgentModule {
     async run(
         cwd: string,
         args: readonly string[],
-        options: GitCommandOptions & { readonly credential?: GitCredentialRef } = {},
+        options: GitCommandOptions & GitPlacement & { readonly credential?: GitCredentialRef } = {},
     ): Promise<GitCommandResult> {
-        const { credential, ...command } = options;
-        return await this.#foregroundFor(credential).run(cwd, args, command);
+        const { credential, runnerId, ...command } = options;
+        return await this.#machine(runnerId).foreground(credential).run(cwd, args, command);
     }
 
     /**
@@ -252,9 +290,9 @@ export class GitModule implements AgentModule {
     async readOnly(
         cwd: string,
         args: readonly string[],
-        options: { readonly signal?: AbortSignal } = {},
+        options: GitPlacement & { readonly signal?: AbortSignal } = {},
     ): Promise<string> {
-        const result = await this.#scan({
+        const result = await this.#machine(options.runnerId).scan({
             args,
             cwd,
             ...(options.signal === undefined ? {} : { signal: options.signal }),
@@ -269,8 +307,15 @@ export class GitModule implements AgentModule {
         path: string,
         options: GitOperationOptions & { readonly isHome?: boolean } = {},
     ): Promise<GitRepositoryProbe> {
+        const machine = this.#machine(options.runnerId);
         return await probeGitRepository({
-            git: this.#readFor(options.credential),
+            git: this.#readFor(options.credential, options.runnerId),
+            ...(options.runnerId === undefined
+                ? {}
+                : {
+                      isDirectory: async (candidate: string) =>
+                          await machine.isDirectory(candidate),
+                  }),
             path,
             ...(options.isHome === undefined ? {} : { isHome: options.isHome }),
             ...(options.signal === undefined ? {} : { signal: options.signal }),
@@ -278,9 +323,20 @@ export class GitModule implements AgentModule {
     }
 
     /** The branch, head, upstream, and divergence of a repository. */
-    async facts(root: string, signal?: AbortSignal): Promise<GitRepositoryFacts> {
+    async facts(
+        root: string,
+        signal?: AbortSignal,
+        placement: GitPlacement = {},
+    ): Promise<GitRepositoryFacts> {
+        const machine = this.#machine(placement.runnerId);
         const probe = await probeGitRepository({
-            git: this.#read,
+            git: machine.read,
+            ...(placement.runnerId === undefined
+                ? {}
+                : {
+                      isDirectory: async (candidate: string) =>
+                          await machine.isDirectory(candidate),
+                  }),
             path: root,
             ...(signal === undefined ? {} : { signal }),
         });
@@ -289,12 +345,12 @@ export class GitModule implements AgentModule {
 
     /** The canonical top level of the repository containing a path. */
     async topLevel(path: string, options: GitOperationOptions = {}): Promise<string> {
-        return await readGitTopLevel(this.#readFor(options.credential), path);
+        return await readGitTopLevel(this.#readFor(options.credential, options.runnerId), path);
     }
 
     /** The shared Git directory every worktree of a repository has in common. */
     async commonDir(path: string, options: GitOperationOptions = {}): Promise<string> {
-        return await readGitCommonDir(this.#readFor(options.credential), path);
+        return await readGitCommonDir(this.#readFor(options.credential, options.runnerId), path);
     }
 
     /** Both halves of a worktree's identity: its own top level and its shared common directory. */
@@ -302,7 +358,10 @@ export class GitModule implements AgentModule {
         path: string,
         options: GitOperationOptions = {},
     ): Promise<GitWorktreeIdentity> {
-        return await readGitWorktreeIdentity(this.#readFor(options.credential), path);
+        return await readGitWorktreeIdentity(
+            this.#readFor(options.credential, options.runnerId),
+            path,
+        );
     }
 
     /** Whether a path is the top level of a worktree belonging to one specific repository. */
@@ -311,7 +370,7 @@ export class GitModule implements AgentModule {
     ): Promise<boolean> {
         return await isGitWorktreeAt({
             commonDir: options.commonDir,
-            git: this.#readFor(options.credential),
+            git: this.#readFor(options.credential, options.runnerId),
             path: options.path,
         });
     }
@@ -321,7 +380,10 @@ export class GitModule implements AgentModule {
         path: string,
         options: GitOperationOptions = {},
     ): Promise<string | undefined> {
-        return await detectGitDefaultBranch(this.#readFor(options.credential), path);
+        return await detectGitDefaultBranch(
+            this.#readFor(options.credential, options.runnerId),
+            path,
+        );
     }
 
     /** The remote URL a repository is really working against, tracked branch first. */
@@ -329,7 +391,7 @@ export class GitModule implements AgentModule {
         cwd: string,
         options: GitOperationOptions = {},
     ): Promise<string | undefined> {
-        return await selectGitRemoteUrl(this.#readFor(options.credential), cwd);
+        return await selectGitRemoteUrl(this.#readFor(options.credential, options.runnerId), cwd);
     }
 
     /** The commit a reference resolves to, or nothing when Git answered with something else. */
@@ -339,7 +401,7 @@ export class GitModule implements AgentModule {
         options: GitOperationOptions = {},
     ): Promise<string | undefined> {
         return await resolveGitCommit(
-            this.#readFor(options.credential),
+            this.#readFor(options.credential, options.runnerId),
             cwd,
             ref,
             options.signal === undefined ? undefined : { signal: options.signal },
@@ -354,52 +416,64 @@ export class GitModule implements AgentModule {
      */
     async resolveComparisonBase(
         cwd: string,
-        options: { readonly head?: string; readonly signal?: AbortSignal } = {},
+        options: GitPlacement & { readonly head?: string; readonly signal?: AbortSignal } = {},
     ): Promise<GitComparisonBase> {
         return await resolveGitComparisonBase({
             ...(options.head === undefined ? {} : { head: options.head }),
             run: async (args) =>
-                await this.readOnly(
-                    cwd,
-                    args,
-                    options.signal === undefined ? {} : { signal: options.signal },
-                ),
+                await this.readOnly(cwd, args, {
+                    ...(options.signal === undefined ? {} : { signal: options.signal }),
+                    ...(options.runnerId === undefined ? {} : { runnerId: options.runnerId }),
+                }),
         });
     }
 
     /** The exact bytes of one path at one revision, or that it is absent there. */
-    async readFileAtRevision(options: {
-        readonly maximumBytes: number;
-        readonly path: string;
-        readonly relativePath: string;
-        readonly revision: string;
-        readonly signal?: AbortSignal;
-    }): Promise<GitRevisionFile> {
+    async readFileAtRevision(
+        options: GitPlacement & {
+            readonly maximumBytes: number;
+            readonly path: string;
+            readonly relativePath: string;
+            readonly revision: string;
+            readonly signal?: AbortSignal;
+        },
+    ): Promise<GitRevisionFile> {
         return await readGitFileAtRevision({
             maximumBytes: options.maximumBytes,
             path: options.path,
             relativePath: options.relativePath,
             revision: options.revision,
-            runGit: this.#scan,
+            runGit: this.#machine(options.runnerId).scan,
             ...(options.signal === undefined ? {} : { signal: options.signal }),
         });
     }
 
     /** Every tracked and untracked file a working tree holds, bounded and ignore-aware. */
-    async listWorkingTreeFiles(options: {
-        readonly path: string;
-        readonly signal?: AbortSignal;
-    }): Promise<GitWorkingTreeFiles> {
+    async listWorkingTreeFiles(
+        options: GitPlacement & {
+            readonly path: string;
+            readonly signal?: AbortSignal;
+        },
+    ): Promise<GitWorkingTreeFiles> {
         return await listGitWorkingTreeFiles({
             path: options.path,
-            runGit: this.#scan,
+            runGit: this.#machine(options.runnerId).scan,
             ...(options.signal === undefined ? {} : { signal: options.signal }),
         });
     }
 
     /** How many lines an untracked file adds, and whether it is binary or could not be counted. */
-    async countUntrackedFileLines(path: string, maximumBytes: number): Promise<UntrackedFileCount> {
-        return await countUntrackedFileLines(path, maximumBytes);
+    async countUntrackedFileLines(
+        path: string,
+        maximumBytes: number,
+        placement: GitPlacement = {},
+    ): Promise<UntrackedFileCount> {
+        if (placement.runnerId === undefined)
+            return await countUntrackedFileLines(path, maximumBytes);
+        return await this.#machine(placement.runnerId).files.countUntrackedLines(
+            path,
+            maximumBytes,
+        );
     }
 
     // --- Changing a repository -------------------------------------------------------------
@@ -410,12 +484,14 @@ export class GitModule implements AgentModule {
      * The clone runs in a private staging directory, proves the checkout's identity, and is only
      * then renamed into place, so a failed or interrupted clone never exposes a partial project.
      */
-    async clone(options: {
-        readonly credential?: GitCredentialRef;
-        readonly destination: string;
-        readonly gitIdentity?: { readonly email: string; readonly name: string };
-        readonly source: GitRemoteSource;
-    }): Promise<void> {
+    async clone(
+        options: GitPlacement & {
+            readonly credential?: GitCredentialRef;
+            readonly destination: string;
+            readonly gitIdentity?: { readonly email: string; readonly name: string };
+            readonly source: GitRemoteSource;
+        },
+    ): Promise<void> {
         const authentication =
             options.credential === undefined
                 ? undefined
@@ -423,6 +499,25 @@ export class GitModule implements AgentModule {
                       options.credential.projectId,
                       options.credential.creator,
                   );
+        if (options.runnerId !== undefined) {
+            const runnerId = options.runnerId;
+            const machine = await this.#runnerMachine(runnerId);
+            await cloneOnRunner(this.#root().named("runner-git-clone"), machine, {
+                destination: options.destination,
+                source: options.source,
+                ...(authentication === undefined
+                    ? {}
+                    : {
+                          gitAuthentication: await this.#throughTunnel(
+                              runnerId,
+                              machine,
+                              authentication,
+                          ),
+                      }),
+                ...(options.gitIdentity === undefined ? {} : { gitIdentity: options.gitIdentity }),
+            });
+            return;
+        }
         await cloneRemoteRepository({
             destination: options.destination,
             source: options.source,
@@ -432,15 +527,17 @@ export class GitModule implements AgentModule {
     }
 
     /** The commit a new workspace should start from, fetching origin first when it can. */
-    async resolveWorkspaceBase(options: {
-        readonly credential?: GitCredentialRef;
-        readonly defaultBranch?: string;
-        readonly projectPath: string;
-        readonly requestedRef?: string;
-        readonly signal?: AbortSignal;
-    }): Promise<WorkspaceBase> {
+    async resolveWorkspaceBase(
+        options: GitPlacement & {
+            readonly credential?: GitCredentialRef;
+            readonly defaultBranch?: string;
+            readonly projectPath: string;
+            readonly requestedRef?: string;
+            readonly signal?: AbortSignal;
+        },
+    ): Promise<WorkspaceBase> {
         return await resolveWorkspaceBase({
-            git: this.#foregroundFor(options.credential),
+            git: this.#machine(options.runnerId).foreground(options.credential),
             projectPath: options.projectPath,
             ...(options.defaultBranch === undefined
                 ? {}
@@ -451,19 +548,25 @@ export class GitModule implements AgentModule {
     }
 
     /** Cuts a worktree on a new branch and proves Git created it where and from what it was told. */
-    async createWorktree(options: {
-        readonly branch: string;
-        readonly commit: string;
-        readonly credential?: GitCredentialRef;
-        readonly expectedCommonDir: string;
-        readonly projectPath: string;
-        readonly workspacePath: string;
-    }): Promise<void> {
+    async createWorktree(
+        options: GitPlacement & {
+            readonly branch: string;
+            readonly commit: string;
+            readonly credential?: GitCredentialRef;
+            readonly expectedCommonDir: string;
+            readonly projectPath: string;
+            readonly workspacePath: string;
+        },
+    ): Promise<void> {
+        const machine = this.#machine(options.runnerId);
         await createGitWorktree({
             branch: options.branch,
             commit: options.commit,
             expectedCommonDir: options.expectedCommonDir,
-            git: this.#foregroundFor(options.credential),
+            git: machine.foreground(options.credential),
+            ...(options.runnerId === undefined
+                ? {}
+                : { makeParent: async (path: string) => await machine.makeDirectory(path) }),
             projectPath: options.projectPath,
             workspacePath: options.workspacePath,
         });
@@ -476,16 +579,22 @@ export class GitModule implements AgentModule {
      * Deletion is refused unless the path is a real directory that is the top level of its own
      * worktree and shares the repository the caller named.
      */
-    async removeWorktree(options: {
-        readonly credential?: GitCredentialRef;
-        readonly expectedCommonDir: string;
-        readonly projectPath: string;
-        readonly removeDirectory: boolean;
-        readonly workspacePath: string;
-    }): Promise<void> {
+    async removeWorktree(
+        options: GitPlacement & {
+            readonly credential?: GitCredentialRef;
+            readonly expectedCommonDir: string;
+            readonly projectPath: string;
+            readonly removeDirectory: boolean;
+            readonly workspacePath: string;
+        },
+    ): Promise<void> {
+        const machine = this.#machine(options.runnerId);
         await removeGitWorktree({
             expectedCommonDir: options.expectedCommonDir,
-            git: this.#foregroundFor(options.credential),
+            git: machine.foreground(options.credential),
+            ...(options.runnerId === undefined
+                ? {}
+                : { inspect: async (path: string) => await machine.inspect(path) }),
             projectPath: options.projectPath,
             removeDirectory: options.removeDirectory,
             workspacePath: options.workspacePath,
@@ -495,17 +604,19 @@ export class GitModule implements AgentModule {
     }
 
     /** Renames the branch a worktree is on, refusing when it is not the branch the caller named. */
-    async renameBranch(options: {
-        readonly credential?: GitCredentialRef;
-        readonly expectedCommonDir: string;
-        readonly from: string;
-        readonly to: string;
-        readonly workspacePath: string;
-    }): Promise<void> {
+    async renameBranch(
+        options: GitPlacement & {
+            readonly credential?: GitCredentialRef;
+            readonly expectedCommonDir: string;
+            readonly from: string;
+            readonly to: string;
+            readonly workspacePath: string;
+        },
+    ): Promise<void> {
         await renameGitBranch({
             expectedCommonDir: options.expectedCommonDir,
             from: options.from,
-            git: this.#foregroundFor(options.credential),
+            git: this.#machine(options.runnerId).foreground(options.credential),
             to: options.to,
             workspacePath: options.workspacePath,
         });
@@ -608,18 +719,30 @@ export class GitModule implements AgentModule {
     }
 
     /** One repository's change snapshot, served from a short-lived cache. */
-    async snapshot(root: string, key = root, signal?: AbortSignal): Promise<GitChangeSnapshot> {
+    async snapshot(
+        root: string,
+        key = root,
+        signal?: AbortSignal,
+        placement: GitPlacement = {},
+    ): Promise<GitChangeSnapshot> {
         const now = Date.now();
         this.#evictExpired(now);
         const cached = this.#cache.get(key);
-        if (cached !== undefined && cached.expiresAt > now && cached.root === root) {
+        if (
+            cached !== undefined &&
+            cached.expiresAt > now &&
+            cached.root === root &&
+            cached.runnerId === placement.runnerId
+        ) {
             this.#cache.delete(key);
             this.#cache.set(key, cached);
             return cached.snapshot;
         }
+        const machine = this.#machine(placement.runnerId);
         const state = await scanGitRepository({
+            files: machine.files,
             path: root,
-            runGit: this.#scan,
+            runGit: machine.scan,
             ...(signal === undefined ? {} : { signal }),
         });
         const files = state.files.slice(0, MAX_SNAPSHOT_FILES);
@@ -639,6 +762,7 @@ export class GitModule implements AgentModule {
         this.#cache.set(key, {
             expiresAt: Date.now() + SNAPSHOT_CACHE_MS,
             root,
+            runnerId: placement.runnerId,
             snapshot,
         });
         return snapshot;
@@ -646,13 +770,15 @@ export class GitModule implements AgentModule {
 
     /** Snapshots for a batch of catalog entities, addressed the way a live subscriber reads them. */
     async watch(
-        entities: readonly (GitEntity & { readonly root: string })[],
+        entities: readonly (GitEntity & GitPlacement & { readonly root: string })[],
     ): Promise<readonly GitLiveSnapshot[]> {
         const snapshots: GitLiveSnapshot[] = [];
         for (const entity of entities.slice(0, MAX_WATCH_ENTITIES)) {
             const snapshot = await this.snapshot(
                 entity.root,
                 `${entity.projectId}:${entity.workspaceId ?? ""}`,
+                undefined,
+                entity.runnerId === undefined ? {} : { runnerId: entity.runnerId },
             );
             snapshots.push(
                 liveSnapshot(
@@ -662,6 +788,7 @@ export class GitModule implements AgentModule {
                         ...(entity.workspaceId === undefined
                             ? {}
                             : { workspaceId: entity.workspaceId }),
+                        ...(entity.runnerId === undefined ? {} : { runnerId: entity.runnerId }),
                     },
                     snapshot,
                 ),
@@ -691,6 +818,10 @@ export class GitModule implements AgentModule {
      */
     track(entity: GitTrackedEntity): void {
         if (this.#disposed) return;
+        if (entity.runnerId !== undefined) {
+            this.#runnerTrackerInstance().watch({ ...entity, runnerId: entity.runnerId });
+            return;
+        }
         this.#trackerInstance().watch(entity);
     }
 
@@ -707,16 +838,23 @@ export class GitModule implements AgentModule {
             throw new Error("The Git watch entities are invalid.");
         }
         if (this.#disposed) return;
-        if (entities.length === 0) {
+        const local = entities.filter((entity) => entity.runnerId === undefined);
+        const remote = entities.flatMap((entity) =>
+            entity.runnerId === undefined ? [] : [{ ...entity, runnerId: entity.runnerId }],
+        );
+        if (remote.length > 0) this.#runnerTrackerInstance().replace(remote);
+        else this.#runnerTracker?.replace([]);
+        if (local.length === 0) {
             this.#tracker?.replace([]);
             return;
         }
-        this.#trackerInstance().replace(entities);
+        this.#trackerInstance().replace(local);
     }
 
     /** Stops watching one repository and releases its watchers and timers. */
     untrack(entity: GitTrackedEntity): void {
-        this.#tracker?.unwatch(entity);
+        if (entity.runnerId !== undefined) this.#runnerTracker?.unwatch(entity);
+        else this.#tracker?.unwatch(entity);
     }
 
     /**
@@ -727,36 +865,58 @@ export class GitModule implements AgentModule {
      * events are not arriving and the caller must poll; `onChanges(null)` means some may have
      * been missed.
      */
-    watchWorkingTree(root: string, observer: WorkingTreeObserver): () => void {
+    watchWorkingTree(
+        root: string,
+        observer: WorkingTreeObserver,
+        placement: GitPlacement = {},
+    ): () => void {
         if (this.#disposed) return () => undefined;
+        const runnerId = placement.runnerId;
+        if (runnerId !== undefined) {
+            return watchRunnerWorkingTree(
+                this.#root().named("runner-working-tree-watch"),
+                async () => await this.#runnerMachine(runnerId),
+                root,
+                observer,
+            );
+        }
         return this.#treeInstance().watch(root, observer);
     }
 
     /** Tells the watcher a repository is dirty, for a change it saw before the watcher did. */
     markChanged(entity: GitTrackedEntity): void {
-        this.#tracker?.markChanged(entity);
+        if (entity.runnerId !== undefined) this.#runnerTracker?.markChanged(entity);
+        else this.#tracker?.markChanged(entity);
     }
 
     /** What the last scan of a watched repository found, if it has been scanned at all. */
     trackedSnapshot(entity: GitTrackedEntity): GitChangeSnapshot | undefined {
-        return this.#tracker?.snapshot(entity);
+        return entity.runnerId !== undefined
+            ? this.#runnerTracker?.snapshot(entity)
+            : this.#tracker?.snapshot(entity);
     }
 
     /** Every watched repository that has a snapshot, ready to be sent to a live subscriber. */
     liveSnapshots(): readonly GitLiveSnapshot[] {
-        return (this.#tracker?.tracked() ?? []).map(({ entity, snapshot }) =>
-            liveSnapshot(entity, snapshot),
+        return [...(this.#tracker?.tracked() ?? []), ...(this.#runnerTracker?.tracked() ?? [])].map(
+            ({ entity, snapshot }) => liveSnapshot(entity, snapshot),
         );
     }
 
     /** The repositories currently being watched, most recently used first. */
     trackedKeys(): readonly string[] {
-        return this.#tracker?.trackedKeys ?? [];
+        return [...(this.#tracker?.trackedKeys ?? []), ...(this.#runnerTracker?.trackedKeys ?? [])];
     }
 
     /** Rescans one repository now, whether or not it is already watched. */
     async refresh(ctx: Context, entity: GitTrackedEntity): Promise<GitChangeSnapshot | undefined> {
         if (this.#disposed) return undefined;
+        if (entity.runnerId !== undefined) {
+            return await this.#runnerTrackerInstance().refresh(ctx, {
+                ...entity,
+                runnerId: entity.runnerId,
+            });
+        }
         return await this.#trackerInstance().refresh(ctx, entity);
     }
 
@@ -781,6 +941,10 @@ export class GitModule implements AgentModule {
         this.#tracker = undefined;
         this.#tree?.dispose();
         this.#tree = undefined;
+        this.#runnerTracker?.dispose();
+        this.#runnerTracker = undefined;
+        this.#tunnel.close();
+        this.#runnerMachines.clear();
         this.#observers.clear();
         this.#cache.clear();
         this.#credentials.close();
@@ -820,6 +984,36 @@ export class GitModule implements AgentModule {
         return this.#tracker;
     }
 
+    #runnerTrackerInstance(): RunnerGitStateTracker {
+        this.#runnerTracker ??= new RunnerGitStateTracker(
+            this.#root(),
+            {
+                deliver: async (ctx, entity, snapshot) => {
+                    const observers = Array.from(this.#observers);
+                    for (const observer of observers) await observer(ctx, entity, snapshot);
+                },
+                report: (ctx, error, entity) => {
+                    ctx.log.debug("A Git watcher could not scan a repository on a runner.", {
+                        path: entity.path,
+                        projectId: entity.projectId,
+                        runnerId: entity.runnerId,
+                    });
+                    ctx.log.debug("The Git watcher failure was:", {}, error);
+                },
+                stamp: (state) => this.#stamp(state),
+            },
+            (runnerId): RunnerGitAccess => {
+                const machine = this.#machine(runnerId);
+                return {
+                    machine: async () => await this.#runnerMachine(runnerId),
+                    scan: machine.scan,
+                    files: machine.files,
+                };
+            },
+        );
+        return this.#runnerTracker;
+    }
+
     #stamp(state: GitChangeState): GitChangeSnapshot {
         return { ...state, generation: this.#generation, version: ++this.#version };
     }
@@ -833,6 +1027,112 @@ export class GitModule implements AgentModule {
     #root(): RootContext {
         this.#lifetime ??= createRootContext();
         return this.#lifetime;
+    }
+
+    /** Git work on this machine, or on the runner named. */
+    #machine(runnerId: string | undefined): GitMachine {
+        if (runnerId === undefined) {
+            return {
+                foreground: (credential) => this.#foregroundFor(credential),
+                read: this.#read,
+                scan: this.#scan,
+                files: localGitWorkingFiles,
+                isDirectory: async (path) =>
+                    await stat(path)
+                        .then((stats) => stats.isDirectory())
+                        .catch(() => false),
+                makeDirectory: async (path) => {
+                    await mkdir(path, { recursive: true, mode: 0o700 });
+                },
+                inspect: async (path) => {
+                    const stats = await lstat(path);
+                    return {
+                        isDirectory: stats.isDirectory(),
+                        isSymbolicLink: stats.isSymbolicLink(),
+                    };
+                },
+            };
+        }
+        const existing = this.#runnerMachines.get(runnerId);
+        if (existing !== undefined) return existing;
+        const target = {
+            machine: async () => await this.#runnerMachine(runnerId),
+            ctx: () => this.#root().named("runner-git"),
+        };
+        const scan = runnerScanGit(target, () => this.#config?.gitCeilingDirectories);
+        const plain = runnerGitCommandRunner(target);
+        const created: GitMachine = {
+            foreground: (credential) => {
+                const authentication =
+                    credential === undefined
+                        ? undefined
+                        : this.daemonAuthentication(credential.projectId, credential.creator);
+                if (authentication === undefined) return plain;
+                return runnerGitCommandRunner(target, async () => {
+                    const machine = await this.#runnerMachine(runnerId);
+                    return {
+                        GIT_CONFIG_GLOBAL: "/dev/null",
+                        GIT_CONFIG_NOSYSTEM: "1",
+                        ...(await this.#throughTunnel(runnerId, machine, authentication))
+                            .environment,
+                    };
+                });
+            },
+            read: gitCommandRunnerFromScanGitRunner(scan),
+            scan,
+            files: runnerGitWorkingFiles(target.machine),
+            isDirectory: async (path) => {
+                const machine = await this.#runnerMachine(runnerId);
+                return await machine.fs
+                    .stat(PRODUCT, path)
+                    .then((stats) => stats.isDirectory)
+                    .catch(() => false);
+            },
+            makeDirectory: async (path) => {
+                await (
+                    await this.#runnerMachine(runnerId)
+                ).fs.mkdir(PRODUCT, path, {
+                    recursive: true,
+                });
+            },
+            inspect: async (path) => {
+                const stats = await (await this.#runnerMachine(runnerId)).fs.lstat(PRODUCT, path);
+                return { isDirectory: stats.isDirectory, isSymbolicLink: stats.isSymbolicLink };
+            },
+        };
+        this.#runnerMachines.set(runnerId, created);
+        return created;
+    }
+
+    async #runnerMachine(runnerId: string): Promise<Compute> {
+        if (this.#runners === undefined) {
+            throw new Error("Git cannot reach runners without the runners module.");
+        }
+        return await this.#runners.machine(runnerId);
+    }
+
+    /** The credential's environment, pointed at the runner's own way back to the proxy. */
+    async #throughTunnel(
+        runnerId: string,
+        machine: Compute,
+        authentication: GitAuthentication,
+    ): Promise<GitAuthentication> {
+        const port = await this.#tunnel.port(
+            this.#root().named(`runner-git-tunnel-${runnerId}`),
+            machine,
+            authentication.loopbackPort,
+        );
+        const here = `127.0.0.1:${String(authentication.loopbackPort)}`;
+        const there = `127.0.0.1:${String(port)}`;
+        return {
+            environment: Object.fromEntries(
+                Object.entries(authentication.environment).map(([name, value]) => [
+                    name,
+                    value.replaceAll(here, there),
+                ]),
+            ),
+            loopbackPort: port,
+        };
     }
 
     /** The foreground boundary: writes, fetches, and anything needing a repository credential. */
@@ -856,9 +1156,10 @@ export class GitModule implements AgentModule {
     }
 
     /** The unattended read boundary, which still carries a credential when the read needs one. */
-    #readFor(credential: GitCredentialRef | undefined): GitCommandRunner {
-        if (credential === undefined) return this.#read;
-        return this.#foregroundFor(credential);
+    #readFor(credential: GitCredentialRef | undefined, runnerId?: string): GitCommandRunner {
+        const machine = this.#machine(runnerId);
+        if (credential === undefined) return machine.read;
+        return machine.foreground(credential);
     }
 
     #evictExpired(now: number): void {

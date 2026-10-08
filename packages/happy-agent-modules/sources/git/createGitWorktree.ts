@@ -11,10 +11,14 @@ export async function createGitWorktree(options: {
     commit: string;
     expectedCommonDir: string;
     git: GitCommandRunner;
+    /** Create the workspace's parent folder on the machine it lives on. Defaults to this one. */
+    makeParent?: (path: string) => Promise<void>;
     projectPath: string;
     workspacePath: string;
 }): Promise<void> {
-    await mkdir(dirname(options.workspacePath), { recursive: true, mode: 0o700 });
+    const parent = dirname(options.workspacePath);
+    if (options.makeParent === undefined) await mkdir(parent, { recursive: true, mode: 0o700 });
+    else await options.makeParent(parent);
     await runGitCommandOrThrow(
         options.git,
         options.projectPath,

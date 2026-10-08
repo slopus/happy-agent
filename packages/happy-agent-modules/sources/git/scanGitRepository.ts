@@ -1,9 +1,13 @@
-import { constants } from "node:fs";
-import { lstat, open, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 
-import { countUntrackedFileLines, type UntrackedFileCount } from "./countUntrackedFileLines.js";
-import { gitIndexFingerprint, gitWorktreeFingerprint } from "./gitWorktreeFingerprint.js";
+import type { UntrackedFileCount } from "./countUntrackedFileLines.js";
+import type { GitWorkingFile, GitWorkingFiles } from "./GitWorkingFiles.js";
+import {
+    gitIndexFingerprint,
+    gitWorktreeFingerprint,
+    remoteGitIndexFingerprint,
+} from "./gitWorktreeFingerprint.js";
+import { localGitWorkingFiles } from "./impl/localGitWorkingFiles.js";
 import { parseGitRawNumstat, type GitDiffChange } from "./parseGitRawNumstat.js";
 import { parseGitStatusV2, type GitStatusEntry, type GitStatusV2 } from "./parseGitStatusV2.js";
 import { readGitFileAtRevision } from "./readGitFileAtRevision.js";
@@ -25,6 +29,8 @@ const CONSISTENCY_ATTEMPTS = 3;
 const STATUS_ARGS = ["status", "--porcelain=v2", "-z", "--branch", "--untracked-files=all"];
 
 export interface ScanGitRepositoryOptions {
+    /** The working tree's files, on whichever machine the repository lives. Defaults to this one. */
+    files?: GitWorkingFiles;
     /** The repository's Git directory, when the caller already resolved it. */
     gitDirectory?: string;
     now?: () => number;
@@ -57,11 +63,18 @@ export async function scanGitRepository(
  * `undefined` whenever that cannot be proved, which callers treat as a change.
  */
 export async function readGitWorktreeFingerprint(
-    options: Pick<ScanGitRepositoryOptions, "gitDirectory" | "path" | "runGit" | "signal">,
+    options: Pick<
+        ScanGitRepositoryOptions,
+        "files" | "gitDirectory" | "path" | "runGit" | "signal"
+    >,
 ): Promise<string | undefined> {
     const runGit = options.runGit ?? runScanGit;
+    const files = options.files ?? localGitWorkingFiles;
     try {
-        const indexFingerprint = gitIndexFingerprint(options.gitDirectory);
+        const indexFingerprint =
+            options.files === undefined
+                ? gitIndexFingerprint(options.gitDirectory)
+                : await remoteGitIndexFingerprint(options.gitDirectory, files);
         const result = await runGit({
             args: STATUS_ARGS,
             cwd: options.path,
@@ -69,6 +82,7 @@ export async function readGitWorktreeFingerprint(
         });
         if (result.truncated) return undefined;
         return await gitWorktreeFingerprint({
+            files,
             indexFingerprint,
             root: options.path,
             status: parseGitStatusV2(result.stdout),
@@ -92,12 +106,19 @@ export async function scanGitRepositoryWithFingerprint(
         });
         return result.stdout;
     };
+    const files = options.files ?? localGitWorkingFiles;
     const gitDirectory = options.gitDirectory ?? (await resolveGitDirectory(run));
     let last: GitChangeState | undefined;
     for (let attempt = 0; attempt < CONSISTENCY_ATTEMPTS; attempt += 1) {
-        const before = gitIndexFingerprint(gitDirectory);
-        const scanned = await scanOnce(options, runGit, run, now, before);
-        const after = gitIndexFingerprint(gitDirectory);
+        const before =
+            options.files === undefined
+                ? gitIndexFingerprint(gitDirectory)
+                : await remoteGitIndexFingerprint(gitDirectory, files);
+        const scanned = await scanOnce(options, files, runGit, run, now, before);
+        const after =
+            options.files === undefined
+                ? gitIndexFingerprint(gitDirectory)
+                : await remoteGitIndexFingerprint(gitDirectory, files);
         last = scanned.state;
         if (before === after) return scanned;
     }
@@ -107,6 +128,7 @@ export async function scanGitRepositoryWithFingerprint(
 
 async function scanOnce(
     options: ScanGitRepositoryOptions,
+    files: GitWorkingFiles,
     runGit: ScanGitRunner,
     run: (args: readonly string[]) => Promise<string>,
     now: () => number,
@@ -140,6 +162,7 @@ async function scanOnce(
         // next fingerprint differ rather than hiding behind this one.
         if (!result.truncated) {
             fingerprint = await gitWorktreeFingerprint({
+                files,
                 indexFingerprint,
                 root: options.path,
                 status,
@@ -218,8 +241,8 @@ async function scanOnce(
         counted += 1;
         const path = join(options.path, entry.path);
         const count =
-            (await reusableUntrackedCount(path, previous.get(entry.path))) ??
-            (await countUntrackedFileLines(path, UNTRACKED_BYTE_LIMIT));
+            (await reusableUntrackedCount(files, path, previous.get(entry.path))) ??
+            (await files.countUntrackedLines(path, UNTRACKED_BYTE_LIMIT));
         if (count.inexact) countsExact = false;
         changes.push(untrackedChange(entry.path, count));
     }
@@ -249,6 +272,7 @@ async function scanOnce(
     let hiddenLargeFiles = false;
     for (const change of displayCandidates) {
         const enriched = await enrichDisplayedFile(
+            files,
             options.path,
             comparison.base,
             change,
@@ -278,18 +302,15 @@ async function scanOnce(
 
 /** A previous untracked count, when the file is provably the same one that was counted. */
 async function reusableUntrackedCount(
+    files: GitWorkingFiles,
     path: string,
     previous: GitFileChange | undefined,
 ): Promise<UntrackedFileCount | undefined> {
     if (previous?.status !== "untracked" || previous.contentToken === undefined) return undefined;
     if (!previous.binary && previous.insertions === undefined) return undefined;
-    try {
-        const details = await lstat(path);
-        if (!details.isFile()) return undefined;
-        if (previous.contentToken !== `${String(details.mtimeMs)}-${String(details.size)}`) {
-            return undefined;
-        }
-    } catch {
+    const [details] = await files.lstatMany([path]);
+    if (details === undefined || !details.isFile) return undefined;
+    if (previous.contentToken !== `${String(details.mtimeMs)}-${String(details.size)}`) {
         return undefined;
     }
     return {
@@ -300,6 +321,7 @@ async function reusableUntrackedCount(
 }
 
 async function enrichDisplayedFile(
+    files: GitWorkingFiles,
     root: string,
     base: string,
     change: GitFileChange,
@@ -308,7 +330,10 @@ async function enrichDisplayedFile(
     previous: GitFileChange | undefined,
 ): Promise<GitFileChange | undefined> {
     const currentPath = join(root, change.path);
-    const current = await openWorkingFile(currentPath);
+    const current: GitWorkingFile = await files.openWorkingFile(
+        currentPath,
+        DISPLAY_FILE_BYTE_LIMIT,
+    );
     if (current.kind === "too_large") return undefined;
     try {
         const contentToken =
@@ -353,7 +378,7 @@ async function enrichDisplayedFile(
         }
         const newBytes =
             change.binary && current.kind === "file"
-                ? await readBounded(current.handle, DISPLAY_FILE_BYTE_LIMIT)
+                ? await current.read(DISPLAY_FILE_BYTE_LIMIT)
                 : undefined;
         if (newBytes === null) return undefined;
         return {
@@ -363,59 +388,8 @@ async function enrichDisplayedFile(
             ...(change.binary && oldBytes !== undefined ? { oldBytes } : {}),
         };
     } finally {
-        if (current.kind === "file") await current.handle.close().catch(() => undefined);
+        if (current.kind === "file") await current.close();
     }
-}
-
-type WorkingFile =
-    | { kind: "file"; handle: FileHandle; mtimeMs: number; size: number }
-    | { kind: "missing" | "not_file" | "too_large" | "unavailable" };
-
-/**
- * Opens once, then proves and reads that descriptor. A path replacement after this point cannot
- * redirect the read to a FIFO, device, symlink target, or newly enlarged file.
- */
-async function openWorkingFile(path: string): Promise<WorkingFile> {
-    let handle: FileHandle;
-    try {
-        handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
-    } catch (error) {
-        const code = (error as NodeJS.ErrnoException).code;
-        if (code === "ENOENT" || code === "ENOTDIR") return { kind: "missing" };
-        if (code === "ELOOP") return { kind: "not_file" };
-        return { kind: "unavailable" };
-    }
-    try {
-        const details = await handle.stat();
-        if (!details.isFile()) {
-            await handle.close().catch(() => undefined);
-            return { kind: "not_file" };
-        }
-        if (details.size > DISPLAY_FILE_BYTE_LIMIT) {
-            await handle.close().catch(() => undefined);
-            return { kind: "too_large" };
-        }
-        return {
-            handle,
-            kind: "file",
-            mtimeMs: details.mtimeMs,
-            size: details.size,
-        };
-    } catch {
-        await handle.close().catch(() => undefined);
-        return { kind: "unavailable" };
-    }
-}
-
-async function readBounded(handle: FileHandle, maximumBytes: number): Promise<Buffer | null> {
-    const bytes = Buffer.allocUnsafe(maximumBytes + 1);
-    let offset = 0;
-    while (offset < bytes.byteLength) {
-        const result = await handle.read(bytes, offset, bytes.byteLength - offset, null);
-        if (result.bytesRead === 0) return bytes.subarray(0, offset);
-        offset += result.bytesRead;
-    }
-    return null;
 }
 
 function trackedChange(change: GitDiffChange, staging: GitStatusEntry | undefined): GitFileChange {

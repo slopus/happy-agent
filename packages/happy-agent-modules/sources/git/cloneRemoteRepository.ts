@@ -13,9 +13,9 @@ import { normalizeProjectCwd } from "./normalizeProjectCwd.js";
 
 const execFile = promisify(execFileCallback);
 const GIT_CLONE_OUTPUT_LIMIT = 1024 * 1024;
-const GIT_CLONE_TIMEOUT_MS = 60 * 60 * 1_000;
+export const GIT_CLONE_TIMEOUT_MS = 60 * 60 * 1_000;
 const GITHUB_REPOSITORY_SEGMENT = /^[A-Za-z0-9](?:[A-Za-z0-9_.-]{0,99})$/u;
-const STRIPPED_GIT_ENVIRONMENT = [
+export const STRIPPED_GIT_ENVIRONMENT = [
     "GIT_ALTERNATE_OBJECT_DIRECTORIES",
     "GIT_ASKPASS",
     "GIT_AUTHOR_EMAIL",
@@ -187,7 +187,7 @@ function cloneEnvironment(authentication: GitAuthentication | undefined): NodeJS
     return environment;
 }
 
-function validateDestination(destination: string): string {
+export function validateDestination(destination: string): string {
     if (
         destination.length === 0 ||
         destination.includes("\0") ||
@@ -231,7 +231,7 @@ function validateGitRemoteUrl(remote: string): string {
     return url.toString();
 }
 
-function remoteUrlsMatch(
+export function remoteUrlsMatch(
     actual: string,
     expected: string,
     sourceKind: GitRemoteSource["kind"],

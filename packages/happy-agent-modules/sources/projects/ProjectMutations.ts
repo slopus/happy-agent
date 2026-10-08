@@ -33,7 +33,7 @@ export type ProjectEventPayload = ProjectEvent extends infer TEvent
 
 export type ProjectMutationSpec<Result extends ProjectStoreMutationResult> = {
     /** Reads the project this operation may already have, by folder rather than by ID. */
-    readonly beforeByPath?: string;
+    readonly beforeByPath?: { readonly path: string; readonly runnerId: string | undefined };
     readonly changeable: readonly (keyof Project)[];
     readonly event: (after: Project, before: Project | undefined) => ProjectEventPayload;
     readonly projectId?: string;
@@ -95,7 +95,11 @@ export class ProjectMutations {
                     ? await this.getRequired(txCtx, spec.projectId)
                     : spec.beforeByPath === undefined
                       ? undefined
-                      : await this.findByPath(txCtx, spec.beforeByPath);
+                      : await this.findByPath(
+                            txCtx,
+                            spec.beforeByPath.path,
+                            spec.beforeByPath.runnerId,
+                        );
             const raw = await spec.run(txCtx, before);
             assertProjectStoreMutationResult(raw);
             if (!("project" in raw)) {
@@ -143,15 +147,19 @@ export class ProjectMutations {
         return project;
     }
 
-    async findByPath(ctx: Context, repositoryRef: string): Promise<Project | undefined> {
+    async findByPath(
+        ctx: Context,
+        repositoryRef: string,
+        runnerId?: string,
+    ): Promise<Project | undefined> {
         const raw = await requirePromise(
-            this.#store.findByPath(ctx, repositoryRef),
+            this.#store.findByPath(ctx, repositoryRef, runnerId),
             "Project store find by folder",
         );
         if (raw === undefined) return undefined;
         assertProject(raw);
         assertProjectRecord(raw);
-        if (raw.repositoryRef !== repositoryRef) {
+        if (raw.repositoryRef !== repositoryRef || raw.runnerId !== runnerId) {
             throw new Error("The project store returned a different folder.");
         }
         return structuredClone(raw);

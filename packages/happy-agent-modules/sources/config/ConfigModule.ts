@@ -2567,6 +2567,21 @@ export class ConfigModule implements AgentModule {
         return this.#workspacesHome;
     }
 
+    /**
+     * The folder projects cloned onto a runner live under, given that runner's home.
+     *
+     * The daemon's own environment describes the daemon's machine, so its overrides never move a
+     * folder on a runner.
+     */
+    projectsHomeOn(home: string): string {
+        return getManagedProjectsDirectory({}, home);
+    }
+
+    /** The folder managed workspaces live under on a runner with this home and platform. */
+    workspacesHomeOn(home: string, platform: NodeJS.Platform): string {
+        return getManagedWorkspacesDirectory({}, home, platform);
+    }
+
     #environmentValue(name: string): string | undefined {
         return Object.hasOwn(this.#environment, name) ? this.#environment[name] : process.env[name];
     }

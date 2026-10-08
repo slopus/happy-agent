@@ -20,10 +20,12 @@ export type GitRepositoryProbe = Static<typeof gitRepositoryProbeSchema>;
 export async function probeGitRepository(options: {
     git: GitCommandRunner;
     isHome?: boolean;
+    /** Whether a path is a directory on the machine the folder lives on. Defaults to this one. */
+    isDirectory?: (path: string) => Promise<boolean>;
     path: string;
     signal?: AbortSignal;
 }): Promise<GitRepositoryProbe> {
-    if (!isDirectory(options.path)) {
+    if (!(await (options.isDirectory ?? isDirectory)(options.path))) {
         return {
             presence: "missing",
             worktreeSupport: "unsupported",
@@ -106,7 +108,7 @@ async function readFacts(
     };
 }
 
-function isDirectory(path: string): boolean {
+async function isDirectory(path: string): Promise<boolean> {
     try {
         return statSync(path).isDirectory();
     } catch {

@@ -24,6 +24,7 @@ import {
     projectWorkspaceSetupCommandsSchema,
     projectWorktreeSupportSchema,
     type Project,
+    projectRunnerIdSchema,
 } from "./Project.js";
 import { projectContextSchema } from "./ProjectEvent.js";
 import {
@@ -48,6 +49,7 @@ export const projectStoreCreateInputSchema = Type.Object(
         remoteSource: Type.Optional(projectRemoteSourceSchema),
         repositoryRef: projectRepositoryRefSchema,
         requiredSecretKind: Type.Optional(projectRequiredSecretKindSchema),
+        runnerId: Type.Optional(projectRunnerIdSchema),
     },
     { additionalProperties: false },
 );
@@ -285,7 +287,11 @@ export const projectStoreSchema = Type.Object(
             Type.Promise(Type.Union([projectSchema, Type.Undefined()])),
         ),
         findByPath: Type.Function(
-            [projectContextSchema, projectRepositoryRefSchema],
+            [
+                projectContextSchema,
+                projectRepositoryRefSchema,
+                Type.Union([projectRunnerIdSchema, Type.Undefined()]),
+            ],
             Type.Promise(Type.Union([projectSchema, Type.Undefined()])),
         ),
         readAvatar: Type.Function(

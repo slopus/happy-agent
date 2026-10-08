@@ -318,10 +318,15 @@ export const projectMutationOperationSchema = Type.Union([
     Type.Literal("state_change"),
 ]);
 
+/** The runner a folder lives on, by its configured ID. */
+export const projectRunnerIdSchema = Type.String({ pattern: "^[a-z][a-z0-9_-]{0,63}$" });
+
 export const projectSchema = Type.Object(
     {
         id: projectIdSchema,
         repositoryRef: projectRepositoryRefSchema,
+        /** The runner whose filesystem `repositoryRef` is a path in; absent for this machine. */
+        runnerId: Type.Optional(projectRunnerIdSchema),
         kind: projectKindSchema,
         storageKey: projectStorageKeySchema,
         name: projectNameSchema,
@@ -360,6 +365,7 @@ export const projectCreateInputSchema = Type.Object(
     {
         id: Type.Optional(projectIdSchema),
         repositoryRef: projectRepositoryRefSchema,
+        runnerId: Type.Optional(projectRunnerIdSchema),
         name: projectNameSchema,
         nameSource: Type.Optional(projectNameSourceSchema),
         kind: Type.Optional(projectKindSchema),
@@ -386,6 +392,7 @@ export const projectCreateToolInputSchema = Type.Object(
 export const projectEnsureInputSchema = Type.Object(
     {
         repositoryRef: projectRepositoryRefSchema,
+        runnerId: Type.Optional(projectRunnerIdSchema),
         name: Type.Optional(projectNameSchema),
         nameSource: Type.Optional(projectNameSourceSchema),
         kind: Type.Optional(projectKindSchema),

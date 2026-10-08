@@ -20,12 +20,16 @@ export type ProjectCreatorProfile = Static<typeof projectCreatorProfileSchema>;
 export interface RegisterProjectRequest {
     readonly path: string;
     readonly projectId?: string;
+    /** The runner whose filesystem `path` is in; the default runner while runners are configured. */
+    readonly runnerId?: string;
 }
 
 /** A project whose folder does not exist yet, because its repository still has to be cloned. */
 export interface CreateRemoteProjectRequest {
     readonly name: string;
     readonly projectId?: string;
+    /** The runner to clone onto; the default runner while runners are configured. */
+    readonly runnerId?: string;
     readonly secret?: { readonly kind: "github" };
     readonly source: ProjectRemoteSource;
 }

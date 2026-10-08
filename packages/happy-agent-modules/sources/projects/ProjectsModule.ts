@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, normalize } from "node:path";
 
 import {
     type AgentKV,
@@ -14,11 +14,17 @@ import {
 import { createId } from "@paralleldrive/cuid2";
 import { type TSchema } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
+import {
+    computePermissions,
+    RunnerUnavailableError,
+    type Compute,
+} from "@slopus/happy-agent-compute";
 import { backoff, mapAsyncLock, type Context, type MapAsyncLock } from "@steve.kite/stdlib";
 
 import { AbortModule } from "../abort/index.js";
 import { ConfigModule } from "../config/index.js";
 import { durableCheckpoint, DurableFunctionsModule } from "../durableFunctions/index.js";
+import type { RunnersModule } from "../runners/index.js";
 import {
     GitModule,
     type GitAuthentication,
@@ -153,6 +159,9 @@ import {
     type ProjectProvisionResult,
 } from "./ProjectDurableFunctions.js";
 
+/** The product manages its own folders; the agent sandbox does not apply to that work. */
+const PRODUCT = computePermissions("full_access");
+
 /** How many projects one page may carry, and how much text a page may spend on them. */
 export const PROJECT_PAGE_SIZE = 50;
 export const MAX_PROJECT_OUTPUT_CHARACTERS = 12_000;
@@ -204,6 +213,7 @@ export class ProjectsModule implements AgentModule {
     readonly #config: ConfigModule;
     readonly #durableFunctions: DurableFunctionsModule;
     readonly #git: GitModule;
+    readonly #runners: RunnersModule | undefined;
     readonly #store: ProjectStore;
     readonly #mutations: ProjectMutations;
     readonly #crossWorkspace: boolean;
@@ -224,14 +234,18 @@ export class ProjectsModule implements AgentModule {
      * @param abort How the work in a project is stopped. Archiving a project is the moment its
      * folders stop being anybody's, so the decision cancels the root agents attached to it rather
      * than leaving them running in a checkout that is about to be removed.
+     * @param runners Where folders live once runners are configured. Without it, everything is on
+     * this machine.
      */
     constructor(
         config: ConfigModule,
         git: GitModule,
         abort: AbortModule,
         durableFunctions: DurableFunctionsModule,
+        runners?: RunnersModule,
     ) {
         this.#abort = abort;
+        this.#runners = runners;
         this.#config = config;
         this.#durableFunctions = durableFunctions;
         this.#git = git;
@@ -599,11 +613,15 @@ export class ProjectsModule implements AgentModule {
      * path-keyed identity: a host that knows only a working directory finds the
      * owning project here.
      */
-    async getByPath(ctx: Context, repositoryRef: string): Promise<Project | undefined> {
+    async getByPath(
+        ctx: Context,
+        repositoryRef: string,
+        runnerId?: string,
+    ): Promise<Project | undefined> {
         if (!Value.Check(projectRepositoryRefSchema, repositoryRef)) {
             throw new Error("A project folder must be an absolute path.");
         }
-        const project = await this.#mutations.findByPath(ctx, repositoryRef);
+        const project = await this.#mutations.findByPath(ctx, repositoryRef, runnerId);
         if (project === undefined) return undefined;
         return structuredClone(project);
     }
@@ -624,8 +642,11 @@ export class ProjectsModule implements AgentModule {
             event: (after) => ({ type: "project_created", project: after }),
             run: async (txCtx) => {
                 if (
-                    (await this.#mutations.findByPath(txCtx, normalized.repositoryRef)) !==
-                    undefined
+                    (await this.#mutations.findByPath(
+                        txCtx,
+                        normalized.repositoryRef,
+                        normalized.runnerId,
+                    )) !== undefined
                 ) {
                     throw new Error(
                         `The folder "${normalized.repositoryRef}" is already a project. Use ensure_project instead.`,
@@ -638,6 +659,9 @@ export class ProjectsModule implements AgentModule {
                     this.#store.create(txCtx, {
                         id: projectId,
                         repositoryRef: normalized.repositoryRef,
+                        ...(normalized.runnerId === undefined
+                            ? {}
+                            : { runnerId: normalized.runnerId }),
                         kind,
                         name:
                             kind === "home"
@@ -686,6 +710,9 @@ export class ProjectsModule implements AgentModule {
                     this.#store.ensure(txCtx, {
                         id: candidateId,
                         repositoryRef: normalized.repositoryRef,
+                        ...(normalized.runnerId === undefined
+                            ? {}
+                            : { runnerId: normalized.runnerId }),
                         kind,
                         name:
                             kind === "home"
@@ -704,7 +731,7 @@ export class ProjectsModule implements AgentModule {
                     }),
                     "Project store ensure",
                 ),
-            beforeByPath: normalized.repositoryRef,
+            beforeByPath: { path: normalized.repositoryRef, runnerId: normalized.runnerId },
         });
         if (result.operation !== "ensure") {
             throw new Error("Project ensure returned another operation.");
@@ -810,6 +837,11 @@ export class ProjectsModule implements AgentModule {
                     lockedCtx.lifetime?.throwIfAborted();
                     const current = await this.get(lockedCtx, projectId);
                     if (current?.status !== "archived") return;
+                    const runnerId = current.runnerId;
+                    if (runnerId !== undefined) {
+                        await this.#removeManagedRunnerDirectory(current, runnerId);
+                        return;
+                    }
                     await removeManagedProjectDirectory({
                         git: this.#git,
                         managedProjectsDirectory: this.managedProjectsDirectory,
@@ -861,7 +893,7 @@ export class ProjectsModule implements AgentModule {
         if (project.status !== "active") {
             throw new Error("Project restoration did not leave the project active.");
         }
-        if (project.remoteSource !== undefined && !existsSync(project.repositoryRef)) {
+        if (project.remoteSource !== undefined && !(await this.#folderExists(project))) {
             const refreshing = await this.refresh(ctx, project.id);
             await this.scheduleInitialization(ctx, project.id);
             return refreshing;
@@ -1046,9 +1078,9 @@ export class ProjectsModule implements AgentModule {
         return await this.#applyProjectProbe(
             ctx,
             projectId,
-            await this.#git.probe(project.repositoryRef, {
+            await this.#git.probe(this.location(project).path, {
                 isHome: project.kind === "home",
-                ...this.#gitOptions(projectId),
+                ...this.#gitOptions(project),
             }),
         );
     }
@@ -1064,7 +1096,7 @@ export class ProjectsModule implements AgentModule {
         if (!(await this.#isRepositoryRoot(project))) return project;
         const branch = await this.#git.defaultBranch(
             project.repositoryRef,
-            this.#gitOptions(projectId),
+            this.#gitOptions(project),
         );
         if (branch === undefined) return project;
         return await this.setDefaultBranch(ctx, { projectId, branch });
@@ -1080,7 +1112,7 @@ export class ProjectsModule implements AgentModule {
         if (!(await this.#isRepositoryRoot(project))) return project;
         const remote = await this.#git.selectRemoteUrl(
             project.repositoryRef,
-            this.#gitOptions(projectId),
+            this.#gitOptions(project),
         );
         const name = remote === undefined ? undefined : this.#git.remoteProjectName(remote);
         if (name === undefined) return project;
@@ -1275,10 +1307,102 @@ export class ProjectsModule implements AgentModule {
         return { creator, projectId };
     }
 
-    /** The same, shaped as the options every Git method takes. */
-    #gitOptions(projectId: string): { readonly credential?: GitCredentialRef } {
-        const credential = this.gitCredential(projectId);
-        return credential === undefined ? {} : { credential };
+    /**
+     * The options every Git method takes for one project: the machine its folder is on and the
+     * credential it carries. A folder on this machine is refused once runners are configured.
+     */
+    #gitOptions(project: Project): {
+        readonly credential?: GitCredentialRef;
+        readonly runnerId?: string;
+    } {
+        const credential = this.gitCredential(project.id);
+        const { runnerId } = this.location(project);
+        return {
+            ...(credential === undefined ? {} : { credential }),
+            ...(runnerId === undefined ? {} : { runnerId }),
+        };
+    }
+
+    /**
+     * Where a project's folder is: the runner holding it and the path there, or this machine.
+     *
+     * The home project follows the runners: while any are configured it is the default runner's
+     * home directory, which is unknown until that runner first connects. A folder on this machine
+     * is refused once runners are configured, and a folder on a runner that is no longer
+     * configured is unavailable rather than looked for here.
+     */
+    location(project: Project): { readonly runnerId?: string; readonly path: string } {
+        const runners = this.#runners;
+        if (project.kind === "home" && runners?.enabled === true) {
+            const runnerId = runners.defaultRunnerId;
+            if (runnerId === undefined)
+                throw new RunnerUnavailableError("No runner is the default.");
+            const home = runners.home(runnerId);
+            if (home === undefined) {
+                throw new RunnerUnavailableError(
+                    `The runner ${runners.displayName(runnerId)} has never connected, so its home folder is not known yet.`,
+                );
+            }
+            return { runnerId, path: home };
+        }
+        if (project.runnerId === undefined) {
+            if (project.kind !== "home") runners?.assertLocalExecution();
+            return { path: project.repositoryRef };
+        }
+        if (runners === undefined || !runners.has(project.runnerId)) {
+            throw new RunnerUnavailableError(
+                `The runner "${project.runnerId}" holding this project is no longer configured.`,
+            );
+        }
+        return { runnerId: project.runnerId, path: project.repositoryRef };
+    }
+
+    /** Whether a project's folder exists on the machine it lives on. */
+    async #folderExists(project: Project): Promise<boolean> {
+        const { runnerId, path } = this.location(project);
+        if (runnerId === undefined) return existsSync(path);
+        const machine = await this.#runnerMachine(runnerId);
+        return await machine.fs.exists(PRODUCT, path);
+    }
+
+    async #runnerMachine(runnerId: string): Promise<Compute> {
+        if (this.#runners === undefined) {
+            throw new RunnerUnavailableError(`The runner "${runnerId}" is not configured.`);
+        }
+        return await this.#runners.machine(runnerId);
+    }
+
+    /** Where clones land on a runner, under its own home directory. */
+    #runnerProjectsDirectory(runnerId: string): string {
+        const home = this.#runners?.home(runnerId);
+        if (home === undefined) {
+            throw new RunnerUnavailableError(
+                `The runner ${this.#runners?.displayName(runnerId) ?? runnerId} has never connected, so it has nowhere to put projects yet.`,
+            );
+        }
+        return this.#config.projectsHomeOn(home);
+    }
+
+    /** Remove a clone Happy Agent made in a runner's managed projects folder, and nothing else. */
+    async #removeManagedRunnerDirectory(project: Project, runnerId: string): Promise<void> {
+        if (project.remoteSource === undefined) return;
+        if (
+            project.repositoryRef !==
+            join(this.#runnerProjectsDirectory(runnerId), project.storageKey)
+        )
+            return;
+        const machine = await this.#runnerMachine(runnerId);
+        let metadata;
+        try {
+            metadata = await machine.fs.lstat(PRODUCT, project.repositoryRef);
+        } catch (error) {
+            if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+            throw error;
+        }
+        if (metadata.isSymbolicLink || !metadata.isDirectory) {
+            throw new Error("Refusing to archive a managed project path that is not a directory.");
+        }
+        await machine.fs.rm(PRODUCT, project.repositoryRef, { force: true, recursive: true });
     }
 
     /** Who a project belongs to when the caller named nobody: this machine, and its one person. */
@@ -1318,7 +1442,16 @@ export class ProjectsModule implements AgentModule {
      * keeps the identity it has and the request is simply answered with it; the requested identity
      * only takes effect for a folder that becomes a project now.
      */
-    async resolvePath(ctx: Context, cwd: string, requestedProjectId?: string): Promise<Project> {
+    async resolvePath(
+        ctx: Context,
+        cwd: string,
+        requestedProjectId?: string,
+        runnerId?: string,
+    ): Promise<Project> {
+        if (runnerId !== undefined) {
+            return await this.#resolveRunnerPath(ctx, cwd, runnerId, requestedProjectId);
+        }
+        this.#runners?.assertLocalExecution();
         const path = this.#git.normalizeProjectCwd(cwd);
         const importedId =
             requestedProjectId === undefined
@@ -1360,6 +1493,11 @@ export class ProjectsModule implements AgentModule {
             );
         }
         if (request.projectId !== undefined) clientChosenProjectId(request.projectId);
+        const runnerId = this.#place(request.runnerId);
+        if (runnerId !== undefined) {
+            const path = await this.#validateRunnerPath(runnerId, request.path);
+            return await this.resolvePath(ctx, path, request.projectId, runnerId);
+        }
         const path = await validateRegistrationPath(this.#git, request.path);
         return await this.resolvePath(
             ctx,
@@ -1368,10 +1506,107 @@ export class ProjectsModule implements AgentModule {
         );
     }
 
+    /** The runner a new folder goes to, refusing a runner that is not configured. */
+    #place(runnerId: string | undefined): string | undefined {
+        if (this.#runners === undefined) {
+            if (runnerId === undefined) return undefined;
+            throw new ProjectRegistrationError(
+                "invalid_request",
+                `No runner called "${runnerId}" is configured.`,
+            );
+        }
+        try {
+            return this.#runners.place(runnerId).runnerId;
+        } catch (error) {
+            throw new ProjectRegistrationError(
+                "invalid_request",
+                error instanceof Error ? error.message : String(error),
+            );
+        }
+    }
+
+    /** Checks a folder someone asked to register on a runner, and returns its canonical path. */
+    async #validateRunnerPath(runnerId: string, requestedPath: string): Promise<string> {
+        const machine = await this.#runnerMachine(runnerId);
+        let details;
+        try {
+            details = await machine.fs.stat(PRODUCT, requestedPath);
+        } catch (error) {
+            const code = (error as NodeJS.ErrnoException).code;
+            throw new ProjectRegistrationError(
+                code === "ENOENT" || code === "ENOTDIR" ? "path_missing" : "path_inaccessible",
+                code === "ENOENT" || code === "ENOTDIR"
+                    ? "The project folder does not exist on the runner."
+                    : "The project folder is not accessible on the runner.",
+            );
+        }
+        if (!details.isDirectory) {
+            throw new ProjectRegistrationError(
+                "not_directory",
+                "The project path is not a folder.",
+            );
+        }
+        return await machine.fs.realpath(PRODUCT, requestedPath);
+    }
+
+    /** The project a folder on a runner belongs to, importing the folder if it is new. */
+    async #resolveRunnerPath(
+        ctx: Context,
+        cwd: string,
+        runnerId: string,
+        requestedProjectId: string | undefined,
+    ): Promise<Project> {
+        const machine = await this.#runnerMachine(runnerId);
+        const path = await machine.fs.realpath(PRODUCT, cwd).catch(() => normalize(cwd));
+        const importedId =
+            requestedProjectId === undefined
+                ? undefined
+                : clientChosenId(requestedProjectId, "project");
+        if (runnerId === this.#runners?.defaultRunnerId && path === this.#runners.home(runnerId)) {
+            const home = await this.#homeProject(ctx);
+            if (home !== undefined) return home;
+        }
+        const existing = await this.getByPath(ctx, path, runnerId);
+        if (existing !== undefined) {
+            if (importedId !== undefined && importedId !== existing.id) {
+                await this.#assertUnusedProjectId(ctx, importedId, path, runnerId);
+            }
+            return existing.status === "archived" ? await this.restore(ctx, existing.id) : existing;
+        }
+        if (importedId !== undefined)
+            await this.#assertUnusedProjectId(ctx, importedId, path, runnerId);
+        const project = await this.create(ctx, {
+            ...(importedId === undefined ? {} : { id: importedId }),
+            repositoryRef: path,
+            runnerId,
+            kind: "regular",
+            name: folderProjectName(path),
+        });
+        await this.scheduleInitialization(ctx, project.id);
+        return project;
+    }
+
+    /** The one home project, when the catalog has it. */
+    async #homeProject(ctx: Context): Promise<Project | undefined> {
+        for (const project of await this.#allProjects(ctx)) {
+            if (project.kind === "home") {
+                return project.status === "archived"
+                    ? await this.restore(ctx, project.id)
+                    : project;
+            }
+        }
+        return undefined;
+    }
+
     /** Refuses a client-chosen project identity that already names another folder. */
-    async #assertUnusedProjectId(ctx: Context, id: string, path: string): Promise<void> {
+    async #assertUnusedProjectId(
+        ctx: Context,
+        id: string,
+        path: string,
+        runnerId?: string,
+    ): Promise<void> {
         const known = await this.get(ctx, id);
-        if (known !== undefined && known.repositoryRef !== path) {
+        if (known !== undefined && (known.repositoryRef !== path || known.runnerId !== runnerId)) {
             throw new ProjectRegistrationError(
                 "project_id_conflict",
                 "That project ID already names another folder.",
@@ -1432,7 +1667,7 @@ export class ProjectsModule implements AgentModule {
             ) {
                 return { outcome: "superseded" };
             }
-            if (project.remoteSource === undefined && !existsSync(project.repositoryRef)) {
+            if (project.remoteSource === undefined && !(await this.#folderExists(project))) {
                 throw new Error("The project folder is not available.");
             }
             if (project.remoteSource !== undefined) {
@@ -1452,7 +1687,7 @@ export class ProjectsModule implements AgentModule {
                 try {
                     remote = await this.#git.selectRemoteUrl(
                         project.repositoryRef,
-                        this.#gitOptions(projectId),
+                        this.#gitOptions(project),
                     );
                 } catch {
                     // A repository without a usable remote is a perfectly good project.
@@ -1479,9 +1714,11 @@ export class ProjectsModule implements AgentModule {
 
             if ((await this.get(ctx, projectId))?.avatar === undefined) {
                 await durableCheckpoint(ctx, kv, "avatar", async () => {
-                    const repositoryAvatar = repositoryTopLevel
-                        ? await findRepositoryAvatar(project.repositoryRef)
-                        : undefined;
+                    // A folder on a runner is not read here for an avatar; its hosting avatar is.
+                    const repositoryAvatar =
+                        repositoryTopLevel && project.runnerId === undefined
+                            ? await findRepositoryAvatar(project.repositoryRef)
+                            : undefined;
                     const hostingAvatar =
                         repositoryAvatar === undefined && remote !== undefined
                             ? await findHostingAvatar(this.#git, remote)
@@ -1538,7 +1775,11 @@ export class ProjectsModule implements AgentModule {
         }
         const id =
             request.projectId === undefined ? createId() : clientChosenProjectId(request.projectId);
-        const path = this.#git.normalizeFuturePath(join(this.managedProjectsDirectory, name));
+        const runnerId = this.#place(request.runnerId);
+        const path =
+            runnerId === undefined
+                ? this.#git.normalizeFuturePath(join(this.managedProjectsDirectory, name))
+                : join(this.#runnerProjectsDirectory(runnerId), name);
         const githubToken =
             options.githubToken ??
             (request.secret?.kind === "github" &&
@@ -1562,7 +1803,7 @@ export class ProjectsModule implements AgentModule {
             });
         };
 
-        const retried = await this.#retriedRemoteProject(ctx, id, path, request, creator);
+        const retried = await this.#retriedRemoteProject(ctx, id, path, request, creator, runnerId);
         if (retried !== undefined) {
             this.#creators.set(id, creator);
             await registerCredential();
@@ -1578,25 +1819,36 @@ export class ProjectsModule implements AgentModule {
             }
             return (await this.get(ctx, id)) ?? retried;
         }
-        if ((await this.getByPath(ctx, path)) !== undefined) {
+        if ((await this.getByPath(ctx, path, runnerId)) !== undefined) {
             throw new ProjectRegistrationError(
                 "project_path_conflict",
                 "That managed project folder already belongs to another project.",
             );
         }
-        if (existsSync(path)) {
-            throw new ProjectRegistrationError(
-                "project_path_conflict",
-                "That managed project folder already exists.",
-            );
+        if (runnerId === undefined) {
+            if (existsSync(path)) {
+                throw new ProjectRegistrationError(
+                    "project_path_conflict",
+                    "That managed project folder already exists.",
+                );
+            }
+            await mkdir(this.managedProjectsDirectory, { recursive: true });
+        } else {
+            const machine = await this.#runnerMachine(runnerId);
+            if (await machine.fs.exists(PRODUCT, path)) {
+                throw new ProjectRegistrationError(
+                    "project_path_conflict",
+                    "That managed project folder already exists on the runner.",
+                );
+            }
         }
-        await mkdir(this.managedProjectsDirectory, { recursive: true });
         this.#creators.set(id, creator);
         await registerCredential();
         try {
             const project = await this.create(ctx, {
                 id,
                 repositoryRef: path,
+                ...(runnerId === undefined ? {} : { runnerId }),
                 kind: "regular",
                 name,
                 remoteSource: request.source,
@@ -1607,7 +1859,14 @@ export class ProjectsModule implements AgentModule {
             await this.scheduleInitialization(ctx, id);
             return project;
         } catch (error) {
-            const raced = await this.#retriedRemoteProject(ctx, id, path, request, creator);
+            const raced = await this.#retriedRemoteProject(
+                ctx,
+                id,
+                path,
+                request,
+                creator,
+                runnerId,
+            );
             if (raced !== undefined) {
                 if (raced.initializationStatus !== "ready") {
                     await this.scheduleInitialization(ctx, id);
@@ -1616,7 +1875,7 @@ export class ProjectsModule implements AgentModule {
             }
             this.#git.revokeCredentials(id);
             this.#creators.delete(id);
-            if ((await this.getByPath(ctx, path)) !== undefined) {
+            if ((await this.getByPath(ctx, path, runnerId)) !== undefined) {
                 throw new ProjectRegistrationError(
                     "project_path_conflict",
                     "That managed project folder already belongs to another project.",
@@ -1632,12 +1891,14 @@ export class ProjectsModule implements AgentModule {
         path: string,
         request: CreateRemoteProjectRequest,
         creator: ProjectCreator,
+        runnerId: string | undefined,
     ): Promise<Project | undefined> {
         const project = await this.get(ctx, id);
         if (project === undefined) return undefined;
         const recordedCreator = this.#creators.get(id);
         if (
             project.repositoryRef !== path ||
+            project.runnerId !== runnerId ||
             !remoteProjectSourcesEqual(project.remoteSource, request.source) ||
             project.requiredSecretKind !== request.secret?.kind ||
             (recordedCreator !== undefined &&
@@ -1654,12 +1915,12 @@ export class ProjectsModule implements AgentModule {
 
     async #cloneRemoteProject(ctx: Context, project: Project): Promise<void> {
         if (project.remoteSource === undefined) return;
-        if (existsSync(project.repositoryRef)) {
+        if (await this.#folderExists(project)) {
             // The folder is already there: either a previous clone landed and the record did not
             // catch up, or something else took the name. Only the right repository counts.
             const topLevel = await this.#git.topLevel(
                 project.repositoryRef,
-                this.#gitOptions(project.id),
+                this.#gitOptions(project),
             );
             if (topLevel !== project.repositoryRef) {
                 throw new Error("The managed project folder is not the expected Git repository.");
@@ -1667,7 +1928,7 @@ export class ProjectsModule implements AgentModule {
             const origin = await this.#git.run(
                 project.repositoryRef,
                 ["remote", "get-url", "origin"],
-                this.#gitOptions(project.id),
+                this.#gitOptions(project),
             );
             if (!this.#remoteSourceUrlMatches(origin.stdout.trim(), project.remoteSource)) {
                 throw new Error("The managed project folder has a different origin repository.");
@@ -1698,6 +1959,7 @@ export class ProjectsModule implements AgentModule {
         // place, so a failed or interrupted clone never leaves half a project behind.
         await this.#git.clone({
             credential,
+            ...(project.runnerId === undefined ? {} : { runnerId: project.runnerId }),
             destination: project.repositoryRef,
             source: project.remoteSource,
             ...(profile === undefined
@@ -1933,7 +2195,7 @@ export class ProjectsModule implements AgentModule {
         if (project.kind === "home") return false;
         try {
             return (
-                (await this.#git.topLevel(project.repositoryRef, this.#gitOptions(project.id))) ===
+                (await this.#git.topLevel(project.repositoryRef, this.#gitOptions(project))) ===
                 project.repositoryRef
             );
         } catch {

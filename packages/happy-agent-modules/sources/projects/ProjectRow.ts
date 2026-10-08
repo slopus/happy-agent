@@ -16,6 +16,8 @@ import { projectSettingsSchema, type ProjectSettings } from "./ProjectSettings.j
 export type ProjectRow = {
     readonly id: string;
     readonly repository_ref: string;
+    /** Empty for a folder on this machine. */
+    readonly runner_id: string;
     readonly kind: string;
     readonly storage_key: string;
     readonly name: string;
@@ -55,6 +57,7 @@ export function projectFromRow(row: ProjectRow): Project {
     const project: Project = {
         id: row.id,
         repositoryRef: row.repository_ref,
+        ...(row.runner_id === "" ? {} : { runnerId: row.runner_id }),
         kind: row.kind as Project["kind"],
         storageKey: row.storage_key,
         name: row.name,

@@ -33,11 +33,12 @@ export async function requireProject(database: AgentDatabase, projectId: string)
 export async function readProjectByPath(
     database: AgentDatabase,
     repositoryRef: string,
+    runnerId: string | undefined,
 ): Promise<Project | undefined> {
     const rows = await agentDatabaseRows<ProjectRow>(
         database,
         sql`SELECT * FROM ${sql.raw(PROJECTS_TABLE)}
-            WHERE repository_ref = ${repositoryRef} LIMIT 1`,
+            WHERE repository_ref = ${repositoryRef} AND runner_id = ${runnerId ?? ""} LIMIT 1`,
     );
     const row = rows[0];
     return row === undefined ? undefined : projectFromRow(row);
@@ -172,7 +173,7 @@ export async function insertProjectRow(database: AgentDatabase, project: Project
     await agentDatabaseRun(
         database,
         sql`INSERT INTO ${sql.raw(PROJECTS_TABLE)} (
-            id, repository_ref, kind, storage_key, name, name_source,
+            id, repository_ref, runner_id, kind, storage_key, name, name_source,
             status, presence, initialization_status, initialization_attempt,
             initialization_error, default_branch, worktree_support,
             worktree_unsupported_reason, remote_source_json, required_secret_kind,
@@ -180,7 +181,7 @@ export async function insertProjectRow(database: AgentDatabase, project: Project
             workspace_setup_commands_json,
             order_key, version, avatar_json, description, created_at, updated_at, archived_at
         ) VALUES (
-            ${project.id}, ${project.repositoryRef}, ${project.kind},
+            ${project.id}, ${project.repositoryRef}, ${project.runnerId ?? ""}, ${project.kind},
             ${project.storageKey}, ${project.name}, ${project.nameSource},
             ${project.status}, ${project.presence}, ${project.initializationStatus},
             ${project.initializationAttempt}, ${project.initializationError ?? null},

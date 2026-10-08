@@ -284,6 +284,7 @@ describe("ProjectsModule", () => {
                 "007-project-root-agent-order-keys",
                 "008-project-avatar-assets",
                 "009-project-workspace-setup-commands",
+                "010-project-runner",
             ]);
         } finally {
             database.close();

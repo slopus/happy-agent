@@ -30,7 +30,7 @@ export function createProjectRegistration(): Pick<ProjectStore, "create" | "ensu
         },
         ensure: async (ctx, input) => {
             const database = databaseFor(ctx);
-            const existing = await readProjectByPath(database, input.repositoryRef);
+            const existing = await readProjectByPath(database, input.repositoryRef, input.runnerId);
             if (existing === undefined) {
                 const project = await newProjectRow(ctx, input);
                 await insertProjectRow(database, project);
@@ -95,6 +95,7 @@ async function newProjectRow(
     return {
         id: input.id,
         repositoryRef: input.repositoryRef,
+        ...(input.runnerId === undefined ? {} : { runnerId: input.runnerId }),
         kind: input.kind,
         storageKey,
         name: input.name,

@@ -439,8 +439,8 @@ export async function startHappyAgentRuntime(
 
         const permissions = new PermissionsModule(compute.computeModule, autoModule);
         const abort = new AbortModule(compute.computeModule);
-        const git = new GitModule(config);
-        const projects = new ProjectsModule(config, git, abort, durableFunctions);
+        const git = new GitModule(config, runners);
+        const projects = new ProjectsModule(config, git, abort, durableFunctions, runners);
         const workspaces = new WorkspacesModule(config, projects, git, abort, durableFunctions);
         const titles = new TitlesModule(config, history, workspaces);
         const bots = new BotsModule(config, abort, titles, projects, workspaces);

@@ -10,7 +10,7 @@ import { resolveGitExecutable } from "./resolveGitExecutable.js";
 
 const SCAN_TIMEOUT_MS = 10_000;
 const SCAN_OUTPUT_LIMIT = 16 * 1024 * 1024;
-const STRIPPED_ENVIRONMENT = [
+export const STRIPPED_ENVIRONMENT = [
     "GIT_ALTERNATE_OBJECT_DIRECTORIES",
     "GIT_ASKPASS",
     "GIT_CONFIG",
@@ -30,7 +30,7 @@ const STRIPPED_ENVIRONMENT = [
     "GIT_TEMPLATE_DIR",
     "GIT_WORK_TREE",
 ];
-const SAFE_CONFIGURATION = [
+export const SAFE_CONFIGURATION = [
     "-c",
     "core.fsmonitor=false",
     "-c",
@@ -210,7 +210,7 @@ function retainedBase64Prefix(stdout: string): string {
     return stdout.startsWith("... ") ? "" : stdout;
 }
 
-function scanGitError(message: string, code: number, stderr: string, stdout: string): Error {
+export function scanGitError(message: string, code: number, stderr: string, stdout: string): Error {
     const error = new Error(
         message.trim() || `Git exited with status ${String(code)}.`,
     ) as Error & {

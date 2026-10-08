@@ -9,6 +9,8 @@ import { WORKTREE_CHECKOUT_TIMEOUT_MS } from "./worktreeCheckoutTimeout.js";
 export async function removeGitWorktree(options: {
     expectedCommonDir: string;
     git: GitCommandRunner;
+    /** Inspect a path on the machine the workspace lives on. Defaults to this one. */
+    inspect?: (path: string) => Promise<{ isDirectory: boolean; isSymbolicLink: boolean }>;
     projectPath: string;
     removeDirectory: boolean;
     workspacePath: string;
@@ -18,8 +20,14 @@ export async function removeGitWorktree(options: {
         throw new Error("The source repository no longer owns this workspace.");
     }
     if (options.removeDirectory) {
-        const details = await lstat(options.workspacePath);
-        if (details.isSymbolicLink() || !details.isDirectory()) {
+        const details =
+            options.inspect === undefined
+                ? await lstat(options.workspacePath).then((stats) => ({
+                      isDirectory: stats.isDirectory(),
+                      isSymbolicLink: stats.isSymbolicLink(),
+                  }))
+                : await options.inspect(options.workspacePath);
+        if (details.isSymbolicLink || !details.isDirectory) {
             throw new Error("The workspace path is not a real directory.");
         }
         if (

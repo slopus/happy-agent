@@ -334,4 +334,78 @@ export const projectMigrations = [
             );
         },
     ],
+    [
+        "010-project-runner",
+        /**
+         * A project folder may live on a runner, and two runners can hold the same path, so a folder
+         * is unique per machine rather than globally. SQLite cannot change a column constraint in
+         * place, so the table is rebuilt with every row kept; an empty runner means this machine.
+         */
+        async (_ctx: Context, database: AgentDatabase): Promise<void> => {
+            const columns = `id, repository_ref, kind, storage_key, name, name_source, status,
+                presence, initialization_status, initialization_attempt, initialization_error,
+                default_branch, worktree_support, worktree_unsupported_reason, remote_source_json,
+                required_secret_kind, git_ahead, git_behind, git_detached, git_branch, git_head,
+                git_upstream, order_key, version, avatar_json, description, created_at,
+                updated_at, archived_at, workspace_setup_commands_json`;
+            const rebuilt = `${PROJECTS_TABLE}_runner_rebuild`;
+            await agentDatabaseRun(
+                database,
+                sql`CREATE TABLE ${sql.raw(rebuilt)} (
+                    id TEXT PRIMARY KEY,
+                    repository_ref TEXT NOT NULL,
+                    runner_id TEXT NOT NULL DEFAULT '',
+                    kind TEXT NOT NULL,
+                    storage_key TEXT NOT NULL UNIQUE,
+                    name TEXT NOT NULL,
+                    name_source TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    presence TEXT NOT NULL,
+                    initialization_status TEXT NOT NULL,
+                    initialization_attempt BIGINT NOT NULL DEFAULT 0,
+                    initialization_error TEXT,
+                    default_branch TEXT,
+                    worktree_support TEXT NOT NULL DEFAULT 'unknown',
+                    worktree_unsupported_reason TEXT,
+                    remote_source_json TEXT,
+                    required_secret_kind TEXT,
+                    git_ahead BIGINT NOT NULL DEFAULT 0,
+                    git_behind BIGINT NOT NULL DEFAULT 0,
+                    git_detached INTEGER NOT NULL DEFAULT 0,
+                    git_branch TEXT,
+                    git_head TEXT,
+                    git_upstream TEXT,
+                    order_key TEXT NOT NULL,
+                    version BIGINT NOT NULL DEFAULT 1,
+                    avatar_json TEXT,
+                    description TEXT,
+                    created_at BIGINT NOT NULL,
+                    updated_at BIGINT NOT NULL,
+                    archived_at BIGINT,
+                    workspace_setup_commands_json TEXT,
+                    UNIQUE (runner_id, repository_ref)
+                )`,
+            );
+            await agentDatabaseRun(
+                database,
+                sql`INSERT INTO ${sql.raw(rebuilt)} (${sql.raw(columns)})
+                    SELECT ${sql.raw(columns)} FROM ${sql.raw(PROJECTS_TABLE)}`,
+            );
+            await agentDatabaseRun(database, sql`DROP TABLE ${sql.raw(PROJECTS_TABLE)}`);
+            await agentDatabaseRun(
+                database,
+                sql`ALTER TABLE ${sql.raw(rebuilt)} RENAME TO ${sql.raw(PROJECTS_TABLE)}`,
+            );
+            await agentDatabaseRun(
+                database,
+                sql`CREATE INDEX ${sql.raw(`${PROJECTS_TABLE}_status_id`)}
+                    ON ${sql.raw(PROJECTS_TABLE)} (status, id)`,
+            );
+            await agentDatabaseRun(
+                database,
+                sql`CREATE INDEX ${sql.raw(`${PROJECTS_TABLE}_order_id`)}
+                    ON ${sql.raw(PROJECTS_TABLE)} (order_key, id)`,
+            );
+        },
+    ],
 ] as const;

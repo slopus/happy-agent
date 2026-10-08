@@ -47,8 +47,8 @@ export function createProjectQueries(): Pick<
             };
         },
         get: async (ctx, projectId) => await readProject(databaseFor(ctx), projectId),
-        findByPath: async (ctx, repositoryRef) =>
-            await readProjectByPath(databaseFor(ctx), repositoryRef),
+        findByPath: async (ctx, repositoryRef, runnerId) =>
+            await readProjectByPath(databaseFor(ctx), repositoryRef, runnerId),
         readAvatar: queryProjectAvatar,
         readSettings: async (ctx, projectId) => {
             const database = databaseFor(ctx);
