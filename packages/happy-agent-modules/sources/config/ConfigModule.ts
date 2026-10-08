@@ -1,7 +1,9 @@
 import {
+    computePermissions,
     localAgentSocketPath,
     ensurePrivateDirectory,
     toManagedNetworkPolicy,
+    type Compute,
     type ManagedNetworkPolicy,
     type ComputeServiceExecution,
 } from "@slopus/happy-agent-compute";
@@ -2612,14 +2614,33 @@ export class ConfigModule implements AgentModule {
         return servers;
     }
 
-    /** Read the MCP catalog owned by one workspace without merging it into machine settings. */
+    /**
+     * Read the MCP catalog owned by one workspace without merging it into machine settings, from
+     * the machine the workspace is on when that is not this one.
+     */
     async readWorkspaceMcpServers(
         workspacePath: string,
+        machine?: Compute,
     ): Promise<HappyAgentConfigValues["mcpServers"]> {
         if (workspacePath.length === 0 || workspacePath.length > MAX_PATH_LENGTH) {
             throw new Error("Workspace path is invalid.");
         }
-        return await readMcpConfigurationFile(join(resolve(workspacePath), "mcp.toml"));
+        const path = join(resolve(workspacePath), "mcp.toml");
+        if (machine === undefined) return await readMcpConfigurationFile(path);
+        let text: string;
+        try {
+            const bytes = await machine.fs.readFileBuffer(computePermissions("full_access"), path, {
+                maxBytes: MAX_CONFIG_FILE_BYTES,
+            });
+            text = Buffer.from(bytes).toString("utf8");
+        } catch (error) {
+            if (isMissingFile(error)) return mcpServersFromSource({ values: {} });
+            throw new Error(
+                `Could not read Happy Agent configuration '${path}'. ${error instanceof Error ? error.message : String(error)}`,
+                { cause: error },
+            );
+        }
+        return mcpServersFromSource(parseHappyAgentConfigToml(text));
     }
 
     /** The most recently loaded Happy-owned MCP catalog. */
@@ -3009,7 +3030,12 @@ interface ReadSource {
 async function readMcpConfigurationFile(
     path: string,
 ): Promise<HappyAgentConfigValues["mcpServers"]> {
-    const source = await readConfigSource(path, "global");
+    return mcpServersFromSource(await readConfigSource(path, "global"));
+}
+
+function mcpServersFromSource(source: {
+    readonly values: PartialValues;
+}): HappyAgentConfigValues["mcpServers"] {
     const misplaced = Object.keys(source.values).filter((key) => key !== "mcp_servers");
     if (misplaced.length > 0) {
         throw new Error(

@@ -24,3 +24,14 @@ and start external processes or network connections.
 Direct tools use `mcp__<server>__<tool>`. Protocol tools provide live tool, resource, template, and
 prompt discovery. The tools hook resolves the catalog for every provider request, so a successful
 online reload is visible on the next inference without restarting the daemon.
+
+## Runners
+
+A stdio server is a process, and while runners are configured nothing runs on the daemon's
+machine. A workspace on a runner has its `mcp.toml` read from the runner, and its stdio servers
+start there as the runner's product programs, speaking MCP over their standard input and output.
+The user-wide catalog's stdio servers start on the default runner. HTTP servers are always reached
+from the daemon. The same configuration on two machines is two servers, so pooling never shares a
+process across machines. A server that could not start because its runner was away is retried once
+that runner connects again. The module takes `RunnersModule` for the machines and `ComputeModule`
+for which runner an agent's folder is on.

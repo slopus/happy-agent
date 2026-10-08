@@ -7,6 +7,7 @@ import {
     type AgentModuleHooks,
     type AgentModuleScope,
     type AgentModuleSystemScope,
+    type AgentConfig,
     type AnyAgentTool,
     withAgentDatabase,
 } from "@slopus/happy-agent-base";
@@ -318,6 +319,16 @@ export class ComputeModule implements AgentModule {
         const module = new ComputeModule(config, secrets, runners);
         module.#provider = provider;
         return module;
+    }
+
+    /**
+     * The runner an agent's folder is on, read from its configuration; undefined for a folder on
+     * this machine or an agent with no compute. Work the product does for the agent's folder, such
+     * as starting its MCP servers, runs on that runner.
+     */
+    runnerOf(config: AgentConfig): string | undefined {
+        const raw = config.modules?.[this.name];
+        return Value.Check(agentComputeConfigSchema, raw) ? raw.runnerId : undefined;
     }
 
     /** Resolve the exact compute cached for this agent, or no compute when none was configured. */

@@ -488,7 +488,7 @@ export async function startHappyAgentRuntime(
         );
         const scheduling = new SchedulingModule();
         const userInput = new UserInputModule(presence);
-        const mcp = new McpModule(config, userInput, workspaces);
+        const mcp = new McpModule(config, userInput, workspaces, runners, compute.computeModule);
         registerShutdown("mcp", async () => await mcp.close());
         userInput.onEventTransactional(async (listenerCtx, event) => {
             if (event.type !== "user_input_answered") return;

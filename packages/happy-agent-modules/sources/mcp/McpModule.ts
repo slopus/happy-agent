@@ -14,9 +14,11 @@ import {
 } from "@slopus/happy-agent-base";
 import { Type, type Static } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
-import { asyncLock, type AsyncLock, type Context } from "@steve.kite/stdlib";
+import { asyncLock, detach, type AsyncLock, type Context } from "@steve.kite/stdlib";
 
+import { ComputeModule } from "../compute/index.js";
 import { ConfigModule, type HappyAgentConfigValues } from "../config/index.js";
+import { RunnersModule } from "../runners/index.js";
 import { UserInputModule } from "../userInput/index.js";
 import { WorkspacesModule } from "../workspaces/index.js";
 
@@ -147,7 +149,9 @@ export class McpModule implements AgentModule {
     readonly name = "mcp";
     readonly migrations = [mcpMigration];
 
+    readonly #compute: ComputeModule;
     readonly #config: ConfigModule;
+    readonly #runners: RunnersModule;
     readonly #userInput: UserInputModule;
     readonly #maxPageSize: number;
     readonly #maxOutputCharacters: number;
@@ -159,36 +163,68 @@ export class McpModule implements AgentModule {
     readonly #archivedWorkspaces = new Set<string>();
     readonly #workspaceFailures = new Map<string, string>();
     readonly #unsubscribeWorkspaceEvents: () => void;
+    readonly #unsubscribeRunnerUpdates: () => void;
+    /** Runners connected at the last update, so a runner coming back retries its servers once. */
+    readonly #connectedRunners = new Set<string>();
     #agents: AgentSystemRef | undefined;
     #context: Context | undefined;
+    #serversContext: Context | undefined;
     #initialReload: Promise<void> | undefined;
     #closePromise: Promise<void> | undefined;
     #closed = false;
 
+    /**
+     * @param runners The owner of the machines folders live on. A stdio server for a workspace on a
+     * runner starts on that runner, and while runners are configured the user's own stdio servers
+     * start on the default runner, because nothing runs on this machine then.
+     * @param compute The owner of each agent's placement, which says which runner its folder is on.
+     */
     constructor(
         config: ConfigModule,
         userInput: UserInputModule,
         workspaces: WorkspacesModule,
+        runners: RunnersModule,
+        compute: ComputeModule,
         options: McpModuleOptions = {},
     ) {
         if (!Value.Check(mcpModuleOptionsSchema, options)) {
             throw new Error("MCP module options are invalid.");
         }
+        this.#compute = compute;
         this.#config = config;
+        this.#runners = runners;
         this.#userInput = userInput;
         this.#maxPageSize = options.maxPageSize ?? DEFAULT_PAGE_SIZE;
         this.#maxOutputCharacters = options.maxOutputCharacters ?? DEFAULT_OUTPUT_CHARACTERS;
         this.#unsubscribeWorkspaceEvents = workspaces.onEvent(async (ctx, event) => {
+            const workspace = workspaceKey(event.workspace.runnerId, event.workspace.path);
             if (event.type === "workspace_created") {
-                await this.#markWorkspaceActive(ctx, event.workspace.path);
+                await this.#markWorkspaceActive(ctx, workspace);
                 return;
             }
             if (
                 (event.type === "workspace_updated" && event.change === "begin_archive") ||
                 event.type === "workspace_archived"
             ) {
-                await this.#releaseWorkspace(ctx, event.workspace.path);
+                await this.#releaseWorkspace(ctx, workspace);
             }
+        });
+        // A server that could not start because its runner was away starts once the runner is back.
+        this.#unsubscribeRunnerUpdates = runners.onUpdated((ctx, snapshot) => {
+            const connected = snapshot.runners
+                .filter((runner) => runner.status === "connected")
+                .map((runner) => runner.id);
+            const returned = connected.some((id) => !this.#connectedRunners.has(id));
+            this.#connectedRunners.clear();
+            for (const id of connected) this.#connectedRunners.add(id);
+            if (!returned || this.#closed || this.#initialReload === undefined) return;
+            if (![...this.#pool.values()].some((entry) => entry.failure !== undefined)) return;
+            const reloadCtx = detach(ctx).named("mcp-runner-reconnect");
+            void this.reload(reloadCtx).catch((error: unknown) => {
+                reloadCtx.log.warn(
+                    `MCP servers could not start on a runner: ${errorMessage(error)}`,
+                );
+            });
         });
     }
 
@@ -337,7 +373,7 @@ export class McpModule implements AgentModule {
                 [...this.#workspaceAgents.keys()].map(async (workspace) => {
                     try {
                         const workspaceCatalogServers = withoutServerNames(
-                            await this.#config.readWorkspaceMcpServers(workspace),
+                            await this.#readWorkspaceServers(workspace),
                             globalNames,
                         );
                         this.#workspaceFailures.delete(workspace);
@@ -405,6 +441,7 @@ export class McpModule implements AgentModule {
         if (this.#closePromise !== undefined) return await this.#closePromise;
         this.#closed = true;
         this.#unsubscribeWorkspaceEvents();
+        this.#unsubscribeRunnerUpdates();
         const close = async (): Promise<void> => {
             const connections = [...this.#pool.values()].flatMap((entry) =>
                 entry.connection === undefined ? [] : [entry.connection],
@@ -1021,9 +1058,10 @@ export class McpModule implements AgentModule {
             await this.#releaseAgent(ctx, agentId);
             return;
         }
+        const runnerId = config === undefined ? undefined : this.#compute.runnerOf(config);
         await this.#reloadLock.runInLock(ctx, async () => {
             if (this.#closed) return;
-            const normalized = workspacePath(workspace);
+            const normalized = workspaceKey(runnerId, workspace);
             if (this.#archivedWorkspaces.has(normalized)) return;
             const previous = this.#agentWorkspaces.get(agentId);
             const catalogId = workspaceCatalog(normalized);
@@ -1068,7 +1106,7 @@ export class McpModule implements AgentModule {
     async #releaseWorkspace(ctx: Context, workspace: string): Promise<void> {
         this.#rememberContext(ctx);
         await this.#reloadLock.runInLock(ctx, async () => {
-            const normalized = workspacePath(workspace);
+            const normalized = workspace;
             this.#archivedWorkspaces.add(normalized);
             for (const agentId of this.#workspaceAgents.get(normalized) ?? []) {
                 this.#agentWorkspaces.delete(agentId);
@@ -1083,7 +1121,7 @@ export class McpModule implements AgentModule {
         this.#rememberContext(ctx);
         await this.#reloadLock.runInLock(ctx, async () => {
             if (this.#closed) return;
-            const normalized = workspacePath(workspace);
+            const normalized = workspace;
             this.#archivedWorkspaces.delete(normalized);
             this.#workspaceFailures.delete(normalized);
         });
@@ -1097,7 +1135,7 @@ export class McpModule implements AgentModule {
         ) {
             throw new Error("The workspace no longer requires an MCP catalog.");
         }
-        const servers = await this.#config.readWorkspaceMcpServers(workspace);
+        const servers = await this.#readWorkspaceServers(workspace);
         const globalNames = new Set(this.#catalogs.get(GLOBAL_CATALOG)?.servers.keys() ?? []);
         await this.#reconcileCatalog(
             ctx,
@@ -1122,7 +1160,11 @@ export class McpModule implements AgentModule {
         const desiredCatalogs = new Map<string, McpCatalog>();
         const connectionInputs = new Map<
             string,
-            { readonly config: McpServerConfig; readonly name: string }
+            {
+                readonly config: McpServerConfig;
+                readonly name: string;
+                readonly runnerId: string | undefined;
+            }
         >();
         for (const [catalogId, servers] of catalogs) {
             const desired = new Map<string, McpCatalogServer>();
@@ -1131,9 +1173,15 @@ export class McpModule implements AgentModule {
                     desired.set(name, { config });
                     continue;
                 }
-                const connectionId = mcpConnectionFingerprint(config);
+                // A stdio server is a process on one machine, so the same configuration on two
+                // machines is two servers. An HTTP server is reached from here either way.
+                const runnerId =
+                    config.transport === "stdio" ? this.#catalogRunner(catalogId) : undefined;
+                const fingerprint = mcpConnectionFingerprint(config);
+                const connectionId =
+                    runnerId === undefined ? fingerprint : `runner:${runnerId}:${fingerprint}`;
                 desired.set(name, { config, connectionId });
-                connectionInputs.set(connectionId, { config, name });
+                connectionInputs.set(connectionId, { config, name, runnerId });
             }
             desiredCatalogs.set(catalogId, { servers: desired });
         }
@@ -1145,7 +1193,13 @@ export class McpModule implements AgentModule {
                 try {
                     return {
                         connectionId,
-                        connection: await McpClientConnection.connect(input.name, input.config),
+                        connection:
+                            input.runnerId === undefined
+                                ? await McpClientConnection.connect(input.name, input.config)
+                                : await McpClientConnection.connect(input.name, input.config, {
+                                      ctx: this.#serversLifetime(ctx),
+                                      machine: await this.#runners.machine(input.runnerId),
+                                  }),
                     } as const;
                 } catch (error) {
                     return {
@@ -1204,6 +1258,30 @@ export class McpModule implements AgentModule {
 
     #rememberContext(ctx: Context): void {
         this.#context ??= ctx;
+    }
+
+    /** The lifetime of servers on runners, which outlive whatever request first needed them. */
+    #serversLifetime(ctx: Context): Context {
+        this.#serversContext ??= detach(this.#context ?? ctx).named("mcp-servers");
+        return this.#serversContext;
+    }
+
+    /** The runner a catalog's stdio servers start on, or undefined for this machine. */
+    #catalogRunner(catalogId: string): string | undefined {
+        if (catalogId === GLOBAL_CATALOG) {
+            return this.#runners.enabled ? this.#runners.defaultRunnerId : undefined;
+        }
+        return parseWorkspaceKey(catalogId.slice(WORKSPACE_CATALOG_PREFIX.length)).runnerId;
+    }
+
+    /** A workspace's own catalog, read from the machine the workspace is on. */
+    async #readWorkspaceServers(workspace: string): Promise<HappyAgentConfigValues["mcpServers"]> {
+        const { path, runnerId } = parseWorkspaceKey(workspace);
+        if (runnerId === undefined) return await this.#config.readWorkspaceMcpServers(path);
+        return await this.#config.readWorkspaceMcpServers(
+            path,
+            await this.#runners.machine(runnerId),
+        );
     }
 
     #assertOpen(): void {
@@ -1426,13 +1504,27 @@ function userInputAnswerStrings(answer: unknown): string[] {
     return typeof answer.text === "string" ? [...selected, answer.text] : selected;
 }
 
-function workspacePath(path: string): string {
+const WORKSPACE_CATALOG_PREFIX = "workspace:";
+
+/**
+ * One workspace folder: its path on this machine, or its runner and its path there. The same path
+ * on two machines is two folders.
+ */
+function workspaceKey(runnerId: string | undefined, path: string): string {
     if (path.length === 0 || path.length > 4_096) throw new Error("Workspace path is invalid.");
-    return resolve(path);
+    const resolved = resolve(path);
+    return runnerId === undefined ? resolved : `runner:${runnerId}:${resolved}`;
 }
 
-function workspaceCatalog(path: string): string {
-    return `workspace:${path}`;
+function parseWorkspaceKey(key: string): { readonly path: string; readonly runnerId?: string } {
+    const match = /^runner:([a-z][a-z0-9_-]{0,63}):(.+)$/su.exec(key);
+    return match === null
+        ? { path: key }
+        : { path: match[2] as string, runnerId: match[1] as string };
+}
+
+function workspaceCatalog(workspace: string): string {
+    return `${WORKSPACE_CATALOG_PREFIX}${workspace}`;
 }
 
 function catalogConnectionIds(catalog: McpCatalog | undefined): ReadonlySet<string> {

@@ -3,10 +3,12 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { ElicitRequestSchema, type ElicitRequest } from "@modelcontextprotocol/sdk/types.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import type { Compute } from "@slopus/happy-agent-compute";
 import { asyncLock, type AsyncLock, type Context } from "@steve.kite/stdlib";
 
 import type { HappyAgentConfigValues } from "../config/index.js";
 import type { McpElicitationResult } from "./Mcp.js";
+import { MachineStdioTransport } from "./impl/MachineStdioTransport.js";
 
 type ServerConfig = HappyAgentConfigValues["mcpServers"][string];
 type ElicitationHandler = (request: ElicitRequest) => Promise<McpElicitationResult>;
@@ -32,7 +34,15 @@ export class McpClientConnection {
         });
     }
 
-    static async connect(name: string, config: ServerConfig): Promise<McpClientConnection> {
+    /**
+     * @param runner Where a stdio server runs when it is not this machine: a runner's machine and
+     * the context its process lives in. HTTP servers are always reached from this machine.
+     */
+    static async connect(
+        name: string,
+        config: ServerConfig,
+        runner?: { readonly ctx: Context; readonly machine: Compute },
+    ): Promise<McpClientConnection> {
         if (
             config.transport === "http" &&
             (config.oauthClientIdEnvVar !== undefined ||
@@ -49,19 +59,26 @@ export class McpClientConnection {
         );
         const connection = new McpClientConnection(name, config, client);
         const transport =
-            config.transport === "stdio"
-                ? new StdioClientTransport({
+            config.transport === "stdio" && runner !== undefined
+                ? new MachineStdioTransport(runner.ctx, runner.machine, {
                       command: config.command,
-                      ...(config.args === undefined ? {} : { args: [...config.args] }),
+                      args: config.args ?? [],
                       ...(config.cwd === undefined ? {} : { cwd: config.cwd }),
-                      ...(config.env === undefined
-                          ? {}
-                          : { env: { ...definedEnvironment(), ...config.env } }),
-                      stderr: "pipe",
+                      ...(config.env === undefined ? {} : { environment: config.env }),
                   })
-                : new StreamableHTTPClientTransport(new URL(config.url), {
-                      requestInit: { headers: httpHeaders(config) },
-                  });
+                : config.transport === "stdio"
+                  ? new StdioClientTransport({
+                        command: config.command,
+                        ...(config.args === undefined ? {} : { args: [...config.args] }),
+                        ...(config.cwd === undefined ? {} : { cwd: config.cwd }),
+                        ...(config.env === undefined
+                            ? {}
+                            : { env: { ...definedEnvironment(), ...config.env } }),
+                        stderr: "pipe",
+                    })
+                  : new StreamableHTTPClientTransport(new URL(config.url), {
+                        requestInit: { headers: httpHeaders(config) },
+                    });
         if (transport instanceof StdioClientTransport) {
             transport.stderr?.on("data", () => undefined);
         }

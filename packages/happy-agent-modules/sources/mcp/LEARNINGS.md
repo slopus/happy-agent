@@ -39,3 +39,14 @@ Malformed workspace catalogs are isolated from global and healthy-workspace reco
 last valid catalog remains live, a new failure is logged once, and a catalog that has never loaded
 is retried on later session use. Archival, path reuse, queued reloads, and shutdown all pass through
 the same serialized lifecycle boundary so stale work cannot resurrect a released process.
+
+## Stdio servers follow the folder's machine
+
+MCP stdio servers used to be children of the daemon, with a workspace's `mcp.toml` read from the
+daemon's disk by path. A runner workspace's path names a folder on another machine, so the daemon
+would read a different file, or none, and start the server beside the database instead of beside
+the code. A workspace's catalog key now includes its runner, its catalog is read through the
+runner's filesystem, and its stdio servers start through the runner's product processes behind a
+small stdio transport. Pool keys include the runner for stdio servers. Folders on this machine
+keep the SDK's own stdio transport, because it limits the inherited environment to a safe subset,
+and the daemon's environment can hold provider credentials; a runner's environment holds none.

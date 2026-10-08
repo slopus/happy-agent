@@ -6,9 +6,12 @@ import { fileURLToPath } from "node:url";
 import { createRootContext, type Context } from "@steve.kite/stdlib";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { ComputeModule } from "../../sources/compute/index.js";
 import { ConfigModule } from "../../sources/config/index.js";
 import { McpModule } from "../../sources/mcp/index.js";
 import { PresenceModule } from "../../sources/presence/index.js";
+import { RunnersModule } from "../../sources/runners/index.js";
+import { SecretsModule } from "../../sources/secrets/index.js";
 import { UserInputModule } from "../../sources/userInput/index.js";
 import { resolveModuleHooks } from "../support/moduleHooks.js";
 
@@ -150,7 +153,7 @@ describe("McpModule production discovery", () => {
         const config = await ConfigModule.load(join(root, ".happy"));
         const presence = new PresenceModule(config);
         const workspaceEvents = new WorkspaceEvents();
-        const module = new McpModule(config, new UserInputModule(presence), workspaceEvents.module);
+        const module = mcpModule(config, new UserInputModule(presence), workspaceEvents.module);
         const agents = new McpAgents({
             "agent-a": firstWorkspace,
             "agent-b": secondWorkspace,
@@ -240,7 +243,7 @@ describe("McpModule production discovery", () => {
         await write(root, "workspace-broken/mcp.toml", "[settings]\ninvalid = true\n");
         const config = await ConfigModule.load(join(root, ".happy"));
         const presence = new PresenceModule(config);
-        const module = new McpModule(
+        const module = mcpModule(
             config,
             new UserInputModule(presence),
             new WorkspaceEvents().module,
@@ -288,7 +291,7 @@ describe("McpModule production discovery", () => {
         const config = await ConfigModule.load(join(root, ".happy"));
         const presence = new PresenceModule(config);
         const workspaceEvents = new WorkspaceEvents();
-        const module = new McpModule(config, new UserInputModule(presence), workspaceEvents.module);
+        const module = mcpModule(config, new UserInputModule(presence), workspaceEvents.module);
         const agents = new McpAgents({ agent: workspace });
         const gate = gatedStdio(root, "reload-race", "replacement");
         try {
@@ -352,8 +355,24 @@ async function configuredModule(servers: Record<string, ReturnType<typeof stdio>
     return {
         config,
         root,
-        module: new McpModule(config, new UserInputModule(presence), new WorkspaceEvents().module),
+        module: mcpModule(config, new UserInputModule(presence), new WorkspaceEvents().module),
     };
+}
+
+/** The module as the runtime builds it, on a configuration with no runners. */
+function mcpModule(
+    config: ConfigModule,
+    userInput: UserInputModule,
+    workspaces: ConstructorParameters<typeof McpModule>[2],
+): McpModule {
+    const runners = new RunnersModule(config);
+    return new McpModule(
+        config,
+        userInput,
+        workspaces,
+        runners,
+        new ComputeModule(config, new SecretsModule(), runners),
+    );
 }
 
 function stdio(label: string) {
