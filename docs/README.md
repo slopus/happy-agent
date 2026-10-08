@@ -39,7 +39,8 @@ and running on it ([happy.engineering](https://happy.engineering/),
   `@slopus/happy-agent-client`.
 - **Happy for iOS and Android** is the companion: pair it with the desktop app to follow, steer,
   and approve agents from anywhere. The relay in between carries only ciphertext and can read
-  nothing.
+  nothing. The apps send product analytics, never your content, unless you turn it off
+  ([details](happy.md#what-the-relay-sees-only-ciphertext-actually-means)).
 - **The original Happy CLI** ([source](https://github.com/slopus/happy)) is in maintenance mode.
   Its `happy` command wraps Claude Code and Codex for the mobile app; it is not Happy Terminal.
 

@@ -98,6 +98,14 @@ that sessions exist, and roughly when they were active. They cannot see your
 prompts, the model's replies, your file contents, your tool calls, or your
 machine's name.
 
+Analytics are separate from the relay. Happy Agent itself sends no analytics.
+The Happy phone and desktop apps send product analytics to PostHog unless you
+turn it off in their settings: which features are used, the model and effort,
+OS, app version, device type, locale and time zone, tied to a random or derived
+ID, never your name or email. PostHog also sees each request's IP address, from
+which the phone's events get an approximate location. Message content, prompts,
+code, titles, and file paths are never included.
+
 ## How Happy Agent connects to Happy
 
 Happy Agent speaks the Happy protocol natively. It does not wrap another CLI; a Happy Agent
