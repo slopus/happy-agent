@@ -17,17 +17,14 @@ import { toSessionAgentNotificationMessage } from "@/core/toSessionAgentNotifica
 import { toSessionReminderMessage } from "@/core/toSessionReminderMessage.js";
 import { toAnthropicCompactionBlock } from "@/protocol/anthropic/toAnthropicCompactionBlock.js";
 import { toAnthropicToolName } from "@/protocol/anthropic/toAnthropicToolName.js";
-import {
-    AnthropicServerToolReplay,
-    isAnthropicServerToolContinuation,
-} from "@/protocol/anthropic/anthropicServerToolContinuation.js";
+import { AnthropicServerToolReplay } from "@/protocol/anthropic/anthropicServerToolContinuation.js";
 
 export type AnthropicReasoningState =
     | { type: "thinking"; thinking: string; signature: string }
     | { type: "redacted_thinking"; data: string };
 
 export function toAnthropicMessages(messages: readonly SessionMessage[]): BetaMessageParam[] {
-    const serverTools = new AnthropicServerToolReplay();
+    const serverTools = new AnthropicServerToolReplay(messages);
     const converted = messages.flatMap((message): BetaMessageParam[] => {
         if (message.role === "system" || message.role === "agent") {
             // Anthropic has no system role inside a conversation, so a notice keeps the position
@@ -48,14 +45,12 @@ export function toAnthropicMessages(messages: readonly SessionMessage[]): BetaMe
             return [{ role: "user", content: [toToolResult(message)] }];
         }
         const content = toAssistantContent(message, serverTools);
-        const continuationOnly =
+        const projectedServerToolsOnly =
             content.length === 0 &&
             message.content.some(
-                (block) =>
-                    (block.type === "tool_call" || block.type === "tool_result") &&
-                    isAnthropicServerToolContinuation(block.vendor),
+                (block) => block.type === "tool_call" || block.type === "tool_result",
             );
-        return continuationOnly ? [] : [{ role: "assistant", content }];
+        return projectedServerToolsOnly ? [] : [{ role: "assistant", content }];
     });
     const last = converted.at(-1);
     if (last !== undefined) last.content = addCacheBreakpoint(last.content);

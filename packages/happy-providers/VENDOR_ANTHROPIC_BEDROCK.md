@@ -111,6 +111,21 @@ settlements are projected to one native result; conflicting results and unanchor
 markers fail explicitly. Unknown incoming result IDs likewise fail at the provider boundary.
 Visibility/history publication settings do not remove native blocks from private model context.
 
+Only client tool results can resume an unfinished server turn. Anthropic documents that adding
+text after those results ends the turn and rejects a pending server call with the exact error
+`was found without a corresponding <name>_tool_result block`. This applies to queued steering as
+well as immediate interruption. Agent deliveries and system reminders also become user text on
+the wire and end the native turn. See [Server tools](https://platform.claude.com/docs/en/agents-and-tools/tool-use/server-tools)
+and [Troubleshooting tool use](https://platform.claude.com/docs/en/agents-and-tools/tool-use/troubleshooting-tool-use).
+
+Serialization omits an unmatched server call once subsequent user input ends its turn, and omits
+an assistant message left empty by that projection. Completed client calls and their actual
+results remain intact, so steering does not re-execute local work. The complete history is scanned
+before projecting anything: completed native pairs, including genuine delayed settlements, retain
+their positions. With only client results after a call, the existing server continuation remains
+available. This also allows recovery from calls retained after an interrupted or failed stream.
+Stored history is never changed, and no search result is invented.
+
 ## Credentials
 
 Load `BedrockBearerTokenCredential`, normally from `AWS_BEARER_TOKEN_BEDROCK`, or load

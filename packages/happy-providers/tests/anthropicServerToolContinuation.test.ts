@@ -49,6 +49,169 @@ const boundary: SessionMessage = {
 };
 
 describe("Anthropic server-tool continuation replay", () => {
+    it("omits an abandoned native search when a new user turn resumes the conversation", () => {
+        const messages: SessionMessage[] = [
+            { role: "user", content: [{ type: "text", text: "Find a tool." }] },
+            assistant(call, { type: "text", text: "Search was interrupted." }),
+            { role: "user", content: [{ type: "text", text: "Continue." }] },
+        ];
+        const before = structuredClone(messages);
+        expect(toAnthropicMessages(messages)[1]?.content).toEqual([
+            { type: "text", text: "Search was interrupted." },
+        ]);
+        expect(pendingAnthropicServerTools(messages).size).toBe(0);
+        expect(messages).toEqual(before);
+    });
+
+    it("preserves a completed native search even when another search was abandoned", () => {
+        const completedCall = { ...call, callId: "completed" };
+        const completedResult = {
+            ...result,
+            callId: "completed",
+            vendor: {
+                outputBlock: JSON.stringify(nativeResult),
+            },
+        };
+        const messages: SessionMessage[] = [
+            assistant(call, completedCall, completedResult),
+            { role: "user", content: [{ type: "text", text: "Continue." }] },
+        ];
+        expect(toAnthropicMessages(messages)[0]?.content).toEqual([
+            { ...nativeCall, id: "completed" },
+            { ...nativeResult, tool_use_id: "completed" },
+        ]);
+    });
+
+    it("omits an empty assistant turn left by an abandoned search", () => {
+        const messages: SessionMessage[] = [
+            { role: "user", content: [{ type: "text", text: "Find a tool." }] },
+            assistant(call),
+            { role: "user", content: [{ type: "text", text: "Continue." }] },
+        ];
+        expect(toAnthropicMessages(messages).map((message) => message.role)).toEqual([
+            "user",
+            "user",
+        ]);
+    });
+
+    it("retains a real delayed settlement even if a user message intervened", () => {
+        const messages: SessionMessage[] = [
+            assistant(call),
+            { role: "user", content: [{ type: "text", text: "Continue." }] },
+            assistant(continuation, result),
+        ];
+        const before = structuredClone(messages);
+        expect(toAnthropicMessages(messages)[0]?.content).toEqual([nativeCall]);
+        expect(toAnthropicMessages(messages)[2]?.content).toEqual([nativeResult]);
+        expect(messages).toEqual(before);
+    });
+
+    it("omits an abandoned search when a message from another agent starts new work", () => {
+        const messages: SessionMessage[] = [
+            assistant(call, { type: "text", text: "Saved prefix." }),
+            {
+                role: "agent",
+                author: { id: "bootstrap", description: "Bootstrap projects" },
+                content: [{ type: "text", text: "Continue bootstrapping." }],
+            },
+        ];
+        expect(toAnthropicMessages(messages)[0]?.content).toEqual([
+            { type: "text", text: "Saved prefix." },
+        ]);
+        expect(pendingAnthropicServerTools(messages).size).toBe(0);
+    });
+
+    it("does not replay an incomplete native result when abandoning its search", () => {
+        const messages: SessionMessage[] = [
+            assistant(call, { ...result, incomplete: true }),
+            { role: "user", content: [{ type: "text", text: "Continue." }] },
+        ];
+        const before = structuredClone(messages);
+        expect(toAnthropicMessages(messages)).toEqual([
+            {
+                role: "user",
+                content: [
+                    { type: "text", text: "Continue.", cache_control: { type: "ephemeral" } },
+                ],
+            },
+        ]);
+        expect(messages).toEqual(before);
+    });
+
+    it.each(["user", "agent", "system"] as const)(
+        "ends the pending server continuation when %s input follows client results",
+        (role) => {
+            const clientCall: SessionToolCallBlock = {
+                type: "tool_call",
+                callId: boundary.callId,
+                name: "Bash",
+                arguments: "{}",
+            };
+            const input: SessionMessage =
+                role !== "agent"
+                    ? { role, content: [{ type: "text", text: "Also inspect projects." }] }
+                    : {
+                          role,
+                          author: { id: "bootstrap", description: "Bootstrap projects" },
+                          content: [{ type: "text", text: "Also inspect projects." }],
+                      };
+            const messages = [assistant(clientCall, call), boundary, input];
+            const before = structuredClone(messages);
+            expect(pendingAnthropicServerTools(messages).size).toBe(0);
+            expect(toAnthropicMessages(messages)[0]?.content).toEqual([
+                { type: "tool_use", id: boundary.callId, name: "Bash", input: {} },
+            ]);
+            expect(messages).toEqual(before);
+        },
+    );
+
+    it("omits a canceled search even when its local call was settled as an error", () => {
+        const messages: SessionMessage[] = [
+            assistant(
+                { type: "tool_call", callId: boundary.callId, name: "Bash", arguments: "{}" },
+                call,
+            ),
+            { ...boundary, isError: true },
+            { role: "user", content: [{ type: "text", text: "Handle this immediately." }] },
+        ];
+        expect(pendingAnthropicServerTools(messages).size).toBe(0);
+        expect(toAnthropicMessages(messages)[0]?.content).not.toContainEqual(nativeCall);
+        expect(toAnthropicMessages(messages)[1]?.content).toEqual([
+            {
+                type: "tool_result",
+                tool_use_id: boundary.callId,
+                content: "ok",
+                is_error: true,
+            },
+        ]);
+    });
+
+    it("does not mistake an unrelated tool result for a live search continuation", () => {
+        const messages: SessionMessage[] = [
+            assistant(call),
+            boundary,
+            { role: "user", content: [{ type: "text", text: "Continue." }] },
+        ];
+        expect(pendingAnthropicServerTools(messages).size).toBe(0);
+        expect(toAnthropicMessages(messages).some((message) => message.role === "assistant")).toBe(
+            false,
+        );
+    });
+
+    it("abandons a search left behind after its client-tool continuation returned a newer response", () => {
+        const messages: SessionMessage[] = [
+            assistant(
+                { type: "tool_call", callId: boundary.callId, name: "Bash", arguments: "{}" },
+                call,
+            ),
+            boundary,
+            assistant({ type: "text", text: "The later response finished." }),
+            { role: "user", content: [{ type: "text", text: "Continue." }] },
+        ];
+        expect(pendingAnthropicServerTools(messages).size).toBe(0);
+        expect(toAnthropicMessages(messages)[0]?.content).not.toContainEqual(nativeCall);
+    });
+
     it("projects durable settlements retained across a retry to exactly one native pair", () => {
         const messages = [
             assistant(call),
