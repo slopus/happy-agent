@@ -56,7 +56,7 @@ import {
 } from "@slopus/happy-agent-base";
 import { Type, type Static, type TSchema } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
-import { afterCommit, shutdown, withLifetime, type Context } from "@steve.kite/stdlib";
+import { afterCommit, detach, shutdown, withLifetime, type Context } from "@steve.kite/stdlib";
 import { MAX_RUNNER_FRAME_BYTES, RunnerUnavailableError } from "@slopus/happy-agent-compute";
 import { WebSocketServer } from "ws";
 
@@ -308,7 +308,14 @@ export type PreparedRunnerSocket =
 export type PreparedWorkspaceProxySocket =
     | { readonly handled: false }
     | { readonly handled: true; readonly rejection: ApiSocketRejection }
-    | { readonly handled: true };
+    | {
+          readonly handled: true;
+          /**
+           * For a folder on a runner, the one-time key its attachment presents to the workspace
+           * proxy so connections are made from the runner's network. Absent for this machine.
+           */
+          readonly route?: string;
+      };
 
 export interface ApiDrainAgentProgress {
     readonly id: string;
@@ -1526,7 +1533,7 @@ export class ApiModule implements AgentModule {
             writeSocketError(socket, prepared.rejection);
             return true;
         }
-        this.#workspaceProxy.accept(socket, head);
+        this.#workspaceProxy.accept(socket, head, prepared.route);
         return true;
     }
 
@@ -1789,8 +1796,22 @@ export class ApiModule implements AgentModule {
             ctx = await this.#authenticate(ctx, authorization);
             this.#assertTeamUser(ctx);
             this.#assertSocketReady();
-            await this.#resolveWorkspaceScope(ctx, match[1] as string);
-            return { handled: true };
+            const { runnerId } = await this.#resolveWorkspaceScope(ctx, match[1] as string);
+            const runners = this.#runners;
+            if (runnerId === undefined || runners === undefined) {
+                runners?.assertLocalExecution();
+                return { handled: true };
+            }
+            // Refuse a runner that is not there now, rather than every request on the tunnel.
+            await runners.machine(runnerId);
+            // Connections outlive the request that opened the attachment.
+            const connectCtx = detach(ctx).named("workspace-proxy-connections");
+            const route = this.#workspaceProxy.route(async (host, port) => {
+                const network = (await runners.machine(runnerId)).network;
+                if (network === undefined) throw new Error("The runner cannot open connections.");
+                return await network.connect(connectCtx, { host, port });
+            });
+            return { handled: true, route };
         } catch (error: unknown) {
             return {
                 handled: true,

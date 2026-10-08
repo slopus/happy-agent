@@ -41,4 +41,4 @@ export {
     workspaceResource,
 } from "./ApiResourceProjection.js";
 export * from "./ApiSchemas.js";
-export { WorkspaceProxy } from "./WorkspaceProxy.js";
+export { WORKSPACE_PROXY_ROUTE_HEADER, WorkspaceProxy } from "./WorkspaceProxy.js";

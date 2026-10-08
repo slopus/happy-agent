@@ -203,3 +203,15 @@ shutdown and does not claim that terminals or background processes have exited.
   conflicts, bootstrap, and events, so this discriminator must stay there rather than being added
   route by route. Client schemas keep the field optional only for older compatible daemons and
   tolerate unknown keys so newer built-ins retain ordinary bot behavior in older UIs.
+
+## The workspace proxy reaches a runner folder's network through a route
+
+A runner folder's dev server listens on the runner's loopback, which the daemon's own network
+cannot reach. Admitting a runner folder's proxy attachment mints a route: a one-time, minute-long
+key naming a connector that opens connections through the runner's compute network. Node hands the
+route to `WorkspaceProxy.accept` directly; the Bun front door adds it as a private header on the
+attachment's first inner request and sends that folder's inner `CONNECT`s to the internal proxy
+listener too, instead of connecting them natively. The header is removed before anything is
+forwarded, a replayed key is not a route, and this machine's folders keep the native fast path.
+Plain requests use `createConnection` over a stream that waits for the runner connection, which
+Bun and Node both honor.

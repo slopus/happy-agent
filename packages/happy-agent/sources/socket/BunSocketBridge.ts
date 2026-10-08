@@ -1,5 +1,6 @@
 import {
     socketRejectionBody,
+    WORKSPACE_PROXY_ROUTE_HEADER,
     type ApiSocketRejection,
     type PreparedWorkspaceProxySocket,
 } from "@slopus/happy-agent-modules";
@@ -53,6 +54,8 @@ interface ClientState extends OutboundState {
     connectTimer: ReturnType<typeof setTimeout> | undefined;
     kind: "client";
     phase: "connecting" | "headers" | "proxy_headers" | "raw" | "routing";
+    /** The workspace proxy route of a folder on a runner, whose connections are made there. */
+    proxyRoute: string | undefined;
     upstream: BunSocket | undefined;
 }
 
@@ -244,6 +247,7 @@ function routeInitialRequest(
                 }
                 state.buffer = state.buffer.subarray(parsed.bytes);
                 state.phase = "proxy_headers";
+                state.proxyRoute = prepared.route;
                 enqueueWrite(socket, Buffer.from("HTTP/1.1 200 Connection Established\r\n\r\n"));
                 socket.timeout?.(HEADER_TIMEOUT_SECONDS);
                 if (state.buffer.byteLength > 0) routeProxyRequest(bun, options, socket);
@@ -270,16 +274,30 @@ function routeProxyRequest(
     }
     state.phase = "connecting";
     socket.timeout?.(0);
-    if (parsed.method !== "CONNECT") {
-        if (options.proxyHttpAuthorization !== undefined) {
+    // A runner folder's tunnels are opened from the runner, which only the internal listener can
+    // reach; this machine's own tunnels are connected natively below.
+    if (parsed.method !== "CONNECT" || state.proxyRoute !== undefined) {
+        const added = [
+            ...(options.proxyHttpAuthorization === undefined
+                ? []
+                : [`Proxy-Authorization: ${options.proxyHttpAuthorization}`]),
+            ...(state.proxyRoute === undefined
+                ? []
+                : [`${WORKSPACE_PROXY_ROUTE_HEADER}: ${state.proxyRoute}`]),
+        ];
+        if (added.length > 0) {
             // Only the first inner request is inspected. The admitted internal connection
             // then owns ordinary HTTP framing and keep-alive, just like the Unix listener.
             const lines = state.buffer
                 .subarray(0, parsed.bytes - 4)
                 .toString("latin1")
                 .split("\r\n");
-            const head = lines.filter((line) => !/^proxy-authorization\s*:/i.test(line));
-            head.push(`Proxy-Authorization: ${options.proxyHttpAuthorization}`);
+            const head = lines.filter(
+                (line) =>
+                    !/^proxy-authorization\s*:/i.test(line) &&
+                    !line.toLowerCase().startsWith(`${WORKSPACE_PROXY_ROUTE_HEADER}:`),
+            );
+            head.push(...added);
             state.buffer = Buffer.concat([
                 Buffer.from(`${head.join("\r\n")}\r\n\r\n`, "latin1"),
                 state.buffer.subarray(parsed.bytes),
@@ -572,6 +590,7 @@ function clientState(): ClientState {
         outboundOffset: 0,
         outboundQueue: [],
         phase: "headers",
+        proxyRoute: undefined,
         upstream: undefined,
     };
 }
