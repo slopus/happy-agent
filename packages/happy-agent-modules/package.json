@@ -23,6 +23,11 @@
             "types": "./dist/transport/index.d.ts",
             "import": "./dist/transport/index.js",
             "default": "./dist/transport/index.js"
+        },
+        "./tailcat": {
+            "types": "./dist/tailcat/remote.d.ts",
+            "import": "./dist/tailcat/remote.js",
+            "default": "./dist/tailcat/remote.js"
         }
     },
     "publishConfig": {

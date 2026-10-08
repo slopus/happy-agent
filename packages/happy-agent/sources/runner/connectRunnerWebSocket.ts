@@ -1,4 +1,6 @@
 import { MAX_RUNNER_FRAME_BYTES, type RunnerChannel } from "@slopus/happy-agent-compute";
+import type { createConnection } from "node:net";
+import type { Duplex } from "node:stream";
 import WebSocket, { type RawData } from "ws";
 
 /** Why a connection attempt did not produce a channel. */
@@ -22,12 +24,31 @@ const CONNECT_TIMEOUT_MS = 20_000;
  * One binary WebSocket message is one frame. Anything else from the daemon — a text message, an
  * oversized message, a socket error — closes the channel with a reason the runner logs.
  */
-export async function connectRunnerWebSocket(url: string, token: string): Promise<RunnerChannel> {
+export async function connectRunnerWebSocket(
+    url: string,
+    token: string,
+    /** Opens the connection the WebSocket runs over, when the address alone cannot. */
+    dial?: () => Promise<Duplex>,
+): Promise<RunnerChannel> {
+    let socket: Duplex | undefined;
+    if (dial !== undefined) {
+        try {
+            socket = await dial();
+        } catch (error) {
+            throw new RunnerConnectError(
+                `The daemon could not be reached: ${error instanceof Error ? error.message : String(error)}`,
+            );
+        }
+    }
+    const opened = socket;
     const webSocket = new WebSocket(url, {
         headers: { authorization: `Bearer ${token}` },
         handshakeTimeout: CONNECT_TIMEOUT_MS,
         maxPayload: MAX_RUNNER_FRAME_BYTES,
         perMessageDeflate: false,
+        ...(opened === undefined
+            ? {}
+            : { createConnection: (() => opened) as unknown as typeof createConnection }),
     });
     await new Promise<void>((resolve, reject) => {
         const fail = (error: RunnerConnectError) => {

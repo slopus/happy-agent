@@ -8,6 +8,8 @@ import { AgentDaemonError } from "../lifecycle/AgentDaemonError.js";
 export interface RunnerOptions {
     /** The WebSocket address of the daemon's `GET /v0/runners/connect`. */
     readonly url: string;
+    /** A standalone daemon's Tailcat exposure, dialed through a Tailcat carrier. */
+    readonly tailcat?: { readonly address: string; readonly port: number };
     /** The runner's token. Never logged, never handed to anything the runner starts. */
     readonly token: string;
     /** Where the daemon places the home project and bot folders on this machine. */
@@ -77,12 +79,30 @@ export function readRunnerOptions(
     }
     if (!isAbsolute(home))
         throw new AgentDaemonError("The runner's home must be an absolute path.");
+    const tailcat = endpoint.startsWith("tailcat:") ? tailcatEndpoint(endpoint) : undefined;
     return {
-        url: runnerConnectUrl(endpoint),
+        // Over Tailcat the carrier chooses the machine, so the address only names the route.
+        url: tailcat === undefined ? runnerConnectUrl(endpoint) : TAILCAT_RUNNER_URL,
+        ...(tailcat === undefined ? {} : { tailcat }),
         token,
         home,
         privateDirectories: [...new Set([stateDirectory, dirname(tokenFile)])],
     };
+}
+
+const TAILCAT_RUNNER_URL = "ws://server.tailcat/v0/runners/connect";
+const TAILCAT_DEFAULT_PORT = 24779;
+
+/** `tailcat:<address>` or `tailcat:<address>:<port>`, with the address exactly as Tailcat printed it. */
+function tailcatEndpoint(endpoint: string): { address: string; port: number } {
+    const match = /^tailcat:(tc[A-Za-z0-9_-]+)(?::(\d{1,5}))?$/u.exec(endpoint);
+    const port = match?.[2] === undefined ? TAILCAT_DEFAULT_PORT : Number(match[2]);
+    if (match === null || port < 1 || port > 65_535) {
+        throw new AgentDaemonError(`The endpoint ${endpoint} is not a Tailcat address.`, {
+            hint: "Use tailcat:<address>:<port> with the address and port from the daemon's .happy/agent/tailcat files.",
+        });
+    }
+    return { address: match[1] as string, port };
 }
 
 /** The runner route under an `http(s)://` endpoint, or under a daemon's local socket. */

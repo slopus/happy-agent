@@ -25,7 +25,8 @@ Commands:
   reload   Stop the running daemon, then start a fresh one.
   run      Run the daemon in the foreground of this process.
   runner   Run this machine as a runner for a daemon on another machine.
-           --endpoint <address>  The daemon: https://host, http://host:port, or unix:/socket.
+           --endpoint <address>  The daemon: https://host, http://host:port, unix:/socket, or
+                                 tailcat:<address>[:<port>] for a standalone daemon.
            --token-file <path>   The runner's token (default ~/.happy-runner/token), or set
                                  HAPPY_RUNNER_TOKEN.
            --home <directory>    Where the home project and bot folders live (default: home).

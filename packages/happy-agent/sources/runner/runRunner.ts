@@ -1,6 +1,7 @@
 import { hostname } from "node:os";
 
 import { createRunnerMachine, RunnerHost } from "@slopus/happy-agent-compute";
+import { openTailcatRemote } from "@slopus/happy-agent-modules/tailcat";
 import { createRootContext, withLogger, type Context } from "@steve.kite/stdlib";
 
 import { getDaemonIdentity } from "../lifecycle/getDaemonIdentity.js";
@@ -45,6 +46,14 @@ export async function runRunner(args: readonly string[]): Promise<void> {
             }),
     });
 
+    // A standalone daemon is reached through one Tailcat carrier, reused across reconnects.
+    const tailcat = options.tailcat;
+    const remote = tailcat === undefined ? undefined : openTailcatRemote(tailcat.address);
+    const dial =
+        remote === undefined || tailcat === undefined
+            ? undefined
+            : async () => await remote.connect(tailcat.port);
+
     let stopping = false;
     let wake: (() => void) | undefined;
     let current: { close(reason: string): void } | undefined;
@@ -63,7 +72,7 @@ export async function runRunner(args: readonly string[]): Promise<void> {
     while (!stopping) {
         const startedAt = Date.now();
         try {
-            const channel = await connectRunnerWebSocket(options.url, options.token);
+            const channel = await connectRunnerWebSocket(options.url, options.token, dial);
             if (stopping) {
                 channel.close("The runner is shutting down.");
                 break;
@@ -88,6 +97,7 @@ export async function runRunner(args: readonly string[]): Promise<void> {
         delay = Math.min(delay * 2, LAST_RETRY_MS);
     }
     await disposeHost(root.named("runner-shutdown"), host);
+    await remote?.close();
 }
 
 async function disposeHost(ctx: Context, host: RunnerHost): Promise<void> {
