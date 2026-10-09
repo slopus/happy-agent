@@ -29,6 +29,12 @@ pub struct ConfigModule {
     pub values: toml::Value,
 }
 
+pub struct ExecutionEnvironment {
+    pub root: PathBuf,
+    pub cwd: PathBuf,
+    pub shell: String,
+}
+
 #[derive(Clone, Copy)]
 pub enum Document {
     Instructions,
@@ -56,6 +62,186 @@ impl Document {
 }
 
 impl ConfigModule {
+    pub fn context_window(&self, model: &str) -> Option<u64> {
+        match model {
+            "openai/gpt-6.1-sol"
+            | "openai/gpt-6-astra"
+            | "openai/gpt-6-sol"
+            | "openai/gpt-6-luna"
+            | "openai/gpt-5.6-sol"
+            | "openai/gpt-5.6-terra"
+            | "openai/gpt-5.6-luna"
+            | "openai/gpt-5.4" => Some(272000),
+            "anthropic/opus-5-5"
+            | "anthropic/opus-5"
+            | "anthropic/sonnet-5-5"
+            | "anthropic/sonnet-5"
+            | "anthropic/fable-5-1"
+            | "anthropic/fable-5"
+            | "anthropic/opus-4-8"
+            | "moonshotai/kimi-k3"
+            | "zai/glm-5.3" => Some(1000000),
+            "xai/grok-4.7" | "xai/grok-4.6" | "xai/grok-build" | "xai/grok-4.5" => Some(500000),
+            "xai/grok-composer-2.5-fast" => Some(200000),
+            _ => None,
+        }
+    }
+    pub fn execution_environment(
+        &self,
+        configuration: &serde_json::Value,
+        arguments: &serde_json::Value,
+    ) -> Result<ExecutionEnvironment> {
+        let root = configuration["modules"]["compute"]["cwd"]
+            .as_str()
+            .or_else(|| configuration["environment"]["workingDirectory"].as_str())
+            .context("The agent has no working directory.")?;
+        let root = std::fs::canonicalize(root)?;
+        let requested = arguments["workdir"]
+            .as_str()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| root.clone());
+        let cwd = std::fs::canonicalize(if requested.is_absolute() {
+            requested
+        } else {
+            root.join(requested)
+        })?;
+        let shell = arguments["shell"]
+            .as_str()
+            .or_else(|| configuration["environment"]["shell"].as_str())
+            .filter(|shell| !shell.is_empty())
+            .unwrap_or("/bin/bash")
+            .to_owned();
+        Ok(ExecutionEnvironment { root, cwd, shell })
+    }
+    pub async fn session(
+        &self,
+        agent: &str,
+        settings: &serde_json::Value,
+        tools: Vec<happy_providers::ToolDefinition>,
+    ) -> Result<happy_providers::HttpSession> {
+        use happy_providers::{
+            BedrockTransport, CredentialSource, ProviderConfig, ProviderKind, Transport,
+        };
+        let provider = settings["provider"]
+            .as_str()
+            .or_else(|| {
+                self.values
+                    .get("defaults")
+                    .and_then(|defaults| defaults.get("provider"))
+                    .and_then(toml::Value::as_str)
+            })
+            .context("No inference provider is selected.")?;
+        let entry = self
+            .values
+            .get("providers")
+            .and_then(|providers| providers.get(provider));
+        let field = |name: &str| entry.and_then(|entry| entry.get(name));
+        let configured_kind = field("type")
+            .and_then(toml::Value::as_str)
+            .unwrap_or(provider);
+        anyhow::ensure!(
+            field("enabled")
+                .and_then(toml::Value::as_bool)
+                .unwrap_or(false),
+            "The selected inference provider is disabled."
+        );
+        let model = settings["model"]
+            .as_str()
+            .or_else(|| {
+                self.values
+                    .get("defaults")
+                    .and_then(|defaults| defaults.get("model"))
+                    .and_then(toml::Value::as_str)
+            })
+            .context("No inference model is selected.")?;
+        let kind = match configured_kind {
+            "codex" => ProviderKind::Codex,
+            "grok" => ProviderKind::Grok,
+            "claude" => ProviderKind::Claude,
+            "bedrock" if model.starts_with("anthropic/") => ProviderKind::Claude,
+            "bedrock" if model.starts_with("moonshotai/") => ProviderKind::Kimi,
+            "bedrock" if model.starts_with("zai/") => ProviderKind::Glm,
+            "bedrock" => ProviderKind::Codex,
+            _ => bail!("The selected inference provider type is not supported."),
+        };
+        let credential = if let Some(token) = field("api_key").and_then(toml::Value::as_str) {
+            CredentialSource::Bearer {
+                token: token.to_owned(),
+            }
+        } else {
+            anyhow::ensure!(
+                field("credential_isolation").and_then(toml::Value::as_bool) != Some(true),
+                "The selected isolated provider has no credential."
+            );
+            let auth_file = field("auth_file")
+                .and_then(toml::Value::as_str)
+                .map(PathBuf::from);
+            match (configured_kind, kind) {
+                ("bedrock", _) => CredentialSource::Aws {
+                    profile: field("profile")
+                        .and_then(toml::Value::as_str)
+                        .map(str::to_owned),
+                },
+                (_, ProviderKind::Codex) => CredentialSource::Codex { auth_file },
+                (_, ProviderKind::Grok) => CredentialSource::Grok { auth_file },
+                (_, ProviderKind::Claude) => CredentialSource::Environment {
+                    variable: "ANTHROPIC_API_KEY".into(),
+                },
+                (_, ProviderKind::Responses) => CredentialSource::Environment {
+                    variable: "OPENAI_API_KEY".into(),
+                },
+                _ => bail!("The selected inference provider has no credential."),
+            }
+        };
+        let transport = match field("transport")
+            .and_then(toml::Value::as_str)
+            .unwrap_or("auto")
+        {
+            "auto" => Transport::Auto,
+            "sse" => Transport::Sse,
+            "websocket" | "websocket-cached" => Transport::Websocket,
+            _ => bail!("The selected provider transport is invalid."),
+        };
+        let config = ProviderConfig {
+            kind,
+            credential,
+            model: model.into(),
+            endpoint: field("base_url")
+                .and_then(toml::Value::as_str)
+                .map(str::to_owned),
+            transport,
+            bedrock: if configured_kind == "bedrock" {
+                Some(if matches!(kind, ProviderKind::Claude) {
+                    BedrockTransport::Runtime
+                } else {
+                    BedrockTransport::Mantle
+                })
+            } else {
+                None
+            },
+            region: field("region")
+                .and_then(toml::Value::as_str)
+                .map(str::to_owned)
+                .or_else(|| std::env::var("AWS_REGION").ok())
+                .or_else(|| std::env::var("AWS_DEFAULT_REGION").ok())
+                .unwrap_or_else(|| "us-east-1".into()),
+            user_agent: None,
+            headers: std::collections::BTreeMap::new(),
+            inference_max_retries: self
+                .values
+                .get("settings")
+                .and_then(|settings| settings.get("inference_max_retries"))
+                .and_then(toml::Value::as_integer)
+                .and_then(|count| u32::try_from(count).ok())
+                .unwrap_or(10),
+            stream_idle_timeout_ms: 300000,
+            responses_features: true,
+            parallel_tool_calls: true,
+            native_compaction: true,
+        };
+        happy_providers::HttpSession::new(agent.into(), config, tools).await
+    }
+
     pub fn load() -> Result<Self> {
         let os_home = home_directory()?;
         let configured = std::env::var("HAPPY_HOME_DIR").unwrap_or_default();

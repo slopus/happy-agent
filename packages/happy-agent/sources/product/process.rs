@@ -14,6 +14,14 @@ pub fn process_running(pid: u32) -> bool {
                 .rsplit_once(')')
                 .is_some_and(|(_, tail)| tail.split_whitespace().next() == Some("Z"))
         {
+            // Linux may expose a zombie thread-group leader before the other
+            // threads finish exiting and release shared database descriptors.
+            // A kill command must wait for those threads as well as the leader.
+            if std::fs::read_dir(format!("/proc/{pid}/task"))
+                .is_ok_and(|tasks| tasks.filter_map(Result::ok).take(2).count() > 1)
+            {
+                return true;
+            }
             return false;
         }
         true

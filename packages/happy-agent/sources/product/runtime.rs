@@ -1,25 +1,76 @@
 use super::{config::ConfigModule, filesystem::private_file};
-use anyhow::{Context, Result, bail};
+use anyhow::{Context as _, Result, bail};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
-use std::{path::Path, sync::Arc};
+use std::{
+    path::Path,
+    sync::{Arc, Mutex},
+};
 
 // This module owns the database and both original ownership seams. Historical module
 // tables and unknown KV payloads are retained without eager decoding at startup.
 pub struct RuntimeModule {
-    _config: Arc<ConfigModule>,
-    database: Option<Connection>,
-    owner: Option<Connection>,
+    config: Arc<ConfigModule>,
+    state: Mutex<Option<Database>>,
+}
+
+struct Database {
+    database: Connection,
+    owner: Connection,
     storage_token: String,
 }
 
+/// An immutable transaction scope. Module operations use this exact connection
+/// and return their notifications to the owner for publication after commit.
+pub struct Context<'a> {
+    database: &'a Connection,
+    owner: usize,
+    after_commit: std::cell::RefCell<Vec<Box<dyn FnOnce() + Send>>>,
+}
+impl Context<'_> {
+    pub fn database(&self) -> &Connection {
+        self.database
+    }
+    pub fn after_commit(&self, work: impl FnOnce() + Send + 'static) -> Result<()> {
+        let mut observers = self.after_commit.borrow_mut();
+        anyhow::ensure!(
+            observers.len() < 10000,
+            "The transaction has too many notifications."
+        );
+        observers.push(Box::new(work));
+        Ok(())
+    }
+}
+
 impl RuntimeModule {
-    pub async fn open(config: Arc<ConfigModule>) -> Result<Arc<std::sync::Mutex<Self>>> {
-        tokio::task::spawn_blocking(move || Self::open_blocking(config))
-            .await?
-            .map(|runtime| Arc::new(std::sync::Mutex::new(runtime)))
+    pub fn assert_context(&self, ctx: &Context<'_>) -> Result<()> {
+        anyhow::ensure!(
+            ctx.owner == self as *const Self as usize,
+            "The transaction belongs to a different runtime database."
+        );
+        Ok(())
+    }
+    pub fn new(config: Arc<ConfigModule>) -> Self {
+        Self {
+            config,
+            state: Mutex::new(None),
+        }
     }
 
-    fn open_blocking(config: Arc<ConfigModule>) -> Result<Self> {
+    pub async fn load(self: &Arc<Self>) -> Result<()> {
+        let runtime = self.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut state = runtime
+                .state
+                .lock()
+                .map_err(|_| anyhow::anyhow!("The runtime database lock is unavailable."))?;
+            anyhow::ensure!(state.is_none(), "The runtime database is already loaded.");
+            *state = Some(Self::open_blocking(runtime.config.clone())?);
+            Ok(())
+        })
+        .await?
+    }
+
+    fn open_blocking(config: Arc<ConfigModule>) -> Result<Database> {
         config.prepare()?;
         let canonical_directory = std::fs::canonicalize(&config.paths.directory)?;
         let database_path = canonical_directory.join(
@@ -83,10 +134,9 @@ impl RuntimeModule {
             Ok(database)
         })();
         match result {
-            Ok(database) => Ok(Self {
-                _config: config,
-                database: Some(database),
-                owner: Some(owner),
+            Ok(database) => Ok(Database {
+                database,
+                owner,
                 storage_token,
             }),
             Err(error) => {
@@ -96,27 +146,97 @@ impl RuntimeModule {
         }
     }
 
-    pub fn close(&mut self) -> Result<()> {
-        if let Some(database) = self.database.take()
-            && let Err((database, error)) = database.close()
-        {
-            self.database = Some(database);
-            return Err(error.into());
-        }
-        if let Some(owner) = self.owner.take() {
+    pub async fn transact<T: Send + 'static>(
+        self: &Arc<Self>,
+        work: impl for<'a> FnOnce(&Context<'a>) -> Result<T> + Send + 'static,
+    ) -> Result<T> {
+        let runtime = self.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut state = runtime
+                .state
+                .lock()
+                .map_err(|_| anyhow::anyhow!("The runtime database lock is unavailable."))?;
+            let state = state
+                .as_mut()
+                .context("The runtime database is not open.")?;
+            let transaction = state
+                .database
+                .transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let context = Context {
+                database: &transaction,
+                owner: Arc::as_ptr(&runtime) as usize,
+                after_commit: std::cell::RefCell::new(Vec::new()),
+            };
+            let value = work(&context)?;
+            let observers = context.after_commit.into_inner();
+            transaction.commit()?;
+            for observer in observers {
+                observer();
+            }
+            Ok(value)
+        })
+        .await?
+    }
+
+    pub async fn migrate(
+        self: &Arc<Self>,
+        module: &'static str,
+        migrations: &'static [(&'static str, &'static str)],
+    ) -> Result<()> {
+        let runtime = self.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut state = runtime
+                .state
+                .lock()
+                .map_err(|_| anyhow::anyhow!("The runtime database lock is unavailable."))?;
+            migrate(
+                &mut state
+                    .as_mut()
+                    .context("The runtime database is not open.")?
+                    .database,
+                module,
+                migrations,
+            )
+        })
+        .await?
+    }
+
+    pub async fn close(self: &Arc<Self>) -> Result<()> {
+        let runtime = self.clone();
+        tokio::task::spawn_blocking(move || runtime.close_blocking()).await?
+    }
+    fn close_blocking(&self) -> Result<()> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| anyhow::anyhow!("The runtime database lock is unavailable."))?;
+        if let Some(database) = state.take() {
+            let Database {
+                database,
+                owner,
+                storage_token,
+            } = database;
+            if let Err((database, error)) = database.close() {
+                *state = Some(Database {
+                    database,
+                    owner,
+                    storage_token,
+                });
+                return Err(error.into());
+            }
             owner.execute_batch("ROLLBACK")?;
+            release_storage_lock(
+                &self.config.paths.directory.join("agent.lock"),
+                &storage_token,
+            );
         }
-        release_storage_lock(
-            &self._config.paths.directory.join("agent.lock"),
-            &self.storage_token,
-        );
         Ok(())
     }
 }
 
 impl Drop for RuntimeModule {
     fn drop(&mut self) {
-        let _ = self.close();
+        let _ = self.close_blocking();
     }
 }
 

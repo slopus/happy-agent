@@ -23,6 +23,8 @@ pub struct LifecycleModule {
     started_at: u64,
     mutations: Mutex<usize>,
     drain_writer: Mutex<()>,
+    agents: Mutex<std::collections::BTreeMap<String, String>>,
+    database_open: AtomicBool,
     ready: AtomicBool,
     draining: AtomicBool,
     shutting_down: AtomicBool,
@@ -49,6 +51,8 @@ impl LifecycleModule {
             started_at: super::identity::now(),
             mutations: Mutex::new(0),
             drain_writer: Mutex::new(()),
+            agents: Mutex::new(std::collections::BTreeMap::new()),
+            database_open: AtomicBool::new(false),
             ready: AtomicBool::new(false),
             draining: AtomicBool::new(false),
             shutting_down: AtomicBool::new(false),
@@ -103,11 +107,63 @@ impl LifecycleModule {
             .mutations
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if self.is_draining() && count > 0 {
-            vec![json!({"name":"api-mutations","count":count})]
-        } else {
-            vec![]
+        if !self.is_draining() {
+            return vec![];
         }
+        let mut rows = Vec::new();
+        if count > 0 {
+            rows.push(json!({"name":"api-mutations","count":count}));
+        }
+        let agents = self
+            .agents
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !agents.is_empty() {
+            let mut row = json!({"name":"agent-system","count":agents.len(),"agents":agents.iter().take(100).map(|(id,stage)|json!({"id":id,"stage":stage})).collect::<Vec<_>>()});
+            if agents.len() > 100 {
+                row["truncated"] = json!(true);
+            }
+            rows.push(row);
+        }
+        rows
+    }
+    pub fn set_agent_stage(&self, id: &str, stage: Option<&str>) {
+        let mut agents = self
+            .agents
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(stage) = stage {
+            agents.insert(id.into(), stage.into());
+        } else {
+            agents.remove(id);
+        }
+        drop(agents);
+        if self.is_draining()
+            && let Err(error) = self.write_drain_state()
+        {
+            eprintln!("Could not update agent drain progress: {error:#}");
+        }
+    }
+    pub fn set_database_open(&self, open: bool) {
+        self.database_open.store(open, Ordering::Release);
+    }
+    fn shutdown_waiting(&self) -> Vec<&'static str> {
+        if !self.shutting_down.load(Ordering::Acquire) {
+            return vec![];
+        }
+        let mut waiting = Vec::new();
+        if !self
+            .agents
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_empty()
+        {
+            waiting.push("agent-system");
+        }
+        if self.database_open.load(Ordering::Acquire) {
+            waiting.push("main-database");
+        }
+        waiting
     }
     pub fn begin_shutdown(&self) {
         self.shutting_down.store(true, Ordering::Release);
@@ -116,7 +172,7 @@ impl LifecycleModule {
     pub fn health(&self) -> Value {
         json!({"healthy":true,"ready":self.is_ready(),"status":if self.is_ready(){"ready"}else{"starting"},
             "version":{"protocol":26,"daemon":version()},"draining":self.is_draining(),"drainWaitingFor":self.drain_progress(),
-            "shuttingDown":self.shutting_down.load(Ordering::Acquire),"waitingFor":[]})
+            "shuttingDown":self.shutting_down.load(Ordering::Acquire),"waitingFor":self.shutdown_waiting()})
     }
     fn write_drain_state(&self) -> Result<()> {
         let _writer = self

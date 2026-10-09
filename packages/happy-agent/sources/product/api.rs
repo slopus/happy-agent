@@ -1,7 +1,8 @@
 use super::{
+    agents::AgentSystemModule,
     config::{ConfigModule, Document},
+    events::{Entry, EventsModule},
     identity::now,
-    journal::{Entry, Journal},
     lifecycle::LifecycleModule,
     runtime::RuntimeModule,
     schemas::Schemas,
@@ -17,7 +18,7 @@ use serde_json::{Value, json};
 use std::{
     collections::VecDeque,
     convert::Infallible,
-    sync::{Arc, Mutex, OnceLock},
+    sync::{Arc, OnceLock},
     time::Duration,
 };
 use subtle::ConstantTimeEq;
@@ -28,20 +29,27 @@ pub struct ApiModule {
     config: Arc<ConfigModule>,
     pub lifecycle: Arc<LifecycleModule>,
     token: OnceLock<String>,
-    runtime: OnceLock<Arc<Mutex<RuntimeModule>>>,
+    runtime: OnceLock<Arc<RuntimeModule>>,
     schemas: Schemas,
-    journal: Mutex<Journal>,
+    events: Arc<EventsModule>,
+    agents: Arc<AgentSystemModule>,
 }
 
 impl ApiModule {
-    pub fn new(config: Arc<ConfigModule>, lifecycle: Arc<LifecycleModule>) -> anyhow::Result<Self> {
+    pub fn new(
+        config: Arc<ConfigModule>,
+        lifecycle: Arc<LifecycleModule>,
+        events: Arc<EventsModule>,
+        agents: Arc<AgentSystemModule>,
+    ) -> anyhow::Result<Self> {
         Ok(Self {
             config,
             lifecycle,
             token: OnceLock::new(),
             runtime: OnceLock::new(),
             schemas: Schemas::new()?,
-            journal: Mutex::new(Journal::new()),
+            events,
+            agents,
         })
     }
     pub fn prepare_token(&self) -> anyhow::Result<()> {
@@ -50,35 +58,28 @@ impl ApiModule {
             .set(token)
             .map_err(|_| anyhow::anyhow!("The API credential has already been prepared."))
     }
-    pub fn start(&self, runtime: Arc<Mutex<RuntimeModule>>) {
+    pub fn start(&self, runtime: Arc<RuntimeModule>) {
         let _ = self.runtime.set(runtime);
     }
     pub async fn close_runtime(&self) -> anyhow::Result<()> {
+        self.agents.close().await;
         if let Some(runtime) = self.runtime.get() {
-            let runtime = runtime.clone();
-            tokio::task::spawn_blocking(move || {
-                runtime
-                    .lock()
-                    .map_err(|_| anyhow::anyhow!("The runtime database lock is unavailable."))?
-                    .close()
-            })
-            .await??;
+            runtime.close().await?;
         }
+        self.lifecycle.set_database_open(false);
         Ok(())
     }
     pub fn begin_drain(&self) -> anyhow::Result<()> {
         // Capture the sticky transition and its journal position together with
         // stream subscriptions, so a hello cannot miss both forms of the event.
-        let mut journal = self
-            .journal
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let was_draining = self.lifecycle.is_draining();
-        let result = self.lifecycle.begin_drain();
-        if !was_draining {
-            journal.append("daemon.draining", json!({"draining":true}), None);
-        }
-        result.map(|_| ())
+        self.events.with_journal(|journal| {
+            let was_draining = self.lifecycle.is_draining();
+            let result = self.lifecycle.begin_drain();
+            if !was_draining {
+                journal.append("daemon.draining", json!({"draining":true}), None);
+            }
+            result.map(|_| ())
+        })
     }
     fn authorized(&self, request: &Request<Incoming>) -> bool {
         let mut headers = request
@@ -166,9 +167,91 @@ impl ApiModule {
             }
             ("GET", "/v0/events") => self.events(&request),
             ("GET", "/v0/events/stream") => self.event_stream(&request),
+            _ if method == "GET" && path.starts_with("/v0/agents/") => self.agent(request).await,
             _ => error(404, "not_found", "Not found."),
         };
         Ok(result)
+    }
+    async fn agent(&self, request: Request<Incoming>) -> Response<Body> {
+        let parts = request
+            .uri()
+            .path()
+            .trim_start_matches("/v0/agents/")
+            .split('/')
+            .collect::<Vec<_>>();
+        let id = parts[0];
+        if !self.schemas.valid("cuid2", &json!(id)).unwrap_or(false) {
+            return error(400, "invalid_request", "The agent identifier is invalid.");
+        }
+        let result = match parts.as_slice() {
+            [_] => self.agents.focused(id.to_owned()).await,
+            [_, "mode"] => self.agents.mode(id.to_owned()).await,
+            [_, "usage"] => self.agents.usage(id.to_owned()).await,
+            [_, "messages"] => {
+                let query = Query::new(&request);
+                let value: Value = query
+                    .0
+                    .iter()
+                    .map(|(key, value)| (key.clone(), json!(value)))
+                    .collect();
+                if !self.schemas.valid("historyQuery", &value).unwrap_or(false) {
+                    return error(400, "invalid_request", "The history query is invalid.");
+                }
+                if query.get("before").is_some() && query.get("after").is_some() {
+                    return error(
+                        400,
+                        "invalid_request",
+                        "Choose either a before or an after history cursor.",
+                    );
+                }
+                let limit = match query.get("limit") {
+                    None => 50,
+                    Some(value) => match value.parse::<usize>() {
+                        Ok(value)
+                            if self
+                                .schemas
+                                .valid("historyLimit", &json!(value))
+                                .unwrap_or(false) =>
+                        {
+                            value
+                        }
+                        _ => {
+                            return error(
+                                400,
+                                "invalid_request",
+                                "The history limit must be between 1 and 500.",
+                            );
+                        }
+                    },
+                };
+                let omit = match query.get("omitToolData") {
+                    None | Some("false") => false,
+                    Some("true") => true,
+                    _ => {
+                        return error(
+                            400,
+                            "invalid_request",
+                            "The tool data option must be true or false.",
+                        );
+                    }
+                };
+                self.agents
+                    .messages(
+                        id.to_owned(),
+                        query.get("before").map(str::to_owned),
+                        query.get("after").map(str::to_owned),
+                        limit,
+                        omit,
+                    )
+                    .await
+            }
+            _ => return error(404, "not_found", "Not found."),
+        };
+        match result {
+            Ok(Some(value)) => response(200, value),
+            Ok(None) => error(404, "not_found", "The agent was not found."),
+            Err(failure) => internal(failure),
+        }
     }
     async fn document(&self, request: Request<Incoming>, document: Document) -> Response<Body> {
         if request.method() == "GET" {
@@ -201,10 +284,9 @@ impl ApiModule {
                 } else {
                     json!({})
                 };
-                self.journal
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .append("config.updated", payload, None);
+                self.events.with_journal(|journal| {
+                    journal.append("config.updated", payload, None);
+                });
                 response(200, json!({document.field():text}))
             }
             Err(failure) => internal(failure),
@@ -251,17 +333,13 @@ impl ApiModule {
                 );
             }
         };
-        let journal = self
-            .journal
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        match journal.replay(after, until, limit, None) {
+        self.events.with_journal(|journal|match journal.replay(after, until, limit, None) {
             Some(page) => response(200, page),
             None => response(
                 409,
                 json!({"error":"Event cursor is unavailable.","code":"cursor_unavailable","cursor":journal.cursor()}),
             ),
-        }
+        })
     }
     fn valid_cursor(&self, cursor: Option<&str>) -> bool {
         cursor.is_none_or(|cursor| {
@@ -282,11 +360,7 @@ impl ApiModule {
         if !self.valid_cursor(after) {
             return error(400, "invalid_request", "The event cursor is invalid.");
         }
-        let (hello, replay, receiver) = {
-            let journal = self
-                .journal
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let (hello, replay, receiver) = self.events.with_journal(|journal|{
             let (cursor, gap, replay, receiver) = journal.subscribe(after);
             let hello = json!({"cursor":cursor,"gap":gap,"resumed":after.is_some()&&!gap,"connectedAt":now(),
                 "daemonId":self.lifecycle.daemon_id(),"daemonStartedAt":self.lifecycle.started_at(),"draining":self.lifecycle.is_draining()});
@@ -295,7 +369,7 @@ impl ApiModule {
                 replay,
                 receiver,
             )
-        };
+        });
         let state = StreamState {
             hello: Some(hello),
             replay,

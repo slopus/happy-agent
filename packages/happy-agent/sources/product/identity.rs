@@ -19,6 +19,17 @@ impl Versions {
     pub fn next(&mut self) -> String {
         self.next_at(now())
     }
+    pub fn observe(&mut self, value: uuid::Uuid) {
+        let value = value.as_u128();
+        let timestamp = (value >> 80) as u64;
+        let random = (((value >> 64) & 0xfff) << 62) | (value & LOW_MASK);
+        if self.timestamp.is_none_or(|previous| timestamp > previous) {
+            self.timestamp = Some(timestamp);
+            self.random = random;
+        } else if self.timestamp == Some(timestamp) {
+            self.random = self.random.max(random);
+        }
+    }
     fn next_at(&mut self, now: u64) -> String {
         let mut timestamp = now.max(self.timestamp.unwrap_or(0));
         if self.timestamp == Some(timestamp) {
@@ -43,6 +54,19 @@ pub fn now() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |duration| duration.as_millis() as u64)
+}
+
+pub fn resource_version(timestamp: u64, version: u64, id: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let hash = Sha256::digest(id.as_bytes());
+    let tail = u32::from_be_bytes(hash[..4].try_into().expect("SHA-256 prefix")) & 0x1fffff;
+    let random = ((version as u128 & ((1 << 53) - 1)) << 21) | tail as u128;
+    let value = ((timestamp as u128 & 0xffffffffffff) << 80)
+        | (7 << 76)
+        | ((random >> 62) << 64)
+        | (2 << 62)
+        | (random & LOW_MASK);
+    uuid::Uuid::from_u128(value).to_string()
 }
 
 #[cfg(test)]

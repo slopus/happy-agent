@@ -1,0 +1,69 @@
+{
+    "codex": [
+        {
+            "name": "exec_command",
+            "description": "Runs a command, returning output or a session ID for ongoing interaction.",
+            "parameters": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": ["cmd"],
+                "properties": {
+                    "cmd": {
+                        "description": "Shell command to execute.",
+                        "type": "string"
+                    },
+                    "workdir": {
+                        "description": "Working directory for the command. Defaults to the turn cwd.",
+                        "type": "string"
+                    },
+                    "yield_time_ms": {
+                        "description": "Wait before yielding output. Defaults to 10000 ms; effective range is 250-30000 ms. Reaching it leaves the command running and hands back a session ID rather than killing it.",
+                        "type": "number"
+                    },
+                    "max_output_tokens": {
+                        "description": "Output token budget. Defaults to 10000 tokens; larger requests may be capped by policy.",
+                        "type": "number"
+                    },
+                    "shell": {
+                        "description": "Shell binary to launch. Defaults to the machine's default shell.",
+                        "type": "string"
+                    },
+                    "tty": {
+                        "description": "Run the command under a PTY, for programs that behave differently without a terminal. Defaults to false, which uses pipes.",
+                        "type": "boolean"
+                    },
+                    "sandbox_permissions": {
+                        "description": "Request reviewed execution outside the workspace sandbox in Auto mode. Defaults to use_default.",
+                        "anyOf": [
+                            {
+                                "const": "use_default",
+                                "type": "string"
+                            },
+                            {
+                                "const": "require_escalated",
+                                "type": "string"
+                            }
+                        ]
+                    },
+                    "justification": {
+                        "description": "Concise user-facing reason why sandbox escalation is needed. Use only with require_escalated.",
+                        "type": "string"
+                    },
+                    "secrets": {
+                        "description": "IDs of attached secret bundles to expose to this command as environment variables. Choose only what this command needs; use an empty array for none. Selection is reviewed in Auto mode but does not leave the sandbox.",
+                        "maxItems": 256,
+                        "uniqueItems": true,
+                        "type": "array",
+                        "items": {
+                            "minLength": 1,
+                            "maxLength": 128,
+                            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                            "type": "string"
+                        }
+                    }
+                }
+            },
+            "defer": false
+        }
+    ]
+}

@@ -1,13 +1,20 @@
+mod agents;
 mod api;
 mod config;
+mod events;
 mod filesystem;
+mod history;
 mod identity;
 mod journal;
 mod lifecycle;
 mod process;
+mod projects;
 mod runtime;
 mod schemas;
+mod tools;
 mod transport;
+mod usage;
+mod workspaces;
 
 pub use config::ConfigModule;
 pub use lifecycle::{LifecycleModule, command};
@@ -31,11 +38,47 @@ pub async fn sandbox(arguments: Vec<std::ffi::OsString>) -> Result<()> {
 pub async fn run() -> Result<()> {
     let config = Arc::new(ConfigModule::load()?);
     let lifecycle = Arc::new(LifecycleModule::new(config.clone())?);
-    let api = Arc::new(api::ApiModule::new(config.clone(), lifecycle.clone())?);
+    let runtime = Arc::new(runtime::RuntimeModule::new(config.clone()));
+    let events = Arc::new(events::EventsModule::new(runtime.clone())?);
+    let usage = Arc::new(usage::UsageModule::new(
+        runtime.clone(),
+        events.clone(),
+        config.clone(),
+    )?);
+    let history = Arc::new(history::HistoryModule::new(
+        runtime.clone(),
+        events.clone(),
+        usage.clone(),
+    )?);
+    let tools = Arc::new(tools::ToolsModule::new(config.clone())?);
+    let projects = Arc::new(projects::ProjectsModule::new(runtime.clone()));
+    let workspaces = Arc::new(workspaces::WorkspacesModule::new(runtime.clone()));
+    let agents = Arc::new(agents::AgentSystemModule::new(
+        config.clone(),
+        runtime.clone(),
+        events.clone(),
+        history.clone(),
+        tools,
+        usage.clone(),
+        lifecycle.clone(),
+        projects,
+        workspaces,
+    )?);
+    let api = Arc::new(api::ApiModule::new(
+        config.clone(),
+        lifecycle.clone(),
+        events.clone(),
+        agents.clone(),
+    )?);
     // Health is available before storage restoration, on the same authenticated listener.
     let transport = transport::TransportModule::bind(config.clone(), api.clone()).await?;
     let result = async {
-        let runtime = runtime::RuntimeModule::open(config.clone()).await?;
+        runtime.load().await?;
+        lifecycle.set_database_open(true);
+        events.load().await?;
+        usage.load().await?;
+        history.load().await?;
+        agents.load().await?;
         lifecycle.publish_pid()?;
         api.start(runtime);
         lifecycle.ready()?;

@@ -23,3 +23,20 @@ Mutation IDs are correlation values, not deduplication keys. Every successful do
 its own event. Mutation admission occurs before reading an HTTP body, so draining waits for writes
 it already accepted while rejecting later mutations. SSE hello and drain publication share the
 journal lock to keep a concurrent subscriber from missing both the sticky state and its event.
+
+An original tool row means dispatch already happened. Restart may retry only a reloadable tool;
+an ordinary shell call returns the original interruption result instead. An unanswered private
+call without a tool row has not dispatched and may execute once. The recovered result keeps the
+Base call ID in public history and the provider's native correlation ID in inference context.
+Pending history blocks must flush under their original inference ID before the result updates
+that row. The active public run ID survives both operations and settlement.
+
+Restoration starts only valid persisted owed work. Queued messages alone do not wake an idle agent.
+Settlement, tool-result claims, private records, history, and scoped KV cleanup participate in the
+same database transaction, with public notifications after commit. Unknown configuration metadata
+remains intact. Usage keeps the original five migration keys and attributes provider measurements
+to the public run; history reads all selected runs' usage in one grouped query.
+
+On Linux, a zombie main thread can coexist briefly with exiting worker threads that still hold
+database handles. The launcher now considers that daemon alive until its thread group has exited,
+so a successful kill command also means the canonical database ownership lock can be reclaimed.
