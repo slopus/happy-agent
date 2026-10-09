@@ -175,6 +175,8 @@ pub struct AgentSystem {
 struct Worker {
     handle: tokio::task::JoinHandle<()>,
     wake: u64,
+    cancel: CancellationToken,
+    finished: Arc<tokio::sync::Notify>,
 }
 struct Snapshot {
     configuration: Value,
@@ -347,10 +349,16 @@ impl AgentSystem {
         workers.retain(|_, worker| !worker.handle.is_finished());
         let system = self.clone();
         let worker_id = id.clone();
+        let cancel = self.shutdown.child_token();
+        let owned_cancel = cancel.clone();
+        let finished = Arc::new(tokio::sync::Notify::new());
+        let owned_finished = finished.clone();
         workers.insert(
             id,
             Worker {
                 wake: 0,
+                cancel,
+                finished,
                 handle: tokio::spawn(async move {
                     loop {
                         let generation = system
@@ -359,7 +367,7 @@ impl AgentSystem {
                             .unwrap_or_else(std::sync::PoisonError::into_inner)
                             .get(&worker_id)
                             .map_or(0, |worker| worker.wake);
-                        let result = system.work(&worker_id).await;
+                        let result = system.work(&worker_id, &owned_cancel).await;
                         if let Err(error) = &result {
                             eprintln!(
                                 "Agent {worker_id} stopped with durable work retained: {error:#}"
@@ -372,18 +380,50 @@ impl AgentSystem {
                             .unwrap_or_else(std::sync::PoisonError::into_inner);
                         let again = result.is_ok()
                             && !system.shutdown.is_cancelled()
+                            && !owned_cancel.is_cancelled()
                             && !system.modules.iter().any(|module| module.draining())
                             && workers
                                 .get(&worker_id)
                                 .is_some_and(|worker| worker.wake != generation);
                         if !again {
                             workers.remove(&worker_id);
+                            owned_finished.notify_waiters();
                             return;
                         }
                     }
                 }),
             },
         );
+    }
+    /// Cancels one owned turn and waits for its durable edge. Feature hooks that
+    /// run inside that turn return a stop decision instead of waiting on it.
+    pub async fn abort(&self, id: &str) -> Result<()> {
+        let finished = {
+            let workers = self
+                .workers
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let Some(worker) = workers.get(id) else {
+                return Ok(());
+            };
+            worker.cancel.cancel();
+            worker.finished.clone()
+        };
+        loop {
+            let stopped = finished.notified();
+            tokio::pin!(stopped);
+            stopped.as_mut().enable();
+            if !self
+                .workers
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .get(id)
+                .is_some_and(|worker| Arc::ptr_eq(&worker.finished, &finished))
+            {
+                return Ok(());
+            }
+            stopped.await;
+        }
     }
     pub async fn close(&self) {
         let workers = std::mem::take(
@@ -462,7 +502,7 @@ impl AgentSystem {
             native_ids,
         })
     }
-    async fn work(self: &Arc<Self>, id: &str) -> Result<()> {
+    async fn work(self: &Arc<Self>, id: &str, cancel: &CancellationToken) -> Result<()> {
         let mut restored = true;
         loop {
             if self.shutdown.is_cancelled() {
@@ -485,7 +525,7 @@ impl AgentSystem {
                 return Ok(());
             }
             if !snapshot.calls.is_empty() {
-                self.execute_batch(id, snapshot, restored).await?;
+                self.execute_batch(id, snapshot, restored, cancel).await?;
                 restored = false;
                 continue;
             }
@@ -494,7 +534,12 @@ impl AgentSystem {
                 restored = false;
                 continue;
             }
+            if cancel.is_cancelled() {
+                self.settle(id, "aborted", "abort").await?;
+                return Ok(());
+            }
             let can_accept_send = stage == "settlement"
+                || owed.get("turnId").is_none()
                 || snapshot
                     .context
                     .messages
@@ -531,7 +576,7 @@ impl AgentSystem {
                     self.settle(id, &status, &reason).await?;
                     return Ok(());
                 }
-                "inference" | "tools" => self.infer(id, snapshot).await?,
+                "inference" | "tools" => self.infer(id, snapshot, cancel).await?,
                 "compaction" => {
                     anyhow::bail!("Durable compaction execution has not been migrated yet.")
                 }
@@ -697,6 +742,7 @@ impl AgentSystem {
         id: &str,
         snapshot: Snapshot,
         restored: bool,
+        cancel: &CancellationToken,
     ) -> Result<()> {
         for (key, call) in &snapshot.calls {
             if self.shutdown.is_cancelled() {
@@ -704,6 +750,8 @@ impl AgentSystem {
             }
             let message = if let Some(committed) = call.get("committed") {
                 serde_json::from_value(committed.clone())?
+            } else if cancel.is_cancelled() {
+                tool_error(call, "The tool call was aborted.")
             } else if restored
                 && !self
                     .modules
@@ -719,7 +767,7 @@ impl AgentSystem {
                 let mut result = None;
                 for module in &self.modules {
                     if let Some(message) = module
-                        .execute_tool(&snapshot.scope(id), call, self.shutdown.child_token())
+                        .execute_tool(&snapshot.scope(id), call, cancel.child_token())
                         .await
                     {
                         result = Some(message);
@@ -731,6 +779,11 @@ impl AgentSystem {
             if self.shutdown.is_cancelled() {
                 return Ok(());
             }
+            let message = if cancel.is_cancelled() && call.get("committed").is_none() {
+                tool_error(call, "The tool call was aborted.")
+            } else {
+                message
+            };
             let system = self.clone();
             let agent = id.to_owned();
             let key = key.clone();
@@ -764,7 +817,12 @@ impl AgentSystem {
         }
         Ok(())
     }
-    async fn infer(self: &Arc<Self>, id: &str, mut snapshot: Snapshot) -> Result<()> {
+    async fn infer(
+        self: &Arc<Self>,
+        id: &str,
+        mut snapshot: Snapshot,
+        cancel: &CancellationToken,
+    ) -> Result<()> {
         let inference = cuid2::create_id();
         let began = now();
         let system = self.clone();
@@ -826,7 +884,7 @@ impl AgentSystem {
             structured_output: None,
         };
         let (sender, mut receiver) = tokio::sync::mpsc::channel(64);
-        let cancel = self.shutdown.child_token();
+        let cancel = cancel.child_token();
         let task = tokio::spawn(async move {
             session.run(request, cancel, sender).await;
             session.destroy().await;

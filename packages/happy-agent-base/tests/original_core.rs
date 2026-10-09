@@ -18,6 +18,7 @@ use tokio_util::sync::CancellationToken;
 struct PrivateRuntime {
     shutdown: CancellationToken,
     requests: mpsc::Sender<RunRequest>,
+    wait_once: AtomicBool,
     gate_next_exit: AtomicBool,
     exited: Notify,
     gate: (Mutex<bool>, Condvar),
@@ -58,23 +59,40 @@ impl AgentModule for PrivateRuntime {
     }
     async fn session(
         &self,
-        _scope: &AgentScope<'_>,
+        scope: &AgentScope<'_>,
         tools: Vec<ToolDefinition>,
     ) -> Option<Result<Box<dyn Session>>> {
         assert!(tools.is_empty());
-        Some(Ok(Box::new(PrivateSession(self.requests.clone()))))
+        Some(Ok(Box::new(PrivateSession {
+            requests: self.requests.clone(),
+            wait_for_cancel: scope.id == "reviewerstopped"
+                && self.wait_once.swap(false, Ordering::SeqCst),
+        })))
     }
 }
-struct PrivateSession(mpsc::Sender<RunRequest>);
+struct PrivateSession {
+    requests: mpsc::Sender<RunRequest>,
+    wait_for_cancel: bool,
+}
 #[async_trait]
 impl Session for PrivateSession {
     async fn run(
         &mut self,
         request: RunRequest,
-        _cancel: CancellationToken,
+        cancel: CancellationToken,
         events: mpsc::Sender<Event>,
     ) {
-        self.0.send(request).await.unwrap();
+        self.requests.send(request).await.unwrap();
+        if self.wait_for_cancel {
+            cancel.cancelled().await;
+            events
+                .send(Event::Done {
+                    outcome: Outcome::Cancelled,
+                })
+                .await
+                .unwrap();
+            return;
+        }
         for event in [
             Event::BlockStart,
             Event::TextStart,
@@ -119,6 +137,7 @@ async fn private_core_without_public_features_runs_input_accepted_during_worker_
     let runtime = Arc::new(PrivateRuntime {
         shutdown: CancellationToken::new(),
         requests,
+        wait_once: AtomicBool::new(false),
         gate_next_exit: AtomicBool::new(true),
         exited: Notify::new(),
         gate: (Mutex::new(false), Condvar::new()),
@@ -159,4 +178,76 @@ async fn private_core_without_public_features_runs_input_accepted_during_worker_
     assert!(
         matches!(&second.context.messages[2].content()[0], happy_providers::Block::Text { text } if text == "Review the next action")
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn aborting_a_private_review_preserves_queued_input_and_keeps_the_root_and_other_agents_alive()
+ {
+    let directory = tempfile::tempdir().unwrap();
+    let database = Arc::new(SqliteDatabase::new());
+    database
+        .load(DatabaseLocation {
+            directory: directory.path().into(),
+            database: directory.path().join("auto-agent.sqlite"),
+            ownership: directory.path().join("auto-agent.sqlite.lock"),
+            store_lock: directory.path().join("auto-agent.lock"),
+        })
+        .await
+        .unwrap();
+    let (requests, mut received) = mpsc::channel(8);
+    let runtime = Arc::new(PrivateRuntime {
+        shutdown: CancellationToken::new(),
+        requests,
+        wait_once: AtomicBool::new(true),
+        gate_next_exit: AtomicBool::new(false),
+        exited: Notify::new(),
+        gate: (Mutex::new(false), Condvar::new()),
+    });
+    let _release = ReleaseOnDrop(runtime.clone());
+    let system = Arc::new(AgentSystem::new(database.clone(), vec![runtime.clone()]).unwrap());
+    let owner = system.clone();
+    database.transact(move |ctx| {
+        owner.create(ctx, "reviewerstopped", &json!({"provenance":{"createdAt":1700000000000u64},"environment":{"osVersion":"fixture","platform":"linux","workingDirectory":"/","shell":"/bin/bash"},"modules":{},"metadata":{}}))?;
+        owner.enqueue(ctx, "reviewerstopped", &json!({"id":"firstreview","message":{"role":"user","content":[{"type":"text","text":"A review that waits"}]},"options":{"provider":"fixture","model":"review-model","effort":"low","permissionMode":"read_only"}}), false)
+    }).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(5), received.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    let owner = system.clone();
+    database.transact(move |ctx| owner.enqueue(ctx, "reviewerstopped", &json!({"id":"queuedreview","message":{"role":"user","content":[{"type":"text","text":"Keep this queued"}]}}), false)).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(5), system.abort("reviewerstopped"))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!runtime.shutdown.is_cancelled());
+    assert!(received.try_recv().is_err());
+    let owner = system.clone();
+    database.transact(move |ctx| {
+        assert!(owner.owed(ctx, "reviewerstopped")?.is_none());
+        let queued: i64 = ctx.database().query_row("SELECT count(*) FROM happy_agent_values WHERE owner_id='reviewerstopped' AND key GLOB 'send.*'", [], |row| row.get(0))?;
+        assert_eq!(queued, 1);
+        owner.create(ctx, "reviewerhealthy", &json!({"provenance":{"createdAt":1700000000000u64},"environment":{"osVersion":"fixture","platform":"linux","workingDirectory":"/","shell":"/bin/bash"},"modules":{},"metadata":{}}))?;
+        owner.enqueue(ctx, "reviewerhealthy", &json!({"id":"healthyreview","message":{"role":"user","content":[{"type":"text","text":"The other reviewer still runs"}]},"options":{"provider":"fixture","model":"review-model","permissionMode":"read_only"}}), false)
+    }).await.unwrap();
+    let healthy = tokio::time::timeout(Duration::from_secs(5), received.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        matches!(&healthy.context.messages[0].content()[0], happy_providers::Block::Text { text } if text == "The other reviewer still runs")
+    );
+    let owner = system.clone();
+    database.transact(move |ctx| owner.enqueue(ctx, "reviewerstopped", &json!({"id":"newreview","message":{"role":"user","content":[{"type":"text","text":"Start another review"}]}}), false)).await.unwrap();
+    let resumed = tokio::time::timeout(Duration::from_secs(5), received.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(resumed.context.messages.len(), 3);
+    assert!(
+        matches!(&resumed.context.messages[1].content()[0], happy_providers::Block::Text { text } if text == "Keep this queued")
+    );
+    runtime.shutdown.cancel();
+    system.close().await;
+    database.close().await.unwrap();
 }

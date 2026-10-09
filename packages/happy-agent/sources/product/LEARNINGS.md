@@ -112,6 +112,12 @@ the same core run a private reviewer without public History, Events or Usage
 tables. The worker retains a committed wake through its exit boundary, fixing a
 race that left a newly accepted input queued until another message arrived.
 
+Private-review cancellation belongs to the shared core's per-agent lifetime.
+Cancelling it leaves the daemon and other agents running, waits for its durable
+edge, and keeps queued input idle. A new turn consumes that queue before inference
+even when the previous aborted context ended with a user message. Root shutdown
+still retains owed work and nonreloadable claims for original restart handling.
+
 Durable Functions settlement is atomic with its success handler and scoped KV
 deletion. A failed handler rolls that whole transaction back, so restart keeps
 the same call and checkpoint. Cancelling an older blocked call must re-run

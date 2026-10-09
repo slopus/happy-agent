@@ -71,6 +71,14 @@ holds that exit boundary and runs the second input without another message.
 
 ## Abort keeps queued input queued, and never leaves the store active over nothing
 
+The native original-store core gives each worker its own child cancellation token.
+Aborting one private reviewer awaits that worker's durable edge and leaves the
+root lifetime and other agents alive. Unstarted or cancelled tools receive the
+original aborted result, while a committed result still wins. Queued input stays
+queued and the core clears owed work on abort. A later delivery must consume that
+queue before inference: owed work without a turn identity is a fresh acceptance
+boundary, even when the prior aborted context ends with a user message.
+
 An abort cancels the requested turn; messages already accepted stay queued for the next turn,
 in memory and after a restart, and a restart does not run them on its own. That is deliberate.
 What an abort must not do is leave `owed` set with no run: when it lands after the settlement
