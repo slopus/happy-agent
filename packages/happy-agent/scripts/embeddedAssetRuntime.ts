@@ -20,6 +20,8 @@ export interface EmbeddedFile {
 }
 
 const materializedRoots = new Map<string, string>();
+/** Groups this process already resolved, by name and layout. Embedded bytes cannot change. */
+const resolvedGroups = new Map<string, string>();
 let windowsCacheRoot: string | undefined;
 
 /**
@@ -27,6 +29,8 @@ let windowsCacheRoot: string | undefined;
  *
  * The cache key includes every file's bytes and layout. Native package-relative lookups therefore
  * keep working, while multiple Happy Agent binaries can safely share immutable extracted assets.
+ * Reading and hashing a large executable is synchronous, so each group is hashed once per process:
+ * callers resolve the supervisor and Claude executables on every spawn and provider creation.
  */
 export function materializeEmbeddedFiles(name: string, files: readonly EmbeddedFile[]): string {
     if (!/^[a-z0-9][a-z0-9-]*$/u.test(name)) {
@@ -35,7 +39,31 @@ export function materializeEmbeddedFiles(name: string, files: readonly EmbeddedF
     if (files.length === 0) {
         throw new Error(`Embedded asset group ${name} has no files.`);
     }
+    const key = groupKey(name, files);
+    const resolved = key === undefined ? undefined : resolvedGroups.get(key);
+    if (resolved !== undefined) return resolved;
+    const root = materializeGroup(name, files);
+    if (key !== undefined) resolvedGroups.set(key, root);
+    return root;
+}
 
+/** Embedded sources and generated text identify their bytes; raw buffers are hashed every time. */
+function groupKey(name: string, files: readonly EmbeddedFile[]): string | undefined {
+    if (files.some((file) => file.contents !== undefined && typeof file.contents !== "string")) {
+        return undefined;
+    }
+    return JSON.stringify([
+        name,
+        files.map((file) => [
+            file.relativePath,
+            file.executable === true,
+            file.source ?? null,
+            file.contents ?? null,
+        ]),
+    ]);
+}
+
+function materializeGroup(name: string, files: readonly EmbeddedFile[]): string {
     const assets = files.map((file) => ({
         ...file,
         contents:
