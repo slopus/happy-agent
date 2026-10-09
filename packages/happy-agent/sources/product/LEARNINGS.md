@@ -134,3 +134,9 @@ checked against generated original-source expectations. The current security
 guard additionally refuses an allow when required human evidence was omitted.
 This foundation remains outside daemon startup until the actual reviewer and
 tool permission execution are installed.
+
+Provider construction and its retained-session key come from one Config path.
+The opaque key preserves an account's managed session across compatible model,
+effort and permission selections, and rebuilds it for changed account, protocol,
+endpoint or tool definitions. A private-core regression verifies the lifetime,
+and the existing daemon recovery, history and real command checks remain green.

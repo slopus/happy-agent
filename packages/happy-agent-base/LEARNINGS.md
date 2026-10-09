@@ -19,6 +19,16 @@ their opaque vendor metadata. A new raw-provider-item block would create another
 shared persistence concept and is unnecessary. The worker never dispatches a
 server call, even when its name matches an installed local tool.
 
+The original-store core initially constructed and destroyed a provider session
+on every inference. That discarded managed connections and reviewer continuation
+state. It now retains one session per agent until the owning factory's opaque
+construction key changes or the system closes. Compatible model and effort
+selections remain request choices; account, protocol, endpoint and actual tool
+array belong to construction. The core never interprets provider keys. A
+deterministic private-core test retains state across turns and a compatible
+selection, then verifies route retirement and shutdown destruction. Retention is
+bounded and optional, so cache admission cannot fail a successful inference.
+
 ## Completed SQLite transactions return their connection to the upstream pool
 
 The older libSQL client handed its connection to each transaction without taking it back,

@@ -8,12 +8,188 @@ use serde_json::json;
 use std::{
     sync::{
         Arc, Condvar, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::Duration,
 };
 use tokio::sync::{Notify, mpsc};
 use tokio_util::sync::CancellationToken;
+
+struct ManagedRuntime {
+    shutdown: CancellationToken,
+    requests: mpsc::Sender<(usize, usize, RunRequest)>,
+    created: AtomicUsize,
+    destroyed: Arc<AtomicUsize>,
+    settled: Arc<Notify>,
+}
+#[async_trait]
+impl AgentModule for ManagedRuntime {
+    fn name(&self) -> &'static str {
+        "managed-private-runtime"
+    }
+    fn shutdown(&self) -> Option<CancellationToken> {
+        Some(self.shutdown.clone())
+    }
+    fn compatible(
+        &self,
+        _previous: &serde_json::Value,
+        _next: &serde_json::Value,
+    ) -> Option<Result<bool>> {
+        Some(Ok(true))
+    }
+    fn session_key(
+        &self,
+        scope: &AgentScope<'_>,
+        _tools: &[ToolDefinition],
+    ) -> Result<Option<String>> {
+        Ok(Some(
+            scope.settings["provider"].as_str().unwrap().to_owned(),
+        ))
+    }
+    async fn session(
+        &self,
+        _scope: &AgentScope<'_>,
+        _tools: Vec<ToolDefinition>,
+    ) -> Option<Result<Box<dyn Session>>> {
+        Some(Ok(Box::new(ManagedSession {
+            serial: self.created.fetch_add(1, Ordering::SeqCst),
+            turns: 0,
+            requests: self.requests.clone(),
+            destroyed: self.destroyed.clone(),
+        })))
+    }
+    fn settled(
+        &self,
+        ctx: &happy_agent_base::DatabaseContext<'_>,
+        _scope: &AgentScope<'_>,
+        _status: &str,
+        _reason: &str,
+    ) -> Result<()> {
+        let settled = self.settled.clone();
+        ctx.after_commit(move || settled.notify_one())
+    }
+}
+struct ManagedSession {
+    serial: usize,
+    turns: usize,
+    requests: mpsc::Sender<(usize, usize, RunRequest)>,
+    destroyed: Arc<AtomicUsize>,
+}
+#[async_trait]
+impl Session for ManagedSession {
+    async fn run(
+        &mut self,
+        request: RunRequest,
+        _cancel: CancellationToken,
+        events: mpsc::Sender<Event>,
+    ) {
+        self.turns += 1;
+        self.requests
+            .send((self.serial, self.turns, request))
+            .await
+            .unwrap();
+        for event in [
+            Event::BlockStart,
+            Event::TextStart,
+            Event::TextDelta {
+                delta: "Managed response".into(),
+            },
+            Event::TextEnd,
+            Event::BlockStop,
+            Event::Done {
+                outcome: Outcome::Normal {
+                    usage: Usage::default(),
+                },
+            },
+        ] {
+            events.send(event).await.unwrap();
+        }
+    }
+    async fn compact(
+        &mut self,
+        _context: SessionContext,
+        _prompt: Option<String>,
+        _cancel: CancellationToken,
+    ) -> Compaction {
+        panic!("This fixture does not compact.")
+    }
+    async fn destroy(&mut self) {
+        self.destroyed.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn managed_private_session_survives_turns_and_compatible_model_changes_until_route_or_shutdown()
+ {
+    let directory = tempfile::tempdir().unwrap();
+    let database = Arc::new(SqliteDatabase::new());
+    database
+        .load(DatabaseLocation {
+            directory: directory.path().into(),
+            database: directory.path().join("auto-agent.sqlite"),
+            ownership: directory.path().join("auto-agent.sqlite.lock"),
+            store_lock: directory.path().join("auto-agent.lock"),
+        })
+        .await
+        .unwrap();
+    let (requests, mut received) = mpsc::channel(4);
+    let destroyed = Arc::new(AtomicUsize::new(0));
+    let runtime = Arc::new(ManagedRuntime {
+        shutdown: CancellationToken::new(),
+        requests,
+        created: AtomicUsize::new(0),
+        destroyed: destroyed.clone(),
+        settled: Arc::new(Notify::new()),
+    });
+    let system = Arc::new(AgentSystem::new(database.clone(), vec![runtime.clone()]).unwrap());
+    let owner = system.clone();
+    database.transact(move |ctx| owner.create(ctx,"managedreviewer",&json!({"provenance":{"createdAt":1700000000000u64},"environment":{"osVersion":"fixture","platform":"linux","workingDirectory":"/","shell":"/bin/bash"},"modules":{},"metadata":{}}))).await.unwrap();
+    for (id, provider, model, effort) in [
+        ("firstmanaged", "fixture", "first-model", "low"),
+        ("secondmanaged", "fixture", "compatible-model", "high"),
+        ("thirdmanaged", "other", "compatible-model", "high"),
+    ] {
+        let owner = system.clone();
+        database.transact(move |ctx| owner.enqueue(ctx,"managedreviewer",&json!({"id":id,"message":{"role":"user","content":[{"type":"text","text":id}]},"metadata":{"messageOrigin":"agent"},"options":{"provider":provider,"model":model,"effort":effort,"permissionMode":"read_only"}}),false)).await.unwrap();
+        let (serial, turn, request) = tokio::time::timeout(Duration::from_secs(5), received.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(5), runtime.settled.notified())
+            .await
+            .unwrap();
+        assert_eq!(request.model.as_deref(), Some(model));
+        if id == "secondmanaged" {
+            assert_eq!(
+                (serial, turn),
+                (0, 2),
+                "A compatible next turn must use the same stateful session"
+            );
+            assert_eq!(runtime.created.load(Ordering::SeqCst), 1);
+            assert_eq!(
+                destroyed.load(Ordering::SeqCst),
+                0,
+                "Turn completion does not own the provider lifetime"
+            );
+        } else if id == "thirdmanaged" {
+            assert_eq!((serial, turn), (1, 1));
+            assert_eq!(runtime.created.load(Ordering::SeqCst), 2);
+            assert_eq!(
+                destroyed.load(Ordering::SeqCst),
+                1,
+                "Changing the construction route retires its old session"
+            );
+        }
+    }
+    runtime.shutdown.cancel();
+    system.close().await;
+    assert_eq!(
+        destroyed.load(Ordering::SeqCst),
+        2,
+        "The system closes every retained provider session"
+    );
+    database.close().await.unwrap();
+}
 
 struct PrivateRuntime {
     shutdown: CancellationToken,

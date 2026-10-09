@@ -153,6 +153,15 @@ pub trait AgentModule: Send + Sync {
     ) -> Option<Result<Box<dyn Session>>> {
         None
     }
+    /// The owning provider module defines which construction can be reused.
+    /// The core treats this as opaque and never branches on a provider key.
+    fn session_key(
+        &self,
+        _scope: &AgentScope<'_>,
+        _tools: &[ToolDefinition],
+    ) -> Result<Option<String>> {
+        Ok(None)
+    }
     async fn execute_tool(
         &self,
         _scope: &AgentScope<'_>,
@@ -171,6 +180,11 @@ pub struct AgentSystem {
     schemas: RuntimeSchemas,
     shutdown: CancellationToken,
     workers: Mutex<BTreeMap<String, Worker>>,
+    sessions: Mutex<BTreeMap<String, CachedSession>>,
+}
+struct CachedSession {
+    key: String,
+    session: Box<dyn Session>,
 }
 struct Worker {
     handle: tokio::task::JoinHandle<()>,
@@ -224,6 +238,7 @@ impl AgentSystem {
             schemas,
             shutdown,
             workers: Mutex::new(BTreeMap::new()),
+            sessions: Mutex::new(BTreeMap::new()),
         })
     }
     pub fn configuration(&self, ctx: &DatabaseContext<'_>, id: &str) -> Result<Option<Value>> {
@@ -434,6 +449,15 @@ impl AgentSystem {
         );
         for (_, worker) in workers {
             let _ = worker.handle.await;
+        }
+        let sessions = std::mem::take(
+            &mut *self
+                .sessions
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        );
+        for (_, mut cached) in sessions {
+            cached.session.destroy().await;
         }
         for module in &self.modules {
             module.close().await;
@@ -860,12 +884,35 @@ impl AgentSystem {
         snapshot.context.instructions = instructions.join("\n\n");
         let mut selected = None;
         for module in &self.modules {
+            let key = match module.session_key(&snapshot.scope(id), &tools) {
+                Ok(key) => key.map(|key| format!("{}:{key}", module.name())),
+                Err(error) => {
+                    selected = Some((Err(error), None));
+                    break;
+                }
+            };
+            if let Some(key) = &key {
+                let cached = {
+                    self.sessions
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .remove(id)
+                };
+                if let Some(mut cached) = cached {
+                    if cached.key == *key {
+                        selected = Some((Ok(cached.session), Some(key.clone())));
+                        break;
+                    }
+                    cached.session.destroy().await;
+                }
+            }
             if let Some(session) = module.session(&snapshot.scope(id), tools.clone()).await {
-                selected = Some(session);
+                selected = Some((session, key));
                 break;
             }
         }
-        let mut session = match selected.context("The agent has no inference provider.")? {
+        let (selected, session_key) = selected.context("The agent has no inference provider.")?;
+        let mut session = match selected {
             Ok(session) => session,
             Err(error) => {
                 self.settle(id, "failed", "error").await?;
@@ -887,7 +934,7 @@ impl AgentSystem {
         let cancel = cancel.child_token();
         let task = tokio::spawn(async move {
             session.run(request, cancel, sender).await;
-            session.destroy().await;
+            session
         });
         let mut accumulator = Accumulator::default();
         let mut persisted = 0;
@@ -935,7 +982,37 @@ impl AgentSystem {
                     .await?;
             }
         }
-        task.await?;
+        let mut session = Some(task.await?);
+        if let Some(key) = session_key
+            && outcome.is_some()
+            && !self.shutdown.is_cancelled()
+        {
+            let displaced = {
+                let mut sessions = self
+                    .sessions
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                // One retained session per bounded catalog identity. Cache
+                // admission is optional and never fails a successful inference.
+                if sessions.len() < 10_000 || sessions.contains_key(id) {
+                    sessions.insert(
+                        id.to_owned(),
+                        CachedSession {
+                            key,
+                            session: session.take().expect("owned inference session"),
+                        },
+                    )
+                } else {
+                    None
+                }
+            };
+            if let Some(mut displaced) = displaced {
+                displaced.session.destroy().await;
+            }
+        }
+        if let Some(mut session) = session {
+            session.destroy().await;
+        }
         if self.shutdown.is_cancelled() {
             return Ok(());
         }

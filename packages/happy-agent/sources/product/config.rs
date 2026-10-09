@@ -57,6 +57,13 @@ impl happy_agent_base::AgentModule for ConfigModule {
                 .map(|session| Box::new(session) as Box<dyn happy_providers::Session>),
         )
     }
+    fn session_key(
+        &self,
+        scope: &happy_agent_base::AgentScope<'_>,
+        tools: &[happy_providers::ToolDefinition],
+    ) -> Result<Option<String>> {
+        Ok(Some(self.session_key(scope.settings, tools)?))
+    }
 }
 
 pub struct ExecutionEnvironment {
@@ -304,12 +311,10 @@ impl ConfigModule {
             .to_owned();
         Ok(ExecutionEnvironment { root, cwd, shell })
     }
-    pub async fn session(
+    fn session_configuration(
         &self,
-        agent: &str,
         settings: &serde_json::Value,
-        tools: Vec<happy_providers::ToolDefinition>,
-    ) -> Result<happy_providers::HttpSession> {
+    ) -> Result<(String, happy_providers::ProviderConfig)> {
         use happy_providers::{
             BedrockTransport, CredentialSource, ProviderConfig, ProviderKind, Transport,
         };
@@ -428,6 +433,28 @@ impl ConfigModule {
             parallel_tool_calls: true,
             native_compaction: true,
         };
+        Ok((provider.to_owned(), config))
+    }
+    pub fn session_key(
+        &self,
+        settings: &serde_json::Value,
+        tools: &[happy_providers::ToolDefinition],
+    ) -> Result<String> {
+        use sha2::{Digest, Sha256};
+        let (provider, mut config) = self.session_configuration(settings)?;
+        // The request chooses model and effort. Construction owns the account,
+        // protocol family, credentials, endpoint, transport and actual tool array.
+        config.model.clear();
+        let serialized = serde_json::to_vec(&serde_json::json!([provider, config, tools]))?;
+        Ok(format!("{:x}", Sha256::digest(serialized)))
+    }
+    pub async fn session(
+        &self,
+        agent: &str,
+        settings: &serde_json::Value,
+        tools: Vec<happy_providers::ToolDefinition>,
+    ) -> Result<happy_providers::HttpSession> {
+        let (_, config) = self.session_configuration(settings)?;
         happy_providers::HttpSession::new(agent.into(), config, tools).await
     }
 
