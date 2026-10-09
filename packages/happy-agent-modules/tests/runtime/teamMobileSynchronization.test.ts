@@ -171,6 +171,9 @@ describe("parallel personal mobile synchronization", () => {
                 { timeout: 10_000 },
             );
             // Composer drafts are private per member: each phone mirrors only its owner's.
+            // A session starts at most one full pass a second, so a draft can take that long to
+            // cross in either direction.
+            const paced = { timeout: 5_000 };
             const draft = (text: string) => ({
                 text,
                 providerId: "gym",
@@ -186,11 +189,13 @@ describe("parallel personal mobile synchronization", () => {
                 updatedAt: null,
             });
             await alice.saveAgentDraft(agentId, { draft: draft("Alice desktop"), updatedAt: 200 });
-            await vi.waitFor(() =>
-                expect(relay.metadata("alice-mobile", bot.id)).toMatchObject({
-                    draft: draft("Alice desktop"),
-                    draftUpdatedAt: 200,
-                }),
+            await vi.waitFor(
+                () =>
+                    expect(relay.metadata("alice-mobile", bot.id)).toMatchObject({
+                        draft: draft("Alice desktop"),
+                        draftUpdatedAt: 200,
+                    }),
+                paced,
             );
             expect(relay.metadata("bob-mobile", bot.id).draftUpdatedAt).toBeNull();
             expect((await bob.getAgentDraft(agentId)).draft).toEqual({
@@ -201,11 +206,13 @@ describe("parallel personal mobile synchronization", () => {
                 draft: draft("Bob phone"),
                 draftUpdatedAt: 300,
             });
-            await vi.waitFor(async () =>
-                expect((await bob.getAgentDraft(agentId)).draft).toEqual({
-                    value: draft("Bob phone"),
-                    updatedAt: 300,
-                }),
+            await vi.waitFor(
+                async () =>
+                    expect((await bob.getAgentDraft(agentId)).draft).toEqual({
+                        value: draft("Bob phone"),
+                        updatedAt: 300,
+                    }),
+                paced,
             );
             expect((await alice.getAgentDraft(agentId)).draft).toEqual({
                 value: draft("Alice desktop"),
@@ -217,18 +224,22 @@ describe("parallel personal mobile synchronization", () => {
                 draft: draft("Bob stale"),
                 draftUpdatedAt: 250,
             });
-            await vi.waitFor(() =>
-                expect(relay.metadata("bob-mobile", bot.id)).toMatchObject({
-                    draft: draft("Bob phone"),
-                    draftUpdatedAt: 300,
-                }),
+            await vi.waitFor(
+                () =>
+                    expect(relay.metadata("bob-mobile", bot.id)).toMatchObject({
+                        draft: draft("Bob phone"),
+                        draftUpdatedAt: 300,
+                    }),
+                paced,
             );
             relay.updateMetadata("alice-mobile", bot.id, { draft: null, draftUpdatedAt: 400 });
-            await vi.waitFor(async () =>
-                expect((await alice.getAgentDraft(agentId)).draft).toEqual({
-                    value: null,
-                    updatedAt: 400,
-                }),
+            await vi.waitFor(
+                async () =>
+                    expect((await alice.getAgentDraft(agentId)).draft).toEqual({
+                        value: null,
+                        updatedAt: 400,
+                    }),
+                paced,
             );
             expect((await bob.getAgentDraft(agentId)).draft).toEqual({
                 value: draft("Bob phone"),

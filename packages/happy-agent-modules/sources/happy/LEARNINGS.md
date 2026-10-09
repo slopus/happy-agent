@@ -200,8 +200,10 @@ stalled unrelated requests for seconds:
   event itself moved.
 - Every durable event of a working agent started the next pass the moment the previous one ended.
   A session kicked continuously now starts a full pass at most once a second and batches what
-  arrives meanwhile, so a busy agent's messages reach the phone up to a second later. A quiet
-  session still publishes at once, and a caller waiting on `settle` or `archive` is never paced.
+  arrives meanwhile, so a busy agent's messages reach the phone up to a second later. Changes from
+  the phone, such as a draft, are read by the same paced pass and can also take up to a second to
+  arrive; the user accepted that delay. A quiet session still publishes at once, and a caller
+  waiting on `settle` or `archive` is never paced.
 - Every catalog event, including git facts, probes, renames, and reorders, re-checked the
   visibility of every published session, which reads its agent, workspace, and project. Only a
   project or workspace becoming archived can hide sessions it does not name, so only that reaps
