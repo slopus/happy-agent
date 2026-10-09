@@ -422,6 +422,12 @@ export class WorkspacesModule implements AgentModule {
                         name: normalized.name,
                         nameConfigured: normalized.nameConfigured ?? false,
                         kind: normalized.kind ?? "git_worktree",
+                        ...(normalized.runnerId === undefined
+                            ? {}
+                            : { runnerId: normalized.runnerId }),
+                        ...(normalized.dockerImage === undefined
+                            ? {}
+                            : { dockerImage: normalized.dockerImage }),
                         ...(normalized.baseRef === undefined
                             ? {}
                             : { baseRef: normalized.baseRef }),

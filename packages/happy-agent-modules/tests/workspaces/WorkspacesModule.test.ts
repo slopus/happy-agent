@@ -174,6 +174,33 @@ describe("WorkspacesModule", () => {
         }
     });
 
+    it("records the runner and image a workspace is reserved on", async () => {
+        const { workspaces } = await temporaryWorkspacesCatalog();
+        const database = workspaceDatabase("workspaces-reserve-runner-test");
+        await database.ready;
+        try {
+            const input = {
+                id: "workspace-1",
+                projectRef: "acme",
+                name: "On the build box",
+                runnerId: "build-box",
+                dockerImage: "node:24",
+            };
+            const { workspace } = await workspaces.reserve(database.context, input);
+
+            expect(workspace).toMatchObject({ runnerId: "build-box", dockerImage: "node:24" });
+            await expect(workspaces.get(database.context, "workspace-1")).resolves.toMatchObject({
+                runnerId: "build-box",
+                dockerImage: "node:24",
+            });
+            await expect(
+                workspaces.reserve(database.context, { ...input, runnerId: "other-box" }),
+            ).rejects.toThrow("another machine");
+        } finally {
+            database.close();
+        }
+    });
+
     it("uses reservation hooks only while choosing names unavailable to the catalog", async () => {
         const { workspaces, workspacesDirectory } = await temporaryWorkspacesCatalog();
         const database = workspaceDatabase("workspaces-collision-test");
