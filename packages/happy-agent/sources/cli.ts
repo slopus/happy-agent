@@ -2,7 +2,6 @@
 
 import { assertGymRuntimeSupported } from "./lifecycle/assertGymRuntimeSupported.js";
 import { AgentDaemonError } from "./lifecycle/AgentDaemonError.js";
-import { ensureSafeBunRuntime } from "./lifecycle/ensureSafeBunRuntime.js";
 import { getDaemonIdentity } from "./lifecycle/getDaemonIdentity.js";
 import { isAgentDaemonCommand, runAgentDaemonCommand } from "./lifecycle/runAgentDaemonCommand.js";
 
@@ -38,7 +37,6 @@ installFailureReporting();
 void main().catch(reportFailure);
 
 async function main(): Promise<void> {
-    await ensureSafeBunRuntime();
     const [command, ...rest] = process.argv.slice(2);
     if (command === "--help" || command === "-h" || command === undefined) {
         console.log(USAGE);

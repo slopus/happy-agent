@@ -11,14 +11,12 @@ still need a narrower folder of their own; the home directory only stops the roo
 A consequence is that the local `happy.toml` layer is read from the home directory, not from
 the folder `happy-agent start` was run in.
 
-## Runtime restarts must hide their Windows console
+## Background launchers hide their own Windows console
 
-The safe Bun runtime restart inherited its caller's standard streams but omitted
-`windowsHide`. A desktop launch can have no visible terminal, so stream inheritance
-alone does not keep a Windows console application hidden. The restart now explicitly
-hides its console while preserving arguments, JIT settings, signals and exit status.
-Git probes and other background launchers still need their own hiding options; a
-parent's launch options do not apply automatically to later child processes.
+A desktop launch can have no visible terminal, so inheriting a caller's standard
+streams does not keep a Windows console application hidden. Git probes and other
+background launchers need their own hiding options; a parent's launch options do not
+apply automatically to later child processes.
 
 ## Reload must outlive the daemon it replaces
 
@@ -30,20 +28,23 @@ rejects a caller owned by the target daemon. An unavailable ancestry check also 
 External reloads still wait for shutdown and replacement readiness. Preserve the database and
 verify session progress after recovery; a working session may legitimately await a question.
 
-## A runtime safeguard needs verification against the installed build
+## The JavaScript JIT stays enabled
 
-Bun 1.4.2 passes the reduced optimizer regression that crashes Bun 1.4.0. That
-result did not establish that the live daemon was fixed: later crash reports
-reached the same exception assertion through both the baseline JIT and the
-interpreter. Disabling baseline, DFG, and FTL prevents those JIT tiers from
-running; it does not prove that all native crashes are resolved. The settings
-must be present before VM initialization, which is why the CLI re-executes.
+After live crashes in Bun's exception handling, the CLI re-executed itself with the
+baseline, DFG, and FTL JIT tiers disabled before loading the daemon. That did not fix
+the incident: later crash reports reached the same assertion through the interpreter,
+and the cause was the native working-tree watcher releasing JavaScript references on a
+worker thread during missing-directory cleanup. Parcel now carries a pnpm native patch
+that finalizes those references on their owning thread.
 
-The incident was reproduced in the native working-tree watcher's missing-directory
-cleanup: it released JavaScript references on a worker thread and corrupted later
-runtime operations. Parcel now carries a pnpm native patch that finalizes those references
-on their owning JavaScript thread, and the temporary macOS built-in watcher fallback is
-removed. The runtime upgrade and JIT guard alone could not fix the dependency's cleanup.
+Meanwhile the guard cost every request: the daemon serves all work from one JavaScript
+thread, and interpreted code turned schema checks, JSON handling and history
+projection into multi-second event-loop stalls on busy team nodes. The settings were
+also inherited by every child, so a user's own Bun commands in agent shells ran
+without JIT. At the user's direction the guard is removed and the daemon runs with
+Bun's default tiers. Bun 1.4.2 remains the minimum because Bun 1.4.0 aborts while
+resuming optimized async functions after caught exceptions, and `test:bun:runtime`
+still gates every platform build on that regression.
 
 Verify the selected managed executable, its build revision, resolved published
 SDKs, and native binding before testing a recovery. Reloading an older local
