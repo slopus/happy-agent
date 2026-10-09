@@ -9,6 +9,17 @@ response arrives, remove the local API's default Cache-Control before forwarding
 upstream policy also stays absent. Locally generated failures retain the API's no-store policy;
 hop-by-hop headers are still stripped.
 
+## The proxy never caps concurrency
+
+Each connection used to refuse a request with `503 remote_busy` once 32 were active, and its HTTP
+pool also capped sockets at 32. An open event stream holds its slot for as long as it lives, so
+opening about eight desktop conversations at once (roughly forty parallel requests beside the
+desktop's event stream) failed some of them while the remote itself was idle. The user directed
+that the proxy run everything in parallel and limit nothing: every request and attachment now gets
+its own carrier stream immediately, with no count limit, no queue, and no idle-socket cap beyond the
+idle timeout. Per-request deadlines, response bounds on health checks, and stream backpressure
+remain.
+
 ## Display order is required, durable public state
 
 Sorting connections by ID prevented user reordering and inserted new connections into the middle
