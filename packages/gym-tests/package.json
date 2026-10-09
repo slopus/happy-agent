@@ -25,7 +25,7 @@
         "@sinclair/typebox": "^0.34.49",
         "@slopus/happy-agent-gym": "workspace:*",
         "@slopus/happy-agent-modules": "workspace:*",
-        "@slopus/happy-providers": "0.0.37",
+        "@slopus/happy-providers": "0.0.38",
         "@slopus/happy-terminal-gym": "workspace:*",
         "@types/node": "^24.0.10",
         "@types/ws": "8.18.1",
