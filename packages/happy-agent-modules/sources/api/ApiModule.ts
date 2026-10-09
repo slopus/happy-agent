@@ -7043,7 +7043,7 @@ function statusForAgentEvent(
     if (eventType !== "provider.event") return undefined;
     const rigEvent = recordValue(payload?.["rigEvent"]);
     const type = stringValue(rigEvent?.["type"]);
-    if (type === "toolcall_start" || type === "toolcall_delta" || type === "toolcall_end") {
+    if (type === "toolcall_start" || type === "toolcall_end") {
         return "generating_tools";
     }
     if (

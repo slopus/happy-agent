@@ -320,20 +320,51 @@ async function eventRetentionBoundary(
         database,
         sql`SELECT count(*) AS count, sum(payload_bytes) AS bytes FROM happy_agent_events`,
     );
-    if (totals[0]!.count <= capacity && (totals[0]!.bytes ?? 0) <= EVENTS_PAYLOAD_BYTE_CAPACITY)
-        return undefined;
-    const rows = await agentDatabaseRows<{ event_id: string }>(
-        database,
-        sql`
-        SELECT event_id FROM (
-            SELECT event_id,
-                row_number() OVER (ORDER BY event_id DESC) AS position,
-                sum(payload_bytes) OVER (ORDER BY event_id DESC) AS bytes
-            FROM happy_agent_events
-        ) WHERE position > ${capacity} OR bytes > ${EVENTS_PAYLOAD_BYTE_CAPACITY}
-        ORDER BY event_id DESC LIMIT 1`,
-    );
-    return rows[0]?.event_id;
+    const count = Number(totals[0]!.count);
+    const bytes = Number(totals[0]!.bytes ?? 0);
+    if (count <= capacity && bytes <= EVENTS_PAYLOAD_BYTE_CAPACITY) return undefined;
+    // A full window is the steady state, so this runs on nearly every append. It walks only the
+    // oldest rows that must go, in key order, instead of ranking the whole window to find them.
+    let through: string | undefined;
+    if (count > capacity) {
+        const rows = await agentDatabaseRows<{ event_id: string }>(
+            database,
+            sql`SELECT event_id FROM happy_agent_events
+                ORDER BY event_id ASC LIMIT 1 OFFSET ${count - capacity - 1}`,
+        );
+        through = rows[0]?.event_id;
+    }
+    const excessBytes = bytes - EVENTS_PAYLOAD_BYTE_CAPACITY;
+    if (excessBytes > 0) {
+        const byBytes = await oldestPrefixCovering(database, excessBytes);
+        if (byBytes !== undefined && (through === undefined || byBytes > through)) {
+            through = byBytes;
+        }
+    }
+    return through;
+}
+
+/** The newest event of the shortest oldest-first prefix whose payloads total at least `bytes`. */
+async function oldestPrefixCovering(
+    database: AgentDatabase,
+    bytes: number,
+): Promise<string | undefined> {
+    let removed = 0;
+    let after = "";
+    while (true) {
+        const rows = await agentDatabaseRows<{ event_id: string; payload_bytes: number | null }>(
+            database,
+            sql`SELECT event_id, payload_bytes FROM happy_agent_events
+                WHERE event_id > ${after}
+                ORDER BY event_id ASC LIMIT 256`,
+        );
+        if (rows.length === 0) return undefined;
+        for (const row of rows) {
+            removed += Number(row.payload_bytes ?? 0);
+            if (removed >= bytes) return row.event_id;
+        }
+        after = rows.at(-1)!.event_id;
+    }
 }
 
 export async function trimEvents(

@@ -62,6 +62,11 @@ The module implements the standard `AgentModule` lifecycle hooks and records raw
 - `tool.started`, `tool.completed`
 - `inference.completed`, `turn.completed`, `loop.settled`
 
+Streamed text and reasoning fragments are not journaled. They update the in-memory run and reach
+`subscribe` listeners as `provider.event` values marked `streamed: true`, each with a fresh
+in-memory agent version that `previousCursor` and `latestAgentEvent` honor. Tool-argument
+fragments are dropped: a tool call is recorded when its generation starts and when it ends.
+
 Payloads are the values supplied by Agent Base at the hook boundary. Tool arguments larger than
 1 MiB are replaced in completed-call and dispatch projections with a readable reference to History,
 which owns the exact original input. This keeps repeated argument copies within the journal limit.
