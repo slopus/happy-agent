@@ -1,0 +1,17 @@
+{
+    "notice": "<model-switch-history-context>\nThe active model/provider configuration changed from GPT-5.6 Luna on fixture to Grok 4.6 on switch-fixture.\nBefore responding, investigate the prior agent history so you understand the user's request, decisions, work already performed, and relevant subagent findings. Review the bounded excerpt below, then use read_agent_history proactively whenever the excerpt is incomplete or more detail could affect your answer.\nThe excerpt and tool expose the durable inference-oriented history, not raw provider protocol traffic or hidden reasoning. Exposed thinking and conversation are prioritized; tool calls are summarized and tool outputs are truncated.\nHistory overview: 4 messages, 2 user messages, 2 assistant messages, 0 thinking blocks, 0 tool calls, 0 tool results, and 115 text characters.\nBeginning history excerpt:\n1. USER\nText: Remember the original request.\n\n2. ASSISTANT (fixture, openai/gpt-5.6-sol)\nText: A prior assistant answer.\n\n3. USER\nText: Continue with the compatible model.\n\n4. ASSISTANT (fixture, openai/gpt-5.6-luna)\nText: Selected model completed.\n</model-switch-history-context>",
+    "excerpt": {
+        "beginning": "1. USER\nText: Remember the original request.\n\n2. ASSISTANT (fixture, openai/gpt-5.6-sol)\nText: A prior assistant answer.\n\n3. USER\nText: Continue with the compatible model.\n\n4. ASSISTANT (fixture, openai/gpt-5.6-luna)\nText: Selected model completed.",
+        "recent": "",
+        "stats": {
+            "assistantMessages": 2,
+            "messages": 4,
+            "textCharacters": 115,
+            "thinkingBlocks": 0,
+            "toolCalls": 0,
+            "toolResults": 0,
+            "userMessages": 2
+        },
+        "statsAreSampled": false
+    }
+}

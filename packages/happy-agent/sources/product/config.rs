@@ -28,6 +28,7 @@ pub struct ConfigModule {
     pub paths: Paths,
     pub values: toml::Value,
     catalogs: serde_json::Value,
+    compatibility: serde_json::Value,
 }
 
 pub struct ExecutionEnvironment {
@@ -63,6 +64,94 @@ impl Document {
 }
 
 impl ConfigModule {
+    fn provider_type(&self, id: &str) -> Option<&str> {
+        self.values
+            .get("providers")?
+            .get(id)?
+            .get("type")
+            .and_then(toml::Value::as_str)
+    }
+    pub fn models_compatible(
+        &self,
+        previous: &serde_json::Value,
+        next: &serde_json::Value,
+    ) -> Result<bool> {
+        let Some(previous_model) = previous["model"].as_str() else {
+            return Ok(false);
+        };
+        let Some(previous_provider) = previous["provider"].as_str() else {
+            return Ok(false);
+        };
+        let next_model = next["model"]
+            .as_str()
+            .context("The selected model is missing.")?;
+        let next_provider = next["provider"]
+            .as_str()
+            .context("The selected provider is missing.")?;
+        let Some(previous_type) = self.provider_type(previous_provider) else {
+            return Ok(false);
+        };
+        let next_type = self
+            .provider_type(next_provider)
+            .context("The selected provider is unavailable.")?;
+        let Some(family) = self.compatibility["families"][previous_model].as_str() else {
+            return Ok(false);
+        };
+        if self.compatibility["families"][next_model] != family {
+            return Ok(false);
+        }
+        if !self.compatibility["matrix"][previous_type][next_type]
+            .as_array()
+            .is_some_and(|families| families.iter().any(|entry| entry == family))
+        {
+            return Ok(false);
+        }
+        if previous_type == "bedrock" && family == "codex" {
+            return Ok(self.model_region(previous_provider, previous_model, true)
+                == self.model_region(next_provider, next_model, true));
+        }
+        Ok(true)
+    }
+    fn model_region(&self, provider: &str, model: &str, ambient: bool) -> String {
+        let entry = self
+            .values
+            .get("providers")
+            .and_then(|providers| providers.get(provider));
+        entry
+            .and_then(|entry| entry.get("model_overrides"))
+            .and_then(|overrides| overrides.get(model))
+            .and_then(|model| model.get("region"))
+            .or_else(|| entry.and_then(|entry| entry.get("region")))
+            .and_then(toml::Value::as_str)
+            .map(str::trim)
+            .filter(|region| !region.is_empty())
+            .map(str::to_owned)
+            .or_else(|| {
+                if !ambient {
+                    return None;
+                }
+                ["AWS_REGION", "AWS_DEFAULT_REGION"]
+                    .into_iter()
+                    .find_map(|variable| {
+                        std::env::var(variable)
+                            .ok()
+                            .map(|region| region.trim().to_owned())
+                            .filter(|region| !region.is_empty())
+                    })
+            })
+            .unwrap_or_else(|| "us-east-1".into())
+    }
+    pub fn model_label(&self, settings: &serde_json::Value) -> String {
+        let model = settings["model"].as_str().unwrap_or("an unnamed model");
+        settings["provider"]
+            .as_str()
+            .and_then(|provider| self.provider_type(provider))
+            .and_then(|kind| self.catalogs[kind].as_array())
+            .and_then(|models| models.iter().find(|entry| entry["id"] == model))
+            .and_then(|model| model["name"].as_str())
+            .unwrap_or(model)
+            .to_owned()
+    }
     pub fn context_window(&self, model: &str) -> Option<u64> {
         self.catalogs
             .as_object()?
@@ -384,14 +473,20 @@ impl ConfigModule {
             bail!("The configured Happy Agent API token is invalid for this deployment.");
         }
         let catalogs = serde_json::from_str(include_str!("model_catalogs.json"))?;
+        let compatibility = serde_json::from_str(include_str!("model_compatibility.json"))?;
         anyhow::ensure!(
             super::schemas::Schemas::new()?.valid("nativeCatalog", &catalogs)?,
             "The curated native model catalog is invalid."
+        );
+        anyhow::ensure!(
+            super::schemas::Schemas::new()?.valid("nativeModelCompatibility", &compatibility)?,
+            "The curated model compatibility matrix is invalid."
         );
         Ok(Self {
             paths,
             values,
             catalogs,
+            compatibility,
         })
     }
 

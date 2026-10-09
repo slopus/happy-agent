@@ -18,7 +18,12 @@ import {
 } from "../../happy-agent-modules/sources/history/HistoryMessage.ts";
 import { readAgentHistoryTool } from "../../happy-agent-modules/sources/history/tools/read_agent_history.ts";
 import { selectHistoryPage } from "../../happy-agent-modules/sources/history/impl/selectHistoryPage.ts";
-import { summarizeHistory } from "../../happy-agent-modules/sources/history/impl/summarizeHistory.ts";
+import { createHistoryExcerpt } from "../../happy-agent-modules/sources/history/impl/createHistoryExcerpt.ts";
+import { createModelSwitchNotice } from "../../happy-agent-modules/sources/modelSwitch/impl/createModelSwitchNotice.ts";
+import {
+    summarizeHistory,
+    historyStatsSchema,
+} from "../../happy-agent-modules/sources/history/impl/summarizeHistory.ts";
 import {
     foldHistorySearchText,
     historyMessageSearchParts,
@@ -46,6 +51,9 @@ const require = createRequire(new URL("../../happy-agent-modules/package.json", 
 const { Type } = require("@sinclair/typebox");
 const { agentConfigSchema, cuid2Schema, agentPermissionModeSchema } = await import(
     require.resolve("@slopus/happy-agent-base")
+);
+const { providerModelFamily, PROVIDER_MODEL_COMPATIBILITY_MATRIX } = await import(
+    require.resolve("@slopus/happy-providers")
 );
 // The factory closes over compute only in execution/review functions. Reading
 // its schema and descriptor neither constructs compute nor executes a command.
@@ -128,6 +136,13 @@ const modelSchema = Type.Object(
     },
     { additionalProperties: false },
 );
+const family = Type.Union([
+    Type.Literal("claude"),
+    Type.Literal("codex"),
+    Type.Literal("grok"),
+    Type.Literal("kimi"),
+    Type.Literal("glm"),
+]);
 const schemas = {
     instructions: documentBodySchema,
     security: securityDocumentBodySchema,
@@ -154,6 +169,17 @@ const schemas = {
     historyTool: readHistory.parameters,
     historyToolResult: readHistory.returnType,
     historyAgentId: historyAgentIdSchema,
+    historyExcerptBudget: Type.Integer({ minimum: 1, maximum: 200_000 }),
+    historyStats: historyStatsSchema,
+    historyExcerpt: Type.Object(
+        {
+            beginning: Type.String({ maxLength: 200_000 }),
+            recent: Type.String({ maxLength: 200_000 }),
+            stats: historyStatsSchema,
+            statsAreSampled: Type.Boolean(),
+        },
+        { additionalProperties: false },
+    ),
     historyEventReference: Type.Object(
         {
             agentId: cuid2Schema,
@@ -171,6 +197,16 @@ const schemas = {
             Type.Literal("bedrock"),
         ]),
         Type.Array(modelSchema, { maxItems: 1000 }),
+    ),
+    nativeModelCompatibility: Type.Object(
+        {
+            families: Type.Record(Type.String(), family),
+            matrix: Type.Record(
+                Type.String(),
+                Type.Record(Type.String(), Type.Array(family, { maxItems: 5 })),
+            ),
+        },
+        { additionalProperties: false },
     ),
     queuedInput: Type.Object({
         id: cuid2Schema,
@@ -310,6 +346,73 @@ for (const type of ["codex", "claude", "grok", "bedrock"]) {
 writeFileSync(
     new URL("../sources/product/model_catalogs.json", import.meta.url),
     `${JSON.stringify(catalogs, null, 2)}\n`,
+);
+const compatibilityModels = [
+    ...new Set(
+        Object.values(catalogs)
+            .flat()
+            .map((model) => model.id)
+            .concat("openai/codex-auto-review"),
+    ),
+];
+writeFileSync(
+    new URL("../sources/product/model_compatibility.json", import.meta.url),
+    `${JSON.stringify({ families: Object.fromEntries(compatibilityModels.map((model) => [model, providerModelFamily(model)])), matrix: PROVIDER_MODEL_COMPATIBILITY_MATRIX }, null, 2)}\n`,
+);
+const handoffRecords = [
+    {
+        position: 0,
+        message: {
+            recordId: "handoffuserzero",
+            role: "user",
+            blocks: [{ type: "text", text: "Remember the original request." }],
+        },
+    },
+    {
+        position: 1,
+        message: {
+            recordId: "handoffassistantzero",
+            role: "assistant",
+            provider: "fixture",
+            model: "openai/gpt-5.6-sol",
+            blocks: [{ type: "text", text: "A prior assistant answer." }],
+        },
+    },
+    {
+        position: 2,
+        message: {
+            recordId: "handoffuserone",
+            role: "user",
+            blocks: [{ type: "text", text: "Continue with the compatible model." }],
+        },
+    },
+    {
+        position: 3,
+        message: {
+            recordId: "handoffassistantone",
+            role: "assistant",
+            provider: "fixture",
+            model: "openai/gpt-5.6-luna",
+            blocks: [{ type: "text", text: "Selected model completed." }],
+        },
+    },
+];
+const handoffExcerpt = createHistoryExcerpt(
+    handoffRecords,
+    32_000,
+    summarizeHistory(handoffRecords.map((record) => record.message)),
+);
+const handoffNotice = createModelSwitchNotice({
+    previousModel: catalogs.codex.find((model) => model.id === "openai/gpt-5.6-luna").name,
+    previousProvider: "fixture",
+    model: catalogs.grok.find((model) => model.id === "xai/grok-4.6").name,
+    provider: "switch-fixture",
+    historyTool: "read_agent_history",
+    excerpt: handoffExcerpt,
+});
+writeFileSync(
+    new URL("../tests/model_switch_goldens.json", import.meta.url),
+    `${JSON.stringify({ notice: handoffNotice, excerpt: handoffExcerpt }, null, 2)}\n`,
 );
 
 // Golden results come from the original pure tool and history selector. The

@@ -29315,6 +29315,129 @@
         "pattern": "^[^\\u0000\\r\\n]+$",
         "type": "string"
     },
+    "historyExcerptBudget": {
+        "minimum": 1,
+        "maximum": 200000,
+        "type": "integer"
+    },
+    "historyStats": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+            "assistantMessages",
+            "messages",
+            "textCharacters",
+            "thinkingBlocks",
+            "toolCalls",
+            "toolResults",
+            "userMessages"
+        ],
+        "properties": {
+            "assistantMessages": {
+                "maximum": 100000,
+                "minimum": 0,
+                "type": "integer"
+            },
+            "messages": {
+                "maximum": 100000,
+                "minimum": 0,
+                "type": "integer"
+            },
+            "textCharacters": {
+                "maximum": 204800000000000,
+                "minimum": 0,
+                "type": "integer"
+            },
+            "thinkingBlocks": {
+                "maximum": 204800000,
+                "minimum": 0,
+                "type": "integer"
+            },
+            "toolCalls": {
+                "maximum": 204800000,
+                "minimum": 0,
+                "type": "integer"
+            },
+            "toolResults": {
+                "maximum": 204800000,
+                "minimum": 0,
+                "type": "integer"
+            },
+            "userMessages": {
+                "maximum": 100000,
+                "minimum": 0,
+                "type": "integer"
+            }
+        }
+    },
+    "historyExcerpt": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": ["beginning", "recent", "stats", "statsAreSampled"],
+        "properties": {
+            "beginning": {
+                "maxLength": 200000,
+                "type": "string"
+            },
+            "recent": {
+                "maxLength": 200000,
+                "type": "string"
+            },
+            "stats": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                    "assistantMessages",
+                    "messages",
+                    "textCharacters",
+                    "thinkingBlocks",
+                    "toolCalls",
+                    "toolResults",
+                    "userMessages"
+                ],
+                "properties": {
+                    "assistantMessages": {
+                        "maximum": 100000,
+                        "minimum": 0,
+                        "type": "integer"
+                    },
+                    "messages": {
+                        "maximum": 100000,
+                        "minimum": 0,
+                        "type": "integer"
+                    },
+                    "textCharacters": {
+                        "maximum": 204800000000000,
+                        "minimum": 0,
+                        "type": "integer"
+                    },
+                    "thinkingBlocks": {
+                        "maximum": 204800000,
+                        "minimum": 0,
+                        "type": "integer"
+                    },
+                    "toolCalls": {
+                        "maximum": 204800000,
+                        "minimum": 0,
+                        "type": "integer"
+                    },
+                    "toolResults": {
+                        "maximum": 204800000,
+                        "minimum": 0,
+                        "type": "integer"
+                    },
+                    "userMessages": {
+                        "maximum": 100000,
+                        "minimum": 0,
+                        "type": "integer"
+                    }
+                }
+            },
+            "statsAreSampled": {
+                "type": "boolean"
+            }
+        }
+    },
     "historyEventReference": {
         "additionalProperties": false,
         "type": "object",
@@ -44250,6 +44373,80 @@
                             "type": "array",
                             "items": {
                                 "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "nativeModelCompatibility": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": ["families", "matrix"],
+        "properties": {
+            "families": {
+                "type": "object",
+                "patternProperties": {
+                    "^(.*)$": {
+                        "anyOf": [
+                            {
+                                "const": "claude",
+                                "type": "string"
+                            },
+                            {
+                                "const": "codex",
+                                "type": "string"
+                            },
+                            {
+                                "const": "grok",
+                                "type": "string"
+                            },
+                            {
+                                "const": "kimi",
+                                "type": "string"
+                            },
+                            {
+                                "const": "glm",
+                                "type": "string"
+                            }
+                        ]
+                    }
+                }
+            },
+            "matrix": {
+                "type": "object",
+                "patternProperties": {
+                    "^(.*)$": {
+                        "type": "object",
+                        "patternProperties": {
+                            "^(.*)$": {
+                                "maxItems": 5,
+                                "type": "array",
+                                "items": {
+                                    "anyOf": [
+                                        {
+                                            "const": "claude",
+                                            "type": "string"
+                                        },
+                                        {
+                                            "const": "codex",
+                                            "type": "string"
+                                        },
+                                        {
+                                            "const": "grok",
+                                            "type": "string"
+                                        },
+                                        {
+                                            "const": "kimi",
+                                            "type": "string"
+                                        },
+                                        {
+                                            "const": "glm",
+                                            "type": "string"
+                                        }
+                                    ]
+                                }
                             }
                         }
                     }

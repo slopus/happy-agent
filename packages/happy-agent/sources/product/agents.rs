@@ -21,6 +21,7 @@ use std::{
     collections::BTreeMap,
     sync::{Arc, Mutex},
 };
+mod model_switch;
 
 pub struct AgentSystemModule {
     config: Arc<ConfigModule>,
@@ -487,11 +488,13 @@ impl AgentSystemModule {
                 let requested=entry["message"]["content"].as_array().into_iter().flatten().any(|block|block["type"]=="tool_call_request");batch.push((key,entry));if requested{break;}
             }
             let mut settings=read(ctx,&agent,"settings")?.unwrap_or(json!({"profile":null,"permissionMode":"auto"}));
+            let previous_settings=settings.clone();
             for(_,entry)in &batch {
                 for field in ["provider","model","effort","permissionMode"] {if let Some(value)=entry["options"].get(field){settings[field]=value.clone();}}
                 if let Some(tier)=entry["options"].get("serviceTier") {if tier.is_null(){settings.as_object_mut().context("Agent settings are invalid.")?.remove("serviceTier");}else{settings["serviceTier"]=tier.clone();}}
                 settings["profile"]=Value::Null;
             }
+            agents.adopt_model(ctx,&agent,&previous_settings,&settings)?;
             let mut run=batch[0].1["id"].as_str().context("The accepted message identifier is missing.")?.to_owned();
             let mut finished=None;
             let mut prior_ids=Vec::new();let mut new_run=true;

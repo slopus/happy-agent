@@ -1,0 +1,44 @@
+{
+    "families": {
+        "openai/gpt-6.1-sol": "codex",
+        "openai/gpt-6-astra": "codex",
+        "openai/gpt-6-sol": "codex",
+        "openai/gpt-6-luna": "codex",
+        "openai/gpt-5.6-sol": "codex",
+        "openai/gpt-5.6-terra": "codex",
+        "openai/gpt-5.6-luna": "codex",
+        "anthropic/opus-5-5": "claude",
+        "anthropic/opus-5": "claude",
+        "anthropic/sonnet-5-5": "claude",
+        "anthropic/sonnet-5": "claude",
+        "anthropic/fable-5-1": "claude",
+        "anthropic/fable-5": "claude",
+        "anthropic/opus-4-8": "claude",
+        "xai/grok-4.7": "grok",
+        "xai/grok-4.6": "grok",
+        "xai/grok-build": "grok",
+        "xai/grok-4.5": "grok",
+        "xai/grok-composer-2.5-fast": "grok",
+        "openai/gpt-5.4": "codex",
+        "moonshotai/kimi-k3": "kimi",
+        "zai/glm-5.3": "glm",
+        "openai/codex-auto-review": "codex"
+    },
+    "matrix": {
+        "bedrock": {
+            "bedrock": ["claude", "codex", "kimi", "glm"]
+        },
+        "claude": {
+            "claude": ["claude"]
+        },
+        "codex": {
+            "codex": ["codex"]
+        },
+        "grok": {
+            "grok": ["grok"]
+        },
+        "gym": {
+            "gym": ["claude", "codex", "grok", "kimi", "glm"]
+        }
+    }
+}

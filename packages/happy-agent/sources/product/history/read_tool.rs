@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 
 const FILTER: &str = "agent_id=?1 AND (?2 IS NULL OR role IN (SELECT value FROM json_each(?2))) AND (?3 IS NULL OR instr(search_text,?3)>0)";
-const COUNTERS: &str = "count(*),coalesce(sum(assistant_messages),0),coalesce(sum(user_messages),0),coalesce(sum(text_characters),0),coalesce(sum(thinking_blocks),0),coalesce(sum(tool_calls),0),coalesce(sum(tool_results),0)";
+pub(super) const COUNTERS: &str = "count(*),coalesce(sum(assistant_messages),0),coalesce(sum(user_messages),0),coalesce(sum(text_characters),0),coalesce(sum(thinking_blocks),0),coalesce(sum(tool_calls),0),coalesce(sum(tool_results),0)";
 const MAX_CHARACTERS: usize = 80_000;
 
 impl HistoryModule {
@@ -98,7 +98,12 @@ impl HistoryModule {
                 self.schemas.valid("historyMessage", &message)?,
                 "A durable history message is invalid."
             );
-            let text = format_message(&message, position + 1, arguments["include_tools"] != false);
+            let text = format_message(
+                &message,
+                position + 1,
+                arguments["include_tools"] != false,
+                12_000,
+            );
             let separator = if rendered.is_empty() { 0 } else { 2 };
             let remaining = MAX_CHARACTERS.saturating_sub(characters + separator);
             let length = text.encode_utf16().count();
@@ -186,7 +191,11 @@ impl HistoryModule {
     }
 }
 
-fn counters(ctx: &Context<'_>, query: &str, parameters: impl rusqlite::Params) -> Result<[i64; 7]> {
+pub(super) fn counters(
+    ctx: &Context<'_>,
+    query: &str,
+    parameters: impl rusqlite::Params,
+) -> Result<[i64; 7]> {
     Ok(ctx.database().query_row(query, parameters, |row| {
         Ok([
             row.get(0)?,
@@ -202,7 +211,12 @@ fn counters(ctx: &Context<'_>, query: &str, parameters: impl rusqlite::Params) -
 fn stats_resource(counters: [i64; 7]) -> Value {
     json!({"messages":counters[0],"assistant_messages":counters[1],"user_messages":counters[2],"text_characters":counters[3],"thinking_blocks":counters[4],"tool_calls":counters[5],"tool_results":counters[6]})
 }
-pub(super) fn format_message(message: &Value, position: i64, include_tools: bool) -> String {
+pub(super) fn format_message(
+    message: &Value,
+    position: i64,
+    include_tools: bool,
+    text_limit: usize,
+) -> String {
     let sender = message["senderAgentId"]
         .as_str()
         .map(|id| format!(" ({id})"))
@@ -227,14 +241,14 @@ pub(super) fn format_message(message: &Value, position: i64, include_tools: bool
         match block["type"].as_str() {
             Some("text") => lines.push(format!(
                 "Text: {}",
-                truncate(block["text"].as_str().unwrap_or(""), 12_000)
+                truncate(block["text"].as_str().unwrap_or(""), text_limit)
             )),
             Some("thinking") => lines.push(if block["redacted"] == true {
                 "Thinking: [redacted]".into()
             } else {
                 format!(
                     "Thinking: {}",
-                    truncate(block["thinking"].as_str().unwrap_or(""), 12_000)
+                    truncate(block["thinking"].as_str().unwrap_or(""), text_limit)
                 )
             }),
             Some("image") => lines.push(format!(

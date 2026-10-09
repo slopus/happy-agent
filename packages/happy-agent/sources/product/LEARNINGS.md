@@ -74,3 +74,16 @@ now checks the durable indexed call's requested marker before enforcing it. Ordi
 calls use their own tool schema, and History retains oversized structured arguments as the
 original raw JSON string. This avoids both rejecting more permissive tools and leaving an ordinary
 call permanently unable to flush its owning inference before execution.
+
+Model compatibility comes from the original provider-family matrix, including resolved Bedrock
+regions for GPT models. Compatible selections retain private inference context. An incompatible
+selection clears only that context, keeps public History, clears the context estimate, and inserts
+the original bounded history handoff in the same input-acceptance transaction. The full notice
+matches an original-source golden through three real model selections and restart. Effort, tier,
+and permission changes preserve context; choosing the regular tier removes the stored priority
+option and omits it from the provider request.
+
+Provider retry safety must be checked at the actual provider seam. A real failed Responses attempt
+that completed tool items before its retry retains neither those items nor their shell effects.
+The native provider commits one complete attempt, so this scenario needs a regression fixture
+without additional rollback machinery in the outer loop.

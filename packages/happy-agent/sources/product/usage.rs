@@ -54,6 +54,27 @@ impl UsageModule {
     pub async fn load(&self) -> Result<()> {
         self.runtime.migrate("usage", MIGRATIONS).await
     }
+    pub fn clear_context(&self, ctx: &Context<'_>, agent: &str) -> Result<()> {
+        self.runtime.assert_context(ctx)?;
+        let previous: Option<Option<String>> = ctx
+            .database()
+            .query_row(
+                "SELECT context_json FROM happy_agent_usage_contexts WHERE agent_id=?1",
+                [agent],
+                |row| row.get(0),
+            )
+            .optional()?;
+        ctx.database().execute("INSERT INTO happy_agent_usage_contexts(agent_id,updated_at,context_json) VALUES(?1,?2,NULL) ON CONFLICT(agent_id) DO UPDATE SET updated_at=excluded.updated_at,context_json=NULL",params![agent,i64::try_from(super::identity::now())?])?;
+        if previous.flatten().is_some() {
+            self.events.record(
+                ctx,
+                Some(agent),
+                "agent.context.updated",
+                json!({"agentId":agent,"context":null}),
+            )?;
+        }
+        Ok(())
+    }
     pub fn record(&self, ctx: &Context<'_>, record: &Value) -> Result<()> {
         self.runtime.assert_context(ctx)?;
         anyhow::ensure!(

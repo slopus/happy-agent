@@ -1506,3 +1506,354 @@ async fn history_tool_matches_original_source_goldens_for_search_paging_statisti
     }));
     provider.await.expect("all golden native turns");
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn provider_retry_discards_completed_tool_items_before_any_tool_effect() {
+    let (endpoint, mut requests, provider) = scripted_provider(2).await;
+    let installation = Installation::new();
+    installation.seed(&endpoint);
+    installation.command("start");
+    let first = exchange(&mut requests).await;
+    let input = first.request["input"].clone();
+    first.respond.send(vec![json!({"type":"response.output_item.added","item":{"type":"function_call","call_id":"native-abandoned-retry-tool","name":"exec_command"}}),json!({"type":"response.function_call_arguments.delta","delta":json!({"cmd":"printf stale > stale-provider-effect"}).to_string()}),json!({"type":"response.function_call_arguments.done"}),json!({"type":"response.failed","response":{"status":503,"error":{"code":"server_error","message":"Retry this incomplete provider attempt."}}})]).expect("abandoned retryable attempt");
+    let retry = exchange(&mut requests).await;
+    assert_eq!(
+        retry.request["input"], input,
+        "provider owns replay of the original immutable request"
+    );
+    retry
+        .respond
+        .send(text_response("Successful retry response."))
+        .expect("successful provider retry");
+    let page = completed(&installation).await;
+    let messages = page["runs"][0]["messages"]
+        .as_array()
+        .expect("settled messages");
+    assert_eq!(messages.len(), 3);
+    assert_eq!(
+        messages[2]["content"],
+        json!([{"type":"text","text":"Successful retry response."}])
+    );
+    assert!(!page.to_string().contains("native-abandoned-retry-tool"));
+    assert!(
+        !installation
+            ._directory
+            .path()
+            .join("workspace/stale-provider-effect")
+            .exists()
+    );
+    installation.command("stop");
+    installation.command("start");
+    let (client, token) = installation.client();
+    let restored: Value = client
+        .get(format!("http://happy/v0/agents/{AGENT}/messages"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .expect("restored retry result")
+        .json()
+        .await
+        .expect("page");
+    assert_eq!(restored["runs"], page["runs"]);
+    assert!(
+        !installation
+            ._directory
+            .path()
+            .join("workspace/stale-provider-effect")
+            .exists()
+    );
+    provider.await.expect("exactly two provider attempts");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn compatible_model_switch_retains_context_and_incompatible_switch_hands_off_public_history()
+{
+    let (endpoint, mut requests, provider) = scripted_provider(3).await;
+    let installation = Installation::new();
+    installation.seed(&endpoint);
+    let public = installation
+        ._directory
+        .path()
+        .join(if cfg!(target_os = "macos") {
+            "Happy/Config/happy.toml"
+        } else {
+            "happy/config/happy.toml"
+        });
+    let configuration = std::fs::read_to_string(&public)
+        .expect("fixture configuration")
+        .replace(
+            "include_models = ['openai/gpt-5.6-sol']",
+            "include_models = ['openai/gpt-5.6-sol', 'openai/gpt-5.6-luna']",
+        );
+    std::fs::write(&public,format!("{configuration}\n[providers.switch-fixture]\ntype = 'grok'\napi_key = 'fixture-placeholder'\ncredential_isolation = true\nenabled = true\nbase_url = '{endpoint}'\ntransport = 'sse'\ninclude_models = ['xai/grok-4.6']\n")).expect("two curated fixture routes");
+    let database =
+        Connection::open(installation.home.join("agent/agent.sqlite")).expect("original catalog");
+    database
+        .execute(
+            "DELETE FROM happy_agent_values WHERE owner_id=?1 OR (owner_id='' AND key=?2)",
+            params![AGENT, format!("agentSystem.config.{AGENT}")],
+        )
+        .expect("empty catalog");
+    database
+        .execute(
+            "DELETE FROM happy_agent_module_project_root_agents WHERE agent_id=?1",
+            [AGENT],
+        )
+        .expect("empty project roots");
+    drop(database);
+    installation.command("start");
+    let (client, token) = installation.client();
+    let agent = "agentmodelhandoff";
+    let created = client
+        .post("http://happy/v0/agents")
+        .bearer_auth(&token)
+        .json(&json!({"workspaceId":WORKSPACE,"id":agent}))
+        .send()
+        .await
+        .expect("create");
+    assert_eq!(created.status(), 201);
+    for (index, (provider_id, model, effort, text)) in [
+        (
+            "fixture",
+            "openai/gpt-5.6-sol",
+            "medium",
+            "Remember the original request.",
+        ),
+        (
+            "fixture",
+            "openai/gpt-5.6-luna",
+            "medium",
+            "Continue with the compatible model.",
+        ),
+        (
+            "switch-fixture",
+            "xai/grok-4.6",
+            "high",
+            "Continue with the incompatible model.",
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let body = json!({"id":format!("messagemodelhandoff{index}"),"text":text,"profile":null,"mode":{"providerId":provider_id,"modelId":model,"effort":effort,"serviceTier":null,"permissionMode":"full_access"}});
+        let sent = client
+            .post(format!("http://happy/v0/agents/{agent}/send"))
+            .bearer_auth(&token)
+            .json(&body)
+            .send()
+            .await
+            .expect("send selected model");
+        assert_eq!(sent.status(), 202);
+        let inference = exchange(&mut requests).await;
+        let input = inference.request["input"]
+            .as_array()
+            .expect("provider input");
+        if index == 1 {
+            assert!(input.iter().any(|item| item["role"] == "user"
+                && item["content"] == "Remember the original request."));
+            assert!(input.iter().any(|item| item["role"] == "assistant"
+                && item["content"][0]["text"] == "A prior assistant answer."));
+            assert!(
+                !inference
+                    .request
+                    .to_string()
+                    .contains("model-switch-history-context")
+            );
+        }
+        if index == 2 {
+            assert_eq!(input.len(), 2, "fresh private context: {input:?}");
+            assert_eq!(input[0]["role"], "developer");
+            let notice = input[0]["content"][0]["text"]
+                .as_str()
+                .expect("handoff notice");
+            assert!(notice.contains("<model-switch-history-context>"));
+            assert!(notice.contains("Beginning history excerpt:"));
+            assert!(notice.contains("Remember the original request."));
+            assert!(notice.contains("read_agent_history"));
+            let golden: Value = serde_json::from_str(include_str!("model_switch_goldens.json"))
+                .expect("original handoff golden");
+            assert_eq!(notice, golden["notice"].as_str().expect("source notice"));
+            assert_eq!(input[1]["role"], "user");
+            assert_eq!(input[1]["content"], text);
+        }
+        inference
+            .respond
+            .send(text_response(if index == 0 {
+                "A prior assistant answer."
+            } else {
+                "Selected model completed."
+            }))
+            .expect("provider response");
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let focused: Value = client
+                    .get(format!("http://happy/v0/agents/{agent}"))
+                    .bearer_auth(&token)
+                    .send()
+                    .await
+                    .expect("focused agent")
+                    .json()
+                    .await
+                    .expect("resource");
+                if focused["agent"]["status"] == "idle" {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("settled turn");
+    }
+    let page: Value = client
+        .get(format!("http://happy/v0/agents/{agent}/messages"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .expect("public archive")
+        .json()
+        .await
+        .expect("page");
+    assert_eq!(page["runs"].as_array().expect("runs").len(), 3);
+    assert!(page["runs"].as_array().expect("runs").iter().all(|run| {
+        run["status"] == "completed"
+            && run["messages"]
+                .as_array()
+                .is_some_and(|messages| messages.len() == 2)
+    }));
+    installation.command("stop");
+    installation.command("start");
+    let (_, token) = installation.client();
+    let restored: Value = client
+        .get(format!("http://happy/v0/agents/{agent}/messages"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .expect("model-switch archive after restart")
+        .json()
+        .await
+        .expect("page");
+    assert_eq!(restored["runs"], page["runs"]);
+    provider.await.expect("three real selected model turns");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn regular_tier_clears_priority_while_effort_and_permission_changes_preserve_context() {
+    let (endpoint, mut requests, provider) = scripted_provider(2).await;
+    let installation = Installation::new();
+    installation.seed(&endpoint);
+    let database =
+        Connection::open(installation.home.join("agent/agent.sqlite")).expect("original catalog");
+    database
+        .execute(
+            "DELETE FROM happy_agent_values WHERE owner_id=?1 OR (owner_id='' AND key=?2)",
+            params![AGENT, format!("agentSystem.config.{AGENT}")],
+        )
+        .expect("empty catalog");
+    database
+        .execute(
+            "DELETE FROM happy_agent_module_project_root_agents WHERE agent_id=?1",
+            [AGENT],
+        )
+        .expect("empty project roots");
+    drop(database);
+    installation.command("start");
+    let (client, token) = installation.client();
+    let agent = "agenttiercontext";
+    assert_eq!(
+        client
+            .post("http://happy/v0/agents")
+            .bearer_auth(&token)
+            .json(&json!({"workspaceId":WORKSPACE,"id":agent}))
+            .send()
+            .await
+            .expect("create")
+            .status(),
+        201
+    );
+    for (index, (tier, effort, permission)) in [
+        (json!("priority"), "medium", "full_access"),
+        (Value::Null, "high", "read_only"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mode = json!({"providerId":"fixture","modelId":"openai/gpt-5.6-sol","effort":effort,"serviceTier":tier,"permissionMode":permission});
+        assert_eq!(client.post(format!("http://happy/v0/agents/{agent}/send")).bearer_auth(&token).json(&json!({"id":format!("messagetiercontext{index}"),"text":format!("Tier context turn {index}."),"profile":null,"mode":mode})).send().await.expect("send tier selection").status(),202);
+        let inference = exchange(&mut requests).await;
+        assert_eq!(inference.request["reasoning"]["effort"], effort);
+        if index == 0 {
+            assert_eq!(inference.request["service_tier"], "priority");
+        } else {
+            assert!(
+                inference.request.get("service_tier").is_none(),
+                "regular tier omits the provider option"
+            );
+            assert!(
+                inference.request["input"]
+                    .as_array()
+                    .expect("input")
+                    .iter()
+                    .any(|item| item["role"] == "assistant"
+                        && item["content"][0]["text"] == "Prior tier context answer.")
+            );
+            assert!(
+                !inference
+                    .request
+                    .to_string()
+                    .contains("model-switch-history-context")
+            );
+        }
+        inference
+            .respond
+            .send(text_response(if index == 0 {
+                "Prior tier context answer."
+            } else {
+                "Regular tier completed."
+            }))
+            .expect("provider response");
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let focused: Value = client
+                    .get(format!("http://happy/v0/agents/{agent}"))
+                    .bearer_auth(&token)
+                    .send()
+                    .await
+                    .expect("focused agent")
+                    .json()
+                    .await
+                    .expect("resource");
+                if focused["agent"]["status"] == "idle" {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("settled turn");
+    }
+    let mode: Value = client
+        .get(format!("http://happy/v0/agents/{agent}/mode"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .expect("last selected mode")
+        .json()
+        .await
+        .expect("mode");
+    assert!(mode["mode"]["serviceTier"].is_null());
+    assert_eq!(mode["mode"]["effort"], "high");
+    assert_eq!(mode["mode"]["permissionMode"], "read_only");
+    installation.command("stop");
+    let database = Connection::open(installation.home.join("agent/agent.sqlite"))
+        .expect("persisted selection");
+    let settings: String = database
+        .query_row(
+            "SELECT value_json FROM happy_agent_values WHERE owner_id=?1 AND key='settings'",
+            [agent],
+            |row| row.get(0),
+        )
+        .expect("settings");
+    let settings: Value = serde_json::from_str(&settings).expect("selected settings");
+    assert!(settings.get("serviceTier").is_none());
+    provider.await.expect("two provider turns");
+}

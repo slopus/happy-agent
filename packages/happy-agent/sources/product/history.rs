@@ -10,6 +10,7 @@ use happy_providers::Block;
 use rusqlite::{OptionalExtension, params};
 use serde_json::{Value, json};
 use std::sync::Arc;
+mod excerpt;
 mod read_tool;
 
 const MIGRATIONS: &[(&str, &str)] = &[
