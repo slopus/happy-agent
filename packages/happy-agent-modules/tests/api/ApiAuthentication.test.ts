@@ -4,6 +4,7 @@ import { Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { HAPPY_AGENT_PROTOCOL_VERSION } from "@slopus/happy-agent-client";
 import { SignJWT } from "jose";
 import type { Context } from "@steve.kite/stdlib";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -216,6 +217,17 @@ describe("GET /v0/authentication with JWT team authentication", () => {
             subject: "person-2",
         });
         expect((await call("/v0/health", `Bearer ${token}`)).status).toBe(200);
+    });
+});
+
+describe("GET /v0/health", () => {
+    it("advertises the protocol of the client the daemon is built against", async () => {
+        const { call, token } = await harness("standalone");
+
+        // `happy-agent start` replaces a daemon whose protocol differs from its client's.
+        expect((await call("/v0/health", `Bearer ${token!}`)).body).toMatchObject({
+            version: { protocol: HAPPY_AGENT_PROTOCOL_VERSION },
+        });
     });
 });
 

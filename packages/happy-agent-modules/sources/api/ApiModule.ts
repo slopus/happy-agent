@@ -230,7 +230,7 @@ import {
 import { WorkspaceProxy } from "./WorkspaceProxy.js";
 import { SubtaskInputError, SubtasksModule } from "../subtasks/index.js";
 
-const API_PROTOCOL_VERSION = 25;
+const API_PROTOCOL_VERSION = 26;
 
 /**
  * How many archived agents the desktop bootstrap carries. Recent history is what the desktop
