@@ -32,11 +32,16 @@ import {
     type HistoryPendingMessage,
 } from "../history/index.js";
 import { USER_MESSAGE_ORIGIN_METADATA } from "../impl/messageOrigin.js";
-import { ProjectsModule, type Project } from "../projects/index.js";
+import { ProjectsModule, type Project, type ProjectEvent } from "../projects/index.js";
 import { ProviderUsageModule } from "../providerUsage/index.js";
 import { SchedulingModule } from "../scheduling/index.js";
 import { UserInputModule, type UserInputRequest } from "../userInput/index.js";
-import { WorkspacesModule, type WorkspaceAgentPlacement } from "../workspaces/index.js";
+import {
+    WorkspacesModule,
+    type Workspace,
+    type WorkspaceAgentPlacement,
+    type WorkspaceEvent,
+} from "../workspaces/index.js";
 import { TeamModule, type TeamUser } from "../team/index.js";
 import { ConfigModule } from "../config/index.js";
 import type { SessionInputBlock, SessionUserMessage } from "@slopus/happy-providers";
@@ -79,7 +84,11 @@ import {
     type HappySpawnTarget,
     type HappyTargetSpawnRequest,
 } from "./HappySession.js";
-import { HappySessionClient, type HappySessionOperations } from "./HappySessionClient.js";
+import {
+    HappySessionClient,
+    type HappySessionChange,
+    type HappySessionOperations,
+} from "./HappySessionClient.js";
 import {
     happyComposerDraftFromConfig,
     happyComposerDraftSnapshotSchema,
@@ -489,8 +498,11 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
                             await this.#projects.listAgentIds(ctx, event.project.id),
                         );
                     }
-                    await this.#reapArchived(ctx);
-                    await this.#republishAttached(ctx);
+                    await this.#reapAfter(ctx, event);
+                    await this.#republishAttached(ctx, {
+                        agentIds: movedAgentIds(event),
+                        projectId: event.project.id,
+                    });
                 });
             }),
         );
@@ -506,8 +518,11 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
                             await this.#workspaces.listAgentIds(ctx, event.workspace.id),
                         );
                     }
-                    await this.#reapArchived(ctx);
-                    await this.#republishAttached(ctx);
+                    await this.#reapAfter(ctx, event);
+                    await this.#republishAttached(ctx, {
+                        agentIds: movedAgentIds(event),
+                        workspaceId: event.workspace.id,
+                    });
                 });
             }),
         );
@@ -517,8 +532,13 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
             }),
         );
         this.#unwatchCatalog.push(
-            this.#providerUsage.onChanged(() => {
-                for (const connected of this.#agents.values()) connected.client.kick();
+            this.#providerUsage.onChanged((entry) => {
+                // Usage appears only in the state of sessions running on that provider.
+                for (const connected of this.#agents.values()) {
+                    if (connected.client.concerns({ providerId: entry.providerId })) {
+                        connected.client.kick();
+                    }
+                }
             }),
         );
     }
@@ -1790,14 +1810,23 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
     }
 
     /**
-     * Asks every live session to describe itself again, because where it lives has changed.
+     * Asks the live sessions a catalog change describes to describe themselves again.
      *
      * Renaming a workspace or a project renames it on the phone: the session's own metadata is
      * what the phone groups and labels by, so it is republished rather than left saying the old
-     * name until something else happens to move it.
+     * name until something else happens to move it. Only sessions in the changed project or
+     * workspace, and agents the change moved, can be affected; republishing every session made
+     * each catalog change a full sync pass per session on the daemon's only thread.
      */
-    async #republishAttached(_ctx: Context): Promise<void> {
-        for (const attached of this.#agents.values()) attached.client.kick();
+    async #republishAttached(
+        _ctx: Context,
+        change: HappySessionChange & { readonly agentIds: readonly string[] },
+    ): Promise<void> {
+        for (const [agentId, attached] of this.#agents) {
+            if (change.agentIds.includes(agentId) || attached.client.concerns(change)) {
+                attached.client.kick();
+            }
+        }
     }
 
     /** Project sync is best effort and never participates in session event transactions. */
@@ -1870,13 +1899,19 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
      * phone is told in the same words rather than left holding a session pointing at a checkout
      * that may no longer be on disk.
      */
-    async #reapArchived(ctx: Context): Promise<void> {
-        const agentIds = new Set([
-            ...this.#agents.keys(),
-            ...(this.#fingerprint.length === 0
-                ? []
-                : await this.#sync.listAgentIds(ctx, this.#fingerprint, MAX_REAPED_SYNC_SESSIONS)),
-        ]);
+    async #reapArchived(ctx: Context, only?: readonly string[]): Promise<void> {
+        const agentIds = new Set(
+            only ?? [
+                ...this.#agents.keys(),
+                ...(this.#fingerprint.length === 0
+                    ? []
+                    : await this.#sync.listAgentIds(
+                          ctx,
+                          this.#fingerprint,
+                          MAX_REAPED_SYNC_SESSIONS,
+                      )),
+            ],
+        );
         for (const agentId of agentIds) {
             try {
                 if (await this.#userVisible(ctx, agentId)) continue;
@@ -1885,6 +1920,21 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
                 ctx.log.debug("Happy could not retire an archived session.", { agentId }, error);
             }
         }
+    }
+
+    /**
+     * Reaps what a catalog event can have put out of reach.
+     *
+     * Asking whether a session is still visible reads its agent, workspace, and project, so a
+     * reap over every published session on every catalog event (git facts, probes, renames,
+     * reorders) cost hundreds of reads and validations per event on the daemon's only thread.
+     * Only a project or workspace becoming archived can hide sessions it does not name, and an
+     * attachment or visibility change can hide only the agent it moved.
+     */
+    async #reapAfter(ctx: Context, event: ProjectEvent | WorkspaceEvent): Promise<void> {
+        const moved = movedAgentIds(event);
+        if (becameArchived(event)) await this.#reapArchived(ctx);
+        else if (moved.length > 0) await this.#reapArchived(ctx, moved);
     }
 
     async #attach(
@@ -2600,6 +2650,29 @@ function sameIntegration(current: HappyIntegration, value: HappyIntegrationValue
         current.authorization?.expiresAt === value.authorization?.expiresAt &&
         current.error?.code === value.error?.code &&
         current.error?.message === value.error?.message
+    );
+}
+
+/** The agents a catalog event attached, reordered, or showed somewhere else. */
+function movedAgentIds(event: ProjectEvent | WorkspaceEvent): readonly string[] {
+    if ("association" in event) return [event.association.agentId];
+    if ("agentId" in event) return [event.agentId];
+    return [];
+}
+
+/** Whether the event's project or workspace is archived now and was not before it. */
+function becameArchived(event: ProjectEvent | WorkspaceEvent): boolean {
+    if ("workspace" in event) {
+        const archived = (workspace: Workspace) =>
+            workspace.status === "archived" || workspace.archivedAt !== undefined;
+        return (
+            archived(event.workspace) &&
+            !("previousWorkspace" in event && archived(event.previousWorkspace))
+        );
+    }
+    return (
+        event.project.status === "archived" &&
+        !("previousProject" in event && event.previousProject.status === "archived")
     );
 }
 

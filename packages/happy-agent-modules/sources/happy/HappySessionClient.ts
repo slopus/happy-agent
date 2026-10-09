@@ -62,6 +62,8 @@ const HTTP_TIMEOUT_MS = 15_000;
 const RETRY_DELAY_MS = 2_000;
 const OUTBOX_BATCH = 50;
 const INCOMING_PAGE = 100;
+/** A session kicked continuously starts a full pass at most this often. */
+const MIN_SYNC_PASS_INTERVAL_MS = 1_000;
 
 /** The socket surface this client needs, which is the part of Socket.IO it uses. */
 export interface HappySocket {
@@ -237,6 +239,13 @@ const rpcRequestSchema = Type.Object(
  * do everything owed, then wait to be told there is more — because that is what
  * makes it safe to interrupt at any point and pick up where it stopped.
  */
+/** A catalog or provider change that can alter what some sessions publish to Happy. */
+export interface HappySessionChange {
+    readonly projectId?: string;
+    readonly providerId?: string;
+    readonly workspaceId?: string;
+}
+
 export class HappySessionClient {
     readonly #options: HappySessionClientOptions;
     readonly #closeController = new AbortController();
@@ -263,16 +272,23 @@ export class HappySessionClient {
     #lastMetadata: Record<string, unknown> | undefined;
     #metadataBase: Record<string, unknown> = {};
     #metadataVersion: number | undefined;
+    /** Ends the wait for the next paced pass early. */
+    #hurry: (() => void) | undefined;
     #projectIdSent: string | undefined;
     #needsAnotherSync = false;
     #pendingMetadataUpdate: EncryptedMetadataUpdate | undefined;
+    #passStartedAt = Number.NEGATIVE_INFINITY;
     #retryTimer: NodeJS.Timeout | undefined;
     #sentSessionEnd = false;
     #socket: HappySocket | undefined;
     #started = false;
+    /** Where the last published snapshot lives and which provider runs it. */
+    #subject: HappySessionChange | undefined;
     #summaryTitle: string | undefined;
     #summaryUpdatedAt = Date.now();
     #syncPromise: Promise<void> | undefined;
+    /** Someone is waiting for the running loop to finish, so it is not paced. */
+    #urgent = false;
 
     constructor(options: HappySessionClientOptions) {
         this.#options = options;
@@ -295,11 +311,27 @@ export class HappySessionClient {
         this.#clearRetry();
         this.#syncPromise = this.#runSyncLoop().finally(() => {
             this.#syncPromise = undefined;
+            this.#urgent = false;
         });
+    }
+
+    /**
+     * Whether a change to this project, workspace, or provider can alter what the session
+     * publishes. A session that has not read its own snapshot yet cannot tell, so it always can.
+     */
+    concerns(change: HappySessionChange): boolean {
+        const subject = this.#subject;
+        if (subject === undefined) return true;
+        return (
+            (change.projectId !== undefined && change.projectId === subject.projectId) ||
+            (change.workspaceId !== undefined && change.workspaceId === subject.workspaceId) ||
+            (change.providerId !== undefined && change.providerId === subject.providerId)
+        );
     }
 
     /** Sends everything owed and waits for it, which is what a test or a shutdown needs. */
     async settle(): Promise<void> {
+        this.#hurryNextPass();
         this.kick();
         await this.#syncPromise;
         await this.#avatarSync;
@@ -312,6 +344,7 @@ export class HappySessionClient {
         this.#clearRetry();
         this.#clearAvatarRetry();
         try {
+            this.#hurryNextPass();
             this.kick();
             await this.#syncPromise;
             await this.#sendSessionEnd();
@@ -359,7 +392,10 @@ export class HappySessionClient {
 
     async #runSyncLoop(): Promise<void> {
         do {
+            if (!this.#urgent) await this.#paceNextPass();
+            if (this.#closed) return;
             this.#needsAnotherSync = false;
+            this.#passStartedAt = Date.now();
             try {
                 const state = await this.#ensureRemoteSession();
                 if (state?.remoteSessionId === undefined || this.#closed) return;
@@ -368,6 +404,13 @@ export class HappySessionClient {
                 if (!this.#archiving) await this.#fetchIncoming(state);
                 await this.#applyPendingMetadata(state);
                 const snapshot = await this.#session();
+                this.#subject = {
+                    ...(snapshot.project === undefined ? {} : { projectId: snapshot.project.id }),
+                    providerId: snapshot.providerId,
+                    ...(snapshot.workspace === undefined
+                        ? {}
+                        : { workspaceId: snapshot.workspace.id }),
+                };
                 await this.#syncMetadata(state, snapshot);
                 this.#sendKeepAlive(state.remoteSessionId, snapshot);
                 await this.#syncAgentState(state, snapshot);
@@ -378,6 +421,38 @@ export class HappySessionClient {
                 return;
             }
         } while (this.#needsAnotherSync && !this.#closed);
+    }
+
+    /**
+     * Waits until the next full pass is due.
+     *
+     * Every durable event of a working agent kicks its session, and a pass re-reads the whole
+     * session and asks Happy for new messages. Starting the next pass the moment the last one
+     * finished made one streaming agent cost tens of passes a second on the daemon's only thread.
+     * A quiet session still publishes a change at once; a busy one batches what arrives meanwhile.
+     * A caller waiting on {@link settle} or {@link archive} is never paced.
+     */
+    async #paceNextPass(): Promise<void> {
+        const wait = this.#passStartedAt + MIN_SYNC_PASS_INTERVAL_MS - Date.now();
+        if (wait <= 0) return;
+        const signal = this.#closeController.signal;
+        await new Promise<void>((resolve) => {
+            const done = () => {
+                clearTimeout(timer);
+                signal.removeEventListener("abort", done);
+                this.#hurry = undefined;
+                resolve();
+            };
+            const timer = setTimeout(done, wait);
+            timer.unref();
+            signal.addEventListener("abort", done, { once: true });
+            this.#hurry = done;
+        });
+    }
+
+    #hurryNextPass(): void {
+        this.#urgent = true;
+        this.#hurry?.();
     }
 
     #kickAvatar(snapshot: HappySessionSnapshot): void {
