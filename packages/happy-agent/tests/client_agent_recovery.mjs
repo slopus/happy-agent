@@ -46,6 +46,7 @@ const { agent, profiles, slashCommands } = await client.getAgent(id);
 assert(Value.Check(agentSchema, agent), JSON.stringify([...Value.Errors(agentSchema, agent)]));
 assert.equal(agent.workspaceId, "workspacerecovered");
 assert.equal(agent.status, "idle");
+await client.getEvents({ after: agent.lastCursor });
 assert.deepEqual(profiles, []);
 assert(slashCommands.some((command) => command.name === "compact"));
 assert.deepEqual((await client.getAgentMode(id)).mode, {

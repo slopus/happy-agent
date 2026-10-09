@@ -1,14 +1,30 @@
 use anyhow::{Context, Result};
 use jsonschema::{Keyword, ValidationError, Validator};
 use serde_json::Value;
-use std::collections::BTreeMap;
+use std::{
+    collections::BTreeMap,
+    sync::{Arc, OnceLock},
+};
 
 /// Serialized TypeBox schemas from ApiSchemas.ts and events/types.ts. TypeBox
 /// measures string bounds in UTF-16 units; preserve that behavior in the native
 /// evaluator instead of silently changing it to Unicode scalar counts.
-pub struct Schemas(BTreeMap<String, Validator>);
+pub struct Schemas(Arc<BTreeMap<String, Validator>>);
+static COMPILED: OnceLock<std::result::Result<Arc<BTreeMap<String, Validator>>, String>> =
+    OnceLock::new();
 impl Schemas {
     pub fn new() -> Result<Self> {
+        COMPILED
+            .get_or_init(|| {
+                Self::compile()
+                    .map(Arc::new)
+                    .map_err(|error| format!("{error:#}"))
+            })
+            .as_ref()
+            .map(|schemas| Self(schemas.clone()))
+            .map_err(|error| anyhow::anyhow!("{error}"))
+    }
+    fn compile() -> Result<BTreeMap<String, Validator>> {
         let source: BTreeMap<String, Value> =
             serde_json::from_str(include_str!("request_schemas.json"))?;
         let mut compiled = BTreeMap::new();
@@ -32,7 +48,7 @@ impl Schemas {
                 })?;
             compiled.insert(name, validator);
         }
-        Ok(Self(compiled))
+        Ok(compiled)
     }
     pub fn valid(&self, name: &str, value: &Value) -> Result<bool> {
         Ok(self

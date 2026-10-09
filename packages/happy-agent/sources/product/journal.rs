@@ -50,8 +50,27 @@ impl Journal {
             .map_or(self.origin.as_str(), |entry| entry.cursor())
     }
     pub fn append(&mut self, kind: &str, payload: Value, owner: Option<String>) -> Arc<Entry> {
-        let envelope =
-            json!({"cursor":self.versions.next(),"occurredAt":now(),"type":kind,"payload":payload});
+        self.append_with_cursor(kind, |_| payload, owner)
+    }
+    pub fn agent_cursor(&self, id: &str) -> &str {
+        self.entries
+            .iter()
+            .rev()
+            .find(|entry| {
+                entry.envelope["payload"]["agentId"] == id
+                    || entry.envelope["payload"]["agent"]["id"] == id
+            })
+            .map_or_else(|| self.cursor(), |entry| entry.cursor())
+    }
+    pub fn append_with_cursor(
+        &mut self,
+        kind: &str,
+        payload: impl FnOnce(&str) -> Value,
+        owner: Option<String>,
+    ) -> Arc<Entry> {
+        let cursor = self.versions.next();
+        let payload = payload(&cursor);
+        let envelope = json!({"cursor":cursor,"occurredAt":now(),"type":kind,"payload":payload});
         let bytes = envelope.to_string().len();
         let entry = Arc::new(Entry {
             envelope,

@@ -11,13 +11,26 @@ import {
     eventIdSchema,
     appendEventInputSchema,
 } from "../../happy-agent-modules/sources/events/types.ts";
-import { historyMessageSchema } from "../../happy-agent-modules/sources/history/HistoryMessage.ts";
+import {
+    historyMessageSchema,
+    historyToolArgumentsSchema,
+} from "../../happy-agent-modules/sources/history/HistoryMessage.ts";
+import { historyPendingMessageSchema } from "../../happy-agent-modules/sources/history/HistoryRun.ts";
 import {
     usageRecordSchema,
     usageCurrentContextSchema,
     usageRunBreakdownSchema,
 } from "../../happy-agent-modules/sources/usage/Usage.ts";
 import { codexExecCommandTool } from "../../happy-agent-modules/sources/compute/tools/codex/exec_command.ts";
+import { agentModelCatalog } from "../../happy-agent-modules/sources/config/impl/agentCatalog.ts";
+import {
+    projectIdSchema,
+    projectRepositoryRefSchema,
+    projectStatusSchema,
+    projectOrderKeySchema,
+    projectTimestampSchema,
+    projectVersionSchema,
+} from "../../happy-agent-modules/sources/projects/Project.ts";
 
 // Build-time reference data only; the released daemon evaluates the serialized
 // TypeBox contract in Rust and does not load JavaScript.
@@ -92,6 +105,20 @@ const sessionMessage = Type.Union([
         vendor: Type.Optional(Type.Unknown()),
     }),
 ]);
+const modelSchema = Type.Object(
+    {
+        id: Type.String({ minLength: 1, maxLength: 512 }),
+        providerId: Type.String({ minLength: 1, maxLength: 128 }),
+        name: Type.String({ minLength: 1, maxLength: 512 }),
+        effortLevels: Type.Array(Type.String()),
+        defaultEffort: Type.String(),
+        contextWindow: Type.Integer({ minimum: 1 }),
+        autoCompactWindow: Type.Integer({ minimum: 1 }),
+        enabled: Type.Boolean(),
+        serviceTiers: Type.Optional(Type.Array(Type.String())),
+    },
+    { additionalProperties: false },
+);
 const schemas = {
     instructions: documentBodySchema,
     security: securityDocumentBodySchema,
@@ -114,6 +141,49 @@ const schemas = {
     agentMode: agentModeSchema,
     permissionMode: agentPermissionModeSchema,
     historyMessage: historyMessageSchema,
+    historyToolArguments: historyToolArgumentsSchema,
+    historyEventReference: Type.Object(
+        {
+            agentId: cuid2Schema,
+            runId: Type.Union([cuid2Schema, Type.Null()]),
+            messageId: Type.String({ minLength: 1, maxLength: 256 }),
+        },
+        { additionalProperties: false },
+    ),
+    historyPending: historyPendingMessageSchema,
+    nativeCatalog: Type.Record(
+        Type.Union([
+            Type.Literal("codex"),
+            Type.Literal("claude"),
+            Type.Literal("grok"),
+            Type.Literal("bedrock"),
+        ]),
+        Type.Array(modelSchema, { maxItems: 1000 }),
+    ),
+    queuedInput: Type.Object({
+        id: cuid2Schema,
+        message: sessionMessage,
+        metadata: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+        options: Type.Optional(
+            Type.Object({
+                provider: Type.Optional(Type.String()),
+                model: Type.Optional(Type.String()),
+                effort: Type.Optional(Type.String()),
+                serviceTier: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                permissionMode: Type.Optional(agentPermissionModeSchema),
+                profile: Type.Optional(Type.Union([Type.Null(), Type.String({ maxLength: 512 })])),
+            }),
+        ),
+    }),
+    projectScope: Type.Object({
+        id: projectIdSchema,
+        root: projectRepositoryRefSchema,
+        status: projectStatusSchema,
+        runnerId: Type.String(),
+        updatedAt: projectTimestampSchema,
+        version: projectVersionSchema,
+    }),
+    projectOrderKey: projectOrderKeySchema,
     usageRecord: usageRecordSchema,
     usageContext: usageCurrentContextSchema,
     usageBreakdown: usageRunBreakdownSchema,
@@ -204,4 +274,28 @@ writeFileSync(
 writeFileSync(
     new URL("../sources/product/tool_definitions.json", import.meta.url),
     `${JSON.stringify({ codex: [{ name: execCommand.name, description: execCommand.description, parameters: execCommand.parameters, defer: execCommand.defer }] }, null, 2)}\n`,
+);
+const catalogs = {};
+for (const type of ["codex", "claude", "grok", "bedrock"]) {
+    const provider = { type };
+    if (type === "bedrock") {
+        // Capture the complete curated subset independently of regional Mantle
+        // availability. Each concrete route still needs its actual regional filters.
+        provider.modelOverrides = Object.fromEntries(
+            [
+                "anthropic/opus-5-5",
+                "anthropic/opus-5",
+                "anthropic/sonnet-5-5",
+                "anthropic/sonnet-5",
+                "anthropic/fable-5-1",
+                "anthropic/fable-5",
+                "anthropic/opus-4-8",
+            ].map((id) => [id, { transport: "runtime" }]),
+        );
+    }
+    catalogs[type] = agentModelCatalog({ values: { providers: { [type]: provider } } });
+}
+writeFileSync(
+    new URL("../sources/product/model_catalogs.json", import.meta.url),
+    `${JSON.stringify(catalogs, null, 2)}\n`,
 );

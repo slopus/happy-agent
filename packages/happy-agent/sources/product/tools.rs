@@ -40,12 +40,15 @@ impl ToolsModule {
         call: &Value,
         cancel: CancellationToken,
     ) -> ToolOutcome {
-        let result = match call["call"]["name"].as_str() {
-            Some("exec_command") if call["call"].get("namespace").is_none() => {
-                self.exec_command(configuration, settings, call, cancel)
-                    .await
-            }
-            _ => Err(anyhow::anyhow!("The requested tool is unavailable.")),
+        let result = match self.validate_arguments(call) {
+            Err(error) => Err(error),
+            Ok(()) => match call["call"]["name"].as_str() {
+                Some("exec_command") if call["call"].get("namespace").is_none() => {
+                    self.exec_command(configuration, settings, call, cancel)
+                        .await
+                }
+                _ => Err(anyhow::anyhow!("The requested tool is unavailable.")),
+            },
         };
         let (output, is_error) = match result {
             Ok(value) => value,
@@ -59,6 +62,18 @@ impl ToolsModule {
                 vendor: None,
             },
         }
+    }
+    fn validate_arguments(&self, call: &Value) -> Result<()> {
+        let raw = call["call"]["arguments"]
+            .as_str()
+            .context("The tool arguments are missing.")?;
+        let arguments: Value = serde_json::from_str(raw)?;
+        anyhow::ensure!(
+            arguments.to_string().len() <= 1_000_000
+                && self.schemas.valid("historyToolArguments", &arguments)?,
+            "Tool arguments exceed the supported size or complexity limits."
+        );
+        Ok(())
     }
     async fn exec_command(
         &self,

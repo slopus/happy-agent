@@ -559,3 +559,679 @@ async fn idle_restoration_keeps_queued_input_idle_without_owed_work() {
             .exists()
     );
 }
+
+struct Exchange {
+    request: Value,
+    respond: tokio::sync::oneshot::Sender<Vec<Value>>,
+}
+async fn scripted_provider(
+    count: usize,
+) -> (
+    String,
+    mpsc::Receiver<Exchange>,
+    tokio::task::JoinHandle<()>,
+) {
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("scripted inference");
+    let endpoint = format!(
+        "http://{}/v1",
+        listener.local_addr().expect("fixture address")
+    );
+    let (sender, receiver) = mpsc::channel(count);
+    let task = tokio::spawn(async move {
+        for _ in 0..count {
+            let (mut socket, _) = listener.accept().await.expect("inference");
+            let mut bytes = Vec::new();
+            let request = loop {
+                let mut buffer = [0; 8192];
+                let n = socket.read(&mut buffer).await.expect("request bytes");
+                assert!(n > 0, "complete request");
+                bytes.extend_from_slice(&buffer[..n]);
+                assert!(bytes.len() < 4 * 1024 * 1024, "bounded request");
+                if let Some(end) = bytes.windows(4).position(|bytes| bytes == b"\r\n\r\n") {
+                    let headers = String::from_utf8_lossy(&bytes[..end]);
+                    let length = headers
+                        .lines()
+                        .find_map(|line| {
+                            line.to_ascii_lowercase()
+                                .strip_prefix("content-length:")
+                                .map(|value| value.trim().parse::<usize>().expect("length"))
+                        })
+                        .expect("body length");
+                    if bytes.len() >= end + 4 + length {
+                        break serde_json::from_slice(&bytes[end + 4..end + 4 + length])
+                            .expect("inference JSON");
+                    }
+                }
+            };
+            let (respond, response) = tokio::sync::oneshot::channel();
+            sender
+                .send(Exchange { request, respond })
+                .await
+                .expect("observed request");
+            let response = tokio::time::timeout(Duration::from_secs(5), response)
+                .await
+                .expect("bounded scripted response")
+                .expect("scripted response");
+            let body = response
+                .iter()
+                .map(|event| format!("data: {event}\r\n\r\n"))
+                .collect::<String>();
+            socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).as_bytes()).await.expect("response");
+        }
+    });
+    (endpoint, receiver, task)
+}
+fn text_response(text: &str) -> Vec<Value> {
+    vec![
+        json!({"type":"response.content_part.added","part":{"type":"output_text"}}),
+        json!({"type":"response.output_text.delta","delta":text}),
+        json!({"type":"response.output_text.done"}),
+        json!({"type":"response.completed","response":{"id":format!("response-{text}"),"output":[],"usage":{"input_tokens":10,"output_tokens":2}}}),
+    ]
+}
+async fn exchange(requests: &mut mpsc::Receiver<Exchange>) -> Exchange {
+    tokio::time::timeout(Duration::from_secs(5), requests.recv())
+        .await
+        .expect("next genuine inference")
+        .expect("observed inference")
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn new_agent_send_tool_steering_and_all_mode_queue_keep_original_api_identities() {
+    let (endpoint, mut requests, provider) = scripted_provider(3).await;
+    let installation = Installation::new();
+    installation.seed(&endpoint);
+    let database =
+        Connection::open(installation.home.join("agent/agent.sqlite")).expect("original catalog");
+    database
+        .execute(
+            "DELETE FROM happy_agent_values WHERE owner_id=?1 OR (owner_id='' AND key=?2)",
+            params![AGENT, format!("agentSystem.config.{AGENT}")],
+        )
+        .expect("remove fixture agent");
+    database
+        .execute(
+            "DELETE FROM happy_agent_module_project_root_agents WHERE agent_id=?1",
+            [AGENT],
+        )
+        .expect("empty root-agent series");
+    drop(database);
+    installation.command("start");
+    let (client, token) = installation.client();
+    let id = "agentnewnativeflow";
+    let response = client
+        .post("http://happy/v0/agents")
+        .bearer_auth(&token)
+        .json(&json!({"workspaceId":WORKSPACE,"id":id,"title":"New native conversation"}))
+        .send()
+        .await
+        .expect("create original agent");
+    assert_eq!(response.status(), 201);
+    let focused: Value = response.json().await.expect("new focused agent");
+    assert_eq!(focused["agent"]["status"], "idle");
+    assert_eq!(focused["agent"]["workspaceId"], WORKSPACE);
+    let repeat:Value=client.post("http://happy/v0/agents").bearer_auth(&token).json(&json!({"workspaceId":"workspacenolongerexists","id":id,"title":"Ignored duplicate title"})).send().await.expect("safe creation retry").json().await.expect("same agent");
+    assert_eq!(repeat["agent"], focused["agent"]);
+    let invalid = client
+        .post("http://happy/v0/agents")
+        .bearer_auth(&token)
+        .json(&json!({"workspaceId":WORKSPACE,"id":id,"parentAgentId":"agentinvalidparent"}))
+        .send()
+        .await
+        .expect("strict duplicate validation");
+    assert_eq!(invalid.status(), 400);
+    let mode = json!({"providerId":"fixture","modelId":"openai/gpt-5.6-sol","effort":"medium","serviceTier":null,"permissionMode":"full_access"});
+    let send = |message: &str, text: &str, delivery: &str| json!({"id":message,"text":text,"delivery":delivery,"profile":"removed-profile","clientMetadata":{"opaque":{"kept":true}},"mode":mode});
+    let first = client
+        .post(format!("http://happy/v0/agents/{id}/send"))
+        .bearer_auth(&token)
+        .json(&send(
+            "messagenewnativeflow",
+            "Produce the requested real tool call.",
+            "queue",
+        ))
+        .send()
+        .await
+        .expect("original send");
+    assert_eq!(first.status(), 202);
+    let first: Value = first.json().await.expect("sent message");
+    assert_eq!(first["message"]["id"], "messagenewnativeflow");
+    assert_eq!(first["message"]["profile"], Value::Null);
+    let initial = exchange(&mut requests).await;
+    assert!(
+        initial
+            .request
+            .to_string()
+            .contains("Produce the requested real tool call.")
+    );
+    for (message, text, delivery) in [
+        ("messagequeuednativeone", "First queued message.", "queue"),
+        ("messagequeuednativetwo", "Second queued message.", "queue"),
+        (
+            "messagesteerednative",
+            "Steer after the full tool batch.",
+            "steer",
+        ),
+    ] {
+        let response = client
+            .post(format!("http://happy/v0/agents/{id}/send"))
+            .bearer_auth(&token)
+            .json(&send(message, text, delivery))
+            .send()
+            .await
+            .expect("queued send");
+        assert_eq!(response.status(), 202);
+        let pending: Value = response.json().await.expect("pending message");
+        assert_eq!(pending["message"]["status"], "pending");
+        assert_eq!(pending["message"]["runId"], Value::Null);
+    }
+    let arguments=json!({"cmd":"printf 'one new execution\\n' | tee -a new-flow-count","yield_time_ms":1000,"max_output_tokens":1000}).to_string();
+    initial.respond.send(vec![json!({"type":"response.output_item.added","item":{"type":"function_call","id":"native-item","call_id":"native-new-flow-call","name":"exec_command"}}),json!({"type":"response.output_item.done","item":{"type":"function_call","id":"native-item","call_id":"native-new-flow-call","name":"exec_command","arguments":arguments}}),json!({"type":"response.completed","response":{"id":"native-tool-response","output":[],"usage":{"input_tokens":10,"output_tokens":2}}})]).expect("tool-producing response");
+    let steered = exchange(&mut requests).await;
+    let context = steered.request.to_string();
+    assert!(context.contains("native-new-flow-call"));
+    assert!(context.contains("one new execution"));
+    assert!(context.contains("Steer after the full tool batch."));
+    assert!(!context.contains("First queued message."));
+    steered
+        .respond
+        .send(text_response("Steering completed."))
+        .expect("steering response");
+    let queued = exchange(&mut requests).await;
+    let context = queued.request.to_string();
+    assert!(context.contains("First queued message."));
+    assert!(context.contains("Second queued message."));
+    queued
+        .respond
+        .send(text_response("Both queued messages completed."))
+        .expect("queued response");
+    let page = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let page: Value = client
+                .get(format!("http://happy/v0/agents/{id}/messages"))
+                .bearer_auth(&token)
+                .send()
+                .await
+                .expect("public history")
+                .json()
+                .await
+                .expect("page");
+            if page["runs"].as_array().is_some_and(|runs| {
+                runs.len() == 3 && runs.iter().all(|run| run["status"] != "running")
+            }) {
+                break page;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("three settled public runs");
+    assert_eq!(page["runs"][0]["id"], "messagenewnativeflow");
+    assert_eq!(page["runs"][0]["status"], "aborted");
+    assert_eq!(page["runs"][0]["reason"], "steering");
+    assert_eq!(page["runs"][1]["id"], "messagesteerednative");
+    assert_eq!(page["runs"][1]["status"], "completed");
+    assert_eq!(page["runs"][2]["id"], "messagequeuednativeone");
+    assert_eq!(
+        page["runs"][2]["messages"][1]["id"],
+        "messagequeuednativetwo"
+    );
+    let mut duplicate = send("messagenewnativeflow", "Ignored duplicate body.", "queue");
+    duplicate["mode"]["providerId"] = json!("removed-provider");
+    let response = client
+        .post(format!("http://happy/v0/agents/{id}/send"))
+        .bearer_auth(&token)
+        .json(&duplicate)
+        .send()
+        .await
+        .expect("idempotent send after route removal");
+    assert_eq!(response.status(), 202);
+    let message: Value = response.json().await.expect("accepted duplicate");
+    assert_eq!(message["message"]["status"], "accepted");
+    assert_eq!(message["message"]["mode"], mode);
+    assert_eq!(
+        message["message"]["clientMetadata"],
+        json!({"opaque":{"kept":true}})
+    );
+    assert_eq!(
+        std::fs::read_to_string(
+            installation
+                ._directory
+                .path()
+                .join("workspace/new-flow-count")
+        )
+        .expect("real generated tool"),
+        "one new execution\n"
+    );
+    let events: Value = client
+        .get("http://happy/v0/events?limit=1000")
+        .bearer_auth(&token)
+        .send()
+        .await
+        .expect("run transitions")
+        .json()
+        .await
+        .expect("events");
+    let transitions = events["events"]
+        .as_array()
+        .expect("event array")
+        .iter()
+        .filter(|event| event["type"] == "run.boundary")
+        .collect::<Vec<_>>();
+    assert_eq!(transitions.len(), 1);
+    assert_eq!(
+        transitions[0]["payload"]["finishedRun"]["id"],
+        "messagenewnativeflow"
+    );
+    assert_eq!(
+        transitions[0]["payload"]["startedRun"]["id"],
+        "messagesteerednative"
+    );
+    provider
+        .await
+        .expect("all three genuine inferences completed");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn explicit_tool_request_keeps_three_messages_and_concurrent_retries_do_not_repeat_work() {
+    let (endpoint, mut requests, provider) = scripted_provider(1).await;
+    let installation = Installation::new();
+    installation.seed(&endpoint);
+    let database =
+        Connection::open(installation.home.join("agent/agent.sqlite")).expect("original catalog");
+    database
+        .execute(
+            "DELETE FROM happy_agent_values WHERE owner_id=?1 OR (owner_id='' AND key=?2)",
+            params![AGENT, format!("agentSystem.config.{AGENT}")],
+        )
+        .expect("remove fixture agent");
+    database
+        .execute(
+            "DELETE FROM happy_agent_module_project_root_agents WHERE agent_id=?1",
+            [AGENT],
+        )
+        .expect("empty roots");
+    drop(database);
+    installation.command("start");
+    let (client, token) = installation.client();
+    let agent = "agentexplicitnative";
+    let message = "messageexplicitnative";
+    let created = client
+        .post("http://happy/v0/agents")
+        .bearer_auth(&token)
+        .json(&json!({"workspaceId":WORKSPACE,"id":agent}))
+        .send()
+        .await
+        .expect("create");
+    assert_eq!(created.status(), 201);
+    let mode = json!({"providerId":"fixture","modelId":"openai/gpt-5.6-sol","effort":"medium","serviceTier":null,"permissionMode":"full_access"});
+    let body = json!({"id":message,"text":"Run the requested tool before answering.","profile":"old-profile","mode":mode,"clientMetadata":{"userId":"client-owned-untrusted","value":"opaque-client-metadata"},"content":[{"type":"tool_call_request","name":"exec_command","arguments":{"cmd":"printf 'one explicit execution\\n' | tee -a explicit-count","yield_time_ms":1000,"max_output_tokens":1000}}]});
+    let sent = client
+        .post(format!("http://happy/v0/agents/{agent}/send"))
+        .bearer_auth(&token)
+        .json(&body)
+        .send()
+        .await
+        .expect("explicit request");
+    assert_eq!(sent.status(), 202);
+    let inference = exchange(&mut requests).await;
+    let context = inference.request.to_string();
+    assert!(!context.contains("tool_call_request"));
+    assert!(!context.contains("opaque-client-metadata"));
+    assert!(context.contains("one explicit execution"));
+    let page: Value = client
+        .get(format!("http://happy/v0/agents/{agent}/messages"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .expect("history before inference completes")
+        .json()
+        .await
+        .expect("page");
+    let messages = page["runs"][0]["messages"]
+        .as_array()
+        .expect("two messages");
+    assert_eq!(messages.len(), 2);
+    assert_eq!(messages[0]["id"], message);
+    assert_eq!(messages[0]["metadata"], json!({}));
+    assert_eq!(messages[0]["clientMetadata"], body["clientMetadata"]);
+    assert_eq!(messages[0]["content"][1], body["content"][0]);
+    let call = messages[1]["content"][0]["id"]
+        .as_str()
+        .expect("stable requested call")
+        .to_owned();
+    assert_eq!(messages[1]["id"], call);
+    assert_eq!(messages[1]["content"][0]["status"], "completed");
+    assert!(context.contains(&call));
+    let mut replay = body.clone();
+    replay["text"] = json!("Changed duplicate text.");
+    replay["mode"]["providerId"] = json!("unavailable-provider");
+    replay["mode"]["modelId"] = json!("unavailable-model");
+    let path = format!("http://happy/v0/agents/{agent}/send");
+    let (first, second) = tokio::join!(
+        client.post(&path).bearer_auth(&token).json(&replay).send(),
+        client.post(&path).bearer_auth(&token).json(&replay).send()
+    );
+    for response in [first, second] {
+        let response = response.expect("concurrent retry");
+        assert_eq!(response.status(), 202);
+        let replay: Value = response.json().await.expect("original resource");
+        assert_eq!(replay["message"], messages[0]);
+    }
+    let mut invalid = replay;
+    invalid["mutationId"] = json!("not-accepted-by-send");
+    let response = client
+        .post(&path)
+        .bearer_auth(&token)
+        .json(&invalid)
+        .send()
+        .await
+        .expect("strict duplicate validation");
+    assert_eq!(response.status(), 400);
+    inference
+        .respond
+        .send(text_response("Explicit tool completed."))
+        .expect("one provider reply");
+    let page = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let page: Value = client
+                .get(format!("http://happy/v0/agents/{agent}/messages"))
+                .bearer_auth(&token)
+                .send()
+                .await
+                .expect("final history")
+                .json()
+                .await
+                .expect("page");
+            if page["runs"][0]["status"] == "completed" {
+                break page;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("completed run");
+    let messages = page["runs"][0]["messages"]
+        .as_array()
+        .expect("three messages");
+    assert_eq!(messages.len(), 3);
+    assert_eq!(messages[1]["id"], call);
+    assert_ne!(messages[2]["id"], call);
+    assert_eq!(
+        std::fs::read_to_string(
+            installation
+                ._directory
+                .path()
+                .join("workspace/explicit-count")
+        )
+        .expect("single real tool effect"),
+        "one explicit execution\n"
+    );
+    installation.command("stop");
+    installation.command("start");
+    let (_, token) = installation.client();
+    let restored: Value = client
+        .get(format!("http://happy/v0/agents/{agent}/messages"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .expect("restored history")
+        .json()
+        .await
+        .expect("page");
+    assert_eq!(restored["runs"], page["runs"]);
+    assert_eq!(
+        std::fs::read_to_string(
+            installation
+                ._directory
+                .path()
+                .join("workspace/explicit-count")
+        )
+        .expect("no restart replay"),
+        "one explicit execution\n"
+    );
+    provider.await.expect("one provider request only");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn provider_failure_finishes_the_original_run_as_failed_and_survives_restart() {
+    let (endpoint, mut requests, provider) = scripted_provider(1).await;
+    let installation = Installation::new();
+    installation.seed(&endpoint);
+    installation.command("start");
+    let inference = exchange(&mut requests).await;
+    inference.respond.send(vec![json!({"type":"response.failed","response":{"error":{"code":"invalid_request","message":"Deterministic provider failure."}}})]).expect("failed inference response");
+    let (client, token) = installation.client();
+    let page = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let page: Value = client
+                .get(format!("http://happy/v0/agents/{AGENT}/messages"))
+                .bearer_auth(&token)
+                .send()
+                .await
+                .expect("history")
+                .json()
+                .await
+                .expect("page");
+            if page["runs"][0]["status"] != "running" {
+                break page;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("failed run settlement");
+    assert_eq!(page["runs"][0]["status"], "failed");
+    assert_eq!(page["runs"][0]["reason"], "error");
+    let messages = page["runs"][0]["messages"].as_array().expect("messages");
+    assert_eq!(messages.last().expect("durable error")["role"], "service");
+    assert!(
+        messages.last().expect("durable error")["content"]
+            .to_string()
+            .contains("The provider rejected the inference request.")
+    );
+    installation.command("stop");
+    installation.command("start");
+    let (_, token) = installation.client();
+    let restored: Value = client
+        .get(format!("http://happy/v0/agents/{AGENT}/messages"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .expect("restored failure")
+        .json()
+        .await
+        .expect("page");
+    assert_eq!(restored["runs"], page["runs"]);
+    provider.await.expect("one failed inference");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn explicit_complex_arguments_are_accepted_retained_and_fail_the_tool_before_execution() {
+    let (endpoint, mut requests, provider) = scripted_provider(1).await;
+    let installation = Installation::new();
+    installation.seed(&endpoint);
+    let database =
+        Connection::open(installation.home.join("agent/agent.sqlite")).expect("original catalog");
+    database
+        .execute(
+            "DELETE FROM happy_agent_values WHERE owner_id=?1 OR (owner_id='' AND key=?2)",
+            params![AGENT, format!("agentSystem.config.{AGENT}")],
+        )
+        .expect("empty original catalog");
+    database
+        .execute(
+            "DELETE FROM happy_agent_module_project_root_agents WHERE agent_id=?1",
+            [AGENT],
+        )
+        .expect("empty project roots");
+    drop(database);
+    installation.command("start");
+    let (client, token) = installation.client();
+    let agent = "agentcomplexrequest";
+    let created = client
+        .post("http://happy/v0/agents")
+        .bearer_auth(&token)
+        .json(&json!({"workspaceId":WORKSPACE,"id":agent}))
+        .send()
+        .await
+        .expect("create");
+    assert_eq!(created.status(), 201);
+    let mut nested = json!(true);
+    for _ in 0..9 {
+        nested = json!({"child":nested});
+    }
+    let control = json!({"type":"tool_call_request","name":"exec_command","arguments":{"cmd":"printf unexpected > complex-side-effect","complex":nested}});
+    let body = json!({"id":"messagecomplexrequest","text":"Handle this requested tool.","profile":null,"mode":{"providerId":"fixture","modelId":"openai/gpt-5.6-sol","effort":"medium","serviceTier":null,"permissionMode":"full_access"},"content":[control]});
+    let response = client
+        .post(format!("http://happy/v0/agents/{agent}/send"))
+        .bearer_auth(&token)
+        .json(&body)
+        .send()
+        .await
+        .expect("accept explicit input");
+    assert_eq!(response.status(), 202);
+    let inference = exchange(&mut requests).await;
+    assert!(
+        inference
+            .request
+            .to_string()
+            .contains("Tool arguments exceed the supported size or complexity limits."),
+        "ordinary failed result reaches inference: {}",
+        inference.request
+    );
+    let page: Value = client
+        .get(format!("http://happy/v0/agents/{agent}/messages"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .expect("history")
+        .json()
+        .await
+        .expect("page");
+    let messages = page["runs"][0]["messages"].as_array().expect("messages");
+    assert_eq!(messages.len(), 2);
+    assert_eq!(messages[0]["content"][1], control);
+    assert_eq!(messages[1]["content"][0]["arguments"], control["arguments"]);
+    assert_eq!(messages[1]["content"][0]["status"], "failed");
+    assert!(
+        !installation
+            ._directory
+            .path()
+            .join("workspace/complex-side-effect")
+            .exists()
+    );
+    inference
+        .respond
+        .send(text_response("The requested arguments were too complex."))
+        .expect("normal continuation");
+    provider.await.expect("one continuation inference");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn explicit_arguments_larger_than_private_event_limit_still_enter_canonical_history() {
+    let installation = Installation::new();
+    installation.seed("http://127.0.0.1:1/v1");
+    let database =
+        Connection::open(installation.home.join("agent/agent.sqlite")).expect("original catalog");
+    database
+        .execute(
+            "DELETE FROM happy_agent_values WHERE owner_id=?1 OR (owner_id='' AND key=?2)",
+            params![AGENT, format!("agentSystem.config.{AGENT}")],
+        )
+        .expect("empty original catalog");
+    database
+        .execute(
+            "DELETE FROM happy_agent_module_project_root_agents WHERE agent_id=?1",
+            [AGENT],
+        )
+        .expect("empty project roots");
+    drop(database);
+    installation.command("start");
+    let (client, token) = installation.client();
+    let agent = "agentlargerequest";
+    let created = client
+        .post("http://happy/v0/agents")
+        .bearer_auth(&token)
+        .json(&json!({"workspaceId":WORKSPACE,"id":agent}))
+        .send()
+        .await
+        .expect("create");
+    assert_eq!(created.status(), 201);
+    let control = json!({"type":"tool_call_request","name":"exec_command","arguments":{"cmd":"printf unexpected > large-side-effect","value":"x".repeat(6 * 1024 * 1024)}});
+    let body = json!({"id":"messagelargerequest","text":"Handle this requested tool.","profile":null,"mode":{"providerId":"fixture","modelId":"openai/gpt-5.6-sol","effort":"medium","serviceTier":null,"permissionMode":"full_access"},"content":[control]});
+    let response = client
+        .post(format!("http://happy/v0/agents/{agent}/send"))
+        .bearer_auth(&token)
+        .json(&body)
+        .send()
+        .await
+        .expect("accept large explicit input");
+    let status = response.status();
+    let accepted: Value = response.json().await.expect("accepted resource");
+    assert_eq!(status, 202, "{accepted}");
+    assert_eq!(accepted["message"]["content"][1], control);
+    let page = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let page: Value = client
+                .get(format!("http://happy/v0/agents/{agent}/messages"))
+                .bearer_auth(&token)
+                .send()
+                .await
+                .expect("history")
+                .json()
+                .await
+                .expect("page");
+            if page["runs"][0]["messages"]
+                .as_array()
+                .is_some_and(|messages| {
+                    messages.len() >= 2 && messages[1]["content"][0]["status"] == "failed"
+                })
+            {
+                break page;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("failed tool preserves accepted input");
+    assert_eq!(page["runs"][0]["messages"][0]["content"][1], control);
+    assert_eq!(
+        page["runs"][0]["messages"][1]["content"][0]["arguments"],
+        control["arguments"]
+    );
+    assert!(
+        page["runs"][0]["messages"][1]["content"][0]["result"]["output"]
+            .as_str()
+            .expect("failed result")
+            .contains("Tool arguments exceed the supported size or complexity limits.")
+    );
+    assert!(
+        !installation
+            ._directory
+            .path()
+            .join("workspace/large-side-effect")
+            .exists()
+    );
+    let events: Value = client
+        .get("http://happy/v0/events?limit=1000")
+        .bearer_auth(&token)
+        .send()
+        .await
+        .expect("public journal")
+        .json()
+        .await
+        .expect("events");
+    let pending = events["events"]
+        .as_array()
+        .expect("events")
+        .iter()
+        .find(|event| {
+            event["type"] == "message.created"
+                && event["payload"]["message"]["id"] == "messagelargerequest"
+        })
+        .expect("exact public pending event");
+    assert_eq!(pending["payload"]["message"]["content"][1], control);
+}

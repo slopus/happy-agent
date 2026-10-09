@@ -44,6 +44,26 @@ struct Snapshot {
     open_calls: Vec<Value>,
     native_ids: BTreeMap<String, String>,
 }
+#[derive(Debug)]
+pub struct AgentRequestError {
+    pub status: u16,
+    pub code: &'static str,
+    pub message: &'static str,
+}
+impl std::fmt::Display for AgentRequestError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.message)
+    }
+}
+impl std::error::Error for AgentRequestError {}
+fn request_error(status: u16, code: &'static str, message: &'static str) -> anyhow::Error {
+    AgentRequestError {
+        status,
+        code,
+        message,
+    }
+    .into()
+}
 impl AgentSystemModule {
     // Keep the feature dependency graph explicit rather than injecting a host.
     #[expect(clippy::too_many_arguments)]
@@ -147,6 +167,111 @@ impl AgentSystemModule {
         let agents = self.clone();
         self.runtime.transact(move|ctx|Ok(agents.configuration(ctx,&id)?.map(|configuration|json!({"mode":configuration["metadata"].get("lastMode").cloned().unwrap_or(Value::Null)})))).await
     }
+    pub async fn create(self: &Arc<Self>, body: Value) -> Result<Value> {
+        if !self.schemas.valid("agentCreate", &body)? {
+            return Err(request_error(
+                400,
+                "invalid_request",
+                "The agent creation request is invalid.",
+            ));
+        }
+        let id = body["id"]
+            .as_str()
+            .map_or_else(cuid2::create_id, str::to_owned);
+        let agents = self.clone();
+        let identity = id.clone();
+        self.runtime.transact(move|ctx|{
+            if agents.configuration(ctx,&identity)?.is_some(){return Ok(());}
+            let workspace=body["workspaceId"].as_str().context("The workspace identifier is missing.")?;
+            let scope=agents.projects.root_workspace(ctx,workspace)?.ok_or_else(||request_error(404,"not_found","The workspace was not found."))?;
+            if scope["status"]!="active" {return Err(request_error(409,"conflict","The workspace is not available."));}
+            if scope["runnerId"]!="" {return Err(request_error(409,"not_initialized","Native runner-backed agent creation has not been migrated yet."));}
+            let configuration=agents.config.agent_configuration(scope["root"].as_str().context("The workspace root is missing.")?,workspace,workspace,body["title"].as_str())?;
+            anyhow::ensure!(agents.schemas.valid("agentConfig",&configuration)?,"The new agent configuration is invalid.");
+            write(ctx,"",&format!("agentSystem.config.{identity}"),&configuration)?;write(ctx,&identity,"agentConfig",&configuration)?;
+            let attached=agents.projects.attach_agent(ctx,workspace,&identity)?;
+            let mut resources=Vec::new();for id in attached["agentIds"].as_array().context("The agent series is invalid.")? {if let Some(resource)=agents.resource(ctx,id.as_str().context("The series agent identifier is invalid.")?)?{resources.push(resource);}}
+            for (kind,field) in [("project.updated","projectId"),("workspace.updated","workspaceId")] {
+                let mut payload=json!({field:workspace,"previousVersion":attached["previousVersion"],"version":attached["version"],"changes":{"agents":resources,"updatedAt":attached["updatedAt"]}});
+                if let Some(mutation)=body.get("mutationId"){payload["mutationId"]=mutation.clone();}
+                agents.events.record(ctx,None,kind,payload)?;
+            }
+            let resource=agents.resource(ctx,&identity)?.context("The created agent disappeared.")?;
+            agents.events.record_agent_created(ctx,&identity,resource,body.get("mutationId"))?;Ok(())
+        }).await?;
+        self.focused(id)
+            .await?
+            .context("The created agent disappeared.")
+    }
+    fn check_sendable(&self, ctx: &Context<'_>, id: &str) -> Result<()> {
+        let agent = self
+            .resource(ctx, id)?
+            .ok_or_else(|| request_error(404, "not_found", "The agent was not found."))?;
+        if agent["canSendMessages"] != true {
+            return Err(request_error(
+                409,
+                "conflict",
+                "The agent cannot accept user messages.",
+            ));
+        }
+        Ok(())
+    }
+    pub async fn assert_sendable(self: &Arc<Self>, id: String) -> Result<()> {
+        let agents = self.clone();
+        self.runtime
+            .transact(move |ctx| agents.check_sendable(ctx, &id))
+            .await
+    }
+    pub async fn send(self: &Arc<Self>, id: String, body: Value) -> Result<Value> {
+        if !self.schemas.valid("agentSend", &body)? {
+            return Err(request_error(
+                400,
+                "invalid_request",
+                "The message request is invalid.",
+            ));
+        }
+        let agents = self.clone();
+        let agent = id.clone();
+        let cursor = self.events.cursor();
+        let(result,wake)=self.runtime.transact(move|ctx|{
+            agents.check_sendable(ctx,&agent)?;
+            let id=body["id"].as_str().map_or_else(cuid2::create_id,str::to_owned);
+            if let Some(message)=agents.history.existing(ctx,&agent,&id)? {
+                if message["role"]!="user" {return Err(request_error(409,"conflict","The message ID is already in use."));}
+                return Ok((json!({"message":agents.history.message_resource(&message,false),"cursor":cursor}),false));
+            }
+            if let Some(message)=agents.history.pending(ctx,&agent,&id)? {return Ok((json!({"message":agents.history.pending_resource(&message),"cursor":cursor}),false));}
+            if !agents.config.mode_available(&body["mode"]){return Err(request_error(400,"invalid_request","The selected provider, model, effort, or service tier is unavailable."));}
+            let delivery=body["delivery"].as_str().unwrap_or("queue");let prefix=if delivery=="steer"{"steering."}else{"send."};
+            let mut content=vec![json!({"type":"text","text":body["text"]})];content.extend(body["content"].as_array().into_iter().flatten().cloned());
+            let blocks=content.iter().map(|block|{let mut block=block.clone();if block["type"]=="image"{block["mediaType"]=block["mimeType"].clone();block.as_object_mut().expect("validated image block").remove("mimeType");}block}).collect::<Vec<_>>();
+            let mut pending=json!({"id":id,"agentId":agent,"role":"user","status":"pending","delivery":delivery,"createdAt":now(),"blocks":blocks,"mode":body["mode"],"profile":null,"runId":null});
+            if let Some(metadata)=body.get("clientMetadata"){pending["clientMetadata"]=metadata.clone();}
+            agents.history.queue(ctx,&agent,&pending)?;
+            let mut metadata=json!({"messageOrigin":"user","mode":body["mode"]});if let Some(client)=body.get("clientMetadata"){metadata["clientMetadata"]=client.clone();}
+            let options=json!({"provider":body["mode"]["providerId"],"model":body["mode"]["modelId"],"effort":body["mode"]["effort"],"serviceTier":body["mode"]["serviceTier"],"permissionMode":body["mode"]["permissionMode"],"profile":null});
+            let queued=json!({"id":id,"message":{"role":"user","content":content},"metadata":metadata,"options":options});
+            anyhow::ensure!(agents.schemas.valid("queuedInput",&queued)?,"The queued input is invalid.");
+            let last:Option<String>=ctx.database().query_row("SELECT max(key) FROM happy_agent_values WHERE owner_id=?1 AND substr(key,1,length(?2))=?2",params![agent,prefix],|row|row.get(0))?;
+            let queue_timestamp=format!("{:014}",now());let(mut slot,mut sequence)=(queue_timestamp.clone(),0u64);
+            if let Some(last)=last {let parts=last.strip_prefix(prefix).context("The queue key is invalid.")?.split_once('.').context("The queue key is invalid.")?;if queue_timestamp.as_str()<=parts.0 {slot=parts.0.into();sequence=parts.1.parse::<u64>()?+1;}}
+            let key=format!("{prefix}{slot}.{sequence:06}");
+            ctx.database().execute("INSERT INTO happy_agent_values(owner_id,key,value_json) VALUES(?1,?2,'true')",params![agent,format!("message.{id}")])?;
+            ctx.database().execute("INSERT INTO happy_agent_values(owner_id,key,value_json) VALUES(?1,?2,?3)",params![agent,key,queued.to_string()])?;
+            if agents.owed(ctx,&agent)?.is_none(){write(ctx,&agent,"owed",&json!({"stage":"inference","loopId":cuid2::create_id()}))?;}
+            let mut configuration=agents.configuration(ctx,&agent)?.context("The agent disappeared during admission.")?;
+            if !configuration["metadata"].is_object(){configuration["metadata"]=json!({});}
+            configuration["metadata"]["lastMode"]=body["mode"].clone();configuration["metadata"]["updatedAt"]=json!(now());
+            write(ctx,&agent,"agentConfig",&configuration)?;
+            let public=agents.history.pending_resource(&pending);
+            agents.events.record_history_message(ctx,&agent,"message.created",Value::Null,public.clone())?;
+            Ok((json!({"message":public,"cursor":cursor}),true))
+        }).await?;
+        if wake {
+            self.start_worker(id);
+        }
+        Ok(result)
+    }
     pub async fn messages(
         self: &Arc<Self>,
         id: String,
@@ -208,7 +333,7 @@ impl AgentSystemModule {
             .as_ref()
             .map(|association| association.1.clone());
         Ok(Some(
-            json!({"id":id,"workspaceId":association.map(|association|association.0).unwrap_or_default(),"parentAgentId":parent,"subtask":false,"subtasks":[],"subtaskOrderKey":null,"userVisible":order.is_some(),"managedByAnotherAgent":parent.is_some(),"canSendMessages":parent.is_none()&&archived.is_null(),"title":metadata.get("title").cloned().unwrap_or(Value::Null),"titleStatus":if metadata["title"].is_string(){"ready"}else{"idle"},"status":status,"subagents":{"total":children,"running":0},"processes":{"running":0},"pendingQuestionId":null,"unread":metadata.get("unread").cloned().unwrap_or(Value::Null),"orderKey":order,"lastCursor":latest.as_ref().map_or_else(||self.events.cursor(),|event|event.0.clone()),"version":version,"createdAt":created,"updatedAt":updated,"archivedAt":archived}),
+            json!({"id":id,"workspaceId":association.map(|association|association.0).unwrap_or_default(),"parentAgentId":parent,"subtask":false,"subtasks":[],"subtaskOrderKey":null,"userVisible":order.is_some(),"managedByAnotherAgent":parent.is_some(),"canSendMessages":parent.is_none()&&archived.is_null(),"title":metadata.get("title").cloned().unwrap_or(Value::Null),"titleStatus":if metadata["title"].is_string(){"ready"}else{"idle"},"status":status,"subagents":{"total":children,"running":0},"processes":{"running":0},"pendingQuestionId":null,"unread":metadata.get("unread").cloned().unwrap_or(Value::Null),"orderKey":order,"lastCursor":self.events.agent_cursor(id),"version":version,"createdAt":created,"updatedAt":updated,"archivedAt":archived}),
         ))
     }
     fn snapshot(&self, ctx: &Context<'_>, id: &str) -> Result<Snapshot> {
@@ -306,9 +431,34 @@ impl AgentSystemModule {
                 restored = false;
                 continue;
             }
+            let can_accept_send = stage == "settlement"
+                || snapshot
+                    .context
+                    .messages
+                    .last()
+                    .is_none_or(|message| matches!(message, Message::Assistant { .. }));
+            if self.accept_queue(id, can_accept_send).await? {
+                restored = false;
+                continue;
+            }
             match stage {
                 "settlement" => {
-                    self.settle(id, "completed", "completed").await?;
+                    let agents = self.clone();
+                    let agent = id.to_owned();
+                    let stop = self
+                        .runtime
+                        .transact(move |ctx| {
+                            Ok(agents.events.active_run(ctx, &agent)?.map(|active| {
+                                active["stopReason"].as_str().unwrap_or("stop").to_owned()
+                            }))
+                        })
+                        .await?;
+                    let (status, reason) = match stop.as_deref() {
+                        Some("error") => ("failed", "error"),
+                        Some("aborted") => ("aborted", "abort"),
+                        _ => ("completed", "completed"),
+                    };
+                    self.settle(id, status, reason).await?;
                     return Ok(());
                 }
                 "inference" | "tools" => {
@@ -321,6 +471,78 @@ impl AgentSystemModule {
             }
             restored = false;
         }
+    }
+    async fn accept_queue(self: &Arc<Self>, id: &str, can_accept_send: bool) -> Result<bool> {
+        let agents = self.clone();
+        let agent = id.to_owned();
+        self.runtime.transact(move|ctx|{
+            let prefix=if ctx.database().query_row("SELECT EXISTS(SELECT 1 FROM happy_agent_values WHERE owner_id=?1 AND key GLOB 'steering.*')",[&agent],|row|row.get::<_,bool>(0))?{"steering."}else if can_accept_send{"send."}else{return Ok(false);};
+            let mut statement=ctx.database().prepare("SELECT key,value_json FROM happy_agent_values WHERE owner_id=?1 AND substr(key,1,length(?2))=?2 ORDER BY key LIMIT 513")?;
+            let rows=statement.query_map(params![agent,prefix],|row|Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
+            anyhow::ensure!(rows.len()<=512,"The pending input queue exceeds its restoration bound.");
+            if rows.is_empty(){return Ok(false);}
+            let mut batch=Vec::new();
+            for(key,encoded)in rows {
+                let entry:Value=serde_json::from_str(&encoded)?;anyhow::ensure!(agents.schemas.valid("queuedInput",&entry)?,"A durable queued input is invalid.");
+                let requested=entry["message"]["content"].as_array().into_iter().flatten().any(|block|block["type"]=="tool_call_request");batch.push((key,entry));if requested{break;}
+            }
+            let mut settings=read(ctx,&agent,"settings")?.unwrap_or(json!({"profile":null,"permissionMode":"auto"}));
+            for(_,entry)in &batch {
+                for field in ["provider","model","effort","permissionMode"] {if let Some(value)=entry["options"].get(field){settings[field]=value.clone();}}
+                if let Some(tier)=entry["options"].get("serviceTier") {if tier.is_null(){settings.as_object_mut().context("Agent settings are invalid.")?.remove("serviceTier");}else{settings["serviceTier"]=tier.clone();}}
+                settings["profile"]=Value::Null;
+            }
+            let mut run=batch[0].1["id"].as_str().context("The accepted message identifier is missing.")?.to_owned();
+            let mut finished=None;
+            let mut prior_ids=Vec::new();let mut new_run=true;
+            if let Some(previous)=agents.events.active_run(ctx,&agent)? {
+                if previous["hasProviderEvent"]!=true {
+                    run=previous["runId"].as_str().context("The unstarted run identity is missing.")?.to_owned();
+                    prior_ids=previous["acceptedMessageIds"].as_array().context("The accepted message identities are invalid.")?.iter().map(|id|id.as_str().map(str::to_owned).context("The accepted message identity is invalid.")).collect::<Result<Vec<_>>>()?;
+                    new_run=false;
+                }else{
+                    finished=Some(agents.history.finish_run(ctx,&agent,previous["runId"].as_str().context("The previous run identity is missing.")?,if prefix=="steering."{"aborted"}else{"completed"},if prefix=="steering."{"steering"}else{"completed"})?);
+                }
+            }
+            let mut accepted_ids=Vec::new();
+            for(key,entry)in &batch {
+                let id=entry["id"].as_str().context("The accepted message identifier is missing.")?;
+                let pending=agents.history.pending(ctx,&agent,id)?;
+                let created=pending.as_ref().and_then(|pending|pending["createdAt"].as_u64()).unwrap_or_else(now);
+                if accepted_ids.is_empty() && new_run{agents.history.begin_run(ctx,&agent,&run,created)?;}
+                accepted_ids.push(id.to_owned());
+                let metadata=entry.get("metadata").cloned().unwrap_or(json!({}));
+                let content=entry["message"]["content"].as_array().context("The queued input content is invalid.")?;
+                let mut private=entry["message"].clone();private["content"]=json!(content.iter().filter(|block|block["type"]!="tool_call_request").cloned().collect::<Vec<_>>());
+                agents.append_record(ctx,&agent,&json!({"type":"user","id":id,"message":private,"metadata":metadata}))?;
+                let mut message=if let Some(pending)=pending {
+                    let mut message=pending;message["recordId"]=json!(id);message["role"]=json!("user");message["at"]=json!(created);message["runId"]=json!(run);
+                    for field in ["id","agentId","status","createdAt"] {message.as_object_mut().context("The pending message is invalid.")?.remove(field);}message
+                }else {
+                    let blocks=content.iter().map(|block|{let mut block=block.clone();if block["type"]=="image"{block["mediaType"]=block["mimeType"].clone();block.as_object_mut().expect("validated image").remove("mimeType");}block}).collect::<Vec<_>>();
+                    json!({"recordId":id,"role":if metadata["messageOrigin"]=="user"{"user"}else{"agent"},"at":created,"runId":run,"blocks":blocks,"delivery":if prefix=="steering."{"steer"}else{"queue"},"profile":null})
+                };
+                if message["role"]=="user" && message.get("mode").is_none() && let Some(mode)=metadata.get("mode"){message["mode"]=mode.clone();}
+                agents.history.accept(ctx,&agent,&message)?;delete(ctx,&agent,key)?;
+                if let Some(request)=content.iter().find(|block|block["type"]=="tool_call_request") {
+                    let call=cuid2::create_id();let arguments=request.get("arguments").cloned().unwrap_or(json!({}));
+                    let block=json!({"type":"tool_call","callId":call,"name":request["name"],"arguments":arguments.to_string()});
+                    agents.append_record(ctx,&agent,&json!({"type":"block","id":call,"block":block}))?;
+                    let mut requested=json!({"recordId":call,"role":"assistant","at":now(),"runId":run,"blocks":[{"type":"tool_call","callId":call,"name":request["name"],"arguments":arguments,"requested":true}]});attribution(&mut requested,&settings);agents.history.append(ctx,&agent,&requested)?;
+                }
+            }
+            write(ctx,&agent,"settings",&settings)?;
+            let mut owed=agents.owed(ctx,&agent)?.context("Acceptance has no owed loop identity.")?;owed["stage"]=json!("inference");owed["turnId"]=json!(cuid2::create_id());
+            for field in ["inferenceId","settlementId"] {owed.as_object_mut().context("The owed work is invalid.")?.remove(field);}write(ctx,&agent,"owed",&owed)?;
+            let all_ids=prior_ids.into_iter().chain(accepted_ids.iter().cloned()).collect::<Vec<_>>();
+            agents.events.store_active(ctx,&agent,&json!({"acceptedMessageIds":all_ids,"activeIndex":null,"activeKind":null,"argumentBuffers":{},"blocks":[],"callIndexes":{},"hasProviderEvent":false,"runId":run,"stopReason":"stop","text":""}))?;
+            let started=agents.history.run(ctx,&agent,&run)?;
+            if prefix=="steering." && let Some(finished)=finished {agents.events.record(ctx,Some(&agent),"run.boundary",json!({"agentId":agent,"finishedRun":finished,"startedRun":started,"acceptedMessageIds":accepted_ids}))?;}else {
+                if let Some(finished)=finished{agents.events.record(ctx,Some(&agent),"run.finished",json!({"agentId":agent,"run":finished}))?;}
+                agents.events.record(ctx,Some(&agent),"run.started",json!({"agentId":agent,"run":started,"acceptedMessageIds":accepted_ids}))?;
+            }
+            Ok(true)
+        }).await
     }
     fn flush_pending(&self, ctx: &Context<'_>, id: &str, settings: &Value) -> Result<()> {
         let prefix = format!("kv.{id}.run.module.history.");
@@ -579,6 +801,12 @@ impl AgentSystemModule {
         let settings = snapshot.settings;
         let ended = now().max(began);
         self.runtime.transact(move|ctx|{
+            if let Some(mut active)=agents.events.active_run(ctx,&agent)? {
+                active["hasProviderEvent"]=json!(true);
+                active["stopReason"]=json!(match &outcome {Outcome::Error{..}=>"error",Outcome::Cancelled=>"aborted",Outcome::Length{..}=>"length",_=>"stop"});
+                if let Outcome::Error{error}=&outcome {active["errorMessage"]=json!(error.to_string().chars().scan(0,|units,character|{*units+=character.len_utf16();(*units<=8192).then_some(character)}).collect::<String>());}else{active.as_object_mut().context("The active run is invalid.")?.remove("errorMessage");}
+                agents.events.store_active(ctx,&agent,&active)?;
+            }
             agents.flush_pending(ctx,&agent,&settings)?;
             let run=agents.events.run_id(ctx,&agent)?.context("Inference has no public run identity.")?;
             let (state,usage)=match &outcome {Outcome::Normal{usage}=>("normal",Some(usage)),Outcome::ToolCall{usage}=>("tool_call",Some(usage)),Outcome::Length{usage}=>("length",Some(usage)),Outcome::Cancelled=>("cancelled",None),Outcome::Error{..}=>("error",None)};

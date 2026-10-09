@@ -1,10 +1,9 @@
 use super::{
-    agents::AgentSystemModule,
+    agents::{AgentRequestError, AgentSystemModule},
     config::{ConfigModule, Document},
     events::{Entry, EventsModule},
     identity::now,
     lifecycle::LifecycleModule,
-    runtime::RuntimeModule,
     schemas::Schemas,
 };
 use bytes::Bytes;
@@ -29,7 +28,6 @@ pub struct ApiModule {
     config: Arc<ConfigModule>,
     pub lifecycle: Arc<LifecycleModule>,
     token: OnceLock<String>,
-    runtime: OnceLock<Arc<RuntimeModule>>,
     schemas: Schemas,
     events: Arc<EventsModule>,
     agents: Arc<AgentSystemModule>,
@@ -46,7 +44,6 @@ impl ApiModule {
             config,
             lifecycle,
             token: OnceLock::new(),
-            runtime: OnceLock::new(),
             schemas: Schemas::new()?,
             events,
             agents,
@@ -57,17 +54,6 @@ impl ApiModule {
         self.token
             .set(token)
             .map_err(|_| anyhow::anyhow!("The API credential has already been prepared."))
-    }
-    pub fn start(&self, runtime: Arc<RuntimeModule>) {
-        let _ = self.runtime.set(runtime);
-    }
-    pub async fn close_runtime(&self) -> anyhow::Result<()> {
-        self.agents.close().await;
-        if let Some(runtime) = self.runtime.get() {
-            runtime.close().await?;
-        }
-        self.lifecycle.set_database_open(false);
-        Ok(())
     }
     pub fn begin_drain(&self) -> anyhow::Result<()> {
         // Capture the sticky transition and its journal position together with
@@ -167,21 +153,45 @@ impl ApiModule {
             }
             ("GET", "/v0/events") => self.events(&request),
             ("GET", "/v0/events/stream") => self.event_stream(&request),
-            _ if method == "GET" && path.starts_with("/v0/agents/") => self.agent(request).await,
+            ("POST", "/v0/agents") => match read_json(request).await {
+                Ok(body) => match self.agents.create(body).await {
+                    Ok(value) => response(201, value),
+                    Err(failure) => internal(failure),
+                },
+                Err(response) => response,
+            },
+            _ if ["GET", "POST"].contains(&method.as_str()) && path.starts_with("/v0/agents/") => {
+                self.agent(request).await
+            }
             _ => error(404, "not_found", "Not found."),
         };
         Ok(result)
     }
     async fn agent(&self, request: Request<Incoming>) -> Response<Body> {
-        let parts = request
-            .uri()
-            .path()
+        let path = request.uri().path().to_owned();
+        let parts = path
             .trim_start_matches("/v0/agents/")
             .split('/')
             .collect::<Vec<_>>();
         let id = parts[0];
         if !self.schemas.valid("cuid2", &json!(id)).unwrap_or(false) {
             return error(400, "invalid_request", "The agent identifier is invalid.");
+        }
+        if request.method() == "POST" {
+            if !matches!(parts.as_slice(), [_, "send"]) {
+                return error(404, "not_found", "Not found.");
+            }
+            if let Err(failure) = self.agents.assert_sendable(id.to_owned()).await {
+                return internal(failure);
+            }
+            let body = match read_json(request).await {
+                Ok(body) => body,
+                Err(response) => return response,
+            };
+            return match self.agents.send(id.to_owned(), body).await {
+                Ok(value) => response(202, value),
+                Err(failure) => internal(failure),
+            };
         }
         let result = match parts.as_slice() {
             [_] => self.agents.focused(id.to_owned()).await,
@@ -496,6 +506,9 @@ fn error(status: u16, code: &str, message: &str) -> Response<Body> {
     response(status, json!({"error":message,"code":code}))
 }
 fn internal(failure: anyhow::Error) -> Response<Body> {
+    if let Some(failure) = failure.downcast_ref::<AgentRequestError>() {
+        return error(failure.status, failure.code, failure.message);
+    }
     eprintln!("API request failed: {failure:#}");
     error(500, "internal", "An internal error occurred.")
 }

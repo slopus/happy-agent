@@ -48,6 +48,23 @@ impl HistoryModule {
         self.runtime.migrate("history", MIGRATIONS).await
     }
     pub fn append(&self, ctx: &Context<'_>, agent: &str, message: &Value) -> Result<()> {
+        self.append_inner(ctx, agent, message, true)
+    }
+    pub fn accept(&self, ctx: &Context<'_>, agent: &str, message: &Value) -> Result<()> {
+        self.append_inner(ctx, agent, message, false)?;
+        ctx.database().execute(
+            "DELETE FROM happy_agent_module_history_pending WHERE agent_id=?1 AND message_id=?2",
+            params![agent, message["recordId"].as_str()],
+        )?;
+        Ok(())
+    }
+    fn append_inner(
+        &self,
+        ctx: &Context<'_>,
+        agent: &str,
+        message: &Value,
+        publish: bool,
+    ) -> Result<()> {
         anyhow::ensure!(
             self.schemas.valid("historyMessage", message)?,
             "A durable history message is invalid."
@@ -73,8 +90,59 @@ impl HistoryModule {
         for block in blocks.iter().filter(|block| block["type"] == "tool_call") {
             ctx.database().execute("INSERT INTO happy_agent_module_history_tool_calls(agent_id,call_id,record_id) VALUES(?1,?2,?3)",params![agent,block["callId"].as_str(),message["recordId"].as_str()])?;
         }
-        self.events.record(ctx,Some(agent),"message.created",json!({"agentId":agent,"runId":message["runId"],"message":self.message_resource(message,false)}))?;
+        if publish {
+            self.events.record_history_message(
+                ctx,
+                agent,
+                "message.created",
+                message["runId"].clone(),
+                self.message_resource(message, false),
+            )?;
+        }
         Ok(())
+    }
+    pub fn begin_run(&self, ctx: &Context<'_>, agent: &str, id: &str, at: u64) -> Result<()> {
+        ctx.database().execute("INSERT INTO happy_agent_module_history_runs(agent_id,sequence,run_id,status,reason,started_at,ended_at) SELECT ?1,coalesce(max(sequence),-1)+1,?2,'running',NULL,?3,NULL FROM happy_agent_module_history_runs WHERE agent_id=?1",params![agent,id,i64::try_from(at)?])?;
+        Ok(())
+    }
+    pub fn pending(&self, ctx: &Context<'_>, agent: &str, id: &str) -> Result<Option<Value>> {
+        let value:Option<String>=ctx.database().query_row("SELECT message_json FROM happy_agent_module_history_pending WHERE agent_id=?1 AND message_id=?2",params![agent,id],|row|row.get(0)).optional()?;
+        value
+            .map(|value| {
+                let value: Value = serde_json::from_str(&value)?;
+                anyhow::ensure!(
+                    self.schemas.valid("historyPending", &value)?,
+                    "A durable pending message is invalid."
+                );
+                Ok(value)
+            })
+            .transpose()
+    }
+    pub fn queue(&self, ctx: &Context<'_>, agent: &str, pending: &Value) -> Result<()> {
+        anyhow::ensure!(
+            self.schemas.valid("historyPending", pending)?,
+            "The pending history message is invalid."
+        );
+        let count: i64 = ctx.database().query_row(
+            "SELECT count(*) FROM happy_agent_module_history_pending WHERE agent_id=?1",
+            [agent],
+            |row| row.get(0),
+        )?;
+        anyhow::ensure!(count < 512, "The pending history queue is full.");
+        anyhow::ensure!(
+            pending.to_string().len() <= 64 * 1024 * 1024,
+            "The pending message exceeds its durable byte limit."
+        );
+        ctx.database().execute("INSERT INTO happy_agent_module_history_pending(agent_id,position,message_id,message_json) SELECT ?1,coalesce(max(position),-1)+1,?2,?3 FROM happy_agent_module_history_pending WHERE agent_id=?1",params![agent,pending["id"].as_str(),pending.to_string()])?;
+        Ok(())
+    }
+    pub fn pending_resource(&self, pending: &Value) -> Value {
+        let mut message = pending.clone();
+        message["recordId"] = pending["id"].clone();
+        message["at"] = pending["createdAt"].clone();
+        let mut resource = self.message_resource(&message, false);
+        resource["status"] = json!("pending");
+        resource
     }
     pub fn complete_tool(
         &self,
@@ -112,7 +180,13 @@ impl HistoryModule {
             "The completed tool history is invalid."
         );
         ctx.database().execute("UPDATE happy_agent_module_history SET message_json=?3,search_text=?4,text_characters=?5,thinking_blocks=?6,tool_calls=?7,tool_results=?8 WHERE agent_id=?1 AND record_id=?2",params![agent,message["recordId"].as_str(),message.to_string(),search(message["blocks"].as_array().context("The history blocks are missing.")?),counters.2,counters.3,counters.4,counters.5])?;
-        self.events.record(ctx,Some(agent),"message.updated",json!({"agentId":agent,"runId":message["runId"],"message":self.message_resource(&message,false)}))?;
+        self.events.record_history_message(
+            ctx,
+            agent,
+            "message.updated",
+            message["runId"].clone(),
+            self.message_resource(&message, false),
+        )?;
         Ok(())
     }
     pub fn finish_run(

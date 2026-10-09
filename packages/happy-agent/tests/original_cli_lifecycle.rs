@@ -27,11 +27,83 @@ fn installation() -> tempfile::TempDir {
         .expect("temporary installation")
 }
 
+struct Foreground(std::process::Child);
+impl Drop for Foreground {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
 struct DaemonGuard<'a>(&'a Path);
 impl Drop for DaemonGuard<'_> {
     fn drop(&mut self) {
         let _ = command(self.0, &["kill"]);
     }
+}
+
+#[test]
+fn startup_health_is_served_while_database_restoration_waits() {
+    let temporary = installation();
+    let home = temporary.path().join(".happy");
+    let _guard = DaemonGuard(&home);
+    assert!(command(&home, &["start"]).status.success());
+    assert!(command(&home, &["stop"]).status.success());
+    let database =
+        rusqlite::Connection::open(home.join("agent/agent.sqlite")).expect("existing installation");
+    database
+        .execute_batch("BEGIN IMMEDIATE")
+        .expect("hold restoration's loader transaction");
+    let mut foreground = Foreground(
+        Command::new(env!("CARGO_BIN_EXE_happy-agent"))
+            .arg("run")
+            .env("HAPPY_HOME_DIR", &home)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("foreground daemon"),
+    );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    while !home.join("agent/server.sock").exists() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "daemon binds its starting listener"
+        );
+        assert!(
+            foreground.0.try_wait().expect("process status").is_none(),
+            "daemon is waiting for restoration"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let token = std::fs::read_to_string(home.join("agent/token")).expect("starting credential");
+    let mut socket = UnixStream::connect(home.join("agent/server.sock")).expect("starting socket");
+    socket
+        .set_read_timeout(Some(std::time::Duration::from_secs(1)))
+        .expect("bounded health read");
+    write!(socket,"GET /v0/health HTTP/1.1\r\nHost: happy\r\nAuthorization: Bearer {}\r\nConnection: close\r\n\r\n",token.trim()).expect("health request");
+    let mut response = String::new();
+    socket
+        .read_to_string(&mut response)
+        .expect("health is served during database restoration");
+    assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+    let (_, body) = response.split_once("\r\n\r\n").expect("health response");
+    let health: serde_json::Value = serde_json::from_str(body).expect("health JSON");
+    assert_eq!(health["ready"], false);
+    assert_eq!(health["status"], "starting");
+    assert_eq!(request(&home, Some(token.trim()), "GET", "/").0, 503);
+    database
+        .execute_batch("ROLLBACK")
+        .expect("release restoration");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while request(&home, Some(token.trim()), "GET", "/v0/health").1["ready"] != true {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "restoration publishes ready"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(command(&home, &["stop"]).status.success());
 }
 
 fn request(home: &Path, token: Option<&str>, method: &str, path: &str) -> (u16, serde_json::Value) {

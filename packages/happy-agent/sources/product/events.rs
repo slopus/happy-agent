@@ -30,6 +30,18 @@ pub struct EventsModule {
     journal: Mutex<Journal>,
     schemas: Schemas,
 }
+struct Publication {
+    durable: Value,
+    public: Value,
+}
+impl From<Value> for Publication {
+    fn from(public: Value) -> Self {
+        Self {
+            durable: public.clone(),
+            public,
+        }
+    }
+}
 impl EventsModule {
     pub fn new(runtime: Arc<RuntimeModule>) -> Result<Self> {
         Ok(Self {
@@ -75,6 +87,9 @@ impl EventsModule {
     pub fn cursor(&self) -> String {
         self.with_journal(|journal| journal.cursor().to_owned())
     }
+    pub fn agent_cursor(&self, id: &str) -> String {
+        self.with_journal(|journal| journal.agent_cursor(id).to_owned())
+    }
     pub fn record(
         self: &Arc<Self>,
         ctx: &Context<'_>,
@@ -87,7 +102,35 @@ impl EventsModule {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .next();
-        self.record_at(ctx, agent, kind, payload, id)
+        self.record_at(ctx, agent, kind, payload.into(), id, now())
+    }
+    pub fn record_history_message(
+        self: &Arc<Self>,
+        ctx: &Context<'_>,
+        agent: &str,
+        kind: &str,
+        run: Value,
+        message: Value,
+    ) -> Result<String> {
+        let durable = json!({"agentId":agent,"runId":run,"messageId":message["id"]});
+        anyhow::ensure!(
+            self.schemas.valid("historyEventReference", &durable)?,
+            "The history event reference is invalid."
+        );
+        let public = json!({"agentId":agent,"runId":run,"message":message});
+        let id = self
+            .versions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .next();
+        self.record_at(
+            ctx,
+            Some(agent),
+            kind,
+            Publication { durable, public },
+            id,
+            now(),
+        )
     }
     pub fn record_versioned(
         self: &Arc<Self>,
@@ -105,8 +148,38 @@ impl EventsModule {
             ctx,
             Some(agent),
             "agent.updated",
-            json!({"agentId":agent,"previousVersion":previous,"version":id,"changes":changes}),
+            json!({"agentId":agent,"previousVersion":previous,"version":id,"changes":changes})
+                .into(),
             id,
+            now(),
+        )
+    }
+    pub fn record_agent_created(
+        self: &Arc<Self>,
+        ctx: &Context<'_>,
+        id: &str,
+        mut agent: Value,
+        mutation: Option<&Value>,
+    ) -> Result<String> {
+        let version = self
+            .versions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .next();
+        let occurred = now();
+        agent["version"] = json!(version);
+        agent["updatedAt"] = json!(occurred);
+        let mut payload = json!({"agent":agent});
+        if let Some(mutation) = mutation {
+            payload["mutationId"] = mutation.clone();
+        }
+        self.record_at(
+            ctx,
+            Some(id),
+            "agent.created",
+            payload.into(),
+            version,
+            occurred,
         )
     }
     fn record_at(
@@ -114,10 +187,11 @@ impl EventsModule {
         ctx: &Context<'_>,
         agent: Option<&str>,
         kind: &str,
-        payload: Value,
+        payload: Publication,
         id: String,
+        occurred_at: u64,
     ) -> Result<String> {
-        let mut input = json!({"type":kind,"payload":payload});
+        let mut input = json!({"type":kind,"payload":payload.durable});
         if let Some(agent) = agent {
             input["agentId"] = json!(agent);
         }
@@ -125,8 +199,8 @@ impl EventsModule {
             self.schemas.valid("appendEvent", &input)?,
             "The event input is invalid."
         );
-        let occurred_at = i64::try_from(now())?;
-        let encoded = payload.to_string();
+        let occurred_at = i64::try_from(occurred_at)?;
+        let encoded = payload.durable.to_string();
         anyhow::ensure!(
             encoded.len() <= 5 * 1024 * 1024,
             "The event payload exceeds its allowed size."
@@ -148,9 +222,20 @@ impl EventsModule {
         }
         let events = self.clone();
         let kind = kind.to_owned();
+        let payload = payload.public;
         ctx.after_commit(move || {
             events.with_journal(|journal| {
-                journal.append(&kind, payload, None);
+                journal.append_with_cursor(
+                    &kind,
+                    |cursor| {
+                        let mut payload = payload;
+                        if kind == "agent.created" {
+                            payload["agent"]["lastCursor"] = json!(cursor);
+                        }
+                        payload
+                    },
+                    None,
+                );
             })
         })?;
         Ok(id)

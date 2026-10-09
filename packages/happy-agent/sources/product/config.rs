@@ -27,6 +27,7 @@ pub struct Paths {
 pub struct ConfigModule {
     pub paths: Paths,
     pub values: toml::Value,
+    catalogs: serde_json::Value,
 }
 
 pub struct ExecutionEnvironment {
@@ -63,28 +64,93 @@ impl Document {
 
 impl ConfigModule {
     pub fn context_window(&self, model: &str) -> Option<u64> {
-        match model {
-            "openai/gpt-6.1-sol"
-            | "openai/gpt-6-astra"
-            | "openai/gpt-6-sol"
-            | "openai/gpt-6-luna"
-            | "openai/gpt-5.6-sol"
-            | "openai/gpt-5.6-terra"
-            | "openai/gpt-5.6-luna"
-            | "openai/gpt-5.4" => Some(272000),
-            "anthropic/opus-5-5"
-            | "anthropic/opus-5"
-            | "anthropic/sonnet-5-5"
-            | "anthropic/sonnet-5"
-            | "anthropic/fable-5-1"
-            | "anthropic/fable-5"
-            | "anthropic/opus-4-8"
-            | "moonshotai/kimi-k3"
-            | "zai/glm-5.3" => Some(1000000),
-            "xai/grok-4.7" | "xai/grok-4.6" | "xai/grok-build" | "xai/grok-4.5" => Some(500000),
-            "xai/grok-composer-2.5-fast" => Some(200000),
-            _ => None,
+        self.catalogs
+            .as_object()?
+            .values()
+            .flat_map(|catalog| catalog.as_array().into_iter().flatten())
+            .find(|entry| entry["id"] == model)
+            .and_then(|entry| entry["contextWindow"].as_u64())
+    }
+    pub fn provider_enabled(&self, id: &str) -> bool {
+        let providers = self.values.get("providers");
+        let entry = providers.and_then(|providers| providers.get(id));
+        entry
+            .and_then(|entry| entry.get("enabled"))
+            .and_then(toml::Value::as_bool)
+            .or_else(|| {
+                providers
+                    .and_then(|providers| providers.get("default_enable"))
+                    .and_then(toml::Value::as_bool)
+            })
+            .unwrap_or_else(|| {
+                entry
+                    .and_then(|entry| entry.get("auto_enable"))
+                    .and_then(toml::Value::as_bool)
+                    == Some(true)
+            })
+    }
+    pub fn mode_available(&self, mode: &serde_json::Value) -> bool {
+        let Some(provider) = mode["providerId"].as_str() else {
+            return false;
+        };
+        if !self.provider_enabled(provider) {
+            return false;
         }
+        let entry = self
+            .values
+            .get("providers")
+            .and_then(|providers| providers.get(provider));
+        let field = |name: &str| entry.and_then(|entry| entry.get(name));
+        let kind = field("type")
+            .and_then(toml::Value::as_str)
+            .unwrap_or(provider);
+        let Some(model) = self
+            .catalogs
+            .get(kind)
+            .and_then(serde_json::Value::as_array)
+            .and_then(|catalog| catalog.iter().find(|entry| entry["id"] == mode["modelId"]))
+        else {
+            return false;
+        };
+        let model_id = model["id"].as_str().unwrap_or("");
+        if field("include_models")
+            .and_then(toml::Value::as_array)
+            .is_some_and(|models| !models.iter().any(|id| id.as_str() == Some(model_id)))
+            || field("exclude_models")
+                .and_then(toml::Value::as_array)
+                .is_some_and(|models| models.iter().any(|id| id.as_str() == Some(model_id)))
+        {
+            return false;
+        }
+        model["effortLevels"]
+            .as_array()
+            .is_some_and(|efforts| efforts.contains(&mode["effort"]))
+            && (mode["serviceTier"].is_null()
+                || model["serviceTiers"]
+                    .as_array()
+                    .is_some_and(|tiers| tiers.contains(&mode["serviceTier"])))
+    }
+    pub fn agent_configuration(
+        &self,
+        root: &str,
+        project: &str,
+        workspace: &str,
+        title: Option<&str>,
+    ) -> Result<serde_json::Value> {
+        use serde_json::json;
+        let root = PathBuf::from(root);
+        let created = super::identity::now();
+        let mut metadata = json!({"updatedAt":created,"version":1});
+        if let Some(title) = title {
+            metadata["title"] = json!(title);
+        }
+        let os_version = std::fs::read_to_string("/proc/sys/kernel/osrelease")
+            .unwrap_or_default()
+            .trim()
+            .to_owned();
+        Ok(
+            json!({"provenance":{"createdAt":created},"environment":{"osVersion":os_version,"platform":if cfg!(target_os="macos"){"darwin"}else if cfg!(windows){"win32"}else{"linux"},"workingDirectory":root,"shell":std::env::var("SHELL").unwrap_or_else(|_|"/bin/bash".into())},"metadata":metadata,"modules":{"compute":{"cwd":root,"secretScope":{"projectId":project,"workspaceId":workspace}}}}),
+        )
     }
     pub fn execution_environment(
         &self,
@@ -140,9 +206,7 @@ impl ConfigModule {
             .and_then(toml::Value::as_str)
             .unwrap_or(provider);
         anyhow::ensure!(
-            field("enabled")
-                .and_then(toml::Value::as_bool)
-                .unwrap_or(false),
+            self.provider_enabled(provider),
             "The selected inference provider is disabled."
         );
         let model = settings["model"]
@@ -319,7 +383,16 @@ impl ConfigModule {
         {
             bail!("The configured Happy Agent API token is invalid for this deployment.");
         }
-        Ok(Self { paths, values })
+        let catalogs = serde_json::from_str(include_str!("model_catalogs.json"))?;
+        anyhow::ensure!(
+            super::schemas::Schemas::new()?.valid("nativeCatalog", &catalogs)?,
+            "The curated native model catalog is invalid."
+        );
+        Ok(Self {
+            paths,
+            values,
+            catalogs,
+        })
     }
 
     pub fn team_enabled(&self) -> bool {

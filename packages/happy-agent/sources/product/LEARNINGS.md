@@ -40,3 +40,25 @@ to the public run; history reads all selected runs' usage in one grouped query.
 On Linux, a zombie main thread can coexist briefly with exiting worker threads that still hold
 database handles. The launcher now considers that daemon alive until its thread group has exited,
 so a successful kill command also means the canonical database ownership lock can be reclaimed.
+
+Create and send validate the complete original request before resolving an idempotent retry.
+An existing user message or pending input returns its original resource before checking whether
+its submitted provider is still available. Queue admission, the duplicate claim, pending history,
+and last mode are atomic. Steering waits for the current inference and its tool batch, then owns
+one run boundary; ordinary queued inputs share the next run and keep their individual modes.
+Explicit requests retain the public user control block while excluding it from provider input,
+and use one fresh call identity for the requested assistant message and its result.
+
+Provider failures must survive the inference-to-settlement boundary. The active run now retains
+its terminal reason, so error settlement finishes the archive as failed instead of completed.
+The error remains a human-readable service message, as required by the published client schema.
+
+Canonical History owns exact requested arguments, including inputs too large or complex to run.
+Those limits fail the accepted tool call before execution. Public message events retain the exact
+message, while private durable message events store a compact History reference to stay within
+their separate 5 MiB bound. Full original raw event and hook parity remains migration work.
+
+Health must answer while database restoration waits. The authenticated listener now serves
+starting health before restoration, and shutdown closes workers and storage even after failed
+initialization. Serialized TypeBox validators compile once into an immutable shared collection;
+compiling the same expanded schemas separately in every module delayed the starting listener.

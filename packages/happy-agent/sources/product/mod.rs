@@ -51,7 +51,7 @@ pub async fn run() -> Result<()> {
         usage.clone(),
     )?);
     let tools = Arc::new(tools::ToolsModule::new(config.clone())?);
-    let projects = Arc::new(projects::ProjectsModule::new(runtime.clone()));
+    let projects = Arc::new(projects::ProjectsModule::new(runtime.clone())?);
     let workspaces = Arc::new(workspaces::WorkspacesModule::new(runtime.clone()));
     let agents = Arc::new(agents::AgentSystemModule::new(
         config.clone(),
@@ -72,7 +72,8 @@ pub async fn run() -> Result<()> {
     )?);
     // Health is available before storage restoration, on the same authenticated listener.
     let transport = transport::TransportModule::bind(config.clone(), api.clone()).await?;
-    let result = async {
+    let server = tokio::spawn(transport.serve());
+    let initialized = async {
         runtime.load().await?;
         lifecycle.set_database_open(true);
         events.load().await?;
@@ -80,11 +81,23 @@ pub async fn run() -> Result<()> {
         history.load().await?;
         agents.load().await?;
         lifecycle.publish_pid()?;
-        api.start(runtime);
         lifecycle.ready()?;
-        transport.serve().await
+        Ok::<_, anyhow::Error>(())
     }
     .await;
-    lifecycle.cleanup()?;
-    result
+    if initialized.is_err() {
+        lifecycle.begin_shutdown();
+    }
+    let served = server
+        .await
+        .map_err(anyhow::Error::from)
+        .and_then(|result| result);
+    lifecycle.begin_shutdown();
+    agents.close().await;
+    let closed = runtime.close().await;
+    if closed.is_ok() {
+        lifecycle.set_database_open(false);
+    }
+    let cleaned = lifecycle.cleanup();
+    initialized.and(served).and(closed).and(cleaned)
 }
