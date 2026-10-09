@@ -17,6 +17,13 @@ history, usage, projection, serialization) and the response unchanged; a stage t
 run is the regression to look for. Trace instrumentation does not enable export on a deployed
 daemon or authorize its restart.
 
+## Projection checks are compiled once
+
+Profiles of concurrent desktop history loads showed the interpreted TypeBox check of each tool
+call's arguments and presentation, nested arrays of objects included, costing more than reading
+the messages. Message and tool projection now check through validators compiled once per fixed
+schema; acceptance is unchanged and no projected value is retained.
+
 ## Shell names preserve command presentation
 
 Claude uses PowerShell on native Windows. Its calls use the same existing command presentation

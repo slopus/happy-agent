@@ -1,5 +1,4 @@
 import { Type, type Static, type TSchema } from "@sinclair/typebox";
-import { Value } from "@sinclair/typebox/value";
 import {
     agentSpawnPresentationSchema,
     type AgentSpawnPresentation,
@@ -11,6 +10,7 @@ import {
     type HistoryToolPresentation,
 } from "../history/index.js";
 import type { ToolPermissionReview } from "../permissions/index.js";
+import { apiValidator } from "./impl/apiValidator.js";
 
 const presentationTextSchema = Type.String({ maxLength: MAX_HISTORY_TOOL_OUTPUT_LENGTH });
 const nonEmptyPresentationTextSchema = Type.String({
@@ -241,5 +241,5 @@ function checked<Schema extends TSchema>(
     schema: Schema,
     value: unknown,
 ): Static<Schema> | undefined {
-    return Value.Check(schema, value) ? (value as Static<Schema>) : undefined;
+    return apiValidator(schema).Check(value) ? (value as Static<Schema>) : undefined;
 }

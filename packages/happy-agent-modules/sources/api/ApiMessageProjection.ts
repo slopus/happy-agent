@@ -1,5 +1,4 @@
 import { Type, type Static, type TSchema } from "@sinclair/typebox";
-import { Value } from "@sinclair/typebox/value";
 import type { AgentSpawnPresentation } from "@slopus/happy-agent-client";
 
 import {
@@ -9,6 +8,7 @@ import {
     type HistoryToolPresentation,
 } from "../history/index.js";
 import { decodeRequestProfile } from "../impl/requestProfile.js";
+import { apiValidator } from "./impl/apiValidator.js";
 import { toolCallResource, type MessageResourceOptions } from "./ApiToolPresentation.js";
 
 type ReviewedHistoryToolCall = Extract<HistoryBlock, { type: "tool_call" }> & {
@@ -108,7 +108,7 @@ export function providerMessageContent(
         HistoryToolPresentation | AgentSpawnPresentation
     > = new Map(),
 ): readonly Record<string, unknown>[] | undefined {
-    if (!Value.Check(providerContentSchema, value)) return undefined;
+    if (!apiValidator(providerContentSchema).Check(value)) return undefined;
     const results = new Map<string, Static<typeof providerToolResultBlockSchema>>();
     for (const candidate of value) {
         const result = checked(providerToolResultBlockSchema, candidate);
@@ -270,7 +270,7 @@ function checked<Schema extends TSchema>(
     schema: Schema,
     value: unknown,
 ): Static<Schema> | undefined {
-    return Value.Check(schema, value) ? (value as Static<Schema>) : undefined;
+    return apiValidator(schema).Check(value) ? (value as Static<Schema>) : undefined;
 }
 
 function historyRole(role: HistoryMessage["role"]): string {
