@@ -1,0 +1,48 @@
+{
+    "instructions": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": ["instructions"],
+        "properties": {
+            "instructions": {
+                "maxLength": 262144,
+                "type": "string"
+            },
+            "mutationId": {
+                "minLength": 1,
+                "maxLength": 512,
+                "type": "string"
+            }
+        }
+    },
+    "security": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": ["policy"],
+        "properties": {
+            "mutationId": {
+                "minLength": 1,
+                "maxLength": 512,
+                "type": "string"
+            },
+            "policy": {
+                "maxLength": 32768,
+                "type": "string"
+            }
+        }
+    },
+    "cursor": {
+        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+        "type": "string"
+    },
+    "eventLimitText": {
+        "pattern": "^[1-9][0-9]*$",
+        "maxLength": 5,
+        "type": "string"
+    },
+    "eventLimit": {
+        "minimum": 1,
+        "maximum": 10000,
+        "type": "integer"
+    }
+}

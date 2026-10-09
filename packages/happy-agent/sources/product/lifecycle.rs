@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 use std::{
     path::Path,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
     time::{Duration, Instant},
@@ -20,6 +20,9 @@ pub struct LifecycleModule {
     config: Arc<ConfigModule>,
     instance: String,
     identity: String,
+    started_at: u64,
+    mutations: Mutex<usize>,
+    drain_writer: Mutex<()>,
     ready: AtomicBool,
     draining: AtomicBool,
     shutting_down: AtomicBool,
@@ -41,8 +44,11 @@ impl LifecycleModule {
     pub fn new(config: Arc<ConfigModule>) -> Result<Self> {
         Ok(Self {
             config,
-            instance: uuid::Uuid::new_v4().to_string(),
+            instance: cuid2::create_id(),
             identity: process_identity(std::process::id())?,
+            started_at: super::identity::now(),
+            mutations: Mutex::new(0),
+            drain_writer: Mutex::new(()),
             ready: AtomicBool::new(false),
             draining: AtomicBool::new(false),
             shutting_down: AtomicBool::new(false),
@@ -65,9 +71,43 @@ impl LifecycleModule {
     pub fn is_draining(&self) -> bool {
         self.draining.load(Ordering::Acquire)
     }
-    pub fn begin_drain(&self) -> Result<()> {
-        self.draining.store(true, Ordering::Release);
-        self.write_drain_state()
+    pub fn begin_drain(&self) -> Result<bool> {
+        let mutations = self
+            .mutations
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let changed = !self.draining.swap(true, Ordering::AcqRel);
+        drop(mutations);
+        self.write_drain_state()?;
+        Ok(changed)
+    }
+    pub fn admit_mutation(self: &Arc<Self>) -> Option<Mutation> {
+        let mut count = self
+            .mutations
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if self.is_draining() {
+            return None;
+        }
+        *count += 1;
+        Some(Mutation(self.clone()))
+    }
+    pub fn daemon_id(&self) -> &str {
+        &self.instance
+    }
+    pub fn started_at(&self) -> u64 {
+        self.started_at
+    }
+    fn drain_progress(&self) -> Vec<Value> {
+        let count = *self
+            .mutations
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if self.is_draining() && count > 0 {
+            vec![json!({"name":"api-mutations","count":count})]
+        } else {
+            vec![]
+        }
     }
     pub fn begin_shutdown(&self) {
         self.shutting_down.store(true, Ordering::Release);
@@ -75,10 +115,15 @@ impl LifecycleModule {
     }
     pub fn health(&self) -> Value {
         json!({"healthy":true,"ready":self.is_ready(),"status":if self.is_ready(){"ready"}else{"starting"},
-            "version":{"protocol":26,"daemon":version()},"draining":self.is_draining(),"drainWaitingFor":[],
+            "version":{"protocol":26,"daemon":version()},"draining":self.is_draining(),"drainWaitingFor":self.drain_progress(),
             "shuttingDown":self.shutting_down.load(Ordering::Acquire),"waitingFor":[]})
     }
     fn write_drain_state(&self) -> Result<()> {
+        let _writer = self
+            .drain_writer
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let waiting_for = self.drain_progress();
         atomic_private(
             &self.config.paths.drain,
             &serde_json::to_vec(&DrainState {
@@ -86,13 +131,15 @@ impl LifecycleModule {
                 pid: std::process::id(),
                 instance: self.instance.clone(),
                 process_identity: self.identity.clone(),
-                phase: if self.is_draining() {
+                phase: if self.is_draining() && waiting_for.is_empty() {
                     "drained"
+                } else if self.is_draining() {
+                    "draining"
                 } else {
                     "ready"
                 }
                 .into(),
-                waiting_for: vec![],
+                waiting_for,
             })?,
         )
     }
@@ -104,6 +151,24 @@ impl LifecycleModule {
             remove_missing_ok(&self.config.paths.drain)?;
         }
         Ok(())
+    }
+}
+
+pub struct Mutation(Arc<LifecycleModule>);
+impl Drop for Mutation {
+    fn drop(&mut self) {
+        let mut count = self
+            .0
+            .mutations
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *count -= 1;
+        drop(count);
+        if self.0.is_draining()
+            && let Err(error) = self.0.write_drain_state()
+        {
+            eprintln!("Could not update local drain progress: {error:#}");
+        }
     }
 }
 

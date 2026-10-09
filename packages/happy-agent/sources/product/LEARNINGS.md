@@ -13,3 +13,13 @@ feature reads them.
 
 The Node inspector does not exist in a Rust process. Both existing inspector routes use the API's
 documented 409 response for a daemon without inspector support. The public contract stays unchanged.
+
+Document responses preserve the submitted text and the API's UTF-8 byte bounds. Original character
+validation alone allowed oversized multibyte writes, and security reads could split a character.
+The native API evaluates serialized TypeBox schemas with their UTF-16 string semantics, enforces
+the specified byte bound, and truncates external document reads at a valid UTF-8 boundary.
+
+Mutation IDs are correlation values, not deduplication keys. Every successful document write emits
+its own event. Mutation admission occurs before reading an HTTP body, so draining waits for writes
+it already accepted while rejecting later mutations. SSE hello and drain publication share the
+journal lock to keep a concurrent subscriber from missing both the sticky state and its event.

@@ -20,11 +20,39 @@ pub struct Paths {
     pub observation: PathBuf,
     pub drain: PathBuf,
     pub database: PathBuf,
+    pub instructions: PathBuf,
+    pub security: PathBuf,
 }
 
 pub struct ConfigModule {
     pub paths: Paths,
     pub values: toml::Value,
+}
+
+#[derive(Clone, Copy)]
+pub enum Document {
+    Instructions,
+    Security,
+}
+impl Document {
+    pub fn limit(self) -> usize {
+        match self {
+            Self::Instructions => 256 * 1024,
+            Self::Security => 32 * 1024,
+        }
+    }
+    pub fn field(self) -> &'static str {
+        match self {
+            Self::Instructions => "instructions",
+            Self::Security => "policy",
+        }
+    }
+    pub fn schema(self) -> &'static str {
+        match self {
+            Self::Instructions => "instructions",
+            Self::Security => "security",
+        }
+    }
 }
 
 impl ConfigModule {
@@ -70,6 +98,8 @@ impl ConfigModule {
             PathBuf::from(format!(r"\\.\pipe\happy-agent-{hash:x}"))
         };
         let paths = Paths {
+            instructions: configuration.join("AGENTS.md"),
+            security: configuration.join("SECURITY.md"),
             home,
             public,
             configuration,
@@ -108,6 +138,70 @@ impl ConfigModule {
 
     pub fn team_enabled(&self) -> bool {
         team_enabled(&self.values)
+    }
+
+    fn document_path(&self, document: Document) -> PathBuf {
+        match document {
+            Document::Instructions => self.paths.instructions.clone(),
+            Document::Security => self.paths.security.clone(),
+        }
+    }
+    pub async fn read_document(&self, document: Document) -> Result<String> {
+        use std::io::Read;
+        let path = self.document_path(document);
+        tokio::task::spawn_blocking(move || {
+            let mut options = std::fs::OpenOptions::new();
+            options.read(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.custom_flags(libc::O_NONBLOCK);
+            }
+            let file = match options.open(path) {
+                Ok(file) => file,
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                    ) =>
+                {
+                    return Ok(String::new());
+                }
+                Err(error) => return Err(error.into()),
+            };
+            if !file.metadata()?.is_file() {
+                return Ok(String::new());
+            }
+            let mut bytes = Vec::new();
+            file.take(document.limit() as u64 + 4)
+                .read_to_end(&mut bytes)?;
+            let mut end = bytes.len().min(document.limit());
+            if end < bytes.len() {
+                while end > 0 && bytes.get(end).is_some_and(|byte| byte & 0xc0 == 0x80) {
+                    end -= 1;
+                }
+            }
+            let mut text = String::from_utf8_lossy(&bytes[..end]).into_owned();
+            let mut end = text.len().min(document.limit());
+            while !text.is_char_boundary(end) {
+                end -= 1;
+            }
+            text.truncate(end);
+            Ok(text)
+        })
+        .await?
+    }
+    pub async fn write_document(&self, document: Document, contents: String) -> Result<String> {
+        anyhow::ensure!(
+            contents.len() <= document.limit(),
+            "The document exceeds its allowed byte size."
+        );
+        let path = self.document_path(document);
+        tokio::task::spawn_blocking(move || {
+            atomic_private(&path, contents.as_bytes())?;
+            Ok(contents)
+        })
+        .await?
     }
 
     pub fn prepare(&self) -> Result<()> {

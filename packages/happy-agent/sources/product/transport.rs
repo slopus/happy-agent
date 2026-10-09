@@ -92,7 +92,7 @@ impl TransportModule {
                 biased;
                 _=self.api.lifecycle.shutdown.cancelled()=>break,
                 control=self.controls.next()=>{
-                    if control==Control::Drain {self.api.lifecycle.begin_drain()?;}else{self.api.lifecycle.begin_shutdown();}
+                    if control==Control::Drain {self.api.begin_drain()?;}else{self.api.lifecycle.begin_shutdown();}
                 },
                 connection=accept(&mut self.listener,&self.config)=>{
                     let stream=connection?;

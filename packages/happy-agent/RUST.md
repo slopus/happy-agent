@@ -10,6 +10,10 @@ The standalone daemon serves authenticated health, authentication, greeting,
 drain, shutdown, and the specified unavailable-inspector response over the original
 private Unix socket. Its launcher uses the same executable's `run` role. Token
 reuse, local signal drain, and shutdown are exercised through real processes.
+Global instruction and security documents, event pages, and resumable SSE are
+available through the same API. The unchanged published client reads these
+documents and follows live events in an executable integration test. Drain
+waits for admitted HTTP mutations, including requests still sending their body.
 
 This is an incomplete product migration. The remaining API namespaces, terminal
 UI, agent restoration, product modules, background terminals, MCP, services, cloud,
@@ -122,8 +126,9 @@ have already migrated.
 
 The base currently exposes one agent worker and tool-owned permission traits.
 The product's module hooks, multi-agent registry/routing, full filesystem and
-shell permission boundary, background compaction via session forks, and durable
-API event stream still need integration. The retained TypeScript chaos, formal
+shell permission boundary and background compaction via session forks still need
+integration. The bounded public API journal is implemented; agent history and
+module events still need to be connected to it. The retained TypeScript chaos, formal
 verification, and gym suites have not been ported or run against this runtime;
 the Rust tests exercise the explicitly migrated stages and restart cases.
 
