@@ -1,5 +1,7 @@
 mod agents;
 mod api;
+#[cfg(test)]
+mod auto;
 mod config;
 #[cfg(test)]
 mod durable;

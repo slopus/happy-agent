@@ -125,3 +125,12 @@ dispatch after commit: otherwise its reservation leaves younger work blocked
 even when that younger work's own keys are free. The native procedure primitive
 is verified with real SQLite tests but stays outside daemon startup until its
 owning module registrations are present.
+
+Auto evidence must outlive private context replacement. The native archive
+retains original rows, validates their raw SQLite flags and contiguous cursors,
+and refuses a lost original generation or missing authorization archive. Its
+classifiers, transcript renderer, tagged verdict parser and prompt wrapper are
+checked against generated original-source expectations. The current security
+guard additionally refuses an allow when required human evidence was omitted.
+This foundation remains outside daemon startup until the actual reviewer and
+tool permission execution are installed.
