@@ -216,6 +216,65 @@ async fn recorded_grok_hosted_search_stays_opaque_and_never_requests_local_execu
 }
 
 #[tokio::test]
+async fn recorded_reasoning_usage_survives_real_transport_and_terminal_outcome() {
+    let fixture: Value =
+        serde_json::from_str(include_str!("vendors/fixtures/grok-4-5-high.sse.json")).unwrap();
+    let recorded = fixture["response"]["events"].as_array().unwrap();
+    let expected = &recorded.last().unwrap()["response"]["usage"];
+    let (endpoint, _requests, server) = server(vec![(
+        200,
+        json!({"content-type":"text/event-stream"}),
+        sse(recorded),
+    )])
+    .await;
+    let mut session = HttpSession::new(
+        "recordedreasoning".into(),
+        config(ProviderKind::Grok, endpoint),
+        vec![],
+    )
+    .await
+    .unwrap();
+    let events = collect(
+        &mut session,
+        RunRequest::default(),
+        CancellationToken::new(),
+    )
+    .await;
+    let Some(Event::Done {
+        outcome: Outcome::Normal { usage },
+    }) = events.last()
+    else {
+        panic!("The recorded inference must settle normally");
+    };
+    let actual = serde_json::to_value(usage).unwrap();
+    assert_eq!(
+        actual["reasoning"],
+        expected["output_tokens_details"]["reasoning_tokens"]
+    );
+    assert_eq!(actual["input"], expected["input_tokens"]);
+    assert_eq!(actual["output"], expected["output_tokens"]);
+    assert!(events.iter().any(|event| matches!(event, Event::TokenUsage {usage} if serde_json::to_value(usage).unwrap()["reasoning"] == actual["reasoning"])));
+    server.await.unwrap();
+}
+
+#[test]
+fn old_usage_decodes_and_retains_the_original_five_field_shape() {
+    let original = json!({"input":17,"output":3,"cacheRead":9,"cacheWrite":0,"totalTokens":20});
+    let usage: Usage = serde_json::from_value(original.clone()).unwrap();
+    assert_eq!(usage.reasoning, None);
+    assert_eq!(serde_json::to_value(usage).unwrap(), original);
+    let with_reasoning: Usage = serde_json::from_value(
+        json!({"input":17,"output":3,"cacheRead":9,"cacheWrite":0,"totalTokens":20,"reasoning":0}),
+    )
+    .unwrap();
+    assert_eq!(with_reasoning.reasoning, Some(0));
+    assert_eq!(
+        serde_json::to_value(with_reasoning).unwrap()["reasoning"],
+        0
+    );
+}
+
+#[tokio::test]
 async fn codex_lite_websocket_warms_once_and_reuses_the_open_connection() {
     use futures_util::{SinkExt, StreamExt};
     use tokio_tungstenite::tungstenite::Message as Frame;
@@ -663,7 +722,7 @@ async fn chat_completions_continues_through_usage_after_finish_reason() {
     let mut body = sse(&[
         json!({"choices":[{"index":0,"delta":{"content":"hello"},"finish_reason":null}]}),
         json!({"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}),
-        json!({"choices":[],"usage":{"prompt_tokens":15,"completion_tokens":2}}),
+        json!({"choices":[],"usage":{"prompt_tokens":15,"completion_tokens":2,"completion_tokens_details":{"reasoning_tokens":1}}}),
     ]);
     body.extend_from_slice(b"data: [DONE]\n\n");
     let (endpoint, _requests, server) = server(vec![(
@@ -684,7 +743,7 @@ async fn chat_completions_continues_through_usage_after_finish_reason() {
     )
     .await;
     assert!(
-        matches!(events.last(),Some(Event::Done { outcome:Outcome::Normal { usage } }) if usage.input==15)
+        matches!(events.last(),Some(Event::Done { outcome:Outcome::Normal { usage } }) if usage.input==15 && usage.reasoning==Some(1))
     );
     server.await.unwrap();
 }

@@ -768,6 +768,7 @@ pub(crate) fn response_usage(value: &Value) -> Usage {
             .unwrap_or(0),
         cache_write: 0,
         total_tokens: input + output,
+        reasoning: value["output_tokens_details"]["reasoning_tokens"].as_u64(),
     }
 }
 fn chat_usage(value: &Value) -> Usage {
@@ -781,6 +782,7 @@ fn chat_usage(value: &Value) -> Usage {
             .unwrap_or(0),
         cache_write: 0,
         total_tokens: input + output,
+        reasoning: value["completion_tokens_details"]["reasoning_tokens"].as_u64(),
     }
 }
 fn anthropic_usage(value: &Value) -> Usage {
@@ -794,6 +796,7 @@ fn anthropic_usage(value: &Value) -> Usage {
         cache_read,
         cache_write,
         total_tokens: input + output,
+        reasoning: None,
     }
 }
 fn string<'a>(value: &'a Value, key: &str) -> &'a str {

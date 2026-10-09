@@ -7,6 +7,11 @@ TypeScript tests remain migration evidence; the historical SDK examples below
 are not executable against this source package. See
 [the runtime guide](../happy-agent/RUST.md) and `sources/lib.rs`.
 
+Rust usage keeps the five normalized token fields and retains optional
+`reasoning` when the backend reports it. Reasoning tokens are part of output,
+so they do not increase the existing totals. Old stored usage decodes unchanged,
+and serialization omits the extra value when the backend did not supply it.
+
 One small, stateful session interface for talking to coding-agent model backends. You work with a
 session — create it, run turns, compact, destroy — while the library absorbs the low-level vendor
 machinery underneath: wire protocols and transports, request framing, streaming, headers,
