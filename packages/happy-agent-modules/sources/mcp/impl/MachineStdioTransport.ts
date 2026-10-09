@@ -6,6 +6,8 @@ import type { Context } from "@steve.kite/stdlib";
 
 /** How long a server may take to leave after its input closes before it is killed. */
 const CLOSE_GRACE_MS = 2_000;
+/** How long a killed server's exit may take to be reported before the close stops waiting. */
+const EXIT_REPORT_MS = 1_000;
 
 /**
  * An MCP server on a runner, spoken to over its standard input and output.
@@ -30,6 +32,7 @@ export class MachineStdioTransport implements Transport {
     readonly #readBuffer = new ReadBuffer();
     #process: ComputeProcess | undefined;
     #started = false;
+    #finished = false;
 
     constructor(
         ctx: Context,
@@ -66,11 +69,7 @@ export class MachineStdioTransport implements Transport {
         });
         // The server's log is its own; draining it keeps a chatty server from blocking.
         child.onStderr(() => undefined);
-        void child.exited.then(() => {
-            this.#process = undefined;
-            this.#readBuffer.clear();
-            this.onclose?.();
-        });
+        void child.exited.then(() => this.#finish());
     }
 
     async send(message: JSONRPCMessage): Promise<void> {
@@ -81,6 +80,11 @@ export class MachineStdioTransport implements Transport {
         }
     }
 
+    /**
+     * Stop the server, reporting the transport closed at once so pending requests fail now. The
+     * wait for its exit is bounded: while the runner is away nothing it was told arrives until it
+     * returns.
+     */
     async close(): Promise<void> {
         const child = this.#process;
         if (child === undefined) return;
@@ -88,8 +92,25 @@ export class MachineStdioTransport implements Transport {
         const timer = setTimeout(() => child.signal("SIGKILL"), CLOSE_GRACE_MS);
         timer.unref();
         child.signal("SIGTERM");
-        await child.exited.catch(() => undefined);
-        clearTimeout(timer);
+        this.#finish();
+        let waiting: NodeJS.Timeout | undefined;
+        await Promise.race([
+            child.exited.catch(() => undefined),
+            new Promise<void>((resolve) => {
+                waiting = setTimeout(resolve, CLOSE_GRACE_MS + EXIT_REPORT_MS);
+                waiting.unref();
+            }),
+        ]);
+        clearTimeout(waiting);
+        void child.exited.finally(() => clearTimeout(timer)).catch(() => undefined);
+    }
+
+    #finish(): void {
+        if (this.#finished) return;
+        this.#finished = true;
+        this.#process = undefined;
+        this.#readBuffer.clear();
+        this.onclose?.();
     }
 
     #readMessages(): void {

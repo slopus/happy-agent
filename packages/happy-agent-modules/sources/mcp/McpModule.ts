@@ -209,7 +209,9 @@ export class McpModule implements AgentModule {
                 await this.#releaseWorkspace(ctx, workspace);
             }
         });
-        // A server that could not start because its runner was away starts once the runner is back.
+        // A runner that goes away takes its servers with it, so they fail at once instead of
+        // holding calls until it returns; a server that could not run because its runner was
+        // away starts again once the runner is back.
         this.#unsubscribeRunnerUpdates = runners.onUpdated((ctx, snapshot) => {
             const connected = snapshot.runners
                 .filter((runner) => runner.status === "connected")
@@ -217,6 +219,7 @@ export class McpModule implements AgentModule {
             const returned = connected.some((id) => !this.#connectedRunners.has(id));
             this.#connectedRunners.clear();
             for (const id of connected) this.#connectedRunners.add(id);
+            this.#failServersOnAbsentRunners();
             if (!returned || this.#closed || this.#initialReload === undefined) return;
             if (![...this.#pool.values()].some((entry) => entry.failure !== undefined)) return;
             const reloadCtx = detach(ctx).named("mcp-runner-reconnect");
@@ -1218,6 +1221,11 @@ export class McpModule implements AgentModule {
                 ...(attempt.connection === undefined ? {} : { connection: attempt.connection }),
                 ...(attempt.failure === undefined ? {} : { failure: attempt.failure }),
             });
+            const { connection, connectionId } = attempt;
+            if (connection !== undefined) {
+                connection.client.onclose = () =>
+                    this.#recordStopped(connectionId, connection, "The MCP server stopped.");
+            }
         }
 
         // Every connection needed by the batch is ready or has a bounded failure before any
@@ -1254,6 +1262,31 @@ export class McpModule implements AgentModule {
             if (pooled.connection !== undefined) closing.push(pooled.connection);
         }
         await Promise.allSettled(closing.map(async (connection) => await connection.close()));
+    }
+
+    /** A live connection that ended is a failure, which the next reload starts again. */
+    #recordStopped(connectionId: string, connection: McpClientConnection, failure: string): void {
+        const pooled = this.#pool.get(connectionId);
+        if (pooled?.connection !== connection) return;
+        this.#pool.set(connectionId, { references: pooled.references, failure });
+    }
+
+    /** Fail every server on a runner that is not connected, and stop what it holds of them. */
+    #failServersOnAbsentRunners(): void {
+        for (const [connectionId, pooled] of this.#pool) {
+            const connection = pooled.connection;
+            const runnerId = /^runner:([^:]+):/u.exec(connectionId)?.[1];
+            if (
+                connection === undefined ||
+                runnerId === undefined ||
+                this.#connectedRunners.has(runnerId)
+            ) {
+                continue;
+            }
+            const failure = `The runner ${this.#runners.displayName(runnerId)} is not connected.`;
+            this.#recordStopped(connectionId, connection, failure);
+            void connection.close().catch(() => undefined);
+        }
     }
 
     #rememberContext(ctx: Context): void {

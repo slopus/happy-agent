@@ -50,3 +50,12 @@ runner's filesystem, and its stdio servers start through the runner's product pr
 small stdio transport. Pool keys include the runner for stdio servers. Folders on this machine
 keep the SDK's own stdio transport, because it limits the inherited environment to a safe subset,
 and the daemon's environment can hold provider credentials; a runner's environment holds none.
+
+## A runner's servers fail while it is away and return with it
+
+A server's stream on a runner survives a reconnect within the runner's lease, so a request sent
+while the runner was away waited up to the whole lease, stalling an agent turn for about a minute.
+When the lease ran out the server was gone, yet its pooled connection stayed in place, so the server
+never came back after the runner restarted. A runner that disconnects now fails its servers at
+once with a message naming it and stops them; a connection that ends on its own is recorded as
+failed; and the runner's return reloads every failed server.

@@ -52,35 +52,54 @@ async function runnerWorld() {
     cleanups.push(async () => await runners.close());
 
     const started: ComputeProcessStartOptions[] = [];
-    const host = new RunnerHost({
-        ctx: database.rootContext.named("test-runner"),
-        identity: { version: "9.9.9", platform: "linux", arch: "x64", hostname: "box", home },
-        createCompute: async (computeCtx, request) => {
-            const compute = createHostCompute({ ctx: computeCtx, cwd: request.cwd });
-            const processes = compute.processes;
-            if (processes === undefined) return compute;
-            return Object.assign(compute, {
-                processes: {
-                    start: async (startCtx: never, options: ComputeProcessStartOptions) => {
-                        started.push(options);
-                        return await processes.start(startCtx, options);
+    /** Start a runner process and connect it; it holds nothing from an earlier one. */
+    const startRunner = async () => {
+        const host = new RunnerHost({
+            ctx: database.rootContext.named("test-runner"),
+            identity: { version: "9.9.9", platform: "linux", arch: "x64", hostname: "box", home },
+            createCompute: async (computeCtx, request) => {
+                const compute = createHostCompute({ ctx: computeCtx, cwd: request.cwd });
+                const processes = compute.processes;
+                if (processes === undefined) return compute;
+                return Object.assign(compute, {
+                    processes: {
+                        start: async (startCtx: never, options: ComputeProcessStartOptions) => {
+                            started.push(options);
+                            return await processes.start(startCtx, options);
+                        },
                     },
-                },
-            });
-        },
-    });
-    cleanups.push(async () => await host.dispose(database.rootContext.named("test-dispose")));
-    const connected = new Promise<void>((resolve) => {
-        const stop = runners.onUpdated((_ctx, snapshot) => {
-            if (snapshot.runners[0]?.status !== "connected") return;
-            stop();
-            resolve();
+                });
+            },
         });
-    });
-    const [daemonSide, runnerSide] = createRunnerChannelPair();
-    void runners.accept("build-box", daemonSide);
-    void host.serve(runnerSide);
-    await connected;
+        cleanups.push(async () => await host.dispose(database.rootContext.named("test-dispose")));
+        const connected = new Promise<void>((resolve) => {
+            const stop = runners.onUpdated((_ctx, snapshot) => {
+                if (snapshot.runners[0]?.status !== "connected") return;
+                stop();
+                resolve();
+            });
+        });
+        const [daemonSide, runnerSide] = createRunnerChannelPair();
+        void runners.accept("build-box", daemonSide);
+        void host.serve(runnerSide);
+        await connected;
+        return {
+            /** The runner process stops without a goodbye, taking its programs with it. */
+            stop: async () => {
+                const disconnected = new Promise<void>((resolve) => {
+                    const stop = runners.onUpdated((_ctx, snapshot) => {
+                        if (snapshot.runners[0]?.status === "connected") return;
+                        stop();
+                        resolve();
+                    });
+                });
+                runnerSide.close("The runner stopped.");
+                await host.dispose(database.rootContext.named("test-runner-stop"));
+                await disconnected;
+            },
+        };
+    };
+    const runner = await startRunner();
 
     const config = await ConfigModule.load(join(root, ".happy"));
     const module = new McpModule(
@@ -91,7 +110,7 @@ async function runnerWorld() {
         new ComputeModule(config, new SecretsModule(), runners),
     );
     cleanups.push(async () => await module.close());
-    return { home, module, root, started };
+    return { home, module, root, runner, startRunner, started };
 }
 
 /** An agent whose folder is on the runner, as the compute configuration records it. */
@@ -125,6 +144,36 @@ describe("MCP servers on a runner", () => {
         expect(started).toEqual([
             expect.objectContaining({ command: process.execPath, args: [fixture, "on-runner"] }),
         ]);
+    });
+
+    it("fails a server at once while its runner is away and restarts it when it returns", async () => {
+        const { home, module, runner, startRunner, started } = await runnerWorld();
+        const workspace = join(home, "workspace");
+        await write(join(workspace, "mcp.toml"), serverToml("tools", "on-runner"));
+        const agents = agentOnRunner(workspace);
+        const hooks = await resolveModuleHooks(ctx, module, agents);
+        await hooks.agentCreated?.(
+            ctx,
+            { agents, sharedKV: {} } as never,
+            {
+                id: "agent",
+                metadata: undefined,
+            } as never,
+        );
+        await expect(echo(module, "before")).resolves.toBe("on-runner:before");
+
+        await runner.stop();
+        const startedAt = Date.now();
+        await expect(echo(module, "away")).rejects.toThrow(
+            "The runner build-box is not connected.",
+        );
+        expect(Date.now() - startedAt).toBeLessThan(2_000);
+
+        await startRunner();
+        await expect
+            .poll(async () => await echo(module, "back").catch(() => ""))
+            .toBe("on-runner:back");
+        expect(started).toHaveLength(2);
     });
 
     it("starts the user's own stdio servers on the default runner", async () => {

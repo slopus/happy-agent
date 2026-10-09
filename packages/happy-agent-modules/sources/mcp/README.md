@@ -32,6 +32,7 @@ machine. A workspace on a runner has its `mcp.toml` read from the runner, and it
 start there as the runner's product programs, speaking MCP over their standard input and output.
 The user-wide catalog's stdio servers start on the default runner. HTTP servers are always reached
 from the daemon. The same configuration on two machines is two servers, so pooling never shares a
-process across machines. A server that could not start because its runner was away is retried once
-that runner connects again. The module takes `RunnersModule` for the machines and `ComputeModule`
+process across machines. A server whose runner goes away fails at once, naming the runner, and
+a server that stopped or could not start because its runner was away starts again once that runner
+connects. The module takes `RunnersModule` for the machines and `ComputeModule`
 for which runner an agent's folder is on.
