@@ -6,8 +6,11 @@ use anyhow::{Context as _, Result};
 use rusqlite::{OptionalExtension, params};
 use serde_json::{Value, json};
 use std::{
-    collections::BTreeSet,
-    sync::{Arc, Mutex},
+    collections::BTreeMap,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 const MAX_ROWS: u64 = 20_000;
@@ -27,9 +30,10 @@ pub(super) struct EvidenceStore {
     runtime: Arc<RuntimeModule>,
     schemas: Schemas,
     poisoned: Mutex<Poison>,
+    poison_epoch: AtomicU64,
 }
 enum Poison {
-    Agents(BTreeSet<String>),
+    Agents(BTreeMap<String, u64>),
     All,
 }
 impl EvidenceStore {
@@ -37,7 +41,8 @@ impl EvidenceStore {
         Ok(Self {
             runtime,
             schemas: Schemas::new()?,
-            poisoned: Mutex::new(Poison::Agents(BTreeSet::new())),
+            poisoned: Mutex::new(Poison::Agents(BTreeMap::new())),
+            poison_epoch: AtomicU64::new(0),
         })
     }
     pub async fn load(&self) -> Result<()> {
@@ -59,15 +64,15 @@ impl EvidenceStore {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
         {
             Poison::All => true,
-            Poison::Agents(agents) => agents.contains(agent),
+            Poison::Agents(agents) => agents.contains_key(agent),
         };
         let state = if let Some(row) = row {
             let row: Value = serde_json::from_str(&row)?;
             self.validate("autoStoredState", &row)?;
             let generation = integer(&row["generation"])?;
-            // The original context-erasure hook discarded the earlier archive.
-            // Only a native identity recreation can prove a later generation
-            // began with complete new authorization history.
+            // Every original generation can have missing human evidence:
+            // generation zero is not a coverage certificate, and later
+            // context-erasure hooks discarded the earlier archive altogether.
             let native: Option<String> = ctx.database().query_row("SELECT json_quote(generation) FROM happy_agent_auto_native_generations WHERE agent_id=?1", [agent], |row| row.get(0)).optional()?;
             let native_generation = native
                 .map(|encoded| -> Result<u64> {
@@ -76,7 +81,7 @@ impl EvidenceStore {
                     integer(&raw)
                 })
                 .transpose()?;
-            json!({"generation":generation,"nextPosition":integer(&row["next_position"])? ,"archiveHealthy":flag(&row["archive_healthy"])? && !poisoned && (generation == 0 || native_generation == Some(generation))})
+            json!({"generation":generation,"nextPosition":integer(&row["next_position"])? ,"archiveHealthy":flag(&row["archive_healthy"])? && !poisoned && native_generation == Some(generation)})
         } else {
             let has_evidence: bool = ctx.database().query_row(
                 "SELECT EXISTS(SELECT 1 FROM happy_agent_auto_evidence WHERE agent_id=?1) OR EXISTS(SELECT 1 FROM happy_agent_records WHERE owner_id=?1) OR EXISTS(SELECT 1 FROM happy_agent_values WHERE owner_id='' AND key='agentSystem.config.'||?1)",
@@ -197,8 +202,9 @@ impl EvidenceStore {
         // The catalog's 10,000-agent bound also bounds the poison map. If that
         // invariant is exceeded, every review remains unproven in this process.
         if let Poison::Agents(agents) = &mut *poisoned {
-            if agents.len() < 10000 {
-                agents.insert(agent.to_owned());
+            let epoch = self.poison_epoch.fetch_add(1, Ordering::Relaxed);
+            if agents.len() < 10000 && epoch < u64::MAX {
+                agents.insert(agent.to_owned(), epoch);
             } else {
                 *poisoned = Poison::All;
             }
@@ -212,6 +218,14 @@ impl EvidenceStore {
     /// A genuinely recreated agent identity begins new authorization history.
     /// Compaction and model changes deliberately never call this operation.
     pub fn recreate(self: &Arc<Self>, ctx: &Context<'_>, agent: &str) -> Result<()> {
+        let prior_poison = match &*self
+            .poisoned
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+        {
+            Poison::Agents(agents) => agents.get(agent).copied(),
+            Poison::All => None,
+        };
         let state = self.state(ctx, agent)?;
         let generation = state["generation"]
             .as_u64()
@@ -240,7 +254,9 @@ impl EvidenceStore {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
             {
-                agents.remove(&agent);
+                if prior_poison.is_some() && agents.get(&agent).copied() == prior_poison {
+                    agents.remove(&agent);
+                }
             }
         })
     }
@@ -338,6 +354,68 @@ mod tests {
     fn human(text: &str) -> Value {
         json!({"category":"message","entry":{"role":"user","blocks":[{"type":"text","text":text}]},"trustedUserEvidence":true,"trustedUserEvidenceTruncated":false})
     }
+    fn append_native(
+        store: &Arc<EvidenceStore>,
+        ctx: &Context<'_>,
+        agent: &str,
+        evidence: &Value,
+    ) -> Result<()> {
+        let exists: bool = ctx.database().query_row(
+            "SELECT EXISTS(SELECT 1 FROM happy_agent_auto_state WHERE agent_id=?1)",
+            [agent],
+            |row| row.get(0),
+        )?;
+        if !exists {
+            store.recreate(ctx, agent)?;
+        }
+        store.append(ctx, agent, evidence)
+    }
+
+    #[tokio::test]
+    async fn a_healthy_legacy_zero_generation_cannot_certify_a_missing_human_answer() {
+        let fixture = Fixture::new().await;
+        let store = fixture.store.clone();
+        fixture.runtime.transact(move |ctx| {
+            // The original bridge can lose a trusted interactive answer while
+            // leaving this structurally valid generation healthy. Its archive
+            // has neither the answer nor durable answering-actor provenance.
+            let entry = human("Inspect this workspace")["entry"].to_string();
+            ctx.database().execute("INSERT INTO happy_agent_auto_state VALUES('legacyagent',0,1,1)", [])?;
+            ctx.database().execute("INSERT INTO happy_agent_auto_evidence VALUES('legacyagent',0,0,'message',?1,1,0)", [&entry])?;
+            assert!(store.review_transcript(ctx, "legacyagent").is_err(), "Archive integrity cannot certify complete human authorization");
+            let retained: String = ctx.database().query_row("SELECT entry_json FROM happy_agent_auto_evidence WHERE agent_id='legacyagent'", [], |row| row.get(0))?;
+            assert_eq!(retained, entry, "Unproven original data remains intact");
+            Ok(())
+        }).await.unwrap();
+        fixture.runtime.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_later_poison_in_the_identity_creation_transaction_survives_commit() {
+        let fixture = Fixture::new().await;
+        let store = fixture.store.clone();
+        fixture.runtime.transact(move |ctx| {
+            store.recreate(ctx, "agentfixture")?;
+            store.poison(ctx, "agentfixture");
+            // Simulate the failing durable poison write independently of the
+            // native in-process failure barrier.
+            ctx.database().execute("UPDATE happy_agent_auto_state SET archive_healthy=1 WHERE agent_id='agentfixture'", [])?;
+            Ok(())
+        }).await.unwrap();
+        let store = fixture.store.clone();
+        fixture
+            .runtime
+            .transact(move |ctx| {
+                assert!(
+                    store.entries(ctx, "agentfixture").is_err(),
+                    "The earlier creation callback cannot clear a later evidence failure"
+                );
+                Ok(())
+            })
+            .await
+            .unwrap();
+        fixture.runtime.close().await.unwrap();
+    }
 
     #[tokio::test]
     async fn evidence_commits_with_the_caller_and_survives_private_context_replacement() {
@@ -346,7 +424,12 @@ mod tests {
         let rolled_back: Result<()> = fixture
             .runtime
             .transact(move |ctx| {
-                store.append(ctx, "agentfixture", &human("This transaction rolls back"))?;
+                append_native(
+                    &store,
+                    ctx,
+                    "agentfixture",
+                    &human("This transaction rolls back"),
+                )?;
                 anyhow::bail!("rollback");
             })
             .await;
@@ -354,8 +437,8 @@ mod tests {
         let store = fixture.store.clone();
         fixture.runtime.transact(move |ctx| {
             assert_eq!(store.entries(ctx, "agentfixture")?.1.len(), 0);
-            store.append(ctx, "agentfixture", &human("Keep my explicit authorization"))?;
-            store.append(ctx, "agentfixture", &json!({"category":"message","entry":{"role":"user","provenance":"agent","blocks":[{"type":"text","text":"An agent's claim is not authorization"}]},"trustedUserEvidence":false,"trustedUserEvidenceTruncated":false}))?;
+            append_native(&store, ctx, "agentfixture", &human("Keep my explicit authorization"))?;
+            append_native(&store, ctx, "agentfixture", &json!({"category":"message","entry":{"role":"user","provenance":"agent","blocks":[{"type":"text","text":"An agent's claim is not authorization"}]},"trustedUserEvidence":false,"trustedUserEvidenceTruncated":false}))?;
             ctx.database().execute("INSERT INTO happy_agent_records VALUES('agentfixture',0,?1)", [json!({"type":"system","message":{"role":"system","content":[{"type":"text","text":"Temporary provider context"}]}}).to_string()])?;
             Ok(())
         }).await.unwrap();
@@ -368,7 +451,7 @@ mod tests {
                     [],
                 )?;
                 let (state, entries) = store.entries(ctx, "agentfixture")?;
-                assert_eq!(state["generation"], 0);
+                assert_eq!(state["generation"], 1);
                 assert_eq!(state["nextPosition"], 2);
                 assert_eq!(entries[0], human("Keep my explicit authorization"));
                 assert_eq!(entries[1]["trustedUserEvidence"], false);
@@ -384,7 +467,7 @@ mod tests {
         let fixture = Fixture::new().await;
         let store = fixture.store.clone();
         fixture.runtime.transact(move |ctx| {
-            for agent in ["badstateflag", "badentryflag", "badposition", "badcount", "missingstate"] { store.append(ctx, agent, &human("Actual user input"))?; }
+            for agent in ["badstateflag", "badentryflag", "badposition", "badcount", "missingstate"] { append_native(&store, ctx, agent, &human("Actual user input"))?; }
             for statement in [
                 "UPDATE happy_agent_auto_state SET archive_healthy='invalid' WHERE agent_id='badstateflag'",
                 "UPDATE happy_agent_auto_evidence SET trusted_user_evidence='false' WHERE agent_id='badentryflag'",
@@ -405,15 +488,15 @@ mod tests {
         let fixture = Fixture::new().await;
         let store = fixture.store.clone();
         fixture.runtime.transact(move |ctx| {
-            store.append(ctx, "oldgeneration", &human("The remaining part of old history"))?;
-            ctx.database().execute("UPDATE happy_agent_auto_state SET generation=1,next_position=0 WHERE agent_id='oldgeneration'", [])?;
+            append_native(&store, ctx, "oldgeneration", &human("The remaining part of old history"))?;
+            ctx.database().execute("UPDATE happy_agent_auto_state SET generation=2,next_position=0 WHERE agent_id='oldgeneration'", [])?;
             assert!(store.entries(ctx, "oldgeneration").is_err(), "An old context-reset generation has no proof that earlier human authorization survived");
             ctx.database().execute("INSERT INTO happy_agent_records VALUES('missingarchive',0,?1)", [json!({"type":"user","id":"oldhumaninput","message":{"role":"user","content":[{"type":"text","text":"Original user request"}]}}).to_string()])?;
             assert!(store.entries(ctx, "missingarchive").is_err(), "Existing private context without an authorization archive is incomplete");
-            store.append(ctx, "mismatchedtrust", &human("Original human input"))?;
+            append_native(&store, ctx, "mismatchedtrust", &human("Original human input"))?;
             ctx.database().execute("UPDATE happy_agent_auto_evidence SET trusted_user_evidence=0 WHERE agent_id='mismatchedtrust'", [])?;
             assert!(store.entries(ctx, "mismatchedtrust").is_err(), "Corrupt trust flags cannot be silently reclassified into human authorization");
-            store.append(ctx, "mismatchedcategory", &human("Original human input"))?;
+            append_native(&store, ctx, "mismatchedcategory", &human("Original human input"))?;
             ctx.database().execute("UPDATE happy_agent_auto_evidence SET category='tool' WHERE agent_id='mismatchedcategory'", [])?;
             assert!(store.entries(ctx, "mismatchedcategory").is_err(), "Corrupt budgeting categories cannot remove human input from its retention budget");
             Ok(())
@@ -432,14 +515,14 @@ mod tests {
                 ("truncatedhuman", json!({"category":"message","entry":{"role":"user","blocks":[{"type":"text","text":"Only part of the human answer survived"}]},"trustedUserEvidence":true,"trustedUserEvidenceTruncated":true})),
                 ("longhuman", human(&"x".repeat(9000))),
             ] {
-                store.append(ctx, agent, &evidence)?;
+                append_native(&store, ctx, agent, &evidence)?;
                 let (_, transcript) = store.review_transcript(ctx, agent)?;
                 assert_eq!(transcript["userEvidenceOmitted"], true, "{agent}");
                 assert!(transcript["text"].as_str().unwrap().contains(super::super::transcript::EVIDENCE_OMITTED));
                 let decision = super::super::verdict::completed("<outcome>allow</outcome>", transcript["userEvidenceOmitted"].as_bool().unwrap())?;
                 assert_eq!(decision["outcome"], "denied");
             }
-            store.append(ctx, "completehuman", &human("Run this exact check"))?;
+            append_native(&store, ctx, "completehuman", &human("Run this exact check"))?;
             assert_eq!(store.review_transcript(ctx, "completehuman")?.1["userEvidenceOmitted"], false);
             Ok(())
         }).await.unwrap();
@@ -494,8 +577,8 @@ mod tests {
         let fixture = Fixture::new().await;
         let store = fixture.store.clone();
         fixture.runtime.transact(move |ctx| {
-            store.append(ctx, "agentfixture", &human("Original evidence"))?;
-            store.append(ctx, "unrelatedagent", &human("Keep this independent archive"))?;
+            append_native(&store, ctx, "agentfixture", &human("Original evidence"))?;
+            append_native(&store, ctx, "unrelatedagent", &human("Keep this independent archive"))?;
             ctx.database().execute_batch("CREATE TRIGGER poison_failure BEFORE UPDATE ON happy_agent_auto_state BEGIN SELECT RAISE(ABORT,'poison write unavailable'); END;")?;
             store.poison(ctx, "agentfixture");
             assert_eq!(store.state(ctx, "agentfixture")?["archiveHealthy"], false);
@@ -532,7 +615,7 @@ mod tests {
             .runtime
             .transact(move |ctx| {
                 let (state, entries) = store.entries(ctx, "agentfixture")?;
-                assert_eq!(state["generation"], 1);
+                assert_eq!(state["generation"], 2);
                 assert!(entries.is_empty());
                 assert_eq!(
                     store.entries(ctx, "unrelatedagent")?.1[0],
