@@ -1,5 +1,16 @@
 # Daemon lifecycle learnings
 
+## The daemon starts in the home directory
+
+The detached daemon inherited its launcher's working directory. Happy.app launched from Finder
+starts in `/`, so every child that did not name its own directory started there. Claude Code
+then read across the whole disk, including other apps' containers, and macOS asked the user
+whether Happy could access data from other apps. The daemon now always starts in the user's
+home directory, whoever launches it. Children that read their working directory on startup
+still need a narrower folder of their own; the home directory only stops the root default.
+A consequence is that the local `happy.toml` layer is read from the home directory, not from
+the folder `happy-agent start` was run in.
+
 ## Runtime restarts must hide their Windows console
 
 The safe Bun runtime restart inherited its caller's standard streams but omitted

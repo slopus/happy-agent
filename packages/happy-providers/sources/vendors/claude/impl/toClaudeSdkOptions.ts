@@ -22,6 +22,7 @@ export function toClaudeSdkOptions(options: {
     abort?: AbortSignal;
     context: SessionContext;
     credential: ClaudeCredential;
+    cwd?: string;
     effort?: SessionReasoningEffort;
     env: NodeJS.ProcessEnv;
     model: string;
@@ -52,6 +53,7 @@ export function toClaudeSdkOptions(options: {
             ),
         },
         ...(options.compaction ? { maxTurns: 1 } : {}),
+        ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
         model: options.model,
         ...(options.pathToClaudeCodeExecutable === undefined
             ? {}

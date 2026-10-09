@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { realpathSync } from "node:fs";
 
 import {
     query as defaultClaudeSdkQuery,
@@ -61,6 +62,8 @@ const CLAUDE_STRUCTURED_OUTPUT_TOOL_NAME = "StructuredOutput";
 export interface ClaudeSessionOptions extends InferenceRetryOptions {
     instructions: string;
     credential: ClaudeCredential;
+    /** The directory Claude Code runs in; defaults to this process's own. */
+    cwd?: string;
     env?: NodeJS.ProcessEnv;
     model?: string;
     modelConfigurations?: Readonly<Record<string, SessionModelConfiguration>>;
@@ -74,6 +77,7 @@ export interface ClaudeSessionOptions extends InferenceRetryOptions {
 
 export class ClaudeSession extends BaseSession {
     readonly credential: ClaudeCredential;
+    readonly cwd: string | undefined;
     readonly env: NodeJS.ProcessEnv;
     readonly model: string | undefined;
     readonly pathToClaudeCodeExecutable: string | undefined;
@@ -103,6 +107,7 @@ export class ClaudeSession extends BaseSession {
     constructor(id: string, options: ClaudeSessionOptions) {
         super(id);
         this.credential = options.credential;
+        this.cwd = options.cwd;
         this.env = options.env ?? process.env;
         this.model = options.model;
         this.activeModel = options.model;
@@ -422,8 +427,11 @@ export class ClaudeSession extends BaseSession {
             structuredOutput: _structuredOutput,
             ...sdkRequestOptions
         } = options;
+        const cwd = this.cwd === undefined ? undefined : claudeWorkingDirectory(this.cwd);
         const replay = createClaudeSessionReplay({
             context: configuredContext,
+            // The replayed environment must name the directory the live query runs in.
+            ...(cwd === undefined ? {} : { cwd }),
             env: this.env,
             model: options.model,
             sessionId: this.sdkSessionId,
@@ -499,6 +507,7 @@ export class ClaudeSession extends BaseSession {
                     ...sdkRequestOptions,
                     context: configuredContext,
                     credential: this.credential,
+                    ...(cwd === undefined ? {} : { cwd }),
                     env: this.env,
                     maxRetries: options.maxRetries ?? this.resolveInferenceMaxRetries(),
                     ...(this.pathToClaudeCodeExecutable === undefined
@@ -1045,6 +1054,20 @@ function toAggregateModelUsage(
         cacheWrite,
         totalTokens: input + output,
     };
+}
+
+/**
+ * Claude Code reports the directory the operating system hands back once it runs there, with
+ * links resolved, so `/tmp` comes back as `/private/tmp` on macOS. A replay naming the path as
+ * given would differ from the live environment message and lose the cache. A missing directory
+ * stays as given, leaving the SDK to report that it cannot start there.
+ */
+function claudeWorkingDirectory(cwd: string): string {
+    try {
+        return realpathSync.native(cwd);
+    } catch {
+        return cwd;
+    }
 }
 
 function emptyStream(): SessionStream {

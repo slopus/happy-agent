@@ -39,6 +39,8 @@ export interface ClaudeSessionReplay {
 
 export function createClaudeSessionReplay(options: {
     context: SessionContext;
+    /** The directory the live query runs in; defaults to this process's own, as the SDK does. */
+    cwd?: string;
     env?: NodeJS.ProcessEnv;
     model: string;
     sessionId: string;
@@ -48,6 +50,7 @@ export function createClaudeSessionReplay(options: {
     const history = messages.slice(0, splitIndex);
     const promptMessages = messages.slice(splitIndex);
     const entries = toSessionStoreEntries(history, {
+        cwd: options.cwd ?? process.cwd(),
         env: options.env ?? process.env,
         model: options.model,
         sessionId: options.sessionId,
@@ -142,7 +145,7 @@ function toPromptMessage(messages: readonly ReplayMessage[]): SDKUserMessage {
 
 function toSessionStoreEntries(
     messages: readonly ReplayMessage[],
-    options: { env: NodeJS.ProcessEnv; model: string; sessionId: string },
+    options: { cwd: string; env: NodeJS.ProcessEnv; model: string; sessionId: string },
 ): SessionStoreEntry[] {
     let parentUuid: string | null = null;
     const assistantUuidByToolCallId = new Map<string, string>();
@@ -158,8 +161,9 @@ function toSessionStoreEntries(
         const uuid = stableMessageUuid(options.sessionId, message, index);
         const base = {
             // Rig runs every tool itself, so Claude Code never works from a caller-owned
-            // directory. The transcript still needs the field expected by its resume path.
-            cwd: process.cwd(),
+            // directory. The transcript still needs the field expected by its resume path, and
+            // the environment attachment must name the directory the live query runs in.
+            cwd: options.cwd,
             entrypoint: "sdk-ts",
             isSidechain: false,
             parentUuid,

@@ -603,8 +603,10 @@ always use standard Responses.
 separate Bedrock provider class in the public API:
 
 - A `ClaudeCodeCredential`, `ClaudeOAuthCredential`, `ClaudeAuthTokenCredential`, or
-  `ClaudeApiKeyCredential` uses the Anthropic Agent SDK. This branch accepts `env`, `model`,
-  `onAccountUsage`, `pathToClaudeCodeExecutable`, `query`, and `userAgent`.
+  `ClaudeApiKeyCredential` uses the Anthropic Agent SDK. This branch accepts `cwd`, `env`,
+  `model`, `onAccountUsage`, `pathToClaudeCodeExecutable`, `query`, and `userAgent`. `cwd` is the
+  directory Claude Code runs in and defaults to the process's own; because Claude Code reads its
+  working directory on startup, name an empty private folder rather than a home or root folder.
 - A `BedrockBearerTokenCredential` or `BedrockAwsCredential` uses Anthropic Messages on Amazon
   Bedrock. This branch accepts `client`, `endpoint`, `model`, `region` (default `us-east-1`),
   `transport` (`"mantle"` by default, or `"runtime"`), and `userAgent`.

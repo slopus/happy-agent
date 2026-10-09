@@ -13,6 +13,11 @@ import { resolveClaudeModelId } from "@/vendors/claude/impl/resolveClaudeModelId
 
 export interface ClaudeProviderOptions extends InferenceRetryOptions {
     credential: ClaudeCredential;
+    /**
+     * The directory Claude Code runs in, which defaults to this process's own. Claude Code reads
+     * its working directory on startup, so callers should name an empty private folder.
+     */
+    cwd?: string;
     env?: NodeJS.ProcessEnv;
     model?: string;
     /** Receives the account usage the limiter reports during inference. */
@@ -29,6 +34,7 @@ export class ClaudeProvider extends BaseProvider {
     static override readonly outputTypes: readonly ProviderModality[] = ["text"];
 
     readonly credential: ClaudeCredential;
+    readonly cwd: string | undefined;
     readonly env: NodeJS.ProcessEnv | undefined;
     readonly model: string | undefined;
     readonly onAccountUsage: ((usage: ProviderUsage) => void) | undefined;
@@ -41,6 +47,7 @@ export class ClaudeProvider extends BaseProvider {
     constructor(options: ClaudeProviderOptions) {
         super();
         this.credential = options.credential;
+        this.cwd = options.cwd;
         this.env = options.env;
         this.model = options.model === undefined ? undefined : resolveClaudeModelId(options.model);
         this.onAccountUsage = options.onAccountUsage;
@@ -55,6 +62,7 @@ export class ClaudeProvider extends BaseProvider {
         return new ClaudeSession(id, {
             ...options,
             credential: this.credential,
+            ...(this.cwd === undefined ? {} : { cwd: this.cwd }),
             ...(this.env === undefined ? {} : { env: this.env }),
             ...(this.model === undefined ? {} : { model: this.model }),
             ...(this.onAccountUsage === undefined ? {} : { onAccountUsage: this.onAccountUsage }),

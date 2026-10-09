@@ -189,6 +189,14 @@ The date attachment is the local calendar date at replay time, as it is in the C
 rebuilt after midnight therefore differs from the one it replaces; the CLI itself reports a
 changed date on a long-lived query, and the one-hour cache lifetime makes the difference moot.
 
+The working directory in the environment snapshot is the one the CLI sees after it starts, with
+links resolved: started in `/tmp/x` on macOS, it reports `/private/tmp/x`. A replay naming the
+path as configured makes the CLI append `Primary working directory: /private/tmp/x (was /tmp/x)`
+and loses the prefix, so the session resolves a configured `cwd` before using it for both the
+query and the replay. Claude Code reads its working directory on startup, so callers pass an
+empty private folder; left unset, it runs in the caller's own directory, which for a desktop
+daemon can be `/`.
+
 A run-level model overrides the active model and is retained for later turns and
 compaction. Replay serializes historical assistant entries with the currently selected
 model because the SDK entry type requires a model; the actual next request uses the

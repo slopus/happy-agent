@@ -190,6 +190,8 @@ async function withServer(
                 const session = new ClaudeSession("<SESSION_ID>", {
                     instructions: "You are a careful engineer.",
                     credential,
+                    // Not this process's own, so a replay that ignored it would miss the cache.
+                    cwd,
                     env,
                     model,
                     query: claudeSdkQuery,
