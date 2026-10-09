@@ -1,5 +1,4 @@
 import { Type, type Static, type TSchema } from "@sinclair/typebox";
-import { Value } from "@sinclair/typebox/value";
 import { agentRequestProfileSchema, cuid2Schema } from "@slopus/happy-agent-base";
 import {
     agentSpawnPresentationSchema,
@@ -11,6 +10,7 @@ import {
 } from "@slopus/happy-agent-client";
 
 import { toolPermissionReviewSchema } from "../permissions/ToolPermissionReview.js";
+import { historyValidator } from "./impl/historyValidator.js";
 
 /** Stable bounds for durable history. These are deliberately generous for real transcripts. */
 export const MAX_HISTORY_RECORD_ID_LENGTH = 256;
@@ -435,39 +435,51 @@ export type HistoryMessageInput = Static<typeof historyMessageInputSchema>;
 
 /** Check the extra persistence bound that JSON Schema cannot express for a value. */
 export function historyToolArgumentsWithinByteLimit(value: unknown): boolean {
-    if (!Value.Check(historyToolArgumentsSchema, value)) return false;
-    try {
-        const encoded = JSON.stringify(value);
-        return (
-            encoded !== undefined &&
-            new TextEncoder().encode(encoded).byteLength <= MAX_HISTORY_ARGUMENT_BYTES
-        );
-    } catch {
-        return false;
-    }
+    return historyValidator(historyToolArgumentsSchema).Check(value) && toolArgumentsFit(value);
 }
 
 /** Check every tool argument and the final encoded message size before a store write. */
 export function historyMessageWithinPersistenceBounds(message: unknown): boolean {
-    if (!Value.Check(historyMessageSchema, message)) return false;
-    const candidate = message as HistoryMessage;
+    if (!historyValidator(historyMessageSchema).Check(message)) return false;
+    let encoded: string | undefined;
+    try {
+        encoded = JSON.stringify(message);
+    } catch {
+        return false;
+    }
+    return encoded !== undefined && historyMessageFitsPersistenceBounds(message, encoded);
+}
+
+/**
+ * The persistence bounds of a message that already matches `historyMessageSchema`, which covers
+ * every tool argument's shape. A stored row is measured by the bytes it holds instead of being
+ * encoded again: desktop history loads re-encoded and re-checked every message they read.
+ */
+export function historyMessageFitsPersistenceBounds(
+    message: HistoryMessage,
+    encoded: string,
+): boolean {
     if (
-        candidate.blocks.some(
+        message.blocks.some(
             (block) =>
                 block.type === "tool_call" &&
                 ((block.requested !== true &&
                     block.arguments !== undefined &&
-                    !historyToolArgumentsWithinByteLimit(block.arguments)) ||
+                    !toolArgumentsFit(block.arguments)) ||
                     (block.elevated === undefined) !== (block.review === undefined)),
         )
     ) {
         return false;
     }
+    return Buffer.byteLength(encoded, "utf8") <= MAX_HISTORY_MESSAGE_JSON_BYTES;
+}
+
+function toolArgumentsFit(value: unknown): boolean {
     try {
-        const encoded = JSON.stringify(candidate);
+        const encoded = JSON.stringify(value);
         return (
             encoded !== undefined &&
-            new TextEncoder().encode(encoded).byteLength <= MAX_HISTORY_MESSAGE_JSON_BYTES
+            Buffer.byteLength(encoded, "utf8") <= MAX_HISTORY_ARGUMENT_BYTES
         );
     } catch {
         return false;

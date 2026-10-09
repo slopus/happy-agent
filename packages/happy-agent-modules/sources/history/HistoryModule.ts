@@ -51,6 +51,7 @@ import {
     historyMessageInputSchema,
     historyMessageModeSchema,
     historyMutationIdSchema,
+    historyMessageFitsPersistenceBounds,
     historyMessageWithinPersistenceBounds,
     historyAgentIdSchema,
     historyRecordIdSchema,
@@ -111,6 +112,7 @@ import {
     type HistoryRunsQuery,
 } from "./HistoryRun.js";
 import { createHistoryExcerpt, type HistoryExcerpt } from "./impl/createHistoryExcerpt.js";
+import { historyValidator } from "./impl/historyValidator.js";
 import {
     historyMessageSearchParts,
     foldHistorySearchText,
@@ -208,6 +210,17 @@ export class HistoryModule implements AgentModule {
 
     constructor(events?: EventsModule) {
         this.#events = events;
+        // Compile during module construction, not while the first history request owns the
+        // database transaction. The cache contains fixed schemas, never transcript content.
+        for (const schema of [
+            historyMessageSchema,
+            historyToolArgumentsSchema,
+            historyRecordSchema,
+            historyRunSchema,
+            historyRunsPageSchema,
+        ]) {
+            historyValidator(schema);
+        }
     }
 
     /** Preserve user control inputs alongside text and images in pending and accepted history. */
@@ -852,7 +865,7 @@ export class HistoryModule implements AgentModule {
                     hasMore,
                 };
                 txCtx.span("history.runs.validate", () => {
-                    if (!Value.Check(historyRunsPageSchema, page)) {
+                    if (!historyValidator(historyRunsPageSchema).Check(page)) {
                         throw new Error("The history module produced an invalid run page.");
                     }
                 });
@@ -2197,7 +2210,7 @@ function toHistoryRecord(row: HistoryRow): HistoryRecord {
         throw new Error("The history module found mismatched persisted statistics.");
     }
     const record: HistoryRecord = { message, position };
-    if (!Value.Check(historyRecordSchema, record)) {
+    if (!historyValidator(historyRecordSchema).Check(record)) {
         throw new Error("The history module found an invalid persisted record.");
     }
     return record;
@@ -2211,8 +2224,8 @@ function parseStoredMessage(encoded: string): HistoryMessage {
         throw new Error("The history module found malformed persisted message JSON.");
     }
     if (
-        !Value.Check(historyMessageSchema, parsed) ||
-        !historyMessageWithinPersistenceBounds(parsed)
+        !historyValidator(historyMessageSchema).Check(parsed) ||
+        !historyMessageFitsPersistenceBounds(parsed, encoded)
     ) {
         throw new Error("The history module found an invalid persisted message.");
     }
@@ -2498,7 +2511,7 @@ function runStateFromRow(row: HistoryRunRow): HistoryRunState {
 
 function runFromRow(row: HistoryRunRow, messages: HistoryMessage[]): HistoryRun {
     const run: HistoryRun = { ...runStateFromRow(row), messages };
-    if (!Value.Check(historyRunSchema, run)) {
+    if (!historyValidator(historyRunSchema).Check(run)) {
         throw new Error("The history module produced an invalid history run.");
     }
     return run;

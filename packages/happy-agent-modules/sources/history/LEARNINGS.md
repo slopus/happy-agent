@@ -119,6 +119,19 @@ reads every selected run's messages in one query split by run in memory. The anc
 `after` page is the only one narrowed to later positions. The oversized-run check happens on the
 counts, before any message is read.
 
+## History validation must not repeatedly interpret schema trees
+
+Concurrent desktop history loads spent more time interpreting nested message schemas than reading
+SQLite. History now compiles its fixed TypeBox schemas once during module construction and reuses
+them across records, runs, and pages. All existing checks, byte limits, and corruption errors remain;
+the cache contains schemas only, never messages or user-specific state. UTF-8 size checks use byte
+length directly instead of allocating another full encoded payload. Prewarming keeps compilation
+off the first request's database transaction and prevents a cold-load latency spike.
+
+Reading a stored message checks its schema once. The persistence bounds that follow measure the
+stored JSON's own bytes and each tool argument's size, without checking the message's shape
+again or encoding the parsed message a second time; writes still encode before measuring.
+
 ## Visible message activity means human text or a final model response
 
 History reports the newest non-hidden `user` message with non-whitespace text immediately. An

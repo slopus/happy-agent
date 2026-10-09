@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { Value } from "@sinclair/typebox/value";
 
 import {
@@ -24,6 +24,17 @@ function validMessage() {
 }
 
 describe("history runtime bounds and contracts", () => {
+    it("checks UTF-8 persistence limits without allocating another encoded payload", () => {
+        const encode = vi.spyOn(TextEncoder.prototype, "encode");
+        try {
+            expect(historyToolArgumentsWithinByteLimit({ text: "🙂".repeat(10_000) })).toBe(true);
+            expect(historyMessageWithinPersistenceBounds(validMessage())).toBe(true);
+            expect(encode.mock.calls.length).toBe(0);
+        } finally {
+            encode.mockRestore();
+        }
+    });
+
     it("retains exact requested arguments that must fail execution instead of acceptance", () => {
         const argumentsValue = {
             body: "x".repeat(1_010_000),
