@@ -725,7 +725,6 @@ describe("EventsModule", () => {
                 "loop.started",
                 "provider.event",
                 "provider.event",
-                "provider.event",
                 "tool.started",
                 "tool.completed",
                 "inference.completed",
@@ -1262,12 +1261,13 @@ describe("EventsModule", () => {
                 events
                     .replay(events.originCursor())
                     ?.events.filter((event) => event.type === "provider.event") ?? [];
-            expect(providerEvents).toHaveLength(16);
+            // Streamed reasoning and tool-argument fragments are not journaled.
+            expect(providerEvents).toHaveLength(14);
             expect(providerEvents[0]?.payload).toMatchObject({
                 event: { type: "block_start" },
                 rigEvent: { type: "block_start" },
             });
-            expect(providerEvents[3]?.payload).toMatchObject({
+            expect(providerEvents[2]?.payload).toMatchObject({
                 event: {
                     reasoning:
                         '{"type":"reasoning","encrypted_content":"OPAQUE_REASONING_SENTINEL"}',
@@ -1281,7 +1281,7 @@ describe("EventsModule", () => {
                     type: "thinking_end",
                 },
             });
-            expect(providerEvents[6]?.payload).toMatchObject({
+            expect(providerEvents[4]?.payload).toMatchObject({
                 event: { type: "toolcall_end" },
                 rigEvent: {
                     toolCall: {
@@ -1290,22 +1290,22 @@ describe("EventsModule", () => {
                     },
                 },
             });
-            expect(providerEvents[9]?.payload).toMatchObject({
+            expect(providerEvents[7]?.payload).toMatchObject({
                 event: { type: "toolcall_result_end" },
                 rigEvent: { type: "tool_execution_end" },
             });
-            expect(providerEvents[11]?.payload).toMatchObject({
+            expect(providerEvents[9]?.payload).toMatchObject({
                 event: { type: "retrying", attempt: 2 },
                 rigEvent: { messageId: "message-projection-assistant", type: "retrying" },
             });
-            expect(providerEvents[12]?.payload).toMatchObject({
+            expect(providerEvents[10]?.payload).toMatchObject({
                 event: { type: "token_usage" },
             });
-            expect(providerEvents[14]?.payload).toMatchObject({
+            expect(providerEvents[12]?.payload).toMatchObject({
                 event: { type: "block_reset" },
                 rigEvent: { type: "block_reset" },
             });
-            expect(providerEvents[15]?.payload).toMatchObject({
+            expect(providerEvents[13]?.payload).toMatchObject({
                 event: { message: "provider failed", state: "error", type: "done" },
             });
         } finally {

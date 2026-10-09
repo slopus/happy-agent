@@ -187,6 +187,28 @@ one message it cannot carry.
 - The Happy draft schema must accept the same additional fields as the desktop draft API. A stricter mirror interpreted a valid desktop draft as a timestamped clear. Accept those fields when projecting the draft; do not change the public API to accommodate the adapter.
 - Compare metadata by content rather than serialized key order: the phone's parser reorders keys without changing values, and byte comparisons doubled metadata traffic. A failed phone write must also remain scheduled while connected instead of waiting for another edit or reconnect. Reuse its single per-session timer with capped backoff, read the latest draft on retry, and stop when the draft catches up, the session disappears, or the socket disconnects.
 
+## Sync passes share the daemon's only thread
+
+A full session pass re-reads the session, asks Happy for new messages, and republishes metadata
+and agent state: tens of milliseconds of interpreted work on the thread that also answers every
+API request. Profiles of a team node with about sixty attached sessions showed storms that
+stalled unrelated requests for seconds:
+
+- Every provider-usage snapshot and every project or workspace catalog event kicked all attached
+  sessions. A session now records which project, workspace, and provider its last snapshot
+  published, and catalog and usage changes kick only the sessions they concern plus the agents an
+  event itself moved.
+- Every durable event of a working agent started the next pass the moment the previous one ended.
+  A session kicked continuously now starts a full pass at most once a second and batches what
+  arrives meanwhile, so a busy agent's messages reach the phone up to a second later. Changes from
+  the phone, such as a draft, are read by the same paced pass and can also take up to a second to
+  arrive; the user accepted that delay. A quiet session still publishes at once, and a caller
+  waiting on `settle` or `archive` is never paced.
+- Every catalog event, including git facts, probes, renames, and reorders, re-checked the
+  visibility of every published session, which reads its agent, workspace, and project. Only a
+  project or workspace becoming archived can hide sessions it does not name, so only that reaps
+  everything; an attachment or visibility change re-checks just the agent it moved.
+
 ## Tests
 
 - Keep composer coverage compact. Repeating complete fixtures and the same round trip at several layers inflated the change without testing distinct failures. Consolidate related scenarios, share only small local fixtures, and retain the transaction, React lifecycle, ordering, retry, and reconnect regressions at the boundary that exposes each failure.

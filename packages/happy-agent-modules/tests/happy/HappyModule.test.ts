@@ -14,6 +14,7 @@ import {
     happySyncMigrations,
     type HappySpawnRequest,
 } from "../../sources/happy/index.js";
+import { createHappyAccountFingerprint } from "../../sources/happy/credentials/createHappyAccountFingerprint.js";
 import { happyIntegrationMigrations } from "../../sources/happy/HappyIntegrationDatabase.js";
 import { moduleDatabase } from "../support/moduleDatabase.js";
 import type { BotRecord } from "../../sources/bots/index.js";
@@ -1202,10 +1203,13 @@ describe("archiving a Happy session", () => {
             },
             metadata: { version: 1 },
         };
+        let configReads = 0;
         const agents = {
             abort: async () => undefined,
-            config: async (_ctx: unknown, agentId: string) =>
-                agentId === "agent-unattached" ? config : undefined,
+            config: async (_ctx: unknown, agentId: string) => {
+                configReads += 1;
+                return agentId === "agent-unattached" ? config : undefined;
+            },
             updateMetadata: async () => undefined,
         };
         const projects = {
@@ -1293,6 +1297,44 @@ describe("archiving a Happy session", () => {
         await sync.setRemoteSession(database.context, "agent-unattached", "remote-unattached", 2);
 
         if (workspaceListener === undefined) throw new Error("Happy did not watch workspaces.");
+        // Git facts and renames cannot hide a session, so they must not re-read every session's
+        // agent, workspace, and project the way an archive does.
+        await sync.ensureSession(
+            database.context,
+            {
+                agentId: "agent-elsewhere",
+                credentialFingerprint: createHappyAccountFingerprint(
+                    happyConnection.configuration.credentials,
+                    happyConnection.configuration.serverUrl,
+                ),
+                encryptionKeyBase64: Buffer.alloc(32).toString("base64"),
+                encryptionVariant: "legacy",
+                sessionId: "agent-elsewhere",
+            },
+            1,
+        );
+        const readsBefore = configReads;
+        const ready = { ...archivedWorkspace, archivedAt: undefined, status: "ready" };
+        workspaceListener(database.context, {
+            at: 3,
+            change: "apply_git_facts",
+            eventId: "event-0",
+            previousWorkspace: ready,
+            type: "workspace_updated",
+            workspace: ready,
+        });
+        workspaceListener(database.context, {
+            at: 3,
+            eventId: "event-00",
+            previousName: "Old name",
+            previousWorkspace: ready,
+            type: "workspace_renamed",
+            workspace: ready,
+        });
+        await module.settle();
+        expect(configReads).toBe(readsBefore);
+        expect(requests).not.toContain("POST /v1/sessions/remote-unattached/archive");
+
         workspaceListener(database.context, {
             at: 3,
             eventId: "event-1",

@@ -1248,6 +1248,60 @@ describe("keeping one session in step with Happy", () => {
         await session.close();
     });
 
+    it("tells which project, workspace, and provider changes its published facts depend on", async () => {
+        // Every catalog event and every provider usage change used to republish all attached
+        // sessions, each a full sync pass. Sixty sessions made one workspace rename stall the
+        // daemon for over a second, so changes now reach only the sessions they describe.
+        const socket = new FakeSocket();
+        const { operations, snapshot } = fakeOperations();
+        Object.assign(snapshot, {
+            project: { id: "project-1", kind: "regular", name: "Rig" },
+            workspace: { id: "workspace-1", name: "RPC" },
+        });
+        const session = client({ operations, server: fakeServer(), socket });
+        expect(session.concerns({ projectId: "project-2" })).toBe(true);
+
+        await session.settle();
+
+        expect(session.concerns({ projectId: "project-1" })).toBe(true);
+        expect(session.concerns({ workspaceId: "workspace-1" })).toBe(true);
+        expect(session.concerns({ providerId: "codex" })).toBe(true);
+        expect(session.concerns({ projectId: "project-2" })).toBe(false);
+        expect(session.concerns({ workspaceId: "workspace-2" })).toBe(false);
+        expect(session.concerns({ providerId: "claude" })).toBe(false);
+        expect(session.concerns({})).toBe(false);
+        await session.close();
+    });
+
+    it("paces passes for a session that keeps changing, while a quiet change goes at once", async () => {
+        // Every durable event of a working agent kicks its session. Running the next full pass
+        // the moment the previous one finished made one streaming agent cost tens of passes a
+        // second on the daemon's only thread.
+        const socket = new FakeSocket();
+        const server = fakeServer();
+        const session = client({ operations: fakeOperations().operations, server, socket });
+        const fetches = () => server.requests.filter((one) => one.url.includes("/messages")).length;
+        vi.useFakeTimers();
+        try {
+            await session.settle();
+            await vi.advanceTimersByTimeAsync(1_100);
+            const before = fetches();
+            session.kick();
+            await vi.advanceTimersByTimeAsync(10);
+            expect(fetches()).toBe(before + 1);
+            for (let index = 0; index < 20; index += 1) session.kick();
+            await vi.advanceTimersByTimeAsync(500);
+            expect(fetches()).toBe(before + 1);
+            await vi.advanceTimersByTimeAsync(600);
+            expect(fetches()).toBe(before + 2);
+            await vi.advanceTimersByTimeAsync(2_000);
+            expect(fetches()).toBe(before + 2);
+        } finally {
+            await session.close();
+            vi.useRealTimers();
+        }
+    });
+
     it("does not republish facts that have not changed", async () => {
         const socket = new FakeSocket();
         const session = client({

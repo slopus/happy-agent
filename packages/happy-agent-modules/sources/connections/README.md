@@ -1,6 +1,6 @@
 # Remote connections
 
-`ConnectionsModule` owns the configured roster, active-admin-only tools, and bounded HTTP pools.
+`ConnectionsModule` owns the configured roster, active-admin-only tools, and reusable HTTP pools.
 Configuration owns private machine settings, Cloud owns WorkOS refresh rotation, and Tailcat owns
 the encrypted carrier processes. No remote credential reaches a roster response.
 
@@ -11,9 +11,10 @@ bot after deploying the remote. Supply `name`, `address`, optional `port`, and e
 or `workos_organization_id`. Configure a standalone remote's matching fixed token under `[api]` and
 enable `[feature.tailcat]` on that remote. Team remotes use their existing WorkOS deployment settings.
 
-HTTP pools open one Tailcat carrier per configured remote on demand and retain it for reuse. Each
-connection allows 32 active requests and four idle sockets. Display-name changes preserve the pool,
-carrier, and active requests. Endpoint or authentication changes and removal close active work
+HTTP pools open one Tailcat carrier per configured remote on demand and retain it for reuse. A
+connection does not cap concurrency: every request and attachment opens or reuses its own carrier
+stream at once, and idle streams stay warm until they time out. Display-name changes preserve the
+pool, carrier, and active requests. Endpoint or authentication changes and removal close active work
 without deleting any remote data. Durable Functions reconcile persisted configuration after restart; no request or
 mutation is replayed by the proxy. SSE, upgrades, and CONNECT remain remote-owned streams.
 

@@ -7,7 +7,6 @@ export class RemoteConnectionError extends Error {
         readonly code:
             | "remote_unavailable"
             | "remote_timeout"
-            | "remote_busy"
             | "not_found"
             | "invalid_request"
             | "conflict"

@@ -24,7 +24,11 @@ const HOP_HEADERS = [
     "upgrade",
 ];
 
-/** One bounded reusable HTTP pool. A failed exchange is never retried by this layer. */
+/**
+ * One reusable HTTP pool. Every request and attachment gets its own carrier stream at once, so a
+ * burst never waits behind another request or an open event stream. A failed exchange is never
+ * retried by this layer.
+ */
 export class RemoteProxyConnection {
     readonly #agent: Agent;
     readonly #active = new Set<AbortController>();
@@ -35,8 +39,6 @@ export class RemoteProxyConnection {
         this.#closeTransport = closeTransport;
         this.#agent = new Agent({
             keepAlive: true,
-            maxSockets: 32,
-            maxFreeSockets: 4,
             timeout: 30_000,
         });
         this.#agent.createConnection = (_options, callback) => {
@@ -67,8 +69,6 @@ export class RemoteProxyConnection {
         authorize: (signal: AbortSignal) => Promise<string>,
     ): Promise<Omit<ConnectionHealth, "connectionId">> {
         if (this.#closed) throw unavailable();
-        if (this.#active.size >= 32)
-            throw new RemoteConnectionError(503, "remote_busy", "The remote connection is busy.");
         const controller = new AbortController();
         this.#active.add(controller);
         const timer = setTimeout(
@@ -162,8 +162,6 @@ export class RemoteProxyConnection {
         head?: Buffer,
     ): Promise<void> {
         if (this.#closed) throw unavailable();
-        if (this.#active.size >= 32)
-            throw new RemoteConnectionError(503, "remote_busy", "The remote connection is busy.");
         const controller = new AbortController();
         this.#active.add(controller);
         const signal = controller.signal;

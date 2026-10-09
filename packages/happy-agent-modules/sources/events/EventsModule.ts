@@ -100,6 +100,11 @@ type ActiveRun = Static<typeof activeRunSchema>;
  */
 export const EVENTS_CAPACITY = 10_000;
 
+/** How many in-memory streamed versions each agent keeps for version lookups. */
+const MAX_STREAMED_VERSIONS_PER_AGENT = 1_024;
+/** How many agents' streamed versions are kept at once; the least recently streaming go first. */
+const MAX_STREAMED_VERSION_AGENTS = 256;
+
 /**
  * The daemon's durable, bounded event journal.
  *
@@ -111,6 +116,25 @@ export class EventsModule implements AgentModule<AnyAgentTool> {
     readonly name = "events";
     readonly migrations = eventsMigrations;
     readonly #entries: AgentEvent[] = [];
+    /**
+     * Where each retained event sits, counted from the first event this process ever held, so a
+     * cursor lookup does not scan a window of ten thousand events on every append and replay.
+     */
+    readonly #positions = new Map<string, number>();
+    /** How many events have left the front of the window; positions are offset by it. */
+    #dropped = 0;
+    /** The newest retained event of each agent. */
+    readonly #latestByAgent = new Map<string, string>();
+    /**
+     * Versions minted by streamed text, newest last, kept only in memory.
+     *
+     * A streamed fragment is an agent version on the API like any other change, but it is not
+     * journaled, so the durable latest-event row does not know it. Version lookups take the newer
+     * of the durable answer and this overlay. Each agent keeps a bounded tail: a lookup older
+     * than the tail answers with the durable predecessor, which a client detects as a version gap
+     * and repairs by refetching, never by adopting a wrong state.
+     */
+    readonly #streamedVersions = new Map<string, { readonly ids: string[]; occurredAt: number }>();
     readonly #listeners = new Set<EventListener>();
     /**
      * The loop each agent has opened and not yet had journaled, because the run it belongs to had
@@ -143,7 +167,7 @@ export class EventsModule implements AgentModule<AnyAgentTool> {
         const loaded = await ctx.inTx(
             async (txCtx) => await loadEventState(txCtx.db, this.capacity()),
         );
-        this.#entries.push(...loaded.events.map(freezeEvent));
+        for (const event of loaded.events) this.#retain(freezeEvent(event));
         this.#occurredAt = this.#entries.at(-1)?.occurredAt ?? 0;
         this.#originCursor = loaded.originCursor ?? this.#originCursor;
         const highWater = this.#entries.at(-1)?.id ?? this.#originCursor;
@@ -167,7 +191,8 @@ export class EventsModule implements AgentModule<AnyAgentTool> {
     }
 
     latestCursor(agentId: string): string | undefined {
-        return this.#entries.findLast((event) => event.agentId === agentId)?.id;
+        const latest = this.#latestByAgent.get(agentId);
+        return latest !== undefined && this.#positions.has(latest) ? latest : undefined;
     }
 
     /** The newest durable event identity and time for one agent, read as one consistent fact. */
@@ -179,7 +204,11 @@ export class EventsModule implements AgentModule<AnyAgentTool> {
         if (latest !== undefined && !Value.Check(latestAgentEventSchema, latest)) {
             throw new Error("The event journal found invalid latest agent event metadata.");
         }
-        return latest;
+        const streamed = this.#streamedVersions.get(agentId);
+        const cursor = streamed?.ids.at(-1);
+        if (streamed === undefined || cursor === undefined) return latest;
+        if (latest !== undefined && latest.cursor > cursor) return latest;
+        return { cursor, occurredAt: streamed.occurredAt };
     }
 
     /**
@@ -269,7 +298,10 @@ export class EventsModule implements AgentModule<AnyAgentTool> {
         ) {
             throw new Error("The event journal received an invalid cursor lookup.");
         }
-        return await loadPreviousEventCursor(ctx.db, agentId, beforeId);
+        const durable = await loadPreviousEventCursor(ctx.db, agentId, beforeId);
+        const streamed = this.#streamedVersionBefore(agentId, beforeId);
+        if (streamed === undefined) return durable;
+        return durable !== undefined && durable > streamed ? durable : streamed;
     }
 
     async record(ctx: Context, input: AppendEventInput): Promise<AgentEvent> {
@@ -288,7 +320,7 @@ export class EventsModule implements AgentModule<AnyAgentTool> {
             const events = this.#entries.slice(0, limit);
             return { cursor: events.at(-1)?.id ?? after, events, latestCursor };
         }
-        const index = this.#entries.findIndex((event) => event.id === after);
+        const index = this.#indexOf(after);
         if (index < 0) return undefined;
         const events = this.#entries.slice(index + 1, index + 1 + limit);
         return { cursor: events.at(-1)?.id ?? after, events, latestCursor };
@@ -304,8 +336,8 @@ export class EventsModule implements AgentModule<AnyAgentTool> {
             const trimmed = await trimEvents(txCtx.db, through);
             if (trimmed === undefined) return undefined;
             afterCommit(txCtx, () => {
-                const index = this.#entries.findIndex((event) => event.id === through);
-                if (index >= 0) this.#entries.splice(0, index + 1);
+                const index = this.#indexOf(through);
+                if (index >= 0) this.#dropFront(index + 1);
                 this.#originCursor = through;
             });
             return { through, trimmed };
@@ -447,6 +479,13 @@ export class EventsModule implements AgentModule<AnyAgentTool> {
             scope: AgentModuleScope,
             event: SessionEvent,
         ): Promise<void> => {
+            // A tool call is announced when the model starts it and again, with its complete
+            // arguments, when it ends. The fragments in between reach no reader.
+            if (event.type === "toolcall_delta") return;
+            if (event.type === "text_delta" || event.type === "reasoning_delta") {
+                this.#streamDelta(scope, event);
+                return;
+            }
             const journalEvent =
                 event.type === "toolcall_end"
                     ? { ...event, arguments: journalToolArguments(event.arguments) }
@@ -680,16 +719,20 @@ export class EventsModule implements AgentModule<AnyAgentTool> {
     }
 
     private publish(event: AgentEvent, removedThrough?: string): void {
-        if (this.#entries.some((candidate) => candidate.id === event.id)) return;
+        if (this.#positions.has(event.id)) return;
         this.#occurredAt = Math.max(this.#occurredAt, event.occurredAt);
-        this.#entries.push(event);
+        this.#retain(event);
+        let drop = 0;
         while (
-            this.#entries.length > 0 &&
-            (this.#entries.length > this.capacity() ||
-                (removedThrough !== undefined && this.#entries[0]!.id <= removedThrough))
+            drop < this.#entries.length &&
+            (this.#entries.length - drop > this.capacity() ||
+                (removedThrough !== undefined && this.#entries[drop]!.id <= removedThrough))
         ) {
-            const removed = this.#entries.shift();
-            if (removed !== undefined) this.#originCursor = removed.id;
+            drop += 1;
+        }
+        if (drop > 0) {
+            this.#originCursor = this.#entries[drop - 1]!.id;
+            this.#dropFront(drop);
         }
         for (const listener of this.#listeners) {
             try {
@@ -698,6 +741,128 @@ export class EventsModule implements AgentModule<AnyAgentTool> {
                 // One observer cannot starve the ordered journal or its other subscribers.
             }
         }
+    }
+
+    /**
+     * Passes one streamed text fragment to live subscribers without journaling it.
+     *
+     * A model streams dozens of fragments a second. Journaling each one cost a transaction with a
+     * synced commit and a rewrite of the whole active run, and stalled every request on the
+     * daemon. The durable start and end events bracket the block and the end carries its complete
+     * text, so replay and restart lose nothing a fragment would have restored: restoration resets
+     * an interrupted block either way. The fragment still mints an agent version, in memory.
+     */
+    #streamDelta(
+        scope: AgentModuleScope,
+        event: Extract<SessionEvent, { type: "text_delta" | "reasoning_delta" }>,
+    ): void {
+        const agentId = scope.agent.id;
+        const current = this.#runs.get(agentId) ?? emptyRun(this.#createId());
+        const kind = event.type === "text_delta" ? "text" : "reasoning";
+        const index = requireActive(current, kind);
+        const block = recordValue(current.blocks[index]);
+        const blocks = [...current.blocks];
+        if (kind === "text") {
+            const text = typeof block?.text === "string" ? block.text : "";
+            blocks[index] = { text: text + event.delta, type: "text" };
+        } else {
+            const thinking = typeof block?.thinking === "string" ? block.thinking : "";
+            blocks[index] = { thinking: thinking + event.delta, type: "thinking" };
+        }
+        const run: ActiveRun = {
+            ...current,
+            blocks,
+            hasProviderEvent: true,
+            ...(kind === "text" ? { text: current.text + event.delta } : {}),
+        };
+        this.#runs.set(agentId, run);
+        const streamed = freezeEvent({
+            agentId,
+            id: this.#createId(),
+            occurredAt: Math.max(this.#occurredAt, Math.max(0, Math.trunc(Date.now()))),
+            payload: {
+                event: { type: event.type, delta: event.delta },
+                rigEvent: {
+                    contentIndex: index,
+                    delta: event.delta,
+                    messageId: run.inferenceId ?? `${run.runId}-assistant`,
+                    type: kind === "text" ? "text_delta" : "thinking_delta",
+                },
+                runId: run.runId,
+                provider: scope.agent.provider,
+                ...(scope.agent.model === undefined ? {} : { model: scope.agent.model }),
+                streamed: true,
+            },
+            type: "provider.event",
+        });
+        this.#occurredAt = streamed.occurredAt;
+        this.#rememberStreamedVersion(agentId, streamed.id, streamed.occurredAt);
+        for (const listener of this.#listeners) {
+            try {
+                listener(streamed);
+            } catch {
+                // One observer cannot starve the stream or its other subscribers.
+            }
+        }
+    }
+
+    #rememberStreamedVersion(agentId: string, id: string, occurredAt: number): void {
+        let versions = this.#streamedVersions.get(agentId);
+        if (versions === undefined) {
+            versions = { ids: [], occurredAt };
+            if (this.#streamedVersions.size >= MAX_STREAMED_VERSION_AGENTS) {
+                const oldest = this.#streamedVersions.keys().next().value;
+                if (oldest !== undefined) this.#streamedVersions.delete(oldest);
+            }
+        } else {
+            // Re-inserting keeps the map ordered by last activity, so eviction takes the stalest.
+            this.#streamedVersions.delete(agentId);
+        }
+        versions.ids.push(id);
+        versions.occurredAt = occurredAt;
+        if (versions.ids.length > MAX_STREAMED_VERSIONS_PER_AGENT) {
+            versions.ids.splice(0, versions.ids.length - MAX_STREAMED_VERSIONS_PER_AGENT);
+        }
+        this.#streamedVersions.set(agentId, versions);
+    }
+
+    /** The newest in-memory streamed version strictly before `beforeId`, or the newest overall. */
+    #streamedVersionBefore(agentId: string, beforeId: string | undefined): string | undefined {
+        const ids = this.#streamedVersions.get(agentId)?.ids;
+        if (ids === undefined || ids.length === 0) return undefined;
+        if (beforeId === undefined) return ids.at(-1);
+        let low = 0;
+        let high = ids.length;
+        while (low < high) {
+            const middle = (low + high) >>> 1;
+            if (ids[middle]! < beforeId) low = middle + 1;
+            else high = middle;
+        }
+        return low === 0 ? undefined : ids[low - 1];
+    }
+
+    #retain(event: AgentEvent): void {
+        this.#positions.set(event.id, this.#dropped + this.#entries.length);
+        this.#entries.push(event);
+        if (event.agentId !== undefined) this.#latestByAgent.set(event.agentId, event.id);
+    }
+
+    #dropFront(count: number): void {
+        for (const removed of this.#entries.splice(0, count)) {
+            this.#positions.delete(removed.id);
+            if (
+                removed.agentId !== undefined &&
+                this.#latestByAgent.get(removed.agentId) === removed.id
+            ) {
+                this.#latestByAgent.delete(removed.agentId);
+            }
+        }
+        this.#dropped += count;
+    }
+
+    #indexOf(id: string): number {
+        const position = this.#positions.get(id);
+        return position === undefined ? -1 : position - this.#dropped;
     }
 }
 
@@ -761,19 +926,6 @@ function projectProviderEvent(
             partial: partialMessage(run, now),
             type: "text_start",
         };
-    } else if (event.type === "text_delta") {
-        const index = requireActive(run, "text");
-        const block = recordValue(run.blocks[index]);
-        const text = typeof block?.text === "string" ? block.text + event.delta : event.delta;
-        run.blocks[index] = { text, type: "text" };
-        run.text += event.delta;
-        rigEvent = {
-            contentIndex: index,
-            delta: event.delta,
-            messageId,
-            partial: partialMessage(run, now),
-            type: "text_delta",
-        };
     } else if (event.type === "text_end") {
         const index = requireActive(run, "text");
         const content = String(recordValue(run.blocks[index])?.text ?? "");
@@ -793,19 +945,6 @@ function projectProviderEvent(
             messageId,
             partial: partialMessage(run, now),
             type: "thinking_start",
-        };
-    } else if (event.type === "reasoning_delta") {
-        const index = requireActive(run, "reasoning");
-        const block = recordValue(run.blocks[index]);
-        const thinking =
-            typeof block?.thinking === "string" ? block.thinking + event.delta : event.delta;
-        run.blocks[index] = { thinking, type: "thinking" };
-        rigEvent = {
-            contentIndex: index,
-            delta: event.delta,
-            messageId,
-            partial: partialMessage(run, now),
-            type: "thinking_delta",
         };
     } else if (event.type === "reasoning_end") {
         const index = requireActive(run, "reasoning");
@@ -837,16 +976,6 @@ function projectProviderEvent(
             messageId,
             partial: partialMessage(run, now),
             type: "toolcall_start",
-        };
-    } else if (event.type === "toolcall_delta") {
-        const index = run.callIndexes[event.callId] ?? requireActive(run, "tool");
-        run.argumentBuffers[event.callId] = (run.argumentBuffers[event.callId] ?? "") + event.delta;
-        rigEvent = {
-            contentIndex: index,
-            delta: event.delta,
-            messageId,
-            partial: partialMessage(run, now),
-            type: "toolcall_delta",
         };
     } else if (event.type === "toolcall_end") {
         const index = run.callIndexes[event.callId] ?? requireActive(run, "tool");

@@ -650,9 +650,12 @@ is `503 remote_unavailable`; a connection/header deadline of 30 seconds is
 inventing a successful response or replaying a mutation. Cloud authentication failures retain
 their existing stable Cloud error codes. Remote HTTP rejections pass through unchanged.
 Cancellation, connection replacement/removal, and daemon shutdown close associated streams and
-release resources. Each connection permits at most 32 concurrent requests/attachments and rejects
-overflow with `503 remote_busy`. Streams use backpressure and bounded buffers. Reconnecting the
-carrier never replays an in-flight request; clients reconnect SSE using the remote cursor.
+release resources. A connection does not limit concurrent requests or attachments: each one is
+forwarded immediately over its own carrier stream, in parallel, and never waits behind another
+request or an open stream. This is additive and does not increment the protocol version; an older
+daemon may still reject overflow with `503 remote_busy`. Streams use backpressure and bounded
+buffers. Reconnecting the carrier never replays an in-flight request; clients reconnect SSE using
+the remote cursor.
 
 `HappyAgentClient.listConnections()` reads the roster. `reorderConnection(id, request, options)`
 moves one connection using the roster version as `options.ifMatch`. `client.connection(id)` creates an

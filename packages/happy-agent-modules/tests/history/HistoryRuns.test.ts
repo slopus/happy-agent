@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { Value } from "@sinclair/typebox/value";
 import { withTracer } from "@steve.kite/stdlib";
 import type {
     AgentBaseAcceptedMessage,
@@ -12,6 +13,14 @@ import { USER_MESSAGE_ORIGIN_METADATA } from "../../sources/impl/messageOrigin.j
 import { moduleDatabase, type ModuleDatabase } from "../support/moduleDatabase.js";
 import { resolveModuleHooks } from "../support/moduleHooks.js";
 import { recordingTracer } from "../support/recordingTracer.js";
+import { historyMessageSchema } from "../../sources/history/HistoryMessage.js";
+import { historyRecordSchema } from "../../sources/history/HistoryPage.js";
+import { historyRunSchema, historyRunsPageSchema } from "../../sources/history/HistoryRun.js";
+
+vi.mock("@sinclair/typebox/value", async (importOriginal) => {
+    const original = await importOriginal<typeof import("@sinclair/typebox/value")>();
+    return { ...original, Value: { ...original.Value, Check: vi.fn(original.Value.Check) } };
+});
 
 const mode = {
     providerId: "codex",
@@ -141,6 +150,38 @@ async function finishInference(
 }
 
 describe("HistoryModule run history", () => {
+    it("reuses compiled nested validators across repeated history pages", async () => {
+        const world = await setup("history-runs-compiled-validation");
+        try {
+            await acceptBatch(world, [accepted("message-a", "send")]);
+            await finishInference(world, "inference-a", "answer");
+            const expected = await world.history.runs(world.database.context, "agent-a");
+            const interpreted = vi.spyOn(Value, "Check");
+            try {
+                for (let index = 0; index < 3; index += 1) {
+                    expect(await world.history.runs(world.database.context, "agent-a")).toEqual(
+                        expected,
+                    );
+                }
+                // Full nested schemas must still validate, but interpreting them per record,
+                // per run and per page made concurrent reads repeatedly walk the schema tree.
+                const nestedSchemas = new Set<unknown>([
+                    historyMessageSchema,
+                    historyRecordSchema,
+                    historyRunSchema,
+                    historyRunsPageSchema,
+                ]);
+                expect(
+                    interpreted.mock.calls.filter(([schema]) => nestedSchemas.has(schema)).length,
+                ).toBe(0);
+            } finally {
+                interpreted.mockRestore();
+            }
+        } finally {
+            world.database.close();
+        }
+    });
+
     it("traces transaction work, queries, decoding and validation without changing the page", async () => {
         const world = await setup("history-runs-tracing");
         try {

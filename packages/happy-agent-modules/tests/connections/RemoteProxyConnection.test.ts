@@ -111,20 +111,88 @@ describe("remote HTTP proxy", () => {
         },
     );
 
-    it("bounds concurrent health checks and releases pending work on close", async () => {
-        const f = await fixture((_req, _res) => undefined);
-        const pending = Array.from({ length: 32 }, () =>
+    it("never refuses concurrent health checks and releases pending work on close", async () => {
+        let arrived = 0;
+        const f = await fixture((_req, _res) => {
+            arrived += 1;
+        });
+        const pending = Array.from({ length: 40 }, () =>
             f.pool.health(async () => "token").catch((error: unknown) => error),
         );
-        await expect(f.pool.health(async () => "token")).rejects.toMatchObject({
-            status: 503,
-            code: "remote_busy",
-        });
+        await expect.poll(() => arrived).toBe(40);
         await f.pool.close();
         const results = await Promise.all(pending);
-        expect(results).toHaveLength(32);
+        expect(results).toHaveLength(40);
         expect(results.every((result) => result instanceof Error)).toBe(true);
+        expect(results.some((result) => (result as { code?: string }).code === "remote_busy")).toBe(
+            false,
+        );
     });
+
+    it("forwards a burst of requests in parallel beside an open event stream", async () => {
+        // Opening eight desktop conversations at once sends about forty requests through one
+        // remote connection, beside the event stream the desktop always keeps open. The remote
+        // answers only once every request has arrived, so any cap or queue would hang the burst.
+        const held: ServerResponse[] = [];
+        const f = await fixture((req, res) => {
+            if (req.url === "/v0/events/stream") {
+                res.writeHead(200, { "content-type": "text/event-stream" });
+                res.write("event: hello\ndata: {}\n\n");
+                return;
+            }
+            held.push(res);
+            if (held.length < 40) return;
+            for (const response of held.splice(0)) {
+                response.writeHead(200, { "content-type": "application/json" });
+                response.end(JSON.stringify({ ok: true }));
+            }
+        });
+        const stream = new AbortController();
+        const events = await fetch(`${f.url}/v0/events/stream`, { signal: stream.signal });
+        await events.body!.getReader().read();
+        try {
+            const responses = await Promise.all(
+                Array.from({ length: 40 }, (_, index) =>
+                    fetch(`${f.url}/v0/agents/a${index}/question`),
+                ),
+            );
+            expect(responses.map((response) => response.status)).toEqual(
+                Array.from({ length: 40 }, () => 200),
+            );
+            await Promise.all(responses.map((response) => response.json()));
+        } finally {
+            stream.abort();
+        }
+    });
+
+    it("keeps open streams from holding back other requests", async () => {
+        const f = await fixture((req, res) => {
+            if (req.url?.startsWith("/v0/events/stream")) {
+                res.writeHead(200, { "content-type": "text/event-stream" });
+                res.write("event: hello\ndata: {}\n\n");
+                return;
+            }
+            res.writeHead(200, { "content-type": "application/json" });
+            res.end("{}");
+        });
+        const streams = Array.from({ length: 40 }, () => new AbortController());
+        try {
+            await Promise.all(
+                streams.map(async (controller, index) => {
+                    const response = await fetch(`${f.url}/v0/events/stream?n=${index}`, {
+                        signal: controller.signal,
+                    });
+                    await response.body!.getReader().read();
+                }),
+            );
+            const response = await fetch(`${f.url}/v0/health`);
+            expect(response.status).toBe(200);
+            await response.text();
+        } finally {
+            for (const controller of streams) controller.abort();
+        }
+    });
+
     it("checks authenticated health without exposing remote diagnostics", async () => {
         const f = await fixture((req, res) => {
             expect(req.url).toBe("/v0/health");

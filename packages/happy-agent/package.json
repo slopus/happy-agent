@@ -37,7 +37,7 @@
         "build:bun:all": "pnpm dlx bun@1.4.2 scripts/build-binary.ts --all",
         "check": "tsc --noEmit",
         "test": "vitest run --passWithNoTests",
-        "test:bun:runtime": "pnpm dlx bun@1.4.2 test ./tests/bun/asyncFunctionResume.bun.mjs ./tests/bun/safeRuntime.bun.mjs",
+        "test:bun:runtime": "pnpm dlx bun@1.4.2 test ./tests/bun/asyncFunctionResume.bun.mjs",
         "test:bun:transports": "pnpm dlx bun@1.4.2 test ./tests/bun/teamTerminalTransport.bun.mjs ./tests/bun/serviceHttpTunnel.bun.mjs ./tests/bun/workspaceProxyRoute.bun.mjs ./tests/bun/liveControlTransport.bun.mjs",
         "build:native:monty": "node scripts/build-native-monty.mjs",
         "test:native:monty": "node scripts/verify-native-monty.mjs",

@@ -11,13 +11,8 @@ Standalone builds require Bun 1.4.2 or newer. Bun 1.4.0 can abort inside
 JavaScriptCore while resuming optimized async functions after caught exceptions.
 `test:bun:runtime` exercises this failure in a child process using the release
 runtime, since the ordinary Node tests cannot detect it. Every platform build
-runs this regression before compiling the executable. Bun 1.4.2 also aborted in
-JIT exception handling during a longer live run, so the CLI starts a fresh VM
-with the baseline, DFG, and FTL JavaScript JIT tiers disabled before loading the
-daemon. The interpreter and WebAssembly remain available. This guard also applies
-to direct foreground launches and overrides inherited settings that re-enable
-those tiers. A later interpreter crash showed that disabling JIT is not a complete
-fix for the live incident; the guard only constrains which engine tiers run.
+runs this regression before compiling the executable. The daemon runs with
+Bun's default JavaScript JIT tiers enabled.
 
 ```text
 sources/ ----> tsc ------> dist/cli.js (Node or Bun)
