@@ -227,8 +227,21 @@ impl HistoryModule {
         {
             return Ok(());
         }
-        let output = bounded(output, 16000);
-        let mut result = json!({"type":"tool_result","callId":call,"toolName":name,"output":output,"display":if is_error{"Command failed."}else{"Command completed."}});
+        let name = if self.schemas.valid("historyToolName", &json!(name))? {
+            name
+        } else {
+            "Invalid tool name"
+        };
+        let output = recorded_output(output, 16000);
+        let display = if is_error {
+            format!("Tool {name} failed.")
+        } else {
+            format!(
+                "Tool {name} returned {} characters.",
+                output.encode_utf16().count()
+            )
+        };
+        let mut result = json!({"type":"tool_result","callId":call,"toolName":name,"output":output,"display":display});
         if is_error {
             result["isError"] = json!(true);
         }
@@ -377,12 +390,19 @@ impl HistoryModule {
     }
 }
 
-fn bounded(text: &str, limit: usize) -> &str {
-    let mut end = text.len().min(limit);
-    while !text.is_char_boundary(end) {
-        end -= 1;
+fn recorded_output(text: &str, limit: usize) -> String {
+    let count = text.encode_utf16().count();
+    if count <= limit {
+        return text.into();
     }
-    &text[..end]
+    let head: String = text
+        .chars()
+        .scan(0, |units, character| {
+            *units += character.len_utf16();
+            (*units <= limit).then_some(character)
+        })
+        .collect();
+    format!("{head}\n...[truncated {} chars]", count - limit)
 }
 fn search(blocks: &[Value]) -> String {
     let mut parts = Vec::new();

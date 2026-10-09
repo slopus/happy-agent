@@ -15,6 +15,7 @@ import {
     historyMessageSchema,
     historyToolArgumentsSchema,
     historyAgentIdSchema,
+    historyToolResultBlockSchema,
 } from "../../happy-agent-modules/sources/history/HistoryMessage.ts";
 import { readAgentHistoryTool } from "../../happy-agent-modules/sources/history/tools/read_agent_history.ts";
 import { selectHistoryPage } from "../../happy-agent-modules/sources/history/impl/selectHistoryPage.ts";
@@ -35,6 +36,8 @@ import {
     usageRunBreakdownSchema,
 } from "../../happy-agent-modules/sources/usage/Usage.ts";
 import { codexExecCommandTool } from "../../happy-agent-modules/sources/compute/tools/codex/exec_command.ts";
+import { codexWriteStdinTool } from "../../happy-agent-modules/sources/compute/tools/codex/write_stdin.ts";
+import { codexKillSessionTool } from "../../happy-agent-modules/sources/compute/tools/codex/kill_session.ts";
 import { agentModelCatalog } from "../../happy-agent-modules/sources/config/impl/agentCatalog.ts";
 import {
     projectIdSchema,
@@ -58,6 +61,8 @@ const { providerModelFamily, PROVIDER_MODEL_COMPATIBILITY_MATRIX } = await impor
 // The factory closes over compute only in execution/review functions. Reading
 // its schema and descriptor neither constructs compute nor executes a command.
 const execCommand = codexExecCommandTool(undefined);
+const writeStdin = codexWriteStdinTool(undefined);
+const killSession = codexKillSessionTool(undefined);
 const readHistory = readAgentHistoryTool(undefined, "build-reference");
 const text = Type.Object({ type: Type.Literal("text"), text: Type.String() });
 const image = Type.Object({
@@ -158,6 +163,11 @@ const schemas = {
     }),
     historyLimit: Type.Integer({ minimum: 1, maximum: 500 }),
     execCommand: execCommand.parameters,
+    historyToolName: historyToolResultBlockSchema.properties.toolName,
+    writeStdin: writeStdin.parameters,
+    killSession: killSession.parameters,
+    unifiedExecOutput: execCommand.returnType,
+    commandSessionId: Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
     cuid2: cuid2Schema,
     agentConfig: agentConfigSchema,
     agentCreate: agentCreateBodySchema,
@@ -321,7 +331,7 @@ writeFileSync(
 );
 writeFileSync(
     new URL("../sources/product/tool_definitions.json", import.meta.url),
-    `${JSON.stringify({ codex: [{ name: execCommand.name, description: execCommand.description, parameters: execCommand.parameters, defer: execCommand.defer }], common: [{ name: readHistory.name, description: readHistory.description, parameters: readHistory.parameters, defer: readHistory.defer }] }, null, 2)}\n`,
+    `${JSON.stringify({ codex: [execCommand, writeStdin, killSession].map((tool) => ({ name: tool.name, description: tool.description, parameters: tool.parameters, defer: tool.defer })), common: [{ name: readHistory.name, description: readHistory.description, parameters: readHistory.parameters, defer: readHistory.defer }] }, null, 2)}\n`,
 );
 const catalogs = {};
 for (const type of ["codex", "claude", "grok", "bedrock"]) {

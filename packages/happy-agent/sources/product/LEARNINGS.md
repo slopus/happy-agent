@@ -87,3 +87,18 @@ Provider retry safety must be checked at the actual provider seam. A real failed
 that completed tool items before its retry retains neither those items nor their shell effects.
 The native provider commits one complete attempt, so this scenario needs a regression fixture
 without additional rollback machinery in the outer loop.
+
+A command that outlives its wait must retain a real stdin and an independent process lifetime.
+Tools now owns bounded command sessions, with original Codex start, input, poll, and stop
+definitions and output formatting. Reads consume only new output. Ending a turn retains yielded
+commands; permission reduction stops them after its transaction commits. Shutdown awaits all
+owned process tasks. A shutdown during the initial wait retains the nonreloadable durable claim,
+so restart reports interruption and does not repeat the effect. A real descendant FIFO verifies
+whole-execution teardown across Linux's separate PID namespace; workload PIDs cannot be compared
+directly with host PIDs.
+
+Canonical tool output uses the original UTF-16 character limit and omitted-character suffix.
+Cutting the UTF-8 byte buffer shortened multibyte output prematurely and concealed the omission.
+Tool display text now names the tool and counts the retained output, with the original validated
+fallback for an invalid name. The provider retains its full bounded result independently of the
+shorter public archive.

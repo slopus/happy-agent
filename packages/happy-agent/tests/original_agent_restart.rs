@@ -1857,3 +1857,432 @@ async fn regular_tier_clears_priority_while_effort_and_permission_changes_preser
     assert!(settings.get("serviceTier").is_none());
     provider.await.expect("two provider turns");
 }
+
+fn command_response(id: &str, name: &str, arguments: Value) -> Vec<Value> {
+    vec![
+        json!({"type":"response.output_item.added","item":{"type":"function_call","id":format!("item-{id}"),"call_id":id,"name":name}}),
+        json!({"type":"response.function_call_arguments.delta","item_id":format!("item-{id}"),"delta":arguments.to_string()}),
+        json!({"type":"response.function_call_arguments.done","arguments":arguments.to_string()}),
+        json!({"type":"response.output_item.done","item":{"type":"function_call","id":format!("item-{id}"),"call_id":id,"name":name,"arguments":arguments.to_string()}}),
+        json!({"type":"response.completed","response":{"id":format!("response-{id}"),"output":[],"usage":{"input_tokens":10,"output_tokens":2}}}),
+    ]
+}
+
+fn command_output(request: &Value, id: &str) -> String {
+    request["input"]
+        .as_array()
+        .expect("provider context")
+        .iter()
+        .find(|item| item["type"] == "function_call_output" && item["call_id"] == id)
+        .expect("native call result")["output"]
+        .as_str()
+        .expect("command output")
+        .to_owned()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn yielded_command_accepts_input_reads_only_new_output_and_stops_the_process_group() {
+    let (endpoint, mut requests, provider) = scripted_provider(5).await;
+    let installation = Installation::new();
+    installation.seed(&endpoint);
+    installation.command("start");
+    let first = exchange(&mut requests).await;
+    let command = "printf 'session-ready\\n'; mkfifo descendant-input; (exec 3<> descendant-input; printf 'descendant-ready\\n'; IFS= read -r released <&3; printf 'escaped' > descendant-effect) & IFS= read -r first || exec sleep 20; printf 'accepted:%s\\n' \"$first\"; IFS= read -r second; printf 'unexpected-%s\\n' completion";
+    first
+        .respond
+        .send(command_response(
+            "native-session-start",
+            "exec_command",
+            json!({"cmd":command,"yield_time_ms":250}),
+        ))
+        .expect("start interactive command");
+    let after_start = tokio::time::timeout(Duration::from_secs(5), requests.recv())
+        .await
+        .unwrap_or_else(|error| {
+            panic!(
+                "The yielded command did not continue: {error}; daemon log: {}",
+                std::fs::read_to_string(installation.home.join("agent/daemon.log"))
+                    .unwrap_or_default()
+            )
+        })
+        .expect("command continuation");
+    let output = command_output(&after_start.request, "native-session-start");
+    assert!(output.contains("session-ready"), "{output}");
+    assert!(
+        output.contains("descendant-ready"),
+        "the descendant opened its real input pipe"
+    );
+    let session: u64 = output
+        .lines()
+        .find_map(|line| line.strip_prefix("Process running with session ID "))
+        .expect("yielded session identity")
+        .parse()
+        .expect("positive integer session");
+    assert!(session > 0);
+    after_start
+        .respond
+        .send(command_response(
+            "native-session-input",
+            "write_stdin",
+            json!({"session_id":session,"chars":"hello-session\n","yield_time_ms":250}),
+        ))
+        .expect("type into yielded command");
+    let after_input = exchange(&mut requests).await;
+    let output = command_output(&after_input.request, "native-session-input");
+    assert!(output.contains("accepted:hello-session"), "{output}");
+    assert!(
+        !output.contains("session-ready"),
+        "initial output must not repeat: {output}"
+    );
+    assert!(
+        output.contains(&format!("Process running with session ID {session}")),
+        "{output}"
+    );
+    after_input
+        .respond
+        .send(command_response(
+            "native-session-poll",
+            "write_stdin",
+            json!({"session_id":session,"yield_time_ms":0}),
+        ))
+        .expect("poll yielded command");
+    let after_poll = exchange(&mut requests).await;
+    let output = command_output(&after_poll.request, "native-session-poll");
+    assert!(output.contains("(no new output)"), "{output}");
+    assert!(!output.contains("accepted:hello-session"));
+    after_poll
+        .respond
+        .send(command_response(
+            "native-session-stop",
+            "kill_session",
+            json!({"session_id":session}),
+        ))
+        .expect("stop yielded command");
+    let after_stop = exchange(&mut requests).await;
+    let output = command_output(&after_stop.request, "native-session-stop");
+    assert!(
+        output.starts_with("The shell session was stopped."),
+        "{output}"
+    );
+    assert!(!output.contains("unexpected-completion"));
+    use std::os::unix::fs::OpenOptionsExt;
+    let pipe = std::fs::OpenOptions::new()
+        .write(true)
+        .custom_flags(libc::O_NONBLOCK)
+        .open(
+            installation
+                ._directory
+                .path()
+                .join("workspace/descendant-input"),
+        );
+    assert_eq!(
+        pipe.expect_err("the descendant no longer holds a reader")
+            .raw_os_error(),
+        Some(libc::ENXIO)
+    );
+    assert!(
+        !installation
+            ._directory
+            .path()
+            .join("workspace/descendant-effect")
+            .exists()
+    );
+    after_stop
+        .respond
+        .send(text_response("The interactive command was stopped."))
+        .expect("finish turn");
+    let page = completed(&installation).await;
+    let messages = page["runs"][0]["messages"].as_array().expect("messages");
+    assert_eq!(messages.len(), 7);
+    let call_ids: Vec<_> = messages
+        .iter()
+        .flat_map(|message| message["content"].as_array().into_iter().flatten())
+        .filter(|block| block["type"] == "tool_call")
+        .map(|block| block["id"].as_str().expect("Base call identity"))
+        .collect();
+    assert_eq!(call_ids.len(), 5);
+    installation.command("stop");
+    provider.await.expect("five actual inference exchanges");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn yielded_command_survives_turn_completion_and_permission_reduction_stops_it_before_restart()
+{
+    let (endpoint, mut requests, provider) = scripted_provider(4).await;
+    let installation = Installation::new();
+    installation.seed(&endpoint);
+    installation.command("start");
+    let first = exchange(&mut requests).await;
+    first.respond.send(command_response("native-detached-start","exec_command",json!({"cmd":"mkfifo background-input; exec 3<> background-input; printf 'background-ready\\n'; IFS= read -r released <&3; printf '%s' \"$released\" > background-effect","yield_time_ms":250}))).expect("start background command");
+    let after_start = exchange(&mut requests).await;
+    let output = command_output(&after_start.request, "native-detached-start");
+    let session: u64 = output
+        .lines()
+        .find_map(|line| line.strip_prefix("Process running with session ID "))
+        .expect("yielded handle")
+        .parse()
+        .expect("session");
+    assert!(output.contains("background-ready"));
+    after_start
+        .respond
+        .send(text_response("The command keeps running after this turn."))
+        .expect("finish owning turn");
+    let first_page = completed(&installation).await;
+    use std::os::unix::fs::OpenOptionsExt;
+    let input = installation
+        ._directory
+        .path()
+        .join("workspace/background-input");
+    drop(
+        std::fs::OpenOptions::new()
+            .write(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(&input)
+            .expect("the completed turn retains its yielded command"),
+    );
+    let (client, token) = installation.client();
+    let mode = json!({"providerId":"fixture","modelId":"openai/gpt-5.6-sol","effort":"medium","serviceTier":null,"permissionMode":"read_only"});
+    assert_eq!(client.post(format!("http://happy/v0/agents/{AGENT}/send")).bearer_auth(&token).json(&json!({"id":"messagepermissionreduction","text":"Continue in Read only.","profile":null,"mode":mode})).send().await.expect("reduce permissions").status(),202);
+    let restricted = exchange(&mut requests).await;
+    let pipe = std::fs::OpenOptions::new()
+        .write(true)
+        .custom_flags(libc::O_NONBLOCK)
+        .open(&input);
+    assert_eq!(
+        pipe.expect_err("permission reduction stops existing commands before inference")
+            .raw_os_error(),
+        Some(libc::ENXIO)
+    );
+    restricted
+        .respond
+        .send(text_response("Read only continuation completed."))
+        .expect("finish restricted turn");
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let focused: Value = client
+                .get(format!("http://happy/v0/agents/{AGENT}"))
+                .bearer_auth(&token)
+                .send()
+                .await
+                .expect("agent")
+                .json()
+                .await
+                .expect("resource");
+            if focused["agent"]["status"] == "idle" {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("settled restricted turn");
+    installation.command("stop");
+    installation.command("start");
+    let (_, token) = installation.client();
+    assert_eq!(client.post(format!("http://happy/v0/agents/{AGENT}/send")).bearer_auth(&token).json(&json!({"id":"messagerestartedsession","text":"Report the old command handle.","content":[{"type":"tool_call_request","name":"write_stdin","arguments":{"session_id":session,"yield_time_ms":0}}],"profile":null,"mode":mode})).send().await.expect("old session after restart").status(),202);
+    let restarted = exchange(&mut requests).await;
+    assert!(
+        restarted
+            .request
+            .to_string()
+            .contains(&format!("There is no command {session} on this machine."))
+    );
+    restarted
+        .respond
+        .send(text_response("The prior daemon's session is gone."))
+        .expect("finish restart report");
+    let page = completed(&installation).await;
+    assert_eq!(page["runs"].as_array().expect("runs").len(), 3);
+    assert_eq!(page["runs"][0], first_page["runs"][0]);
+    assert!(
+        !installation
+            ._directory
+            .path()
+            .join("workspace/background-effect")
+            .exists()
+    );
+    installation.command("stop");
+    provider.await.expect("four actual inference exchanges");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn tool_history_counts_utf16_characters_and_discloses_omitted_output() {
+    let (endpoint, mut requests, provider) = scripted_provider(2).await;
+    let installation = Installation::new();
+    installation.seed(&endpoint);
+    installation.command("start");
+    let first = exchange(&mut requests).await;
+    first
+        .respond
+        .send(command_response(
+            "native-unicode-history",
+            "exec_command",
+            json!({"cmd":"printf '界%.0s' {1..20000}","max_output_tokens":10000}),
+        ))
+        .expect("unicode output");
+    let after_command = exchange(&mut requests).await;
+    let full = command_output(&after_command.request, "native-unicode-history");
+    assert_eq!(full.matches('界').count(), 20000);
+    after_command
+        .respond
+        .send(text_response("The Unicode output is retained and bounded."))
+        .expect("finish");
+    let page = completed(&installation).await;
+    let call = page["runs"][0]["messages"][2]["content"][0].clone();
+    let retained = full.chars().take(16000).collect::<String>();
+    let expected = format!(
+        "{retained}\n...[truncated {} chars]",
+        full.encode_utf16().count() - 16000
+    );
+    assert_eq!(call["result"]["output"], expected);
+    installation.command("stop");
+    let database =
+        Connection::open(installation.home.join("agent/agent.sqlite")).expect("canonical history");
+    let stored:String=database.query_row("SELECT history.message_json FROM happy_agent_module_history history JOIN happy_agent_module_history_tool_calls calls ON history.agent_id=calls.agent_id AND history.record_id=calls.record_id WHERE calls.agent_id=?1 AND calls.call_id=?2",params![AGENT,call["id"].as_str().expect("call identity")],|row|row.get(0)).expect("indexed owning history");
+    let stored: Value = serde_json::from_str(&stored).expect("stored history");
+    let result = stored["blocks"]
+        .as_array()
+        .expect("blocks")
+        .iter()
+        .find(|block| block["type"] == "tool_result")
+        .expect("result");
+    assert_eq!(
+        result["display"],
+        format!(
+            "Tool exec_command returned {} characters.",
+            expected.encode_utf16().count()
+        )
+    );
+    provider.await.expect("two provider exchanges");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn daemon_shutdown_closes_a_yielded_command_after_its_turn_and_restart_preserves_history() {
+    let (endpoint, mut requests, provider) = scripted_provider(2).await;
+    let installation = Installation::new();
+    installation.seed(&endpoint);
+    installation.command("start");
+    let first = exchange(&mut requests).await;
+    first.respond.send(command_response("native-shutdown-session","exec_command",json!({"cmd":"mkfifo shutdown-input; exec 3<> shutdown-input; printf 'shutdown-session-ready\\n'; IFS= read -r released <&3; printf '%s' \"$released\" > shutdown-effect","yield_time_ms":250}))).expect("yielded shutdown session");
+    let after_start = exchange(&mut requests).await;
+    let output = command_output(&after_start.request, "native-shutdown-session");
+    assert!(output.contains("Process running with session ID "));
+    assert!(output.contains("shutdown-session-ready"));
+    after_start
+        .respond
+        .send(text_response("The command remains owned by this daemon."))
+        .expect("finish turn");
+    let page = completed(&installation).await;
+    use std::os::unix::fs::OpenOptionsExt;
+    let input = installation
+        ._directory
+        .path()
+        .join("workspace/shutdown-input");
+    drop(
+        std::fs::OpenOptions::new()
+            .write(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(&input)
+            .expect("yielded process survives turn completion"),
+    );
+    installation.command("stop");
+    assert_eq!(
+        std::fs::OpenOptions::new()
+            .write(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(&input)
+            .expect_err("shutdown closes the whole owned execution")
+            .raw_os_error(),
+        Some(libc::ENXIO)
+    );
+    assert!(
+        !installation
+            ._directory
+            .path()
+            .join("workspace/shutdown-effect")
+            .exists()
+    );
+    installation.command("start");
+    let restored = completed(&installation).await;
+    assert_eq!(restored["runs"], page["runs"]);
+    installation.command("stop");
+    provider.await.expect("no process replay inference");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn shutdown_during_initial_command_wait_preserves_the_claim_and_never_repeats_the_effect() {
+    let (endpoint, mut requests, provider) = scripted_provider(2).await;
+    let installation = Installation::new();
+    installation.seed(&endpoint);
+    installation.command("start");
+    let first = exchange(&mut requests).await;
+    first.respond.send(command_response("native-initial-wait","exec_command",json!({"cmd":"printf 'one initial execution\\n' >> initial-wait-effect; IFS= read -r input; printf 'initial-wait-finished\\n'","yield_time_ms":30000}))).expect("foreground command");
+    let effect = installation
+        ._directory
+        .path()
+        .join("workspace/initial-wait-effect");
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if std::fs::read_to_string(&effect).is_ok_and(|text| text == "one initial execution\n")
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the real command started before cancellation");
+    let (client, token) = installation.client();
+    assert_eq!(
+        client
+            .post("http://happy/v0/shutdown")
+            .bearer_auth(&token)
+            .send()
+            .await
+            .expect("shutdown cancels the initial wait")
+            .status(),
+        202
+    );
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if !installation.home.join("agent/daemon.pid").exists() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("shutdown released database ownership and its process identity");
+    let database = Connection::open(installation.home.join("agent/agent.sqlite"))
+        .expect("durable command claim");
+    assert_eq!(
+        database
+            .query_row(
+                "SELECT count(*) FROM happy_agent_values WHERE owner_id=?1 AND key GLOB 'tool.*'",
+                [AGENT],
+                |row| row.get::<_, i64>(0)
+            )
+            .expect("dispatched nonreloadable claim"),
+        1
+    );
+    drop(database);
+    installation.command("start");
+    let restarted = exchange(&mut requests).await;
+    let output = command_output(&restarted.request, "native-initial-wait");
+    assert_eq!(
+        output,
+        "The tool call was interrupted by a restart and was not retried."
+    );
+    restarted
+        .respond
+        .send(text_response("The interrupted command was not repeated."))
+        .expect("finish original run");
+    let page = completed(&installation).await;
+    assert_eq!(page["runs"].as_array().expect("runs").len(), 1);
+    assert_eq!(
+        std::fs::read_to_string(&effect).expect("effect"),
+        "one initial execution\n"
+    );
+    installation.command("stop");
+    provider.await.expect("two provider exchanges");
+}

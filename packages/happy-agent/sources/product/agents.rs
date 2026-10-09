@@ -146,6 +146,7 @@ impl AgentSystemModule {
         for (_, worker) in workers {
             let _ = worker.await;
         }
+        self.tools.close().await;
     }
     pub fn configuration(&self, ctx: &Context<'_>, id: &str) -> Result<Option<Value>> {
         let root = read(ctx, "", &format!("agentSystem.config.{id}"))?;
@@ -476,12 +477,12 @@ impl AgentSystemModule {
     async fn accept_queue(self: &Arc<Self>, id: &str, can_accept_send: bool) -> Result<bool> {
         let agents = self.clone();
         let agent = id.to_owned();
-        self.runtime.transact(move|ctx|{
-            let prefix=if ctx.database().query_row("SELECT EXISTS(SELECT 1 FROM happy_agent_values WHERE owner_id=?1 AND key GLOB 'steering.*')",[&agent],|row|row.get::<_,bool>(0))?{"steering."}else if can_accept_send{"send."}else{return Ok(false);};
+        let(accepted,permission)=self.runtime.transact(move|ctx|{
+            let prefix=if ctx.database().query_row("SELECT EXISTS(SELECT 1 FROM happy_agent_values WHERE owner_id=?1 AND key GLOB 'steering.*')",[&agent],|row|row.get::<_,bool>(0))?{"steering."}else if can_accept_send{"send."}else{return Ok((false,None));};
             let mut statement=ctx.database().prepare("SELECT key,value_json FROM happy_agent_values WHERE owner_id=?1 AND substr(key,1,length(?2))=?2 ORDER BY key LIMIT 513")?;
             let rows=statement.query_map(params![agent,prefix],|row|Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
             anyhow::ensure!(rows.len()<=512,"The pending input queue exceeds its restoration bound.");
-            if rows.is_empty(){return Ok(false);}
+            if rows.is_empty(){return Ok((false,None));}
             let mut batch=Vec::new();
             for(key,encoded)in rows {
                 let entry:Value=serde_json::from_str(&encoded)?;anyhow::ensure!(agents.schemas.valid("queuedInput",&entry)?,"A durable queued input is invalid.");
@@ -544,8 +545,13 @@ impl AgentSystemModule {
                 if let Some(finished)=finished{agents.events.record(ctx,Some(&agent),"run.finished",json!({"agentId":agent,"run":finished}))?;}
                 agents.events.record(ctx,Some(&agent),"run.started",json!({"agentId":agent,"run":started,"acceptedMessageIds":accepted_ids}))?;
             }
-            Ok(true)
-        }).await
+            let previous=previous_settings["permissionMode"].as_str().unwrap_or("auto");let next=settings["permissionMode"].as_str().unwrap_or("auto");
+            Ok((true,(previous!=next).then(||(previous.to_owned(),next.to_owned()))))
+        }).await?;
+        if let Some((previous, next)) = permission {
+            self.tools.permission_changed(id, &previous, &next).await;
+        }
+        Ok(accepted)
     }
     fn flush_pending(&self, ctx: &Context<'_>, id: &str, settings: &Value) -> Result<()> {
         let prefix = format!("kv.{id}.run.module.history.");

@@ -64,6 +64,50 @@
                 }
             },
             "defer": false
+        },
+        {
+            "name": "write_stdin",
+            "description": "Writes to an existing shell session and returns recent output. Use it for REPLs started by exec_command; end each cell with a newline. Leave chars empty to poll a session without typing anything into it.",
+            "parameters": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": ["session_id"],
+                "properties": {
+                    "session_id": {
+                        "description": "Identifier of the running shell session.",
+                        "type": "number"
+                    },
+                    "chars": {
+                        "description": "Bytes to write to stdin. Defaults to empty, which polls without writing.",
+                        "type": "string"
+                    },
+                    "yield_time_ms": {
+                        "description": "Wait before yielding output. Non-empty writes default to 250 ms and cap at 30000 ms; empty polls default to 5000 ms and cap at 300000 ms.",
+                        "type": "number"
+                    },
+                    "max_output_tokens": {
+                        "description": "Output token budget. Defaults to 10000 tokens; larger requests may be capped by policy.",
+                        "type": "number"
+                    }
+                }
+            },
+            "defer": false
+        },
+        {
+            "name": "kill_session",
+            "description": "Stops a running shell session and everything it started. The session is asked to stop first and forced a couple of seconds later. Stopping a session that has already ended is not an error; you are simply told it had ended.",
+            "parameters": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": ["session_id"],
+                "properties": {
+                    "session_id": {
+                        "description": "Identifier of the shell session to stop.",
+                        "type": "number"
+                    }
+                }
+            },
+            "defer": false
         }
     ],
     "common": [

@@ -50,7 +50,11 @@ pub async fn run() -> Result<()> {
         events.clone(),
         usage.clone(),
     )?);
-    let tools = Arc::new(tools::ToolsModule::new(config.clone(), history.clone())?);
+    let tools = Arc::new(tools::ToolsModule::new(
+        config.clone(),
+        history.clone(),
+        lifecycle.clone(),
+    )?);
     let projects = Arc::new(projects::ProjectsModule::new(runtime.clone())?);
     let workspaces = Arc::new(workspaces::WorkspacesModule::new(runtime.clone()));
     let agents = Arc::new(agents::AgentSystemModule::new(

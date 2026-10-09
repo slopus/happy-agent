@@ -1,20 +1,20 @@
-use super::{config::ConfigModule, history::HistoryModule, schemas::Schemas};
+use super::{
+    config::ConfigModule, history::HistoryModule, lifecycle::LifecycleModule, schemas::Schemas,
+};
 use anyhow::{Context, Result};
 use happy_providers::{Block, Message, ToolDefinition};
 use serde_json::{Value, json};
-use std::{collections::VecDeque, sync::Arc, time::Instant};
-use tokio::{
-    io::{AsyncRead, AsyncReadExt},
-    process::Command,
-};
+use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
+mod commands;
+use commands::CommandSessions;
 
 pub struct ToolsModule {
-    config: Arc<ConfigModule>,
     history: Arc<HistoryModule>,
     schemas: Schemas,
     vendor: Vec<NativeTool>,
     common: Vec<NativeTool>,
+    commands: Arc<CommandSessions>,
 }
 struct NativeTool {
     definition: ToolDefinition,
@@ -22,27 +22,44 @@ struct NativeTool {
 }
 enum Implementation {
     ExecCommand,
+    WriteStdin,
+    KillSession,
     ReadHistory,
 }
 pub struct ToolOutcome {
     pub message: Message,
 }
 impl ToolsModule {
-    pub fn new(config: Arc<ConfigModule>, history: Arc<HistoryModule>) -> Result<Self> {
+    pub fn new(
+        config: Arc<ConfigModule>,
+        history: Arc<HistoryModule>,
+        lifecycle: Arc<LifecycleModule>,
+    ) -> Result<Self> {
         let definitions: std::collections::BTreeMap<String, Vec<ToolDefinition>> =
             serde_json::from_str(include_str!("tool_definitions.json"))?;
+        let codex = definitions
+            .get("codex")
+            .context("The native command definitions are missing.")?;
+        anyhow::ensure!(
+            codex.len() == 3,
+            "The native command definitions are incomplete."
+        );
         Ok(Self {
-            config,
             history,
             schemas: Schemas::new()?,
-            vendor: vec![NativeTool {
-                definition: definitions
-                    .get("codex")
-                    .and_then(|tools| tools.first())
-                    .context("The native command definition is missing.")?
-                    .clone(),
-                implementation: Implementation::ExecCommand,
-            }],
+            commands: Arc::new(CommandSessions::new(config, lifecycle)),
+            vendor: [
+                Implementation::ExecCommand,
+                Implementation::WriteStdin,
+                Implementation::KillSession,
+            ]
+            .into_iter()
+            .zip(codex)
+            .map(|(implementation, definition)| NativeTool {
+                definition: definition.clone(),
+                implementation,
+            })
+            .collect(),
             common: vec![NativeTool {
                 definition: definitions
                     .get("common")
@@ -52,6 +69,20 @@ impl ToolsModule {
                 implementation: Implementation::ReadHistory,
             }],
         })
+    }
+    pub async fn close(&self) {
+        self.commands.close().await;
+    }
+    pub async fn permission_changed(&self, agent: &str, previous: &str, next: &str) {
+        let rank = |mode: &str| match mode {
+            "read_only" => 0,
+            "workspace_write" => 1,
+            "auto" => 2,
+            _ => 3,
+        };
+        if rank(next) < rank(previous) {
+            self.commands.stop_agent(agent).await;
+        }
     }
     pub fn vendor_tools(&self) -> Vec<ToolDefinition> {
         self.vendor
@@ -100,9 +131,13 @@ impl ToolsModule {
             Err(error) => Err(error),
             Ok(()) => match self.definition(call).map(|tool| &tool.implementation) {
                 Some(Implementation::ExecCommand) => {
-                    self.exec_command(configuration, settings, call, cancel)
+                    self.exec_command(agent, configuration, settings, call, cancel)
                         .await
                 }
+                Some(Implementation::WriteStdin) => {
+                    self.write_stdin(agent, settings, call, cancel).await
+                }
+                Some(Implementation::KillSession) => self.kill_session(agent, call).await,
                 Some(Implementation::ReadHistory) => {
                     match serde_json::from_str(call["call"]["arguments"].as_str().unwrap_or("")) {
                         Ok(arguments) => self
@@ -129,29 +164,36 @@ impl ToolsModule {
             },
         }
     }
-    async fn exec_command(
-        &self,
-        configuration: &Value,
-        settings: &Value,
-        call: &Value,
-        cancel: CancellationToken,
-    ) -> Result<(String, bool)> {
+    fn arguments(&self, call: &Value, schema: &str, message: &str) -> Result<Value> {
         let arguments: Value = serde_json::from_str(
             call["call"]["arguments"]
                 .as_str()
                 .context("The tool arguments are missing.")?,
         )?;
-        anyhow::ensure!(
-            self.schemas.valid("execCommand", &arguments)?,
-            "The command arguments are invalid."
-        );
+        anyhow::ensure!(self.schemas.valid(schema, &arguments)?, "{message}");
+        Ok(arguments)
+    }
+    fn mode<'a>(&self, settings: &'a Value) -> Result<&'a str> {
         let mode = settings["permissionMode"].as_str().unwrap_or("auto");
         anyhow::ensure!(
             self.schemas.valid("permissionMode", &json!(mode))?,
             "The permission mode is invalid."
         );
-        // This is the tool definition's own review policy. Review does not grant
-        // host access, and a restricted mode never honors an elevation argument.
+        Ok(mode)
+    }
+    async fn exec_command(
+        &self,
+        agent: &str,
+        configuration: &Value,
+        settings: &Value,
+        call: &Value,
+        cancel: CancellationToken,
+    ) -> Result<(String, bool)> {
+        let arguments =
+            self.arguments(call, "execCommand", "The command arguments are invalid.")?;
+        let mode = self.mode(settings)?;
+        // Each definition owns review and elevation independently. An escalation
+        // argument never widens Read only or Workspace write.
         let review = arguments["sandbox_permissions"] == "require_escalated"
             || arguments["secrets"]
                 .as_array()
@@ -170,161 +212,102 @@ impl ToolsModule {
             arguments["tty"] != true,
             "PTY command execution has not been migrated yet."
         );
-        let environment = self
-            .config
-            .execution_environment(configuration, &arguments)?;
-        let (root, cwd, shell) = (environment.root, environment.cwd, environment.shell);
-        if mode != "full_access" {
-            anyhow::ensure!(
-                cwd.starts_with(&root),
-                "The command's working directory is outside its workspace."
-            );
-        }
-        let cmd = arguments["cmd"]
+        let result = self
+            .commands
+            .start(agent, configuration, mode, &arguments, cancel)
+            .await?;
+        self.output(&result)
+    }
+    async fn write_stdin(
+        &self,
+        agent: &str,
+        settings: &Value,
+        call: &Value,
+        cancel: CancellationToken,
+    ) -> Result<(String, bool)> {
+        let arguments = self.arguments(
+            call,
+            "writeStdin",
+            "The command input arguments are invalid.",
+        )?;
+        let session = self.session_id(&arguments)?;
+        let typing = arguments["chars"]
             .as_str()
-            .context("The shell command is missing.")?;
-        let policy = json!({"mode":mode,"allowedReadPaths":[],"allowedWritePaths":if mode=="workspace_write"||mode=="auto"{vec![root.clone()]}else{vec![]},"deniedReadPaths":[],"deniedWritePaths":if mode=="full_access"{vec![]}else{vec![root.join(".git"),root.join("AGENTS.md"),root.join("AGENTS_SECURITY.md"),root.join("happy.toml")]},"network":{"egress":mode=="full_access","allowedHosts":[],"localBinding":mode=="full_access"}});
-        #[cfg(unix)]
-        let command = happy_agent_supervisor::command()?;
-        #[cfg(windows)]
-        anyhow::bail!("Native Windows command execution has not been migrated yet.");
-        #[cfg(unix)]
-        {
-            let mut command = Command::from(command);
-            command
-                .arg("--policy")
-                .arg(policy.to_string())
-                .arg("--")
-                .arg(shell)
-                .arg("-lc")
-                .arg(cmd)
-                .current_dir(&cwd)
-                .stdin(std::process::Stdio::null())
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
-                .kill_on_drop(true);
-            use std::os::unix::process::CommandExt;
-            unsafe {
-                command.as_std_mut().pre_exec(|| {
-                    if libc::setsid() < 0 {
-                        return Err(std::io::Error::last_os_error());
-                    }
-                    #[cfg(target_os = "linux")]
-                    if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) < 0 {
-                        return Err(std::io::Error::last_os_error());
-                    }
-                    Ok(())
-                });
-            }
-            let began = Instant::now();
-            let mut child = command.spawn()?;
-            let pid = child
-                .id()
-                .context("The command process identity is unavailable.")?;
-            let stdout = child
-                .stdout
-                .take()
-                .context("The command output pipe is unavailable.")?;
-            let stderr = child
-                .stderr
-                .take()
-                .context("The command error pipe is unavailable.")?;
-            let capture =
-                tokio::spawn(async move { tokio::join!(capture(stdout), capture(stderr)) });
-            let status = tokio::select! {
-                status=child.wait()=>status?,
-                _=cancel.cancelled()=>{
-                    unsafe {libc::kill(-(pid as i32),libc::SIGKILL);}
-                    let _=child.kill().await;let _=child.wait().await;
-                    capture.abort();
-                    anyhow::bail!("The command was interrupted.");
-                },
-            };
-            let (stdout, stderr) = capture.await?;
-            let (stdout, stdout_dropped) = stdout?;
-            let (stderr, stderr_dropped) = stderr?;
-            let produced = [stdout, stderr]
-                .into_iter()
-                .filter(|part| !part.is_empty())
-                .collect::<Vec<_>>()
-                .join("\n");
-            let dropped = stdout_dropped + stderr_dropped;
-            let output = if dropped > 0 {
-                format!(
-                    "[The machine dropped {dropped} bytes of this session's output as it ran.]\n{produced}"
-                )
-            } else {
-                produced
-            };
-            let max = arguments["max_output_tokens"]
-                .as_f64()
-                .unwrap_or(10000.0)
-                .min(10000.0)
-                * 4.0;
-            let max = (max.floor() as usize).max(4000);
-            let output = truncate(&output, max);
-            let output = format!(
-                "Wall time: {:.4} seconds\nProcess exited with code {}\nOutput:\n{}",
-                began.elapsed().as_secs_f64(),
-                status
-                    .code()
-                    .map_or_else(|| "unknown".into(), |code| code.to_string()),
-                if output.is_empty() {
-                    "(no new output)"
+            .is_some_and(|chars| !chars.is_empty());
+        anyhow::ensure!(
+            self.mode(settings)? != "auto" || !typing,
+            "Automatic review is unavailable for this action; it has not been proven safe to execute."
+        );
+        let result = self
+            .commands
+            .input(agent, session, &arguments, cancel)
+            .await?;
+        self.output(&result)
+    }
+    async fn kill_session(&self, agent: &str, call: &Value) -> Result<(String, bool)> {
+        let arguments = self.arguments(
+            call,
+            "killSession",
+            "The command stop arguments are invalid.",
+        )?;
+        let session = self.session_id(&arguments)?;
+        let (command, stopped) = self.commands.stop(agent, session).await?;
+        Ok((
+            format!(
+                "{} Session {session}: {command}",
+                if stopped {
+                    "The shell session was stopped."
                 } else {
-                    &output
+                    "The shell session had already ended by itself."
                 }
+            ),
+            false,
+        ))
+    }
+    fn session_id(&self, arguments: &Value) -> Result<u64> {
+        anyhow::ensure!(
+            self.schemas
+                .valid("commandSessionId", &arguments["session_id"])?,
+            "The shell session identifier must be a whole number above zero."
+        );
+        arguments["session_id"]
+            .as_u64()
+            .or_else(|| arguments["session_id"].as_f64().map(|value| value as u64))
+            .context("The shell session identity is missing.")
+    }
+    fn output(&self, result: &Value) -> Result<(String, bool)> {
+        anyhow::ensure!(
+            self.schemas.valid("unifiedExecOutput", result)?,
+            "The command result is invalid."
+        );
+        let mut sections = vec![format!(
+            "Wall time: {:.4} seconds",
+            result["wall_time_seconds"].as_f64().unwrap_or(0.0)
+        )];
+        if let Some(code) = result["exit_code"].as_i64() {
+            sections.push(format!("Process exited with code {code}"));
+        } else if let Some(session) = result["session_id"].as_u64() {
+            sections.push(format!("Process running with session ID {session}"));
+        } else {
+            sections.push(
+                "Process ended without an exit code, which is what a stopped session looks like"
+                    .into(),
             );
-            Ok((output, !status.success()))
         }
-    }
-}
-
-async fn capture(mut reader: impl AsyncRead + Unpin) -> Result<(String, usize)> {
-    let mut bytes = VecDeque::new();
-    let mut dropped = 0;
-    let mut buffer = [0; 8192];
-    loop {
-        let count = reader.read(&mut buffer).await?;
-        if count == 0 {
-            break;
+        if let Some(tokens) = result["original_token_count"].as_u64() {
+            sections.push(format!("Original token count: {tokens}"));
         }
-        bytes.extend(&buffer[..count]);
-        while bytes.len() > 1024 * 1024 {
-            bytes.pop_front();
-            dropped += 1;
-        }
+        sections.push("Output:".into());
+        sections.push(
+            result["output"]
+                .as_str()
+                .filter(|output| !output.is_empty())
+                .unwrap_or("(no new output)")
+                .into(),
+        );
+        Ok((
+            sections.join("\n"),
+            result["exit_code"].as_i64().is_some_and(|code| code != 0),
+        ))
     }
-    Ok((
-        String::from_utf8_lossy(&bytes.into_iter().collect::<Vec<_>>()).into_owned(),
-        dropped,
-    ))
-}
-fn truncate(text: &str, limit: usize) -> String {
-    if text.encode_utf16().count() <= limit {
-        return text.into();
-    }
-    let mut head = String::new();
-    let mut units = 0;
-    for character in text.chars() {
-        units += character.len_utf16();
-        if units > limit / 2 {
-            break;
-        }
-        head.push(character);
-    }
-    let mut tail = Vec::new();
-    units = 0;
-    for character in text.chars().rev() {
-        units += character.len_utf16();
-        if units > limit / 2 {
-            break;
-        }
-        tail.push(character);
-    }
-    format!(
-        "Warning: truncated output (original token count: {})\n{head}\n… output truncated …\n{}",
-        text.len().div_ceil(4),
-        tail.into_iter().rev().collect::<String>()
-    )
 }
