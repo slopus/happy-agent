@@ -1,4 +1,4 @@
-name: Build and verify Windows Agent
+name: Build and verify Windows Rust Agent
 
 on:
     workflow_call:
@@ -11,85 +11,12 @@ permissions:
     contents: read
 
 jobs:
-    native:
-        name: Native ${{ matrix.component }}
-        runs-on: windows-2025
-        timeout-minutes: 90
-        strategy:
-            fail-fast: false
-            matrix:
-                include:
-                    - component: monty
-                      script: packages/happy-agent/scripts/build-native-monty.mjs
-                      source: packages/happy-agent/native/monty/**
-                      output: packages/happy-agent/native/target/win32-x64
-                    - component: fff
-                      script: packages/happy-agent/scripts/build-native-fff.mjs
-                      source: packages/happy-agent/native/fff/**
-                      output: packages/happy-agent/native/target/win32-x64
-                    - component: libsql
-                      script: packages/happy-agent/scripts/build-native-libsql.mjs
-                      source: packages/happy-agent/native/libsql/**
-                      output: packages/happy-agent/native/target/win32-x64
-        steps:
-            - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-            - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
-              with:
-                  node-version: "24"
-                  package-manager-cache: false
-            - name: Cache native outputs by pinned source and builder
-              id: native-cache
-              uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-              with:
-                  path: ${{ matrix.output }}
-                  # Bump the cache version when changing the compiler setup below. Package-only
-                  # changes reuse native outputs; every run still tests the final binary.
-                  key: windows-gnu-rust195-v2-${{ matrix.component }}-${{ hashFiles('.gitattributes', matrix.source, matrix.script, 'packages/happy-agent/scripts/assertWindowsSystemImports.mjs') }}
-            - name: Install GNU native build tools
-              if: steps.native-cache.outputs.cache-hit != 'true'
-              id: msys2
-              uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2
-              with:
-                  msystem: MINGW64
-                  install: mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake mingw-w64-x86_64-make
-            - name: Select the pinned Windows toolchain
-              if: steps.native-cache.outputs.cache-hit != 'true'
-              env:
-                  MSYS2_LOCATION: ${{ steps.msys2.outputs.msys2-location }}
-              run: |
-                  "$env:MSYS2_LOCATION\mingw64\bin" >> $env:GITHUB_PATH
-                  "$env:MSYS2_LOCATION\usr\bin" >> $env:GITHUB_PATH
-                  rustup toolchain install 1.95.0-x86_64-pc-windows-gnu --profile minimal
-                  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            - name: Build pinned source and verify native imports
-              if: steps.native-cache.outputs.cache-hit != 'true'
-              env:
-                  BUILD_SCRIPT: ${{ matrix.script }}
-                  CARGO_BUILD_JOBS: "2"
-                  CMAKE_GENERATOR: MinGW Makefiles
-              run: node $env:BUILD_SCRIPT
-            - name: Stage native files with their repository paths
-              env:
-                  NATIVE_OUTPUT: ${{ matrix.output }}
-              run: |
-                  $destination = Join-Path native-stage $env:NATIVE_OUTPUT
-                  New-Item -ItemType Directory -Force -Path $destination | Out-Null
-                  Copy-Item -Path "$env:NATIVE_OUTPUT\*" -Destination $destination
-            - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-              with:
-                  name: windows-native-${{ matrix.component }}
-                  path: native-stage/
-                  if-no-files-found: error
-                  retention-days: 7
-
     package:
-        name: Package and exercise standalone Agent
+        runs-on: windows-2025
+        timeout-minutes: 60
         permissions:
             contents: read
             id-token: write
-        needs: native
-        runs-on: windows-2025
-        timeout-minutes: 60
         env:
             HAPPY_AGENT_RELEASE_VERSION: ${{ inputs.version }}
             HAPPY_WINDOWS_SIGNING_ENABLED: ${{ vars.WINDOWS_SIGNING_ENABLED == 'true' && github.ref == 'refs/heads/main' }}
@@ -104,62 +31,11 @@ jobs:
               with:
                   node-version: "24"
                   package-manager-cache: false
-            - name: Locate the pnpm store
-              id: pnpm-store
-              shell: bash
-              run: |
-                  echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
-                  echo "abi=$(node -p 'process.versions.modules')" >> "$GITHUB_OUTPUT"
-                  echo "image=$(node -p '[process.env.ImageOS, process.env.ImageVersion].join("-")')" >> "$GITHUB_OUTPUT"
-            - name: Cache dependency downloads
-              uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-              with:
-                  path: ${{ steps.pnpm-store.outputs.path }}
-                  key: pnpm-store-v1-${{ runner.os }}-${{ runner.arch }}-node${{ steps.pnpm-store.outputs.abi }}-${{ steps.pnpm-store.outputs.image }}-${{ hashFiles('pnpm-lock.yaml', 'package.json', 'pnpm-workspace.yaml', 'patches/**') }}
-            - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-              with:
-                  pattern: windows-native-*
-                  merge-multiple: true
-            - name: Install dependencies
-              # Cache downloads only; patched native addons must run their install scripts again.
-              run: pnpm install --frozen-lockfile --config.side-effects-cache=false
-            - name: Build workspace JavaScript
-              run: pnpm build
-            - name: Verify source named-pipe transports before signing and compiling
-              run: |
-                  pnpm --filter @slopus/happy-agent exec pnpm dlx bun@1.4.2 scripts/verify-windows-sockets.ts
-                  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            - name: Stage the published sandbox SDK for its native regression checks
-              run: |
-                  @'
-                  const { cpSync, mkdirSync } = require('node:fs');
-                  const { createRequire } = require('node:module');
-                  const { dirname, join, resolve } = require('node:path');
-                  const agent = createRequire(resolve('packages/happy-agent/package.json'));
-                  const compute = createRequire(agent.resolve('@slopus/happy-agent-compute'));
-                  const platform = dirname(compute.resolve('@slopus/happy-agent-supervisor-win32-x64/package.json'));
-                  const source = join(platform, 'vendor/x86_64-pc-windows-gnu/bin');
-                  const destination = 'packages/happy-agent-supervisor/native/target/release';
-                  mkdirSync(destination, { recursive: true });
-                  cpSync(source, destination, { recursive: true });
-                  '@ | node
-                  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            - name: Select the built libsql binding for native regression checks
-              run: |
-                  @'
-                  const { copyFileSync, unlinkSync } = require('node:fs');
-                  const { createRequire } = require('node:module');
-                  const { resolve } = require('node:path');
-                  const agent = createRequire(resolve('packages/happy-agent/package.json'));
-                  const modules = createRequire(agent.resolve('@slopus/happy-agent-modules'));
-                  const client = createRequire(modules.resolve('@libsql/client'));
-                  const libsql = createRequire(client.resolve('libsql'));
-                  // Detach the installed hardlink before replacing it; never change a cached store file.
-                  const destination = libsql.resolve('@libsql/win32-x64-msvc');
-                  unlinkSync(destination);
-                  copyFileSync('packages/happy-agent/native/target/win32-x64/libsql.node', destination);
-                  '@ | node
-                  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            - run: rustup target add x86_64-pc-windows-msvc
+            - name: Verify the Rust provider and durable runtime
+              run: cargo test --locked --package happy-providers --package happy-agent-base
+            - name: Build the single executable with a static CRT
+              run: pnpm --filter @slopus/happy-agent build:native --target win32-x64
             - name: Authenticate signing with GitHub OIDC
               if: env.HAPPY_WINDOWS_SIGNING_ENABLED == 'true'
               uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3
@@ -170,54 +46,16 @@ jobs:
             - name: Install the pinned Artifact Signing module
               if: env.HAPPY_WINDOWS_SIGNING_ENABLED == 'true'
               run: Install-Module -Name ArtifactSigning -RequiredVersion 0.1.8 -Force -Repository PSGallery -Scope CurrentUser
-            - name: Verify patched Parcel callback lifetimes under Node and Bun
-              run: pnpm --filter @slopus/happy-agent test:native:watcher
-
-            - name: Verify the Bun runtime before compiling
-              run: pnpm --filter @slopus/happy-agent test:bun:runtime
-            - name: Build standalone executable with signed embedded native assets when enabled
-              run: pnpm --filter @slopus/happy-agent build:bun --target win32-x64
-            - name: Sign and verify the standalone executable
+            - name: Sign and verify the executable
               if: env.HAPPY_WINDOWS_SIGNING_ENABLED == 'true'
               run: ./scripts/sign-windows-files.ps1 -Directory packages/happy-agent/dist/bin
-            - name: Verify native libraries
-              run: |
-                  pnpm --filter @slopus/happy-agent test:native:monty
-                  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-                  node --expose-gc packages/happy-agent/scripts/verify-native-libsql.mjs
-                  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-                  pnpm --filter @slopus/happy-agent exec pnpm dlx bun@1.4.2 scripts/verify-native-libsql.mjs
-                  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-                  node packages/happy-agent/scripts/verify-native-fff.mjs
-                  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-                  pnpm --filter @slopus/happy-agent exec pnpm dlx bun@1.4.2 scripts/verify-native-fff.mjs
-                  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            - name: Provision once on this disposable CI machine
-              # Hosted Windows runners are already elevated. Never run this step on a
-              # developer machine or turn a failed setup into repeated UAC retries.
-              run: |
-                  if ($env:GITHUB_ACTIONS -ne 'true') { throw 'CI only' }
-                  $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
-                  $principal = [Security.Principal.WindowsPrincipal]::new($identity)
-                  if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-                      throw 'The disposable runner must already be elevated for sandbox setup.'
-                  }
-                  & packages/happy-agent/dist/bin/happy-agent-win32-x64.exe sandbox setup
-                  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-                  $status = & packages/happy-agent-supervisor/native/target/release/happy-agent-supervisor.exe --setup-status | ConvertFrom-Json
-                  if ($LASTEXITCODE -ne 0 -or -not $status.ready) { throw 'Sandbox setup did not complete.' }
-                  "HAPPY_WINDOWS_SANDBOX_HOME=$($status.stateDirectory)" >> $env:GITHUB_ENV
-                  'HAPPY_WINDOWS_SANDBOX_NO_PROVISION=1' >> $env:GITHUB_ENV
-            - name: Verify native sandbox enforcement
-              run: pnpm --filter @slopus/happy-agent-supervisor test:native:windows
-            - name: Exercise the packaged executable
+            - name: Verify implemented commands in the exact release executable
               run: |
                   $binary = 'packages/happy-agent/dist/bin/happy-agent-win32-x64.exe'
-                  & $binary --version
+                  if ((& $binary --version) -ne "Happy Agent $env:HAPPY_AGENT_RELEASE_VERSION") { throw 'Release version mismatch.' }
+                  node packages/happy-agent/scripts/smoke-rust-runtime.mjs $binary
                   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-                  node packages/happy-agent/scripts/smoke-binary-transports.mjs $binary
-                  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            - name: Package the tested executable and checksum
+            - name: Package the executable and npm platform tarball
               run: |
                   $name = "happy-agent-$env:HAPPY_AGENT_RELEASE_VERSION-win32-x64.tar.gz"
                   New-Item -ItemType Directory -Force release-assets | Out-Null
@@ -225,11 +63,19 @@ jobs:
                   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
                   $hash = (Get-FileHash "release-assets/$name" -Algorithm SHA256).Hash.ToLowerInvariant()
                   "$hash  $name" | Set-Content "release-assets/$name.sha256" -Encoding ascii
-                  $signing = if ($env:HAPPY_WINDOWS_SIGNING_ENABLED -eq 'true') { 'Signed' } else { 'Unsigned' }
-                  "$signing Windows x64 Agent: ``$name`` (SHA-256 ``$hash``)." >> $env:GITHUB_STEP_SUMMARY
+                  node packages/happy-agent/scripts/package-native.mjs platform --version $env:HAPPY_AGENT_RELEASE_VERSION --target win32-x64 --binary packages/happy-agent/dist/bin/happy-agent-win32-x64.exe --output release-assets/npm
+                  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+                  node packages/happy-agent/scripts/package-native.mjs root --version $env:HAPPY_AGENT_RELEASE_VERSION --output .context/npm-root
+                  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+                  node packages/happy-agent/scripts/verify-native-package.mjs ".context/npm-root/slopus-happy-agent-$env:HAPPY_AGENT_RELEASE_VERSION.tgz" "release-assets/npm/slopus-happy-agent-win32-x64-$env:HAPPY_AGENT_RELEASE_VERSION.tgz"
+                  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+                  'Windows ships inference and durable agents; its sandbox supervisor migration is incomplete.' >> $env:GITHUB_STEP_SUMMARY
             - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
               with:
                   name: happy-agent-win32-x64
-                  path: release-assets/*
+                  path: |
+                      release-assets/*.tar.gz
+                      release-assets/*.sha256
+                      release-assets/npm/*.tgz
                   if-no-files-found: error
                   retention-days: 7

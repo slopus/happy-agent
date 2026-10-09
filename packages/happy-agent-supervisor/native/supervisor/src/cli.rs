@@ -19,9 +19,8 @@ enum PolicySource {
 }
 
 impl Invocation {
-    pub(crate) fn parse() -> SupervisorResult<Self> {
-        let mut arguments = std::env::args_os();
-        let _program = arguments.next();
+    pub(crate) fn parse(arguments: impl IntoIterator<Item = OsString>) -> SupervisorResult<Self> {
+        let mut arguments = arguments.into_iter();
         let mut policy_source = None;
         let mut command = Vec::new();
 

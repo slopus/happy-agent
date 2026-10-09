@@ -1,5 +1,11 @@
 # Developing Happy Agent and Happy Terminal
 
+The Happy Agent source is migrating to Rust. Start with
+[the current runtime guide](packages/happy-agent/RUST.md) for builds, checks, and
+the implemented CLI. The desktop API and terminal integration remain to be
+migrated; the TypeScript workspace and published Terminal instructions below
+describe the previous product runtime.
+
 Thanks for helping improve Happy Agent and Happy Terminal. This guide contains the repository-specific
 setup, testing, and release details that contributors need. For product usage
 and configuration, start with the [README](README.md).

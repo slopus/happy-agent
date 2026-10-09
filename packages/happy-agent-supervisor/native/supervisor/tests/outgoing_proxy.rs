@@ -19,7 +19,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
 
-const SUPERVISOR: &str = env!("CARGO_BIN_EXE_happy-agent-supervisor");
+const SUPERVISOR: &str = env!("CARGO_BIN_EXE_happy-agent");
 const DENIED_HOST: &str = "denied.invalid";
 const RUN_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -134,6 +134,7 @@ fn supervise(
     .unwrap_or_else(|error| panic!("write policy: {error}"));
 
     let mut command = Command::new(SUPERVISOR);
+    command.arg("supervisor");
     command
         .current_dir(workspace.path())
         .arg("--policy-file")

@@ -1,0 +1,39 @@
+[package]
+name = "happy-agent"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+autobins = false
+
+[[bin]]
+name = "happy-agent"
+path = "sources/main.rs"
+
+[[test]]
+name = "supervisor-behavior"
+path = "../happy-agent-supervisor/native/supervisor/tests/behavior.rs"
+
+[[test]]
+name = "supervisor-services"
+path = "../happy-agent-supervisor/native/supervisor/tests/services.rs"
+
+[[test]]
+name = "supervisor-outgoing-proxy"
+path = "../happy-agent-supervisor/native/supervisor/tests/outgoing_proxy.rs"
+
+[dependencies]
+anyhow.workspace = true
+happy-agent-base = { path = "../happy-agent-base" }
+happy-providers = { path = "../happy-providers" }
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+uuid.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+happy-agent-supervisor = { path = "../happy-agent-supervisor/native/supervisor" }
+
+[dev-dependencies]
+libc.workspace = true
+tempfile.workspace = true

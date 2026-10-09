@@ -1,5 +1,12 @@
 # build scripts
 
+The current runtime uses `build-native.mjs` to compile the single Rust executable,
+`package-native.mjs` to create npm launcher/platform tarballs, and
+`verify-native-package.mjs` to exercise the packed launcher's native resolution.
+`smoke-rust-runtime.mjs` checks inference and durable queued input through the real
+executable with a local HTTP fixture. The Bun compiler described below has been
+removed; these historical notes apply to the previous published runtime.
+
 The package's ordinary TypeScript build produces its published Node-compatible
 JavaScript distribution and copies the repository's `docs/` into `dist/docs/`.
 `build-binary.ts` takes that distribution and compiles

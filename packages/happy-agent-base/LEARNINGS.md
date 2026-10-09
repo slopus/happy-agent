@@ -1,5 +1,21 @@
 # Agent Base learnings
 
+## Rust migration keeps the runtime separate from product modules
+
+The runtime is now a Rust library linked into the single Happy Agent executable.
+Its SQLite transactions, immutable provider history, tool result commit boundary,
+queue admission, and explicit stages remain the core contract. Database errors
+stop the worker and reach its owner; they are never converted into successful
+settlement. The old TypeScript store generation is refused rather than silently
+converted or erased. The product module hooks and the multi-agent owner API still
+need migration. The historical decisions and formal models below describe the
+previous full runtime and must be carried forward explicitly as those seams move.
+
+Hosted provider calls retain the existing server tool-call/result blocks and
+their opaque vendor metadata. A new raw-provider-item block would create another
+shared persistence concept and is unnecessary. The worker never dispatches a
+server call, even when its name matches an installed local tool.
+
 ## Completed SQLite transactions return their connection to the upstream pool
 
 The older libSQL client handed its connection to each transaction without taking it back,

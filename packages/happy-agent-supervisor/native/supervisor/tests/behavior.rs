@@ -1,10 +1,11 @@
+#![cfg(unix)]
 use serde_json::json;
 use std::fs;
 use std::io::Write;
 use std::process::{Command, Output};
 use tempfile::TempDir;
 
-const SUPERVISOR: &str = env!("CARGO_BIN_EXE_happy-agent-supervisor");
+const SUPERVISOR: &str = env!("CARGO_BIN_EXE_happy-agent");
 
 struct TestBoundary {
     _root: TempDir,
@@ -47,6 +48,7 @@ impl TestBoundary {
 
     fn run_with_env(&self, command: &[&str], environment: &[(&str, &str)]) -> Output {
         let mut supervisor = Command::new(SUPERVISOR);
+        supervisor.arg("supervisor");
         supervisor
             .current_dir(&self.workspace)
             .args(["--policy-file"])
@@ -79,6 +81,7 @@ fn policy_can_be_consumed_from_an_argument() {
         .unwrap_or_else(|error| panic!("read argument policy: {error}"));
 
     let output = Command::new(SUPERVISOR)
+        .arg("supervisor")
         .current_dir(&boundary.workspace)
         .arg("--policy")
         .arg(policy)
@@ -115,6 +118,7 @@ fn seatbelt_blocks_first_time_creation_of_a_denied_path() {
     .to_string();
 
     let output = Command::new(SUPERVISOR)
+        .arg("supervisor")
         .current_dir(&boundary.workspace)
         .args(["--policy", &policy, "--", "/bin/sh", "-c"])
         .arg("printf poisoned > agent-policy.toml")
@@ -138,6 +142,7 @@ fn writes_are_limited_to_the_workspace() {
     let inside = boundary.workspace.join("inside.txt");
     let outside = boundary.outside.join("outside.txt");
     let output = Command::new(SUPERVISOR)
+        .arg("supervisor")
         .current_dir(&boundary.workspace)
         .args(["--policy-file"])
         .arg(&boundary.policy)
@@ -188,7 +193,7 @@ fn overlapping_read_denials_preserve_the_boundary_in_either_order() {
                 "network": { "egress": false, "localBinding": false }
             })
             .to_string();
-            let output = Command::new(SUPERVISOR)
+            let output = Command::new(SUPERVISOR).arg("supervisor")
                 .current_dir(&boundary.workspace)
                 .args(["--policy", &policy, "--", "/bin/sh", "-c"])
                 .arg("if cat \"$PRIVATE_FILE\" >/dev/null 2>&1; then exit 91; fi; cat \"$PUBLIC_FILE\"")
@@ -286,6 +291,7 @@ fn target_signals_pass_through_as_signals() {
 
 fn workload(boundary: &TestBoundary, operation: &str, environment: &[(&str, String)]) -> Output {
     let mut command = Command::new(SUPERVISOR);
+    command.arg("supervisor");
     command
         .current_dir(&boundary.workspace)
         .args(["--policy-file"])

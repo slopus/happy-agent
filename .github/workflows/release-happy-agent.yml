@@ -9,12 +9,11 @@ on:
                 required: true
                 type: string
             release_notes:
-                description: Markdown change notes for the GitHub Release
+                description: Markdown change notes; Rust runtime currently excludes the product daemon/API
                 required: true
                 type: string
             prerelease:
                 description: Must be true for preview versions and false for stable versions
-                required: false
                 default: true
                 type: boolean
 
@@ -29,215 +28,111 @@ env:
     RELEASE_TAG: v${{ inputs.version }}
     RELEASE_VERSION: ${{ inputs.version }}
     RELEASE_PRERELEASE: ${{ inputs.prerelease }}
+    HAPPY_AGENT_RELEASE_VERSION: ${{ inputs.version }}
 
 jobs:
-    windows:
-        permissions:
-            contents: read
-            id-token: write
-        needs: validate
-        uses: ./.github/workflows/build-windows.yml
-        with:
-            version: ${{ inputs.version }}
-
     validate:
-        name: Validate release inputs
         runs-on: ubuntu-24.04
         timeout-minutes: 5
-
         steps:
-            - name: Check out main
-              uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+            - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
               with:
                   fetch-depth: 0
-
             - name: Validate release inputs
-              shell: bash
               env:
                   GH_TOKEN: ${{ github.token }}
                   RELEASE_NOTES: ${{ inputs.release_notes }}
               run: |
-                  if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
-                      echo "Happy Agent releases must be dispatched from main." >&2
-                      exit 1
+                  [[ "$GITHUB_REF" == refs/heads/main ]] || { echo 'Dispatch releases from main.' >&2; exit 1; }
+                  [[ "$RELEASE_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-preview\.(0|[1-9][0-9]*))?$ ]] || exit 1
+                  if [[ "$RELEASE_VERSION" == *-preview.* ]]; then
+                      [[ "$RELEASE_PRERELEASE" == true ]] || exit 1
+                  else
+                      [[ "$RELEASE_PRERELEASE" == false ]] || exit 1
                   fi
-                  if [[ ! "$RELEASE_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-preview\.(0|[1-9][0-9]*))?$ ]]; then
-                      echo "Version must be X.Y.Z or X.Y.Z-preview.N, without a leading v or leading zeroes." >&2
-                      exit 1
-                  fi
-                  if [[ "$RELEASE_VERSION" == *-preview.* && "$RELEASE_PRERELEASE" != "true" ]] || \
-                     [[ "$RELEASE_VERSION" != *-preview.* && "$RELEASE_PRERELEASE" != "false" ]]; then
-                      echo "Preview versions require prerelease=true; stable versions require prerelease=false." >&2
-                      exit 1
-                  fi
-                  if [[ -z "${RELEASE_NOTES//[[:space:]]/}" ]]; then
-                      echo "Release notes must not be blank." >&2
-                      exit 1
-                  fi
+                  [[ -n "${RELEASE_NOTES//[[:space:]]/}" ]] || exit 1
                   git fetch origin main --tags
-                  if [[ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]]; then
-                      echo "Happy Agent releases must start from the current main branch." >&2
-                      exit 1
-                  fi
-                  if git rev-parse --verify --quiet "refs/tags/$RELEASE_TAG" >/dev/null; then
-                      echo "Tag $RELEASE_TAG already exists." >&2
-                      exit 1
-                  fi
-                  if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-                      echo "Release $RELEASE_TAG already exists." >&2
-                      exit 1
-                  fi
+                  [[ "$(git rev-parse HEAD)" == "$(git rev-parse origin/main)" ]] || exit 1
+                  ! git rev-parse --verify --quiet "refs/tags/$RELEASE_TAG" >/dev/null
+                  ! gh release view "$RELEASE_TAG" >/dev/null 2>&1
 
     verify:
-        name: Verify release source
         needs: validate
         runs-on: ubuntu-24.04
-        timeout-minutes: 45
-
+        timeout-minutes: 30
         steps:
-            - name: Check out the release commit
-              uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-              with:
-                  fetch-depth: 0
-
-            - name: Set up pnpm
-              uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
-
-            - name: Set up Node.js
-              uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+            - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+            - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+            - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
               with:
                   node-version: "24"
                   package-manager-cache: false
-
-            - name: Locate the pnpm store
-              id: pnpm-store
-              shell: bash
-              run: |
-                  echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
-                  echo "abi=$(node -p 'process.versions.modules')" >> "$GITHUB_OUTPUT"
-                  echo "image=$(node -p '[process.env.ImageOS, process.env.ImageVersion].join("-")')" >> "$GITHUB_OUTPUT"
-
-            - name: Cache dependency downloads
-              uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-              with:
-                  path: ${{ steps.pnpm-store.outputs.path }}
-                  key: pnpm-store-v1-${{ runner.os }}-${{ runner.arch }}-node${{ steps.pnpm-store.outputs.abi }}-${{ steps.pnpm-store.outputs.image }}-${{ hashFiles('pnpm-lock.yaml', 'package.json', 'pnpm-workspace.yaml', 'patches/**') }}
-
-            - name: Enable Linux user namespaces
+            - run: pnpm install --frozen-lockfile --ignore-scripts
+            - run: rustup show active-toolchain
+            - name: Enable the existing Unix sandbox test boundary
               run: |
                   if [[ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]]; then
                       sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
                   fi
+            - run: pnpm check
+            - run: pnpm test
+            - run: node packages/happy-agent/scripts/smoke-rust-runtime.mjs target/debug/happy-agent
 
-            - name: Install dependencies
-              # Cache downloads only; patched native addons must run their install scripts again.
-              run: pnpm install --frozen-lockfile --config.side-effects-cache=false
-
-            - name: Build Happy Agent JavaScript
-              run: |
-                  pnpm --filter @slopus/happy-agent-supervisor build
-                  pnpm --filter @slopus/happy-providers build
-                  pnpm --filter @slopus/happy-agent-compute build
-                  pnpm --filter @slopus/happy-agent-modules build
-                  pnpm --filter @slopus/happy-agent build
-
-            - name: Run type checks
-              run: |
-                  pnpm --filter @slopus/happy-agent-modules check
-                  pnpm --filter @slopus/happy-agent check
-
-            - name: Run tests
-              env:
-                  HOME: ${{ runner.temp }}/happy-agent-test-home
-              run: |
-                  mkdir -p "$HOME" .local
-                  pnpm run test:scripts
-                  pnpm --filter @slopus/happy-agent-modules test
-                  pnpm --filter @slopus/happy-agent test
+    windows:
+        needs: validate
+        permissions:
+            contents: read
+            id-token: write
+        uses: ./.github/workflows/build-windows.yml
+        with:
+            version: ${{ inputs.version }}
 
     build:
-        name: Build ${{ matrix.target }}
         needs: validate
+        name: Build ${{ matrix.target }}
         runs-on: ${{ matrix.runner }}
         timeout-minutes: 60
+        strategy:
+            fail-fast: false
+            matrix:
+                include:
+                    - { runner: macos-15, target: darwin-arm64, rust: aarch64-apple-darwin }
+                    - { runner: macos-15-intel, target: darwin-x64, rust: x86_64-apple-darwin }
+                    - {
+                          runner: ubuntu-24.04-arm,
+                          target: linux-arm64,
+                          rust: aarch64-unknown-linux-musl,
+                      }
+                    - { runner: ubuntu-24.04, target: linux-x64, rust: x86_64-unknown-linux-musl }
         env:
+            TARGET: ${{ matrix.target }}
             APPLE_API_ISSUER: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
             APPLE_API_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
             APPLE_NOTARY_KEY_P8_BASE64: ${{ secrets.APPLE_NOTARY_KEY_P8_BASE64 }}
             APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
             CSC_KEY_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
             CSC_LINK: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
-        strategy:
-            fail-fast: false
-            matrix:
-                include:
-                    - runner: macos-15
-                      target: darwin-arm64
-                    - runner: macos-15-intel
-                      target: darwin-x64
-                    - runner: ubuntu-24.04-arm
-                      target: linux-arm64
-                    - runner: ubuntu-24.04
-                      target: linux-x64
-
         steps:
-            - name: Check out the verified commit
-              uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-
-            - name: Set up pnpm
-              uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
-
-            - name: Set up Node.js
-              uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+            - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+            - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+            - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
               with:
                   node-version: "24"
                   package-manager-cache: false
-
-            - name: Locate the pnpm store
-              id: pnpm-store
-              shell: bash
-              run: |
-                  echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
-                  echo "abi=$(node -p 'process.versions.modules')" >> "$GITHUB_OUTPUT"
-                  echo "image=$(node -p '[process.env.ImageOS, process.env.ImageVersion].join("-")')" >> "$GITHUB_OUTPUT"
-
-            - name: Cache dependency downloads
-              uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-              with:
-                  path: ${{ steps.pnpm-store.outputs.path }}
-                  key: pnpm-store-v1-${{ runner.os }}-${{ runner.arch }}-node${{ steps.pnpm-store.outputs.abi }}-${{ steps.pnpm-store.outputs.image }}-${{ hashFiles('pnpm-lock.yaml', 'package.json', 'pnpm-workspace.yaml', 'patches/**') }}
-
-            - name: Enable Linux user namespaces
+            - run: rustup target add ${{ matrix.rust }}
+            - name: Install native musl support
               if: runner.os == 'Linux'
               run: |
-                  if [[ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]]; then
-                      sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-                  fi
-
-            - name: Install dependencies
-              # Cache downloads only; patched native addons must run their install scripts again.
-              run: pnpm install --frozen-lockfile --config.side-effects-cache=false
-
-            - name: Build Happy Agent JavaScript
-              run: |
-                  pnpm --filter @slopus/happy-agent-supervisor build
-                  pnpm --filter @slopus/happy-providers build
-                  pnpm --filter @slopus/happy-agent-compute build
-                  pnpm --filter @slopus/happy-agent-modules build
-                  pnpm --filter @slopus/happy-agent build
-
-            - name: Prepare Happy Desktop signing credentials
+                  sudo apt-get update
+                  sudo apt-get install -y musl-tools
+            - name: Build the one runtime executable
+              run: pnpm --filter @slopus/happy-agent build:native --target "$TARGET"
+            - name: Prepare Apple signing credentials
               if: runner.os == 'macOS'
-              shell: bash
               run: |
-                  test -n "$CSC_LINK"
-                  test -n "$CSC_KEY_PASSWORD"
-                  test -n "$APPLE_NOTARY_KEY_P8_BASE64"
-                  test -n "$APPLE_API_KEY_ID"
-                  test -n "$APPLE_API_ISSUER"
-                  test -n "$APPLE_TEAM_ID"
-                  test "$APPLE_TEAM_ID" = "466DQWDR8C"
-
+                  test -n "$CSC_LINK"; test -n "$CSC_KEY_PASSWORD"
+                  test -n "$APPLE_NOTARY_KEY_P8_BASE64"; test -n "$APPLE_API_KEY_ID"; test -n "$APPLE_API_ISSUER"
+                  test "$APPLE_TEAM_ID" = 466DQWDR8C
                   certificate="$RUNNER_TEMP/happy-agent-signing.p12"
                   keychain="$RUNNER_TEMP/happy-agent-signing.keychain-db"
                   keychain_password="$(openssl rand -hex 32)"
@@ -245,303 +140,102 @@ jobs:
                   security create-keychain -p "$keychain_password" "$keychain"
                   security set-keychain-settings -lut 21600 "$keychain"
                   security unlock-keychain -p "$keychain_password" "$keychain"
-                  keychains=("$keychain")
-                  while IFS= read -r existing_keychain; do
-                      existing_keychain="${existing_keychain#*\"}"
-                      existing_keychain="${existing_keychain%\"*}"
-                      if [[ -n "$existing_keychain" && "$existing_keychain" != "$keychain" ]]; then
-                          keychains+=("$existing_keychain")
-                      fi
-                  done < <(security list-keychains -d user)
-                  security list-keychains -d user -s "${keychains[@]}"
-                  security import "$certificate" \
-                      -k "$keychain" \
-                      -P "$CSC_KEY_PASSWORD" \
-                      -T /usr/bin/codesign
-                  security set-key-partition-list \
-                      -S apple-tool:,apple: \
-                      -s \
-                      -k "$keychain_password" \
-                      "$keychain"
-                  identity="$(security find-identity -v -p codesigning "$keychain" \
-                      | sed -n 's/.*"\(Developer ID Application:[^"]*\)".*/\1/p' \
-                      | head -1)"
+                  security import "$certificate" -k "$keychain" -P "$CSC_KEY_PASSWORD" -T /usr/bin/codesign
+                  security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain"
+                  identity="$(security find-identity -v -p codesigning "$keychain" | sed -n 's/.*"\(Developer ID Application:[^"]*\)".*/\1/p' | head -1)"
                   test -n "$identity"
-
                   notary_key="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
                   printf '%s' "$APPLE_NOTARY_KEY_P8_BASE64" | base64 -D > "$notary_key"
                   chmod 600 "$notary_key"
-
-                  printf 'HAPPY_AGENT_CODESIGN_IDENTITY=%s\n' "$identity" >> "$GITHUB_ENV"
-                  printf 'HAPPY_AGENT_SIGNING_KEYCHAIN=%s\n' "$keychain" >> "$GITHUB_ENV"
-                  printf 'APPLE_API_KEY=%s\n' "$notary_key" >> "$GITHUB_ENV"
-
-            - name: Sign Tailcat before embedding
+                  printf 'HAPPY_AGENT_CODESIGN_IDENTITY=%s\nHAPPY_AGENT_SIGNING_KEYCHAIN=%s\nAPPLE_API_KEY=%s\n' "$identity" "$keychain" "$notary_key" >> "$GITHUB_ENV"
+            - name: Sign the single Apple executable
               if: runner.os == 'macOS'
-              shell: bash
-              run: |
-                  source="packages/happy-agent/assets/tailcat/v0.4.0/$TARGET/tailcat"
-                  signed="$GITHUB_WORKSPACE/packages/happy-agent/dist/vendor/tailcat-v0.4.0-$TARGET-signed"
-                  mkdir -p "$(dirname "$signed")"
-                  cp "$source" "$signed"
-                  codesign \
-                      --force \
-                      --identifier com.slopus.happy.agent.tailcat \
-                      --keychain "$HAPPY_AGENT_SIGNING_KEYCHAIN" \
-                      --options runtime \
-                      --sign "$HAPPY_AGENT_CODESIGN_IDENTITY" \
-                      --timestamp \
-                      "$signed"
-                  codesign --verify --strict --verbose=2 "$signed"
-                  test "$("$signed" version)" = "v0.4.0"
-                  printf 'HAPPY_AGENT_SIGNED_TAILCAT_PATH=%s\n' "$signed" >> "$GITHUB_ENV"
-              env:
-                  TARGET: ${{ matrix.target }}
-
-            - name: Identify the native database build inputs
-              id: libsql-inputs
-              shell: bash
-              run: |
-                  toolchain="$(node -p 'JSON.parse(require("node:fs").readFileSync("packages/happy-agent/native/libsql/source.json")).toolchain')"
-                  rustup toolchain install "$toolchain" --profile minimal
-                  echo "key=$(node scripts/release/nativeLibsqlCacheKey.mjs)" >> "$GITHUB_OUTPUT"
-
-            - name: Restore the unsigned native database binding
-              id: libsql-cache
-              uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-              with:
-                  path: packages/happy-agent/native/target/${{ matrix.target }}/libsql.node
-                  key: ${{ steps.libsql-inputs.outputs.key }}
-
-            - name: Build the pinned native database binding
-              if: steps.libsql-cache.outputs.cache-hit != 'true'
-              run: pnpm --filter @slopus/happy-agent build:native:libsql
-
-            - name: Verify native database lifetimes under Node and Bun
-              shell: bash
-              run: |
-                  ulimit -n 16384
-                  # Exercise the upstream pool with our exact built addon in private runtime copies.
-                  # No installed dependency or pnpm store file is overwritten.
-                  for runtime in node bun; do
-                      if [[ "$runtime" == node ]]; then
-                          command=(node --expose-gc)
-                      else
-                          command=(pnpm dlx bun@1.4.2)
-                      fi
-                      "${command[@]}" packages/happy-agent/scripts/verify-native-libsql.mjs
-                  done
-
-            - name: Cache the verified unsigned native database binding
-              if: steps.libsql-cache.outputs.cache-hit != 'true'
-              uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-              with:
-                  path: packages/happy-agent/native/target/${{ matrix.target }}/libsql.node
-                  key: ${{ steps.libsql-inputs.outputs.key }}
-
-            - name: Verify patched Parcel callback lifetimes under Node and Bun
-              run: pnpm --filter @slopus/happy-agent test:native:watcher
-
-            - name: Verify the Bun runtime before compiling
-              run: pnpm --filter @slopus/happy-agent test:bun:runtime
-
-            - name: Compile Happy Agent standalone binary
-              run: |
-                  pnpm --filter @slopus/happy-agent build:bun --target "$TARGET"
-              env:
-                  HAPPY_AGENT_RELEASE_VERSION: ${{ inputs.version }}
-                  TARGET: ${{ matrix.target }}
-
-            - name: Sign Happy Agent
-              if: runner.os == 'macOS'
-              shell: bash
               run: |
                   binary="packages/happy-agent/dist/bin/happy-agent-$TARGET"
-                  codesign \
-                      --force \
-                      --identifier com.slopus.happy.agent \
-                      --keychain "$HAPPY_AGENT_SIGNING_KEYCHAIN" \
-                      --options runtime \
-                      --sign "$HAPPY_AGENT_CODESIGN_IDENTITY" \
-                      --timestamp \
-                      --entitlements packages/happy-agent/assets/macos/entitlements.plist \
-                      "$binary"
+                  codesign --force --identifier com.slopus.happy.agent --keychain "$HAPPY_AGENT_SIGNING_KEYCHAIN" --options runtime --sign "$HAPPY_AGENT_CODESIGN_IDENTITY" --timestamp "$binary"
                   codesign --verify --strict --verbose=2 "$binary"
-              env:
-                  TARGET: ${{ matrix.target }}
-
-            - name: Smoke test the release binary
-              shell: bash
+            - name: Smoke test the exact release binary
               run: |
                   binary="packages/happy-agent/dist/bin/happy-agent-$TARGET"
                   test "$("$binary" --version)" = "Happy Agent $RELEASE_VERSION"
-                  "$binary" --help >/dev/null
-                  node packages/happy-agent/scripts/smoke-binary-transports.mjs "$binary"
-
-                  smoke_root="$(mktemp -d /tmp/happy-agent-release.XXXXXX)"
-                  export HAPPY_HOME_DIR="$smoke_root/home"
-                  cleanup() {
-                      "$binary" stop >/dev/null 2>&1 || true
-                  }
-                  trap cleanup EXIT
-
-                  "$binary" start
-                  "$binary" status
-                  "$binary" stop
-                  for attempt in {1..100}; do
-                      status_output="$("$binary" status)"
-                      if [[ "$status_output" == *"Daemon is not running."* ]]; then
-                          trap - EXIT
-                          exit 0
-                      fi
-                      sleep 0.1
-                  done
-                  echo "$status_output" >&2
-                  exit 1
-              env:
-                  TARGET: ${{ matrix.target }}
-
-            - name: Notarize Happy Agent and embedded Tailcat
+                  node packages/happy-agent/scripts/smoke-rust-runtime.mjs "$binary"
+            - name: Notarize the single Apple executable
               if: runner.os == 'macOS'
-              shell: bash
               run: |
-                  binary="$GITHUB_WORKSPACE/packages/happy-agent/dist/bin/happy-agent-$TARGET"
                   payload="$RUNNER_TEMP/happy-agent-notary-$TARGET"
-                  archive="$RUNNER_TEMP/happy-agent-notary-$TARGET.zip"
+                  archive="$payload.zip"
                   mkdir -p "$payload"
-                  cp "$binary" "$payload/happy-agent"
-                  cp "$HAPPY_AGENT_SIGNED_TAILCAT_PATH" "$payload/tailcat"
+                  cp "packages/happy-agent/dist/bin/happy-agent-$TARGET" "$payload/happy-agent"
                   ditto -c -k --keepParent "$payload" "$archive"
-
-                  set +e
-                  submission="$(xcrun notarytool submit "$archive" \
-                      --issuer "$APPLE_API_ISSUER" \
-                      --key "$APPLE_API_KEY" \
-                      --key-id "$APPLE_API_KEY_ID" \
-                      --output-format json \
-                      --wait)"
-                  submit_status=$?
-                  set -e
-                  printf '%s\n' "$submission"
-                  submission_id="$(jq -r '.id // empty' <<< "$submission")"
-                  notary_status="$(jq -r '.status // empty' <<< "$submission")"
-                  if [[ $submit_status -ne 0 || "$notary_status" != "Accepted" ]]; then
-                      if [[ -n "$submission_id" ]]; then
-                          xcrun notarytool log "$submission_id" \
-                              --issuer "$APPLE_API_ISSUER" \
-                              --key "$APPLE_API_KEY" \
-                              --key-id "$APPLE_API_KEY_ID"
-                      fi
-                      exit 1
-                  fi
-
-                  codesign --verify --strict --verbose=2 "$binary"
-                  codesign --verify --strict --verbose=2 "$HAPPY_AGENT_SIGNED_TAILCAT_PATH"
-              env:
-                  TARGET: ${{ matrix.target }}
-
-            - name: Package release asset
-              shell: bash
+                  xcrun notarytool submit "$archive" --issuer "$APPLE_API_ISSUER" --key "$APPLE_API_KEY" --key-id "$APPLE_API_KEY_ID" --output-format json --wait > "$RUNNER_TEMP/notary.json"
+                  test "$(jq -r .status "$RUNNER_TEMP/notary.json")" = Accepted
+                  codesign --verify --strict --verbose=2 "packages/happy-agent/dist/bin/happy-agent-$TARGET"
+            - name: Package native archive and npm platform package
               run: |
                   mkdir -p release-assets
                   archive="happy-agent-$RELEASE_VERSION-$TARGET.tar.gz"
-                  tar -czf "release-assets/$archive" \
-                      -C packages/happy-agent/dist/bin \
-                      "happy-agent-$TARGET"
-                  (
-                      cd release-assets
-                      shasum -a 256 "$archive" > "$archive.sha256"
-                  )
-              env:
-                  TARGET: ${{ matrix.target }}
-
-            - name: Upload release asset
-              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+                  tar -czf "release-assets/$archive" -C packages/happy-agent/dist/bin "happy-agent-$TARGET"
+                  node packages/happy-agent/scripts/package-native.mjs platform --version "$RELEASE_VERSION" --target "$TARGET" --binary "packages/happy-agent/dist/bin/happy-agent-$TARGET" --output release-assets/npm
+                  node packages/happy-agent/scripts/package-native.mjs root --version "$RELEASE_VERSION" --output .context/npm-root
+                  node packages/happy-agent/scripts/verify-native-package.mjs ".context/npm-root/slopus-happy-agent-$RELEASE_VERSION.tgz" "release-assets/npm/slopus-happy-agent-$TARGET-$RELEASE_VERSION.tgz"
+                  (cd release-assets && shasum -a 256 "$archive" > "$archive.sha256")
+            - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
               with:
                   name: happy-agent-${{ matrix.target }}
-                  path: release-assets/*
+                  path: |
+                      release-assets/*.tar.gz
+                      release-assets/*.sha256
+                      release-assets/npm/*.tgz
                   if-no-files-found: error
                   retention-days: 7
-
             - name: Remove Apple signing credentials
               if: always() && runner.os == 'macOS'
-              shell: bash
               run: |
-                  if [[ -n "${HAPPY_AGENT_SIGNING_KEYCHAIN:-}" ]]; then
-                      security delete-keychain "$HAPPY_AGENT_SIGNING_KEYCHAIN" || true
-                  fi
-                  rm -f \
-                      "$RUNNER_TEMP/happy-agent-signing.p12" \
-                      "$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
+                  if [[ -n "${HAPPY_AGENT_SIGNING_KEYCHAIN:-}" ]]; then security delete-keychain "$HAPPY_AGENT_SIGNING_KEYCHAIN" || true; fi
+                  rm -f "$RUNNER_TEMP/happy-agent-signing.p12" "$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
 
     publish:
         name: Publish GitHub Release
-        needs:
-            - verify
-            - build
-            - windows
+        needs: [verify, build, windows]
         runs-on: ubuntu-24.04
         timeout-minutes: 15
         permissions:
             contents: write
-
         steps:
-            - name: Check out the verified commit
-              uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+            - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
               with:
                   fetch-depth: 0
-
-            - name: Download release assets
-              uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+            - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+            - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+              with:
+                  node-version: "24"
+                  package-manager-cache: false
+            - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
               with:
                   pattern: happy-agent-*
                   path: release-assets
                   merge-multiple: true
-
-            - name: Confirm the release target
-              shell: bash
+            - name: Generate the npm launcher tarball without publishing npm
+              run: node packages/happy-agent/scripts/package-native.mjs root --version "$RELEASE_VERSION" --output release-assets/npm
+            - name: Confirm the release target and checksums
               env:
                   GH_TOKEN: ${{ github.token }}
               run: |
                   git fetch origin main --tags
-                  if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
-                      echo "The verified commit is no longer on main." >&2
-                      exit 1
-                  fi
-                  if git rev-parse --verify --quiet "refs/tags/$RELEASE_TAG" >/dev/null; then
-                      echo "Tag $RELEASE_TAG was created while this release was building." >&2
-                      exit 1
-                  fi
-                  if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-                      echo "Release $RELEASE_TAG was created while this release was building." >&2
-                      exit 1
-                  fi
-
+                  git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+                  ! git rev-parse --verify --quiet "refs/tags/$RELEASE_TAG" >/dev/null
+                  ! gh release view "$RELEASE_TAG" >/dev/null 2>&1
+                  (cd release-assets && for checksum in *.sha256; do sha256sum -c "$checksum"; done)
             - name: Publish the tag and GitHub Release
-              shell: bash
               env:
                   GH_TOKEN: ${{ github.token }}
                   RELEASE_NOTES: ${{ inputs.release_notes }}
               run: |
                   mkdir -p .release
-                  printf '%s\n' "$RELEASE_NOTES" > .release/notes.md
-                  arguments=(
-                      "$RELEASE_TAG"
-                      --draft
-                      --target "$GITHUB_SHA"
-                      --title "Happy Agent $RELEASE_TAG"
-                      --notes-file .release/notes.md
-                  )
-                  if [[ "$RELEASE_PRERELEASE" == "true" ]]; then
-                      arguments+=(--prerelease --latest=false)
-                  fi
-                  gh release create "${arguments[@]}" release-assets/*
+                  printf '%s\n\n%s\n' "$RELEASE_NOTES" 'This Rust runtime release supplies provider inference, durable agents, and the Unix supervisor. The product daemon, desktop API, and terminal UI migration is incomplete.' > .release/notes.md
+                  arguments=("$RELEASE_TAG" --draft --target "$GITHUB_SHA" --title "Happy Agent $RELEASE_TAG" --notes-file .release/notes.md)
+                  if [[ "$RELEASE_PRERELEASE" == true ]]; then arguments+=(--prerelease --latest=false); fi
+                  gh release create "${arguments[@]}" release-assets/*.tar.gz release-assets/*.sha256 release-assets/npm/*.tgz
                   publish_arguments=(--draft=false)
-                  if [[ "$RELEASE_PRERELEASE" == "true" ]]; then
-                      publish_arguments+=(--latest=false)
-                  else
-                      publish_arguments+=(--latest)
-                  fi
+                  if [[ "$RELEASE_PRERELEASE" == true ]]; then publish_arguments+=(--latest=false); else publish_arguments+=(--latest); fi
                   gh release edit "$RELEASE_TAG" "${publish_arguments[@]}"
-                  release_url="$(gh release view "$RELEASE_TAG" --json url --jq .url)"
-                  printf 'Published [%s](%s).\n' "$RELEASE_TAG" "$release_url" >> "$GITHUB_STEP_SUMMARY"

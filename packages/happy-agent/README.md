@@ -1,5 +1,12 @@
 # `@slopus/happy-agent`
 
+The npm command and native builds now use one Rust executable for `infer`,
+`agent`, and the Unix `supervisor`. The product daemon and desktop API described
+below remain unmigrated. Read [RUST.md](RUST.md) for the working commands,
+packaging, and current limitations before running this checkout.
+
+The following is historical product documentation for the remaining migration.
+
 The Happy Agent daemon.
 
 All agent behavior lives in `@slopus/happy-agent-modules`: configuration, databases, storage

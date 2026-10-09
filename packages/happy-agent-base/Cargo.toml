@@ -1,0 +1,24 @@
+[package]
+name = "happy-agent-base"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+path = "sources/lib.rs"
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+happy-providers = { path = "../happy-providers" }
+jsonschema.workspace = true
+rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

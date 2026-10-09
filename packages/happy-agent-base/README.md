@@ -1,5 +1,11 @@
 # @slopus/happy-agent-base
 
+This package is now a Rust library linked into the single `happy-agent`
+executable. Its TypeScript runtime and npm SDK build have been removed.
+The historical interface described below remains reference material for migrating
+product modules; it is not the current Rust API. See
+[the runtime guide](../happy-agent/RUST.md) and `sources/lib.rs`.
+
 The minimal durable runtime for Happy agents.
 
 `AgentBase` owns one agent's persistent inference and tool loop. It durably queues messages,

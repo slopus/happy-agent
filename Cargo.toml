@@ -1,0 +1,65 @@
+[workspace]
+members = [
+    "packages/happy-agent",
+    "packages/happy-agent-base",
+    "packages/happy-providers",
+    "packages/happy-agent-supervisor/native/supervisor",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+rust-version = "1.96"
+
+[workspace.dependencies]
+anyhow = "1.0.102"
+async-trait = "0.1.89"
+aws-config = { version = "1.8.18", default-features = false, features = [
+    "default-https-client",
+    "rt-tokio",
+    "credentials-process",
+    "sso",
+] }
+aws-credential-types = "1.2.14"
+base64 = "0.22.1"
+bytes = "1.11.1"
+crc32fast = "1.5.0"
+futures-util = "0.3.32"
+hmac = "0.12.1"
+http = "1.4.0"
+jsonschema = { version = "0.46.5", default-features = false }
+libc = "0.2.183"
+regex-lite = "0.1.8"
+reqwest = { version = "0.12.28", default-features = false, features = [
+    "json",
+    "stream",
+    "rustls-tls",
+] }
+rusqlite = { version = "0.38.0", features = ["bundled"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = { version = "1.0.149", features = ["preserve_order"] }
+sha2 = "0.10.9"
+tempfile = "3.27.0"
+thiserror = "2.0.18"
+time = { version = "0.3.47", features = ["formatting", "parsing"] }
+tokio = { version = "1.50.0", features = ["full"] }
+tokio-util = "0.7.18"
+tokio-tungstenite = { version = "0.28.0", default-features = false, features = [
+    "connect",
+    "rustls-tls-webpki-roots",
+] }
+uuid = { version = "1.22.0", features = ["v4", "serde"] }
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[workspace.lints.clippy]
+expect_used = "deny"
+unwrap_used = "deny"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+strip = "symbols"

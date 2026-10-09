@@ -7,7 +7,7 @@ use std::process::{Command, Output};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tempfile::TempDir;
 
-const SUPERVISOR: &str = env!("CARGO_BIN_EXE_happy-agent-supervisor");
+const SUPERVISOR: &str = env!("CARGO_BIN_EXE_happy-agent");
 
 struct Boundary {
     directory: TempDir,
@@ -56,6 +56,7 @@ impl Boundary {
 
     fn run(&self, command: &str) -> Output {
         Command::new(SUPERVISOR)
+            .arg("supervisor")
             .arg("--policy-file")
             .arg(self.policy_file())
             .args(["--", "/bin/sh", "-c", command])
@@ -116,6 +117,7 @@ fn service_credentials_cannot_use_process_arguments_or_public_files() {
     let fake = tempfile::tempdir().unwrap_or_else(|error| panic!("{error}"));
     let boundary = Boundary::new(fake.path());
     let arguments = Command::new(SUPERVISOR)
+        .arg("supervisor")
         .args([
             "--policy",
             &boundary.policy.to_string(),
@@ -133,6 +135,7 @@ fn service_credentials_cannot_use_process_arguments_or_public_files() {
     fs::set_permissions(&path, fs::Permissions::from_mode(0o644))
         .unwrap_or_else(|error| panic!("{error}"));
     let public = Command::new(SUPERVISOR)
+        .arg("supervisor")
         .arg("--policy-file")
         .arg(path)
         .args(["--", "/bin/sh", "-c", "printf SHOULD_NOT_EXECUTE"])
@@ -322,6 +325,7 @@ fn only_authenticated_bridges_reach_the_private_endpoint() {
     use std::time::Duration;
     let boundary = Boundary::new(&delegated_parent());
     let child = Command::new(SUPERVISOR)
+        .arg("supervisor")
         .arg("--policy-file")
         .arg(boundary.policy_file())
         .args([
@@ -422,6 +426,7 @@ fn abrupt_supervisor_death_releases_recorded_native_owners() {
     });
     boundary.policy["service"]["outbound"] = json!([{ "hostname": "example.com", "port": 443 }]);
     let child = Command::new(SUPERVISOR)
+        .arg("supervisor")
         .arg("--policy-file")
         .arg(boundary.policy_file())
         .args([
@@ -504,6 +509,7 @@ fn application_exit_125_is_not_a_native_startup_failure() {
     assert!(!boundary.cgroup.exists());
     let failed = Boundary::new(&delegated_parent());
     let output = Command::new(SUPERVISOR)
+        .arg("supervisor")
         .arg("--policy-file")
         .arg(failed.policy_file())
         .args(["--", "/missing-service-executable"])
@@ -547,6 +553,7 @@ fn service_terminal_reads_input_in_its_foreground_process_group() {
         );
     }
     let mut command = Command::new(SUPERVISOR);
+    command.arg("supervisor");
     command
         .arg("--policy-file")
         .arg(boundary.policy_file())

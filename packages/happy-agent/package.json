@@ -1,72 +1,30 @@
 {
     "name": "@slopus/happy-agent",
-    "version": "0.0.0",
-    "description": "The Happy Agent daemon.",
+    "version": "0.1.0",
+    "private": true,
+    "description": "Happy Agent Rust provider and durable agent runtime. Product daemon migration is incomplete.",
     "license": "MIT",
-    "repository": {
-        "type": "git",
-        "url": "git+https://github.com/slopus/happy-agent.git",
-        "directory": "packages/happy-agent"
-    },
     "bin": {
-        "happy-agent": "./dist/cli.js"
+        "happy-agent": "./bin/happy-agent.cjs"
     },
     "files": [
-        "dist",
-        "API.md",
-        "README.md"
+        "bin",
+        "RUST.md",
+        "README.md",
+        "API.md"
     ],
     "type": "module",
-    "exports": {
-        ".": {
-            "types": "./dist/index.d.ts",
-            "import": "./dist/index.js",
-            "default": "./dist/index.js"
-        },
-        "./cli": {
-            "import": "./dist/cli.js",
-            "default": "./dist/cli.js"
-        }
-    },
     "publishConfig": {
         "access": "public"
     },
     "scripts": {
-        "build": "node --eval \"import('node:fs/promises').then(({ rm }) => rm('dist', { force: true, recursive: true }))\" && tsc -p tsconfig.build.json && node scripts/copy-docs.mjs",
-        "build:bun": "pnpm dlx bun@1.4.2 scripts/build-binary.ts",
-        "build:bun:all": "pnpm dlx bun@1.4.2 scripts/build-binary.ts --all",
-        "check": "tsc --noEmit",
-        "test": "vitest run --passWithNoTests",
-        "test:bun:runtime": "pnpm dlx bun@1.4.2 test ./tests/bun/asyncFunctionResume.bun.mjs ./tests/bun/safeRuntime.bun.mjs",
-        "test:bun:transports": "pnpm dlx bun@1.4.2 test ./tests/bun/teamTerminalTransport.bun.mjs ./tests/bun/serviceHttpTunnel.bun.mjs ./tests/bun/workspaceProxyRoute.bun.mjs ./tests/bun/liveControlTransport.bun.mjs",
-        "build:native:monty": "node scripts/build-native-monty.mjs",
-        "test:native:monty": "node scripts/verify-native-monty.mjs",
-        "test:native:transport": "bun scripts/verify-windows-sockets.ts",
-        "build:native:libsql": "node scripts/build-native-libsql.mjs",
-        "test:native:libsql": "node --expose-gc scripts/verify-native-libsql.mjs && bun scripts/verify-native-libsql.mjs",
-        "build:native:fff": "node scripts/build-native-fff.mjs",
-        "test:native:fff": "node scripts/verify-native-fff.mjs && bun scripts/verify-native-fff.mjs",
-        "test:native:watcher": "node --expose-gc scripts/verify-native-watcher.mjs && pnpm dlx bun@1.4.2 scripts/verify-native-watcher.mjs"
-    },
-    "dependencies": {
-        "@sinclair/typebox": "^0.34.49",
-        "@slopus/happy-agent-base": "0.0.60",
-        "@slopus/happy-agent-client": "0.0.75",
-        "@slopus/happy-agent-compute": "0.1.22",
-        "@slopus/happy-agent-modules": "workspace:*",
-        "@slopus/happy-agent-supervisor": "0.0.13",
-        "@slopus/happy-providers": "0.0.37",
-        "@steve.kite/stdlib": "0.0.12",
-        "ws": "^8.21.1"
-    },
-    "devDependencies": {
-        "@types/node": "^24.0.10",
-        "@types/ws": "^8.18.1",
-        "jose": "^6.2.10",
-        "typescript": "^7.0.2",
-        "vitest": "^3.2.4"
+        "build": "cargo build --locked --package happy-agent",
+        "build:native": "node scripts/build-native.mjs",
+        "check": "cargo check --locked --package happy-agent --all-targets",
+        "test": "cargo test --locked --package happy-agent",
+        "package:native": "node scripts/package-native.mjs"
     },
     "engines": {
-        "node": ">=22.19.0"
+        "node": ">=22"
     }
 }

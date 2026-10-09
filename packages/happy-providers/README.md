@@ -1,5 +1,12 @@
 # @slopus/happy-providers
 
+This package now builds a Rust library linked into the single `happy-agent`
+executable. Superseded non-Claude inference implementations and the JavaScript
+SDK entrypoint have been removed. Golden traces, vendor definitions, and
+TypeScript tests remain migration evidence; the historical SDK examples below
+are not executable against this source package. See
+[the runtime guide](../happy-agent/RUST.md) and `sources/lib.rs`.
+
 One small, stateful session interface for talking to coding-agent model backends. You work with a
 session — create it, run turns, compact, destroy — while the library absorbs the low-level vendor
 machinery underneath: wire protocols and transports, request framing, streaming, headers,

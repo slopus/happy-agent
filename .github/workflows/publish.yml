@@ -3,13 +3,11 @@ name: Publish package
 on:
     push:
         tags:
-            - "happy-agent-base-v*"
             - "happy-plugins-v*"
-            - "happy-providers-v*"
     workflow_dispatch:
 
 env:
-    RELEASE_PACKAGE: ${{ startsWith(github.ref_name, 'happy-agent-base-v') && 'happy-agent-base' || startsWith(github.ref_name, 'happy-plugins-v') && 'happy-plugins' || startsWith(github.ref_name, 'happy-providers-v') && 'happy-providers' || '' }}
+    RELEASE_PACKAGE: ${{ startsWith(github.ref_name, 'happy-plugins-v') && 'happy-plugins' || '' }}
 
 permissions:
     contents: read
@@ -22,7 +20,7 @@ concurrency:
 jobs:
     publish:
         name: Publish selected package
-        if: startsWith(github.ref, 'refs/tags/happy-agent-base-v') || startsWith(github.ref, 'refs/tags/happy-plugins-v') || startsWith(github.ref, 'refs/tags/happy-providers-v')
+        if: startsWith(github.ref, 'refs/tags/happy-plugins-v')
         runs-on: ubuntu-latest
         environment: npm
         timeout-minutes: 30
@@ -88,9 +86,7 @@ jobs:
             - name: Build the package
               run: |
                   case "$RELEASE_PACKAGE" in
-                      happy-agent-base) pnpm --filter @slopus/happy-agent-base build ;;
                       happy-plugins) pnpm --filter happy-plugins build ;;
-                      happy-providers) pnpm --filter @slopus/happy-providers build ;;
                       *) pnpm run build ;;
                   esac
 

@@ -1,3 +1,8 @@
+> Source migration: `happy-agent` now builds as one Rust executable with `infer`,
+> `agent`, and Unix `supervisor` subcommands. The product daemon, desktop API, and
+> terminal UI remain to be migrated. See [the current build and usage guide](packages/happy-agent/RUST.md).
+> The product documentation below describes the published TypeScript release.
+
 <div align="center">
 
 <h1>Happy Agent</h1>

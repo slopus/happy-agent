@@ -1,5 +1,11 @@
 # Happy Agent Supervisor
 
+The Unix supervisor is now a library linked into the sole `happy-agent`
+executable and invoked as `happy-agent supervisor`. The standalone Rust binary
+target has been removed. The npm SDK and Windows sources described below remain
+reference material for product modules that have not migrated; the new executable
+does not bundle them. See [the runtime guide](../happy-agent/RUST.md).
+
 `@slopus/happy-agent-supervisor` is the small trusted native boundary used to
 launch agent workloads without an intermediary shell. You hand it a policy and
 an argument vector; it applies the operating system's own isolation and then

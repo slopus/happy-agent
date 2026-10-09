@@ -1,87 +1,63 @@
-name: Verify happy-agent-base
+name: Verify Rust Happy Agent
 
 on:
     pull_request:
         paths:
-            - ".github/workflows/verify-happy-agent-base.yml"
-            - "packages/happy-agent-base/**"
-            - "packages/happy-providers/**"
-            - "package.json"
-            - "pnpm-lock.yaml"
-            - "pnpm-workspace.yaml"
+            [
+                "Cargo.toml",
+                "Cargo.lock",
+                "rust-toolchain.toml",
+                "packages/happy-agent/**",
+                "packages/happy-agent-base/**",
+                "packages/happy-providers/**",
+                "packages/happy-agent-supervisor/native/**",
+                ".github/workflows/verify-happy-agent-base.yml",
+            ]
     push:
-        branches:
-            - main
+        branches: [main]
         paths:
-            - ".github/workflows/verify-happy-agent-base.yml"
-            - "packages/happy-agent-base/**"
-            - "packages/happy-providers/**"
-            - "package.json"
-            - "pnpm-lock.yaml"
-            - "pnpm-workspace.yaml"
+            [
+                "Cargo.toml",
+                "Cargo.lock",
+                "rust-toolchain.toml",
+                "packages/happy-agent/**",
+                "packages/happy-agent-base/**",
+                "packages/happy-providers/**",
+                "packages/happy-agent-supervisor/native/**",
+                ".github/workflows/verify-happy-agent-base.yml",
+            ]
     workflow_dispatch:
 
 permissions:
     contents: read
 
 concurrency:
-    group: verify-happy-agent-base-${{ github.ref }}
+    group: verify-rust-agent-${{ github.ref }}
     cancel-in-progress: true
 
 jobs:
     test:
-        name: ${{ matrix.database }}
         runs-on: ubuntu-24.04
         timeout-minutes: 30
-        strategy:
-            fail-fast: false
-            matrix:
-                database:
-                    - sqlite
-                    - pglite
-                    - postgres
-
-        services:
-            postgres:
-                image: postgres:17
-                env:
-                    POSTGRES_DB: happy_agent_base
-                    POSTGRES_PASSWORD: postgres
-                    POSTGRES_USER: postgres
-                ports:
-                    - 5432:5432
-                options: >-
-                    --health-cmd "pg_isready -U postgres -d happy_agent_base"
-                    --health-interval 5s
-                    --health-timeout 5s
-                    --health-retries 12
-
-        env:
-            HAPPY_AGENT_BASE_TEST_DATABASE: ${{ matrix.database }}
-            HAPPY_AGENT_BASE_TEST_POSTGRES_URL: postgres://postgres:postgres@127.0.0.1:5432/happy_agent_base
-            NODE_OPTIONS: --max-old-space-size=6144
-
         steps:
-            - name: Check out the repository
-              uses: actions/checkout@v6
-
-            - name: Set up pnpm
-              uses: pnpm/action-setup@v6
-
-            - name: Set up Node.js
-              uses: actions/setup-node@v6
+            - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+            - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
               with:
                   node-version: "24"
                   package-manager-cache: false
-
-            - name: Install dependencies
-              run: pnpm install --frozen-lockfile
-
-            - name: Run type checks
-              run: pnpm --filter @slopus/happy-agent-base check
-
-            - name: Run the full test suite
-              run: pnpm --filter @slopus/happy-agent-base test
-
-            - name: Build the package
-              run: pnpm --filter @slopus/happy-agent-base build
+            - name: Install the pinned Rust toolchain
+              run: rustup show active-toolchain
+            - name: Allow the existing supervisor's namespaces
+              run: |
+                  if [[ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]]; then
+                      sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+                  fi
+            - name: Check formatting and types
+              run: |
+                  cargo fmt --all --check
+                  cargo check --locked --workspace --all-targets
+                  cargo clippy --locked --workspace --all-targets -- -D warnings
+            - name: Verify providers, durable stages, and the real supervisor
+              run: cargo test --locked --workspace
+            - name: Verify the native command boundary
+              run: node packages/happy-agent/scripts/smoke-rust-runtime.mjs target/debug/happy-agent

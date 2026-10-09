@@ -1,51 +1,11 @@
 {
     "name": "@slopus/happy-agent-base",
-    "version": "0.0.60",
-    "description": "Durable runtime for Happy agents.",
-    "license": "MIT",
-    "repository": {
-        "type": "git",
-        "url": "git+https://github.com/slopus/happy-agent.git",
-        "directory": "packages/happy-agent-base"
-    },
-    "files": [
-        "dist",
-        "README.md"
-    ],
-    "type": "module",
-    "exports": {
-        ".": {
-            "types": "./dist/index.d.ts",
-            "import": "./dist/index.js",
-            "default": "./dist/index.js"
-        }
-    },
-    "publishConfig": {
-        "access": "public"
-    },
+    "version": "0.1.0",
+    "private": true,
+    "description": "Rust durable agent library, statically linked into Happy Agent.",
     "scripts": {
-        "build": "node --eval \"import('node:fs/promises').then(({ rm }) => rm('dist', { force: true, recursive: true }))\" && tsc -p tsconfig.build.json",
-        "check": "tsc --noEmit",
-        "test": "vitest run --passWithNoTests",
-        "test:chaos": "HAPPY_AGENT_BASE_CHAOS_TESTS=1 vitest run --passWithNoTests",
-        "test:real": "RIG_LIVE_TEST=1 vitest run tests/real-gym"
-    },
-    "dependencies": {
-        "@electric-sql/pglite": "^0.5.5",
-        "@libsql/client": "0.18.0",
-        "@paralleldrive/cuid2": "^3.3.0",
-        "@sinclair/typebox": "^0.34.49",
-        "@slopus/happy-providers": "0.0.37",
-        "@steve.kite/stdlib": "0.0.12",
-        "drizzle-orm": "^0.45.2",
-        "postgres": "^3.4.9"
-    },
-    "devDependencies": {
-        "@types/node": "^24.0.10",
-        "typescript": "^7.0.2",
-        "vitest": "^3.2.4"
-    },
-    "engines": {
-        "node": ">=22.19.0"
+        "build": "cargo build --locked --package happy-agent-base",
+        "check": "cargo check --locked --package happy-agent-base --all-targets",
+        "test": "cargo test --locked --package happy-agent-base"
     }
 }
