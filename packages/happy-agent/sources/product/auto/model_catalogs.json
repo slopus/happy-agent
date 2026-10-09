@@ -1,0 +1,374 @@
+{
+    "codex": [
+        {
+            "contextWindow": 272000,
+            "autoCompactWindow": 244800,
+            "defaultEffort": "high",
+            "effortLevels": ["low", "medium", "high", "xhigh", "max"],
+            "id": "openai/gpt-6.1-sol",
+            "name": "GPT-6.1 Sol",
+            "providerId": "codex",
+            "serviceTiers": ["priority"],
+            "enabled": true
+        },
+        {
+            "contextWindow": 272000,
+            "autoCompactWindow": 244800,
+            "defaultEffort": "high",
+            "effortLevels": ["low", "medium", "high", "xhigh", "max"],
+            "id": "openai/gpt-6-astra",
+            "name": "GPT-6 Astra",
+            "providerId": "codex",
+            "serviceTiers": ["priority"],
+            "enabled": true
+        },
+        {
+            "contextWindow": 272000,
+            "autoCompactWindow": 244800,
+            "defaultEffort": "high",
+            "effortLevels": ["low", "medium", "high", "xhigh", "max"],
+            "id": "openai/gpt-6-sol",
+            "name": "GPT-6 Sol",
+            "providerId": "codex",
+            "serviceTiers": ["priority"],
+            "enabled": true
+        },
+        {
+            "contextWindow": 272000,
+            "autoCompactWindow": 244800,
+            "defaultEffort": "medium",
+            "effortLevels": ["low", "medium", "high", "xhigh", "max"],
+            "id": "openai/gpt-6-luna",
+            "name": "GPT-6 Luna",
+            "providerId": "codex",
+            "serviceTiers": ["priority"],
+            "enabled": true
+        },
+        {
+            "contextWindow": 272000,
+            "autoCompactWindow": 244800,
+            "defaultEffort": "medium",
+            "effortLevels": ["low", "medium", "high", "xhigh", "max"],
+            "id": "openai/gpt-5.6-sol",
+            "name": "GPT-5.6 Sol",
+            "providerId": "codex",
+            "serviceTiers": ["priority"],
+            "enabled": true
+        },
+        {
+            "contextWindow": 272000,
+            "autoCompactWindow": 244800,
+            "defaultEffort": "medium",
+            "effortLevels": ["off", "low", "medium", "high", "xhigh", "max"],
+            "id": "openai/gpt-5.6-terra",
+            "name": "GPT-5.6 Terra",
+            "providerId": "codex",
+            "serviceTiers": ["priority"],
+            "enabled": true
+        },
+        {
+            "contextWindow": 272000,
+            "autoCompactWindow": 244800,
+            "defaultEffort": "medium",
+            "effortLevels": ["off", "low", "medium", "high", "xhigh", "max"],
+            "id": "openai/gpt-5.6-luna",
+            "name": "GPT-5.6 Luna",
+            "providerId": "codex",
+            "serviceTiers": ["priority"],
+            "enabled": true
+        },
+        {
+            "providerId": "codex",
+            "id": "openai/codex-auto-review",
+            "name": "Automatic permission reviewer (Codex)",
+            "effortLevels": ["low", "medium", "high", "xhigh"],
+            "defaultEffort": "low"
+        }
+    ],
+    "claude": [
+        {
+            "contextWindow": 1000000,
+            "autoCompactWindow": 400000,
+            "defaultEffort": "medium",
+            "effortLevels": ["low", "medium", "high", "xhigh", "max"],
+            "id": "anthropic/opus-5-5",
+            "name": "Opus 5.5 1M",
+            "providerId": "claude",
+            "enabled": true
+        },
+        {
+            "contextWindow": 1000000,
+            "autoCompactWindow": 400000,
+            "defaultEffort": "medium",
+            "effortLevels": ["off", "low", "medium", "high", "xhigh", "max"],
+            "id": "anthropic/opus-5",
+            "name": "Opus 5 1M",
+            "providerId": "claude",
+            "enabled": true
+        },
+        {
+            "contextWindow": 1000000,
+            "autoCompactWindow": 400000,
+            "defaultEffort": "medium",
+            "effortLevels": ["low", "medium", "high", "xhigh", "max"],
+            "id": "anthropic/sonnet-5-5",
+            "name": "Sonnet 5.5",
+            "providerId": "claude",
+            "enabled": true
+        },
+        {
+            "contextWindow": 1000000,
+            "autoCompactWindow": 400000,
+            "defaultEffort": "medium",
+            "effortLevels": ["off", "low", "medium", "high", "xhigh", "max"],
+            "id": "anthropic/sonnet-5",
+            "name": "Sonnet 5",
+            "providerId": "claude",
+            "enabled": true
+        },
+        {
+            "contextWindow": 1000000,
+            "autoCompactWindow": 400000,
+            "defaultEffort": "medium",
+            "effortLevels": ["off", "low", "medium", "high", "xhigh", "max"],
+            "id": "anthropic/fable-5-1",
+            "name": "Fable 5.1",
+            "providerId": "claude",
+            "enabled": true
+        },
+        {
+            "contextWindow": 1000000,
+            "autoCompactWindow": 400000,
+            "defaultEffort": "medium",
+            "effortLevels": ["off", "low", "medium", "high", "xhigh", "max"],
+            "id": "anthropic/fable-5",
+            "name": "Fable 5",
+            "providerId": "claude",
+            "enabled": true
+        },
+        {
+            "contextWindow": 1000000,
+            "autoCompactWindow": 400000,
+            "defaultEffort": "medium",
+            "effortLevels": ["off", "low", "medium", "high", "xhigh", "max"],
+            "id": "anthropic/opus-4-8",
+            "name": "Opus 4.8 1M",
+            "providerId": "claude",
+            "enabled": true
+        }
+    ],
+    "grok": [
+        {
+            "contextWindow": 500000,
+            "autoCompactWindow": 450000,
+            "defaultEffort": "high",
+            "effortLevels": ["low", "medium", "high", "xhigh"],
+            "id": "xai/grok-4.7",
+            "name": "Grok 4.7",
+            "providerId": "grok",
+            "enabled": true
+        },
+        {
+            "contextWindow": 500000,
+            "autoCompactWindow": 450000,
+            "defaultEffort": "high",
+            "effortLevels": ["low", "medium", "high", "xhigh"],
+            "id": "xai/grok-4.6",
+            "name": "Grok 4.6",
+            "providerId": "grok",
+            "enabled": true
+        },
+        {
+            "contextWindow": 500000,
+            "autoCompactWindow": 450000,
+            "defaultEffort": "medium",
+            "effortLevels": ["medium"],
+            "id": "xai/grok-build",
+            "name": "Grok Build",
+            "providerId": "grok",
+            "enabled": true
+        },
+        {
+            "contextWindow": 500000,
+            "autoCompactWindow": 450000,
+            "defaultEffort": "high",
+            "effortLevels": ["low", "medium", "high"],
+            "id": "xai/grok-4.5",
+            "name": "Grok 4.5",
+            "providerId": "grok",
+            "enabled": true
+        },
+        {
+            "contextWindow": 200000,
+            "autoCompactWindow": 180000,
+            "defaultEffort": "off",
+            "effortLevels": ["off"],
+            "id": "xai/grok-composer-2.5-fast",
+            "name": "Composer 2.5",
+            "providerId": "grok",
+            "enabled": true
+        }
+    ],
+    "bedrock": [
+        {
+            "contextWindow": 272000,
+            "autoCompactWindow": 244800,
+            "defaultEffort": "high",
+            "effortLevels": ["low", "medium", "high", "xhigh", "max"],
+            "id": "openai/gpt-6-astra",
+            "name": "GPT-6 Astra",
+            "providerId": "bedrock",
+            "enabled": true
+        },
+        {
+            "contextWindow": 272000,
+            "autoCompactWindow": 244800,
+            "defaultEffort": "high",
+            "effortLevels": ["low", "medium", "high", "xhigh", "max"],
+            "id": "openai/gpt-6-sol",
+            "name": "GPT-6 Sol",
+            "providerId": "bedrock",
+            "enabled": true
+        },
+        {
+            "contextWindow": 272000,
+            "autoCompactWindow": 244800,
+            "defaultEffort": "medium",
+            "effortLevels": ["low", "medium", "high", "xhigh", "max"],
+            "id": "openai/gpt-6-luna",
+            "name": "GPT-6 Luna",
+            "providerId": "bedrock",
+            "enabled": true
+        },
+        {
+            "contextWindow": 272000,
+            "autoCompactWindow": 244800,
+            "defaultEffort": "medium",
+            "effortLevels": ["low", "medium", "high", "xhigh", "max"],
+            "id": "openai/gpt-5.6-sol",
+            "name": "GPT-5.6 Sol",
+            "providerId": "bedrock",
+            "enabled": true
+        },
+        {
+            "contextWindow": 272000,
+            "autoCompactWindow": 244800,
+            "defaultEffort": "medium",
+            "effortLevels": ["off", "low", "medium", "high", "xhigh", "max"],
+            "id": "openai/gpt-5.6-terra",
+            "name": "GPT-5.6 Terra",
+            "providerId": "bedrock",
+            "enabled": true
+        },
+        {
+            "contextWindow": 272000,
+            "autoCompactWindow": 244800,
+            "defaultEffort": "medium",
+            "effortLevels": ["off", "low", "medium", "high", "xhigh", "max"],
+            "id": "openai/gpt-5.6-luna",
+            "name": "GPT-5.6 Luna",
+            "providerId": "bedrock",
+            "enabled": true
+        },
+        {
+            "contextWindow": 1000000,
+            "autoCompactWindow": 400000,
+            "defaultEffort": "medium",
+            "effortLevels": ["low", "medium", "high", "xhigh", "max"],
+            "id": "anthropic/opus-5-5",
+            "name": "Opus 5.5 1M",
+            "providerId": "bedrock",
+            "enabled": true
+        },
+        {
+            "contextWindow": 1000000,
+            "autoCompactWindow": 400000,
+            "defaultEffort": "medium",
+            "effortLevels": ["off", "low", "medium", "high", "xhigh", "max"],
+            "id": "anthropic/opus-5",
+            "name": "Opus 5 1M",
+            "providerId": "bedrock",
+            "enabled": true
+        },
+        {
+            "contextWindow": 1000000,
+            "autoCompactWindow": 400000,
+            "defaultEffort": "medium",
+            "effortLevels": ["low", "medium", "high", "xhigh", "max"],
+            "id": "anthropic/sonnet-5-5",
+            "name": "Sonnet 5.5",
+            "providerId": "bedrock",
+            "enabled": true
+        },
+        {
+            "contextWindow": 1000000,
+            "autoCompactWindow": 400000,
+            "defaultEffort": "medium",
+            "effortLevels": ["off", "low", "medium", "high", "xhigh", "max"],
+            "id": "anthropic/sonnet-5",
+            "name": "Sonnet 5",
+            "providerId": "bedrock",
+            "enabled": true
+        },
+        {
+            "contextWindow": 1000000,
+            "autoCompactWindow": 400000,
+            "defaultEffort": "medium",
+            "effortLevels": ["off", "low", "medium", "high", "xhigh", "max"],
+            "id": "anthropic/fable-5-1",
+            "name": "Fable 5.1",
+            "providerId": "bedrock",
+            "enabled": true
+        },
+        {
+            "contextWindow": 1000000,
+            "autoCompactWindow": 400000,
+            "defaultEffort": "medium",
+            "effortLevels": ["off", "low", "medium", "high", "xhigh", "max"],
+            "id": "anthropic/fable-5",
+            "name": "Fable 5",
+            "providerId": "bedrock",
+            "enabled": true
+        },
+        {
+            "contextWindow": 1000000,
+            "autoCompactWindow": 400000,
+            "defaultEffort": "medium",
+            "effortLevels": ["off", "low", "medium", "high", "xhigh", "max"],
+            "id": "anthropic/opus-4-8",
+            "name": "Opus 4.8 1M",
+            "providerId": "bedrock",
+            "enabled": true
+        },
+        {
+            "contextWindow": 272000,
+            "autoCompactWindow": 244800,
+            "defaultEffort": "medium",
+            "effortLevels": ["off", "low", "medium", "high", "xhigh"],
+            "id": "openai/gpt-5.4",
+            "name": "GPT-5.4",
+            "providerId": "bedrock",
+            "enabled": true
+        },
+        {
+            "contextWindow": 1000000,
+            "autoCompactWindow": 850000,
+            "defaultEffort": "high",
+            "effortLevels": ["low", "high", "max"],
+            "id": "moonshotai/kimi-k3",
+            "name": "Kimi K3",
+            "providerId": "bedrock",
+            "enabled": true
+        },
+        {
+            "contextWindow": 1000000,
+            "autoCompactWindow": 850000,
+            "defaultEffort": "max",
+            "effortLevels": ["low", "high", "max"],
+            "id": "zai/glm-5.3",
+            "name": "GLM 5.3",
+            "providerId": "bedrock",
+            "enabled": true
+        }
+    ]
+}

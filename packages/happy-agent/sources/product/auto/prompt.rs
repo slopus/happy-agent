@@ -42,6 +42,22 @@ pub(super) fn create(first: bool, conversation: &str, action: &str) -> Result<St
     Ok(lines.join("\n"))
 }
 
+pub(super) fn policy(security: Option<&str>) -> String {
+    let security = security
+        .map(|text| text.trim_matches(super::transcript::js_whitespace))
+        .filter(|text| !text.is_empty());
+    security.map_or_else(
+        || instructions()["base"].as_str().unwrap().to_owned(),
+        |security| {
+            instructions()["configured"].as_str().unwrap().replacen(
+                "{{native_user_security_policy}}",
+                security,
+                1,
+            )
+        },
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -57,6 +73,19 @@ mod tests {
                     options["action"].as_str().unwrap(),
                 )
                 .unwrap(),
+                case["expected"].as_str().unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn original_security_policy_keeps_literal_replacement_text_and_stricter_rules() {
+        for case in super::super::runtime_goldens()["instructionCases"]
+            .as_array()
+            .unwrap()
+        {
+            assert_eq!(
+                policy(case["securityPolicy"].as_str()),
                 case["expected"].as_str().unwrap()
             );
         }

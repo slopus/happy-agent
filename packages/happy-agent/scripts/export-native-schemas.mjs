@@ -64,6 +64,9 @@ import {
     permissionReviewArgumentsSchema,
     permissionReviewDecisionSchema,
     permissionReviewRequestSchema,
+    permissionReviewTranscriptSchema,
+    permissionReviewTranscriptEntrySchema,
+    permissionReviewUsageSchema,
 } from "../../happy-agent-modules/sources/permissions/PermissionReviewer.ts";
 import {
     permissionReviewPromptOptionsSchema,
@@ -72,7 +75,15 @@ import {
 import {
     PERMISSION_REVIEW_INSTRUCTIONS,
     PERMISSION_REVIEW_FOLLOWUP_REMINDER,
+    createPermissionReviewInstructions,
 } from "../../happy-agent-modules/sources/auto/impl/createPermissionReviewInstructions.ts";
+import { buildAutoReviewCatalog } from "../../happy-agent-modules/sources/auto/impl/buildAutoReviewCatalog.ts";
+import {
+    reviewerModelsForAgent,
+    autoReviewerRouteSchema,
+} from "../../happy-agent-modules/sources/auto/impl/reviewerModelForAgent.ts";
+import { reviewerAgentId } from "../../happy-agent-modules/sources/auto/impl/reviewerAgentId.ts";
+import { boundReviewTranscript } from "../../happy-agent-modules/sources/auto/impl/boundReviewTranscript.ts";
 import {
     durableFunctionCallSchema,
     durableFunctionInvokeSchema,
@@ -194,6 +205,10 @@ const schemas = {
     autoEvidenceEntry: autoEvidenceEntrySchema,
     autoEvidenceState: autoEvidenceStateSchema,
     autoReviewerCursor: autoReviewerCursorSchema,
+    autoReviewerRoute: autoReviewerRouteSchema,
+    permissionTranscript: permissionReviewTranscriptSchema,
+    permissionTranscriptEntry: permissionReviewTranscriptEntrySchema,
+    permissionUsage: permissionReviewUsageSchema,
     autoReview: autoPermissionReviewSchema,
     permissionArguments: permissionReviewArgumentsSchema,
     permissionDecision: permissionReviewDecisionSchema,
@@ -419,6 +434,25 @@ schemas.autoTranscriptMessages = Type.Array(autoTranscriptMessageSchema, { maxIt
 schemas.autoTranscript = Type.Object(
     { text: Type.String(), userEvidenceOmitted: Type.Boolean() },
     { additionalProperties: false },
+);
+schemas.autoReviewerModel = Type.Object(
+    {
+        ...Type.Omit(modelSchema, ["contextWindow", "autoCompactWindow", "enabled"]).properties,
+        contextWindow: Type.Optional(modelSchema.properties.contextWindow),
+        autoCompactWindow: Type.Optional(modelSchema.properties.autoCompactWindow),
+        enabled: Type.Optional(modelSchema.properties.enabled),
+    },
+    { additionalProperties: false },
+);
+schemas.autoReviewCatalog = Type.Array(schemas.autoReviewerModel, { maxItems: 10_000 });
+schemas.autoReviewCatalogs = Type.Record(
+    Type.Union([
+        Type.Literal("codex"),
+        Type.Literal("claude"),
+        Type.Literal("grok"),
+        Type.Literal("bedrock"),
+    ]),
+    schemas.autoReviewCatalog,
 );
 writeFileSync(
     new URL("../sources/product/request_schemas.json", import.meta.url),
@@ -693,7 +727,7 @@ writeFileSync(
 const evidenceCases = [];
 writeFileSync(
     new URL("../sources/product/auto/instructions.json", import.meta.url),
-    `${JSON.stringify({ base: PERMISSION_REVIEW_INSTRUCTIONS, followup: PERMISSION_REVIEW_FOLLOWUP_REMINDER }, null, 2)}\n`,
+    `${JSON.stringify({ base: PERMISSION_REVIEW_INSTRUCTIONS, followup: PERMISSION_REVIEW_FOLLOWUP_REMINDER, configured: createPermissionReviewInstructions("{{native_user_security_policy}}") }, null, 2)}\n`,
 );
 for (const metadata of [
     undefined,
@@ -871,4 +905,90 @@ const promptCases = [
 writeFileSync(
     new URL("../tests/auto_goldens.json", import.meta.url),
     `${JSON.stringify({ evidenceCases, transcriptCases, reviewCases, promptCases }, null, 2)}\n`,
+);
+
+const privateCatalogs = Object.fromEntries(
+    Object.entries(catalogs).map(([kind, models]) => [
+        kind,
+        buildAutoReviewCatalog({ models, typeOf: () => kind }),
+    ]),
+);
+writeFileSync(
+    new URL("../sources/product/auto/model_catalogs.json", import.meta.url),
+    `${JSON.stringify(privateCatalogs, null, 2)}\n`,
+);
+const routeCases = [];
+for (const kind of ["codex", "claude", "grok", "bedrock"]) {
+    for (const model of privateCatalogs[kind]) {
+        const active = { providerId: kind, modelId: model.id, effort: "high" };
+        routeCases.push({
+            kind,
+            active,
+            expected: reviewerModelsForAgent({ models: privateCatalogs[kind], active }),
+        });
+    }
+}
+const usage = {
+    input: 1200,
+    output: 130,
+    cacheRead: 45,
+    cacheWrite: 22,
+    totalTokens: 1397,
+    reasoning: 11,
+};
+const captureOptions = [
+    {
+        entries: [],
+        usage,
+        inferred: false,
+        modelId: "openai/codex-auto-review",
+        providerId: "fixture",
+    },
+    {
+        entries: [],
+        usage,
+        inferred: true,
+        modelId: "openai/codex-auto-review",
+        providerId: "fixture",
+    },
+    {
+        entries: [
+            { type: "thinking", text: "x".repeat(2200) },
+            { type: "tool_call", name: "read_file", arguments: "x".repeat(2200) },
+            { type: "tool_result", name: "read_file", isError: true, text: "y".repeat(2200) },
+            { type: "text", text: "Allow this exact action." },
+        ],
+        usage,
+        inferred: true,
+        modelId: "openai/codex-auto-review",
+        providerId: "fixture",
+    },
+    {
+        entries: Array.from({ length: 65 }, (_, index) => ({
+            type: "text",
+            text: `entry ${index}`,
+        })),
+        usage,
+        inferred: true,
+        modelId: "openai/codex-auto-review",
+        providerId: "fixture",
+    },
+];
+const captureCases = captureOptions.map((options) => ({
+    options,
+    expected: boundReviewTranscript(options) ?? null,
+}));
+const instructionCases = [undefined, "", "  Extra stricter policy\nKeep $& and $' verbatim.  "].map(
+    (securityPolicy) => ({
+        securityPolicy: securityPolicy ?? null,
+        expected: createPermissionReviewInstructions(securityPolicy),
+    }),
+);
+const identityCases = ["agentfirst", "agentsecond", "longagentid1234567890"].map((id) => ({
+    id,
+    expected: reviewerAgentId(id),
+}));
+writeFileSync(
+    new URL("../tests/auto_runtime_goldens.json", import.meta.url),
+    `${JSON.stringify({ routeCases, captureCases, instructionCases, identityCases }, null, 2)}\n`,
 );
