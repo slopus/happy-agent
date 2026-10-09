@@ -36,3 +36,10 @@ agent fails with a message naming runners. Once any runner is configured nothing
 daemon's machine and nothing falls back to it: a disconnected runner is an error that names it.
 Repository tokens still never leave the daemon — Git on a runner reaches back to the daemon's
 credential proxy through a loopback listener carried over the runner connection.
+
+## A runner that is away fails at once
+
+Each call on an absent runner used to wait ten seconds for it to return, so an agent turn that
+reads AGENTS.md, skills, and its folder before inference stalled for minutes before failing. The
+wait now counts from the moment the runner went away: a brief drop is still bridged, and once the
+window has passed every call answers `runner_unavailable` immediately.

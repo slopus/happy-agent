@@ -109,8 +109,9 @@ with `net.accept`; at most 64 wait, each for at most 30 seconds.
 
 `RunnerLink` is one registered runner across all of its connections. `accept(channel)` runs the
 handshake and makes the connection current; a newer connection replaces an older one. Calls
-made while the runner is away wait up to ten seconds for it to return, then fail with
-`RunnerUnavailableError`: nothing was sent. A request in flight when a connection ends fails
+made while the runner is away wait for it to return until ten seconds after it went away, then
+fail with `RunnerUnavailableError`: nothing was sent. The window is counted from the drop, so a
+runner that has been away longer fails every call at once rather than making each wait in turn. A request in flight when a connection ends fails
 with `RunnerDisconnectedError`: its outcome is unknown, and it is never replayed.
 
 `createRunnerCompute` builds a `Compute` on a link. The machine is created on the runner before

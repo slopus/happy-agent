@@ -278,12 +278,16 @@ export class RunnerLink {
     }
 
     /**
-     * The current connection, waiting up to `waitMs` for the runner to come back when it is away.
-     * A runner that does not come back in time is an error that says so; nothing was sent.
+     * The current connection, waiting for the runner to come back until `waitMs` after it went
+     * away. The window is counted from the drop, not from each call: it bridges a brief drop,
+     * while a runner that has been away longer fails every call at once instead of making each
+     * one wait in turn. A runner that does not come back in time is an error that says so;
+     * nothing was sent.
      */
     connection(waitMs: number, signal?: AbortSignal): Promise<RunnerConnection> {
         if (this.#session !== undefined) return Promise.resolve(this.#session);
-        if (this.#closed || waitMs <= 0) return Promise.reject(this.#unavailable());
+        const remainingMs = this.#status.since + waitMs - Date.now();
+        if (this.#closed || remainingMs <= 0) return Promise.reject(this.#unavailable());
         return new Promise((resolve, reject) => {
             const finish = () => {
                 clearTimeout(timer);
@@ -301,7 +305,7 @@ export class RunnerLink {
                 },
             };
             const onAbort = () => waiter.reject(signal?.reason);
-            const timer = setTimeout(() => waiter.reject(this.#unavailable()), waitMs);
+            const timer = setTimeout(() => waiter.reject(this.#unavailable()), remainingMs);
             timer.unref?.();
             if (signal?.aborted === true) {
                 waiter.reject(signal.reason);

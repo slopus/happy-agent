@@ -232,6 +232,26 @@ describe.runIf(process.platform !== "win32")("the runner connection", () => {
         });
     });
 
+    it("bridges a brief drop but stops waiting once the runner has been away too long", async () => {
+        const runner = await runnerCompute({}, { reconnectWaitMs: 1_000 });
+        runner.drop();
+        await waitFor(() => runner.link.status().state === "disconnected");
+
+        const bridged = runner.compute.fs.exists(files, ".");
+        await delay(50);
+        const reconnected = await connect(runner.host, runner.link);
+        await expect(bridged).resolves.toBe(true);
+
+        reconnected.runnerEnd.close("The network dropped again.");
+        await waitFor(() => runner.link.status().state === "disconnected");
+        await delay(1_100);
+        const startedAt = Date.now();
+        await expect(runner.compute.fs.exists(files, ".")).rejects.toMatchObject({
+            code: "ERUNNERUNAVAILABLE",
+        });
+        expect(Date.now() - startedAt).toBeLessThan(500);
+    });
+
     it("cancels a long read on the runner when the caller stops waiting", async () => {
         const { compute } = await runnerCompute();
         const sessionId = await compute.shell.startSession({
@@ -254,7 +274,10 @@ describe.runIf(process.platform !== "win32")("the runner connection", () => {
     });
 });
 
-async function runnerCompute(options: Partial<RunnerLinkOptions> = {}) {
+async function runnerCompute(
+    options: Partial<RunnerLinkOptions> = {},
+    compute: { readonly reconnectWaitMs?: number } = {},
+) {
     const folder = await mkdtemp(join(tmpdir(), "runner-compute-"));
     cleanups.push(async () => rm(folder, { force: true, recursive: true }));
     const host = new RunnerHost({
@@ -272,14 +295,15 @@ async function runnerCompute(options: Partial<RunnerLinkOptions> = {}) {
     cleanups.push(async () => host.dispose(ctx));
     const daemon = link(options);
     const connection = await connect(host, daemon);
-    const compute = await createRunnerCompute(ctx, {
+    const created = await createRunnerCompute(ctx, {
         link: daemon,
         computeId: "agent-1",
         cwd: folder,
+        ...compute,
     });
-    cleanups.push(async () => compute.dispose(ctx));
+    cleanups.push(async () => created.dispose(ctx));
     return {
-        compute,
+        compute: created,
         folder,
         host,
         link: daemon,
