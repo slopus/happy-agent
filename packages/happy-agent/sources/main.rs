@@ -1,4 +1,5 @@
 mod native_cli;
+mod product;
 
 fn main() {
     let mut arguments = std::env::args_os();
@@ -19,24 +20,47 @@ fn main() {
             std::process::exit(125);
         }
     }
-    if command == "--version" || command == "-V" {
+    if command == "--version" || command == "-v" {
         println!(
             "Happy Agent {}",
             option_env!("HAPPY_AGENT_RELEASE_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"))
         );
         return;
     }
-    if command == "--help" || command == "-h" || command == "help" {
-        println!(
-            "Happy Agent — Rust provider and durable agent runtime\n\nUsage: happy-agent <command>\n\n  infer --config <file>                 Stream one provider request from stdin as JSON events\n  agent --config <file> --store <file>  Run a durable agent controlled by JSON lines\n  supervisor --policy-file <file> -- <command>  Execute a workload through the native Unix sandbox\n  --version                            Show the release version\n\nThe product daemon, desktop API, and terminal UI have not yet been migrated."
-        );
+    if command == "--help" || command == "-h" {
+        print!("{}", include_str!("product/usage.txt"));
         return;
     }
     let result = (|| {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()?;
-        runtime.block_on(native_cli::run(command, arguments.collect()))
+        let arguments: Vec<_> = arguments.collect();
+        runtime.block_on(async move {
+            if ["start", "run", "status", "drain", "stop", "kill", "reload"]
+                .iter()
+                .any(|name| command == *name)
+            {
+                anyhow::ensure!(
+                    arguments.is_empty(),
+                    "The {} command does not take arguments.\nRun happy-agent --help to see every command.", command.to_string_lossy()
+                );
+                if command == "run" {
+                    product::run().await
+                } else {
+                    product::command(&command.to_string_lossy()).await
+                }
+            } else if command=="infer" || command=="agent" {
+                native_cli::run(command, arguments).await
+            } else if command=="runner" && arguments.first().is_some_and(|arg|arg=="--help" || arg=="-h") {
+                print!("{}",include_str!("product/usage.txt"));
+                Ok(())
+            } else if command=="sandbox" {
+                product::sandbox(arguments).await
+            } else {
+                anyhow::bail!("The Happy agent does not have a command called '{}'.\nRun happy-agent --help to see every command.",command.to_string_lossy());
+            }
+        })
     })();
     if let Err(error) = result {
         eprintln!("Happy Agent: {error:#}");

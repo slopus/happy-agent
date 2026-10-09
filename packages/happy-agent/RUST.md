@@ -4,12 +4,18 @@ The npm command now launches one Rust executable. `infer`, `agent`, and the Unix
 `supervisor` are subcommands of that executable. No Bun, Claude Code SDK,
 JavaScript daemon, or extracted supervisor executable is used by this runtime.
 
-This is the first migration slice, not a replacement for the complete product
-daemon yet. The desktop API specified in `API.md`, daemon start/stop commands,
-the terminal UI, product modules, background terminals, MCP, services, and cloud
-integration have not been connected to the Rust runtime. Those sources remain
-available for subsequent migration. Existing desktop and terminal clients
-cannot use this executable as their daemon. Claude Code integration is skipped.
+The native executable now retains the original `start`, `run`, `status`, `drain`,
+`stop`, `kill`, and `reload` commands, help text, and lowercase `-v` version flag.
+The standalone daemon serves authenticated health, authentication, greeting,
+drain, shutdown, and the specified unavailable-inspector response over the original
+private Unix socket. Its launcher uses the same executable's `run` role. Token
+reuse, local signal drain, and shutdown are exercised through real processes.
+
+This is an incomplete product migration. The remaining API namespaces, terminal
+UI, agent restoration, product modules, background terminals, MCP, services, cloud,
+runner, and Windows sandbox integration are still pending. Existing desktop and
+terminal clients cannot yet use the complete product through this executable.
+Claude Code integration is skipped.
 Direct Anthropic HTTP and Anthropic on Bedrock are separate supported transports.
 
 Rust callers inside the executable can use `happy_agent_supervisor::command()`;
@@ -40,6 +46,8 @@ prompts, skills, and historical golden fixtures remain unchanged as evidence.
 
 ```text
 npm launcher -> happy-agent
+                   +-- start/status/drain/stop/kill/reload -> local daemon
+                   +-- run        -> authenticated API -> original installation database
                    +-- infer      -> provider session -> HTTP / WebSocket
                    +-- agent      -> SQLite stages -> provider / tool traits
                    `-- supervisor -> existing Unix OS sandbox library
@@ -127,8 +135,13 @@ once, together with its call-scoped state; tool state expires at that commit.
 Queued input remains queued after abort or terminal failure until another message
 requests work. Follow-ups remain usable after settlement. Drain retains the next
 stage for restart. An exclusive SQLite lock prevents a second process from
-opening the same store. Old TypeScript databases are refused; they are not
-silently imported or reset.
+opening the same store. The internal JSON diagnostic worker still uses its isolated
+migration schema and refuses old TypeScript databases. The product daemon opens the
+original `agent.sqlite`, retains the original base and installation tables and
+immutable migration ledger, and uses the canonical `agent.sqlite.lock` and matching-token
+`agent.lock` ownership boundaries. Populated-installation tests verify epoch,
+records, KV, unrelated tables, and migration retention across kill and restart.
+Resuming that installation's agents and remaining feature state is still pending.
 
 The JSON command/event surface is an internal migration interface. It is not the
 Happy Agent desktop API and does not change `API.md` or its protocol versions.

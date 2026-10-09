@@ -1,0 +1,21 @@
+Usage: happy-agent <command>
+
+Options:
+  -v, --version  Show the installed Happy Agent version.
+
+Commands:
+  start    Start the daemon when none is running, replacing one that does not match.
+  drain    Drain the local daemon and wait until it is idle, without shutdown.
+  stop     Ask the running daemon to shut down.
+  kill     Immediately kill the daemon process recorded in its PID file.
+  status   Report whether the daemon is running.
+  reload   Stop the running daemon, then start a fresh one.
+  run      Run the daemon in the foreground of this process.
+  runner   Run this machine as a runner for a daemon on another machine.
+           --endpoint <address>  The daemon: https://host, http://host:port, unix:/socket, or
+                                 tailcat:<address>[:<port>] for a standalone daemon.
+           --token-file <path>   The runner's token (default ~/.happy-runner/token), or set
+                                 HAPPY_RUNNER_TOKEN.
+           --home <directory>    Where the home project and bot folders live (default: home).
+  sandbox setup [--retry]  Set up the Windows sandbox, or explicitly retry setup.
+  sandbox status          Report Windows sandbox configuration without changing it.

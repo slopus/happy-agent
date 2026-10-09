@@ -55,13 +55,13 @@ try {
     );
     const launcher = join(root, "package/bin/happy-agent.cjs");
     assert.match(run(process.execPath, [launcher, "--version"]), /^Happy Agent /);
-    assert.match(run(process.execPath, [launcher, "--help"]), /supervisor/);
+    assert.match(run(process.execPath, [launcher, "--help"]), /start.*Start the daemon/);
     const failure = spawnSync(process.execPath, [launcher, "invalid-subcommand"], {
         encoding: "utf8",
         timeout: 30_000,
     });
     assert.equal(failure.status, 1);
-    assert.match(failure.stderr, /Unknown command|--config/);
+    assert.match(failure.stderr, /does not have a command/);
     console.log(
         "Verified npm package contents, exact platform versions, native resolution, command forwarding, and exit propagation.",
     );

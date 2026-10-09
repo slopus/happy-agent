@@ -1,0 +1,25 @@
+[defaults]
+provider = "codex"
+model = "openai/gpt-5.6-sol"
+effort = "medium"
+permission_mode = "auto"
+
+[features]
+cross_workspace = true
+workspaces = true
+workflows = true
+
+[feature.team]
+enabled = false
+host = "0.0.0.0"
+port = 3000
+
+[feature.tailcat]
+enabled = false
+port = 24779
+
+[settings]
+menu_bar = true
+
+[feature.codemode]
+enabled = false
