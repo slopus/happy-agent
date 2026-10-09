@@ -2,7 +2,10 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
     test: {
-        setupFiles: ["../../scripts/windowsSandboxTestSetup.ts"],
+        setupFiles: [
+            "../../scripts/windowsSandboxTestSetup.ts",
+            "../../scripts/isolateHappyTestEnvironment.ts",
+        ],
         // Windows startup provisions private ACLs through PowerShell; bound concurrency
         // keeps these integration fixtures from competing with every other worker.
         ...(process.platform === "win32"

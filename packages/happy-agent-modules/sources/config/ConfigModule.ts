@@ -2518,7 +2518,14 @@ export class ConfigModule implements AgentModule {
         return join(this.configuration.paths.agentHome, "users", userId);
     }
 
-    /** The process-level Happy settings used to find and authorize the mobile integration. */
+    /**
+     * The process-level Happy settings used to find and authorize the mobile integration.
+     *
+     * The Happy CLI login lives in this installation's own root unless `HAPPY_HOME_DIR` names
+     * another one. A daemon's root is `HAPPY_HOME_DIR` or `~/.happy`, so that is the same folder in
+     * production; an installation loaded from any other root, such as a test's temporary folder,
+     * must never fall back to the person's real `~/.happy` and publish to their account.
+     */
     get happyEnvironment(): Readonly<NodeJS.ProcessEnv> {
         const environment: NodeJS.ProcessEnv = {};
         for (const name of [
@@ -2528,6 +2535,9 @@ export class ConfigModule implements AgentModule {
         ] as const) {
             const value = this.#environmentValue(name);
             if (value !== undefined) environment[name] = value;
+        }
+        if (!environment.HAPPY_HOME_DIR?.trim()) {
+            environment.HAPPY_HOME_DIR = this.configuration.paths.happyHome;
         }
         return environment;
     }
