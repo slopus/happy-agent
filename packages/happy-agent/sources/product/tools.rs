@@ -29,6 +29,37 @@ enum Implementation {
 pub struct ToolOutcome {
     pub message: Message,
 }
+#[async_trait::async_trait]
+impl happy_agent_base::AgentModule for ToolsModule {
+    fn name(&self) -> &'static str {
+        "compute"
+    }
+    fn tools(&self, _scope: &happy_agent_base::AgentScope<'_>) -> Vec<ToolDefinition> {
+        self.tools()
+    }
+    fn reloadable(&self, call: &Value) -> Option<bool> {
+        self.definition(call).map(|_| self.reloadable(call))
+    }
+    async fn execute_tool(
+        &self,
+        scope: &happy_agent_base::AgentScope<'_>,
+        call: &Value,
+        cancel: CancellationToken,
+    ) -> Option<Message> {
+        self.definition(call)?;
+        Some(
+            self.execute(scope.id, scope.configuration, scope.settings, call, cancel)
+                .await
+                .message,
+        )
+    }
+    async fn permission_changed(&self, agent: &str, previous: &str, next: &str) {
+        self.permission_changed(agent, previous, next).await;
+    }
+    async fn close(&self) {
+        self.close().await;
+    }
+}
 impl ToolsModule {
     pub fn new(
         config: Arc<ConfigModule>,

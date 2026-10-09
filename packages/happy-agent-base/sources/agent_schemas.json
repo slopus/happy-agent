@@ -1,0 +1,2827 @@
+{
+    "agentConfig": {
+        "type": "object",
+        "properties": {
+            "provenance": {
+                "type": "object",
+                "required": ["createdAt"],
+                "properties": {
+                    "createdAt": {
+                        "type": "number"
+                    },
+                    "createdBy": {
+                        "minLength": 2,
+                        "maxLength": 32,
+                        "pattern": "^[a-z][a-z0-9]*$",
+                        "type": "string"
+                    }
+                }
+            },
+            "environment": {
+                "type": "object",
+                "required": ["osVersion", "platform", "workingDirectory", "shell"],
+                "properties": {
+                    "osVersion": {
+                        "type": "string"
+                    },
+                    "platform": {
+                        "anyOf": [
+                            {
+                                "const": "aix",
+                                "type": "string"
+                            },
+                            {
+                                "const": "android",
+                                "type": "string"
+                            },
+                            {
+                                "const": "cygwin",
+                                "type": "string"
+                            },
+                            {
+                                "const": "darwin",
+                                "type": "string"
+                            },
+                            {
+                                "const": "freebsd",
+                                "type": "string"
+                            },
+                            {
+                                "const": "haiku",
+                                "type": "string"
+                            },
+                            {
+                                "const": "linux",
+                                "type": "string"
+                            },
+                            {
+                                "const": "netbsd",
+                                "type": "string"
+                            },
+                            {
+                                "const": "openbsd",
+                                "type": "string"
+                            },
+                            {
+                                "const": "sunos",
+                                "type": "string"
+                            },
+                            {
+                                "const": "win32",
+                                "type": "string"
+                            }
+                        ]
+                    },
+                    "workingDirectory": {
+                        "type": "string"
+                    },
+                    "shell": {
+                        "type": "string"
+                    }
+                }
+            },
+            "modules": {
+                "type": "object",
+                "patternProperties": {
+                    "^(.*)$": {
+                        "type": "object",
+                        "patternProperties": {
+                            "^(.*)$": {}
+                        }
+                    }
+                }
+            },
+            "metadata": {
+                "allOf": [
+                    {
+                        "type": "object",
+                        "properties": {
+                            "title": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    {
+                        "type": "object",
+                        "patternProperties": {
+                            "^(.*)$": {
+                                "$id": "T0",
+                                "anyOf": [
+                                    {
+                                        "type": "string"
+                                    },
+                                    {
+                                        "type": "number"
+                                    },
+                                    {
+                                        "type": "boolean"
+                                    },
+                                    {
+                                        "type": "null"
+                                    },
+                                    {
+                                        "type": "array",
+                                        "items": {
+                                            "$ref": "T0"
+                                        }
+                                    },
+                                    {
+                                        "type": "object",
+                                        "patternProperties": {
+                                            "^(.*)$": {
+                                                "$ref": "T0"
+                                            }
+                                        }
+                                    }
+                                ]
+                            }
+                        }
+                    }
+                ]
+            }
+        }
+    },
+    "cuid2": {
+        "minLength": 2,
+        "maxLength": 32,
+        "pattern": "^[a-z][a-z0-9]*$",
+        "type": "string"
+    },
+    "permissionMode": {
+        "description": "How much of the machine the agent may touch.",
+        "anyOf": [
+            {
+                "const": "read_only",
+                "type": "string"
+            },
+            {
+                "const": "workspace_write",
+                "type": "string"
+            },
+            {
+                "const": "auto",
+                "type": "string"
+            },
+            {
+                "const": "full_access",
+                "type": "string"
+            }
+        ]
+    },
+    "queuedInput": {
+        "type": "object",
+        "required": ["id", "message"],
+        "properties": {
+            "id": {
+                "minLength": 2,
+                "maxLength": 32,
+                "pattern": "^[a-z][a-z0-9]*$",
+                "type": "string"
+            },
+            "message": {
+                "anyOf": [
+                    {
+                        "type": "object",
+                        "required": ["role", "content"],
+                        "properties": {
+                            "role": {
+                                "const": "user",
+                                "type": "string"
+                            },
+                            "content": {
+                                "type": "array",
+                                "items": {
+                                    "anyOf": [
+                                        {
+                                            "type": "object",
+                                            "required": ["type", "text"],
+                                            "properties": {
+                                                "type": {
+                                                    "const": "text",
+                                                    "type": "string"
+                                                },
+                                                "text": {
+                                                    "type": "string"
+                                                }
+                                            }
+                                        },
+                                        {
+                                            "type": "object",
+                                            "required": ["type", "data", "mimeType"],
+                                            "properties": {
+                                                "type": {
+                                                    "const": "image",
+                                                    "type": "string"
+                                                },
+                                                "data": {
+                                                    "type": "string"
+                                                },
+                                                "mimeType": {
+                                                    "type": "string"
+                                                }
+                                            }
+                                        },
+                                        {
+                                            "type": "object",
+                                            "required": ["type", "name"],
+                                            "properties": {
+                                                "type": {
+                                                    "const": "tool_call_request",
+                                                    "type": "string"
+                                                },
+                                                "name": {
+                                                    "type": "string"
+                                                },
+                                                "arguments": {
+                                                    "type": "object",
+                                                    "patternProperties": {
+                                                        "^(.*)$": {}
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    ]
+                                }
+                            }
+                        }
+                    },
+                    {
+                        "type": "object",
+                        "required": ["role", "content"],
+                        "properties": {
+                            "role": {
+                                "const": "system",
+                                "type": "string"
+                            },
+                            "content": {
+                                "type": "array",
+                                "items": {
+                                    "anyOf": [
+                                        {
+                                            "type": "object",
+                                            "required": ["type", "text"],
+                                            "properties": {
+                                                "type": {
+                                                    "const": "text",
+                                                    "type": "string"
+                                                },
+                                                "text": {
+                                                    "type": "string"
+                                                }
+                                            }
+                                        },
+                                        {
+                                            "type": "object",
+                                            "required": ["type", "data", "mimeType"],
+                                            "properties": {
+                                                "type": {
+                                                    "const": "image",
+                                                    "type": "string"
+                                                },
+                                                "data": {
+                                                    "type": "string"
+                                                },
+                                                "mimeType": {
+                                                    "type": "string"
+                                                }
+                                            }
+                                        },
+                                        {
+                                            "type": "object",
+                                            "required": ["type", "name"],
+                                            "properties": {
+                                                "type": {
+                                                    "const": "tool_call_request",
+                                                    "type": "string"
+                                                },
+                                                "name": {
+                                                    "type": "string"
+                                                },
+                                                "arguments": {
+                                                    "type": "object",
+                                                    "patternProperties": {
+                                                        "^(.*)$": {}
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    ]
+                                }
+                            }
+                        }
+                    },
+                    {
+                        "type": "object",
+                        "required": ["role", "author", "content"],
+                        "properties": {
+                            "role": {
+                                "const": "agent",
+                                "type": "string"
+                            },
+                            "author": {
+                                "type": "object",
+                                "required": ["id", "description"],
+                                "properties": {
+                                    "id": {
+                                        "type": "string"
+                                    },
+                                    "description": {
+                                        "type": "string"
+                                    }
+                                }
+                            },
+                            "content": {
+                                "type": "array",
+                                "items": {
+                                    "anyOf": [
+                                        {
+                                            "type": "object",
+                                            "required": ["type", "text"],
+                                            "properties": {
+                                                "type": {
+                                                    "const": "text",
+                                                    "type": "string"
+                                                },
+                                                "text": {
+                                                    "type": "string"
+                                                }
+                                            }
+                                        },
+                                        {
+                                            "type": "object",
+                                            "required": ["type", "data", "mimeType"],
+                                            "properties": {
+                                                "type": {
+                                                    "const": "image",
+                                                    "type": "string"
+                                                },
+                                                "data": {
+                                                    "type": "string"
+                                                },
+                                                "mimeType": {
+                                                    "type": "string"
+                                                }
+                                            }
+                                        },
+                                        {
+                                            "type": "object",
+                                            "required": ["type"],
+                                            "properties": {
+                                                "type": {
+                                                    "const": "reasoning",
+                                                    "type": "string"
+                                                },
+                                                "text": {
+                                                    "type": "string"
+                                                },
+                                                "reasoning": {
+                                                    "type": "string"
+                                                }
+                                            }
+                                        }
+                                    ]
+                                }
+                            }
+                        }
+                    },
+                    {
+                        "type": "object",
+                        "required": ["role", "content"],
+                        "properties": {
+                            "role": {
+                                "const": "assistant",
+                                "type": "string"
+                            },
+                            "content": {
+                                "type": "array",
+                                "items": {
+                                    "anyOf": [
+                                        {
+                                            "type": "object",
+                                            "required": ["type", "text"],
+                                            "properties": {
+                                                "type": {
+                                                    "const": "text",
+                                                    "type": "string"
+                                                },
+                                                "text": {
+                                                    "type": "string"
+                                                }
+                                            }
+                                        },
+                                        {
+                                            "type": "object",
+                                            "required": ["type"],
+                                            "properties": {
+                                                "type": {
+                                                    "const": "reasoning",
+                                                    "type": "string"
+                                                },
+                                                "text": {
+                                                    "type": "string"
+                                                },
+                                                "reasoning": {
+                                                    "type": "string"
+                                                }
+                                            }
+                                        },
+                                        {
+                                            "type": "object",
+                                            "required": ["type", "callId", "name", "arguments"],
+                                            "properties": {
+                                                "type": {
+                                                    "const": "tool_call",
+                                                    "type": "string"
+                                                },
+                                                "callId": {
+                                                    "type": "string"
+                                                },
+                                                "name": {
+                                                    "type": "string"
+                                                },
+                                                "arguments": {
+                                                    "type": "string"
+                                                },
+                                                "namespace": {
+                                                    "type": "string"
+                                                },
+                                                "incomplete": {
+                                                    "type": "boolean"
+                                                },
+                                                "vendor": {},
+                                                "server": {
+                                                    "const": true,
+                                                    "type": "boolean"
+                                                }
+                                            }
+                                        },
+                                        {
+                                            "type": "object",
+                                            "required": ["type", "callId", "content"],
+                                            "properties": {
+                                                "type": {
+                                                    "const": "tool_result",
+                                                    "type": "string"
+                                                },
+                                                "callId": {
+                                                    "type": "string"
+                                                },
+                                                "content": {
+                                                    "type": "array",
+                                                    "items": {
+                                                        "anyOf": [
+                                                            {
+                                                                "type": "object",
+                                                                "required": ["type", "text"],
+                                                                "properties": {
+                                                                    "type": {
+                                                                        "const": "text",
+                                                                        "type": "string"
+                                                                    },
+                                                                    "text": {
+                                                                        "type": "string"
+                                                                    }
+                                                                }
+                                                            },
+                                                            {
+                                                                "type": "object",
+                                                                "required": [
+                                                                    "type",
+                                                                    "data",
+                                                                    "mimeType"
+                                                                ],
+                                                                "properties": {
+                                                                    "type": {
+                                                                        "const": "image",
+                                                                        "type": "string"
+                                                                    },
+                                                                    "data": {
+                                                                        "type": "string"
+                                                                    },
+                                                                    "mimeType": {
+                                                                        "type": "string"
+                                                                    }
+                                                                }
+                                                            }
+                                                        ]
+                                                    }
+                                                },
+                                                "isError": {
+                                                    "type": "boolean"
+                                                },
+                                                "incomplete": {
+                                                    "type": "boolean"
+                                                },
+                                                "vendor": {}
+                                            }
+                                        }
+                                    ]
+                                }
+                            }
+                        }
+                    },
+                    {
+                        "type": "object",
+                        "required": ["role", "callId", "content"],
+                        "properties": {
+                            "role": {
+                                "const": "tool",
+                                "type": "string"
+                            },
+                            "callId": {
+                                "type": "string"
+                            },
+                            "content": {
+                                "type": "array",
+                                "items": {
+                                    "anyOf": [
+                                        {
+                                            "type": "object",
+                                            "required": ["type", "text"],
+                                            "properties": {
+                                                "type": {
+                                                    "const": "text",
+                                                    "type": "string"
+                                                },
+                                                "text": {
+                                                    "type": "string"
+                                                }
+                                            }
+                                        },
+                                        {
+                                            "type": "object",
+                                            "required": ["type", "data", "mimeType"],
+                                            "properties": {
+                                                "type": {
+                                                    "const": "image",
+                                                    "type": "string"
+                                                },
+                                                "data": {
+                                                    "type": "string"
+                                                },
+                                                "mimeType": {
+                                                    "type": "string"
+                                                }
+                                            }
+                                        }
+                                    ]
+                                }
+                            },
+                            "isError": {
+                                "type": "boolean"
+                            },
+                            "vendor": {}
+                        }
+                    },
+                    {
+                        "type": "object",
+                        "required": ["role", "content", "encryptedContent"],
+                        "properties": {
+                            "role": {
+                                "const": "compaction",
+                                "type": "string"
+                            },
+                            "content": {
+                                "anyOf": [
+                                    {
+                                        "type": "null"
+                                    },
+                                    {
+                                        "type": "string"
+                                    }
+                                ]
+                            },
+                            "encryptedContent": {
+                                "anyOf": [
+                                    {
+                                        "type": "null"
+                                    },
+                                    {
+                                        "type": "string"
+                                    }
+                                ]
+                            },
+                            "vendor": {}
+                        }
+                    }
+                ]
+            },
+            "metadata": {
+                "type": "object",
+                "patternProperties": {
+                    "^(.*)$": {}
+                }
+            },
+            "options": {
+                "type": "object",
+                "properties": {
+                    "provider": {
+                        "type": "string"
+                    },
+                    "model": {
+                        "type": "string"
+                    },
+                    "effort": {
+                        "type": "string"
+                    },
+                    "serviceTier": {
+                        "anyOf": [
+                            {
+                                "type": "string"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ]
+                    },
+                    "permissionMode": {
+                        "description": "How much of the machine the agent may touch.",
+                        "anyOf": [
+                            {
+                                "const": "read_only",
+                                "type": "string"
+                            },
+                            {
+                                "const": "workspace_write",
+                                "type": "string"
+                            },
+                            {
+                                "const": "auto",
+                                "type": "string"
+                            },
+                            {
+                                "const": "full_access",
+                                "type": "string"
+                            }
+                        ]
+                    },
+                    "profile": {
+                        "anyOf": [
+                            {
+                                "type": "null"
+                            },
+                            {
+                                "maxLength": 512,
+                                "type": "string"
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+    },
+    "owed": {
+        "type": "object",
+        "required": ["stage", "loopId"],
+        "properties": {
+            "stage": {
+                "anyOf": [
+                    {
+                        "const": "inference",
+                        "type": "string"
+                    },
+                    {
+                        "const": "tools",
+                        "type": "string"
+                    },
+                    {
+                        "const": "compaction",
+                        "type": "string"
+                    },
+                    {
+                        "const": "settlement",
+                        "type": "string"
+                    }
+                ]
+            },
+            "loopId": {
+                "minLength": 2,
+                "maxLength": 32,
+                "pattern": "^[a-z][a-z0-9]*$",
+                "type": "string"
+            },
+            "turnId": {
+                "minLength": 2,
+                "maxLength": 32,
+                "pattern": "^[a-z][a-z0-9]*$",
+                "type": "string"
+            },
+            "inferenceId": {
+                "minLength": 2,
+                "maxLength": 32,
+                "pattern": "^[a-z][a-z0-9]*$",
+                "type": "string"
+            },
+            "settlementId": {
+                "minLength": 2,
+                "maxLength": 32,
+                "pattern": "^[a-z][a-z0-9]*$",
+                "type": "string"
+            }
+        }
+    },
+    "sessionMessage": {
+        "anyOf": [
+            {
+                "type": "object",
+                "required": ["role", "content"],
+                "properties": {
+                    "role": {
+                        "const": "user",
+                        "type": "string"
+                    },
+                    "content": {
+                        "type": "array",
+                        "items": {
+                            "anyOf": [
+                                {
+                                    "type": "object",
+                                    "required": ["type", "text"],
+                                    "properties": {
+                                        "type": {
+                                            "const": "text",
+                                            "type": "string"
+                                        },
+                                        "text": {
+                                            "type": "string"
+                                        }
+                                    }
+                                },
+                                {
+                                    "type": "object",
+                                    "required": ["type", "data", "mimeType"],
+                                    "properties": {
+                                        "type": {
+                                            "const": "image",
+                                            "type": "string"
+                                        },
+                                        "data": {
+                                            "type": "string"
+                                        },
+                                        "mimeType": {
+                                            "type": "string"
+                                        }
+                                    }
+                                },
+                                {
+                                    "type": "object",
+                                    "required": ["type", "name"],
+                                    "properties": {
+                                        "type": {
+                                            "const": "tool_call_request",
+                                            "type": "string"
+                                        },
+                                        "name": {
+                                            "type": "string"
+                                        },
+                                        "arguments": {
+                                            "type": "object",
+                                            "patternProperties": {
+                                                "^(.*)$": {}
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            },
+            {
+                "type": "object",
+                "required": ["role", "content"],
+                "properties": {
+                    "role": {
+                        "const": "system",
+                        "type": "string"
+                    },
+                    "content": {
+                        "type": "array",
+                        "items": {
+                            "anyOf": [
+                                {
+                                    "type": "object",
+                                    "required": ["type", "text"],
+                                    "properties": {
+                                        "type": {
+                                            "const": "text",
+                                            "type": "string"
+                                        },
+                                        "text": {
+                                            "type": "string"
+                                        }
+                                    }
+                                },
+                                {
+                                    "type": "object",
+                                    "required": ["type", "data", "mimeType"],
+                                    "properties": {
+                                        "type": {
+                                            "const": "image",
+                                            "type": "string"
+                                        },
+                                        "data": {
+                                            "type": "string"
+                                        },
+                                        "mimeType": {
+                                            "type": "string"
+                                        }
+                                    }
+                                },
+                                {
+                                    "type": "object",
+                                    "required": ["type", "name"],
+                                    "properties": {
+                                        "type": {
+                                            "const": "tool_call_request",
+                                            "type": "string"
+                                        },
+                                        "name": {
+                                            "type": "string"
+                                        },
+                                        "arguments": {
+                                            "type": "object",
+                                            "patternProperties": {
+                                                "^(.*)$": {}
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            },
+            {
+                "type": "object",
+                "required": ["role", "author", "content"],
+                "properties": {
+                    "role": {
+                        "const": "agent",
+                        "type": "string"
+                    },
+                    "author": {
+                        "type": "object",
+                        "required": ["id", "description"],
+                        "properties": {
+                            "id": {
+                                "type": "string"
+                            },
+                            "description": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "content": {
+                        "type": "array",
+                        "items": {
+                            "anyOf": [
+                                {
+                                    "type": "object",
+                                    "required": ["type", "text"],
+                                    "properties": {
+                                        "type": {
+                                            "const": "text",
+                                            "type": "string"
+                                        },
+                                        "text": {
+                                            "type": "string"
+                                        }
+                                    }
+                                },
+                                {
+                                    "type": "object",
+                                    "required": ["type", "data", "mimeType"],
+                                    "properties": {
+                                        "type": {
+                                            "const": "image",
+                                            "type": "string"
+                                        },
+                                        "data": {
+                                            "type": "string"
+                                        },
+                                        "mimeType": {
+                                            "type": "string"
+                                        }
+                                    }
+                                },
+                                {
+                                    "type": "object",
+                                    "required": ["type"],
+                                    "properties": {
+                                        "type": {
+                                            "const": "reasoning",
+                                            "type": "string"
+                                        },
+                                        "text": {
+                                            "type": "string"
+                                        },
+                                        "reasoning": {
+                                            "type": "string"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            },
+            {
+                "type": "object",
+                "required": ["role", "content"],
+                "properties": {
+                    "role": {
+                        "const": "assistant",
+                        "type": "string"
+                    },
+                    "content": {
+                        "type": "array",
+                        "items": {
+                            "anyOf": [
+                                {
+                                    "type": "object",
+                                    "required": ["type", "text"],
+                                    "properties": {
+                                        "type": {
+                                            "const": "text",
+                                            "type": "string"
+                                        },
+                                        "text": {
+                                            "type": "string"
+                                        }
+                                    }
+                                },
+                                {
+                                    "type": "object",
+                                    "required": ["type"],
+                                    "properties": {
+                                        "type": {
+                                            "const": "reasoning",
+                                            "type": "string"
+                                        },
+                                        "text": {
+                                            "type": "string"
+                                        },
+                                        "reasoning": {
+                                            "type": "string"
+                                        }
+                                    }
+                                },
+                                {
+                                    "type": "object",
+                                    "required": ["type", "callId", "name", "arguments"],
+                                    "properties": {
+                                        "type": {
+                                            "const": "tool_call",
+                                            "type": "string"
+                                        },
+                                        "callId": {
+                                            "type": "string"
+                                        },
+                                        "name": {
+                                            "type": "string"
+                                        },
+                                        "arguments": {
+                                            "type": "string"
+                                        },
+                                        "namespace": {
+                                            "type": "string"
+                                        },
+                                        "incomplete": {
+                                            "type": "boolean"
+                                        },
+                                        "vendor": {},
+                                        "server": {
+                                            "const": true,
+                                            "type": "boolean"
+                                        }
+                                    }
+                                },
+                                {
+                                    "type": "object",
+                                    "required": ["type", "callId", "content"],
+                                    "properties": {
+                                        "type": {
+                                            "const": "tool_result",
+                                            "type": "string"
+                                        },
+                                        "callId": {
+                                            "type": "string"
+                                        },
+                                        "content": {
+                                            "type": "array",
+                                            "items": {
+                                                "anyOf": [
+                                                    {
+                                                        "type": "object",
+                                                        "required": ["type", "text"],
+                                                        "properties": {
+                                                            "type": {
+                                                                "const": "text",
+                                                                "type": "string"
+                                                            },
+                                                            "text": {
+                                                                "type": "string"
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "type": "object",
+                                                        "required": ["type", "data", "mimeType"],
+                                                        "properties": {
+                                                            "type": {
+                                                                "const": "image",
+                                                                "type": "string"
+                                                            },
+                                                            "data": {
+                                                                "type": "string"
+                                                            },
+                                                            "mimeType": {
+                                                                "type": "string"
+                                                            }
+                                                        }
+                                                    }
+                                                ]
+                                            }
+                                        },
+                                        "isError": {
+                                            "type": "boolean"
+                                        },
+                                        "incomplete": {
+                                            "type": "boolean"
+                                        },
+                                        "vendor": {}
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            },
+            {
+                "type": "object",
+                "required": ["role", "callId", "content"],
+                "properties": {
+                    "role": {
+                        "const": "tool",
+                        "type": "string"
+                    },
+                    "callId": {
+                        "type": "string"
+                    },
+                    "content": {
+                        "type": "array",
+                        "items": {
+                            "anyOf": [
+                                {
+                                    "type": "object",
+                                    "required": ["type", "text"],
+                                    "properties": {
+                                        "type": {
+                                            "const": "text",
+                                            "type": "string"
+                                        },
+                                        "text": {
+                                            "type": "string"
+                                        }
+                                    }
+                                },
+                                {
+                                    "type": "object",
+                                    "required": ["type", "data", "mimeType"],
+                                    "properties": {
+                                        "type": {
+                                            "const": "image",
+                                            "type": "string"
+                                        },
+                                        "data": {
+                                            "type": "string"
+                                        },
+                                        "mimeType": {
+                                            "type": "string"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "isError": {
+                        "type": "boolean"
+                    },
+                    "vendor": {}
+                }
+            },
+            {
+                "type": "object",
+                "required": ["role", "content", "encryptedContent"],
+                "properties": {
+                    "role": {
+                        "const": "compaction",
+                        "type": "string"
+                    },
+                    "content": {
+                        "anyOf": [
+                            {
+                                "type": "null"
+                            },
+                            {
+                                "type": "string"
+                            }
+                        ]
+                    },
+                    "encryptedContent": {
+                        "anyOf": [
+                            {
+                                "type": "null"
+                            },
+                            {
+                                "type": "string"
+                            }
+                        ]
+                    },
+                    "vendor": {}
+                }
+            }
+        ]
+    },
+    "pendingCall": {
+        "type": "object",
+        "required": ["id", "call"],
+        "properties": {
+            "id": {
+                "minLength": 2,
+                "maxLength": 32,
+                "pattern": "^[a-z][a-z0-9]*$",
+                "type": "string"
+            },
+            "call": {
+                "type": "object",
+                "required": ["type", "name", "arguments"],
+                "properties": {
+                    "type": {
+                        "const": "tool_call",
+                        "type": "string"
+                    },
+                    "name": {
+                        "type": "string"
+                    },
+                    "arguments": {
+                        "type": "string"
+                    },
+                    "namespace": {
+                        "type": "string"
+                    },
+                    "incomplete": {
+                        "type": "boolean"
+                    },
+                    "vendor": {}
+                }
+            },
+            "committed": {
+                "type": "object",
+                "required": ["role", "callId", "content"],
+                "properties": {
+                    "role": {
+                        "const": "tool",
+                        "type": "string"
+                    },
+                    "callId": {
+                        "type": "string"
+                    },
+                    "content": {
+                        "type": "array",
+                        "items": {
+                            "anyOf": [
+                                {
+                                    "type": "object",
+                                    "required": ["type", "text"],
+                                    "properties": {
+                                        "type": {
+                                            "const": "text",
+                                            "type": "string"
+                                        },
+                                        "text": {
+                                            "type": "string"
+                                        }
+                                    }
+                                },
+                                {
+                                    "type": "object",
+                                    "required": ["type", "data", "mimeType"],
+                                    "properties": {
+                                        "type": {
+                                            "const": "image",
+                                            "type": "string"
+                                        },
+                                        "data": {
+                                            "type": "string"
+                                        },
+                                        "mimeType": {
+                                            "type": "string"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "isError": {
+                        "type": "boolean"
+                    },
+                    "vendor": {}
+                }
+            }
+        }
+    },
+    "privateRecord": {
+        "anyOf": [
+            {
+                "type": "object",
+                "required": ["type", "id", "message"],
+                "properties": {
+                    "type": {
+                        "const": "user",
+                        "type": "string"
+                    },
+                    "id": {
+                        "minLength": 2,
+                        "maxLength": 32,
+                        "pattern": "^[a-z][a-z0-9]*$",
+                        "type": "string"
+                    },
+                    "message": {
+                        "anyOf": [
+                            {
+                                "type": "object",
+                                "required": ["role", "content"],
+                                "properties": {
+                                    "role": {
+                                        "const": "user",
+                                        "type": "string"
+                                    },
+                                    "content": {
+                                        "type": "array",
+                                        "items": {
+                                            "anyOf": [
+                                                {
+                                                    "type": "object",
+                                                    "required": ["type", "text"],
+                                                    "properties": {
+                                                        "type": {
+                                                            "const": "text",
+                                                            "type": "string"
+                                                        },
+                                                        "text": {
+                                                            "type": "string"
+                                                        }
+                                                    }
+                                                },
+                                                {
+                                                    "type": "object",
+                                                    "required": ["type", "data", "mimeType"],
+                                                    "properties": {
+                                                        "type": {
+                                                            "const": "image",
+                                                            "type": "string"
+                                                        },
+                                                        "data": {
+                                                            "type": "string"
+                                                        },
+                                                        "mimeType": {
+                                                            "type": "string"
+                                                        }
+                                                    }
+                                                },
+                                                {
+                                                    "type": "object",
+                                                    "required": ["type", "name"],
+                                                    "properties": {
+                                                        "type": {
+                                                            "const": "tool_call_request",
+                                                            "type": "string"
+                                                        },
+                                                        "name": {
+                                                            "type": "string"
+                                                        },
+                                                        "arguments": {
+                                                            "type": "object",
+                                                            "patternProperties": {
+                                                                "^(.*)$": {}
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            ]
+                                        }
+                                    }
+                                }
+                            },
+                            {
+                                "type": "object",
+                                "required": ["role", "content"],
+                                "properties": {
+                                    "role": {
+                                        "const": "system",
+                                        "type": "string"
+                                    },
+                                    "content": {
+                                        "type": "array",
+                                        "items": {
+                                            "anyOf": [
+                                                {
+                                                    "type": "object",
+                                                    "required": ["type", "text"],
+                                                    "properties": {
+                                                        "type": {
+                                                            "const": "text",
+                                                            "type": "string"
+                                                        },
+                                                        "text": {
+                                                            "type": "string"
+                                                        }
+                                                    }
+                                                },
+                                                {
+                                                    "type": "object",
+                                                    "required": ["type", "data", "mimeType"],
+                                                    "properties": {
+                                                        "type": {
+                                                            "const": "image",
+                                                            "type": "string"
+                                                        },
+                                                        "data": {
+                                                            "type": "string"
+                                                        },
+                                                        "mimeType": {
+                                                            "type": "string"
+                                                        }
+                                                    }
+                                                },
+                                                {
+                                                    "type": "object",
+                                                    "required": ["type", "name"],
+                                                    "properties": {
+                                                        "type": {
+                                                            "const": "tool_call_request",
+                                                            "type": "string"
+                                                        },
+                                                        "name": {
+                                                            "type": "string"
+                                                        },
+                                                        "arguments": {
+                                                            "type": "object",
+                                                            "patternProperties": {
+                                                                "^(.*)$": {}
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            ]
+                                        }
+                                    }
+                                }
+                            },
+                            {
+                                "type": "object",
+                                "required": ["role", "author", "content"],
+                                "properties": {
+                                    "role": {
+                                        "const": "agent",
+                                        "type": "string"
+                                    },
+                                    "author": {
+                                        "type": "object",
+                                        "required": ["id", "description"],
+                                        "properties": {
+                                            "id": {
+                                                "type": "string"
+                                            },
+                                            "description": {
+                                                "type": "string"
+                                            }
+                                        }
+                                    },
+                                    "content": {
+                                        "type": "array",
+                                        "items": {
+                                            "anyOf": [
+                                                {
+                                                    "type": "object",
+                                                    "required": ["type", "text"],
+                                                    "properties": {
+                                                        "type": {
+                                                            "const": "text",
+                                                            "type": "string"
+                                                        },
+                                                        "text": {
+                                                            "type": "string"
+                                                        }
+                                                    }
+                                                },
+                                                {
+                                                    "type": "object",
+                                                    "required": ["type", "data", "mimeType"],
+                                                    "properties": {
+                                                        "type": {
+                                                            "const": "image",
+                                                            "type": "string"
+                                                        },
+                                                        "data": {
+                                                            "type": "string"
+                                                        },
+                                                        "mimeType": {
+                                                            "type": "string"
+                                                        }
+                                                    }
+                                                },
+                                                {
+                                                    "type": "object",
+                                                    "required": ["type"],
+                                                    "properties": {
+                                                        "type": {
+                                                            "const": "reasoning",
+                                                            "type": "string"
+                                                        },
+                                                        "text": {
+                                                            "type": "string"
+                                                        },
+                                                        "reasoning": {
+                                                            "type": "string"
+                                                        }
+                                                    }
+                                                }
+                                            ]
+                                        }
+                                    }
+                                }
+                            },
+                            {
+                                "type": "object",
+                                "required": ["role", "content"],
+                                "properties": {
+                                    "role": {
+                                        "const": "assistant",
+                                        "type": "string"
+                                    },
+                                    "content": {
+                                        "type": "array",
+                                        "items": {
+                                            "anyOf": [
+                                                {
+                                                    "type": "object",
+                                                    "required": ["type", "text"],
+                                                    "properties": {
+                                                        "type": {
+                                                            "const": "text",
+                                                            "type": "string"
+                                                        },
+                                                        "text": {
+                                                            "type": "string"
+                                                        }
+                                                    }
+                                                },
+                                                {
+                                                    "type": "object",
+                                                    "required": ["type"],
+                                                    "properties": {
+                                                        "type": {
+                                                            "const": "reasoning",
+                                                            "type": "string"
+                                                        },
+                                                        "text": {
+                                                            "type": "string"
+                                                        },
+                                                        "reasoning": {
+                                                            "type": "string"
+                                                        }
+                                                    }
+                                                },
+                                                {
+                                                    "type": "object",
+                                                    "required": [
+                                                        "type",
+                                                        "callId",
+                                                        "name",
+                                                        "arguments"
+                                                    ],
+                                                    "properties": {
+                                                        "type": {
+                                                            "const": "tool_call",
+                                                            "type": "string"
+                                                        },
+                                                        "callId": {
+                                                            "type": "string"
+                                                        },
+                                                        "name": {
+                                                            "type": "string"
+                                                        },
+                                                        "arguments": {
+                                                            "type": "string"
+                                                        },
+                                                        "namespace": {
+                                                            "type": "string"
+                                                        },
+                                                        "incomplete": {
+                                                            "type": "boolean"
+                                                        },
+                                                        "vendor": {},
+                                                        "server": {
+                                                            "const": true,
+                                                            "type": "boolean"
+                                                        }
+                                                    }
+                                                },
+                                                {
+                                                    "type": "object",
+                                                    "required": ["type", "callId", "content"],
+                                                    "properties": {
+                                                        "type": {
+                                                            "const": "tool_result",
+                                                            "type": "string"
+                                                        },
+                                                        "callId": {
+                                                            "type": "string"
+                                                        },
+                                                        "content": {
+                                                            "type": "array",
+                                                            "items": {
+                                                                "anyOf": [
+                                                                    {
+                                                                        "type": "object",
+                                                                        "required": [
+                                                                            "type",
+                                                                            "text"
+                                                                        ],
+                                                                        "properties": {
+                                                                            "type": {
+                                                                                "const": "text",
+                                                                                "type": "string"
+                                                                            },
+                                                                            "text": {
+                                                                                "type": "string"
+                                                                            }
+                                                                        }
+                                                                    },
+                                                                    {
+                                                                        "type": "object",
+                                                                        "required": [
+                                                                            "type",
+                                                                            "data",
+                                                                            "mimeType"
+                                                                        ],
+                                                                        "properties": {
+                                                                            "type": {
+                                                                                "const": "image",
+                                                                                "type": "string"
+                                                                            },
+                                                                            "data": {
+                                                                                "type": "string"
+                                                                            },
+                                                                            "mimeType": {
+                                                                                "type": "string"
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                ]
+                                                            }
+                                                        },
+                                                        "isError": {
+                                                            "type": "boolean"
+                                                        },
+                                                        "incomplete": {
+                                                            "type": "boolean"
+                                                        },
+                                                        "vendor": {}
+                                                    }
+                                                }
+                                            ]
+                                        }
+                                    }
+                                }
+                            },
+                            {
+                                "type": "object",
+                                "required": ["role", "callId", "content"],
+                                "properties": {
+                                    "role": {
+                                        "const": "tool",
+                                        "type": "string"
+                                    },
+                                    "callId": {
+                                        "type": "string"
+                                    },
+                                    "content": {
+                                        "type": "array",
+                                        "items": {
+                                            "anyOf": [
+                                                {
+                                                    "type": "object",
+                                                    "required": ["type", "text"],
+                                                    "properties": {
+                                                        "type": {
+                                                            "const": "text",
+                                                            "type": "string"
+                                                        },
+                                                        "text": {
+                                                            "type": "string"
+                                                        }
+                                                    }
+                                                },
+                                                {
+                                                    "type": "object",
+                                                    "required": ["type", "data", "mimeType"],
+                                                    "properties": {
+                                                        "type": {
+                                                            "const": "image",
+                                                            "type": "string"
+                                                        },
+                                                        "data": {
+                                                            "type": "string"
+                                                        },
+                                                        "mimeType": {
+                                                            "type": "string"
+                                                        }
+                                                    }
+                                                }
+                                            ]
+                                        }
+                                    },
+                                    "isError": {
+                                        "type": "boolean"
+                                    },
+                                    "vendor": {}
+                                }
+                            },
+                            {
+                                "type": "object",
+                                "required": ["role", "content", "encryptedContent"],
+                                "properties": {
+                                    "role": {
+                                        "const": "compaction",
+                                        "type": "string"
+                                    },
+                                    "content": {
+                                        "anyOf": [
+                                            {
+                                                "type": "null"
+                                            },
+                                            {
+                                                "type": "string"
+                                            }
+                                        ]
+                                    },
+                                    "encryptedContent": {
+                                        "anyOf": [
+                                            {
+                                                "type": "null"
+                                            },
+                                            {
+                                                "type": "string"
+                                            }
+                                        ]
+                                    },
+                                    "vendor": {}
+                                }
+                            }
+                        ]
+                    },
+                    "metadata": {}
+                }
+            },
+            {
+                "type": "object",
+                "required": ["type", "block"],
+                "properties": {
+                    "type": {
+                        "const": "block",
+                        "type": "string"
+                    },
+                    "id": {
+                        "minLength": 2,
+                        "maxLength": 32,
+                        "pattern": "^[a-z][a-z0-9]*$",
+                        "type": "string"
+                    },
+                    "block": {
+                        "anyOf": [
+                            {
+                                "type": "object",
+                                "required": ["type", "text"],
+                                "properties": {
+                                    "type": {
+                                        "const": "text",
+                                        "type": "string"
+                                    },
+                                    "text": {
+                                        "type": "string"
+                                    }
+                                }
+                            },
+                            {
+                                "type": "object",
+                                "required": ["type", "data", "mimeType"],
+                                "properties": {
+                                    "type": {
+                                        "const": "image",
+                                        "type": "string"
+                                    },
+                                    "data": {
+                                        "type": "string"
+                                    },
+                                    "mimeType": {
+                                        "type": "string"
+                                    }
+                                }
+                            },
+                            {
+                                "type": "object",
+                                "required": ["type"],
+                                "properties": {
+                                    "type": {
+                                        "const": "reasoning",
+                                        "type": "string"
+                                    },
+                                    "text": {
+                                        "type": "string"
+                                    },
+                                    "reasoning": {
+                                        "type": "string"
+                                    }
+                                }
+                            },
+                            {
+                                "type": "object",
+                                "required": ["type", "callId", "name", "arguments"],
+                                "properties": {
+                                    "type": {
+                                        "const": "tool_call",
+                                        "type": "string"
+                                    },
+                                    "callId": {
+                                        "type": "string"
+                                    },
+                                    "name": {
+                                        "type": "string"
+                                    },
+                                    "arguments": {
+                                        "type": "string"
+                                    },
+                                    "namespace": {
+                                        "type": "string"
+                                    },
+                                    "incomplete": {
+                                        "type": "boolean"
+                                    },
+                                    "vendor": {},
+                                    "server": {
+                                        "const": true,
+                                        "type": "boolean"
+                                    }
+                                }
+                            },
+                            {
+                                "type": "object",
+                                "required": ["type", "callId", "content"],
+                                "properties": {
+                                    "type": {
+                                        "const": "tool_result",
+                                        "type": "string"
+                                    },
+                                    "callId": {
+                                        "type": "string"
+                                    },
+                                    "content": {
+                                        "type": "array",
+                                        "items": {
+                                            "anyOf": [
+                                                {
+                                                    "type": "object",
+                                                    "required": ["type", "text"],
+                                                    "properties": {
+                                                        "type": {
+                                                            "const": "text",
+                                                            "type": "string"
+                                                        },
+                                                        "text": {
+                                                            "type": "string"
+                                                        }
+                                                    }
+                                                },
+                                                {
+                                                    "type": "object",
+                                                    "required": ["type", "data", "mimeType"],
+                                                    "properties": {
+                                                        "type": {
+                                                            "const": "image",
+                                                            "type": "string"
+                                                        },
+                                                        "data": {
+                                                            "type": "string"
+                                                        },
+                                                        "mimeType": {
+                                                            "type": "string"
+                                                        }
+                                                    }
+                                                }
+                                            ]
+                                        }
+                                    },
+                                    "isError": {
+                                        "type": "boolean"
+                                    },
+                                    "incomplete": {
+                                        "type": "boolean"
+                                    },
+                                    "vendor": {}
+                                }
+                            }
+                        ]
+                    }
+                }
+            },
+            {
+                "type": "object",
+                "required": ["type", "id", "message"],
+                "properties": {
+                    "type": {
+                        "const": "tool",
+                        "type": "string"
+                    },
+                    "id": {
+                        "minLength": 2,
+                        "maxLength": 32,
+                        "pattern": "^[a-z][a-z0-9]*$",
+                        "type": "string"
+                    },
+                    "message": {
+                        "type": "object",
+                        "required": ["role", "callId", "content"],
+                        "properties": {
+                            "role": {
+                                "const": "tool",
+                                "type": "string"
+                            },
+                            "callId": {
+                                "type": "string"
+                            },
+                            "content": {
+                                "type": "array",
+                                "items": {
+                                    "anyOf": [
+                                        {
+                                            "type": "object",
+                                            "required": ["type", "text"],
+                                            "properties": {
+                                                "type": {
+                                                    "const": "text",
+                                                    "type": "string"
+                                                },
+                                                "text": {
+                                                    "type": "string"
+                                                }
+                                            }
+                                        },
+                                        {
+                                            "type": "object",
+                                            "required": ["type", "data", "mimeType"],
+                                            "properties": {
+                                                "type": {
+                                                    "const": "image",
+                                                    "type": "string"
+                                                },
+                                                "data": {
+                                                    "type": "string"
+                                                },
+                                                "mimeType": {
+                                                    "type": "string"
+                                                }
+                                            }
+                                        }
+                                    ]
+                                }
+                            },
+                            "isError": {
+                                "type": "boolean"
+                            },
+                            "vendor": {}
+                        }
+                    }
+                }
+            },
+            {
+                "type": "object",
+                "required": ["type", "message"],
+                "properties": {
+                    "type": {
+                        "const": "system",
+                        "type": "string"
+                    },
+                    "message": {
+                        "anyOf": [
+                            {
+                                "type": "object",
+                                "required": ["role", "content"],
+                                "properties": {
+                                    "role": {
+                                        "const": "user",
+                                        "type": "string"
+                                    },
+                                    "content": {
+                                        "type": "array",
+                                        "items": {
+                                            "anyOf": [
+                                                {
+                                                    "type": "object",
+                                                    "required": ["type", "text"],
+                                                    "properties": {
+                                                        "type": {
+                                                            "const": "text",
+                                                            "type": "string"
+                                                        },
+                                                        "text": {
+                                                            "type": "string"
+                                                        }
+                                                    }
+                                                },
+                                                {
+                                                    "type": "object",
+                                                    "required": ["type", "data", "mimeType"],
+                                                    "properties": {
+                                                        "type": {
+                                                            "const": "image",
+                                                            "type": "string"
+                                                        },
+                                                        "data": {
+                                                            "type": "string"
+                                                        },
+                                                        "mimeType": {
+                                                            "type": "string"
+                                                        }
+                                                    }
+                                                },
+                                                {
+                                                    "type": "object",
+                                                    "required": ["type", "name"],
+                                                    "properties": {
+                                                        "type": {
+                                                            "const": "tool_call_request",
+                                                            "type": "string"
+                                                        },
+                                                        "name": {
+                                                            "type": "string"
+                                                        },
+                                                        "arguments": {
+                                                            "type": "object",
+                                                            "patternProperties": {
+                                                                "^(.*)$": {}
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            ]
+                                        }
+                                    }
+                                }
+                            },
+                            {
+                                "type": "object",
+                                "required": ["role", "content"],
+                                "properties": {
+                                    "role": {
+                                        "const": "system",
+                                        "type": "string"
+                                    },
+                                    "content": {
+                                        "type": "array",
+                                        "items": {
+                                            "anyOf": [
+                                                {
+                                                    "type": "object",
+                                                    "required": ["type", "text"],
+                                                    "properties": {
+                                                        "type": {
+                                                            "const": "text",
+                                                            "type": "string"
+                                                        },
+                                                        "text": {
+                                                            "type": "string"
+                                                        }
+                                                    }
+                                                },
+                                                {
+                                                    "type": "object",
+                                                    "required": ["type", "data", "mimeType"],
+                                                    "properties": {
+                                                        "type": {
+                                                            "const": "image",
+                                                            "type": "string"
+                                                        },
+                                                        "data": {
+                                                            "type": "string"
+                                                        },
+                                                        "mimeType": {
+                                                            "type": "string"
+                                                        }
+                                                    }
+                                                },
+                                                {
+                                                    "type": "object",
+                                                    "required": ["type", "name"],
+                                                    "properties": {
+                                                        "type": {
+                                                            "const": "tool_call_request",
+                                                            "type": "string"
+                                                        },
+                                                        "name": {
+                                                            "type": "string"
+                                                        },
+                                                        "arguments": {
+                                                            "type": "object",
+                                                            "patternProperties": {
+                                                                "^(.*)$": {}
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            ]
+                                        }
+                                    }
+                                }
+                            },
+                            {
+                                "type": "object",
+                                "required": ["role", "author", "content"],
+                                "properties": {
+                                    "role": {
+                                        "const": "agent",
+                                        "type": "string"
+                                    },
+                                    "author": {
+                                        "type": "object",
+                                        "required": ["id", "description"],
+                                        "properties": {
+                                            "id": {
+                                                "type": "string"
+                                            },
+                                            "description": {
+                                                "type": "string"
+                                            }
+                                        }
+                                    },
+                                    "content": {
+                                        "type": "array",
+                                        "items": {
+                                            "anyOf": [
+                                                {
+                                                    "type": "object",
+                                                    "required": ["type", "text"],
+                                                    "properties": {
+                                                        "type": {
+                                                            "const": "text",
+                                                            "type": "string"
+                                                        },
+                                                        "text": {
+                                                            "type": "string"
+                                                        }
+                                                    }
+                                                },
+                                                {
+                                                    "type": "object",
+                                                    "required": ["type", "data", "mimeType"],
+                                                    "properties": {
+                                                        "type": {
+                                                            "const": "image",
+                                                            "type": "string"
+                                                        },
+                                                        "data": {
+                                                            "type": "string"
+                                                        },
+                                                        "mimeType": {
+                                                            "type": "string"
+                                                        }
+                                                    }
+                                                },
+                                                {
+                                                    "type": "object",
+                                                    "required": ["type"],
+                                                    "properties": {
+                                                        "type": {
+                                                            "const": "reasoning",
+                                                            "type": "string"
+                                                        },
+                                                        "text": {
+                                                            "type": "string"
+                                                        },
+                                                        "reasoning": {
+                                                            "type": "string"
+                                                        }
+                                                    }
+                                                }
+                                            ]
+                                        }
+                                    }
+                                }
+                            },
+                            {
+                                "type": "object",
+                                "required": ["role", "content"],
+                                "properties": {
+                                    "role": {
+                                        "const": "assistant",
+                                        "type": "string"
+                                    },
+                                    "content": {
+                                        "type": "array",
+                                        "items": {
+                                            "anyOf": [
+                                                {
+                                                    "type": "object",
+                                                    "required": ["type", "text"],
+                                                    "properties": {
+                                                        "type": {
+                                                            "const": "text",
+                                                            "type": "string"
+                                                        },
+                                                        "text": {
+                                                            "type": "string"
+                                                        }
+                                                    }
+                                                },
+                                                {
+                                                    "type": "object",
+                                                    "required": ["type"],
+                                                    "properties": {
+                                                        "type": {
+                                                            "const": "reasoning",
+                                                            "type": "string"
+                                                        },
+                                                        "text": {
+                                                            "type": "string"
+                                                        },
+                                                        "reasoning": {
+                                                            "type": "string"
+                                                        }
+                                                    }
+                                                },
+                                                {
+                                                    "type": "object",
+                                                    "required": [
+                                                        "type",
+                                                        "callId",
+                                                        "name",
+                                                        "arguments"
+                                                    ],
+                                                    "properties": {
+                                                        "type": {
+                                                            "const": "tool_call",
+                                                            "type": "string"
+                                                        },
+                                                        "callId": {
+                                                            "type": "string"
+                                                        },
+                                                        "name": {
+                                                            "type": "string"
+                                                        },
+                                                        "arguments": {
+                                                            "type": "string"
+                                                        },
+                                                        "namespace": {
+                                                            "type": "string"
+                                                        },
+                                                        "incomplete": {
+                                                            "type": "boolean"
+                                                        },
+                                                        "vendor": {},
+                                                        "server": {
+                                                            "const": true,
+                                                            "type": "boolean"
+                                                        }
+                                                    }
+                                                },
+                                                {
+                                                    "type": "object",
+                                                    "required": ["type", "callId", "content"],
+                                                    "properties": {
+                                                        "type": {
+                                                            "const": "tool_result",
+                                                            "type": "string"
+                                                        },
+                                                        "callId": {
+                                                            "type": "string"
+                                                        },
+                                                        "content": {
+                                                            "type": "array",
+                                                            "items": {
+                                                                "anyOf": [
+                                                                    {
+                                                                        "type": "object",
+                                                                        "required": [
+                                                                            "type",
+                                                                            "text"
+                                                                        ],
+                                                                        "properties": {
+                                                                            "type": {
+                                                                                "const": "text",
+                                                                                "type": "string"
+                                                                            },
+                                                                            "text": {
+                                                                                "type": "string"
+                                                                            }
+                                                                        }
+                                                                    },
+                                                                    {
+                                                                        "type": "object",
+                                                                        "required": [
+                                                                            "type",
+                                                                            "data",
+                                                                            "mimeType"
+                                                                        ],
+                                                                        "properties": {
+                                                                            "type": {
+                                                                                "const": "image",
+                                                                                "type": "string"
+                                                                            },
+                                                                            "data": {
+                                                                                "type": "string"
+                                                                            },
+                                                                            "mimeType": {
+                                                                                "type": "string"
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                ]
+                                                            }
+                                                        },
+                                                        "isError": {
+                                                            "type": "boolean"
+                                                        },
+                                                        "incomplete": {
+                                                            "type": "boolean"
+                                                        },
+                                                        "vendor": {}
+                                                    }
+                                                }
+                                            ]
+                                        }
+                                    }
+                                }
+                            },
+                            {
+                                "type": "object",
+                                "required": ["role", "callId", "content"],
+                                "properties": {
+                                    "role": {
+                                        "const": "tool",
+                                        "type": "string"
+                                    },
+                                    "callId": {
+                                        "type": "string"
+                                    },
+                                    "content": {
+                                        "type": "array",
+                                        "items": {
+                                            "anyOf": [
+                                                {
+                                                    "type": "object",
+                                                    "required": ["type", "text"],
+                                                    "properties": {
+                                                        "type": {
+                                                            "const": "text",
+                                                            "type": "string"
+                                                        },
+                                                        "text": {
+                                                            "type": "string"
+                                                        }
+                                                    }
+                                                },
+                                                {
+                                                    "type": "object",
+                                                    "required": ["type", "data", "mimeType"],
+                                                    "properties": {
+                                                        "type": {
+                                                            "const": "image",
+                                                            "type": "string"
+                                                        },
+                                                        "data": {
+                                                            "type": "string"
+                                                        },
+                                                        "mimeType": {
+                                                            "type": "string"
+                                                        }
+                                                    }
+                                                }
+                                            ]
+                                        }
+                                    },
+                                    "isError": {
+                                        "type": "boolean"
+                                    },
+                                    "vendor": {}
+                                }
+                            },
+                            {
+                                "type": "object",
+                                "required": ["role", "content", "encryptedContent"],
+                                "properties": {
+                                    "role": {
+                                        "const": "compaction",
+                                        "type": "string"
+                                    },
+                                    "content": {
+                                        "anyOf": [
+                                            {
+                                                "type": "null"
+                                            },
+                                            {
+                                                "type": "string"
+                                            }
+                                        ]
+                                    },
+                                    "encryptedContent": {
+                                        "anyOf": [
+                                            {
+                                                "type": "null"
+                                            },
+                                            {
+                                                "type": "string"
+                                            }
+                                        ]
+                                    },
+                                    "vendor": {}
+                                }
+                            }
+                        ]
+                    }
+                }
+            },
+            {
+                "type": "object",
+                "required": ["type", "contextToolIds", "messages"],
+                "properties": {
+                    "type": {
+                        "const": "compaction",
+                        "type": "string"
+                    },
+                    "contextToolIds": {
+                        "type": "array",
+                        "items": {
+                            "type": "array",
+                            "minItems": 2,
+                            "maxItems": 2,
+                            "prefixItems": [
+                                {
+                                    "minLength": 2,
+                                    "maxLength": 32,
+                                    "pattern": "^[a-z][a-z0-9]*$",
+                                    "type": "string"
+                                },
+                                {
+                                    "type": "string"
+                                }
+                            ],
+                            "items": false
+                        }
+                    },
+                    "messages": {
+                        "type": "array",
+                        "items": {
+                            "anyOf": [
+                                {
+                                    "type": "object",
+                                    "required": ["role", "content"],
+                                    "properties": {
+                                        "role": {
+                                            "const": "user",
+                                            "type": "string"
+                                        },
+                                        "content": {
+                                            "type": "array",
+                                            "items": {
+                                                "anyOf": [
+                                                    {
+                                                        "type": "object",
+                                                        "required": ["type", "text"],
+                                                        "properties": {
+                                                            "type": {
+                                                                "const": "text",
+                                                                "type": "string"
+                                                            },
+                                                            "text": {
+                                                                "type": "string"
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "type": "object",
+                                                        "required": ["type", "data", "mimeType"],
+                                                        "properties": {
+                                                            "type": {
+                                                                "const": "image",
+                                                                "type": "string"
+                                                            },
+                                                            "data": {
+                                                                "type": "string"
+                                                            },
+                                                            "mimeType": {
+                                                                "type": "string"
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "type": "object",
+                                                        "required": ["type", "name"],
+                                                        "properties": {
+                                                            "type": {
+                                                                "const": "tool_call_request",
+                                                                "type": "string"
+                                                            },
+                                                            "name": {
+                                                                "type": "string"
+                                                            },
+                                                            "arguments": {
+                                                                "type": "object",
+                                                                "patternProperties": {
+                                                                    "^(.*)$": {}
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                ]
+                                            }
+                                        }
+                                    }
+                                },
+                                {
+                                    "type": "object",
+                                    "required": ["role", "content"],
+                                    "properties": {
+                                        "role": {
+                                            "const": "system",
+                                            "type": "string"
+                                        },
+                                        "content": {
+                                            "type": "array",
+                                            "items": {
+                                                "anyOf": [
+                                                    {
+                                                        "type": "object",
+                                                        "required": ["type", "text"],
+                                                        "properties": {
+                                                            "type": {
+                                                                "const": "text",
+                                                                "type": "string"
+                                                            },
+                                                            "text": {
+                                                                "type": "string"
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "type": "object",
+                                                        "required": ["type", "data", "mimeType"],
+                                                        "properties": {
+                                                            "type": {
+                                                                "const": "image",
+                                                                "type": "string"
+                                                            },
+                                                            "data": {
+                                                                "type": "string"
+                                                            },
+                                                            "mimeType": {
+                                                                "type": "string"
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "type": "object",
+                                                        "required": ["type", "name"],
+                                                        "properties": {
+                                                            "type": {
+                                                                "const": "tool_call_request",
+                                                                "type": "string"
+                                                            },
+                                                            "name": {
+                                                                "type": "string"
+                                                            },
+                                                            "arguments": {
+                                                                "type": "object",
+                                                                "patternProperties": {
+                                                                    "^(.*)$": {}
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                ]
+                                            }
+                                        }
+                                    }
+                                },
+                                {
+                                    "type": "object",
+                                    "required": ["role", "author", "content"],
+                                    "properties": {
+                                        "role": {
+                                            "const": "agent",
+                                            "type": "string"
+                                        },
+                                        "author": {
+                                            "type": "object",
+                                            "required": ["id", "description"],
+                                            "properties": {
+                                                "id": {
+                                                    "type": "string"
+                                                },
+                                                "description": {
+                                                    "type": "string"
+                                                }
+                                            }
+                                        },
+                                        "content": {
+                                            "type": "array",
+                                            "items": {
+                                                "anyOf": [
+                                                    {
+                                                        "type": "object",
+                                                        "required": ["type", "text"],
+                                                        "properties": {
+                                                            "type": {
+                                                                "const": "text",
+                                                                "type": "string"
+                                                            },
+                                                            "text": {
+                                                                "type": "string"
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "type": "object",
+                                                        "required": ["type", "data", "mimeType"],
+                                                        "properties": {
+                                                            "type": {
+                                                                "const": "image",
+                                                                "type": "string"
+                                                            },
+                                                            "data": {
+                                                                "type": "string"
+                                                            },
+                                                            "mimeType": {
+                                                                "type": "string"
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "type": "object",
+                                                        "required": ["type"],
+                                                        "properties": {
+                                                            "type": {
+                                                                "const": "reasoning",
+                                                                "type": "string"
+                                                            },
+                                                            "text": {
+                                                                "type": "string"
+                                                            },
+                                                            "reasoning": {
+                                                                "type": "string"
+                                                            }
+                                                        }
+                                                    }
+                                                ]
+                                            }
+                                        }
+                                    }
+                                },
+                                {
+                                    "type": "object",
+                                    "required": ["role", "content"],
+                                    "properties": {
+                                        "role": {
+                                            "const": "assistant",
+                                            "type": "string"
+                                        },
+                                        "content": {
+                                            "type": "array",
+                                            "items": {
+                                                "anyOf": [
+                                                    {
+                                                        "type": "object",
+                                                        "required": ["type", "text"],
+                                                        "properties": {
+                                                            "type": {
+                                                                "const": "text",
+                                                                "type": "string"
+                                                            },
+                                                            "text": {
+                                                                "type": "string"
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "type": "object",
+                                                        "required": ["type"],
+                                                        "properties": {
+                                                            "type": {
+                                                                "const": "reasoning",
+                                                                "type": "string"
+                                                            },
+                                                            "text": {
+                                                                "type": "string"
+                                                            },
+                                                            "reasoning": {
+                                                                "type": "string"
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "type": "object",
+                                                        "required": [
+                                                            "type",
+                                                            "callId",
+                                                            "name",
+                                                            "arguments"
+                                                        ],
+                                                        "properties": {
+                                                            "type": {
+                                                                "const": "tool_call",
+                                                                "type": "string"
+                                                            },
+                                                            "callId": {
+                                                                "type": "string"
+                                                            },
+                                                            "name": {
+                                                                "type": "string"
+                                                            },
+                                                            "arguments": {
+                                                                "type": "string"
+                                                            },
+                                                            "namespace": {
+                                                                "type": "string"
+                                                            },
+                                                            "incomplete": {
+                                                                "type": "boolean"
+                                                            },
+                                                            "vendor": {},
+                                                            "server": {
+                                                                "const": true,
+                                                                "type": "boolean"
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "type": "object",
+                                                        "required": ["type", "callId", "content"],
+                                                        "properties": {
+                                                            "type": {
+                                                                "const": "tool_result",
+                                                                "type": "string"
+                                                            },
+                                                            "callId": {
+                                                                "type": "string"
+                                                            },
+                                                            "content": {
+                                                                "type": "array",
+                                                                "items": {
+                                                                    "anyOf": [
+                                                                        {
+                                                                            "type": "object",
+                                                                            "required": [
+                                                                                "type",
+                                                                                "text"
+                                                                            ],
+                                                                            "properties": {
+                                                                                "type": {
+                                                                                    "const": "text",
+                                                                                    "type": "string"
+                                                                                },
+                                                                                "text": {
+                                                                                    "type": "string"
+                                                                                }
+                                                                            }
+                                                                        },
+                                                                        {
+                                                                            "type": "object",
+                                                                            "required": [
+                                                                                "type",
+                                                                                "data",
+                                                                                "mimeType"
+                                                                            ],
+                                                                            "properties": {
+                                                                                "type": {
+                                                                                    "const": "image",
+                                                                                    "type": "string"
+                                                                                },
+                                                                                "data": {
+                                                                                    "type": "string"
+                                                                                },
+                                                                                "mimeType": {
+                                                                                    "type": "string"
+                                                                                }
+                                                                            }
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            },
+                                                            "isError": {
+                                                                "type": "boolean"
+                                                            },
+                                                            "incomplete": {
+                                                                "type": "boolean"
+                                                            },
+                                                            "vendor": {}
+                                                        }
+                                                    }
+                                                ]
+                                            }
+                                        }
+                                    }
+                                },
+                                {
+                                    "type": "object",
+                                    "required": ["role", "callId", "content"],
+                                    "properties": {
+                                        "role": {
+                                            "const": "tool",
+                                            "type": "string"
+                                        },
+                                        "callId": {
+                                            "type": "string"
+                                        },
+                                        "content": {
+                                            "type": "array",
+                                            "items": {
+                                                "anyOf": [
+                                                    {
+                                                        "type": "object",
+                                                        "required": ["type", "text"],
+                                                        "properties": {
+                                                            "type": {
+                                                                "const": "text",
+                                                                "type": "string"
+                                                            },
+                                                            "text": {
+                                                                "type": "string"
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "type": "object",
+                                                        "required": ["type", "data", "mimeType"],
+                                                        "properties": {
+                                                            "type": {
+                                                                "const": "image",
+                                                                "type": "string"
+                                                            },
+                                                            "data": {
+                                                                "type": "string"
+                                                            },
+                                                            "mimeType": {
+                                                                "type": "string"
+                                                            }
+                                                        }
+                                                    }
+                                                ]
+                                            }
+                                        },
+                                        "isError": {
+                                            "type": "boolean"
+                                        },
+                                        "vendor": {}
+                                    }
+                                },
+                                {
+                                    "type": "object",
+                                    "required": ["role", "content", "encryptedContent"],
+                                    "properties": {
+                                        "role": {
+                                            "const": "compaction",
+                                            "type": "string"
+                                        },
+                                        "content": {
+                                            "anyOf": [
+                                                {
+                                                    "type": "null"
+                                                },
+                                                {
+                                                    "type": "string"
+                                                }
+                                            ]
+                                        },
+                                        "encryptedContent": {
+                                            "anyOf": [
+                                                {
+                                                    "type": "null"
+                                                },
+                                                {
+                                                    "type": "string"
+                                                }
+                                            ]
+                                        },
+                                        "vendor": {}
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        ]
+    }
+}

@@ -1,314 +1,61 @@
-use super::{config::ConfigModule, filesystem::private_file};
-use anyhow::{Context as _, Result, bail};
-use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
-use std::{
-    path::Path,
-    sync::{Arc, Mutex},
-};
+use super::config::ConfigModule;
+use anyhow::{Result, bail};
+use happy_agent_base::SqliteDatabase;
+use rusqlite::OptionalExtension;
+use std::sync::Arc;
 
-// This module owns the database and both original ownership seams. Historical module
-// tables and unknown KV payloads are retained without eager decoding at startup.
+pub use happy_agent_base::DatabaseContext as Context;
+
+/// Product storage owns resolved paths and installation migrations. The shared
+/// agent core owns the transaction scope and exclusive SQLite connection.
 pub struct RuntimeModule {
     config: Arc<ConfigModule>,
-    state: Mutex<Option<Database>>,
+    database: Arc<SqliteDatabase>,
 }
-
-struct Database {
-    database: Connection,
-    owner: Connection,
-    storage_token: String,
-}
-
-/// An immutable transaction scope. Module operations use this exact connection
-/// and return their notifications to the owner for publication after commit.
-pub struct Context<'a> {
-    database: &'a Connection,
-    owner: usize,
-    after_commit: std::cell::RefCell<Vec<Box<dyn FnOnce() + Send>>>,
-}
-impl Context<'_> {
-    pub fn database(&self) -> &Connection {
-        self.database
-    }
-    pub fn after_commit(&self, work: impl FnOnce() + Send + 'static) -> Result<()> {
-        let mut observers = self.after_commit.borrow_mut();
-        anyhow::ensure!(
-            observers.len() < 10000,
-            "The transaction has too many notifications."
-        );
-        observers.push(Box::new(work));
-        Ok(())
-    }
-}
-
 impl RuntimeModule {
-    pub fn assert_context(&self, ctx: &Context<'_>) -> Result<()> {
-        anyhow::ensure!(
-            ctx.owner == self as *const Self as usize,
-            "The transaction belongs to a different runtime database."
-        );
-        Ok(())
-    }
     pub fn new(config: Arc<ConfigModule>) -> Self {
         Self {
             config,
-            state: Mutex::new(None),
+            database: Arc::new(SqliteDatabase::new()),
         }
     }
-
-    pub async fn load(self: &Arc<Self>) -> Result<()> {
-        let runtime = self.clone();
-        tokio::task::spawn_blocking(move || {
-            let mut state = runtime
-                .state
-                .lock()
-                .map_err(|_| anyhow::anyhow!("The runtime database lock is unavailable."))?;
-            anyhow::ensure!(state.is_none(), "The runtime database is already loaded.");
-            *state = Some(Self::open_blocking(runtime.config.clone())?);
-            Ok(())
-        })
-        .await?
+    pub fn database(&self) -> Arc<SqliteDatabase> {
+        self.database.clone()
     }
-
-    fn open_blocking(config: Arc<ConfigModule>) -> Result<Database> {
-        config.prepare()?;
-        let canonical_directory = std::fs::canonicalize(&config.paths.directory)?;
-        let database_path = canonical_directory.join(
-            config
-                .paths
-                .database
-                .file_name()
-                .context("The database file name is unavailable.")?,
-        );
-        let lock_path = canonical_directory.join("agent.sqlite.lock");
-        let owner = Connection::open(&lock_path)?;
-        private_file(&lock_path)?;
-        owner.busy_timeout(std::time::Duration::ZERO)?;
-        owner
-            .execute_batch("PRAGMA journal_mode=DELETE; BEGIN IMMEDIATE")
-            .context("The Happy agent SQLite database is already open in another process.")?;
-        let storage_token = storage_lock(&canonical_directory.join("agent.lock"))?;
-        let result = (|| {
-            let mut database = Connection::open(&database_path)?;
-            private_file(&database_path)?;
-            database.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;")?;
-            database.execute_batch("CREATE TABLE IF NOT EXISTS happy_agent_migrations(module_key TEXT NOT NULL,migration_key TEXT NOT NULL,position BIGINT NOT NULL,PRIMARY KEY(module_key,migration_key),UNIQUE(module_key,position));")?;
-            migrate(
-                &mut database,
-                "@happy-agent-base",
-                &[(
-                    "001-core-storage",
-                    "CREATE TABLE happy_agent_records(owner_id TEXT NOT NULL,position BIGINT NOT NULL,record_json TEXT NOT NULL,PRIMARY KEY(owner_id,position)); CREATE TABLE happy_agent_values(owner_id TEXT NOT NULL,key TEXT NOT NULL,value_json TEXT NOT NULL,PRIMARY KEY(owner_id,key));",
-                )],
-            )?;
-            migrate(
-                &mut database,
-                "happy-agent-installation",
-                &[
-                    (
-                        "001-root-agent",
-                        "CREATE TABLE IF NOT EXISTS happy_agent_loader_state(key TEXT PRIMARY KEY,value TEXT NOT NULL);",
-                    ),
-                    (
-                        "002-drop-root-agent",
-                        "DELETE FROM happy_agent_loader_state WHERE key='root_agent_id';",
-                    ),
-                ],
-            )?;
-            let transaction = database.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            let version: Option<String> = transaction
-                .query_row(
-                    "SELECT value FROM happy_agent_loader_state WHERE key='schema_version'",
-                    [],
-                    |row| row.get(0),
-                )
-                .optional()?;
-            if let Some(version) = version
-                && !version.parse::<u64>().is_ok_and(|version| version > 0)
-            {
+    pub fn assert_context(&self, ctx: &Context<'_>) -> Result<()> {
+        self.database.assert_context(ctx)
+    }
+    pub async fn load(self: &Arc<Self>) -> Result<()> {
+        self.config.prepare()?;
+        self.database.load(self.config.database_location()).await?;
+        self.migrate("happy-agent-installation", &[
+            ("001-root-agent", "CREATE TABLE IF NOT EXISTS happy_agent_loader_state(key TEXT PRIMARY KEY,value TEXT NOT NULL);"),
+            ("002-drop-root-agent", "DELETE FROM happy_agent_loader_state WHERE key='root_agent_id';"),
+        ]).await?;
+        self.transact(|ctx| {
+            let version: Option<String> = ctx.database().query_row("SELECT value FROM happy_agent_loader_state WHERE key='schema_version'", [], |row| row.get(0)).optional()?;
+            if let Some(version) = version && !version.parse::<u64>().is_ok_and(|version| version > 0) {
                 bail!("The stored Happy agent schema version is invalid.");
             }
-            transaction.execute("INSERT INTO happy_agent_loader_state(key,value) VALUES('installation_epoch',?1) ON CONFLICT DO NOTHING",[uuid::Uuid::new_v4().to_string()])?;
-            transaction.execute("INSERT INTO happy_agent_loader_state(key,value) VALUES('schema_version','1') ON CONFLICT DO NOTHING",[])?;
-            transaction.commit()?;
-            Ok(database)
-        })();
-        match result {
-            Ok(database) => Ok(Database {
-                database,
-                owner,
-                storage_token,
-            }),
-            Err(error) => {
-                release_storage_lock(&config.paths.directory.join("agent.lock"), &storage_token);
-                Err(error)
-            }
-        }
+            ctx.database().execute("INSERT INTO happy_agent_loader_state(key,value) VALUES('installation_epoch',?1) ON CONFLICT DO NOTHING", [uuid::Uuid::new_v4().to_string()])?;
+            ctx.database().execute("INSERT INTO happy_agent_loader_state(key,value) VALUES('schema_version','1') ON CONFLICT DO NOTHING", [])?;
+            Ok(())
+        }).await
     }
-
     pub async fn transact<T: Send + 'static>(
         self: &Arc<Self>,
         work: impl for<'a> FnOnce(&Context<'a>) -> Result<T> + Send + 'static,
     ) -> Result<T> {
-        let runtime = self.clone();
-        tokio::task::spawn_blocking(move || {
-            let mut state = runtime
-                .state
-                .lock()
-                .map_err(|_| anyhow::anyhow!("The runtime database lock is unavailable."))?;
-            let state = state
-                .as_mut()
-                .context("The runtime database is not open.")?;
-            let transaction = state
-                .database
-                .transaction_with_behavior(TransactionBehavior::Immediate)?;
-            let context = Context {
-                database: &transaction,
-                owner: Arc::as_ptr(&runtime) as usize,
-                after_commit: std::cell::RefCell::new(Vec::new()),
-            };
-            let value = work(&context)?;
-            let observers = context.after_commit.into_inner();
-            transaction.commit()?;
-            for observer in observers {
-                observer();
-            }
-            Ok(value)
-        })
-        .await?
+        self.database.transact(work).await
     }
-
     pub async fn migrate(
         self: &Arc<Self>,
         module: &'static str,
         migrations: &'static [(&'static str, &'static str)],
     ) -> Result<()> {
-        let runtime = self.clone();
-        tokio::task::spawn_blocking(move || {
-            let mut state = runtime
-                .state
-                .lock()
-                .map_err(|_| anyhow::anyhow!("The runtime database lock is unavailable."))?;
-            migrate(
-                &mut state
-                    .as_mut()
-                    .context("The runtime database is not open.")?
-                    .database,
-                module,
-                migrations,
-            )
-        })
-        .await?
+        self.database.migrate(module, migrations).await
     }
-
     pub async fn close(self: &Arc<Self>) -> Result<()> {
-        let runtime = self.clone();
-        tokio::task::spawn_blocking(move || runtime.close_blocking()).await?
-    }
-    fn close_blocking(&self) -> Result<()> {
-        let mut state = self
-            .state
-            .lock()
-            .map_err(|_| anyhow::anyhow!("The runtime database lock is unavailable."))?;
-        if let Some(database) = state.take() {
-            let Database {
-                database,
-                owner,
-                storage_token,
-            } = database;
-            if let Err((database, error)) = database.close() {
-                *state = Some(Database {
-                    database,
-                    owner,
-                    storage_token,
-                });
-                return Err(error.into());
-            }
-            owner.execute_batch("ROLLBACK")?;
-            release_storage_lock(
-                &self.config.paths.directory.join("agent.lock"),
-                &storage_token,
-            );
-        }
-        Ok(())
-    }
-}
-
-impl Drop for RuntimeModule {
-    fn drop(&mut self) {
-        let _ = self.close_blocking();
-    }
-}
-
-fn migrate(database: &mut Connection, module: &str, migrations: &[(&str, &str)]) -> Result<()> {
-    let applied = {
-        let mut statement = database.prepare("SELECT migration_key,position FROM happy_agent_migrations WHERE module_key=?1 ORDER BY position")?;
-        statement
-            .query_map([module], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()?
-    };
-    for (index, (key, position)) in applied.iter().enumerate() {
-        if migrations.get(index).map(|migration| migration.0) != Some(key.as_str())
-            || *position != index as i64
-        {
-            bail!(
-                "The applied migrations for module \"{module}\" are not a prefix of its current migrations."
-            );
-        }
-    }
-    for (index, (key, sql)) in migrations.iter().enumerate().skip(applied.len()) {
-        let transaction = database.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        transaction.execute_batch(sql)?;
-        transaction.execute("INSERT INTO happy_agent_migrations(module_key,migration_key,position) VALUES(?1,?2,?3)",params![module,key,index as i64])?;
-        transaction.commit()?;
-    }
-    Ok(())
-}
-
-fn storage_lock(path: &Path) -> Result<String> {
-    use std::io::Write;
-    let token = uuid::Uuid::new_v4().to_string();
-    for _ in 0..2 {
-        let mut options = std::fs::OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        match options.open(path) {
-            Ok(mut file) => {
-                let bytes = serde_json::to_vec(
-                    &serde_json::json!({"pid":std::process::id(),"token":token}),
-                )?;
-                file.write_all(&bytes)?;
-                file.sync_all()?;
-                return Ok(token);
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                let owner = std::fs::read(path)
-                    .ok()
-                    .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok());
-                if let Some(pid) = owner.and_then(|value| value.get("pid").and_then(|v| v.as_u64()))
-                    && u32::try_from(pid).is_ok_and(super::process::process_running)
-                {
-                    bail!("The Happy agent store is already owned by process {pid}.");
-                }
-                super::filesystem::remove_missing_ok(path)?;
-            }
-            Err(error) => return Err(error.into()),
-        }
-    }
-    bail!("The Happy agent store lock could not be acquired.")
-}
-
-fn release_storage_lock(path: &Path, token: &str) {
-    if let Ok(bytes) = std::fs::read(path)
-        && let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes)
-        && value.get("token").and_then(|value| value.as_str()) == Some(token)
-    {
-        let _ = std::fs::remove_file(path);
+        self.database.close().await
     }
 }

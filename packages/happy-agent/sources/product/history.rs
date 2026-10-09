@@ -1,4 +1,5 @@
 use super::{
+    config::ConfigModule,
     events::EventsModule,
     identity::now,
     runtime::{Context, RuntimeModule},
@@ -11,6 +12,8 @@ use rusqlite::{OptionalExtension, params};
 use serde_json::{Value, json};
 use std::sync::Arc;
 mod excerpt;
+mod hooks;
+mod model_switch;
 mod read_tool;
 
 const MIGRATIONS: &[(&str, &str)] = &[
@@ -29,6 +32,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
 ];
 
 pub struct HistoryModule {
+    config: Arc<ConfigModule>,
     runtime: Arc<RuntimeModule>,
     events: Arc<EventsModule>,
     schemas: Schemas,
@@ -36,11 +40,13 @@ pub struct HistoryModule {
 }
 impl HistoryModule {
     pub fn new(
+        config: Arc<ConfigModule>,
         runtime: Arc<RuntimeModule>,
         events: Arc<EventsModule>,
         usage: Arc<UsageModule>,
     ) -> Result<Self> {
         Ok(Self {
+            config,
             runtime,
             events,
             usage,

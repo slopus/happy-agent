@@ -1,26 +1,22 @@
-use super::{AgentSystemModule, delete_scope};
+use super::HistoryModule;
 use crate::product::runtime::Context;
 use anyhow::{Context as _, Result};
-use serde_json::{Value, json};
+use happy_agent_base::AgentScope;
+use happy_providers::{Block, Message};
+use serde_json::Value;
 
-impl AgentSystemModule {
-    pub(super) fn adopt_model(
+impl HistoryModule {
+    pub(super) fn model_notice(
         &self,
         ctx: &Context<'_>,
-        agent: &str,
+        scope: &AgentScope<'_>,
         previous: &Value,
-        next: &Value,
-    ) -> Result<()> {
-        if previous["provider"] == next["provider"] && previous["model"] == next["model"] {
-            return Ok(());
-        }
-        if self.config.models_compatible(previous, next)? {
-            return Ok(());
-        }
+    ) -> Result<Option<Message>> {
+        let next = scope.settings;
         // Model selection participates in the caller's input-acceptance transaction.
         // History owns the optional excerpt; it cannot veto an otherwise valid switch.
         let excerpt = if previous["model"].is_string() {
-            self.history.read_excerpt(ctx, agent, 32_000).ok().flatten()
+            self.read_excerpt(ctx, scope.id, 32_000).ok().flatten()
         } else {
             None
         };
@@ -39,16 +35,9 @@ impl AgentSystemModule {
         } else {
             None
         };
-        ctx.database().execute("DELETE FROM happy_agent_values WHERE owner_id=?1 AND key IN(SELECT 'message.'||json_extract(record_json,'$.id') FROM happy_agent_records WHERE owner_id=?1 AND json_extract(record_json,'$.type')='user')",[agent])?;
-        ctx.database()
-            .execute("DELETE FROM happy_agent_records WHERE owner_id=?1", [agent])?;
-        delete_scope(ctx, agent, &format!("kv.{agent}.history."))?;
-        self.usage.clear_context(ctx, agent)?;
-        if let Some(text) = notice {
-            let record = json!({"type":"system","message":{"role":"system","content":[{"type":"text","text":text}]}});
-            self.append_record(ctx, agent, &record)?;
-        }
-        Ok(())
+        Ok(notice.map(|text| Message::System {
+            content: vec![Block::text(text)],
+        }))
     }
 }
 

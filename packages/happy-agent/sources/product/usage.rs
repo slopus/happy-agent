@@ -38,6 +38,51 @@ pub struct UsageModule {
     config: Arc<ConfigModule>,
     schemas: Schemas,
 }
+#[async_trait::async_trait]
+impl happy_agent_base::AgentModule for UsageModule {
+    fn name(&self) -> &'static str {
+        "usage"
+    }
+    fn history_erased(
+        &self,
+        ctx: &Context<'_>,
+        scope: &happy_agent_base::AgentScope<'_>,
+    ) -> Result<()> {
+        self.clear_context(ctx, scope.id)
+    }
+    fn after_inference(
+        &self,
+        ctx: &Context<'_>,
+        scope: &happy_agent_base::AgentScope<'_>,
+        inference: &happy_agent_base::Inference<'_>,
+    ) -> Result<()> {
+        use happy_providers::Outcome;
+        let (state, usage) = match inference.outcome {
+            Outcome::Normal { usage } => ("normal", Some(usage)),
+            Outcome::ToolCall { usage } => ("tool_call", Some(usage)),
+            Outcome::Length { usage } => ("length", Some(usage)),
+            Outcome::Cancelled => ("cancelled", None),
+            Outcome::Error { .. } => ("error", None),
+        };
+        if let Some(usage) = usage {
+            let run = self
+                .events
+                .run_id(ctx, scope.id)?
+                .context("Inference has no public run identity.")?;
+            let mut record = json!({"id":inference.id,"kind":"inference","agentId":scope.id,"runId":run,"provider":scope.settings["provider"],"state":state,"tokens":{"input":usage.input,"output":usage.output,"cacheRead":usage.cache_read,"cacheWrite":usage.cache_write},"startedAt":inference.started_at,"finishedAt":inference.finished_at,"durationMs":inference.finished_at-inference.started_at});
+            for field in ["model", "effort"] {
+                if let Some(value) = scope.settings.get(field) {
+                    record[field] = value.clone();
+                }
+            }
+            if let Some(tier) = scope.settings["serviceTier"].as_str() {
+                record["tier"] = json!(tier);
+            }
+            self.record(ctx, &record)?;
+        }
+        Ok(())
+    }
+}
 impl UsageModule {
     pub fn new(
         runtime: Arc<RuntimeModule>,

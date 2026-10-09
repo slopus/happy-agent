@@ -2,14 +2,17 @@
 
 ## Rust migration keeps the runtime separate from product modules
 
-The runtime is now a Rust library linked into the single Happy Agent executable.
-Its SQLite transactions, immutable provider history, tool result commit boundary,
-queue admission, and explicit stages remain the core contract. Database errors
-stop the worker and reach its owner; they are never converted into successful
-settlement. The old TypeScript store generation is refused rather than silently
-converted or erased. The product module hooks and the multi-agent owner API still
-need migration. The historical decisions and formal models below describe the
-previous full runtime and must be carried forward explicitly as those seams move.
+The daemon's durable loop and original SQLite store are now a Rust library linked
+into the single Happy Agent executable. Feature modules supply instructions,
+provider sessions, tools and transactional observations through their own hooks.
+The core keeps private records, original queue keys, stable Base and provider call
+identities, and the explicit owed stages. History and Usage own their public data;
+the same core can run a private reviewer without those tables. Config resolves
+storage paths, while the core owns the original SQLite transaction lock and
+matching-token store lock. Existing original data is retained without a new store
+generation. The early diagnostic adapter still needs consolidation, and the full
+historical hook surface remains migration work. Database failures retain durable
+work and reach its owner rather than reporting successful settlement.
 
 Hosted provider calls retain the existing server tool-call/result blocks and
 their opaque vendor metadata. A new raw-provider-item block would create another
@@ -57,6 +60,14 @@ The settlement transaction reads `owed` first; if it no longer holds the settlem
 same commit settles the finished run and opens the next one with a fresh inference stage and
 its activation. Only the owner's own record and queues are consulted, so this is not
 multi-owner machinery.
+
+The native worker's exit also needs to retain an admission wake. A new committed
+message could arrive after settlement while the previous task had not finished;
+its wake was ignored because the task still appeared live. Each committed wake
+now advances the worker's generation under the same lock used to retire it. A
+successful exiting worker consumes a later wake before retiring, while a failed
+worker never automatically retries its provider request. A deterministic test
+holds that exit boundary and runs the second input without another message.
 
 ## Abort keeps queued input queued, and never leaves the store active over nothing
 

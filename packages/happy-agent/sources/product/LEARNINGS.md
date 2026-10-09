@@ -102,3 +102,20 @@ Cutting the UTF-8 byte buffer shortened multibyte output prematurely and conceal
 Tool display text now names the tool and counts the retained output, with the original validated
 fallback for an invalid name. The provider retains its full bounded result independently of the
 shorter public archive.
+
+The public archive must not be a prerequisite for every agent loop. The durable
+loop and original transaction scope now belong to Agent Base, while actual
+modules supply their own hooks. History owns public runs, accepted inputs,
+completed inference blocks, tool results and settlement; Usage owns measurement
+and context clearing. This preserves the original main-store behavior and lets
+the same core run a private reviewer without public History, Events or Usage
+tables. The worker retains a committed wake through its exit boundary, fixing a
+race that left a newly accepted input queued until another message arrived.
+
+Durable Functions settlement is atomic with its success handler and scoped KV
+deletion. A failed handler rolls that whole transaction back, so restart keeps
+the same call and checkpoint. Cancelling an older blocked call must re-run
+dispatch after commit: otherwise its reservation leaves younger work blocked
+even when that younger work's own keys are free. The native procedure primitive
+is verified with real SQLite tests but stays outside daemon startup until its
+owning module registrations are present.

@@ -31,6 +31,34 @@ pub struct ConfigModule {
     compatibility: serde_json::Value,
 }
 
+#[async_trait::async_trait]
+impl happy_agent_base::AgentModule for ConfigModule {
+    fn name(&self) -> &'static str {
+        "config"
+    }
+    fn compatible(
+        &self,
+        previous: &serde_json::Value,
+        next: &serde_json::Value,
+    ) -> Option<Result<bool>> {
+        Some(self.models_compatible(previous, next))
+    }
+    async fn instructions(&self, _scope: &happy_agent_base::AgentScope<'_>) -> Result<String> {
+        self.read_document(Document::Instructions).await
+    }
+    async fn session(
+        &self,
+        scope: &happy_agent_base::AgentScope<'_>,
+        tools: Vec<happy_providers::ToolDefinition>,
+    ) -> Option<Result<Box<dyn happy_providers::Session>>> {
+        Some(
+            self.session(scope.id, scope.settings, tools)
+                .await
+                .map(|session| Box::new(session) as Box<dyn happy_providers::Session>),
+        )
+    }
+}
+
 pub struct ExecutionEnvironment {
     pub root: PathBuf,
     pub cwd: PathBuf,
@@ -64,6 +92,14 @@ impl Document {
 }
 
 impl ConfigModule {
+    pub fn database_location(&self) -> happy_agent_base::DatabaseLocation {
+        happy_agent_base::DatabaseLocation {
+            directory: self.paths.directory.clone(),
+            database: self.paths.database.clone(),
+            ownership: self.paths.directory.join("agent.sqlite.lock"),
+            store_lock: self.paths.directory.join("agent.lock"),
+        }
+    }
     fn provider_type(&self, id: &str) -> Option<&str> {
         self.values
             .get("providers")?
@@ -413,7 +449,15 @@ impl ConfigModule {
                 os_home.join(expanded)
             }
         };
-        let home = normalize_path(&home);
+        Self::from_home(normalize_path(&home))
+    }
+
+    #[cfg(test)]
+    pub(super) fn isolated(home: &Path) -> Result<Self> {
+        Self::from_home(home.to_owned())
+    }
+
+    fn from_home(home: PathBuf) -> Result<Self> {
         let directory = home.join("agent");
         let public = home
             .parent()

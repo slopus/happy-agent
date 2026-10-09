@@ -40,6 +40,13 @@ import { codexWriteStdinTool } from "../../happy-agent-modules/sources/compute/t
 import { codexKillSessionTool } from "../../happy-agent-modules/sources/compute/tools/codex/kill_session.ts";
 import { agentModelCatalog } from "../../happy-agent-modules/sources/config/impl/agentCatalog.ts";
 import {
+    durableFunctionCallSchema,
+    durableFunctionInvokeSchema,
+    durableFunctionInvokeResultSchema,
+    durableFunctionNameSchema,
+    durableFunctionOperationIdSchema,
+} from "../../happy-agent-modules/sources/durableFunctions/DurableFunctions.ts";
+import {
     projectIdSchema,
     projectRepositoryRefSchema,
     projectStatusSchema,
@@ -149,6 +156,12 @@ const family = Type.Union([
     Type.Literal("glm"),
 ]);
 const schemas = {
+    durableCall: durableFunctionCallSchema,
+    durableInvoke: durableFunctionInvokeSchema,
+    durableInvokeResult: durableFunctionInvokeResultSchema,
+    durableName: durableFunctionNameSchema,
+    durableOperationId: durableFunctionOperationIdSchema,
+    durableValue: Type.Unknown(),
     instructions: documentBodySchema,
     security: securityDocumentBodySchema,
     cursor: eventIdSchema,
@@ -332,6 +345,31 @@ writeFileSync(
 writeFileSync(
     new URL("../sources/product/tool_definitions.json", import.meta.url),
     `${JSON.stringify({ codex: [execCommand, writeStdin, killSession].map((tool) => ({ name: tool.name, description: tool.description, parameters: tool.parameters, defer: tool.defer })), common: [{ name: readHistory.name, description: readHistory.description, parameters: readHistory.parameters, defer: readHistory.defer }] }, null, 2)}\n`,
+);
+writeFileSync(
+    new URL("../../happy-agent-base/sources/agent_schemas.json", import.meta.url),
+    `${JSON.stringify(
+        Object.fromEntries(
+            [
+                "agentConfig",
+                "cuid2",
+                "permissionMode",
+                "queuedInput",
+                "owed",
+                "sessionMessage",
+                "pendingCall",
+                "privateRecord",
+            ].map((name) => [name, schemas[name]]),
+        ),
+        (_key, value) => {
+            if (value && typeof value === "object" && Array.isArray(value.items)) {
+                const { items, additionalItems, ...rest } = value;
+                return { ...rest, prefixItems: items, items: additionalItems ?? false };
+            }
+            return value;
+        },
+        2,
+    )}\n`,
 );
 const catalogs = {};
 for (const type of ["codex", "claude", "grok", "bedrock"]) {

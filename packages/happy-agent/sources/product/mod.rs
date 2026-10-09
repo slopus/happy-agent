@@ -1,6 +1,8 @@
 mod agents;
 mod api;
 mod config;
+#[cfg(test)]
+mod durable;
 mod events;
 mod filesystem;
 mod history;
@@ -46,6 +48,7 @@ pub async fn run() -> Result<()> {
         config.clone(),
     )?);
     let history = Arc::new(history::HistoryModule::new(
+        config.clone(),
         runtime.clone(),
         events.clone(),
         usage.clone(),

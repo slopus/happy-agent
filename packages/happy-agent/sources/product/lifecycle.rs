@@ -42,6 +42,22 @@ struct DrainState {
     waiting_for: Vec<Value>,
 }
 
+#[async_trait::async_trait]
+impl happy_agent_base::AgentModule for LifecycleModule {
+    fn name(&self) -> &'static str {
+        "lifecycle"
+    }
+    fn shutdown(&self) -> Option<CancellationToken> {
+        Some(self.shutdown.clone())
+    }
+    fn draining(&self) -> bool {
+        self.is_draining()
+    }
+    fn stage(&self, id: &str, stage: Option<&str>) {
+        self.set_agent_stage(id, stage);
+    }
+}
+
 impl LifecycleModule {
     pub fn new(config: Arc<ConfigModule>) -> Result<Self> {
         Ok(Self {

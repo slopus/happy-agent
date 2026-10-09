@@ -1002,6 +1002,7 @@ name = "happy-agent"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "base64 0.22.1",
  "bytes",
  "cuid2",
@@ -1035,8 +1036,10 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "cuid2",
  "happy-providers",
  "jsonschema",
+ "libc",
  "rusqlite",
  "serde",
  "serde_json",

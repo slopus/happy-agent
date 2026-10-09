@@ -1,4 +1,105 @@
 {
+    "durableCall": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": ["id", "function", "arguments", "lockKeys", "createdAt"],
+        "properties": {
+            "id": {
+                "minLength": 2,
+                "maxLength": 32,
+                "pattern": "^[a-z][a-z0-9]*$",
+                "type": "string"
+            },
+            "operationId": {
+                "minLength": 1,
+                "maxLength": 256,
+                "type": "string"
+            },
+            "function": {
+                "minLength": 1,
+                "maxLength": 256,
+                "type": "string"
+            },
+            "arguments": {},
+            "lockKeys": {
+                "maxItems": 64,
+                "type": "array",
+                "items": {
+                    "minLength": 1,
+                    "maxLength": 256,
+                    "type": "string"
+                }
+            },
+            "createdAt": {
+                "minimum": 0,
+                "maximum": 8640000000000000,
+                "type": "integer"
+            }
+        }
+    },
+    "durableInvoke": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": ["function", "arguments"],
+        "properties": {
+            "function": {
+                "minLength": 1,
+                "maxLength": 256,
+                "type": "string"
+            },
+            "arguments": {},
+            "operationId": {
+                "minLength": 1,
+                "maxLength": 256,
+                "type": "string"
+            },
+            "lockKeys": {
+                "maxItems": 64,
+                "type": "array",
+                "items": {
+                    "minLength": 1,
+                    "maxLength": 256,
+                    "type": "string"
+                }
+            }
+        }
+    },
+    "durableInvokeResult": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": ["callId", "status"],
+        "properties": {
+            "callId": {
+                "minLength": 2,
+                "maxLength": 32,
+                "pattern": "^[a-z][a-z0-9]*$",
+                "type": "string"
+            },
+            "status": {
+                "anyOf": [
+                    {
+                        "const": "created",
+                        "type": "string"
+                    },
+                    {
+                        "const": "duplicate",
+                        "type": "string"
+                    }
+                ]
+            }
+        }
+    },
+    "durableName": {
+        "minLength": 1,
+        "maxLength": 256,
+        "type": "string"
+    },
+    "durableOperationId": {
+        "minLength": 1,
+        "maxLength": 256,
+        "type": "string"
+    },
+    "durableValue": {},
     "instructions": {
         "additionalProperties": false,
         "type": "object",

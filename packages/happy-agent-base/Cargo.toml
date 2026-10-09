@@ -10,8 +10,10 @@ path = "sources/lib.rs"
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
+cuid2.workspace = true
 happy-providers = { path = "../happy-providers" }
 jsonschema.workspace = true
+libc.workspace = true
 rusqlite.workspace = true
 serde.workspace = true
 serde_json.workspace = true
