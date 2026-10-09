@@ -62,3 +62,15 @@ Health must answer while database restoration waits. The authenticated listener 
 starting health before restoration, and shutdown closes workers and storage even after failed
 initialization. Serialized TypeBox validators compile once into an immutable shared collection;
 compiling the same expanded schemas separately in every module delayed the starting listener.
+
+Common tools and vendor tools have separate fixed-array entry points and one shared composition
+path. The common history definition is identical for every model. History owns its archive reads,
+target validation, full-content search, bounded rendering, statistics, and original-position
+cursors. Reading an uncreated agent returns an empty archive and still includes it in the roster.
+Eleven original-source golden results cover those semantics through real native turns and restart.
+
+The explicit-request argument limit must not become a limit on every tool's parsed input. History
+now checks the durable indexed call's requested marker before enforcing it. Ordinary provider
+calls use their own tool schema, and History retains oversized structured arguments as the
+original raw JSON string. This avoids both rejecting more permissive tools and leaving an ordinary
+call permanently unable to flush its owning inference before execution.

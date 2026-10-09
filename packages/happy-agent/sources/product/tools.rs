@@ -1,4 +1,4 @@
-use super::{config::ConfigModule, schemas::Schemas};
+use super::{config::ConfigModule, history::HistoryModule, schemas::Schemas};
 use anyhow::{Context, Result};
 use happy_providers::{Block, Message, ToolDefinition};
 use serde_json::{Value, json};
@@ -11,41 +11,107 @@ use tokio_util::sync::CancellationToken;
 
 pub struct ToolsModule {
     config: Arc<ConfigModule>,
+    history: Arc<HistoryModule>,
     schemas: Schemas,
-    codex: Vec<ToolDefinition>,
+    vendor: Vec<NativeTool>,
+    common: Vec<NativeTool>,
+}
+struct NativeTool {
+    definition: ToolDefinition,
+    implementation: Implementation,
+}
+enum Implementation {
+    ExecCommand,
+    ReadHistory,
 }
 pub struct ToolOutcome {
     pub message: Message,
 }
 impl ToolsModule {
-    pub fn new(config: Arc<ConfigModule>) -> Result<Self> {
+    pub fn new(config: Arc<ConfigModule>, history: Arc<HistoryModule>) -> Result<Self> {
         let definitions: std::collections::BTreeMap<String, Vec<ToolDefinition>> =
             serde_json::from_str(include_str!("tool_definitions.json"))?;
         Ok(Self {
             config,
+            history,
             schemas: Schemas::new()?,
-            codex: definitions.get("codex").cloned().unwrap_or_default(),
+            vendor: vec![NativeTool {
+                definition: definitions
+                    .get("codex")
+                    .and_then(|tools| tools.first())
+                    .context("The native command definition is missing.")?
+                    .clone(),
+                implementation: Implementation::ExecCommand,
+            }],
+            common: vec![NativeTool {
+                definition: definitions
+                    .get("common")
+                    .and_then(|tools| tools.first())
+                    .context("The common history definition is missing.")?
+                    .clone(),
+                implementation: Implementation::ReadHistory,
+            }],
         })
     }
-    pub fn codex_tools(&self) -> Vec<ToolDefinition> {
-        self.codex.clone()
+    pub fn vendor_tools(&self) -> Vec<ToolDefinition> {
+        self.vendor
+            .iter()
+            .map(|tool| tool.definition.clone())
+            .collect()
     }
-    pub fn reloadable(&self, _call: &Value) -> bool {
-        false
+    pub fn common_tools(&self) -> Vec<ToolDefinition> {
+        self.common
+            .iter()
+            .map(|tool| tool.definition.clone())
+            .collect()
+    }
+    pub fn tools(&self) -> Vec<ToolDefinition> {
+        let mut tools = self.vendor_tools();
+        tools.extend(self.common_tools());
+        tools
+    }
+    fn definition(&self, call: &Value) -> Option<&NativeTool> {
+        self.vendor.iter().chain(&self.common).find(|tool| {
+            call["call"]["name"] == tool.definition.name
+                && call["call"]["namespace"].as_str() == tool.definition.namespace.as_deref()
+        })
+    }
+    pub fn reloadable(&self, call: &Value) -> bool {
+        self.definition(call)
+            .is_some_and(|tool| matches!(tool.implementation, Implementation::ReadHistory))
     }
     pub async fn execute(
         &self,
+        agent: &str,
         configuration: &Value,
         settings: &Value,
         call: &Value,
         cancel: CancellationToken,
     ) -> ToolOutcome {
-        let result = match self.validate_arguments(call) {
+        let result = match self
+            .history
+            .validate_requested_arguments(
+                agent,
+                call["id"].as_str().unwrap_or(""),
+                call["call"]["arguments"].as_str().unwrap_or(""),
+            )
+            .await
+        {
             Err(error) => Err(error),
-            Ok(()) => match call["call"]["name"].as_str() {
-                Some("exec_command") if call["call"].get("namespace").is_none() => {
+            Ok(()) => match self.definition(call).map(|tool| &tool.implementation) {
+                Some(Implementation::ExecCommand) => {
                     self.exec_command(configuration, settings, call, cancel)
                         .await
+                }
+                Some(Implementation::ReadHistory) => {
+                    match serde_json::from_str(call["call"]["arguments"].as_str().unwrap_or("")) {
+                        Ok(arguments) => self
+                            .history
+                            .read_tool(agent, arguments)
+                            .await
+                            .map(|result| (result.to_string(), false)),
+                        Err(error) => Err(error.into()),
+                    }
                 }
                 _ => Err(anyhow::anyhow!("The requested tool is unavailable.")),
             },
@@ -62,18 +128,6 @@ impl ToolsModule {
                 vendor: None,
             },
         }
-    }
-    fn validate_arguments(&self, call: &Value) -> Result<()> {
-        let raw = call["call"]["arguments"]
-            .as_str()
-            .context("The tool arguments are missing.")?;
-        let arguments: Value = serde_json::from_str(raw)?;
-        anyhow::ensure!(
-            arguments.to_string().len() <= 1_000_000
-                && self.schemas.valid("historyToolArguments", &arguments)?,
-            "Tool arguments exceed the supported size or complexity limits."
-        );
-        Ok(())
     }
     async fn exec_command(
         &self,

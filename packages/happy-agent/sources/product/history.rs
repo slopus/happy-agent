@@ -6,9 +6,11 @@ use super::{
     usage::UsageModule,
 };
 use anyhow::{Context as _, Result};
+use happy_providers::Block;
 use rusqlite::{OptionalExtension, params};
 use serde_json::{Value, json};
 use std::sync::Arc;
+mod read_tool;
 
 const MIGRATIONS: &[(&str, &str)] = &[
     (
@@ -143,6 +145,62 @@ impl HistoryModule {
         let mut resource = self.message_resource(&message, false);
         resource["status"] = json!("pending");
         resource
+    }
+    pub fn provider_block(&self, block: &Block, id: Option<&str>) -> Result<Option<Value>> {
+        Ok(match block {
+            Block::Text { text } => Some(json!({"type":"text","text":text})),
+            Block::Reasoning {
+                text: Some(text), ..
+            } => Some(json!({"type":"thinking","thinking":text})),
+            Block::Image { data, mime_type } => {
+                Some(json!({"type":"image","data":data,"mediaType":mime_type}))
+            }
+            Block::ToolCall {
+                name, arguments, ..
+            } => {
+                let Some(id) = id else {
+                    return Ok(None);
+                };
+                let parsed = serde_json::from_str::<Value>(arguments).ok();
+                let arguments = match parsed {
+                    Some(parsed)
+                        if parsed.to_string().len() <= 1_000_000
+                            && self.schemas.valid("historyToolArguments", &parsed)? =>
+                    {
+                        parsed
+                    }
+                    _ => json!(arguments),
+                };
+                Some(json!({"type":"tool_call","callId":id,"name":name,"arguments":arguments}))
+            }
+            _ => None,
+        })
+    }
+    pub async fn validate_requested_arguments(
+        self: &Arc<Self>,
+        agent: &str,
+        call: &str,
+        raw: &str,
+    ) -> Result<()> {
+        let history = self.clone();
+        let agent = agent.to_owned();
+        let call = call.to_owned();
+        let requested = self.runtime.transact(move |ctx| {
+            let encoded: Option<String> = ctx.database().query_row("SELECT message_json FROM happy_agent_module_history WHERE agent_id=?1 AND record_id=(SELECT record_id FROM happy_agent_module_history_tool_calls WHERE agent_id=?1 AND call_id=?2)",params![agent,call],|row|row.get(0)).optional()?;
+            let Some(encoded) = encoded else { return Ok(false); };
+            let message: Value = serde_json::from_str(&encoded)?;
+            anyhow::ensure!(history.schemas.valid("historyMessage", &message)?, "The tool's owning history message is invalid.");
+            Ok(message["blocks"].as_array().into_iter().flatten().any(|block|block["type"]=="tool_call" && block["callId"]==call && block["requested"]==true))
+        }).await?;
+        if requested {
+            let arguments: Value = serde_json::from_str(raw)?;
+            anyhow::ensure!(
+                arguments.to_string().len() <= 1_000_000
+                    && self.schemas.valid("historyToolArguments", &arguments)?,
+                "Tool arguments exceed the supported size or complexity limits."
+            );
+        }
+        Ok(())
     }
     pub fn complete_tool(
         &self,
@@ -326,17 +384,30 @@ fn bounded(text: &str, limit: usize) -> &str {
     &text[..end]
 }
 fn search(blocks: &[Value]) -> String {
-    blocks
-        .iter()
-        .filter_map(|block| {
-            block["text"]
-                .as_str()
-                .or_else(|| block["thinking"].as_str())
-                .or_else(|| block["output"].as_str())
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-        .to_lowercase()
+    let mut parts = Vec::new();
+    for block in blocks {
+        match block["type"].as_str() {
+            Some("text") => parts.push(block["text"].as_str().unwrap_or("").to_owned()),
+            Some("thinking") => parts.push(block["thinking"].as_str().unwrap_or("").to_owned()),
+            Some("image") => parts.push(block["mediaType"].as_str().unwrap_or("").to_owned()),
+            Some("tool_call" | "tool_call_request") => {
+                parts.push(block["name"].as_str().unwrap_or("").to_owned());
+                parts.push(block.get("arguments").unwrap_or(&Value::Null).to_string());
+            }
+            Some("tool_result") => {
+                for field in ["toolName", "display", "output"] {
+                    parts.push(block[field].as_str().unwrap_or("").to_owned());
+                }
+            }
+            _ => {
+                parts.push("compaction".into());
+                for field in ["trigger", "status", "failureReason"] {
+                    parts.push(block[field].as_str().unwrap_or("").to_owned());
+                }
+            }
+        }
+    }
+    parts.join("\n").replace('\0', "").to_lowercase()
 }
 fn stats(role: &str, blocks: &[Value]) -> (i64, i64, i64, i64, i64, i64) {
     (

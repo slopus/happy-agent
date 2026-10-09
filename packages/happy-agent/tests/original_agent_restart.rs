@@ -1235,3 +1235,274 @@ async fn explicit_arguments_larger_than_private_event_limit_still_enter_canonica
         .expect("exact public pending event");
     assert_eq!(pending["payload"]["message"]["content"][1], control);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn common_history_tool_reads_an_original_archive_and_an_uncreated_agent_in_read_only() {
+    let (endpoint, mut requests, provider) = scripted_provider(2).await;
+    let installation = Installation::new();
+    installation.seed(&endpoint);
+    let database =
+        Connection::open(installation.home.join("agent/agent.sqlite")).expect("original catalog");
+    database
+        .execute(
+            "DELETE FROM happy_agent_values WHERE owner_id=?1 OR (owner_id='' AND key=?2)",
+            params![AGENT, format!("agentSystem.config.{AGENT}")],
+        )
+        .expect("keep archive without active fixture agent");
+    database
+        .execute(
+            "DELETE FROM happy_agent_module_project_root_agents WHERE agent_id=?1",
+            [AGENT],
+        )
+        .expect("empty project roots");
+    drop(database);
+    installation.command("start");
+    let (client, token) = installation.client();
+    let agent = "agenthistoryreader";
+    let response = client
+        .post("http://happy/v0/agents")
+        .bearer_auth(&token)
+        .json(&json!({"workspaceId":WORKSPACE,"id":agent}))
+        .send()
+        .await
+        .expect("create reader");
+    assert_eq!(response.status(), 201);
+    let body = json!({"id":"messagehistoryreader","text":"Read the original archive, then the empty agent.","profile":null,"mode":{"providerId":"fixture","modelId":"openai/gpt-5.6-sol","effort":"medium","serviceTier":null,"permissionMode":"read_only"},"content":[{"type":"tool_call_request","name":"read_agent_history","arguments":{"target":AGENT,"from":"begin","limit":1,"query":"finish","roles":["user"],"include_tools":false}}]});
+    let response = client
+        .post(format!("http://happy/v0/agents/{agent}/send"))
+        .bearer_auth(&token)
+        .json(&body)
+        .send()
+        .await
+        .expect("read-only common tool");
+    assert_eq!(response.status(), 202);
+    let first = exchange(&mut requests).await;
+    let output = first.request["input"]
+        .as_array()
+        .expect("input")
+        .iter()
+        .find(|item| item["type"] == "function_call_output")
+        .expect("history tool result")["output"]
+        .as_str()
+        .expect("JSON tool output");
+    let result: Value = serde_json::from_str(output).expect("common history result");
+    assert_eq!(result["target"], AGENT);
+    assert_eq!(result["cursor"], 0);
+    assert_eq!(result["total_messages"], 1);
+    assert_eq!(result["matched_messages"], 1);
+    assert_eq!(result["returned_messages"], 1);
+    assert!(
+        result["history"]
+            .as_str()
+            .expect("readable archive")
+            .contains("1. USER\nText: Finish the original tool and continue.")
+    );
+    assert!(result.get("previous_cursor").is_none());
+    assert_eq!(result["stats"]["returned"]["user_messages"], 1);
+    assert_eq!(result["agents"].as_array().expect("roster").len(), 2);
+    assert!(
+        first.request["tools"]
+            .as_array()
+            .expect("fixed common array")
+            .iter()
+            .any(|tool| tool["name"] == "read_agent_history")
+    );
+    first.respond.send(vec![json!({"type":"response.output_item.added","item":{"type":"function_call","call_id":"native-empty-history","name":"read_agent_history"}}), json!({"type":"response.function_call_arguments.delta","delta":json!({"target":"agentnevercreated","from":"last","include_tools":false}).to_string()}), json!({"type":"response.function_call_arguments.done"}), json!({"type":"response.completed","response":{"id":"history-call-response","output":[],"usage":{"input_tokens":10,"output_tokens":2}}})]).expect("generated common history call");
+    let second = exchange(&mut requests).await;
+    let output = second.request["input"]
+        .as_array()
+        .expect("input")
+        .iter()
+        .find(|item| {
+            item["type"] == "function_call_output" && item["call_id"] == "native-empty-history"
+        })
+        .expect("native call identity")["output"]
+        .as_str()
+        .expect("JSON output");
+    let empty: Value = serde_json::from_str(output).expect("empty history result");
+    assert_eq!(empty["target"], "agentnevercreated");
+    assert_eq!(empty["total_messages"], 0);
+    assert_eq!(empty["returned_messages"], 0);
+    assert_eq!(empty["history"], "");
+    assert_eq!(empty["agents"][1]["status"], "unknown");
+    second
+        .respond
+        .send(text_response("Both archives inspected."))
+        .expect("normal continuation");
+    provider.await.expect("two native inferences");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ordinary_complex_provider_arguments_keep_raw_history_and_use_the_tool_schema() {
+    let (endpoint, mut requests, provider) = scripted_provider(2).await;
+    let installation = Installation::new();
+    installation.seed(&endpoint);
+    installation.command("start");
+    let first = exchange(&mut requests).await;
+    let mut nested = json!(true);
+    for _ in 0..9 {
+        nested = json!({"child":nested});
+    }
+    let arguments =
+        json!({"cmd":"printf unexpected > ordinary-side-effect","complex":nested}).to_string();
+    first.respond.send(vec![json!({"type":"response.output_item.added","item":{"type":"function_call","call_id":"native-complex-ordinary","name":"exec_command"}}),json!({"type":"response.function_call_arguments.delta","delta":arguments}),json!({"type":"response.function_call_arguments.done"}),json!({"type":"response.completed","response":{"id":"complex-response","output":[],"usage":{"input_tokens":10,"output_tokens":2}}})]).expect("ordinary provider call");
+    let second = exchange(&mut requests).await;
+    let output = second.request["input"]
+        .as_array()
+        .expect("input")
+        .iter()
+        .find(|item| {
+            item["type"] == "function_call_output" && item["call_id"] == "native-complex-ordinary"
+        })
+        .expect("ordinary result")["output"]
+        .as_str()
+        .expect("output");
+    assert_eq!(output, "The command arguments are invalid.");
+    let (client, token) = installation.client();
+    let page: Value = client
+        .get(format!("http://happy/v0/agents/{AGENT}/messages"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .expect("history")
+        .json()
+        .await
+        .expect("page");
+    let call = &page["runs"][0]["messages"][2]["content"][0];
+    assert_eq!(call["arguments"], arguments);
+    assert_eq!(call["status"], "failed");
+    assert!(
+        !installation
+            ._directory
+            .path()
+            .join("workspace/ordinary-side-effect")
+            .exists()
+    );
+    second
+        .respond
+        .send(text_response("Invalid ordinary arguments handled."))
+        .expect("continuation");
+    provider.await.expect("two native inferences");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn history_tool_matches_original_source_goldens_for_search_paging_statistics_and_budget() {
+    let goldens: Value = serde_json::from_str(include_str!("history_tool_goldens.json"))
+        .expect("original source goldens");
+    let cases = goldens["cases"].as_array().expect("cases");
+    let (endpoint, mut requests, provider) = scripted_provider(cases.len()).await;
+    let installation = Installation::new();
+    installation.seed(&endpoint);
+    let database =
+        Connection::open(installation.home.join("agent/agent.sqlite")).expect("original catalog");
+    database
+        .execute(
+            "DELETE FROM happy_agent_values WHERE owner_id=?1 OR (owner_id='' AND key=?2)",
+            params![AGENT, format!("agentSystem.config.{AGENT}")],
+        )
+        .expect("empty catalog");
+    database
+        .execute(
+            "DELETE FROM happy_agent_module_project_root_agents WHERE agent_id=?1",
+            [AGENT],
+        )
+        .expect("empty project roots");
+    for row in goldens["rows"].as_array().expect("original archive rows") {
+        let message = &row["message"];
+        let counters = &row["stats"];
+        database.execute("INSERT INTO happy_agent_module_history(agent_id,position,record_id,role,message_json,search_text,assistant_messages,user_messages,text_characters,thinking_blocks,tool_calls,tool_results) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",params![row["agentId"].as_str(),row["position"].as_i64(),message["recordId"].as_str(),message["role"].as_str(),message.to_string(),row["searchText"].as_str(),counters["assistantMessages"].as_i64(),counters["userMessages"].as_i64(),counters["textCharacters"].as_i64(),counters["thinkingBlocks"].as_i64(),counters["toolCalls"].as_i64(),counters["toolResults"].as_i64()]).expect("original source archive fixture");
+    }
+    drop(database);
+    installation.command("start");
+    let (client, token) = installation.client();
+    let agent = "agentgoldenreader";
+    let created = client
+        .post("http://happy/v0/agents")
+        .bearer_auth(&token)
+        .json(&json!({"workspaceId":WORKSPACE,"id":agent}))
+        .send()
+        .await
+        .expect("create reader");
+    assert_eq!(created.status(), 201);
+    for (index, case) in cases.iter().enumerate() {
+        let body = json!({"id":format!("messagehistorygolden{index:02}"),"text":"Read the selected durable archive.","profile":null,"mode":{"providerId":"fixture","modelId":"openai/gpt-5.6-sol","effort":"medium","serviceTier":null,"permissionMode":"read_only"},"content":[{"type":"tool_call_request","name":"read_agent_history","arguments":case["arguments"]}]});
+        let sent = client
+            .post(format!("http://happy/v0/agents/{agent}/send"))
+            .bearer_auth(&token)
+            .json(&body)
+            .send()
+            .await
+            .expect("request golden read");
+        assert_eq!(sent.status(), 202, "case {index}");
+        let inference = exchange(&mut requests).await;
+        let output = inference.request["input"]
+            .as_array()
+            .expect("input")
+            .iter()
+            .rev()
+            .find(|item| item["type"] == "function_call_output")
+            .expect("latest read result")["output"]
+            .as_str()
+            .expect("JSON result");
+        let mut result: Value = serde_json::from_str(output).expect("history result");
+        let roster = result
+            .as_object_mut()
+            .expect("result")
+            .remove("agents")
+            .expect("roster");
+        let caller = roster
+            .as_array()
+            .expect("agents")
+            .iter()
+            .find(|entry| entry["agent_id"] == agent)
+            .expect("calling agent");
+        assert_eq!(caller["message_count"], 2 + 3 * index);
+        assert_eq!(
+            result, case["expected"],
+            "original source golden case {index}"
+        );
+        inference
+            .respond
+            .send(text_response("Archive read completed."))
+            .expect("normal continuation");
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let focused: Value = client
+                    .get(format!("http://happy/v0/agents/{agent}"))
+                    .bearer_auth(&token)
+                    .send()
+                    .await
+                    .expect("focused agent")
+                    .json()
+                    .await
+                    .expect("resource");
+                if focused["agent"]["status"] == "idle" {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("settled golden turn");
+    }
+    installation.command("stop");
+    installation.command("start");
+    let (_, token) = installation.client();
+    let page: Value = client
+        .get(format!("http://happy/v0/agents/{agent}/messages"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .expect("restored history")
+        .json()
+        .await
+        .expect("page");
+    assert_eq!(page["runs"].as_array().expect("runs").len(), cases.len());
+    assert!(page["runs"].as_array().expect("runs").iter().all(|run| {
+        run["status"] == "completed"
+            && run["messages"]
+                .as_array()
+                .is_some_and(|messages| messages.len() == 3)
+    }));
+    provider.await.expect("all golden native turns");
+}

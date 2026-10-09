@@ -65,5 +65,102 @@
             },
             "defer": false
         }
+    ],
+    "common": [
+        {
+            "name": "read_agent_history",
+            "description": "Read or search the durable low-level history of any agent. The response lists the agents it concerns with their stable IDs, message counts, paths, and statuses; any stable Agent ID may be read, including one that has recorded nothing yet. Use this to investigate prior requests, decisions, reasoning, tool activity, and subagent work after a model change or whenever earlier context matters. This is not a user-facing chat export. Search examines stored block content, but each response is simplified and capped at 80,000 characters: provider-hidden reasoning is unavailable, only exposed thinking is readable, tool calls are summarized, tool outputs are truncated, and images are represented only by metadata. A requested message limit may therefore return fewer messages; continue with next_cursor or previous_cursor.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "cursor": {
+                        "description": "Zero-based original history position. Use a returned previous_cursor or next_cursor to navigate. Cannot be combined with from.",
+                        "minimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                    },
+                    "from": {
+                        "description": "Read the first matching page with start, begin, or beginning; read the last matching page with end or last. Results are always chronological. Cannot be combined with cursor.",
+                        "anyOf": [
+                            {
+                                "const": "start",
+                                "type": "string"
+                            },
+                            {
+                                "const": "begin",
+                                "type": "string"
+                            },
+                            {
+                                "const": "beginning",
+                                "type": "string"
+                            },
+                            {
+                                "const": "end",
+                                "type": "string"
+                            },
+                            {
+                                "const": "last",
+                                "type": "string"
+                            }
+                        ]
+                    },
+                    "include_tools": {
+                        "description": "Include simplified tool calls and truncated tool results. Defaults to true. This does not change what query searches.",
+                        "type": "boolean"
+                    },
+                    "limit": {
+                        "description": "Maximum matching messages to select before the 80,000-character response cap is applied. Defaults to 100 and cannot exceed 500. Large messages may return fewer; use the returned cursors to continue.",
+                        "maximum": 500,
+                        "minimum": 1,
+                        "type": "integer"
+                    },
+                    "query": {
+                        "description": "Case-insensitive text search across full stored conversation, thinking, tool names, arguments, and outputs.",
+                        "maxLength": 100000,
+                        "minLength": 1,
+                        "type": "string"
+                    },
+                    "roles": {
+                        "description": "Return only messages with one of these roles. \"user\" is a message the person actually sent; \"agent\" is a system-generated message such as a goal continuation or another agent's delivery.",
+                        "maxItems": 5,
+                        "minItems": 1,
+                        "uniqueItems": true,
+                        "type": "array",
+                        "items": {
+                            "anyOf": [
+                                {
+                                    "const": "user",
+                                    "type": "string"
+                                },
+                                {
+                                    "const": "agent",
+                                    "type": "string"
+                                },
+                                {
+                                    "const": "assistant",
+                                    "type": "string"
+                                },
+                                {
+                                    "const": "error",
+                                    "type": "string"
+                                },
+                                {
+                                    "const": "system",
+                                    "type": "string"
+                                }
+                            ]
+                        }
+                    },
+                    "target": {
+                        "description": "Stable Agent ID. Omitted means the calling agent; an agent that has recorded nothing simply has an empty history.",
+                        "minLength": 1,
+                        "maxLength": 1024,
+                        "pattern": "^[^\\u0000\\r\\n]+$",
+                        "type": "string"
+                    }
+                }
+            },
+            "defer": true
+        }
     ]
 }

@@ -613,6 +613,7 @@ impl AgentSystemModule {
             } else {
                 self.tools
                     .execute(
+                        id,
                         &snapshot.configuration,
                         &snapshot.settings,
                         call,
@@ -704,7 +705,7 @@ impl AgentSystemModule {
         snapshot.context.instructions = self.config.read_document(Document::Instructions).await?;
         let session = self
             .config
-            .session(id, &snapshot.settings, self.tools.codex_tools())
+            .session(id, &snapshot.settings, self.tools.tools())
             .await;
         let mut session = match session {
             Ok(session) => session,
@@ -769,7 +770,9 @@ impl AgentSystemModule {
                                 record["id"] = json!(id);
                             }
                             agents.append_record(ctx, &agent, &record)?;
-                            if let Some(block) = history_block(&block, base_id.as_deref()) {
+                            if let Some(block) =
+                                agents.history.provider_block(&block, base_id.as_deref())?
+                            {
                                 history.push(block);
                             }
                         }
@@ -887,23 +890,6 @@ fn attribution(message: &mut Value, settings: &Value) {
         if let Some(value) = settings.get(field) {
             message[field] = value.clone();
         }
-    }
-}
-fn history_block(block: &Block, id: Option<&str>) -> Option<Value> {
-    match block {
-        Block::Text { text } => Some(json!({"type":"text","text":text})),
-        Block::Reasoning {
-            text: Some(text), ..
-        } => Some(json!({"type":"thinking","thinking":text})),
-        Block::Image { data, mime_type } => {
-            Some(json!({"type":"image","data":data,"mediaType":mime_type}))
-        }
-        Block::ToolCall {
-            name, arguments, ..
-        } => Some(
-            json!({"type":"tool_call","callId":id?,"name":name,"arguments":serde_json::from_str::<Value>(arguments).unwrap_or(json!(arguments))}),
-        ),
-        _ => None,
     }
 }
 fn restore_context(
