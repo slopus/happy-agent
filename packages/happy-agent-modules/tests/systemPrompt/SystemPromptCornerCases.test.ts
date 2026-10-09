@@ -87,6 +87,20 @@ describe("SystemPromptModule corner cases", () => {
         });
     });
 
+    it("reads AGENTS.md from an agent's folder on a runner", async () => {
+        const compute = new FakeCompute("/srv/projects/demo");
+        compute.directories.add("/srv/projects/demo/.git");
+        compute.write("/srv/projects/demo/AGENTS.md", "Runner instructions.");
+        const runnerMachine = Object.assign(Object.create(compute) as FakeCompute, {
+            id: "runner",
+        });
+        const world = await systemPromptWorld({ compute: async () => runnerMachine });
+
+        await expect(world.module.readAgentsMd(ctx, "agent-a")).resolves.toMatchObject({
+            documents: [{ text: "Runner instructions." }],
+        });
+    });
+
     it("validates a malformed compute returned at runtime before using its filesystem", async () => {
         const world = await systemPromptWorld({
             compute: async () => ({ invalid: true }) as never,

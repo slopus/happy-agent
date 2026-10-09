@@ -36,22 +36,16 @@ have will look for it, cite it, or tell the user to use it. Every prompt here is
 vendor's text minus what Happy Agent lacks, and nothing more: Codex apps and plugins, code mode's
 `functions.exec` (Happy's code mode replaces the whole prompt and names its own tools), the
 asynchronous `request_user_input_async` tool (Happy's `request_user_input` waits for the answer),
-memory, interactive and inline visualizations, `# System prompt learnings
-
-## Windows guidance must describe the executing shell
-
-Agent configuration captured `SHELL`, which is commonly absent on Windows or inherited from Git
-Bash. Native Compute always runs Windows PowerShell 5.1, so Windows prompts name that actual
-default on every inference, including for existing agents. Guidance covers PowerShell quoting,
-environment variables, exit checks, file paths, and hidden background helpers. Claude exposes
-PowerShell on native Windows; Codex keeps exec_command. Bash belongs to Unix/WSL environments,
-and native Windows does not support Git Bash. Tool descriptions must agree with this executor.
-
-## Codex prompts come from Codex's model catalog
-
-skill mentions, orchestrator and
+memory, interactive and inline visualizations, `$skill` mentions, orchestrator and
 environment-owned skills with `skills.list`, `skills.read`, and aliased skill roots, Claude Code's
 hooks and `TaskCreate`, and Grok's `monitor` tool. Codex skill guidance names the `# Skills`
 section Happy's skills module actually writes. The vendor copies in `happy-providers` stay
 verbatim; only these prompts are edited. Check a new or updated vendor prompt against Happy's tool
 arrays and modules before adding it.
+
+## AGENTS.md is read on whichever machine the folder is on
+
+Discovery used to validate the agent's machine against the host compute's exact shape, so an
+agent on a runner or in a container failed every turn with "The compute module returned an
+invalid compute." It now checks only what it calls — a working directory and the filesystem
+reads — because the instructions live wherever the agent's folder actually is.

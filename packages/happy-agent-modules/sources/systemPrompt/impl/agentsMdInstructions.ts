@@ -13,7 +13,6 @@ import { type Context } from "@steve.kite/stdlib";
 
 import type { ConfigModule } from "../../config/index.js";
 import {
-    hostComputeSchema,
     type ComputeFileStat,
     type ComputeModule,
     type ComputePermissions,
@@ -38,6 +37,21 @@ import {
 } from "../AgentsMd.js";
 
 const exact = { additionalProperties: false } as const;
+const callableSchema = Type.Function([], Type.Any());
+/**
+ * What discovery calls on the agent's machine. Any machine qualifies — this one, a runner, or a
+ * container — because AGENTS.md is read wherever the agent's folder actually is.
+ */
+const agentsMdComputeSchema = Type.Object(
+    {
+        cwd: Type.String({ minLength: 1 }),
+        fs: Type.Object(
+            { exists: callableSchema, lstat: callableSchema, readFileBuffer: callableSchema },
+            { additionalProperties: true },
+        ),
+    },
+    { additionalProperties: true },
+);
 const computeFileStatSchema = Type.Object(
     {
         isFile: Type.Boolean(),
@@ -147,18 +161,7 @@ export class AgentsMdInstructions {
             }
             return structuredClone(snapshot);
         }
-        if (compute === null || typeof compute !== "object") {
-            throw new Error("The compute module returned an invalid compute.");
-        }
-        const computeCandidate = {
-            id: compute.id,
-            kind: compute.kind,
-            cwd: compute.cwd,
-            fs: compute.fs,
-            shell: compute.shell,
-            dispose: compute.dispose,
-        };
-        if (!Value.Check(hostComputeSchema, computeCandidate)) {
+        if (!Value.Check(agentsMdComputeSchema, compute)) {
             throw new Error("The compute module returned an invalid compute.");
         }
 
