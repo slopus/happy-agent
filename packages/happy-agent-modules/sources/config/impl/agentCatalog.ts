@@ -1,4 +1,7 @@
+import { stat } from "node:fs/promises";
+
 import { AgentProviders, type AgentModel } from "@slopus/happy-agent-base";
+import { ensurePrivateDirectory } from "@slopus/happy-agent-compute";
 import {
     AnthropicProvider,
     type AnthropicBedrockTransport,
@@ -435,7 +438,14 @@ export function agentProviders(
         providers.add(
             id,
             async ({ model: selected }) =>
-                await createProvider(id, provider, selected, retryLimit, onAccountUsage),
+                await createProvider(
+                    id,
+                    provider,
+                    selected,
+                    retryLimit,
+                    configuration.paths.claudeWorkingDirectory,
+                    onAccountUsage,
+                ),
             provider.type,
         );
     }
@@ -550,6 +560,7 @@ async function createProvider(
     provider: ConcreteConfiguredProvider,
     selectedModel: string | undefined,
     retryLimit: number | undefined,
+    claudeWorkingDirectory: string,
     onAccountUsage?: (usage: ProviderUsage) => void,
 ): Promise<BaseProvider> {
     // Credential isolation means this provider may use only what its own configuration names.
@@ -614,8 +625,10 @@ async function createProvider(
                 async (configDir) => await ClaudeCodeCredential.tryLoad({ configDir }),
                 async () => await ClaudeCodeCredential.tryLoad({}),
             ));
+        await ensureClaudeWorkingDirectory(claudeWorkingDirectory);
         return new AnthropicProvider({
             credential: required(credential, "Claude", id),
+            cwd: claudeWorkingDirectory,
             // Bun cannot use the SDK's runtime require.resolve from its compiled filesystem.
             // The standalone build adapts this resolver to materialize its embedded executable.
             pathToClaudeCodeExecutable: provider.executable ?? resolveClaudeCodeExecutablePath(),
@@ -783,6 +796,16 @@ export function configuredAnthropicBedrockTransport(
     return first !== undefined && transports.every((transport) => transport === first)
         ? first
         : undefined;
+}
+
+/**
+ * Creates Claude Code's private folder when it is missing. Every session resolves its provider
+ * again, and securing a folder on Windows starts PowerShell, so an existing folder is left alone.
+ */
+async function ensureClaudeWorkingDirectory(directory: string): Promise<void> {
+    const existing = await stat(directory).catch(() => undefined);
+    if (existing?.isDirectory() === true) return;
+    await ensurePrivateDirectory(directory);
 }
 
 function required<T>(credential: T | null, vendor: string, id: string): T {

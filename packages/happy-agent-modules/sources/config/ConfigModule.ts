@@ -1136,6 +1136,7 @@ const pathSchemaSet = Type.Object(
         agentLockPath: pathSchema,
         autoAgentLockPath: pathSchema,
         autoDatabasePath: pathSchema,
+        claudeWorkingDirectory: pathSchema,
         configHome: pathSchema,
         databasePath: pathSchema,
         docsHome: pathSchema,
@@ -3152,6 +3153,9 @@ function derivePaths(input: HappyAgentConfigurationInput): HappyAgentConfigurati
         // the reviewer's state shares nothing with the agent it reviews.
         autoAgentLockPath: join(agentHome, "auto-agent.lock"),
         autoDatabasePath: join(agentHome, "auto-agent.sqlite"),
+        // Claude Code reads the directory it starts in. Rig runs every tool itself, so Claude Code
+        // gets an empty private folder rather than wherever the daemon happened to start.
+        claudeWorkingDirectory: join(agentHome, "claude-cwd"),
         configHome,
         databasePath: join(agentHome, "agent.sqlite"),
         docsHome: join(happyHome, "docs"),

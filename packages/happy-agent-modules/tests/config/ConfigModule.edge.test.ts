@@ -156,6 +156,7 @@ describe("ConfigModule edge coverage", () => {
                 agentLockPath: join(root, ".happy", "agent", "agent.lock"),
                 autoAgentLockPath: join(root, ".happy", "agent", "auto-agent.lock"),
                 autoDatabasePath: join(root, ".happy", "agent", "auto-agent.sqlite"),
+                claudeWorkingDirectory: join(root, ".happy", "agent", "claude-cwd"),
                 configHome: join(
                     root,
                     process.platform === "darwin" ? "Happy/Config" : "happy/config",

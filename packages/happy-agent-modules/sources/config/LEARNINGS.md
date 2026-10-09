@@ -1,5 +1,15 @@
 # Config module learnings
 
+## Claude Code runs in a private empty folder
+
+Claude providers never named a working directory, so Claude Code ran wherever the daemon was
+started: `/` for Happy.app launched from Finder. It read across the disk on startup and made
+macOS ask whether Happy could access other apps' data, and the model was told it worked in `/`.
+Configuration now owns `claudeWorkingDirectory`, `agent/claude-cwd` under the Happy home, and
+hands it to every Claude provider. Rig runs every tool itself, so the folder stays empty and is
+not a Git repository. The folder is created private when missing; providers are rebuilt for each
+session and securing a folder on Windows starts PowerShell, so an existing folder is reused as is.
+
 ## Kimi K3 and GLM 5.3 are Bedrock Runtime routes
 
 AWS documents Kimi K3 and GLM 5.3 on the Runtime Chat Completions API. Their curated entries
