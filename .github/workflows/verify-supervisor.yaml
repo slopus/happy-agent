@@ -186,7 +186,7 @@ jobs:
             - name: Prove the file tools
               if: ${{ !inputs.services_only }}
               run: >-
-                  bash "$EXPECT" "file tools" exact 14 "$PROOF_LOGS" --
+                  bash "$EXPECT" "file tools" exact 15 "$PROOF_LOGS" --
                   cargo test --locked -p happy-agent --bin happy-agent product::tools::files::tests:: -- --test-threads=1
 
             - name: Prove the runner peer
