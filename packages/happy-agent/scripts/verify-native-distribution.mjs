@@ -1,15 +1,16 @@
 // Verifies one complete native distribution without publishing it: the five platform archives and
 // npm packages, and the npm launcher package that depends on exactly them. Each platform carries
 // the one executable, the same bytes in its archive and its npm package, built for its own
-// operating system and processor. The Linux executables are static, the Windows executable does
-// not depend on the Visual C++ runtime, and nothing names an interpreter or a shared library to
-// load. Prints each executable's digest.
+// operating system and processor. The Linux executables are static, and the Windows executable's
+// import tables name no Visual C++ or Universal C runtime DLL. Prints each executable's digest.
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
+
+import { C_RUNTIME, peImports } from "./pe-imports.mjs";
 
 const [directoryArgument, version] = process.argv.slice(2);
 assert.ok(directoryArgument && version, "Select the distribution directory and its exact version.");
@@ -114,15 +115,8 @@ try {
             assert.doesNotMatch(dynamic, /\(NEEDED\)/, `${target} needs a shared library.`);
         }
         if (os === "win32") {
-            const bytes = readFileSync(binary).toString("latin1").toLowerCase();
-            for (const runtime of [
-                "vcruntime140.dll",
-                "msvcp140.dll",
-                "ucrtbase.dll",
-                "api-ms-win-crt-",
-            ]) {
-                assert.ok(!bytes.includes(runtime), `${target} imports the C runtime ${runtime}.`);
-            }
+            const runtime = peImports(readFileSync(binary)).filter((dll) => C_RUNTIME.test(dll));
+            assert.deepEqual(runtime, [], `${target} loads the C runtime instead of carrying it.`);
         }
         rows.push({ target, sha256, format });
     }

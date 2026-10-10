@@ -8,7 +8,11 @@ executable with a local HTTP fixture, then, on macOS and Linux, starts, inspects
 the daemon in a private short-lived installation. `verify-native-distribution.mjs` checks a
 whole five-target distribution together: each platform's archive and npm package carry the same
 executable for the right operating system and processor, the launcher depends on exactly those
-packages, the Linux executables are static, and the Windows executable carries its C runtime.
+packages, the Linux executables are static, and the Windows executable carries its C runtime,
+as `pe-imports.mjs` reads from its PE import and delay-load import tables. That reader refuses a
+table that is truncated, lacks its terminating entry inside its directory, points into memory
+the file does not back, or uses the old virtual-address delay-load format;
+`pe-imports.test.mjs` (`node --test`) covers those images.
 The `distribution_only` input of `verify-supervisor.yaml` produces and verifies such a
 distribution without signing or publishing it. The Bun compiler described below has been
 removed; these historical notes apply to the previous published runtime.

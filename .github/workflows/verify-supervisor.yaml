@@ -364,7 +364,7 @@ jobs:
                       case "$TARGET" in
                           linux-*) file "$binary"; readelf -lW "$binary"; readelf -dW "$binary" ;;
                           darwin-*) file "$binary"; otool -L "$binary" ;;
-                          win32-*) file "$binary" ;;
+                          win32-*) file "$binary"; node packages/happy-agent/scripts/pe-imports.mjs "$binary" || true ;;
                       esac
                       echo '```'
                   } | tee -a "$GITHUB_STEP_SUMMARY"
@@ -387,10 +387,8 @@ jobs:
                           fi
                           ;;
                       win32-*)
-                          if grep -aqiE 'vcruntime140\.dll|msvcp140\.dll|ucrtbase\.dll|api-ms-win-crt-' "$binary"; then
-                              echo "The Windows executable imports the C runtime instead of carrying it." >&2
-                              exit 1
-                          fi
+                          # The import tables, not strings in the file, say what it loads.
+                          node packages/happy-agent/scripts/pe-imports.mjs "$binary" >/dev/null
                           ;;
                   esac
 
@@ -452,6 +450,9 @@ jobs:
               run: |
                   node packages/happy-agent/scripts/package-native.mjs root --version "$DISTRIBUTION_VERSION" --output "$RUNNER_TEMP/npm-root"
                   cp "$RUNNER_TEMP/npm-root/slopus-happy-agent-$DISTRIBUTION_VERSION.tgz" distribution/
+
+            - name: Test the Windows import reader
+              run: node --test packages/happy-agent/scripts/pe-imports.test.mjs
 
             - name: Verify the five targets together
               run: node packages/happy-agent/scripts/verify-native-distribution.mjs distribution "$DISTRIBUTION_VERSION" | tee -a "$GITHUB_STEP_SUMMARY"
