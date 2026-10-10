@@ -13,6 +13,13 @@ Configuration now reads only its own global security policy and public configura
 project policy, with the Source headings and exact byte bounds. SystemPrompt owns the agent's
 live instruction hierarchy through compute, including remote files.
 
+Runner shells previously defaulted to `/bin/bash` on Windows even after a successful native
+handshake. Compute execution now follows its own Source resolver, retaining explicit request
+and agent overrides: Windows PowerShell under `SystemRoot`, ignoring `COMSPEC` and `SHELL`,
+and Unix `SHELL` or `/bin/sh`. The terminal keeps its separate shell defaults. Creation-time
+Windows environment capture uses that compute shell, so an ambient terminal or Unix shell
+cannot become a Windows agent's implicit compute shell.
+
 Idle Codex and Grok logins renew without inference, including enabled hidden accounts. The same
 credential selection as inference excludes static keys, disabled accounts, Claude and smart
 aliases. ProviderScan owns one durable maintenance lifetime; a completed pass schedules the

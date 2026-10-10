@@ -16,6 +16,7 @@ const root = await mkdtemp(join(tmpdir(), "happy-windows-runner-"));
 const workspace = join(root, "workspace");
 await mkdir(workspace);
 const token = "0123456789012345678901234567890123456789012";
+const commandShell = process.env.COMSPEC ?? "C:\\Windows\\System32\\cmd.exe";
 const wss = new WebSocketServer({ host: "127.0.0.1", port: 0, path: "/prefix/v0/runners/connect" });
 await once(wss, "listening");
 let runner,
@@ -147,7 +148,8 @@ try {
                 USERPROFILE: root,
                 HAPPY_RUNNER_TOKEN: token,
                 HAPPY_RUNNER_ENDPOINT: "https://invalid.example",
-                COMSPEC: process.env.COMSPEC ?? "C:\\Windows\\System32\\cmd.exe",
+                COMSPEC: commandShell,
+                SHELL: "C:\\source-fixture-shell-must-not-run.exe",
             },
             stdio: ["ignore", "pipe", "pipe"],
             windowsHide: true,
@@ -171,9 +173,24 @@ try {
         const answer = await rpc("compute.create", { computeId, cwd: workspace });
         assert.equal(answer.result.kind, "host");
     }
+    // Source uses Windows PowerShell by default, independently of COMSPEC/SHELL.
+    const defaultShell = await rpc("shell.run", {
+        computeId: "machine",
+        options: {
+            command: '[Console]::WriteLine("SOURCE_DEFAULT_POWERSHELL")',
+            permissions,
+        },
+    });
+    assert.equal(defaultShell.result.result.exitCode, 0);
+    assert.equal(defaultShell.result.result.stdout.trim(), "SOURCE_DEFAULT_POWERSHELL");
+    assert.equal(defaultShell.result.result.stderr, "");
     const shell = await rpc("shell.run", {
         computeId: "machine",
-        options: { command: 'echo "native ping"&echo NATIVE_DONE', permissions },
+        options: {
+            command: 'echo "native ping"&echo NATIVE_DONE',
+            shell: commandShell,
+            permissions,
+        },
     });
     assert.equal(shell.result.result.exitCode, 0);
     assert.match(shell.result.result.stdout, /"native ping"\r?\nNATIVE_DONE/);

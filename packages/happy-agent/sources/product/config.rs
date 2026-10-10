@@ -1723,8 +1723,8 @@ impl ConfigModule {
             .as_str()
             .or_else(|| configuration["environment"]["shell"].as_str())
             .filter(|shell| !shell.is_empty())
-            .unwrap_or("/bin/bash")
-            .to_owned();
+            .map(str::to_owned)
+            .unwrap_or_else(environment::compute_shell);
         Ok(ExecutionEnvironment { root, cwd, shell })
     }
     fn session_configuration(
@@ -2861,6 +2861,99 @@ async fn read_optional_document(path: &Path, limit: usize) -> Result<String> {
 mod tests {
     use super::*;
     use serde_json::json;
+    #[test]
+    fn execution_environment_uses_platform_shell_and_preserves_explicit_overrides() {
+        const CHILD: &str = "HAPPY_AGENT_TEST_SHELL_RESOLUTION_CHILD";
+        const UNIX_SHELL: &str = "/source-fixture-shell";
+        const WINDOWS_TERMINAL: &str = "C:\\Source fixture\\cmd.exe";
+        const WINDOWS_ROOT: &str = "C:\\Source fixture Windows";
+        const WINDOWS_COMPUTE: &str =
+            "C:\\Source fixture Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
+        if std::env::var_os(CHILD).is_none() {
+            // Give this case its own environment without changing other concurrent tests.
+            for case in ["configured", "absent"] {
+                let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+                command
+                    .args(["--exact", "product::config::tests::execution_environment_uses_platform_shell_and_preserves_explicit_overrides", "--nocapture"])
+                    .env(CHILD, case)
+                    .env("SHELL", UNIX_SHELL)
+                    .env("COMSPEC", WINDOWS_TERMINAL)
+                    .env("SystemRoot", WINDOWS_ROOT);
+                if case == "absent" {
+                    command.env_remove("SHELL");
+                }
+                let output = command.output().unwrap();
+                assert!(
+                    output.status.success(),
+                    "{case}: {}\n{}",
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+            return;
+        }
+        let directory = tempfile::tempdir().unwrap();
+        let config = ConfigModule::isolated(&directory.path().join(".happy")).unwrap();
+        let configured = std::env::var(CHILD).unwrap() == "configured";
+        let expected = if cfg!(windows) {
+            WINDOWS_COMPUTE
+        } else if configured {
+            UNIX_SHELL
+        } else {
+            "/bin/sh"
+        };
+        let mut configuration = json!({"modules":{"compute":{"cwd":directory.path()}}});
+        assert_eq!(
+            config
+                .execution_environment(&configuration, &json!({}))
+                .unwrap()
+                .shell,
+            expected
+        );
+        assert_eq!(
+            config.product_shell(),
+            if cfg!(windows) {
+                WINDOWS_TERMINAL
+            } else if configured {
+                UNIX_SHELL
+            } else {
+                "/bin/bash"
+            }
+        );
+        assert_eq!(
+            environment::current().unwrap()["shell"],
+            if cfg!(windows) {
+                WINDOWS_COMPUTE
+            } else if configured {
+                UNIX_SHELL
+            } else {
+                ""
+            }
+        );
+        configuration["environment"] = json!({"shell":"explicit-agent-shell"});
+        assert_eq!(
+            config
+                .execution_environment(&configuration, &json!({}))
+                .unwrap()
+                .shell,
+            "explicit-agent-shell"
+        );
+        assert_eq!(
+            config
+                .execution_environment(&configuration, &json!({"shell":"explicit-request-shell"}))
+                .unwrap()
+                .shell,
+            "explicit-request-shell"
+        );
+        configuration["environment"]["shell"] = json!("");
+        assert_eq!(
+            config
+                .execution_environment(&configuration, &json!({}))
+                .unwrap()
+                .shell,
+            expected
+        );
+    }
     #[test]
     fn unknown_configuration_fields_are_ignored_before_provider_construction() {
         let directory = tempfile::tempdir().unwrap();
