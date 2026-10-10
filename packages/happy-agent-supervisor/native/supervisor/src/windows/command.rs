@@ -7,6 +7,8 @@ use std::{ffi::OsStr, io, path::Path};
 pub struct Command {
     pub(super) inner: std::process::Command,
     pub(super) inherits_environment: bool,
+    pub(super) raw_arguments: std::collections::BTreeSet<usize>,
+    argument_count: usize,
     terminal: Option<Control>,
 }
 impl Command {
@@ -14,15 +16,27 @@ impl Command {
         Self {
             inner: std::process::Command::new(program),
             inherits_environment: true,
+            raw_arguments: std::collections::BTreeSet::new(),
+            argument_count: 0,
             terminal: None,
         }
     }
     pub fn arg(&mut self, argument: impl AsRef<OsStr>) -> &mut Self {
         self.inner.arg(argument);
+        self.argument_count += 1;
         self
     }
     pub fn args(&mut self, arguments: impl IntoIterator<Item = impl AsRef<OsStr>>) -> &mut Self {
-        self.inner.args(arguments);
+        for argument in arguments {
+            self.arg(argument);
+        }
+        self
+    }
+    /// Append intentional shell syntax without applying CRT argument escaping.
+    /// This matches Windows CommandExt::raw_arg, particularly cmd.exe /s /c.
+    pub fn raw_arg(&mut self, argument: impl AsRef<OsStr>) -> &mut Self {
+        self.raw_arguments.insert(self.argument_count);
+        self.arg(argument);
         self
     }
     pub fn current_dir(&mut self, path: impl AsRef<Path>) -> &mut Self {
@@ -46,7 +60,7 @@ impl Command {
         &mut self,
         cols: u16,
         rows: u16,
-    ) -> io::Result<(tokio::fs::File, tokio::fs::File, Control)> {
+    ) -> io::Result<(super::Stream, super::Stream, Control)> {
         if self.terminal.is_some() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,

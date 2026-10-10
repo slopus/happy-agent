@@ -1,10 +1,11 @@
-use super::handles::{pipe, raw};
+use super::{
+    handles::raw,
+    pipes::{self, Stream},
+};
 use std::{
-    fs::File,
     io,
     sync::{Arc, Mutex},
 };
-use tokio::fs::File as AsyncFile;
 use windows_sys::Win32::System::Console::{
     COORD, ClosePseudoConsole, CreatePseudoConsole, ResizePseudoConsole,
 };
@@ -81,20 +82,16 @@ impl Control {
     }
 }
 
-pub fn create_terminal(cols: u16, rows: u16) -> io::Result<(AsyncFile, AsyncFile, Control)> {
+pub fn create_terminal(cols: u16, rows: u16) -> io::Result<(Stream, Stream, Control)> {
     let size = size(cols, rows)?;
-    let (input_read, input_write) = pipe()?;
-    let (output_read, output_write) = pipe()?;
+    let (input_write, input_read) = pipes::create(true)?;
+    let (output_read, output_write) = pipes::create(false)?;
     let mut console = 0;
     hresult(unsafe {
         CreatePseudoConsole(size, raw(&input_read), raw(&output_write), 0, &mut console)
     })?;
     let control = Control(Arc::new(Console(Mutex::new(Some(console)))));
-    Ok((
-        AsyncFile::from_std(File::from(output_read)),
-        AsyncFile::from_std(File::from(input_write)),
-        control,
-    ))
+    Ok((output_read, input_write, control))
 }
 
 fn size(cols: u16, rows: u16) -> io::Result<COORD> {

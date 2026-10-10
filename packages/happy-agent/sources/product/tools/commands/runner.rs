@@ -268,10 +268,19 @@ impl CommandSessions {
             "shell.interruptSession" => {
                 let interrupted = match self.session(owner, id) {
                     Ok(session) => {
-                        if !session.finished() {
-                            session.group.signal(libc::SIGINT)?;
+                        #[cfg(unix)]
+                        {
+                            if !session.finished() {
+                                session.group.signal(libc::SIGINT)?;
+                            }
+                            json!(!session.finished())
                         }
-                        json!(!session.finished())
+                        #[cfg(windows)]
+                        {
+                            let _ = session;
+                            // Source has no shell interrupt operation on Windows.
+                            json!(false)
+                        }
                     }
                     Err(_) => Value::Null,
                 };

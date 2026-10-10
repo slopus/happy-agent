@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, ffi::OsStr, io, os::windows::ffi::OsStrExt, process::Command};
+use std::{collections::BTreeMap, ffi::OsStr, io, os::windows::ffi::OsStrExt};
 
 pub(super) fn wide(value: &OsStr) -> io::Result<Vec<u16>> {
     let mut result: Vec<_> = value.encode_wide().collect();
@@ -12,14 +12,21 @@ pub(super) fn wide(value: &OsStr) -> io::Result<Vec<u16>> {
     Ok(result)
 }
 
-pub(super) fn command_line(command: &Command) -> io::Result<Vec<u16>> {
+pub(super) fn command_line(command: &super::Command) -> io::Result<Vec<u16>> {
     let mut result = Vec::new();
-    for value in std::iter::once(command.get_program()).chain(command.get_args()) {
+    for (index, value) in std::iter::once(command.inner.get_program())
+        .chain(command.inner.get_args())
+        .enumerate()
+    {
         if !result.is_empty() {
             result.push(b' ' as u16);
         }
         let value = wide(value)?;
         let value = &value[..value.len() - 1];
+        if index > 0 && command.raw_arguments.contains(&(index - 1)) {
+            result.extend_from_slice(value);
+            continue;
+        }
         if !value.is_empty()
             && !value
                 .iter()

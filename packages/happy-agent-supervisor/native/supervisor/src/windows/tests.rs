@@ -15,7 +15,7 @@ fn fixture(operation: &str) -> Command {
     command
 }
 
-async fn line_containing(reader: &mut BufReader<tokio::fs::File>, marker: &str) -> String {
+async fn line_containing(reader: &mut BufReader<super::Stream>, marker: &str) -> String {
     tokio::time::timeout(Duration::from_secs(20), async {
         let mut line = String::new();
         loop {
@@ -159,8 +159,9 @@ async fn conpty_roundtrips_input_merges_output_and_reports_resized_dimensions() 
             .unwrap_or_else(|error| panic!("terminal EOF: {error}"))
     });
     assert_eq!(finish(&mut child).await.code(), Some(7));
-    drain
+    tokio::time::timeout(Duration::from_secs(20), drain)
         .await
+        .unwrap_or_else(|error| panic!("terminal EOF deadline: {error}"))
         .unwrap_or_else(|error| panic!("terminal drained: {error}"));
     assert!(
         control.resize(80, 24).is_err(),
@@ -222,6 +223,169 @@ async fn cleared_environments_do_not_reintroduce_ambient_variables() {
     let mut output = BufReader::new(child.stdout.take().unwrap_or_else(|| panic!("stdout")));
     line_containing(&mut output, "ENVIRONMENT_OK").await;
     assert_eq!(finish(&mut child).await.code(), Some(0));
+}
+
+#[tokio::test]
+async fn arguments_preserve_quotes_backslashes_empty_values_and_unicode() {
+    let expected = [
+        "",
+        "plain",
+        "with spaces",
+        "a\"b",
+        "C:\\with spaces\\",
+        "native 🎉",
+    ];
+    let mut command = fixture("arguments");
+    command.arg("--").args(expected);
+    let mut child = command
+        .spawn()
+        .unwrap_or_else(|error| panic!("spawn arguments: {error}"));
+    let mut output = BufReader::new(child.stdout.take().unwrap_or_else(|| panic!("stdout")));
+    let line = line_containing(&mut output, "ARGUMENTS:").await;
+    let encoded = line
+        .split_once("ARGUMENTS:")
+        .unwrap_or_else(|| panic!("argument marker"))
+        .1
+        .trim();
+    let actual: Vec<String> =
+        serde_json::from_str(encoded).unwrap_or_else(|error| panic!("argument JSON: {error}"));
+    assert_eq!(actual, expected);
+    assert_eq!(finish(&mut child).await.code(), Some(0));
+}
+
+#[tokio::test]
+async fn cmd_shell_syntax_keeps_inner_quotes_without_crt_escaping() {
+    let mut command = Command::new(std::env::var_os("COMSPEC").unwrap_or_else(|| "cmd.exe".into()));
+    command
+        .args(["/d", "/s", "/c"])
+        .raw_arg("\"echo \"native ping\"&echo NATIVE_DONE\"");
+    let mut child = command
+        .spawn()
+        .unwrap_or_else(|error| panic!("spawn cmd: {error}"));
+    let mut output = BufReader::new(child.stdout.take().unwrap_or_else(|| panic!("stdout")));
+    let line = line_containing(&mut output, "native ping").await;
+    assert_eq!(line.trim(), "\"native ping\"");
+    line_containing(&mut output, "NATIVE_DONE").await;
+    assert_eq!(finish(&mut child).await.code(), Some(0));
+}
+
+#[tokio::test]
+async fn an_exited_leader_retains_the_job_of_its_surviving_descendant() {
+    let mut child = fixture("orphan")
+        .spawn()
+        .unwrap_or_else(|error| panic!("spawn orphan: {error}"));
+    let job = child.job();
+    let mut output = BufReader::new(child.stdout.take().unwrap_or_else(|| panic!("stdout")));
+    line_containing(&mut output, "ORPHAN_READY").await;
+    assert_eq!(finish(&mut child).await.code(), Some(0));
+    drop(child);
+    assert!(
+        job.active_processes()
+            .unwrap_or_else(|error| panic!("retained job: {error}"))
+            >= 1
+    );
+    job.terminate()
+        .unwrap_or_else(|error| panic!("terminate retained job: {error}"));
+    tokio::time::timeout(Duration::from_secs(5), output.read_to_end(&mut Vec::new()))
+        .await
+        .unwrap_or_else(|error| panic!("orphan output closed: {error}"))
+        .unwrap_or_else(|error| panic!("orphan EOF: {error}"));
+    assert_eq!(
+        job.active_processes()
+            .unwrap_or_else(|error| panic!("empty retained job: {error}")),
+        0
+    );
+}
+
+#[tokio::test]
+async fn abrupt_owner_exit_closes_private_jobs_and_kills_the_tree() {
+    let mut child = fixture("owner")
+        .spawn()
+        .unwrap_or_else(|error| panic!("spawn job owner: {error}"));
+    let job = child.job();
+    let mut output = BufReader::new(child.stdout.take().unwrap_or_else(|| panic!("stdout")));
+    line_containing(&mut output, "OWNER_READY").await;
+    child
+        .stdin
+        .as_mut()
+        .unwrap_or_else(|| panic!("stdin"))
+        .write_all(b"exit\n")
+        .await
+        .unwrap_or_else(|error| panic!("exit owner: {error}"));
+    assert_eq!(finish(&mut child).await.code(), Some(19));
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while job
+            .active_processes()
+            .unwrap_or_else(|error| panic!("query owner tree: {error}"))
+            != 0
+        {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|error| panic!("owner death ended nested job: {error}"));
+}
+
+#[test]
+fn restricted_modes_fail_closed_with_the_boundary_reason() {
+    for mode in ["workspace_write", "auto"] {
+        let error = super::require_full_access(mode)
+            .err()
+            .unwrap_or_else(|| panic!("{mode} launched without a boundary"));
+        assert!(error.to_string().contains("atomic filename boundary"));
+    }
+    assert!(
+        super::require_full_access("read_only")
+            .err()
+            .unwrap_or_else(|| panic!("Read only launched without a boundary"))
+            .to_string()
+            .contains("dedicated-account")
+    );
+    assert!(super::require_full_access("full_access").is_ok());
+    assert!(super::require_full_access("unexpected").is_err());
+}
+
+#[test]
+fn process_io_progresses_while_the_only_blocking_worker_is_occupied() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .max_blocking_threads(1)
+        .build()
+        .unwrap_or_else(|error| panic!("bounded runtime: {error}"));
+    runtime.block_on(async {
+        let (started, ready) = tokio::sync::oneshot::channel();
+        let (release, waiting) = std::sync::mpsc::channel::<()>();
+        let worker = tokio::task::spawn_blocking(move || {
+            let _ = started.send(());
+            let _ = waiting.recv();
+        });
+        ready
+            .await
+            .unwrap_or_else(|error| panic!("blocking worker ready: {error}"));
+        let check = tokio::time::timeout(Duration::from_secs(20), async {
+            let mut child = fixture("echo")
+                .spawn()
+                .unwrap_or_else(|error| panic!("spawn IOCP echo: {error}"));
+            let mut output =
+                BufReader::new(child.stdout.take().unwrap_or_else(|| panic!("stdout")));
+            line_containing(&mut output, "ECHO_READY").await;
+            child
+                .stdin
+                .as_mut()
+                .unwrap_or_else(|| panic!("stdin"))
+                .write_all(b"no blocking worker\n")
+                .await
+                .unwrap_or_else(|error| panic!("IOCP input: {error}"));
+            line_containing(&mut output, "ECHO_RESULT:no blocking worker").await;
+            assert_eq!(finish(&mut child).await.code(), Some(37));
+        })
+        .await;
+        drop(release);
+        worker
+            .await
+            .unwrap_or_else(|error| panic!("blocking worker ended: {error}"));
+        check.unwrap_or_else(|error| panic!("process IO required no blocking worker: {error}"));
+    });
 }
 
 /// A real child entry point inside this test executable, never a helper binary.
@@ -321,6 +485,61 @@ fn child_fixture() {
             );
             println!("ENVIRONMENT_OK");
             std::process::exit(0);
+        }
+        "arguments" => {
+            let arguments: Vec<_> = std::env::args()
+                .skip_while(|arg| arg != "--")
+                .skip(1)
+                .collect();
+            println!(
+                "ARGUMENTS:{}",
+                serde_json::to_string(&arguments)
+                    .unwrap_or_else(|error| panic!("encode arguments: {error}"))
+            );
+            std::process::exit(0);
+        }
+        "orphan" => {
+            let descendant = std::process::Command::new(
+                std::env::current_exe()
+                    .unwrap_or_else(|error| panic!("fixture executable: {error}")),
+            )
+            .args(["--exact", "windows::tests::child_fixture", "--nocapture"])
+            .env("HAPPY_WINDOWS_TEST_OPERATION", "persistent_descendant")
+            .spawn()
+            .unwrap_or_else(|error| panic!("spawn orphan descendant: {error}"));
+            println!("ORPHAN_READY:{}", descendant.id());
+            // This fixture deliberately exits without running destructors. The
+            // retained Job must continue to own the live descendant.
+            std::process::exit(0);
+        }
+        "persistent_descendant" => loop {
+            std::thread::park();
+        },
+        "owner" => {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap_or_else(|error| panic!("owner runtime: {error}"));
+            let _owned = runtime.block_on(async {
+                let mut nested = fixture("tree")
+                    .spawn()
+                    .unwrap_or_else(|error| panic!("spawn nested job: {error}"));
+                let mut output = BufReader::new(
+                    nested
+                        .stdout
+                        .take()
+                        .unwrap_or_else(|| panic!("nested stdout")),
+                );
+                line_containing(&mut output, "TREE_READY").await;
+                nested
+            });
+            println!("OWNER_READY");
+            let mut input = String::new();
+            std::io::stdin()
+                .read_line(&mut input)
+                .unwrap_or_else(|error| panic!("owner input: {error}"));
+            // OS handle closure, rather than Child/Job Drop, owns this cleanup.
+            std::process::exit(19);
         }
         _ => panic!("unexpected fixture operation"),
     }

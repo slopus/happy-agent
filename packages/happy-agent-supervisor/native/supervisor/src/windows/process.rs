@@ -1,17 +1,16 @@
 use super::{
     Command, Control, Job, arguments,
     attributes::Attributes,
-    handles::{own, pipe, raw},
+    handles::{own, raw},
+    pipes::{self, Stream},
 };
 use std::{
-    fs::File,
     io,
     os::windows::{io::OwnedHandle, process::ExitStatusExt},
     process::ExitStatus,
     sync::Arc,
     time::Duration,
 };
-use tokio::fs::File as AsyncFile;
 use windows_sys::Win32::Foundation::{
     HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE, SetHandleInformation, WAIT_FAILED, WAIT_OBJECT_0,
     WAIT_TIMEOUT,
@@ -29,9 +28,9 @@ pub struct Child {
     job: Arc<Job>,
     terminal: Option<Control>,
     status: Option<ExitStatus>,
-    pub stdin: Option<AsyncFile>,
-    pub stdout: Option<AsyncFile>,
-    pub stderr: Option<AsyncFile>,
+    pub stdin: Option<Stream>,
+    pub stdout: Option<Stream>,
+    pub stderr: Option<Stream>,
 }
 
 impl Child {
@@ -84,7 +83,7 @@ impl Drop for Child {
 /// are the only inherited handles, and the Job is attached at process creation.
 pub(super) fn spawn(command: &Command, terminal: Option<&Control>) -> io::Result<Child> {
     let job = Arc::new(Job::create()?);
-    let mut line = arguments::command_line(&command.inner)?;
+    let mut line = arguments::command_line(command)?;
     let environment = arguments::environment(command)?;
     let cwd = command
         .inner
@@ -98,9 +97,9 @@ pub(super) fn spawn(command: &Command, terminal: Option<&Control>) -> io::Result
     let mut flags = EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT;
     let mut stdio = None;
     if terminal.is_none() {
-        let (input_read, input_write) = pipe()?;
-        let (output_read, output_write) = pipe()?;
-        let (error_read, error_write) = pipe()?;
+        let (input_write, input_read) = pipes::create(true)?;
+        let (output_read, output_write) = pipes::create(false)?;
+        let (error_read, error_write) = pipes::create(false)?;
         let handles = [raw(&input_read), raw(&output_write), raw(&error_write)];
         for handle in handles {
             if unsafe { SetHandleInformation(handle, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT) }
@@ -172,11 +171,7 @@ pub(super) fn spawn(command: &Command, terminal: Option<&Control>) -> io::Result
     )) = stdio
     {
         drop((input_read, output_write, error_write));
-        (
-            Some(AsyncFile::from_std(File::from(input_write))),
-            Some(AsyncFile::from_std(File::from(output_read))),
-            Some(AsyncFile::from_std(File::from(error_read))),
-        )
+        (Some(input_write), Some(output_read), Some(error_read))
     } else {
         (None, None, None)
     };

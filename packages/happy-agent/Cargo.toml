@@ -35,6 +35,7 @@ get-size2.workspace = true
 happy-agent-base = { path = "../happy-agent-base" }
 happy-providers = { path = "../happy-providers" }
 hmac.workspace = true
+happy-agent-supervisor = { path = "../happy-agent-supervisor/native/supervisor" }
 http-body-util.workspace = true
 hyper.workspace = true
 hyper-util.workspace = true
@@ -72,9 +73,6 @@ tokio-tungstenite.workspace = true
 toml.workspace = true
 uuid.workspace = true
 unicode-normalization = "0.1.25"
-
-[target.'cfg(unix)'.dependencies]
-happy-agent-supervisor = { path = "../happy-agent-supervisor/native/supervisor" }
 
 [dev-dependencies]
 libc.workspace = true

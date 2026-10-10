@@ -3,7 +3,11 @@ use crate::product::{
     secrets::SecretsModule,
 };
 use anyhow::{Context, Result};
+#[cfg(windows)]
+use happy_agent_supervisor::windows::{Child, Command};
 use serde_json::{Value, json};
+#[cfg(windows)]
+use signals as libc;
 use std::{
     collections::BTreeMap,
     sync::{
@@ -12,9 +16,10 @@ use std::{
     },
     time::{Duration, Instant},
 };
+#[cfg(unix)]
+use tokio::process::{Child, Command};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
-    process::{Child, Command},
     sync::Notify,
     task::JoinHandle,
 };
@@ -23,12 +28,24 @@ use tokio_util::sync::CancellationToken;
 #[cfg(unix)]
 #[path = "groups.rs"]
 mod groups;
+#[cfg(windows)]
+#[path = "windows/groups.rs"]
+mod groups;
 #[path = "processes.rs"]
 mod processes;
+#[cfg(windows)]
+#[path = "windows/shell.rs"]
+mod shell_arguments;
+#[cfg(windows)]
+#[path = "windows/signals.rs"]
+mod signals;
 pub use processes::{ProcessEventListener, ProcessSubscription};
 mod output;
 #[cfg(unix)]
 #[path = "pty.rs"]
+mod pty;
+#[cfg(windows)]
+#[path = "windows/pty.rs"]
 mod pty;
 mod remote;
 mod runner;
@@ -344,13 +361,11 @@ impl CommandSessions {
         } else {
             json!({"mode":mode,"allowedReadPaths":[],"allowedWritePaths":if mode=="workspace_write"||mode=="auto"{vec![root.clone()]}else{vec![]},"deniedReadPaths":[],"deniedWritePaths":if mode=="full_access"{vec![]}else{vec![root.join(".git"),root.join("AGENTS.md"),root.join("AGENTS_SECURITY.md"),root.join("happy.toml") ]},"network":{"egress":mode=="full_access","allowedHosts":[],"localBinding":mode=="full_access"}})
         };
-        #[cfg(windows)]
-        anyhow::bail!("Native Windows command execution has not been migrated yet.");
-        #[cfg(unix)]
         {
             // Source's unrestricted path has no supervisor or namespace setup.
             // The mode is supplied by the shared permission execution scope.
             let program = arguments["_runnerProgram"].as_str();
+            #[cfg(unix)]
             let mut command = if mode == "full_access" {
                 Command::new(program.unwrap_or(&shell))
             } else {
@@ -362,6 +377,13 @@ impl CommandSessions {
                     .arg(&shell);
                 supervisor
             };
+            #[cfg(windows)]
+            let mut command = {
+                happy_agent_supervisor::windows::require_full_access(mode)?;
+                Command::new(program.unwrap_or(&shell))
+            };
+            #[cfg(windows)]
+            let _ = policy;
             for (name, _) in std::env::vars_os() {
                 if hidden.contains(&name.to_string_lossy().to_ascii_lowercase()) {
                     command.env_remove(name);
@@ -412,30 +434,36 @@ impl CommandSessions {
                 } else {
                     cmd.to_owned()
                 };
+                #[cfg(unix)]
                 command.arg("-lc").arg(command_text);
+                #[cfg(windows)]
+                shell_arguments::arguments(&mut command, &shell, &command_text);
             }
-            command
-                .current_dir(if runner.is_some() && mode != "full_access" {
-                    &root
-                } else {
-                    &cwd
-                })
-                .stdin(std::process::Stdio::piped())
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
-                .kill_on_drop(true);
-            use std::os::unix::process::CommandExt;
-            unsafe {
-                command.as_std_mut().pre_exec(|| {
-                    if libc::setsid() < 0 {
-                        return Err(std::io::Error::last_os_error());
-                    }
-                    #[cfg(target_os = "linux")]
-                    if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) < 0 {
-                        return Err(std::io::Error::last_os_error());
-                    }
-                    Ok(())
-                });
+            command.current_dir(if runner.is_some() && mode != "full_access" {
+                &root
+            } else {
+                &cwd
+            });
+            #[cfg(unix)]
+            {
+                command
+                    .stdin(std::process::Stdio::piped())
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::piped())
+                    .kill_on_drop(true);
+                use std::os::unix::process::CommandExt;
+                unsafe {
+                    command.as_std_mut().pre_exec(|| {
+                        if libc::setsid() < 0 {
+                            return Err(std::io::Error::last_os_error());
+                        }
+                        #[cfg(target_os = "linux")]
+                        if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) < 0 {
+                            return Err(std::io::Error::last_os_error());
+                        }
+                        Ok(())
+                    });
+                }
             }
             let terminal = if arguments["tty"] == true {
                 Some(if program.is_some() {
@@ -546,7 +574,12 @@ impl CommandSessions {
                 let pid = child
                     .id()
                     .context("The command process identity is unavailable.")?;
+                #[cfg(unix)]
                 let group = self.groups.retain(pid, agent);
+                #[cfg(windows)]
+                let group = self
+                    .groups
+                    .retain(pid, agent, child.job(), terminal.clone());
                 let session = Arc::new(CommandSession {
                     kind,
                     owner: agent.into(),

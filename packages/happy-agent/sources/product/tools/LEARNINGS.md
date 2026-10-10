@@ -51,6 +51,24 @@ work, reconciling current counts if it falls behind. An abort publishes the shel
 row's exit before sending its hard-kill signal; actual teardown still has its own
 positive cleanup barrier.
 
+## Windows process ownership and restricted admission are separate
+
+Windows Full access commands use one native Job attached during process creation
+and keep its handle after a normal leader exit. Cleanup operates on that held
+kernel identity, including descendants, rather than reopening a numeric PID.
+ConPTY supplies the requested terminal dimensions before launch. Parent stream
+endpoints use IOCP; blocking file reads could otherwise consume the entire
+worker pool before a command could receive stdin.
+
+The source Windows ACL sandbox creates placeholders for protected names that
+start absent and cannot preserve a filename denial through deletion and
+recreation. That violates the required absence invariant. Workspace write and
+Auto fail before launch with the specific missing boundary. Read only also
+fails until the source dedicated-account, token, read-denial and firewall roles
+are established and verified. Full access process tests do not prove restricted
+policy enforcement. Windows shell interruption retains Source's unavailable
+result; explicit termination and cleanup use the Job.
+
 ## Secret selection and sandbox elevation remain separate
 
 Immediately before spawning, Compute resolves exact project, workspace, and
