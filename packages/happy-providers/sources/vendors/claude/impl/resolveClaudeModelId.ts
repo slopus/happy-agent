@@ -5,6 +5,7 @@ const CLAUDE_MODEL_IDS: Readonly<Record<string, string>> = {
     "anthropic/opus-5": "claude-opus-5[1m]",
     "anthropic/opus-4-8": "claude-opus-4-8[1m]",
     "anthropic/sonnet-5-5": "claude-sonnet-5-5[1m]",
+    "anthropic/haiku-5-5": "claude-haiku-5-5[1m]",
     "anthropic/sonnet-5": "claude-sonnet-5[1m]",
 };
 

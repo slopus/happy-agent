@@ -82,6 +82,28 @@ describe("Claude session recreation cache", () => {
         },
         15_000,
     );
+
+    it("preserves Haiku 5.5's cache prefix when the pinned SDK treats its model name as unknown", async () => {
+        await withServer("anthropic/haiku-5-5", async (harness) => {
+            const liveSession = harness.session();
+            const first = await harness.run(liveSession, [user("Refactor the parser.")]);
+            const replayed = replayContext(first.events);
+            const continued = await harness.run(liveSession, [
+                ...replayed,
+                user("Now update the tests."),
+            ]);
+            liveSession.destroy();
+            const recreated = await harness.run(harness.session(), [
+                ...replayed,
+                user("Now update the tests."),
+            ]);
+
+            expect(JSON.stringify(continued.request.messages[1])).toContain(
+                "You are powered by the model claude-haiku-5-5[1m].",
+            );
+            expect(cachePrefix(recreated.request)).toEqual(cachePrefix(continued.request));
+        });
+    }, 15_000);
 });
 
 function user(content: string): SessionMessage {
