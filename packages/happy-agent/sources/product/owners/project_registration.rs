@@ -22,6 +22,12 @@ pub struct PreparedProjectRegistration {
     _project_lock: Option<OwnedMutexGuard<()>>,
 }
 
+impl PreparedProjectRegistration {
+    pub fn existing_project_id(&self) -> Option<&str> {
+        self.known_id.as_deref()
+    }
+}
+
 fn invalid(code: &'static str, message: impl Into<String>) -> anyhow::Error {
     ProjectError::Invalid {
         code,
