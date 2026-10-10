@@ -1,5 +1,6 @@
 //! Services owns admission, original durable records, native execution and teardown.
 mod execution;
+#[cfg(target_os = "linux")]
 mod io;
 mod paging;
 mod persistence;

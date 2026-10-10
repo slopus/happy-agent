@@ -33,11 +33,16 @@ pub(super) struct Execution {
     accepting: AtomicBool,
     finished: AtomicBool,
     task: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    #[cfg(unix)]
     connections: Mutex<Vec<Weak<std::os::fd::OwnedFd>>>,
     capacity: Arc<Semaphore>,
 }
+trait ConnectionStream: AsyncRead + AsyncWrite + Send + Unpin {}
+impl<T: AsyncRead + AsyncWrite + Send + Unpin> ConnectionStream for T {}
+
 pub struct Connection {
-    stream: tokio::net::UnixStream,
+    stream: Box<dyn ConnectionStream>,
+    #[cfg(unix)]
     _descriptor: Arc<std::os::fd::OwnedFd>,
     _permit: tokio::sync::OwnedSemaphorePermit,
 }
@@ -111,6 +116,10 @@ impl Execution {
                 Some("auto" | "full_access")
             ),
             "Starting a workspace service requires Auto or Full access."
+        );
+        ensure!(
+            cfg!(target_os = "linux"),
+            "Workspace services require Linux namespace and cgroup isolation on this compute provider."
         );
         let execution = &options["execution"];
         let directory = PathBuf::from(
@@ -368,17 +377,20 @@ impl Execution {
     pub fn revoke(&self) {
         self.accepting.store(false, Ordering::Release);
         self.capacity.close();
-        let mut connections = self
-            .connections
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        for connection in connections
-            .drain(..)
-            .filter_map(|connection| connection.upgrade())
+        #[cfg(unix)]
         {
-            use std::os::fd::AsRawFd;
-            unsafe {
-                libc::shutdown(connection.as_raw_fd(), libc::SHUT_RDWR);
+            let mut connections = self
+                .connections
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            for connection in connections
+                .drain(..)
+                .filter_map(|connection| connection.upgrade())
+            {
+                use std::os::fd::AsRawFd;
+                unsafe {
+                    libc::shutdown(connection.as_raw_fd(), libc::SHUT_RDWR);
+                }
             }
         }
         self.stop.cancel();
@@ -415,46 +427,56 @@ impl Execution {
         };
         tokio::select! {result=input.write_all(chars.as_bytes())=>{result?;Ok(true)},_=cancel.cancelled()=>bail!("Service input was stopped after dispatch and was not replayed.")}
     }
-    #[cfg(unix)]
     pub async fn connect(&self, cancel: &CancellationToken) -> Result<Connection> {
-        ensure!(
-            self.accepting.load(Ordering::Acquire),
-            "The service is not running."
-        );
-        let permit = self
-            .capacity
-            .clone()
-            .try_acquire_owned()
-            .context("This service already has 64 active endpoint connections.")?;
-        let connect = async {
-            let mut stream = tokio::net::UnixStream::connect(self.directory.join("bridge")).await?;
-            use std::os::fd::AsFd;
-            let descriptor = Arc::new(stream.as_fd().try_clone_to_owned()?);
-            {
-                let mut connections = self
-                    .connections
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                ensure!(
-                    self.accepting.load(Ordering::Acquire),
-                    "The service is not running."
-                );
-                connections.retain(|connection| connection.strong_count() > 0);
-                connections.push(Arc::downgrade(&descriptor));
-            }
-            stream.write_all(self.token.as_bytes()).await?;
-            let ack = stream.read_u8().await?;
-            ensure!(
-                ack == 1 && self.accepting.load(Ordering::Acquire),
-                "The service endpoint is not accepting connections yet."
+        #[cfg(not(unix))]
+        {
+            let _ = cancel;
+            bail!(
+                "Workspace service connections require Linux namespace and cgroup isolation on this compute provider."
             );
-            Ok(Connection {
-                stream,
-                _descriptor: descriptor,
-                _permit: permit,
-            })
-        };
-        tokio::select! {result=tokio::time::timeout(Duration::from_secs(5),connect)=>result.context("The service endpoint connection timed out.")?,_=cancel.cancelled()=>bail!("The service endpoint connection was stopped."),_=self.stop.cancelled()=>bail!("The service endpoint connection was revoked.")}
+        }
+        #[cfg(unix)]
+        {
+            ensure!(
+                self.accepting.load(Ordering::Acquire),
+                "The service is not running."
+            );
+            let permit = self
+                .capacity
+                .clone()
+                .try_acquire_owned()
+                .context("This service already has 64 active endpoint connections.")?;
+            let connect = async {
+                let mut stream =
+                    tokio::net::UnixStream::connect(self.directory.join("bridge")).await?;
+                use std::os::fd::AsFd;
+                let descriptor = Arc::new(stream.as_fd().try_clone_to_owned()?);
+                {
+                    let mut connections = self
+                        .connections
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    ensure!(
+                        self.accepting.load(Ordering::Acquire),
+                        "The service is not running."
+                    );
+                    connections.retain(|connection| connection.strong_count() > 0);
+                    connections.push(Arc::downgrade(&descriptor));
+                }
+                stream.write_all(self.token.as_bytes()).await?;
+                let ack = stream.read_u8().await?;
+                ensure!(
+                    ack == 1 && self.accepting.load(Ordering::Acquire),
+                    "The service endpoint is not accepting connections yet."
+                );
+                Ok(Connection {
+                    stream: Box::new(stream),
+                    _descriptor: descriptor,
+                    _permit: permit,
+                })
+            };
+            tokio::select! {result=tokio::time::timeout(Duration::from_secs(5),connect)=>result.context("The service endpoint connection timed out.")?,_=cancel.cancelled()=>bail!("The service endpoint connection was stopped."),_=self.stop.cancelled()=>bail!("The service endpoint connection was revoked.")}
+        }
     }
     pub fn read(&self, position: (u64, u64)) -> Delta {
         let output = self

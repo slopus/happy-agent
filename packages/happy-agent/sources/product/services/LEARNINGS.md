@@ -33,3 +33,10 @@ bounded cursor over the same capture, discloses retirement or truncation, and ne
 Gateway credentials establish only one principal, workspace, service and execution for five
 minutes. The issuer key belongs to the daemon lifetime. Revocation shuts down existing bridge
 descriptors and cancels pending attachment, even if their signed credentials have not expired.
+
+Strict service startup is supported only by the Linux namespace and delegated cgroup backend,
+as in the original compute provider. Unsupported platforms reject before creating controls or
+launching a workload. Unix PTY and descriptor-revocation code is compiled only for its platform;
+the public endpoint connection keeps the same stream interface, while unsupported connections
+return the specific missing isolation boundary. Compiling the Windows product does not establish
+Windows service isolation.
