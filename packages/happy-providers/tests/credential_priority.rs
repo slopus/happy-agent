@@ -35,4 +35,16 @@ async fn isolated_claude_credentials_keep_source_priority_and_file_discovery() {
         let credential=Credential::load(serde_json::from_value(input).unwrap(),"us-east-1").await.unwrap();assert_eq!(credential.anthropic_api_key().await,token);assert_eq!(credential.anthropic_authentication().await,mode);
     }
     let credential:CredentialSource=serde_json::from_value(serde_json::json!({"type":"claude","ambient":false})).unwrap();assert!(Credential::load(credential,"us-east-1").await.unwrap_err().downcast_ref::<happy_providers::CredentialUnavailable>().is_some());
+}#[tokio::test]
+async fn only_stored_codex_and_grok_sessions_support_maintenance() {
+    let directory=tempfile::tempdir().unwrap();let file=directory.path().join("auth.json");
+    let load=async |kind:&str|{let source:CredentialSource=serde_json::from_value(serde_json::json!({"type":kind,"auth_file":file,"ambient":false})).unwrap();Credential::load(source,"us-east-1").await.unwrap()};
+    std::fs::write(&file,r#"{"tokens":{"access_token":"codex-session","refresh_token":"codex-refresh"}}"#).unwrap();
+    assert!(load("codex").await.supports_maintenance().await);
+    std::fs::write(&file,r#"{"https://auth.x.ai::b1a00492-073a-47ea-816f-4c329264a828":{"key":"grok-session"}}"#).unwrap();
+    assert!(load("grok").await.supports_maintenance().await);
+    std::fs::write(&file,r#"{"xai::api_key":{"key":"grok-api-key"},"https://auth.x.ai::b1a00492-073a-47ea-816f-4c329264a828":{"key":"grok-session"}}"#).unwrap();
+    assert!(!load("grok").await.supports_maintenance().await,"A stored Grok API key wins over the session, so nothing is rotated.");
+    let bearer:CredentialSource=serde_json::from_value(serde_json::json!({"type":"bearer","token":"plain"})).unwrap();
+    assert!(!Credential::load(bearer,"us-east-1").await.unwrap().supports_maintenance().await);
 }

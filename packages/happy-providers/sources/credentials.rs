@@ -159,6 +159,12 @@ impl Credential {
     pub async fn is_codex_session(&self) -> bool {
         self.state.lock().await.codex_session
     }
+    /// A stored Codex or Grok CLI login that [`Self::refresh_for_maintenance`] keeps rotating;
+    /// API keys, including one stored beside a Grok session, have nothing to maintain.
+    pub async fn supports_maintenance(&self) -> bool {
+        let auth = self.state.lock().await;
+        auth.codex_session || auth.grok_session
+    }
     pub async fn headers(
         &self,
         method: &str,
