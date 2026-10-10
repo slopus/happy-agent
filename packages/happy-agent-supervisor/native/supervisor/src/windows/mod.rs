@@ -20,6 +20,8 @@ pub use terminal::{Control, create_terminal};
 
 mod admission;
 #[cfg(test)]
+mod bind_filter_audit;
+#[cfg(test)]
 mod readonly_audit;
 #[cfg(test)]
 mod tests;

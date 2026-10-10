@@ -36,8 +36,8 @@ jobs:
                   $status = $LASTEXITCODE
                   $output | ForEach-Object { $_.ToString() }
                   if ($status -ne 0) { exit $status }
-                  $result = $output | Select-String '^test result: ok\. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in [0-9.]+s$'
-                  if (@($result).Count -ne 1) { throw 'The Windows kernel gate must execute exactly 15 tests without failures, ignored tests, or filters.' }
+                  $result = $output | Select-String '^test result: ok\. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in [0-9.]+s$'
+                  if (@($result).Count -ne 1) { throw 'The Windows kernel gate must execute exactly 17 tests without failures, ignored tests, or filters.' }
 
     product-runtime:
         name: Verify the Windows product executable

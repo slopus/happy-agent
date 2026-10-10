@@ -33,7 +33,9 @@ windows-sys = { version = "=0.61.2", features = [
     "Win32_Storage_FileSystem",
     "Win32_System_Console",
     "Win32_System_JobObjects",
+    "Win32_System_LibraryLoader",
     "Win32_System_Pipes",
+    "Win32_System_SystemServices",
     "Win32_System_Threading",
 ] }
 

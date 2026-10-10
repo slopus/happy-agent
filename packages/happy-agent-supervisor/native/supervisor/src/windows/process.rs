@@ -83,6 +83,8 @@ impl Drop for Child {
 /// are the only inherited handles, and the Job is attached at process creation.
 pub(super) fn spawn(command: &Command, terminal: Option<&Control>) -> io::Result<Child> {
     let job = Arc::new(Job::create()?);
+    #[cfg(test)]
+    let job = command.prepared_job.clone().unwrap_or(job);
     let mut line = arguments::command_line(command)?;
     let environment = arguments::environment(command)?;
     let cwd = command

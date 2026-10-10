@@ -10,6 +10,8 @@ pub struct Command {
     pub(super) raw_arguments: std::collections::BTreeSet<usize>,
     argument_count: usize,
     terminal: Option<Control>,
+    #[cfg(test)]
+    pub(super) prepared_job: Option<std::sync::Arc<super::Job>>,
 }
 impl Command {
     pub fn new(program: impl AsRef<OsStr>) -> Self {
@@ -19,6 +21,8 @@ impl Command {
             raw_arguments: std::collections::BTreeSet::new(),
             argument_count: 0,
             terminal: None,
+            #[cfg(test)]
+            prepared_job: None,
         }
     }
     pub fn arg(&mut self, argument: impl AsRef<OsStr>) -> &mut Self {
