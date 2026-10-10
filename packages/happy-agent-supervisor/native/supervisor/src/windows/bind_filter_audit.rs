@@ -1,10 +1,12 @@
 //! Test-only kernel experiment. Read only admission remains closed.
 //!
 //! Microsoft HCS shim's exact BindFlt signature and flag definitions:
-//! https://github.com/microsoft/hcsshim/blob/main/internal/winapi/bindflt.go
+//! https://github.com/microsoft/hcsshim/blob/ab8249e8a1110ff5f052d3710fe57f29c45503d3/internal/winapi/bindflt.go
 //! Its Job::PromoteToSilo / ApplyFileBinding use an empty kill-on-close Job,
 //! JobObjectCreateSilo and READ_ONLY_MAPPING | USE_CURRENT_SILO_MAPPING (1 | 4):
-//! https://github.com/microsoft/hcsshim/blob/main/internal/jobobject/jobobject.go
+//! Its same ApplyFileBinding method uses flags=4 for a writable mapping, with no
+//! exception array. The private-temp binding below uses that same owned Job:
+//! https://github.com/microsoft/hcsshim/blob/ab8249e8a1110ff5f052d3710fe57f29c45503d3/internal/jobobject/jobobject.go
 //! The Silo information ABI is copied from the Windows structure documented in:
 //! https://github.com/microsoft/hcsshim/blob/main/internal/winapi/jobobject.go
 //!
@@ -149,18 +151,18 @@ fn readonly_mapping(job: &Job, fixture: &Path, writable_temp: &Path) -> io::Resu
     checked(unsafe {
         GetVolumePathNameW(fixture.as_ptr(), volume.as_mut_ptr(), volume.len() as u32)
     })?;
-    let exception = wide(writable_temp.as_os_str())?;
-    let exceptions = [exception.as_ptr()];
-    // Exactly hcsshim's read-only Silo flags. No GLOBAL_MAPPING (2), no NULL Job.
-    // The single exception is this test's owned private temporary directory.
+    let private_temp = wide(writable_temp.as_os_str())?;
+    // Exactly hcsshim's read-only Silo binding, with no exception array. Flag 4
+    // selects the owned Job's mapping; flag 2 would mean a merged bind mapping.
+    // A NULL Job, which could select a host/global mapping, is forbidden above.
     let result = unsafe {
         setup(
             job.raw(),
             1 | 4,
             volume.as_ptr(),
             volume.as_ptr(),
-            exceptions.as_ptr(),
-            1,
+            std::ptr::null(),
+            0,
         )
     };
     if result != 0 {
@@ -168,7 +170,25 @@ fn readonly_mapping(job: &Job, fixture: &Path, writable_temp: &Path) -> io::Resu
             "owned Job BfSetupFilter(flags=5) failed: HRESULT {result:#010x}"
         )));
     }
-    println!("BINDFLT_READONLY_MAPPING_READY:flags=5:owned_job:private_temp_exception");
+    println!("BINDFLT_READONLY_MAPPING_READY:flags=5:owned_job");
+    // hcsshim ApplyFileBinding(readOnly=false) uses flags=4 and no exceptions.
+    // Add only this owned private temp directory, on the same non-NULL Silo Job.
+    let result = unsafe {
+        setup(
+            job.raw(),
+            4,
+            private_temp.as_ptr(),
+            private_temp.as_ptr(),
+            std::ptr::null(),
+            0,
+        )
+    };
+    if result != 0 {
+        return Err(io::Error::other(format!(
+            "owned Job private-temp BfSetupFilter(flags=4) failed: HRESULT {result:#010x}"
+        )));
+    }
+    println!("BINDFLT_WRITABLE_TEMP_MAPPING_READY:flags=4:owned_job");
     Ok(library)
 }
 

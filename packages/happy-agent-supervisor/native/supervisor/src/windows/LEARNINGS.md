@@ -22,3 +22,11 @@ The Untrusted integrity SID has no `UN` SDDL abbreviation. The fixture uses the
 explicit `S-1-16-0` SID and verifies its stored authority and RID. An invalid SID
 failed the first kernel run before Silo creation; that run provides no BindFlt
 availability or filesystem-denial evidence.
+
+The corrected fixture created an owned Silo and installed its read-only BindFlt
+mapping on the tested Windows CI host. The exact Silo child read private user and
+null-DACL Untrusted files, while parent and sibling writes remained unaffected.
+The single absolute private-temp exception still denied its first scratch write.
+The probe now uses a separate writable binding on the same owned Silo, following
+the HCS shim's writable binding call. The remaining filesystem assertions still
+require actual kernel execution; none of the later denial cases ran in that test.
