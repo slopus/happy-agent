@@ -49,8 +49,9 @@ tools check their own input against the captured schemas before they act.
 ## The module is one agent-runtime hook set
 
 MCP installs itself into the agent runtime from its constructor and takes only modules: config for
-the catalogs and the `mcp.toml` writer, runtime for the server index, user input for a server's
-questions, workspaces for archival, and the agent runtime. Its tools are a fixed array — the server
+the catalogs and the `mcp.toml` writer, runtime for the server index, Durable Functions for its
+discovery, lifecycle for the daemon's shutdown, user input for a server's questions, workspaces for
+archival, and the agent runtime. Its tools are a fixed array — the server
 listing, the two configuration tools, the protocol tools once a server is connected, and the
 connected servers' direct tools — all deferred. A direct tool is recognized by the name it was
 offered, or after a restart by its `mcp__server__tool` form. Every MCP tool requires Auto or Full
@@ -63,6 +64,19 @@ The user catalog lives only in `mcp.toml` in the configuration directory, read o
 rewritten whole by `configure_mcp_server`; `happy.toml` holds no MCP servers and the public
 configuration reports them from `mcp.toml`. A malformed catalog fails startup rather than silently
 offering no servers.
+
+## Discovery is owed to Durable Functions
+
+The first port started the user catalog's discovery on a task of its own, outside any owner's
+lifetime, so nothing stopped it with the daemon or remembered it was owed. Startup now invokes the
+durable `mcp.discover` call, whose name is also its operation, so a discovery a stopped daemon still
+owed runs once on the next start rather than twice. Durable Functions run it after the commit and
+stop it with the daemon; agents wait for it before their first tool list until it settles or the
+daemon begins shutting down, so no wait outlives a discovery that will not run. A failed discovery
+is logged and not retried, as the original's was.
+
+The server index's SQL lives in the module's private `persistence` folder and runs inside the
+caller's transaction; the released `001-mcp-server-index` migration is unchanged.
 
 ## Stdio servers never inherit the daemon's credentials
 

@@ -178,3 +178,47 @@ fn a_direct_call_is_always_reviewed_and_its_arguments_read_like_the_original() {
     assert_eq!(tools::arguments(&raw("{")).unwrap_err().to_string(), "The arguments for \"x\" were not valid JSON.");
     assert_eq!(tools::arguments(&raw("  ")).unwrap(), json!({}));
 }
+
+#[tokio::test]
+async fn the_server_index_is_replaced_whole_inside_the_callers_transaction() {
+    let directory = tempfile::tempdir().unwrap();
+    let config = Arc::new(ConfigModule::isolated(&directory.path().join(".happy")).unwrap());
+    let runtime = Arc::new(RuntimeModule::new(config));
+    runtime.load().await.unwrap();
+    runtime.migrate("mcp", persistence::MIGRATIONS).await.unwrap();
+    let row = |agent: &str, name: &str, status: &str| {
+        let mut entry = json!({"agentId": agent, "name": name, "status": status, "toolCount": 2, "updatedAt": 1_700_000_000_000u64});
+        if status == "failed" {
+            entry["errorMessage"] = json!("spawn nope ENOENT");
+        } else {
+            entry["fingerprint"] = json!("a".repeat(64));
+        }
+        assert!(schemas::check(&schemas::INDEXED_SERVER, &entry));
+        entry
+    };
+    let first = vec![row("agentindexed", "docs", "connected"), row("agentindexed", "broken", "failed")];
+    let written = first.clone();
+    runtime.transact(move |ctx| persistence::replace_server_index(ctx, "agentindexed", &written)).await.unwrap();
+
+    // A caller that rolls back takes the replacement with it.
+    let rolled_back: Result<()> = runtime
+        .transact(|ctx| {
+            persistence::replace_server_index(ctx, "agentindexed", &[])?;
+            bail!("Deliberate caller rollback.")
+        })
+        .await;
+    assert!(rolled_back.is_err());
+    let stored = runtime.transact(|ctx| persistence::query_server_index(ctx, "agentindexed")).await.unwrap();
+    assert_eq!(stored, vec![first[1].clone(), first[0].clone()]);
+
+    // A committed replacement leaves only the new rows, and other agents' rows alone.
+    let other = vec![row("agentother", "docs", "connected")];
+    runtime.transact(move |ctx| persistence::replace_server_index(ctx, "agentother", &other)).await.unwrap();
+    let second = vec![row("agentindexed", "search", "connected")];
+    let written = second.clone();
+    runtime.transact(move |ctx| persistence::replace_server_index(ctx, "agentindexed", &written)).await.unwrap();
+    let stored = runtime.transact(|ctx| persistence::query_server_index(ctx, "agentindexed")).await.unwrap();
+    assert_eq!(stored, second);
+    assert_eq!(runtime.transact(|ctx| persistence::query_server_index(ctx, "agentother")).await.unwrap().len(), 1);
+    runtime.close().await.unwrap();
+}

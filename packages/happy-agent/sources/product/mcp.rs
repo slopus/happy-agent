@@ -13,6 +13,7 @@ mod elicitation;
 mod http;
 mod names;
 mod output;
+mod persistence;
 mod protocol;
 mod schemas;
 mod sdk;
@@ -30,7 +31,7 @@ use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use anyhow::{Result, anyhow, bail};
 use async_trait::async_trait;
 use futures_util::FutureExt;
-use futures_util::future::{BoxFuture, Shared, join_all};
+use futures_util::future::{BoxFuture, join_all};
 use happy_agent_base::{AgentModule, AgentScope, ToolPermissionPolicy};
 use happy_providers::{Message, ToolDefinition};
 use indexmap::{IndexMap, IndexSet};
@@ -39,7 +40,9 @@ use tokio_util::sync::CancellationToken;
 
 use super::agent_runtime::AgentRuntimeModule;
 use super::config::ConfigModule;
+use super::durable::{CallKv, DurableFunction, DurableFunctionsModule, Registration};
 use super::identity::now;
+use super::lifecycle::LifecycleModule;
 use super::runtime::RuntimeModule;
 use super::text::{js_is_whitespace, js_length, js_slice, locale_compare};
 use super::user_input::UserInputModule;
@@ -54,20 +57,12 @@ const GLOBAL_CATALOG: &str = "global";
 const WORKSPACE_CATALOG_PREFIX: &str = "workspace:";
 /// How many agents' offered tool lists are remembered for permission disclosure.
 const MAX_OFFERED_AGENTS: usize = 1_024;
-
-const MIGRATIONS: &[(&str, &str)] = &[(
-    "001-mcp-server-index",
-    "CREATE TABLE IF NOT EXISTS mcp_module_index (
-        agent_id TEXT NOT NULL,
-        name TEXT NOT NULL,
-        fingerprint TEXT,
-        status TEXT NOT NULL,
-        tool_count INTEGER NOT NULL,
-        error_message TEXT,
-        updated_at BIGINT NOT NULL,
-        PRIMARY KEY (agent_id, name)
-    )",
-)];
+/// The durable call that discovers the user's catalog once the daemon starts; its name is also
+/// its operation, so at most one is ever owed.
+const DISCOVER_FUNCTION: &str = "mcp.discover";
+/// Every durable call MCP owes holds this key, so they run one at a time in the order they were
+/// owed.
+const DURABLE_LOCK: &str = "mcp";
 
 pub(super) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -108,6 +103,15 @@ struct Offered {
     direct: HashMap<String, (String, String)>,
 }
 
+/// How far the first discovery of the user's catalog has come; agents wait for it before their
+/// first tool list once it is owed.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Discovery {
+    NotOwed,
+    Owed,
+    Settled,
+}
+
 /// One workspace catalog change MCP follows, by workspace key.
 enum WorkspaceChange {
     Active(String),
@@ -137,6 +141,7 @@ impl Listing {
 pub struct McpModule {
     config: Arc<ConfigModule>,
     runtime: Arc<RuntimeModule>,
+    durable: Arc<DurableFunctionsModule>,
     user_input: Arc<UserInputModule>,
     max_page_size: usize,
     max_output_characters: usize,
@@ -144,28 +149,39 @@ pub struct McpModule {
     reload_lock: tokio::sync::Mutex<()>,
     state: Mutex<State>,
     offered: Mutex<IndexMap<String, Offered>>,
-    initial_reload: Mutex<Option<Shared<BoxFuture<'static, ()>>>>,
+    discovery: tokio::sync::watch::Sender<Discovery>,
     closed: AtomicBool,
     close: tokio::sync::OnceCell<()>,
     /// Ends every request a listing or call started outside an agent's own tool call.
     lifetime: CancellationToken,
+    /// The daemon's shutdown, which ends every wait for a discovery that will not run now.
+    stopping: CancellationToken,
     workspace_changes: Mutex<Option<tokio::sync::mpsc::UnboundedSender<WorkspaceChange>>>,
     owner: Weak<Self>,
 }
 
 impl McpModule {
     /// MCP takes configuration, for the servers it runs and the user's catalog it edits; runtime,
-    /// for its durable server index; user input, for the questions a server asks; workspaces,
+    /// for its durable server index; Durable Functions, which run its discovery; lifecycle, whose
+    /// shutdown ends its requests; user input, for the questions a server asks; workspaces,
     /// because an archived workspace's servers stop with it; and the agent runtime it installs
     /// its hooks into.
     pub fn new(
         config: Arc<ConfigModule>,
         runtime: Arc<RuntimeModule>,
+        durable: Arc<DurableFunctionsModule>,
+        lifecycle: Arc<LifecycleModule>,
         user_input: Arc<UserInputModule>,
         workspaces: Arc<WorkspacesModule>,
         agents: Arc<AgentRuntimeModule>,
     ) -> Result<Arc<Self>> {
-        let module = Self::with_limits(config, runtime, user_input, DEFAULT_PAGE_SIZE, DEFAULT_OUTPUT_CHARACTERS);
+        let module = Self::with_limits(config, runtime, durable.clone(), &lifecycle, user_input, DEFAULT_PAGE_SIZE, DEFAULT_OUTPUT_CHARACTERS);
+        durable.register(Registration {
+            name: DISCOVER_FUNCTION.into(),
+            arguments_schema: "ownerReconcileArgs",
+            result_schema: "ownerNull",
+            function: Arc::new(Discover(Arc::downgrade(&module))),
+        })?;
         // A new workspace may be a folder an archived one used to occupy; an archived one takes
         // its servers with it. Changes apply in the order they committed.
         let weak = Arc::downgrade(&module);
@@ -184,43 +200,75 @@ impl McpModule {
         Ok(module)
     }
 
-    fn with_limits(config: Arc<ConfigModule>, runtime: Arc<RuntimeModule>, user_input: Arc<UserInputModule>, max_page_size: usize, max_output_characters: usize) -> Arc<Self> {
+    fn with_limits(
+        config: Arc<ConfigModule>,
+        runtime: Arc<RuntimeModule>,
+        durable: Arc<DurableFunctionsModule>,
+        lifecycle: &LifecycleModule,
+        user_input: Arc<UserInputModule>,
+        max_page_size: usize,
+        max_output_characters: usize,
+    ) -> Arc<Self> {
         Arc::new_cyclic(|owner| Self {
             config,
             runtime,
+            durable,
             user_input,
             max_page_size,
             max_output_characters,
             reload_lock: tokio::sync::Mutex::new(()),
             state: Mutex::new(State::default()),
             offered: Mutex::new(IndexMap::new()),
-            initial_reload: Mutex::new(None),
+            discovery: tokio::sync::watch::Sender::new(Discovery::NotOwed),
             closed: AtomicBool::new(false),
             close: tokio::sync::OnceCell::new(),
             lifetime: CancellationToken::new(),
+            stopping: lifecycle.shutdown.child_token(),
             workspace_changes: Mutex::new(None),
             owner: owner.clone(),
         })
     }
 
     pub async fn load(self: &Arc<Self>) -> Result<()> {
-        self.runtime.migrate("mcp", MIGRATIONS).await
+        self.runtime.migrate("mcp", persistence::MIGRATIONS).await
     }
 
-    /// Begin the first discovery of the user's catalog in its own lifetime; agents wait for it
-    /// before their first tool list.
-    pub fn start(self: &Arc<Self>) {
-        let mut initial = lock(&self.initial_reload);
-        if initial.is_some() {
-            return;
-        }
-        let module = self.clone();
-        let task = tokio::spawn(async move {
-            if let Err(error) = module.reload().await {
-                tracing::warn!(error = %error_message(&error), "Initial MCP discovery failed.");
+    /// Owe the first discovery of the user's catalog to Durable Functions, which run it once this
+    /// commits; agents wait for it before their first tool list. A discovery a stopped daemon
+    /// still owed is the same operation, so it runs once rather than twice, and one that already
+    /// ran since this daemon started is not owed again.
+    pub async fn start(self: &Arc<Self>) -> Result<()> {
+        let owed = self.discovery.send_if_modified(|discovery| {
+            let owed = *discovery == Discovery::NotOwed;
+            if owed {
+                *discovery = Discovery::Owed;
             }
+            owed
         });
-        *initial = Some(async move { drop(task.await) }.boxed().shared());
+        if !owed {
+            return Ok(());
+        }
+        let durable = self.durable.clone();
+        self.runtime
+            .transact(move |ctx| {
+                durable.invoke(ctx, &json!({"function": DISCOVER_FUNCTION, "arguments": {}, "operationId": DISCOVER_FUNCTION, "lockKeys": [DURABLE_LOCK]}))?;
+                Ok(())
+            })
+            .await
+    }
+
+    /// Discover the user's catalog, then let every agent waiting for it go on. A stopped daemon
+    /// leaves it owed to the next one.
+    async fn discover(&self, cancel: &CancellationToken) {
+        tokio::select! {
+            _ = cancel.cancelled() => {}
+            reloaded = self.reload() => {
+                if let Err(error) = reloaded {
+                    tracing::warn!(error = %error_message(&error), "Initial MCP discovery failed.");
+                }
+            }
+        }
+        self.discovery.send_replace(Discovery::Settled);
     }
 
     fn enqueue_workspace_change(self: &Arc<Self>, change: WorkspaceChange) {
@@ -278,9 +326,11 @@ impl McpModule {
     }
 
     async fn initial_reload(&self) {
-        let initial = lock(&self.initial_reload).clone();
-        if let Some(initial) = initial {
-            initial.await;
+        let mut discovery = self.discovery.subscribe();
+        tokio::select! {
+            _ = self.lifetime.cancelled() => {}
+            _ = self.stopping.cancelled() => {}
+            _ = discovery.wait_for(|discovery| *discovery != Discovery::Owed) => {}
         }
     }
 
@@ -1006,26 +1056,7 @@ impl McpModule {
             rows.push(entry);
         }
         let agent = agent_id.to_owned();
-        self.runtime
-            .transact(move |ctx| {
-                ctx.database().execute("DELETE FROM mcp_module_index WHERE agent_id = ?1", [&agent])?;
-                for entry in &rows {
-                    ctx.database().execute(
-                        "INSERT INTO mcp_module_index (agent_id, name, fingerprint, status, tool_count, error_message, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                        rusqlite::params![
-                            entry["agentId"].as_str(),
-                            entry["name"].as_str(),
-                            entry["fingerprint"].as_str(),
-                            entry["status"].as_str(),
-                            entry["toolCount"].as_i64(),
-                            entry["errorMessage"].as_str(),
-                            entry["updatedAt"].as_i64(),
-                        ],
-                    )?;
-                }
-                Ok(())
-            })
-            .await
+        self.runtime.transact(move |ctx| persistence::replace_server_index(ctx, &agent, &rows)).await
     }
 
     /// The tools one agent is offered for this request, rebuilt from the live catalog so an
@@ -1180,6 +1211,18 @@ fn format_rows(page: &Value, maximum: usize, key: &str, identity: &str, suffix: 
     let identities: Vec<String> = items.iter().map(|item| item[identity].as_str().unwrap_or_default().to_string()).collect();
     let suffixes: Vec<Option<String>> = items.iter().map(suffix).collect();
     format_identity_rows(&identities, &suffixes, next_cursor(page), maximum, empty)
+}
+
+/// The first discovery of the user's catalog, run in Durable Functions' lifetime.
+struct Discover(Weak<McpModule>);
+
+impl DurableFunction for Discover {
+    fn execute(self: Arc<Self>, _call: Value, _kv: CallKv, cancel: CancellationToken) -> BoxFuture<'static, Result<Value>> {
+        Box::pin(async move {
+            self.0.upgrade().ok_or_else(|| anyhow!("The MCP module has stopped."))?.discover(&cancel).await;
+            Ok(Value::Null)
+        })
+    }
 }
 
 /// A live connection that ended is a failure, which the next reload starts again.
