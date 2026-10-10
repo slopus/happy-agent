@@ -1499,6 +1499,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "image",
+ "indexmap",
  "jsonschema",
  "libc",
  "monty-alloc",

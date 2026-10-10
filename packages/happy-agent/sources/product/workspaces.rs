@@ -32,10 +32,14 @@ mod workspace_identity;
 #[path = "owners/workspace_naming.rs"]
 mod naming;
 
+/// Told about a workspace after the transaction that reserved it or changed its status commits.
+pub type WorkspaceTransitionListener = Arc<dyn Fn(&Value) + Send + Sync>;
+
 pub struct WorkspacesModule {
     runtime: Arc<RuntimeModule>,
     owners: Option<Owners>,
     subtask_listener: Mutex<Weak<SubtasksModule>>,
+    transition_listeners: Mutex<Vec<WorkspaceTransitionListener>>,
 }
 struct Owners {
     config: Arc<ConfigModule>,
@@ -58,6 +62,7 @@ impl WorkspacesModule {
             runtime,
             owners: None,
             subtask_listener: Mutex::new(Weak::new()),
+            transition_listeners: Mutex::new(Vec::new()),
         }
     }
     #[expect(clippy::too_many_arguments)]
@@ -89,6 +94,7 @@ impl WorkspacesModule {
         let module = Arc::new(Self {
             runtime,
             subtask_listener: Mutex::new(Weak::new()),
+            transition_listeners: Mutex::new(Vec::new()),
             owners: Some(Owners {
                 config,
                 projects,
@@ -144,6 +150,33 @@ impl WorkspacesModule {
         *listener = module;
         Ok(())
     }
+    /// A feature that follows workspace lifetimes, such as one holding processes in a folder,
+    /// installs its listener during construction. Listeners run in commit order.
+    pub fn listen_transitions(&self, listener: WorkspaceTransitionListener) -> Result<()> {
+        let mut listeners = self
+            .transition_listeners
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        anyhow::ensure!(listeners.len() < 64, "The workspace transition listener bound was reached.");
+        listeners.push(listener);
+        Ok(())
+    }
+    fn publish_transition(&self, ctx: &Context<'_>, workspace: &Value) -> Result<()> {
+        let listeners = self
+            .transition_listeners
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        if listeners.is_empty() {
+            return Ok(());
+        }
+        let workspace = workspace.clone();
+        ctx.after_commit(move || {
+            for listener in listeners {
+                listener(&workspace);
+            }
+        })
+    }
     pub async fn load(self: &Arc<Self>) -> Result<()> {
         self.runtime
             .migrate("workspaces", persistence::MIGRATIONS)
@@ -193,6 +226,7 @@ impl WorkspacesModule {
             "The workspace's project is not ready."
         );
         persistence::insert(ctx, &owners.schemas, workspace)?;
+        self.publish_transition(ctx, workspace)?;
         owners.durable.invoke(ctx,&json!({"function":"workspaces.provision","arguments":{"id":workspace["id"]},"operationId":format!("workspace-create.{}",workspace["id"].as_str().unwrap_or_default()),"lockKeys":[format!("workspace.{}",workspace["id"].as_str().unwrap_or_default())]}))?;
         Ok(workspace.clone())
     }
@@ -286,6 +320,7 @@ impl WorkspacesModule {
             if before.get(field)!=after.get(field) {changes[field]=after[field].clone();}
         }
         if before["status"] != after["status"] {
+            self.publish_transition(ctx, after)?;
             changes["status"] = json!(if after["status"] == "archiving"
                 || after["status"] == "archived"
             {

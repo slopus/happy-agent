@@ -12,6 +12,8 @@ mod profile_acceptance;
 mod provider_maintenance_acceptance;
 #[path = "api/onboarding.rs"]
 mod onboarding_acceptance;
+#[path = "api/mcp.rs"]
+mod mcp_acceptance;
 
 use rusqlite::{Connection, params};
 use serde_json::{Value, json};

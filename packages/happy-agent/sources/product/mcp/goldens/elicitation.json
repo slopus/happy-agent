@@ -1,0 +1,218 @@
+{
+    "confirmation": {
+        "asked": {
+            "requestId": "mcp:<uuid>",
+            "questions": [
+                {
+                    "header": "MCP request",
+                    "id": "confirmation",
+                    "multiSelect": false,
+                    "options": [
+                        {
+                            "label": "Continue",
+                            "description": "Accept this request without providing additional values."
+                        },
+                        {
+                            "label": "Decline",
+                            "description": "Reject this request."
+                        }
+                    ],
+                    "question": "Proceed?"
+                }
+            ]
+        },
+        "result": {
+            "action": "accept",
+            "content": {}
+        }
+    },
+    "confirmationDeclined": {
+        "asked": {
+            "requestId": "mcp:<uuid>",
+            "questions": [
+                {
+                    "header": "MCP request",
+                    "id": "confirmation",
+                    "multiSelect": false,
+                    "options": [
+                        {
+                            "label": "Continue",
+                            "description": "Accept this request without providing additional values."
+                        },
+                        {
+                            "label": "Decline",
+                            "description": "Reject this request."
+                        }
+                    ],
+                    "question": "Proceed?"
+                }
+            ]
+        },
+        "result": {
+            "action": "decline"
+        }
+    },
+    "form": {
+        "asked": {
+            "requestId": "mcp:<uuid>",
+            "questions": [
+                {
+                    "header": "Target envi…",
+                    "id": "environment",
+                    "multiSelect": false,
+                    "options": [
+                        {
+                            "label": "Staging",
+                            "description": "Use staging."
+                        },
+                        {
+                            "label": "Production",
+                            "description": "Use production."
+                        }
+                    ],
+                    "question": "Configure the deploy.",
+                    "required": true
+                },
+                {
+                    "header": "replicas",
+                    "id": "replicas",
+                    "multiSelect": false,
+                    "options": [],
+                    "question": "How many replicas?",
+                    "required": true
+                },
+                {
+                    "header": "Confirm",
+                    "id": "confirm",
+                    "multiSelect": false,
+                    "options": [
+                        {
+                            "label": "Yes",
+                            "description": "Answer Yes."
+                        },
+                        {
+                            "label": "No",
+                            "description": "Answer No."
+                        }
+                    ],
+                    "question": "Configure the deploy."
+                },
+                {
+                    "header": "regions",
+                    "id": "regions",
+                    "multiSelect": true,
+                    "options": [
+                        {
+                            "label": "Europe",
+                            "description": "Use eu."
+                        },
+                        {
+                            "label": "United States",
+                            "description": "Use us."
+                        }
+                    ],
+                    "question": "Configure the deploy."
+                },
+                {
+                    "header": "note",
+                    "id": "note",
+                    "multiSelect": false,
+                    "options": [],
+                    "question": "Configure the deploy."
+                }
+            ]
+        },
+        "result": {
+            "action": "accept",
+            "content": {
+                "environment": "production",
+                "replicas": 3,
+                "confirm": true,
+                "regions": ["eu", "us"]
+            }
+        }
+    },
+    "invalidChoice": {
+        "asked": {
+            "requestId": "mcp:<uuid>",
+            "questions": [
+                {
+                    "header": "env",
+                    "id": "env",
+                    "multiSelect": false,
+                    "options": [
+                        {
+                            "label": "a",
+                            "description": "Use a."
+                        },
+                        {
+                            "label": "b",
+                            "description": "Use b."
+                        }
+                    ],
+                    "question": "Pick"
+                }
+            ]
+        },
+        "result": {
+            "action": "decline"
+        }
+    },
+    "fractional": {
+        "asked": {
+            "requestId": "mcp:<uuid>",
+            "questions": [
+                {
+                    "header": "n",
+                    "id": "n",
+                    "multiSelect": false,
+                    "options": [],
+                    "question": "N"
+                }
+            ]
+        },
+        "result": {
+            "action": "decline"
+        }
+    },
+    "cancelled": {
+        "asked": {
+            "requestId": "mcp:<uuid>",
+            "questions": [
+                {
+                    "header": "n",
+                    "id": "n",
+                    "multiSelect": false,
+                    "options": [],
+                    "question": "N"
+                }
+            ]
+        },
+        "result": {
+            "action": "decline"
+        }
+    },
+    "missingRequired": {
+        "asked": {
+            "requestId": "mcp:<uuid>",
+            "questions": [
+                {
+                    "header": "n",
+                    "id": "n",
+                    "multiSelect": false,
+                    "options": [],
+                    "question": "N",
+                    "required": true
+                }
+            ]
+        },
+        "result": {
+            "action": "decline"
+        }
+    },
+    "withMode": {
+        "result": {
+            "action": "decline"
+        }
+    }
+}

@@ -3,6 +3,7 @@ use anyhow::{Context, Result, bail};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use rand::RngCore;
 mod environment;
+mod mcp;
 mod routing;
 mod presence;
 mod provider_state;
@@ -48,6 +49,7 @@ pub struct ConfigModule {
     compatibility: serde_json::Value,
     runtime_values: Mutex<toml::Value>,
     runtime_writer: tokio::sync::Mutex<()>,
+    mcp: mcp::McpCatalogFile,
     skills_root: PathBuf,
     os_home: PathBuf,
     projects_root: PathBuf,
@@ -1120,6 +1122,8 @@ impl ConfigModule {
             database: directory.join("agent.sqlite"),
             directory,
         };
+        // A malformed MCP catalog fails startup, as the original's configuration load did.
+        let mcp = mcp::McpCatalogFile::load(&paths.configuration.join("mcp.toml"))?;
         let defaults:serde_json::Value=serde_json::from_str(include_str!("config/default_values.json"))?;
         let mut values:toml::Value=toml::Value::try_from(default_input(&defaults))?;
         let mut global_values=toml::Value::Table(toml::map::Map::new());
@@ -1176,6 +1180,7 @@ impl ConfigModule {
             compatibility,
             runtime_values: Mutex::new(runtime_values),
             runtime_writer: tokio::sync::Mutex::new(()),
+            mcp,
             skills_root: home_directory()?.join(".agents/skills"),
             os_home,
             projects_root,

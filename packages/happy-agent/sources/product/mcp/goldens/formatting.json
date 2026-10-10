@@ -1,0 +1,10 @@
+{
+    "servers": "docs\tconnected\t3 tools\nbroken\tfailed\t0 tools — spawn nope ENOENT\noff\tdisabled\t0 tools\nMore results at cursor 3.",
+    "serversEmpty": "No MCP servers.",
+    "toolsSmall": "alpha\nbeta — short\ngamma\nMore results at cursor 17.",
+    "toolsSmallNoCursor": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb — y",
+    "resources": "file:///a\nfile:///b — Bee",
+    "templates": "file:///{x} — X files",
+    "prompts": "review — Review code.\nplain",
+    "promptsEmpty": "No MCP prompts."
+}

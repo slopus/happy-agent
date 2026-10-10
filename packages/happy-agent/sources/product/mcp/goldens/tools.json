@@ -1,0 +1,832 @@
+[
+    {
+        "name": "list_mcp_servers",
+        "description": "List configured MCP servers and their current connection status. Results are bounded and cursor-paged.",
+        "parameters": {
+            "additionalProperties": false,
+            "type": "object",
+            "properties": {
+                "cursor": {
+                    "minLength": 1,
+                    "maxLength": 32,
+                    "type": "string"
+                },
+                "limit": {
+                    "minimum": 1,
+                    "maximum": 100,
+                    "type": "integer"
+                }
+            }
+        },
+        "returnType": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": ["servers"],
+            "properties": {
+                "nextCursor": {
+                    "minLength": 1,
+                    "maxLength": 32,
+                    "type": "string"
+                },
+                "servers": {
+                    "maxItems": 100,
+                    "type": "array",
+                    "items": {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["name", "status", "toolCount"],
+                        "properties": {
+                            "disabledTools": {
+                                "maxItems": 100,
+                                "uniqueItems": true,
+                                "type": "array",
+                                "items": {
+                                    "minLength": 1,
+                                    "maxLength": 128,
+                                    "type": "string"
+                                }
+                            },
+                            "enabledTools": {
+                                "maxItems": 100,
+                                "uniqueItems": true,
+                                "type": "array",
+                                "items": {
+                                    "minLength": 1,
+                                    "maxLength": 128,
+                                    "type": "string"
+                                }
+                            },
+                            "errorMessage": {
+                                "maxLength": 2000,
+                                "type": "string"
+                            },
+                            "fingerprint": {
+                                "minLength": 64,
+                                "maxLength": 64,
+                                "pattern": "^[0-9a-f]{64}$",
+                                "type": "string"
+                            },
+                            "name": {
+                                "minLength": 1,
+                                "maxLength": 128,
+                                "type": "string"
+                            },
+                            "promptSupport": {
+                                "type": "boolean"
+                            },
+                            "resourceSupport": {
+                                "type": "boolean"
+                            },
+                            "status": {
+                                "anyOf": [
+                                    {
+                                        "const": "blocked",
+                                        "type": "string"
+                                    },
+                                    {
+                                        "const": "connected",
+                                        "type": "string"
+                                    },
+                                    {
+                                        "const": "disabled",
+                                        "type": "string"
+                                    },
+                                    {
+                                        "const": "failed",
+                                        "type": "string"
+                                    }
+                                ]
+                            },
+                            "toolCount": {
+                                "minimum": 0,
+                                "maximum": 10000,
+                                "type": "integer"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "defer": true,
+        "reloadable": true,
+        "durable": false,
+        "requiresAutoOrFullAccess": true,
+        "capabilities": ["Discover and use configured MCP servers, resources, prompts, and tools."],
+        "searchKeywords": ["list MCP servers", "connected external servers", "MCP configuration"],
+        "autoPermissionInstructions": null,
+        "shouldReview": false,
+        "fullAccess": null,
+        "describe": null
+    },
+    {
+        "name": "configure_mcp_server",
+        "description": "Adds, replaces, or removes one server in ~/Happy/Config/mcp.toml, then reloads the live MCP connections. Existing unrelated servers are preserved.",
+        "parameters": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": ["action", "name"],
+            "properties": {
+                "action": {
+                    "anyOf": [
+                        {
+                            "const": "set",
+                            "type": "string"
+                        },
+                        {
+                            "const": "remove",
+                            "type": "string"
+                        }
+                    ]
+                },
+                "name": {
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "type": "string"
+                },
+                "server": {
+                    "anyOf": [
+                        {
+                            "additionalProperties": false,
+                            "type": "object",
+                            "required": ["command", "transport"],
+                            "properties": {
+                                "disabledTools": {
+                                    "maxItems": 100,
+                                    "uniqueItems": true,
+                                    "type": "array",
+                                    "items": {
+                                        "minLength": 1,
+                                        "maxLength": 128,
+                                        "type": "string"
+                                    }
+                                },
+                                "enabledTools": {
+                                    "maxItems": 100,
+                                    "uniqueItems": true,
+                                    "type": "array",
+                                    "items": {
+                                        "minLength": 1,
+                                        "maxLength": 128,
+                                        "type": "string"
+                                    }
+                                },
+                                "enabled": {
+                                    "type": "boolean"
+                                },
+                                "startupTimeoutMs": {
+                                    "minimum": 1,
+                                    "maximum": 600000,
+                                    "type": "integer"
+                                },
+                                "toolTimeoutMs": {
+                                    "minimum": 1,
+                                    "maximum": 600000,
+                                    "type": "integer"
+                                },
+                                "args": {
+                                    "maxItems": 100,
+                                    "type": "array",
+                                    "items": {
+                                        "maxLength": 4096,
+                                        "type": "string"
+                                    }
+                                },
+                                "command": {
+                                    "minLength": 1,
+                                    "maxLength": 4096,
+                                    "type": "string"
+                                },
+                                "cwd": {
+                                    "minLength": 1,
+                                    "maxLength": 4096,
+                                    "type": "string"
+                                },
+                                "env": {
+                                    "maxProperties": 2048,
+                                    "type": "object",
+                                    "patternProperties": {
+                                        "^(.*)$": {
+                                            "maxLength": 16384,
+                                            "type": "string"
+                                        }
+                                    }
+                                },
+                                "transport": {
+                                    "const": "stdio",
+                                    "type": "string"
+                                }
+                            }
+                        },
+                        {
+                            "additionalProperties": false,
+                            "type": "object",
+                            "required": ["transport", "url"],
+                            "properties": {
+                                "disabledTools": {
+                                    "maxItems": 100,
+                                    "uniqueItems": true,
+                                    "type": "array",
+                                    "items": {
+                                        "minLength": 1,
+                                        "maxLength": 128,
+                                        "type": "string"
+                                    }
+                                },
+                                "enabledTools": {
+                                    "maxItems": 100,
+                                    "uniqueItems": true,
+                                    "type": "array",
+                                    "items": {
+                                        "minLength": 1,
+                                        "maxLength": 128,
+                                        "type": "string"
+                                    }
+                                },
+                                "enabled": {
+                                    "type": "boolean"
+                                },
+                                "startupTimeoutMs": {
+                                    "minimum": 1,
+                                    "maximum": 600000,
+                                    "type": "integer"
+                                },
+                                "toolTimeoutMs": {
+                                    "minimum": 1,
+                                    "maximum": 600000,
+                                    "type": "integer"
+                                },
+                                "bearerTokenEnvVar": {
+                                    "minLength": 1,
+                                    "maxLength": 256,
+                                    "type": "string"
+                                },
+                                "headers": {
+                                    "maxProperties": 2048,
+                                    "type": "object",
+                                    "patternProperties": {
+                                        "^(.*)$": {
+                                            "maxLength": 16384,
+                                            "type": "string"
+                                        }
+                                    }
+                                },
+                                "oauthClientIdEnvVar": {
+                                    "minLength": 1,
+                                    "maxLength": 256,
+                                    "type": "string"
+                                },
+                                "oauthClientSecretEnvVar": {
+                                    "minLength": 1,
+                                    "maxLength": 256,
+                                    "type": "string"
+                                },
+                                "oauthScopes": {
+                                    "maxItems": 100,
+                                    "type": "array",
+                                    "items": {
+                                        "minLength": 1,
+                                        "maxLength": 256,
+                                        "type": "string"
+                                    }
+                                },
+                                "transport": {
+                                    "const": "http",
+                                    "type": "string"
+                                },
+                                "url": {
+                                    "minLength": 1,
+                                    "maxLength": 128,
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        "returnType": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": ["servers"],
+            "properties": {
+                "nextCursor": {
+                    "minLength": 1,
+                    "maxLength": 32,
+                    "type": "string"
+                },
+                "servers": {
+                    "maxItems": 100,
+                    "type": "array",
+                    "items": {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["name", "status", "toolCount"],
+                        "properties": {
+                            "disabledTools": {
+                                "maxItems": 100,
+                                "uniqueItems": true,
+                                "type": "array",
+                                "items": {
+                                    "minLength": 1,
+                                    "maxLength": 128,
+                                    "type": "string"
+                                }
+                            },
+                            "enabledTools": {
+                                "maxItems": 100,
+                                "uniqueItems": true,
+                                "type": "array",
+                                "items": {
+                                    "minLength": 1,
+                                    "maxLength": 128,
+                                    "type": "string"
+                                }
+                            },
+                            "errorMessage": {
+                                "maxLength": 2000,
+                                "type": "string"
+                            },
+                            "fingerprint": {
+                                "minLength": 64,
+                                "maxLength": 64,
+                                "pattern": "^[0-9a-f]{64}$",
+                                "type": "string"
+                            },
+                            "name": {
+                                "minLength": 1,
+                                "maxLength": 128,
+                                "type": "string"
+                            },
+                            "promptSupport": {
+                                "type": "boolean"
+                            },
+                            "resourceSupport": {
+                                "type": "boolean"
+                            },
+                            "status": {
+                                "anyOf": [
+                                    {
+                                        "const": "blocked",
+                                        "type": "string"
+                                    },
+                                    {
+                                        "const": "connected",
+                                        "type": "string"
+                                    },
+                                    {
+                                        "const": "disabled",
+                                        "type": "string"
+                                    },
+                                    {
+                                        "const": "failed",
+                                        "type": "string"
+                                    }
+                                ]
+                            },
+                            "toolCount": {
+                                "minimum": 0,
+                                "maximum": 10000,
+                                "type": "integer"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "defer": true,
+        "reloadable": false,
+        "durable": false,
+        "requiresAutoOrFullAccess": true,
+        "capabilities": [
+            "Configure Happy Agent MCP servers and reload them without restarting the daemon."
+        ],
+        "searchKeywords": ["add MCP server", "edit mcp.toml", "remove MCP server"],
+        "autoPermissionInstructions": "This updates the global Happy MCP configuration and reconnects external servers.",
+        "shouldReview": true,
+        "fullAccess": true,
+        "describe": [
+            "updating MCP server “docs” in ~/Happy/Config/mcp.toml and reloading external MCP connections",
+            "removing MCP server “docs” in ~/Happy/Config/mcp.toml and reloading external MCP connections"
+        ]
+    },
+    {
+        "name": "reload_mcp_servers",
+        "description": "Reconciles this workspace's mcp.toml with the live shared MCP connections. Set global to true to reconcile ~/Happy/Config/mcp.toml instead. Unchanged connections keep running.",
+        "parameters": {
+            "additionalProperties": false,
+            "type": "object",
+            "properties": {
+                "global": {
+                    "description": "Reload the user-wide ~/Happy/Config/mcp.toml catalog instead of this workspace's mcp.toml.",
+                    "type": "boolean"
+                }
+            }
+        },
+        "returnType": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": ["servers"],
+            "properties": {
+                "nextCursor": {
+                    "minLength": 1,
+                    "maxLength": 32,
+                    "type": "string"
+                },
+                "servers": {
+                    "maxItems": 100,
+                    "type": "array",
+                    "items": {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["name", "status", "toolCount"],
+                        "properties": {
+                            "disabledTools": {
+                                "maxItems": 100,
+                                "uniqueItems": true,
+                                "type": "array",
+                                "items": {
+                                    "minLength": 1,
+                                    "maxLength": 128,
+                                    "type": "string"
+                                }
+                            },
+                            "enabledTools": {
+                                "maxItems": 100,
+                                "uniqueItems": true,
+                                "type": "array",
+                                "items": {
+                                    "minLength": 1,
+                                    "maxLength": 128,
+                                    "type": "string"
+                                }
+                            },
+                            "errorMessage": {
+                                "maxLength": 2000,
+                                "type": "string"
+                            },
+                            "fingerprint": {
+                                "minLength": 64,
+                                "maxLength": 64,
+                                "pattern": "^[0-9a-f]{64}$",
+                                "type": "string"
+                            },
+                            "name": {
+                                "minLength": 1,
+                                "maxLength": 128,
+                                "type": "string"
+                            },
+                            "promptSupport": {
+                                "type": "boolean"
+                            },
+                            "resourceSupport": {
+                                "type": "boolean"
+                            },
+                            "status": {
+                                "anyOf": [
+                                    {
+                                        "const": "blocked",
+                                        "type": "string"
+                                    },
+                                    {
+                                        "const": "connected",
+                                        "type": "string"
+                                    },
+                                    {
+                                        "const": "disabled",
+                                        "type": "string"
+                                    },
+                                    {
+                                        "const": "failed",
+                                        "type": "string"
+                                    }
+                                ]
+                            },
+                            "toolCount": {
+                                "minimum": 0,
+                                "maximum": 10000,
+                                "type": "integer"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "defer": true,
+        "reloadable": false,
+        "durable": false,
+        "requiresAutoOrFullAccess": true,
+        "capabilities": [
+            "Configure Happy Agent MCP servers and reload them without restarting the daemon."
+        ],
+        "searchKeywords": ["reload MCP", "reconnect MCP", "refresh mcp.toml"],
+        "autoPermissionInstructions": null,
+        "shouldReview": true,
+        "fullAccess": true,
+        "describe": [
+            "reconciling external MCP servers from this workspace's mcp.toml",
+            "reconciling external MCP servers from ~/Happy/Config/mcp.toml",
+            "reconciling external MCP servers from this workspace's mcp.toml"
+        ]
+    },
+    {
+        "name": "list_mcp_tools",
+        "description": "Lists the current live tool catalog from an MCP server, including tools added after the session started. Available servers: Docs, Linear App.",
+        "parameters": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": ["server"],
+            "properties": {
+                "server": {
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "type": "string"
+                },
+                "cursor": {
+                    "minLength": 1,
+                    "maxLength": 32,
+                    "type": "string"
+                }
+            }
+        },
+        "returnType": {
+            "sha256": "35daf437085b4e834357b09f140b4442281eb505193de16be5dfcf21ce44a5fb",
+            "length": 2695599
+        },
+        "defer": true,
+        "reloadable": true,
+        "durable": false,
+        "requiresAutoOrFullAccess": true,
+        "capabilities": ["Discover and use configured MCP servers, resources, prompts, and tools."],
+        "searchKeywords": ["list MCP tools", "live remote tool catalog"],
+        "autoPermissionInstructions": null,
+        "shouldReview": false,
+        "fullAccess": null,
+        "describe": null
+    },
+    {
+        "name": "call_mcp_tool",
+        "description": "Calls a tool from an MCP server by its live server-side name. Use list_mcp_tools for tools added after session startup. Available servers: Docs, Linear App.",
+        "parameters": {
+            "sha256": "840ae1888f826161917cf27567c64c81740b5e5705b952b7ec56c9faaefc0495",
+            "length": 1347642
+        },
+        "returnType": {
+            "sha256": "f62f48c5745b9b90130dd80e8d42a19a9d4697245a906c027caf94d656e67533",
+            "length": 12130190
+        },
+        "defer": true,
+        "reloadable": false,
+        "durable": false,
+        "requiresAutoOrFullAccess": true,
+        "capabilities": ["Discover and use configured MCP servers, resources, prompts, and tools."],
+        "searchKeywords": ["call MCP tool", "invoke remote server tool"],
+        "autoPermissionInstructions": null,
+        "shouldReview": true,
+        "fullAccess": null,
+        "describe": [
+            "calling \"Fetch\" from \"Docs\" with arguments \"{\\\"url\\\":\\\"https://x\\\\n\\u{202e}\\\"}\". Access: the MCP server can perform actions outside Happy Agent’s filesystem sandbox",
+            "calling \"Search Issues\" from \"Linear App\" with arguments \"{}\". Access: the MCP server can perform actions outside Happy Agent’s filesystem sandbox"
+        ]
+    },
+    {
+        "name": "list_mcp_resources",
+        "description": "Lists resources exposed by an MCP server. Available servers: Docs, Linear App. Use the returned next cursor to continue pagination.",
+        "parameters": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": ["server"],
+            "properties": {
+                "server": {
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "type": "string"
+                },
+                "cursor": {
+                    "minLength": 1,
+                    "maxLength": 32,
+                    "type": "string"
+                }
+            }
+        },
+        "returnType": {
+            "sha256": "9d3ae2b95f43019bf52e5e5e7cdcec6942c6b8d3495034f24c8f99dbacd78261",
+            "length": 1348256
+        },
+        "defer": true,
+        "reloadable": true,
+        "durable": false,
+        "requiresAutoOrFullAccess": true,
+        "capabilities": ["Discover and use configured MCP servers, resources, prompts, and tools."],
+        "searchKeywords": ["list MCP resources", "remote resource catalog"],
+        "autoPermissionInstructions": null,
+        "shouldReview": false,
+        "fullAccess": null,
+        "describe": null
+    },
+    {
+        "name": "list_mcp_resource_templates",
+        "description": "Lists parameterized resource templates exposed by an MCP server. Available servers: Docs, Linear App. Use the returned next cursor to continue pagination.",
+        "parameters": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": ["server"],
+            "properties": {
+                "server": {
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "type": "string"
+                },
+                "cursor": {
+                    "minLength": 1,
+                    "maxLength": 32,
+                    "type": "string"
+                }
+            }
+        },
+        "returnType": {
+            "sha256": "c96e9202f00a18b09064cb00c3424e8c3f10428084282a62ba7721295c5278f1",
+            "length": 1348288
+        },
+        "defer": true,
+        "reloadable": true,
+        "durable": false,
+        "requiresAutoOrFullAccess": true,
+        "capabilities": ["Discover and use configured MCP servers, resources, prompts, and tools."],
+        "searchKeywords": ["MCP resource templates", "parameterized remote resource"],
+        "autoPermissionInstructions": null,
+        "shouldReview": false,
+        "fullAccess": null,
+        "describe": null
+    },
+    {
+        "name": "read_mcp_resource",
+        "description": "Reads a resource from an MCP server. Available servers: Docs, Linear App. Use a URI returned by list_mcp_resources or constructed from a listed resource template.",
+        "parameters": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": ["server", "uri"],
+            "properties": {
+                "server": {
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "type": "string"
+                },
+                "uri": {
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "type": "string"
+                }
+            }
+        },
+        "returnType": {
+            "sha256": "f196e32ec21bd9befeb110790715d3bf53e74e47d381bf87ff77857029bc8d47",
+            "length": 4042922
+        },
+        "defer": true,
+        "reloadable": true,
+        "durable": false,
+        "requiresAutoOrFullAccess": true,
+        "capabilities": ["Discover and use configured MCP servers, resources, prompts, and tools."],
+        "searchKeywords": ["read MCP resource", "load remote URI"],
+        "autoPermissionInstructions": null,
+        "shouldReview": false,
+        "fullAccess": null,
+        "describe": null
+    },
+    {
+        "name": "list_mcp_prompts",
+        "description": "Lists reusable prompts exposed by an MCP server. Available servers: Docs, Linear App. Use the returned next cursor to continue pagination.",
+        "parameters": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": ["server"],
+            "properties": {
+                "server": {
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "type": "string"
+                },
+                "cursor": {
+                    "minLength": 1,
+                    "maxLength": 32,
+                    "type": "string"
+                }
+            }
+        },
+        "returnType": {
+            "sha256": "8784daa35b7444a1f4e4e3c2150f291cb0dc2ca2074207d43ed98994d67a2833",
+            "length": 1348174
+        },
+        "defer": true,
+        "reloadable": true,
+        "durable": false,
+        "requiresAutoOrFullAccess": true,
+        "capabilities": ["Discover and use configured MCP servers, resources, prompts, and tools."],
+        "searchKeywords": ["list MCP prompts", "remote reusable prompts"],
+        "autoPermissionInstructions": null,
+        "shouldReview": false,
+        "fullAccess": null,
+        "describe": null
+    },
+    {
+        "name": "get_mcp_prompt",
+        "description": "Gets a reusable prompt from an MCP server. Available servers: Docs, Linear App.",
+        "parameters": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": ["name", "server"],
+            "properties": {
+                "arguments": {
+                    "maxProperties": 2048,
+                    "type": "object",
+                    "patternProperties": {
+                        "^(.*)$": {
+                            "maxLength": 1000000,
+                            "type": "string"
+                        }
+                    }
+                },
+                "name": {
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "type": "string"
+                },
+                "server": {
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "type": "string"
+                }
+            }
+        },
+        "returnType": {
+            "sha256": "6e7dac85b4d8e5a93d84ba53dd8a2922ca94abe99d12243c433e425b1a74f3fa",
+            "length": 10783049
+        },
+        "defer": true,
+        "reloadable": false,
+        "durable": false,
+        "requiresAutoOrFullAccess": true,
+        "capabilities": ["Discover and use configured MCP servers, resources, prompts, and tools."],
+        "searchKeywords": ["get MCP prompt", "load remote prompt"],
+        "autoPermissionInstructions": null,
+        "shouldReview": true,
+        "fullAccess": null,
+        "describe": [
+            "loading prompt \"Review Code\" from \"My Docs\". Access: the MCP server can return instructions from outside Happy Agent’s local sandbox"
+        ]
+    },
+    {
+        "name": "mcp__Linear_App__search_issues",
+        "description": "Search the tracker.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string"
+                }
+            },
+            "required": ["query"]
+        },
+        "returnType": {
+            "sha256": "f62f48c5745b9b90130dd80e8d42a19a9d4697245a906c027caf94d656e67533",
+            "length": 12130190
+        },
+        "defer": true,
+        "reloadable": false,
+        "durable": false,
+        "requiresAutoOrFullAccess": true,
+        "capabilities": ["Discover and use configured MCP servers, resources, prompts, and tools."],
+        "searchKeywords": ["MCP direct tool", "Linear App", "search issues"],
+        "autoPermissionInstructions": null,
+        "shouldReview": true,
+        "fullAccess": null,
+        "describe": [
+            "calling \"Search Issues\" from \"Linear App\" with arguments \"{\\\"query\\\":\\\"bugs\\\"}\". Access: the MCP server can perform actions outside Happy Agent’s filesystem sandbox",
+            "calling \"Search Issues\" from \"Linear App\" with arguments \"{}\". Access: the MCP server can perform actions outside Happy Agent’s filesystem sandbox"
+        ]
+    },
+    {
+        "name": "mcp__docs__fetch",
+        "description": "Use fetch from docs.",
+        "parameters": {
+            "type": "object"
+        },
+        "returnType": {
+            "sha256": "f62f48c5745b9b90130dd80e8d42a19a9d4697245a906c027caf94d656e67533",
+            "length": 12130190
+        },
+        "defer": true,
+        "reloadable": false,
+        "durable": false,
+        "requiresAutoOrFullAccess": true,
+        "capabilities": ["Discover and use configured MCP servers, resources, prompts, and tools."],
+        "searchKeywords": ["MCP direct tool", "docs", "fetch"],
+        "autoPermissionInstructions": null,
+        "shouldReview": true,
+        "fullAccess": null,
+        "describe": [
+            "calling \"Fetch\" from \"Docs\" with arguments \"{\\\"query\\\":\\\"bugs\\\"}\". Access: the MCP server can perform actions outside Happy Agent’s filesystem sandbox",
+            "calling \"Fetch\" from \"Docs\" with arguments \"{}\". Access: the MCP server can perform actions outside Happy Agent’s filesystem sandbox"
+        ]
+    }
+]

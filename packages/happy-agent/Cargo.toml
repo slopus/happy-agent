@@ -38,6 +38,7 @@ hmac.workspace = true
 http-body-util.workspace = true
 hyper.workspace = true
 hyper-util.workspace = true
+indexmap = "2.14.2"
 libc.workspace = true
 monty-alloc.workspace = true
 monty-pool.workspace = true

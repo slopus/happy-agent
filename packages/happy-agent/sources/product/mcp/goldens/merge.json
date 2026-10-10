@@ -1,0 +1,22 @@
+{
+    "servers": [
+        {
+            "name": "a.b",
+            "status": "failed",
+            "toolCount": 0,
+            "errorMessage": "Tool name conflict (collision after normalization): mcp__a_b__x. The server was quarantined."
+        },
+        {
+            "name": "a_b",
+            "status": "failed",
+            "toolCount": 0,
+            "errorMessage": "Tool name conflict (collision after normalization): mcp__a_b__x. The server was quarantined."
+        },
+        {
+            "name": "ok",
+            "status": "connected",
+            "toolCount": 1
+        }
+    ],
+    "tools": ["mcp__ok__y"]
+}

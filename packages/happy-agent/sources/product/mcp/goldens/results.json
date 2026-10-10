@@ -1,0 +1,602 @@
+{
+    "text": [
+        {
+            "type": "text",
+            "text": "hello"
+        }
+    ],
+    "empty": [
+        {
+            "type": "text",
+            "text": "(empty result)"
+        }
+    ],
+    "structured": [
+        {
+            "type": "text",
+            "text": "{\"a\":[1,2.5,\"x\"],\"b\":{\"c\":null}}"
+        }
+    ],
+    "mixed": [
+        {
+            "type": "image",
+            "data": "aGk=",
+            "mimeType": "image/png"
+        },
+        {
+            "type": "text",
+            "text": "inside"
+        },
+        {
+            "type": "text",
+            "text": "MCP resource: file:///y"
+        },
+        {
+            "type": "text",
+            "text": "MCP resource: file:///z"
+        },
+        {
+            "type": "text",
+            "text": "The MCP tool returned audio content."
+        }
+    ],
+    "images": [
+        {
+            "type": "image",
+            "data": "aGk=",
+            "mimeType": "image/png"
+        },
+        {
+            "type": "image",
+            "data": "aGk=",
+            "mimeType": "image/png"
+        },
+        {
+            "type": "image",
+            "data": "aGk=",
+            "mimeType": "image/png"
+        },
+        {
+            "type": "image",
+            "data": "aGk=",
+            "mimeType": "image/png"
+        },
+        {
+            "type": "text",
+            "text": "Additional MCP images were truncated."
+        },
+        {
+            "type": "text",
+            "text": "Additional MCP images were truncated."
+        }
+    ],
+    "manyBlocks": [
+        {
+            "type": "text",
+            "text": "t0"
+        },
+        {
+            "type": "text",
+            "text": "t1"
+        },
+        {
+            "type": "text",
+            "text": "t2"
+        },
+        {
+            "type": "text",
+            "text": "t3"
+        },
+        {
+            "type": "text",
+            "text": "t4"
+        },
+        {
+            "type": "text",
+            "text": "t5"
+        },
+        {
+            "type": "text",
+            "text": "t6"
+        },
+        {
+            "type": "text",
+            "text": "t7"
+        },
+        {
+            "type": "text",
+            "text": "t8"
+        },
+        {
+            "type": "text",
+            "text": "t9"
+        },
+        {
+            "type": "text",
+            "text": "t10"
+        },
+        {
+            "type": "text",
+            "text": "t11"
+        },
+        {
+            "type": "text",
+            "text": "t12"
+        },
+        {
+            "type": "text",
+            "text": "t13"
+        },
+        {
+            "type": "text",
+            "text": "t14"
+        },
+        {
+            "type": "text",
+            "text": "t15"
+        },
+        {
+            "type": "text",
+            "text": "t16"
+        },
+        {
+            "type": "text",
+            "text": "t17"
+        },
+        {
+            "type": "text",
+            "text": "t18"
+        },
+        {
+            "type": "text",
+            "text": "t19"
+        },
+        {
+            "type": "text",
+            "text": "t20"
+        },
+        {
+            "type": "text",
+            "text": "t21"
+        },
+        {
+            "type": "text",
+            "text": "t22"
+        },
+        {
+            "type": "text",
+            "text": "t23"
+        },
+        {
+            "type": "text",
+            "text": "t24"
+        },
+        {
+            "type": "text",
+            "text": "t25"
+        },
+        {
+            "type": "text",
+            "text": "t26"
+        },
+        {
+            "type": "text",
+            "text": "t27"
+        },
+        {
+            "type": "text",
+            "text": "t28"
+        },
+        {
+            "type": "text",
+            "text": "t29"
+        },
+        {
+            "type": "text",
+            "text": "t30"
+        },
+        {
+            "type": "text",
+            "text": "t31"
+        },
+        {
+            "type": "text",
+            "text": "t32"
+        },
+        {
+            "type": "text",
+            "text": "t33"
+        },
+        {
+            "type": "text",
+            "text": "t34"
+        },
+        {
+            "type": "text",
+            "text": "t35"
+        },
+        {
+            "type": "text",
+            "text": "t36"
+        },
+        {
+            "type": "text",
+            "text": "t37"
+        },
+        {
+            "type": "text",
+            "text": "t38"
+        },
+        {
+            "type": "text",
+            "text": "t39"
+        },
+        {
+            "type": "text",
+            "text": "t40"
+        },
+        {
+            "type": "text",
+            "text": "t41"
+        },
+        {
+            "type": "text",
+            "text": "t42"
+        },
+        {
+            "type": "text",
+            "text": "t43"
+        },
+        {
+            "type": "text",
+            "text": "t44"
+        },
+        {
+            "type": "text",
+            "text": "t45"
+        },
+        {
+            "type": "text",
+            "text": "t46"
+        },
+        {
+            "type": "text",
+            "text": "t47"
+        },
+        {
+            "type": "text",
+            "text": "t48"
+        },
+        {
+            "type": "text",
+            "text": "t49"
+        },
+        {
+            "type": "text",
+            "text": "t50"
+        },
+        {
+            "type": "text",
+            "text": "t51"
+        },
+        {
+            "type": "text",
+            "text": "t52"
+        },
+        {
+            "type": "text",
+            "text": "t53"
+        },
+        {
+            "type": "text",
+            "text": "t54"
+        },
+        {
+            "type": "text",
+            "text": "t55"
+        },
+        {
+            "type": "text",
+            "text": "t56"
+        },
+        {
+            "type": "text",
+            "text": "t57"
+        },
+        {
+            "type": "text",
+            "text": "t58"
+        },
+        {
+            "type": "text",
+            "text": "t59"
+        },
+        {
+            "type": "text",
+            "text": "t60"
+        },
+        {
+            "type": "text",
+            "text": "t61"
+        },
+        {
+            "type": "text",
+            "text": "t62"
+        },
+        {
+            "type": "text",
+            "text": "t63"
+        },
+        {
+            "type": "text",
+            "text": "t64"
+        },
+        {
+            "type": "text",
+            "text": "t65"
+        },
+        {
+            "type": "text",
+            "text": "t66"
+        },
+        {
+            "type": "text",
+            "text": "t67"
+        },
+        {
+            "type": "text",
+            "text": "t68"
+        },
+        {
+            "type": "text",
+            "text": "t69"
+        },
+        {
+            "type": "text",
+            "text": "t70"
+        },
+        {
+            "type": "text",
+            "text": "t71"
+        },
+        {
+            "type": "text",
+            "text": "t72"
+        },
+        {
+            "type": "text",
+            "text": "t73"
+        },
+        {
+            "type": "text",
+            "text": "t74"
+        },
+        {
+            "type": "text",
+            "text": "t75"
+        },
+        {
+            "type": "text",
+            "text": "t76"
+        },
+        {
+            "type": "text",
+            "text": "t77"
+        },
+        {
+            "type": "text",
+            "text": "t78"
+        },
+        {
+            "type": "text",
+            "text": "t79"
+        },
+        {
+            "type": "text",
+            "text": "t80"
+        },
+        {
+            "type": "text",
+            "text": "t81"
+        },
+        {
+            "type": "text",
+            "text": "t82"
+        },
+        {
+            "type": "text",
+            "text": "t83"
+        },
+        {
+            "type": "text",
+            "text": "t84"
+        },
+        {
+            "type": "text",
+            "text": "t85"
+        },
+        {
+            "type": "text",
+            "text": "t86"
+        },
+        {
+            "type": "text",
+            "text": "t87"
+        },
+        {
+            "type": "text",
+            "text": "t88"
+        },
+        {
+            "type": "text",
+            "text": "t89"
+        },
+        {
+            "type": "text",
+            "text": "t90"
+        },
+        {
+            "type": "text",
+            "text": "t91"
+        },
+        {
+            "type": "text",
+            "text": "t92"
+        },
+        {
+            "type": "text",
+            "text": "t93"
+        },
+        {
+            "type": "text",
+            "text": "t94"
+        },
+        {
+            "type": "text",
+            "text": "t95"
+        },
+        {
+            "type": "text",
+            "text": "t96"
+        },
+        {
+            "type": "text",
+            "text": "t97"
+        },
+        {
+            "type": "text",
+            "text": "t98"
+        },
+        {
+            "type": "text",
+            "text": "t99"
+        },
+        {
+            "type": "text",
+            "text": "t100"
+        },
+        {
+            "type": "text",
+            "text": "t101"
+        },
+        {
+            "type": "text",
+            "text": "t102"
+        },
+        {
+            "type": "text",
+            "text": "t103"
+        },
+        {
+            "type": "text",
+            "text": "t104"
+        },
+        {
+            "type": "text",
+            "text": "t105"
+        },
+        {
+            "type": "text",
+            "text": "t106"
+        },
+        {
+            "type": "text",
+            "text": "t107"
+        },
+        {
+            "type": "text",
+            "text": "t108"
+        },
+        {
+            "type": "text",
+            "text": "t109"
+        },
+        {
+            "type": "text",
+            "text": "t110"
+        },
+        {
+            "type": "text",
+            "text": "t111"
+        },
+        {
+            "type": "text",
+            "text": "t112"
+        },
+        {
+            "type": "text",
+            "text": "t113"
+        },
+        {
+            "type": "text",
+            "text": "t114"
+        },
+        {
+            "type": "text",
+            "text": "t115"
+        },
+        {
+            "type": "text",
+            "text": "t116"
+        },
+        {
+            "type": "text",
+            "text": "t117"
+        },
+        {
+            "type": "text",
+            "text": "t118"
+        },
+        {
+            "type": "text",
+            "text": "t119"
+        },
+        {
+            "type": "text",
+            "text": "t120"
+        },
+        {
+            "type": "text",
+            "text": "t121"
+        },
+        {
+            "type": "text",
+            "text": "t122"
+        },
+        {
+            "type": "text",
+            "text": "t123"
+        },
+        {
+            "type": "text",
+            "text": "t124"
+        },
+        {
+            "type": "text",
+            "text": "t125"
+        },
+        {
+            "type": "text",
+            "text": "t126"
+        },
+        {
+            "type": "text",
+            "text": "... [truncated]"
+        }
+    ],
+    "bigText": [
+        {
+            "type": "text",
+            "length": 262151,
+            "tail": "ééééé... [truncated]"
+        },
+        {
+            "type": "text",
+            "length": 1,
+            "tail": "."
+        }
+    ],
+    "bounded": "{\"deep\":[[[[[[[[[[[\"... [truncated]\"]]]]]]]]]]],\"s\":\"yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy\"}",
+    "boundedSmall": "{\"alpha\":\"aaaaa... [truncated]",
+    "boundedNodes": "[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,97,98,99,100,101,102,103,104,105,106,107,108,109,110,111,112,113,114,115,116,117,118,119,120,121,122,123,124,125,126,\"... [truncated]\"]"
+}

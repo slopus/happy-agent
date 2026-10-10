@@ -658,6 +658,8 @@ const schemas = {
     ownerFolderSettings: workspaceFolderSettingsSchema,
     ownerWorkspaceConfigInput: partialValuesSchema.properties.workspace,
     ownerConfigPartialValues: partialValuesSchema,
+    ownerMcpServersInput: partialValuesSchema.properties.mcp_servers,
+    ownerMcpServers: happyAgentConfigValuesSchema.properties.mcpServers,
     ownerConfigTable: Type.Record(Type.String(), Type.Unknown(), { maxProperties: 512 }),
     ...Object.fromEntries(
         Object.entries(providerInputSchemas).map(([kind, schema]) => [

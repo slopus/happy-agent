@@ -16,6 +16,7 @@ mod identity;
 mod journal;
 mod lifecycle;
 mod live;
+mod mcp;
 mod owners;
 mod permissions;
 mod presence;
@@ -35,6 +36,7 @@ mod schemas;
 mod tools;
 mod tailcat;
 mod tasks;
+mod text;
 mod titles;
 mod transport;
 mod usage;
@@ -119,6 +121,7 @@ pub async fn run() -> Result<()> {
     let connections = connections::ConnectionsModule::new(config.clone(), bots.clone(), cloud.clone(), tailcat.clone(), durable.clone(), runtime.clone(), events.clone(), agent_runtime.clone())?;
     let presence = presence::PresenceModule::new(config.clone(), runtime.clone(), durable.clone(), lifecycle.clone(), agent_runtime.clone())?;
     let user_input = user_input::UserInputModule::new(presence.clone(), runtime.clone(), durable.clone(), agent_runtime.clone(), lifecycle.clone())?;
+    let mcp = mcp::McpModule::new(config.clone(), runtime.clone(), user_input.clone(), workspaces.clone(), agent_runtime.clone())?;
     let agents = Arc::new(agents::AgentSystemModule::new(
         config.clone(),
         runtime.clone(),
@@ -185,6 +188,7 @@ pub async fn run() -> Result<()> {
         connections.load().await?;
         presence.load().await?;
         user_input.load().await?;
+        mcp.load().await?;
         scheduling.load().await?;
         tasks.load().await?;
         goal.load().await?;
@@ -194,6 +198,7 @@ pub async fn run() -> Result<()> {
         skills.start().await?;
         if provider_scan.start().await.is_err() { eprintln!("Background provider credential maintenance could not start."); }
         durable.start().await?;
+        mcp.start();
         agents.load().await?;
         lifecycle.publish_pid()?;
         lifecycle.ready()?;
