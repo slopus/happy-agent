@@ -197,9 +197,11 @@ fn verify_literal_names(parent: &File) -> SupervisorResult<()> {
     super::linux::syscall_zero("inspect the protected parent filesystem", unsafe {
         libc::fstatfs(parent.as_raw_fd(), &mut metadata)
     })?;
+    // Linux magic values have the same bits, but statfs.f_type is unsigned
+    // with musl and signed with glibc. Let the literals follow the field type.
     match metadata.f_type {
-        libc::TMPFS_MAGIC | 0x8584_58f6 => return Ok(()), // tmpfs and ramfs
-        0xef53 | libc::XFS_SUPER_MAGIC | libc::BTRFS_SUPER_MAGIC => {},
+        0x0102_1994 | 0x8584_58f6 => return Ok(()), // tmpfs and ramfs
+        0xef53 | 0x5846_5342 | 0x9123_683e => {}, // ext-family, XFS, Btrfs
         _ => return Err(invalid_input("absent protected filenames require ext-family, XFS, Btrfs, tmpfs, or ramfs backing directories with literal filename semantics; this filesystem is unsupported and no command was started").into()),
     }
     let directory = open_path(libc::AT_FDCWD, &fd_path(parent.as_raw_fd()), libc::O_RDONLY | libc::O_DIRECTORY)
