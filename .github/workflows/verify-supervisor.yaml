@@ -9,7 +9,10 @@ name: Verify happy-agent-supervisor
 #
 # This runs on demand only. It is slow, it exists to answer "does the boundary still hold", and
 # that question is worth asking before a release or after touching the sandbox, not on every push.
-# It never signs, packages for release, or publishes. Dispatch it from the branch under test:
+# It never signs, packages for release, or publishes. With distribution_only it instead builds the
+# five release executables exactly as a release would, under a version no release uses, packages
+# them as the release archives and npm packages, and verifies them together; nothing is signed,
+# published, or tagged. Dispatch it from the branch under test:
 #   gh workflow run verify-supervisor.yaml --ref <branch>
 
 on:
@@ -23,17 +26,21 @@ on:
                 description: Validate only the native Windows runtime and its single executable
                 type: boolean
                 default: false
+            distribution_only:
+                description: Build, package, and verify the five release targets without signing or publishing
+                type: boolean
+                default: false
 
 permissions:
     contents: read
 
 concurrency:
-    group: verify-supervisor-${{ github.ref }}-${{ inputs.services_only }}-${{ inputs.windows_only }}
+    group: verify-supervisor-${{ github.ref }}-${{ inputs.services_only }}-${{ inputs.windows_only }}-${{ inputs.distribution_only }}
     cancel-in-progress: true
 
 jobs:
     compute-services:
-        if: ${{ inputs.services_only || !inputs.windows_only }}
+        if: ${{ !inputs.distribution_only && (inputs.services_only || !inputs.windows_only) }}
         name: Published service runtime on ${{ matrix.runner }}
         runs-on: ${{ matrix.runner }}
         timeout-minutes: 20
@@ -70,11 +77,11 @@ jobs:
         name: Native Windows runtime
         permissions:
             contents: read
-        if: ${{ !inputs.services_only }}
+        if: ${{ !inputs.services_only && !inputs.distribution_only }}
         uses: ./.github/workflows/verify-native-windows.yml
 
     native-linux:
-        if: ${{ !inputs.windows_only }}
+        if: ${{ !inputs.windows_only && !inputs.distribution_only }}
         name: Native boundary on ${{ matrix.runner }}
         runs-on: ${{ matrix.runner }}
         timeout-minutes: 90
@@ -223,7 +230,7 @@ jobs:
                   if-no-files-found: warn
 
     native-macos:
-        if: ${{ !inputs.windows_only && !inputs.services_only }}
+        if: ${{ !inputs.windows_only && !inputs.services_only && !inputs.distribution_only }}
         name: Native boundary on ${{ matrix.runner }}
         runs-on: ${{ matrix.runner }}
         timeout-minutes: 60
@@ -269,7 +276,7 @@ jobs:
                   if-no-files-found: warn
 
     package:
-        if: ${{ !inputs.windows_only && !inputs.services_only }}
+        if: ${{ !inputs.windows_only && !inputs.services_only && !inputs.distribution_only }}
         name: TypeScript package
         runs-on: ubuntu-24.04
         timeout-minutes: 20
@@ -298,3 +305,153 @@ jobs:
 
             - name: Build the package
               run: pnpm --filter @slopus/happy-agent-supervisor build
+
+    distribution:
+        if: ${{ inputs.distribution_only }}
+        name: Distribution for ${{ matrix.target }}
+        runs-on: ${{ matrix.runner }}
+        timeout-minutes: 60
+        strategy:
+            fail-fast: false
+            matrix:
+                include:
+                    - { runner: macos-15, target: darwin-arm64, rust: aarch64-apple-darwin }
+                    - { runner: macos-15-intel, target: darwin-x64, rust: x86_64-apple-darwin }
+                    - {
+                          runner: ubuntu-24.04-arm,
+                          target: linux-arm64,
+                          rust: aarch64-unknown-linux-musl,
+                      }
+                    - { runner: ubuntu-24.04, target: linux-x64, rust: x86_64-unknown-linux-musl }
+                    - { runner: windows-2025, target: win32-x64, rust: x86_64-pc-windows-msvc }
+        defaults:
+            run:
+                shell: bash
+        env:
+            TARGET: ${{ matrix.target }}
+            # A version no release uses, so these packages can never pass for published ones.
+            DISTRIBUTION_VERSION: 0.0.0-preview.${{ github.run_number }}
+            HAPPY_AGENT_RELEASE_VERSION: 0.0.0-preview.${{ github.run_number }}
+        steps:
+            - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+            - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+            - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+              with:
+                  node-version: "24"
+                  package-manager-cache: false
+
+            - name: Install the pinned Rust toolchain and the release target
+              run: |
+                  rustup show active-toolchain || rustup toolchain install
+                  rustup target add ${{ matrix.rust }}
+
+            - name: Install native musl support
+              if: runner.os == 'Linux'
+              run: |
+                  sudo apt-get update
+                  sudo apt-get install -y musl-tools
+
+            - name: Build the one executable exactly as a release does
+              run: pnpm --filter @slopus/happy-agent build:native --target "$TARGET"
+
+            - name: Record what the executable loads
+              run: |
+                  binary="packages/happy-agent/dist/bin/happy-agent-$TARGET"
+                  if [[ "$TARGET" == win32-* ]]; then binary="$binary.exe"; fi
+                  {
+                      echo "### What happy-agent-$TARGET loads"
+                      echo '```'
+                      case "$TARGET" in
+                          linux-*) file "$binary"; readelf -lW "$binary"; readelf -dW "$binary" ;;
+                          darwin-*) file "$binary"; otool -L "$binary" ;;
+                          win32-*) file "$binary" ;;
+                      esac
+                      echo '```'
+                  } | tee -a "$GITHUB_STEP_SUMMARY"
+                  case "$TARGET" in
+                      linux-*)
+                          if readelf -lW "$binary" | grep -q INTERP; then
+                              echo "The Linux executable names an ELF interpreter." >&2
+                              exit 1
+                          fi
+                          if readelf -dW "$binary" | grep -q '(NEEDED)'; then
+                              echo "The Linux executable needs a shared library." >&2
+                              exit 1
+                          fi
+                          ;;
+                      darwin-*)
+                          # Only the operating system's own libraries may be loaded.
+                          if otool -L "$binary" | tail -n +2 | grep -vE '^[[:space:]]+(/usr/lib/|/System/Library/)'; then
+                              echo "The Apple executable loads a library the system does not provide." >&2
+                              exit 1
+                          fi
+                          ;;
+                      win32-*)
+                          if grep -aqiE 'vcruntime140\.dll|msvcp140\.dll|ucrtbase\.dll|api-ms-win-crt-' "$binary"; then
+                              echo "The Windows executable imports the C runtime instead of carrying it." >&2
+                              exit 1
+                          fi
+                          ;;
+                  esac
+
+            - name: Smoke test the exact executable
+              run: |
+                  binary="packages/happy-agent/dist/bin/happy-agent-$TARGET"
+                  if [[ "$TARGET" == win32-* ]]; then binary="$binary.exe"; fi
+                  test "$("$binary" --version)" = "Happy Agent $DISTRIBUTION_VERSION"
+                  node packages/happy-agent/scripts/smoke-rust-runtime.mjs "$binary"
+
+            - name: Package the archive and the npm platform package
+              run: |
+                  binary="happy-agent-$TARGET"
+                  if [[ "$TARGET" == win32-* ]]; then
+                      binary="$binary.exe"
+                      # Node's tar must be Windows' own, which reads drive letters as paths; Git
+                      # Bash's GNU tar reads them as remote hosts.
+                      export PATH="/c/Windows/System32:$PATH"
+                  fi
+                  mkdir -p distribution
+                  archive="happy-agent-$DISTRIBUTION_VERSION-$TARGET.tar.gz"
+                  tar -czf "distribution/$archive" -C packages/happy-agent/dist/bin "$binary"
+                  node -e 'const [file] = process.argv.slice(1); const hash = require("node:crypto").createHash("sha256").update(require("node:fs").readFileSync(file)).digest("hex"); console.log(`${hash}  ${require("node:path").basename(file)}`);' "distribution/$archive" > "distribution/$archive.sha256"
+                  node packages/happy-agent/scripts/package-native.mjs platform --version "$DISTRIBUTION_VERSION" --target "$TARGET" --binary "packages/happy-agent/dist/bin/$binary" --output "$RUNNER_TEMP/npm"
+                  cp "$RUNNER_TEMP/npm/slopus-happy-agent-$TARGET-$DISTRIBUTION_VERSION.tgz" distribution/
+                  node packages/happy-agent/scripts/package-native.mjs root --version "$DISTRIBUTION_VERSION" --output "$RUNNER_TEMP/npm-root"
+                  node packages/happy-agent/scripts/verify-native-package.mjs "$RUNNER_TEMP/npm-root/slopus-happy-agent-$DISTRIBUTION_VERSION.tgz" "distribution/slopus-happy-agent-$TARGET-$DISTRIBUTION_VERSION.tgz"
+
+            - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+              with:
+                  name: distribution-${{ matrix.target }}
+                  path: distribution/*
+                  if-no-files-found: error
+                  retention-days: 7
+
+    distribution-set:
+        if: ${{ inputs.distribution_only }}
+        needs: distribution
+        name: Five-target distribution
+        runs-on: ubuntu-24.04
+        timeout-minutes: 15
+        env:
+            DISTRIBUTION_VERSION: 0.0.0-preview.${{ github.run_number }}
+        steps:
+            - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+            - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+            - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+              with:
+                  node-version: "24"
+                  package-manager-cache: false
+
+            - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+              with:
+                  pattern: distribution-*
+                  path: distribution
+                  merge-multiple: true
+
+            - name: Generate the npm launcher package
+              run: |
+                  node packages/happy-agent/scripts/package-native.mjs root --version "$DISTRIBUTION_VERSION" --output "$RUNNER_TEMP/npm-root"
+                  cp "$RUNNER_TEMP/npm-root/slopus-happy-agent-$DISTRIBUTION_VERSION.tgz" distribution/
+
+            - name: Verify the five targets together
+              run: node packages/happy-agent/scripts/verify-native-distribution.mjs distribution "$DISTRIBUTION_VERSION" | tee -a "$GITHUB_STEP_SUMMARY"

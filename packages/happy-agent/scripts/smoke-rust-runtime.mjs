@@ -48,8 +48,8 @@ await writeFile(
     JSON.stringify({ id: "smoke-agent", instructions: "Root instructions.", provider }),
 );
 
-async function run(args, input) {
-    const child = spawn(binary, args, { stdio: ["pipe", "pipe", "pipe"] });
+async function run(args, input, env = process.env) {
+    const child = spawn(binary, args, { env, stdio: ["pipe", "pipe", "pipe"] });
     let output = "",
         error = "";
     child.stdout.on("data", (chunk) => (output += chunk));
@@ -114,6 +114,34 @@ try {
     console.log(
         "Verified native inference, durable queued follow-ups, history continuation, and terminal events.",
     );
+    // The product daemon's lifecycle runs on POSIX only until the Windows product start passes.
+    // Its installation is private to this check, and its socket path stays well under the
+    // Unix socket limit.
+    if (process.platform === "win32") {
+        console.log("Skipped the daemon lifecycle check: it is POSIX-only for now.");
+    } else {
+        const installation = await mkdtemp(join(tmpdir(), "ha-"));
+        const env = { ...process.env, HAPPY_HOME_DIR: join(installation, ".happy") };
+        let started = false;
+        try {
+            await run(["start"], "", env);
+            started = true;
+            assert.match(await run(["status"], "", env), /^Daemon is running at /);
+            assert.match(await run(["stop"], "", env), /^Daemon stopped\.$/m);
+            let status = "";
+            for (let attempt = 0; attempt < 100; attempt += 1) {
+                status = await run(["status"], "", env);
+                if (status.startsWith("Daemon is not running.")) break;
+                await new Promise((resolve) => setTimeout(resolve, 100));
+            }
+            assert.match(status, /^Daemon is not running\./);
+            started = false;
+        } finally {
+            if (started) await run(["stop"], "", env).catch(() => undefined);
+            await rm(installation, { recursive: true, force: true });
+        }
+        console.log("Verified the daemon's start, status, stop, and stopped status.");
+    }
 } finally {
     await new Promise((resolve) => server.close(resolve));
     await rm(root, { recursive: true, force: true });

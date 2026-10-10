@@ -4,7 +4,13 @@ The current runtime uses `build-native.mjs` to compile the single Rust executabl
 `package-native.mjs` to create npm launcher/platform tarballs, and
 `verify-native-package.mjs` to exercise the packed launcher's native resolution.
 `smoke-rust-runtime.mjs` checks inference and durable queued input through the real
-executable with a local HTTP fixture. The Bun compiler described below has been
+executable with a local HTTP fixture, then, on macOS and Linux, starts, inspects, and stops
+the daemon in a private short-lived installation. `verify-native-distribution.mjs` checks a
+whole five-target distribution together: each platform's archive and npm package carry the same
+executable for the right operating system and processor, the launcher depends on exactly those
+packages, the Linux executables are static, and the Windows executable carries its C runtime.
+The `distribution_only` input of `verify-supervisor.yaml` produces and verifies such a
+distribution without signing or publishing it. The Bun compiler described below has been
 removed; these historical notes apply to the previous published runtime.
 
 The package's ordinary TypeScript build produces its published Node-compatible
