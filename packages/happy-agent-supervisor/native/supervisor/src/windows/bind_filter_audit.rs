@@ -214,6 +214,12 @@ fn create_secured(path: &Path, sddl: &str) -> io::Result<()> {
             &mut descriptor,
             std::ptr::null_mut(),
         )
+    })
+    .map_err(|error| {
+        io::Error::other(format!(
+            "Parse owned fixture security descriptor for {}: {error}",
+            path.display()
+        ))
     })?;
     let descriptor = Local(descriptor);
     let attributes = SECURITY_ATTRIBUTES {
@@ -475,9 +481,13 @@ async fn owned_silo_bind_filter_denies_acl_independent_writes_with_private_reads
     let null = source.join("null-dacl-untrusted");
     let user = user_sid()?;
     create_secured(&private, &format!("O:{user}D:P(A;;GA;;;{user})"))?;
+    // Sddl.h has no UN abbreviation. Use the explicit SID: mandatory authority
+    // 16 and SECURITY_MANDATORY_UNTRUSTED_RID 0. Microsoft documents both forms:
+    // https://learn.microsoft.com/en-us/windows/win32/secauthz/sid-strings
+    // https://learn.microsoft.com/en-us/windows/win32/secauthz/well-known-sids
     create_secured(
         &null,
-        &format!("O:{user}D:NO_ACCESS_CONTROLS:(ML;;NW;;;UN)"),
+        &format!("O:{user}D:NO_ACCESS_CONTROLS:(ML;;NW;;;S-1-16-0)"),
     )?;
     assert_owner(&private, &user)?;
     assert_owner(&null, &user)?;

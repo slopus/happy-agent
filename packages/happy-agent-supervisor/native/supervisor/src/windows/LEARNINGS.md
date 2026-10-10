@@ -17,3 +17,8 @@ and exclusion of an inheritable writable file handle. It requires private reads 
 private temporary storage, while parent and sibling writes remain unaffected. Missing APIs or
 failed Silo setup fail the kernel test; they are never a passing skip. This remains a filesystem
 experiment and does not establish a complete Read only boundary.
+
+The Untrusted integrity SID has no `UN` SDDL abbreviation. The fixture uses the
+explicit `S-1-16-0` SID and verifies its stored authority and RID. An invalid SID
+failed the first kernel run before Silo creation; that run provides no BindFlt
+availability or filesystem-denial evidence.
