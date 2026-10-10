@@ -590,6 +590,7 @@ export async function startHappyAgentRuntime(
             subtasks,
             live,
             runners,
+            tasks,
         );
         api = apiModule;
 

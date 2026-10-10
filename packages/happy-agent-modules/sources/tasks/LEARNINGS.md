@@ -27,6 +27,15 @@ to the top, where new work is expected. The global list has no order of its own 
 oldest first. A standalone installation is one person, so it uses one fixed member key rather
 than inventing a user ID.
 
+## Leaving a task is not archiving it
+
+Steve asked that closing a task in the sidebar mean leaving it, with archiving a separate,
+deliberate action. Leaving only removes the caller's membership: the task stays active even when
+its owner or its last member leaves, and archiving leaves every membership in place. People may
+archive a task through the API when they own it or own the team, and the standalone person may
+archive every task; everyone else gets a refusal. The API tells each caller whether they may with
+`canArchive`, which is computed per request and never sent in events that reach every member.
+
 ## Ownership follows the human the agent is working for
 
 A bot creates tasks on someone's behalf, and in a team chat that someone changes from message to

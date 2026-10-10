@@ -53,7 +53,9 @@ top. The owner joins when the task is created; on a standalone installation the 
 `STANDALONE_TASK_MEMBER`, joins every task created there. In team mode a task created without an
 identified person joins nobody. `memberFor(userId)` maps a person to their member key: the user ID
 in team mode, the standalone member otherwise. `join` and `leave` are idempotent; moving a task to
-the place it already holds changes nothing. The global list is every task, oldest first.
+the place it already holds changes nothing. The global list is every task, oldest first. Leaving
+never archives a task, not even when its owner or its last member leaves, and archiving never
+removes a membership.
 
 ## Tools
 
@@ -101,5 +103,8 @@ released `001-task-state` migration stays first, `002-task-list-removed` drops t
 `003-task-catalog` creates the catalog and memberships.
 
 The HTTP contract for tasks is specified in the Tasks chapter of `packages/happy-agent/API.md`
-and typed in `@slopus/happy-agent-client`; the daemon routes, events, and bootstrap fields follow
-once that client version is published.
+and typed in `@slopus/happy-agent-client`. `ApiModule` serves it from this module's public
+operations: the list, read, join, leave, reorder, archive, and unarchive routes, the `task.*`
+events (membership events private to their member in team mode), and the bootstrap `tasks` and
+`taskMemberships`. People archive through the API only when they own the task or own the team;
+on a standalone installation the one person may archive every task.

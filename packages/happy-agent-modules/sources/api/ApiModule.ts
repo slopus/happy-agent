@@ -25,7 +25,13 @@ import {
     secretAttachmentMutationRequestSchema,
     updateSecretRequestSchema,
     archiveBotRequestSchema,
+    archiveTaskRequestSchema,
     createBotRequestSchema,
+    joinTaskRequestSchema,
+    leaveTaskRequestSchema,
+    reorderTaskRequestSchema,
+    taskListScopeSchema,
+    unarchiveTaskRequestSchema,
     renameBotRequestSchema,
     reorderBotRequestSchema,
     reorderConnectionRequestSchema,
@@ -72,6 +78,16 @@ import {
     type BotEvent,
     type BotRecord,
 } from "../bots/index.js";
+import {
+    STANDALONE_TASK_MEMBER,
+    TaskConflictError,
+    TaskInputError,
+    TaskNotFoundError,
+    TasksModule,
+    type TaskEvent,
+    type TaskMemberId,
+    type TaskRecord,
+} from "../tasks/index.js";
 import {
     CompactionAgentBusyError,
     CompactionAlreadyRunningError,
@@ -197,6 +213,8 @@ import {
     projectResource,
     questionResource,
     rootWorkspaceResource,
+    taskMembershipResource,
+    taskResource,
     terminalResource,
     workspaceResource,
 } from "./ApiResourceProjection.js";
@@ -365,6 +383,7 @@ export class ApiModule implements AgentModule {
     readonly #compactions: CompactionsModule;
     readonly #bots: BotsModule;
     readonly #subtasks: SubtasksModule | undefined;
+    readonly #tasks: TasksModule | undefined;
     readonly #live: LiveModule | undefined;
     readonly #runners: RunnersModule | undefined;
     readonly #projects: ProjectsModule;
@@ -487,6 +506,7 @@ export class ApiModule implements AgentModule {
         subtasks?: SubtasksModule,
         live?: LiveModule,
         runners?: RunnersModule,
+        tasks?: TasksModule,
     ) {
         this.#abort = abort;
         this.#config = config;
@@ -518,6 +538,7 @@ export class ApiModule implements AgentModule {
         this.#subtasks = subtasks;
         this.#live = live;
         this.#runners = runners;
+        this.#tasks = tasks;
     }
 
     readonly beforeStart = async (
@@ -838,6 +859,30 @@ export class ApiModule implements AgentModule {
                         updatedAt: user.updatedAt,
                     })),
                 });
+                return;
+            }
+            const userPhoto = /^\/v0\/users\/([^/]+)\/photo$/.exec(url.pathname);
+            if (request.method === "GET" && userPhoto !== null) {
+                if (!this.#team.enabled)
+                    throw notFound("Team users are unavailable in standalone mode.");
+                const userId = decodeURIComponent(userPhoto[1] as string);
+                if (!Value.Check(cuid2Schema, userId)) {
+                    throw invalidRequest("Provide a valid Happy user ID.");
+                }
+                const photo = await this.#team.getUserPhoto(ctx, userId);
+                if (photo === undefined) throw notFound("The user has no photo.");
+                setImageCacheHeaders(response);
+                if (request.headers["if-none-match"] === photo.etag) {
+                    response.writeHead(304, { etag: photo.etag });
+                    response.end();
+                    return;
+                }
+                response.writeHead(200, {
+                    "content-length": photo.bytes.byteLength,
+                    "content-type": photo.contentType,
+                    etag: photo.etag,
+                });
+                response.end(Buffer.from(photo.bytes));
                 return;
             }
             if (request.method === "GET" && url.pathname === "/v0/connections") {
@@ -1347,6 +1392,7 @@ export class ApiModule implements AgentModule {
                 return;
             }
             if (await this.#handleBotRoute(ctx, request, response, url)) return;
+            if (await this.#handleTaskRoute(ctx, request, response, url)) return;
             if (request.method === "GET" && url.pathname === "/v0/projects") {
                 const projects = await this.#allProjects(ctx, true);
                 sendJson(response, 200, {
@@ -1901,6 +1947,13 @@ export class ApiModule implements AgentModule {
             this.#bots.onEvent(async (_eventCtx, event) => {
                 await this.#convertBotEvent(ctx, event);
             }),
+            ...(this.#tasks === undefined
+                ? []
+                : [
+                      this.#tasks.onEvent(async (_eventCtx, event) => {
+                          await this.#convertTaskEvent(ctx, event);
+                      }),
+                  ]),
             this.#terminals.onEvent(async (event) => {
                 this.#convertTerminalEvent(event);
             }),
@@ -2270,6 +2323,58 @@ export class ApiModule implements AgentModule {
                 event.at,
             );
         }
+    }
+
+    async #convertTaskEvent(ctx: Context, event: TaskEvent): Promise<void> {
+        if (
+            event.type === "task_joined" ||
+            event.type === "task_reordered" ||
+            event.type === "task_left"
+        ) {
+            const type =
+                event.type === "task_joined"
+                    ? "task.joined"
+                    : event.type === "task_reordered"
+                      ? "task.reordered"
+                      : "task.left";
+            // A person's list is private: in team mode only the member sees their own changes.
+            const memberId = event.membership.memberId;
+            this.#journal.append(
+                type,
+                { membership: taskMembershipResource(event.membership) },
+                event.at,
+                memberId === STANDALONE_TASK_MEMBER ? undefined : memberId,
+            );
+            return;
+        }
+        // Like bot events, this runs inside the catalog's post-commit notification and must not
+        // wait on the agent's own event chain from that same transaction.
+        const agent = await this.#buildAgentResource(
+            ctx,
+            event.task.agentId,
+            event.task.workspaceId,
+            null,
+            { userVisible: true },
+        );
+        if (agent === undefined) throw new Error("The task event has no agent.");
+        const resource = taskResource(event.task, agent);
+        if (event.type === "task_created") {
+            this.#journal.append("task.created", { task: resource }, event.at);
+            return;
+        }
+        const previous = taskResource(event.previousTask, agent);
+        const changes = resourceChanges(previous, resource);
+        delete changes["agent"];
+        this.#journal.append(
+            "task.updated",
+            {
+                taskId: event.task.id,
+                previousVersion: previous["version"],
+                version: resource["version"],
+                changes,
+            },
+            event.at,
+        );
     }
 
     #convertTerminalEvent(event: TerminalEvent): void {
@@ -3320,6 +3425,13 @@ export class ApiModule implements AgentModule {
                         "Archive or unarchive this agent through its bot.",
                     );
                 }
+                if ((await this.#tasks?.forAgent(ctx, agentId)) !== undefined) {
+                    throw new ApiError(
+                        409,
+                        "conflict",
+                        "Archive or unarchive this agent through its task.",
+                    );
+                }
                 await this.#assertUserControlledAgent(ctx, agentId, true);
                 const body = await bodyAs(request, emptyMutationBodySchema, "agent archival");
                 const config = await this.#agentSystem().config(ctx, agentId);
@@ -3358,6 +3470,9 @@ export class ApiModule implements AgentModule {
             if (operation === "reorder" && request.method === "POST") {
                 if ((await this.#bots.forAgent(ctx, agentId)) !== undefined) {
                     throw new ApiError(409, "conflict", "Reorder this agent through its bot.");
+                }
+                if ((await this.#tasks?.forAgent(ctx, agentId)) !== undefined) {
+                    throw new ApiError(409, "conflict", "Reorder this agent through its task.");
                 }
                 await this.#assertUserControlledAgent(ctx, agentId);
                 const body = await bodyAs(request, reorderBodySchema, "agent reorder");
@@ -3995,12 +4110,14 @@ export class ApiModule implements AgentModule {
     ): Promise<Record<string, unknown> | undefined> {
         const config = options.config ?? (await this.#agentSystem().config(ctx, agentId));
         if (config === undefined) return undefined;
-        // Owner-series entries and bot projections already establish visibility. Only an
-        // unscoped resource needs a bot lookup; never infer ancestry from owner membership.
+        // Owner-series entries and bot and task projections already establish visibility. Only an
+        // unscoped resource needs a bot or task lookup; never infer ancestry from owner membership.
         const userVisible =
             this.#subtasks?.isSubtask(config) === true ||
             (options.userVisible ??
-                (orderKey != null || (await this.#bots.forAgent(ctx, agentId)) !== undefined));
+                (orderKey != null ||
+                    (await this.#bots.forAgent(ctx, agentId)) !== undefined ||
+                    (await this.#tasks?.forAgent(ctx, agentId)) !== undefined));
         const children = await this.#agentSystem().childOf(ctx, agentId);
         const [processes, questions, runningSubagents, activeRunId, subtasks] = await Promise.all([
             this.#compute.listProcesses(ctx, agentId),
@@ -4076,6 +4193,7 @@ export class ApiModule implements AgentModule {
 
     async #agentOrderKey(ctx: Context, agentId: string): Promise<string | null> {
         if ((await this.#bots.forAgent(ctx, agentId)) !== undefined) return null;
+        if ((await this.#tasks?.forAgent(ctx, agentId)) !== undefined) return null;
         const workspaceId = this.#config.configuration.values.features.workspaces
             ? await this.#workspaces.workspaceForAgent(ctx, agentId)
             : undefined;
@@ -4100,6 +4218,8 @@ export class ApiModule implements AgentModule {
         for (let depth = 0; depth < 64; depth += 1) {
             const bot = await this.#bots.forAgent(ctx, current);
             if (bot !== undefined) return bot.workspaceId;
+            const task = await this.#tasks?.forAgent(ctx, current);
+            if (task !== undefined) return task.workspaceId;
             const workspaceId = this.#config.configuration.values.features.workspaces
                 ? await this.#workspaces.workspaceForAgent(ctx, current)
                 : undefined;
@@ -4686,6 +4806,145 @@ export class ApiModule implements AgentModule {
         }
     }
 
+    async #handleTaskRoute(
+        ctx: Context,
+        request: IncomingMessage,
+        response: ServerResponse,
+        url: URL,
+    ): Promise<boolean> {
+        const tasks = this.#tasks;
+        if (tasks === undefined || !url.pathname.startsWith("/v0/tasks")) return false;
+        if (request.method === "GET" && url.pathname === "/v0/tasks") {
+            const scopes = url.searchParams.getAll("scope");
+            const scope = scopes[0] ?? "all";
+            if (scopes.length > 1 || !Value.Check(taskListScopeSchema, scope)) {
+                throw invalidRequest('The task list scope must be "all" or "joined".');
+            }
+            const joined = await tasks.listForMember(ctx, this.#taskMember(ctx));
+            const listed = scope === "all" ? await tasks.list(ctx) : joined.map(({ task }) => task);
+            sendJson(response, 200, {
+                tasks: await Promise.all(
+                    listed.map(async (task) => await this.#taskResource(ctx, task)),
+                ),
+                memberships: joined.map(({ membership }) => taskMembershipResource(membership)),
+            });
+            return true;
+        }
+        const direct = /^\/v0\/tasks\/([a-z][a-z0-9]*)$/.exec(url.pathname);
+        if (direct !== null && request.method === "GET") {
+            const task = await tasks.get(ctx, direct[1] as string);
+            if (task === undefined) throw notFound("The task was not found.");
+            sendJson(response, 200, await this.#taskResponse(ctx, task));
+            return true;
+        }
+        const action =
+            /^\/v0\/tasks\/([a-z][a-z0-9]*)\/(join|leave|reorder|archive|unarchive)$/.exec(
+                url.pathname,
+            );
+        if (action === null || request.method !== "POST") return false;
+        const taskId = action[1] as string;
+        const operation = action[2] as "join" | "leave" | "reorder" | "archive" | "unarchive";
+        const member = this.#taskMember(ctx);
+        try {
+            if (operation === "join" || operation === "leave") {
+                const body = await bodyAs(
+                    request,
+                    operation === "join" ? joinTaskRequestSchema : leaveTaskRequestSchema,
+                    `task ${operation}`,
+                );
+                await this.#withMutationId(body.mutationId, async () =>
+                    operation === "join"
+                        ? await tasks.join(ctx, taskId, member)
+                        : await tasks.leave(ctx, taskId, member),
+                );
+            } else if (operation === "reorder") {
+                const body = await bodyAs(request, reorderTaskRequestSchema, "task reorder");
+                await this.#withMutationId(
+                    body.mutationId,
+                    async () => await tasks.reorder(ctx, taskId, member, body.afterId),
+                );
+            } else {
+                const body = await bodyAs(
+                    request,
+                    operation === "archive" ? archiveTaskRequestSchema : unarchiveTaskRequestSchema,
+                    `task ${operation}`,
+                );
+                const current = await tasks.get(ctx, taskId);
+                if (current === undefined) throw notFound("The task was not found.");
+                if (!this.#canArchiveTask(ctx, current)) {
+                    throw new ApiError(
+                        403,
+                        "forbidden",
+                        operation === "archive"
+                            ? "Only the task's owner or the team owner can archive this task."
+                            : "Only the task's owner or the team owner can unarchive this task.",
+                    );
+                }
+                const resource = await this.#taskResource(ctx, current);
+                requireIfMatch(request, resource["version"], {
+                    currentVersion: resource["version"],
+                    task: resource,
+                });
+                await this.#withMutationId(body.mutationId, async () =>
+                    operation === "archive"
+                        ? await tasks.archive(ctx, taskId, current.version)
+                        : await tasks.unarchive(ctx, taskId, current.version),
+                );
+            }
+        } catch (error: unknown) {
+            if (error instanceof TaskNotFoundError) throw notFound("The task was not found.");
+            if (error instanceof TaskInputError) throw invalidRequest(error.message);
+            if (error instanceof TaskConflictError) {
+                const current = await tasks.get(ctx, taskId);
+                if (current === undefined) throw notFound("The task was not found.");
+                const task = await this.#taskResource(ctx, current);
+                throw new ApiError(409, "conflict", error.message, {
+                    currentVersion: task["version"],
+                    task,
+                });
+            }
+            throw error;
+        }
+        const task = await tasks.get(ctx, taskId);
+        if (task === undefined) throw notFound("The task was not found.");
+        sendJson(response, 200, await this.#taskResponse(ctx, task));
+        return true;
+    }
+
+    /** The caller as a task member: the standalone person, or the authenticated team member. */
+    #taskMember(ctx: Context): TaskMemberId {
+        const member = this.#tasks?.memberFor(teamUser(ctx)?.id);
+        if (member === undefined) throw new TeamAuthenticationError();
+        return member;
+    }
+
+    /**
+     * The standalone installation's one person may archive every task. In team mode the task's
+     * owner and the team owner may; a task nobody owns is the team owner's to archive.
+     */
+    #canArchiveTask(ctx: Context, task: TaskRecord): boolean {
+        if (!this.#team.enabled) return true;
+        const user = teamUser(ctx);
+        if (user === undefined) return false;
+        return user.isOwner || (task.ownerUserId !== undefined && task.ownerUserId === user.id);
+    }
+
+    async #taskResource(ctx: Context, task: TaskRecord): Promise<Record<string, unknown>> {
+        const agent = await this.#buildAgentResource(ctx, task.agentId, task.workspaceId, null, {
+            userVisible: true,
+        });
+        if (agent === undefined) throw new Error("The task has no agent.");
+        return taskResource(task, agent, this.#canArchiveTask(ctx, task));
+    }
+
+    async #taskResponse(ctx: Context, task: TaskRecord): Promise<Record<string, unknown>> {
+        const membership = await this.#tasks?.membership(ctx, task.id, this.#taskMember(ctx));
+        return {
+            task: await this.#taskResource(ctx, task),
+            membership: membership === undefined ? null : taskMembershipResource(membership),
+        };
+    }
+
     async #requireProjectMatch(
         ctx: Context,
         request: IncomingMessage,
@@ -4936,8 +5195,9 @@ export class ApiModule implements AgentModule {
         agentId: string,
         visible: boolean,
     ): Promise<void> {
-        // A bot's one agent is always embedded and visible; bot lifecycle owns archival.
+        // A bot's or task's one agent is always embedded and visible; its lifecycle owns archival.
         if ((await this.#bots.forAgent(ctx, agentId)) !== undefined) return;
+        if ((await this.#tasks?.forAgent(ctx, agentId)) !== undefined) return;
         const workspaceId = this.#config.configuration.values.features.workspaces
             ? await this.#workspaces.workspaceForAgent(ctx, agentId)
             : undefined;
@@ -5935,7 +6195,23 @@ export class ApiModule implements AgentModule {
                 ...shallowResources,
             ],
             archivedAgents: await this.#archivedAgentResources(ctx, archived),
+            ...(await this.#taskBootstrap(ctx)),
             cursor,
+        };
+    }
+
+    /** Every task oldest first, and the caller's own memberships in the caller's order. */
+    async #taskBootstrap(ctx: Context): Promise<Record<string, unknown>> {
+        const tasks = this.#tasks;
+        if (tasks === undefined) return {};
+        const member = this.#taskMember(ctx);
+        const [all, joined] = await Promise.all([
+            tasks.list(ctx),
+            tasks.listForMember(ctx, member),
+        ]);
+        return {
+            tasks: await Promise.all(all.map(async (task) => await this.#taskResource(ctx, task))),
+            taskMemberships: joined.map(({ membership }) => taskMembershipResource(membership)),
         };
     }
 

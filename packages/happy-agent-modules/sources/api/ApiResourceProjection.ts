@@ -7,6 +7,7 @@ import { Value } from "@sinclair/typebox/value";
 
 import type { BotRecord } from "../bots/index.js";
 import type { Profile } from "../profile/index.js";
+import { STANDALONE_TASK_MEMBER, type TaskMembership, type TaskRecord } from "../tasks/index.js";
 import {
     ProjectsModule,
     type Project,
@@ -220,6 +221,46 @@ export function botResource(
         createdAt: bot.createdAt,
         updatedAt: bot.updatedAt,
         archivedAt: bot.archivedAt ?? null,
+    };
+}
+
+/**
+ * One task as the API shows it. `canArchive` depends on who is asking, so it is supplied only for
+ * a caller's own response and left out of events, which reach every member alike.
+ */
+export function taskResource(
+    task: TaskRecord,
+    agent: Readonly<Record<string, unknown>>,
+    canArchive?: boolean,
+): Record<string, unknown> {
+    return {
+        id: task.id,
+        name: task.name,
+        folderName: task.folderName,
+        ownerUserId: task.ownerUserId ?? null,
+        creatorAgentId: task.creatorAgentId ?? null,
+        workspaceId: task.workspaceId,
+        compute:
+            task.runnerId === undefined
+                ? { type: "host", path: task.path }
+                : { type: "runner", runnerId: task.runnerId, path: task.path },
+        status: task.status,
+        ...(canArchive === undefined ? {} : { canArchive }),
+        agent,
+        version: apiResourceVersion(task.updatedAt, task.version, task.id),
+        createdAt: task.createdAt,
+        updatedAt: task.updatedAt,
+        archivedAt: task.archivedAt ?? null,
+    };
+}
+
+/** A person's place in one task. The standalone installation's one person has no user ID. */
+export function taskMembershipResource(membership: TaskMembership): Record<string, unknown> {
+    return {
+        taskId: membership.taskId,
+        userId: membership.memberId === STANDALONE_TASK_MEMBER ? null : membership.memberId,
+        orderKey: membership.orderKey,
+        joinedAt: membership.joinedAt,
     };
 }
 
