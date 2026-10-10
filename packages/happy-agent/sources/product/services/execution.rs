@@ -21,6 +21,10 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
+#[cfg(all(test, unix))]
+#[path = "execution_tests.rs"]
+mod tests;
+
 pub(super) struct Execution {
     pub process_id: String,
     pub started_at: u64,
@@ -353,8 +357,7 @@ impl Execution {
                         let _ = err.await;
                     }
                 }
-                let admitted = read_control(&running.directory.join("started"), 1)
-                    .is_ok_and(|bytes| bytes == [1]);
+                let admitted = running.admitted().unwrap_or(false);
                 running
                     .output
                     .lock()
@@ -399,7 +402,7 @@ impl Execution {
         self.finished.load(Ordering::Acquire)
     }
     pub fn admitted(&self) -> Result<bool> {
-        Ok(read_control(&self.directory.join("started"), 1).is_ok_and(|bytes| bytes == [1]))
+        Ok(read_control(&self.directory.join("started"), 1).is_ok_and(|bytes| bytes == b"1"))
     }
     pub async fn wait(&self, cancel: &CancellationToken) -> Result<Exit> {
         loop {

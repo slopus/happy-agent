@@ -28,6 +28,11 @@ A terminal catalog row and released capacity require that same proof. A shell ex
 abort signal or missing live handle is insufficient. Independent native cleanup may later finish
 an execution that remained stopping; restore admits new identities without reviving an old one.
 
+The supervisor confirms exec admission with the ASCII byte `1` in its private `started` control.
+Service startup and exit classification use the same reader for that marker. Comparing it with
+binary byte 1 left admitted workloads in startup and could misclassify application exit 125 as an
+exec failure; an empty marker or `E` still does not prove admission.
+
 Service input uses a real controlling PTY when requested. Each output reader advances its own
 bounded cursor over the same capture, discloses retirement or truncation, and never replays stdin.
 Gateway credentials establish only one principal, workspace, service and execution for five
