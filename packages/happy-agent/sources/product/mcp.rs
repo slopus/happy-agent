@@ -43,10 +43,10 @@ use super::config::ConfigModule;
 use super::durable::{CallKv, DurableFunction, DurableFunctionsModule, Registration};
 use super::identity::now;
 use super::lifecycle::LifecycleModule;
-use super::runtime::RuntimeModule;
+use super::runtime::{Context, RuntimeModule};
 use super::text::{js_is_whitespace, js_length, js_slice, locale_compare};
 use super::user_input::UserInputModule;
-use super::workspaces::WorkspacesModule;
+use super::workspaces::{WorkspaceSubscription, WorkspacesModule};
 use connection::McpConnection;
 use protocol::{ElicitationHandler, McpError};
 use schemas::{MAX_MCP_CURSOR_LENGTH, MAX_MCP_ERROR_MESSAGE_LENGTH, MAX_MCP_PAGE_SIZE, MAX_MCP_TOTAL_TOOLS};
@@ -60,6 +60,9 @@ const MAX_OFFERED_AGENTS: usize = 1_024;
 /// The durable call that discovers the user's catalog once the daemon starts; its name is also
 /// its operation, so at most one is ever owed.
 const DISCOVER_FUNCTION: &str = "mcp.discover";
+/// The durable call that applies every workspace change MCP owes, in the order they committed;
+/// its name is also its operation, so changes owed while one is pending join it.
+const WORKSPACES_FUNCTION: &str = "mcp.workspaces";
 /// Every durable call MCP owes holds this key, so they run one at a time in the order they were
 /// owed.
 const DURABLE_LOCK: &str = "mcp";
@@ -112,12 +115,6 @@ enum Discovery {
     Settled,
 }
 
-/// One workspace catalog change MCP follows, by workspace key.
-enum WorkspaceChange {
-    Active(String),
-    Released(String),
-}
-
 /// The listings a server pages through.
 #[derive(Clone, Copy)]
 enum Listing {
@@ -156,7 +153,8 @@ pub struct McpModule {
     lifetime: CancellationToken,
     /// The daemon's shutdown, which ends every wait for a discovery that will not run now.
     stopping: CancellationToken,
-    workspace_changes: Mutex<Option<tokio::sync::mpsc::UnboundedSender<WorkspaceChange>>>,
+    /// Keeps MCP subscribed to the workspace changes it owes.
+    workspace_events: Mutex<Option<WorkspaceSubscription>>,
     owner: Weak<Self>,
 }
 
@@ -182,20 +180,20 @@ impl McpModule {
             result_schema: "ownerNull",
             function: Arc::new(Discover(Arc::downgrade(&module))),
         })?;
-        // A new workspace may be a folder an archived one used to occupy; an archived one takes
-        // its servers with it. Changes apply in the order they committed.
+        durable.register(Registration {
+            name: WORKSPACES_FUNCTION.into(),
+            arguments_schema: "ownerReconcileArgs",
+            result_schema: "ownerNull",
+            function: Arc::new(ApplyWorkspaceChanges(Arc::downgrade(&module))),
+        })?;
+        // Each workspace change is owed in the transaction that commits it and applied after, in
+        // commit order, by one coalesced durable call.
         let weak = Arc::downgrade(&module);
-        workspaces.listen_transitions(Arc::new(move |workspace: &Value| {
-            let Some(module) = weak.upgrade() else { return };
-            let path = workspace["path"].as_str().unwrap_or_default();
-            let Ok(key) = workspace_key(workspace["runnerId"].as_str(), path) else { return };
-            let change = match workspace["status"].as_str() {
-                Some("archiving" | "archived") => WorkspaceChange::Released(key),
-                Some("initializing") if workspace["version"] == 1 => WorkspaceChange::Active(key),
-                _ => return,
-            };
-            module.enqueue_workspace_change(change);
+        let subscription = workspaces.on_event_transactional(Arc::new(move |ctx: &Context<'_>, event: &Value| match weak.upgrade() {
+            Some(module) => module.record_workspace_event(ctx, event),
+            None => Ok(()),
         }))?;
+        *lock(&module.workspace_events) = Some(subscription);
         agents.install(module.clone())?;
         Ok(module)
     }
@@ -224,7 +222,7 @@ impl McpModule {
             close: tokio::sync::OnceCell::new(),
             lifetime: CancellationToken::new(),
             stopping: lifecycle.shutdown.child_token(),
-            workspace_changes: Mutex::new(None),
+            workspace_events: Mutex::new(None),
             owner: owner.clone(),
         })
     }
@@ -248,13 +246,37 @@ impl McpModule {
         if !owed {
             return Ok(());
         }
-        let durable = self.durable.clone();
+        let module = self.clone();
         self.runtime
             .transact(move |ctx| {
-                durable.invoke(ctx, &json!({"function": DISCOVER_FUNCTION, "arguments": {}, "operationId": DISCOVER_FUNCTION, "lockKeys": [DURABLE_LOCK]}))?;
+                module.durable.invoke(ctx, &json!({"function": DISCOVER_FUNCTION, "arguments": {}, "operationId": DISCOVER_FUNCTION, "lockKeys": [DURABLE_LOCK]}))?;
+                // Changes a drain that failed left behind are owed again after discovery.
+                if persistence::query_next_workspace_intent(ctx)?.is_some() {
+                    owe_workspace_changes(&module.durable, ctx)?;
+                }
                 Ok(())
             })
             .await
+    }
+
+    fn record_workspace_event(&self, ctx: &Context<'_>, event: &Value) -> Result<()> {
+        owe_workspace_event(&self.durable, ctx, event)
+    }
+
+    /// Apply every owed workspace change, oldest first. A change is settled only after it applies,
+    /// so a stopped daemon applies it again on the next start; applying one twice changes nothing.
+    async fn apply_workspace_changes(&self, cancel: &CancellationToken) -> Result<()> {
+        while !cancel.is_cancelled() {
+            let Some(intent) = self.runtime.transact(|ctx| persistence::query_next_workspace_intent(ctx)).await? else {
+                return Ok(());
+            };
+            match intent.change.as_str() {
+                "released" => self.release_workspace(&intent.workspace).await,
+                _ => self.mark_workspace_active(&intent.workspace).await,
+            }
+            self.runtime.transact(move |ctx| persistence::settle_workspace_intent(ctx, &intent)).await?;
+        }
+        Ok(())
     }
 
     /// Discover the user's catalog, then let every agent waiting for it go on. A stopped daemon
@@ -269,25 +291,6 @@ impl McpModule {
             }
         }
         self.discovery.send_replace(Discovery::Settled);
-    }
-
-    fn enqueue_workspace_change(self: &Arc<Self>, change: WorkspaceChange) {
-        let mut changes = lock(&self.workspace_changes);
-        let sender = changes.get_or_insert_with(|| {
-            let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel::<WorkspaceChange>();
-            let weak = Arc::downgrade(self);
-            tokio::spawn(async move {
-                while let Some(change) = receiver.recv().await {
-                    let Some(module) = weak.upgrade() else { return };
-                    match change {
-                        WorkspaceChange::Active(workspace) => module.mark_workspace_active(&workspace).await,
-                        WorkspaceChange::Released(workspace) => module.release_workspace(&workspace).await,
-                    }
-                }
-            });
-            sender
-        });
-        let _ = sender.send(change);
     }
 
     async fn release_workspace(&self, workspace: &str) {
@@ -402,6 +405,7 @@ impl McpModule {
                     connections
                 };
                 lock(&self.offered).clear();
+                lock(&self.workspace_events).take();
                 join_all(connections.iter().map(|connection| connection.close())).await;
             })
             .await;
@@ -1222,6 +1226,55 @@ impl DurableFunction for Discover {
             self.0.upgrade().ok_or_else(|| anyhow!("The MCP module has stopped."))?.discover(&cancel).await;
             Ok(Value::Null)
         })
+    }
+}
+
+/// The catalog change one workspace event implies, by workspace key: a new workspace may be a
+/// folder an archived one used to occupy, and an archived one takes its servers with it.
+fn workspace_change(event: &Value) -> Option<(String, &'static str)> {
+    let change = match (event["type"].as_str(), event["change"].as_str()) {
+        (Some("workspace_created"), _) => "active",
+        (Some("workspace_updated"), Some("begin_archive")) | (Some("workspace_archived"), _) => "released",
+        _ => return None,
+    };
+    let workspace = &event["workspace"];
+    let key = workspace_key(workspace["runnerId"].as_str(), workspace["path"].as_str().unwrap_or_default()).ok()?;
+    Some((key, change))
+}
+
+/// Owe the change a workspace event implies inside the transaction that commits the event, so it
+/// is applied after the commit and never for a change that rolled back.
+fn owe_workspace_event(durable: &Arc<DurableFunctionsModule>, ctx: &Context<'_>, event: &Value) -> Result<()> {
+    let Some((workspace, change)) = workspace_change(event) else { return Ok(()) };
+    persistence::record_workspace_intent(ctx, &workspace, change)?;
+    owe_workspace_changes(durable, ctx)
+}
+
+/// Owe one drain of every owed workspace change; changes owed while one is pending join it.
+fn owe_workspace_changes(durable: &Arc<DurableFunctionsModule>, ctx: &Context<'_>) -> Result<()> {
+    durable.invoke(ctx, &json!({"function": WORKSPACES_FUNCTION, "arguments": {}, "operationId": WORKSPACES_FUNCTION, "lockKeys": [DURABLE_LOCK]}))?;
+    Ok(())
+}
+
+/// Every workspace change MCP owes, applied in Durable Functions' lifetime.
+struct ApplyWorkspaceChanges(Weak<McpModule>);
+
+impl DurableFunction for ApplyWorkspaceChanges {
+    fn execute(self: Arc<Self>, _call: Value, _kv: CallKv, cancel: CancellationToken) -> BoxFuture<'static, Result<Value>> {
+        Box::pin(async move {
+            self.0.upgrade().ok_or_else(|| anyhow!("The MCP module has stopped."))?.apply_workspace_changes(&cancel).await?;
+            Ok(Value::Null)
+        })
+    }
+
+    /// A change committed after the drain last looked joined this call while it was still owed.
+    /// The call is settled in this same transaction, so owing a new one here loses nothing.
+    fn success(&self, ctx: &Context<'_>, _call: &Value, _result: &Value) -> Result<()> {
+        let Some(module) = self.0.upgrade() else { return Ok(()) };
+        if persistence::query_next_workspace_intent(ctx)?.is_some() {
+            owe_workspace_changes(&module.durable, ctx)?;
+        }
+        Ok(())
     }
 }
 

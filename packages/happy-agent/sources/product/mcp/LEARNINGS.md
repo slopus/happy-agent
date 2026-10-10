@@ -75,8 +75,19 @@ stop it with the daemon; agents wait for it before their first tool list until i
 daemon begins shutting down, so no wait outlives a discovery that will not run. A failed discovery
 is logged and not retried, as the original's was.
 
-The server index's SQL lives in the module's private `persistence` folder and runs inside the
-caller's transaction; the released `001-mcp-server-index` migration is unchanged.
+Workspace changes followed the same pattern: an after-commit listener fed an unbounded channel
+drained by a task of its own. MCP now subscribes to the workspace owner's transactional events and,
+inside the transaction that commits a creation or an archive, owes one row per workspace — a later
+change replaces an earlier one not yet applied — plus the durable `mcp.workspaces` drain, whose name
+is its operation, so every change owed while it is pending joins it. The drain applies the oldest
+change first and settles each row only after it applies and only if no newer change replaced it,
+then owes itself again from its settle transaction if rows remain. A rolled-back workspace change
+owes nothing; a stopped daemon applies what it still owed on the next start. Storage is bounded by
+the number of workspaces, and at most one drain call is ever pending.
+
+The server index's and the owed changes' SQL lives in the module's private `persistence` folder
+and runs inside the caller's transaction; the released `001-mcp-server-index` migration is
+unchanged and the intents table is the new `002-mcp-workspace-intents`.
 
 ## Stdio servers never inherit the daemon's credentials
 

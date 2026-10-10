@@ -222,3 +222,150 @@ async fn the_server_index_is_replaced_whole_inside_the_callers_transaction() {
     assert_eq!(runtime.transact(|ctx| persistence::query_server_index(ctx, "agentother")).await.unwrap().len(), 1);
     runtime.close().await.unwrap();
 }
+
+#[tokio::test]
+async fn workspace_changes_are_owed_once_per_workspace_in_commit_order() {
+    let directory = tempfile::tempdir().unwrap();
+    let config = Arc::new(ConfigModule::isolated(&directory.path().join(".happy")).unwrap());
+    let runtime = Arc::new(RuntimeModule::new(config));
+    runtime.load().await.unwrap();
+    runtime.migrate("mcp", persistence::MIGRATIONS).await.unwrap();
+    let next = || runtime.transact(|ctx| persistence::query_next_workspace_intent(ctx));
+
+    runtime.transact(|ctx| persistence::record_workspace_intent(ctx, "/one", "active")).await.unwrap();
+    runtime.transact(|ctx| persistence::record_workspace_intent(ctx, "/two", "active")).await.unwrap();
+    // A later change to the same workspace replaces the one still owed and moves behind the rest.
+    runtime.transact(|ctx| persistence::record_workspace_intent(ctx, "/one", "released")).await.unwrap();
+    let rolled_back: Result<()> = runtime
+        .transact(|ctx| {
+            persistence::record_workspace_intent(ctx, "/three", "active")?;
+            bail!("Deliberate caller rollback.")
+        })
+        .await;
+    assert!(rolled_back.is_err());
+    assert!(runtime.transact(|ctx| persistence::record_workspace_intent(ctx, "/four", "archived")).await.is_err());
+
+    let first = next().await.unwrap().unwrap();
+    assert_eq!((first.workspace.as_str(), first.change.as_str()), ("/two", "active"));
+    let settled = first.clone();
+    runtime.transact(move |ctx| persistence::settle_workspace_intent(ctx, &settled)).await.unwrap();
+    let second = next().await.unwrap().unwrap();
+    assert_eq!((second.workspace.as_str(), second.change.as_str()), ("/one", "released"));
+
+    // A change that arrives while one is being applied survives that one's settlement.
+    runtime.transact(|ctx| persistence::record_workspace_intent(ctx, "/one", "active")).await.unwrap();
+    let stale = second.clone();
+    runtime.transact(move |ctx| persistence::settle_workspace_intent(ctx, &stale)).await.unwrap();
+    let third = next().await.unwrap().unwrap();
+    assert_eq!((third.workspace.as_str(), third.change.as_str()), ("/one", "active"));
+    runtime.transact(move |ctx| persistence::settle_workspace_intent(ctx, &third)).await.unwrap();
+    assert_eq!(next().await.unwrap(), None);
+    runtime.close().await.unwrap();
+}
+
+#[test]
+fn workspace_events_imply_the_catalog_change_the_original_followed() {
+    let workspace = |path: &str, runner: Option<&str>| {
+        let mut workspace = json!({"id": "workspaceone", "path": path, "status": "initializing"});
+        if let Some(runner) = runner {
+            workspace["runnerId"] = json!(runner);
+        }
+        workspace
+    };
+    let event = |kind: &str, change: Option<&str>, workspace: Value| {
+        let mut event = json!({"type": kind, "workspace": workspace, "eventId": "00000000-0000-4000-8000-000000000000", "at": 1});
+        if let Some(change) = change {
+            event["change"] = json!(change);
+        }
+        event
+    };
+    let path = std::env::temp_dir().join("mcp-workspace").display().to_string();
+    let key = workspace_key(None, &path).unwrap();
+    assert_eq!(workspace_change(&event("workspace_created", None, workspace(&path, None))), Some((key.clone(), "active")));
+    assert_eq!(workspace_change(&event("workspace_updated", Some("begin_archive"), workspace(&path, None))), Some((key.clone(), "released")));
+    assert_eq!(workspace_change(&event("workspace_archived", None, workspace(&path, None))), Some((key, "released")));
+    assert_eq!(
+        workspace_change(&event("workspace_created", None, workspace(&path, Some("studio")))),
+        Some((workspace_key(Some("studio"), &path).unwrap(), "active"))
+    );
+    for change in ["mark_ready", "mark_initialization_failed", "record_initialization", "set_branch", "set_service_cleanup", "rename"] {
+        assert_eq!(workspace_change(&event("workspace_updated", Some(change), workspace(&path, None))), None, "{change}");
+    }
+    assert_eq!(workspace_change(&event("workspace_agent_attached", None, workspace(&path, None))), None);
+    assert_eq!(workspace_change(&event("workspace_created", None, workspace("", None))), None);
+}
+
+/// Stands in for MCP's drain so the test observes how often Durable Functions run it.
+struct CountedDrain(Arc<std::sync::atomic::AtomicUsize>);
+
+impl DurableFunction for CountedDrain {
+    fn execute(self: Arc<Self>, _call: Value, _kv: CallKv, _cancel: CancellationToken) -> BoxFuture<'static, Result<Value>> {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Box::pin(async { Ok(Value::Null) })
+    }
+}
+
+#[tokio::test]
+async fn workspace_changes_are_owed_in_their_transaction_and_drained_by_one_call() {
+    let fixture = crate::product::owners::Fixture::new().await;
+    fixture.runtime.migrate("mcp", persistence::MIGRATIONS).await.unwrap();
+    let drains = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    fixture
+        .durable
+        .register(Registration {
+            name: WORKSPACES_FUNCTION.into(),
+            arguments_schema: "ownerReconcileArgs",
+            result_schema: "ownerNull",
+            function: Arc::new(CountedDrain(drains.clone())),
+        })
+        .unwrap();
+    let root = fixture.directory.path().display().to_string();
+    let event = move |kind: &str, change: Option<&str>, folder: &str| {
+        let mut event = json!({"type": kind, "workspace": {"path": format!("{root}/{folder}")}});
+        if let Some(change) = change {
+            event["change"] = json!(change);
+        }
+        event
+    };
+    let owe = |event: Value| {
+        let durable = fixture.durable.clone();
+        fixture.runtime.transact(move |ctx| owe_workspace_event(&durable, ctx, &event))
+    };
+
+    // A workspace change that rolls back owes nothing.
+    let (durable, created) = (fixture.durable.clone(), event("workspace_created", None, "rolled"));
+    let rolled_back: Result<()> = fixture
+        .runtime
+        .transact(move |ctx| {
+            owe_workspace_event(&durable, ctx, &created)?;
+            bail!("Deliberate workspace rollback.")
+        })
+        .await;
+    assert!(rolled_back.is_err());
+    let durable = fixture.durable.clone();
+    assert!(!fixture.runtime.transact(move |ctx| durable.has_pending(ctx, WORKSPACES_FUNCTION)).await.unwrap());
+    assert_eq!(fixture.runtime.transact(|ctx| persistence::query_next_workspace_intent(ctx)).await.unwrap(), None);
+
+    // Committed changes are owed once per workspace, latest first wins, all joining one drain.
+    owe(event("workspace_created", None, "one")).await.unwrap();
+    owe(event("workspace_created", None, "two")).await.unwrap();
+    owe(event("workspace_updated", Some("begin_archive"), "one")).await.unwrap();
+    owe(event("workspace_archived", None, "one")).await.unwrap();
+    owe(event("workspace_updated", Some("mark_ready"), "two")).await.unwrap();
+    let durable = fixture.durable.clone();
+    assert!(fixture.runtime.transact(move |ctx| durable.has_pending(ctx, WORKSPACES_FUNCTION)).await.unwrap());
+    let next = fixture.runtime.transact(|ctx| persistence::query_next_workspace_intent(ctx)).await.unwrap().unwrap();
+    assert_eq!((next.workspace.ends_with("/two"), next.change.as_str()), (true, "active"));
+
+    // Durable Functions run the one owed drain after startup.
+    fixture.durable.start().await.unwrap();
+    for _ in 0..100 {
+        let durable = fixture.durable.clone();
+        if !fixture.runtime.transact(move |ctx| durable.has_pending(ctx, WORKSPACES_FUNCTION)).await.unwrap() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert_eq!(drains.load(std::sync::atomic::Ordering::SeqCst), 1);
+    fixture.close().await;
+}
