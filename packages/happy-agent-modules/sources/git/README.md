@@ -63,6 +63,8 @@ ignores are excluded from the Linux watch itself, which keeps `node_modules` fro
 spending thousands of inotify watches. The ignore list is re-derived when `.gitignore` changes or
 new directories appear, and events from newly ignored directories are dropped; the native watch
 itself is never replaced, because a second subscription on an already-watched folder can go deaf. `watchWorkingTree` shares that one watch per folder with other modules.
+The home directory and its ancestors are never watched; their observers poll, because such a
+tree holds other applications' data.
 
 Working-tree events are debounced and first checked with a path-scoped status, so ignored build
 output does not schedule the full snapshot scan. Full rescans run two at a time on the module's own

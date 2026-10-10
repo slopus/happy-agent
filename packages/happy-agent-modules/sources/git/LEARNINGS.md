@@ -62,6 +62,23 @@ working directory is a folder keeps it locked on Windows even after its parent e
 watches recursively in the kernel, so it no longer lists ignored directories at all and keeps
 Node's `fs.watch`; everywhere, closing a watch aborts a listing still in flight.
 
+## The home directory is never watched
+
+The daemon starts in the home directory, and the Home project's folder is the home directory, so
+live Git tracking armed a recursive Parcel watch on `~`. On macOS, Parcel's FSEvents backend
+stats every changed path it reports. Each time another application wrote inside
+`~/Library/Containers`, the Photos library, Contacts or Documents, that stat made macOS ask the
+user to let Happy access other apps' data, or Photos, Contacts or Documents, and it kept asking
+every few seconds while the daemon sat idle. The prompt seemed to come from the bundled Tailcat
+process because it appeared just after Tailcat started. The unified log named the daemon as the
+accessor, and a bare watch on `~` reproduced it. On Linux the same watch would also spend an
+inotify watch on every directory in the home.
+
+A root that is the home directory or one of its ancestors, compared after resolving symlinks, now
+never gets a native watch and never runs its ignore listing. Its observers see `watching: false`
+and poll, the same as for a folder that cannot be watched. Git status on a home folder still
+works.
+
 ## A missing workspace must not corrupt the JavaScript runtime
 
 Parcel 2.6 destroys a failed subscription on its worker thread, including releasing JavaScript

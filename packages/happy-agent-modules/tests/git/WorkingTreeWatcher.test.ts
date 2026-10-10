@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync, readlinkSync } from "node:fs";
 import { mkdir, realpath, symlink, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 
 import { createRootContext } from "@steve.kite/stdlib";
 import { afterEach, describe, expect, it } from "vitest";
@@ -139,6 +140,25 @@ describe("WorkingTreeWatcher", { timeout: 60_000 }, () => {
         await new Promise((resolve) => setTimeout(resolve, 300));
         expect(watching()).toBe(false);
         expect(watcher.isWatching(missing)).toBe(false);
+    });
+
+    it("never watches the home directory or a folder containing it", async () => {
+        // A home watch made macOS ask, every few seconds, for access to other apps' data.
+        const home = homedir();
+        const ancestor = dirname(home);
+        const control = await createRoot();
+        const watcher = new WorkingTreeWatcher(createRootContext(), scan);
+        disposers.push(() => watcher.dispose());
+        const homeWatch = watchRepository(home, watcher);
+        const ancestorWatch = watchRepository(ancestor, watcher);
+        const controlWatch = watchRepository(control, watcher);
+
+        await waitFor(() => controlWatch.watching());
+        await settle();
+        expect(homeWatch.watching()).toBe(false);
+        expect(ancestorWatch.watching()).toBe(false);
+        expect(watcher.isWatching(home)).toBe(false);
+        expect(watcher.isWatching(ancestor)).toBe(false);
     });
 
     it.runIf(process.platform === "linux")(
