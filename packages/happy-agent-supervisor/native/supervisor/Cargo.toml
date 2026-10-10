@@ -23,5 +23,17 @@ serde_json.workspace = true
 [target.'cfg(target_os = "linux")'.dependencies]
 fuser = { version = "=0.16.0", default-features = false, features = ["abi-7-31"] }
 
+[target.'cfg(windows)'.dependencies]
+tokio.workspace = true
+windows-sys = { version = "=0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Console",
+    "Win32_System_JobObjects",
+    "Win32_System_Pipes",
+    "Win32_System_Threading",
+] }
+
 [dev-dependencies]
 tempfile.workspace = true

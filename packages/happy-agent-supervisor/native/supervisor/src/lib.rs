@@ -1,10 +1,19 @@
+#[cfg(unix)]
 mod cli;
+#[cfg(unix)]
 mod exec;
+#[cfg(unix)]
 mod hardening;
+#[cfg(unix)]
 mod platform;
+#[cfg(unix)]
 mod policy;
+#[cfg(unix)]
 mod proxy;
+#[cfg(unix)]
 mod service_policy;
+#[cfg(windows)]
+pub mod windows;
 
 pub type SupervisorError = Box<dyn std::error::Error + Send + Sync>;
 pub type SupervisorResult<T> = Result<T, SupervisorError>;
@@ -17,10 +26,12 @@ pub fn command() -> std::io::Result<std::process::Command> {
     Ok(command)
 }
 
+#[cfg(unix)]
 pub(crate) fn invalid_input(message: impl Into<String>) -> std::io::Error {
     std::io::Error::new(std::io::ErrorKind::InvalidInput, message.into())
 }
 
+#[cfg(unix)]
 pub fn run(arguments: impl IntoIterator<Item = std::ffi::OsString>) {
     let result = cli::Invocation::parse(arguments).and_then(|invocation| {
         invocation.policy.validate()?;

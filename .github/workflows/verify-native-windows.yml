@@ -1,0 +1,40 @@
+name: Verify Windows native runtime
+
+on:
+    workflow_dispatch:
+
+permissions:
+    contents: read
+
+jobs:
+    process-owner:
+        name: Execute native Windows process regressions
+        runs-on: windows-2025
+        timeout-minutes: 20
+        steps:
+            - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+            - name: Configure the existing Windows release target
+              run: rustup target add x86_64-pc-windows-msvc
+            - name: Compile the Windows process owner and its tests
+              run: cargo test --locked -p happy-agent-supervisor --lib --target x86_64-pc-windows-msvc --no-run
+            - name: Execute real Job, ConPTY, pipe, environment, and shutdown tests
+              run: cargo test --locked -p happy-agent-supervisor --lib --target x86_64-pc-windows-msvc -- --test-threads=1
+
+    product-runtime:
+        name: Verify the Windows product executable
+        needs: process-owner
+        runs-on: windows-2025
+        timeout-minutes: 45
+        steps:
+            - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+            - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+            - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+              with:
+                  node-version: "24"
+                  package-manager-cache: false
+            - name: Configure the existing Windows release target
+              run: rustup target add x86_64-pc-windows-msvc
+            - name: Build the single Windows executable without signing or publication
+              run: pnpm --filter @slopus/happy-agent build:native --target win32-x64
+            - name: Execute the product smoke check against that executable
+              run: node packages/happy-agent/scripts/smoke-rust-runtime.mjs packages/happy-agent/dist/bin/happy-agent-win32-x64.exe
