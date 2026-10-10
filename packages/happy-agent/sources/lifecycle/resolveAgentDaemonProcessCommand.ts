@@ -16,14 +16,15 @@ interface AgentDaemonProcessRuntime {
 export function resolveAgentDaemonProcessCommand(
     entrypoint: string | undefined,
     runtime: AgentDaemonProcessRuntime = currentRuntime(),
+    commandArguments: readonly string[] = ["run"],
 ): AgentDaemonProcessCommand | undefined {
     if (runtime.standalone) {
-        return { arguments: ["run"], executable: runtime.executable };
+        return { arguments: [...commandArguments], executable: runtime.executable };
     }
     const script = entrypoint ?? runtime.entrypoint;
     if (script === undefined) return undefined;
     return {
-        arguments: [...runtime.execArguments, script, "run"],
+        arguments: [...runtime.execArguments, script, ...commandArguments],
         executable: runtime.executable,
     };
 }

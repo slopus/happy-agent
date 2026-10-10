@@ -28,6 +28,11 @@ rejects a caller owned by the target daemon. An unavailable ancestry check also 
 External reloads still wait for shutdown and replacement readiness. Preserve the database and
 verify session progress after recovery; a working session may legitimately await a question.
 
+Documentation then told agents they could never reload their own daemon, while the local-agent
+skill did exactly that with a detached script, so users asking an agent to reload were bounced.
+`reload --detach` is now the one supported path: the worker waits for its caller to exit, is
+reparented outside the daemon, and passes the same ancestry check. The refusal's hint names it.
+
 ## The JavaScript JIT stays enabled
 
 After live crashes in Bun's exception handling, the CLI re-executed itself with the

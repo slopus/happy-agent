@@ -34,9 +34,10 @@ it("rejects a reload owned by the daemon before draining or stopping it", async 
     const { runAgentDaemonCommand } = await import("../sources/lifecycle/runAgentDaemonCommand.js");
     mocks.pid.mockResolvedValue(process.ppid);
 
-    await expect(runAgentDaemonCommand("reload", { log: () => undefined })).rejects.toThrow(
-        "Cannot reload Happy Agent from a process owned by that daemon.",
-    );
+    await expect(runAgentDaemonCommand("reload", { log: () => undefined })).rejects.toMatchObject({
+        message: "Cannot reload Happy Agent from a process owned by that daemon.",
+        hint: "Run happy-agent reload --detach, which reloads after the calling command exits.",
+    });
 
     expect(mocks.stop).not.toHaveBeenCalled();
     expect(mocks.ensure).not.toHaveBeenCalled();

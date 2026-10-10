@@ -45,11 +45,13 @@ protocol compatibility. A release that intentionally resets state is not a routi
 upgrade: explain the data impact and stop for explicit direction. Likewise, do not silently
 upgrade unrelated clients or providers to satisfy a new requirement.
 
-Use an independent control path that will survive the target daemon stopping: usually SSH from
-the primary machine or an operator's terminal. Do not run the entire upgrade inside an agent,
-terminal, or background tool owned by the daemon being replaced. Do not rely solely on the remote
-connection that will disappear during shutdown. If no independent operator/control path exists,
-prepare the instructions and ask the user to perform the stop/start portion.
+Run the steps below over a control path that survives the target daemon stopping: usually SSH
+from the primary machine or an operator's terminal, not a remote connection that disappears during
+shutdown. An agent never runs these steps against the daemon it runs on. A desktop-managed install
+switches version through Happy Desktop's version picker; for any other install, ask the user to
+run the stop and start from such a path. The only restart an agent performs on its own daemon is
+`happy-agent reload --detach`, which keeps the current executable; see
+[applying configuration changes](../configuration.md#applying-configuration-changes).
 
 ## 2. Capture a baseline and stage the verified release
 

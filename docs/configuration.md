@@ -67,13 +67,15 @@ command. `happy-terminal daemon status` reports drain progress and the new proce
 other supervised deployment restarts through its supervisor instead, such as
 `systemctl restart`.
 
-An agent cannot reload the daemon it runs on. Its shell commands belong to that daemon, so
-shutdown kills the reload before it can start the replacement, and Happy stays down until
-something else starts it. `happy-agent reload` refuses such a caller. `happy-terminal daemon reload`
-has no such check, so never run it from a session, even with full access. An agent that changed
-the configuration should first validate the file, because a daemon cannot start with a `happy.toml`
-it cannot parse. It should then tell the user which running work the reload will interrupt and ask
-them to run the reload from a terminal outside Happy.
+An agent reloads the daemon it runs on only with `happy-agent reload --detach`, run from the
+selected executable `~/.happy/dist/version/<selectedVersion>/happy-agent` (`selectedVersion` is in
+`~/.happy/dist/config.json`) and with host access. It returns at once; the reload starts after the
+command exits and logs to `~/.happy/agent/reload.log`. First validate `happy.toml`, because a daemon
+cannot start with a file it cannot parse, and tell the user which running work will be interrupted.
+Make it the turn's final tool call and never poll or wait on it. A foreground reload from a session
+dies with its daemon: `happy-agent reload` refuses it, and `happy-terminal daemon reload` has no
+such check, so never run that from a session. Switch Agent versions with Happy Desktop's version
+picker, which restarts the daemon itself.
 
 ## Standalone profile bootstrap
 

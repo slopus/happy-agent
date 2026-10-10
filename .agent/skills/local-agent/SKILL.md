@@ -12,17 +12,11 @@ pnpm link:global
 ```
 
 This builds the checkout, globally links Happy Terminal, installs and selects Agent version
-`0.0.0`, and schedules a detached reload. The detached worker waits five seconds, allows graceful
-draining for 30 seconds, then falls back to `kill` followed by `start`.
+`0.0.0`, and runs its `happy-agent reload --detach`. The graceful reload starts once that command
+exits and logs to `~/.happy/agent/reload.log`.
 
 Make `pnpm link:global` the turn's final tool call and return immediately after it. Do not poll the
-reload from the agent being reloaded. The worker logs to `~/.happy/agent/local-reload.log`.
-
-To bypass graceful drain when recovering a stuck daemon, run this as the final tool call:
-
-```bash
-node .agent/skills/local-agent/reload.mjs --hard
-```
+reload from the agent being reloaded.
 
 To switch back, use Happy Desktop's Agent version picker to download or select the latest release.
 No unlink script is needed.

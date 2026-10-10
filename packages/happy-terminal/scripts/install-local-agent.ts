@@ -70,22 +70,22 @@ console.log(`Installed local Happy Agent ${LOCAL_AGENT_VERSION} at ${targetPath}
 console.log(`Happy Agent socket: ${paths.socketPath}`);
 
 if (process.argv.includes("--reload")) {
-    await runBinary(targetPath, paths.happyHome);
-    console.log(`Reloaded the daemon from ${targetPath}`);
+    // Detached, so an agent running this from a session it is about to replace still reloads.
+    process.stdout.write(await runBinary(targetPath, paths.happyHome));
 }
 
 function errorCodeIs(error: unknown, code: string): boolean {
     return error instanceof Error && "code" in error && error.code === code;
 }
 
-function runBinary(path: string, happyHome: string): Promise<void> {
+function runBinary(path: string, happyHome: string): Promise<string> {
     return new Promise((resolve, reject) => {
         execFile(
             path,
-            ["reload"],
+            ["reload", "--detach"],
             { env: { ...process.env, HAPPY_HOME_DIR: happyHome } },
-            (error) => {
-                if (error === null) resolve();
+            (error, stdout) => {
+                if (error === null) resolve(stdout);
                 else reject(error);
             },
         );

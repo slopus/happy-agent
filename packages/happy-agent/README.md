@@ -26,6 +26,7 @@ happy-agent stop     # ask the running daemon to shut down
 happy-agent kill     # immediately kill the daemon recorded in daemon.pid
 happy-agent status   # report whether the daemon is running
 happy-agent reload   # stop the running daemon, then start a fresh one
+happy-agent reload --detach  # return at once; reload after this command exits (for agents)
 happy-agent run      # run the daemon in the foreground of this process
 happy-agent --version
 # Windows only:
@@ -37,6 +38,10 @@ happy-agent sandbox setup --retry   # retry a failed setup deliberately
 Run `reload` from an independent terminal or supervisor. A caller owned by the target daemon
 would be killed during shutdown before it could start the replacement, so the CLI rejects that
 reload before draining. If process ancestry cannot be checked, it leaves the daemon running.
+`reload --detach` is how an agent reloads its own daemon: it starts a worker in its own session
+and returns at once. Once the calling command exits, the reparented worker passes the ancestry
+check and runs the same graceful reload, logging to `agent/reload.log`. It is unavailable on
+Windows, which does not reparent orphans.
 
 `start` spawns a detached runtime process, redirects its output to the rotated daemon log, and
 waits until health reports ready. The Node-compatible package runs `node <cli> run`; a standalone

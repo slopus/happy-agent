@@ -19,7 +19,9 @@ export async function assertReloadCallerOutsideDaemon(
     const reject = () => {
         throw new AgentDaemonError(
             "Cannot reload Happy Agent from a process owned by that daemon.",
-            { hint: "Run happy-agent reload from an independent terminal or supervisor." },
+            {
+                hint: "Run happy-agent reload --detach, which reloads after the calling command exits.",
+            },
         );
     };
     if (daemonPid === process.pid || daemonPid === process.ppid) reject();

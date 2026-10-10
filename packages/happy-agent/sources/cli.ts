@@ -22,6 +22,8 @@ Commands:
   kill     Immediately kill the daemon process recorded in its PID file.
   status   Report whether the daemon is running.
   reload   Stop the running daemon, then start a fresh one.
+           --detach  Return at once and reload after this command exits, logging to
+                     reload.log. An agent reloads its own daemon only this way.
   run      Run the daemon in the foreground of this process.
   runner   Run this machine as a runner for a daemon on another machine.
            --endpoint <address>  The daemon: https://host, http://host:port, unix:/socket, or
@@ -60,6 +62,20 @@ async function main(): Promise<void> {
         const { runSandboxCommand } = await import("./lifecycle/runSandboxCommand.js");
         await runSandboxCommand(rest);
         return;
+    }
+    if (command === "reload" && rest.length === 1) {
+        const lifecycle = await import("./lifecycle/detachAgentDaemonReload.js");
+        if (rest[0] === "--detach") {
+            const logPath = await lifecycle.detachAgentDaemonReload();
+            console.log("Happy Agent will reload once this command exits.");
+            console.log(`Reload log: ${logPath}`);
+            return;
+        }
+        const callerPid = lifecycle.readDetachedReloadCaller(rest[0]);
+        if (callerPid !== undefined) {
+            await lifecycle.runDetachedAgentDaemonReload(callerPid);
+            return;
+        }
     }
     if (rest.length > 0) {
         throw new AgentDaemonError(`The ${command} command does not take arguments.`, {
