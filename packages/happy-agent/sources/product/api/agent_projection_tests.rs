@@ -157,6 +157,69 @@ async fn focused_agents_include_active_subtask_trees_shared_workspaces_and_durab
             .contains("Published client validated independently versioned subtask trees")
     );
     let agents = graph.agents.clone();
+    let parent_id = parent.clone();
+    graph
+        .fixture
+        .runtime
+        .transact(move |ctx| {
+            agents.update_metadata(
+                ctx,
+                &parent_id,
+                &json!({"title":"Coordinator before reordering"}),
+            )?;
+            agents.update_metadata(
+                ctx,
+                &parent_id,
+                &json!({"title":"Coordinator ready to reorder"}),
+            )
+        })
+        .await
+        .unwrap();
+    let before_reorder = focused(&graph, &parent).await;
+    assert_eq!(before_reorder["agent"]["subtasks"][0]["id"], sibling);
+    assert_eq!(before_reorder["agent"]["subtasks"][1]["id"], main);
+    let subtasks = graph.subtasks.clone();
+    let moved_id = main.clone();
+    graph
+        .fixture
+        .runtime
+        .transact(move |ctx| {
+            assert!(subtasks.reorder(ctx, &moved_id, None)?);
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let reordered = focused(&graph, &parent).await;
+    let (status, page) = graph
+        .request(
+            "GET",
+            &format!(
+                "/v0/events?after={}",
+                before_reorder["agent"]["lastCursor"].as_str().unwrap()
+            ),
+            None,
+            None,
+        )
+        .await;
+    assert_eq!(status, 200, "{page}");
+    let update = page["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|event| event["type"] == "agent.updated" && event["payload"]["agentId"] == parent)
+        .expect("The reorder publishes an update for the coordinator");
+    assert_eq!(
+        update["payload"]["previousVersion"],
+        before_reorder["agent"]["version"]
+    );
+    assert_eq!(update["payload"]["version"], reordered["agent"]["version"]);
+    assert_eq!(
+        update["payload"]["changes"]["subtasks"], reordered["agent"]["subtasks"],
+        "The Source reorder delta contains the complete independently versioned subtree, so clients can update without another snapshot request."
+    );
+    assert_eq!(reordered["agent"]["subtasks"][0]["id"], main);
+    assert_eq!(reordered["agent"]["subtasks"][1]["id"], sibling);
+    let agents = graph.agents.clone();
     let task_id = main.clone();
     graph
         .fixture

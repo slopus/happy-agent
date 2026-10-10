@@ -38,7 +38,7 @@ impl From<Value> for Publication {
     fn from(public: Value) -> Self {
         Self {
             durable: public.clone(),
-            public:Some(public),
+            public: Some(public),
         }
     }
 }
@@ -127,7 +127,10 @@ impl EventsModule {
             ctx,
             Some(agent),
             kind,
-            Publication { durable, public:Some(public) },
+            Publication {
+                durable,
+                public: Some(public),
+            },
             id,
             now(),
         )
@@ -220,11 +223,16 @@ impl EventsModule {
             )?;
             db.execute("INSERT INTO happy_agent_event_state(key,value) VALUES('origin_cursor',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[boundary])?;
         }
-        let Some(payload)=payload.public else{return Ok(id);};
+        let Some(payload) = payload.public else {
+            return Ok(id);
+        };
         let journal = self.journal.clone();
         let kind = kind.to_owned();
         ctx.after_commit(move || {
-            journal.lock().unwrap_or_else(std::sync::PoisonError::into_inner).append_with_cursor(
+            journal
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .append_with_cursor(
                     &kind,
                     |cursor| {
                         let mut payload = payload;
@@ -238,17 +246,72 @@ impl EventsModule {
         })?;
         Ok(id)
     }
-    pub fn latest_transition(&self,ctx:&Context<'_>,agent:&str)->Result<Option<(String,u64,Option<String>)>> {
+    pub fn latest_transition(
+        &self,
+        ctx: &Context<'_>,
+        agent: &str,
+    ) -> Result<Option<(String, u64, Option<String>)>> {
         Ok(ctx.database().query_row("SELECT event_id,occurred_at,previous_event_id FROM happy_agent_latest_events WHERE agent_id=?1",[agent],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?))).optional()?)
     }
-    pub fn publish(&self,ctx:&Context<'_>,kind:&str,payload:Value,occurred_at:u64)->Result<()> {
+    pub fn publish(
+        &self,
+        ctx: &Context<'_>,
+        kind: &str,
+        payload: Value,
+        occurred_at: u64,
+    ) -> Result<()> {
         self.runtime.assert_context(ctx)?;
-        anyhow::ensure!(self.schemas.valid("appendEvent",&json!({"type":kind,"payload":payload}))?,"The public event payload is invalid.");
-        let journal=self.journal.clone();let kind=kind.to_owned();ctx.after_commit(move||{journal.lock().unwrap_or_else(std::sync::PoisonError::into_inner).append_at(&kind,payload,None,occurred_at);})
+        anyhow::ensure!(
+            self.schemas
+                .valid("appendEvent", &json!({"type":kind,"payload":payload}))?,
+            "The public event payload is invalid."
+        );
+        let journal = self.journal.clone();
+        let kind = kind.to_owned();
+        ctx.after_commit(move || {
+            journal
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .append_at(&kind, payload, None, occurred_at);
+        })
     }
-    pub fn publish_ephemeral_process(&self,kind:&str,payload:Value)->Result<()> {
-        anyhow::ensure!(self.schemas.valid("appendEvent",&json!({"type":kind,"payload":payload}))?,"The public process event is invalid.");
-        self.with_journal(|journal|journal.append(kind,payload,None));Ok(())
+    pub fn publish_subtask_update(
+        &self,
+        ctx: &Context<'_>,
+        payload: Value,
+        subtasks: Vec<Value>,
+        occurred_at: u64,
+    ) -> Result<()> {
+        self.runtime.assert_context(ctx)?;
+        anyhow::ensure!(
+            self.schemas.valid(
+                "appendEvent",
+                &json!({"type":"agent.updated","payload":payload})
+            )?,
+            "The public agent update is invalid."
+        );
+        for subtask in &subtasks {
+            anyhow::ensure!(
+                self.schemas.valid("ownerPublicAgent", subtask)?,
+                "The public subtask resource is invalid."
+            );
+        }
+        let journal = self.journal.clone();
+        ctx.after_commit(move || {
+            journal
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .append_subtask_update(payload, subtasks, occurred_at);
+        })
+    }
+    pub fn publish_ephemeral_process(&self, kind: &str, payload: Value) -> Result<()> {
+        anyhow::ensure!(
+            self.schemas
+                .valid("appendEvent", &json!({"type":kind,"payload":payload}))?,
+            "The public process event is invalid."
+        );
+        self.with_journal(|journal| journal.append(kind, payload, None));
+        Ok(())
     }
     pub fn latest(&self, ctx: &Context<'_>, agent: &str) -> Result<Option<(String, i64)>> {
         Ok(ctx
@@ -307,10 +370,31 @@ impl EventsModule {
 
 #[async_trait::async_trait]
 impl happy_agent_base::AgentModule for EventsModule {
-    fn name(&self) -> &'static str { "events" }
-    fn metadata_changed(&self, ctx: &Context<'_>, scope: &happy_agent_base::AgentScope<'_>, change: &Value) -> Result<()> {
-        let id=self.versions.lock().unwrap_or_else(std::sync::PoisonError::into_inner).next();
-        self.record_at(ctx,Some(scope.id),"agent.metadata-changed",Publication {durable:change.clone(),public:None},id,now())?;
+    fn name(&self) -> &'static str {
+        "events"
+    }
+    fn metadata_changed(
+        &self,
+        ctx: &Context<'_>,
+        scope: &happy_agent_base::AgentScope<'_>,
+        change: &Value,
+    ) -> Result<()> {
+        let id = self
+            .versions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .next();
+        self.record_at(
+            ctx,
+            Some(scope.id),
+            "agent.metadata-changed",
+            Publication {
+                durable: change.clone(),
+                public: None,
+            },
+            id,
+            now(),
+        )?;
         Ok(())
     }
 }

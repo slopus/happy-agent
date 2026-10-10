@@ -1,6 +1,9 @@
 use super::identity::{Versions, now};
 use serde_json::{Value, json};
-use std::{collections::VecDeque, sync::Arc};
+use std::{
+    collections::{BTreeMap, VecDeque},
+    sync::Arc,
+};
 use tokio::sync::broadcast;
 
 const CAPACITY: usize = 10_000;
@@ -68,16 +71,86 @@ impl Journal {
         payload: impl FnOnce(&str) -> Value,
         owner: Option<String>,
     ) -> Arc<Entry> {
-        self.append_with_cursor_at(kind,payload,owner,now())
+        self.append_with_cursor_at(kind, payload, owner, now())
     }
-    pub fn append_at(&mut self,kind:&str,payload:Value,owner:Option<String>,occurred_at:u64)->Arc<Entry> {
-        self.append_with_cursor_at(kind,|_|payload,owner,occurred_at)
+    pub fn append_at(
+        &mut self,
+        kind: &str,
+        payload: Value,
+        owner: Option<String>,
+        occurred_at: u64,
+    ) -> Arc<Entry> {
+        self.append_with_cursor_at(kind, |_| payload, owner, occurred_at)
     }
-    fn append_with_cursor_at(&mut self,kind:&str,payload:impl FnOnce(&str)->Value,owner:Option<String>,occurred_at:u64)->Arc<Entry> {
+    pub fn append_subtask_update(
+        &mut self,
+        mut payload: Value,
+        mut subtasks: Vec<Value>,
+        occurred_at: u64,
+    ) -> Arc<Entry> {
+        let cursor = self.versions.next();
+        // Cursors have a fixed encoded size. Measure with this frame's fallback before making
+        // room, then choose each child's cursor from the history that will remain afterwards.
+        stamp_subtask_cursors(&mut subtasks, &BTreeMap::new(), &cursor);
+        payload["changes"]["subtasks"] = json!(subtasks);
+        let mut envelope = json!({"cursor":cursor,"occurredAt":occurred_at,"type":"agent.updated","payload":payload});
+        let bytes = envelope.to_string().len();
+        self.retain_for_append(bytes);
+        // Child updates from the same commit have already appended. This temporary index is
+        // bounded by journal retention and belongs only to this publication.
+        let mut cursors = BTreeMap::new();
+        for entry in &self.entries {
+            for id in [
+                entry.envelope["payload"]["agentId"].as_str(),
+                entry.envelope["payload"]["agent"]["id"].as_str(),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                cursors.insert(id.to_owned(), entry.cursor().to_owned());
+            }
+        }
+        stamp_subtask_cursors(
+            envelope["payload"]["changes"]["subtasks"]
+                .as_array_mut()
+                .expect("TypeBox-validated public subtask tree"),
+            &cursors,
+            &cursor,
+        );
+        debug_assert_eq!(envelope.to_string().len(), bytes);
+        self.publish_entry(envelope, None, bytes)
+    }
+    fn append_with_cursor_at(
+        &mut self,
+        kind: &str,
+        payload: impl FnOnce(&str) -> Value,
+        owner: Option<String>,
+        occurred_at: u64,
+    ) -> Arc<Entry> {
         let cursor = self.versions.next();
         let payload = payload(&cursor);
-        let envelope = json!({"cursor":cursor,"occurredAt":occurred_at,"type":kind,"payload":payload});
+        let envelope =
+            json!({"cursor":cursor,"occurredAt":occurred_at,"type":kind,"payload":payload});
         let bytes = envelope.to_string().len();
+        self.retain_for_append(bytes);
+        self.publish_entry(envelope, owner, bytes)
+    }
+    fn retain_for_append(&mut self, bytes: usize) {
+        while !self.entries.is_empty()
+            && (self.entries.len() >= CAPACITY || self.bytes + bytes > MAX_BYTES)
+        {
+            if let Some(removed) = self.entries.pop_front() {
+                self.bytes -= removed.bytes;
+                self.origin = removed.cursor().to_owned();
+            }
+        }
+    }
+    fn publish_entry(
+        &mut self,
+        envelope: Value,
+        owner: Option<String>,
+        bytes: usize,
+    ) -> Arc<Entry> {
         let entry = Arc::new(Entry {
             envelope,
             owner,
@@ -85,12 +158,6 @@ impl Journal {
         });
         self.entries.push_back(entry.clone());
         self.bytes += bytes;
-        while self.entries.len() > CAPACITY || self.bytes > MAX_BYTES && self.entries.len() > 1 {
-            if let Some(removed) = self.entries.pop_front() {
-                self.bytes -= removed.bytes;
-                self.origin = removed.cursor().to_owned();
-            }
-        }
         let _ = self.sender.send(entry.clone());
         entry
     }
@@ -152,9 +219,51 @@ impl Journal {
     }
 }
 
+fn stamp_subtask_cursors(
+    subtasks: &mut [Value],
+    cursors: &BTreeMap<String, String>,
+    fallback: &str,
+) {
+    for subtask in subtasks {
+        let id = subtask["id"]
+            .as_str()
+            .expect("TypeBox-validated public agent identity");
+        subtask["lastCursor"] = json!(cursors.get(id).map_or(fallback, String::as_str));
+        if let Some(nested) = subtask.get_mut("subtasks") {
+            stamp_subtask_cursors(
+                nested
+                    .as_array_mut()
+                    .expect("TypeBox-validated optional public subtask tree"),
+                cursors,
+                fallback,
+            );
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn subtask_update_uses_the_retained_cursor_after_its_own_append_evicts_child_history() {
+        let mut journal = Journal::new();
+        journal.append("agent.updated", json!({"agentId": "child"}), None);
+        for _ in 1..CAPACITY {
+            journal.append("config.updated", json!({}), None);
+        }
+        let update = journal.append_subtask_update(
+            json!({"agentId": "parent", "changes": {}}),
+            vec![json!({"id": "child", "lastCursor": journal.agent_cursor("child")})],
+            42,
+        );
+        assert_eq!(
+            update.envelope["payload"]["changes"]["subtasks"][0]["lastCursor"],
+            journal.agent_cursor("child"),
+            "the published subtree and following snapshot must agree after retention"
+        );
+        assert_eq!(journal.entries.len(), CAPACITY);
+    }
+
     #[test]
     fn bounded_retention_keeps_last_evicted_cursor_and_pagination_advances_over_private_events() {
         let mut journal = Journal::new();
