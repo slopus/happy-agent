@@ -1,13 +1,16 @@
 name: Verify happy-agent-supervisor
 
-# The supervisor is a native binary whose whole purpose is an operating-system claim, and every
-# claim it makes is architecture-specific: Seatbelt on macOS, and user namespaces, bind mounts and
-# a hand-written seccomp filter on Linux, with the syscall numbers differing between x86_64 and
-# aarch64. None of that can be proven by emulation — QEMU does not implement `prctl(PR_SET_SECCOMP)`
-# at all — so each of the four shipped targets has to run its own tests on its own real kernel.
+# The supervisor is part of the single happy-agent executable, and its whole purpose is an
+# operating-system claim that is architecture-specific: Seatbelt on macOS, and user namespaces,
+# bind mounts, FUSE and a hand-written seccomp filter on Linux, with the syscall numbers differing
+# between x86_64 and aarch64. None of that can be proven by emulation, a cross-compile, or a
+# sandbox without delegated cgroups, so each target runs its own tests on its own real kernel and
+# every suite must report its exact count with nothing failed, ignored, or filtered away.
 #
 # This runs on demand only. It is slow, it exists to answer "does the boundary still hold", and
 # that question is worth asking before a release or after touching the sandbox, not on every push.
+# It never signs, packages for release, or publishes. Dispatch it from the branch under test:
+#   gh workflow run verify-supervisor.yaml --ref <branch>
 
 on:
     workflow_dispatch:
@@ -72,86 +75,188 @@ jobs:
         with:
             version: 0.4.48-windows-ci.${{ github.run_number }}
 
-    supervisor:
-        if: ${{ !inputs.windows_only && !inputs.services_only }}
-        name: ${{ matrix.name }}
+    native-linux:
+        if: ${{ !inputs.windows_only }}
+        name: Native boundary on ${{ matrix.runner }}
         runs-on: ${{ matrix.runner }}
-        timeout-minutes: 30
+        timeout-minutes: 90
         strategy:
-            # Every target reports, so a regression on one architecture is visible as exactly that
-            # rather than hidden behind whichever leg happened to fail first.
+            # Every architecture reports, so a regression on one is visible as exactly that.
             fail-fast: false
             matrix:
-                include:
-                    - name: macOS arm64
-                      runner: macos-15
-                      target: aarch64-apple-darwin
-                    - name: macOS x64
-                      runner: macos-15-intel
-                      target: x86_64-apple-darwin
-                    - name: Linux arm64
-                      runner: ubuntu-24.04-arm
-                      target: aarch64-unknown-linux-musl
-                    - name: Linux x64
-                      runner: ubuntu-24.04
-                      target: x86_64-unknown-linux-musl
-
-        defaults:
-            run:
-                working-directory: packages/happy-agent-supervisor/native
-
+                runner: [ubuntu-24.04, ubuntu-24.04-arm]
+        env:
+            CARGO_TERM_COLOR: never
+            # Product tests start sandboxed work through the built executable, never by
+            # re-entering the unit-test binary.
+            HAPPY_AGENT_TEST_COMPUTE_BINARY: ${{ github.workspace }}/target/debug/happy-agent
+            PROOF_LOGS: ${{ github.workspace }}/.native-proof
+            EXPECT: packages/happy-agent-supervisor/scripts/expect-rust-tests.sh
+            DELEGATE: packages/happy-agent-supervisor/scripts/test-services.sh
         steps:
-            - name: Check out the repository
-              uses: actions/checkout@v6
+            - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+            - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+            - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+              with:
+                  node-version: "24"
+                  package-manager-cache: false
 
             - name: Install the pinned Rust toolchain
+              run: rustup show active-toolchain || rustup toolchain install
+
+            - name: Record what the kernel offers
+              # Configuration, not proof: the runtime picks its fallbacks from these, so record them
+              # rather than inferring later which path a green run exercised.
               run: |
-                  rustup show active-toolchain || rustup toolchain install
-                  rustup target add "${{ matrix.target }}"
+                  {
+                      echo '### Kernel on ${{ matrix.runner }}'
+                      echo '```'
+                      uname -a
+                      echo "apparmor_restrict_unprivileged_userns=$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns)"
+                      echo "cgroup controllers: $(cat /sys/fs/cgroup/cgroup.controllers)"
+                      echo "own cgroup: $(cat /proc/self/cgroup)"
+                      ls -l /dev/fuse || echo "/dev/fuse is absent"
+                      echo '```'
+                      echo '| Suite | Result | Expected | Verdict |'
+                      echo '| --- | --- | --- | --- |'
+                  } | tee -a "$GITHUB_STEP_SUMMARY"
 
-            - name: Report what the kernel actually offers
-              # The fallback paths are chosen at runtime, so the kernel version is the difference
-              # between a green run that exercised `mount_setattr` and one that exercised the
-              # pre-5.12 remount walk. Record it rather than inferring it later from a green tick.
-              run: uname -a
+            - name: Install the published client and fixture dependencies
+              if: ${{ !inputs.services_only }}
+              run: pnpm install --frozen-lockfile
 
-            - name: Build the release binary
-              run: cargo build --locked --release --target "${{ matrix.target }}" --bin happy-agent-supervisor
+            - name: Build the single executable and its test binaries
+              run: |
+                  cargo build --locked -p happy-agent --bin happy-agent
+                  cargo test --locked -p happy-agent --no-run
 
-            - name: Verify an enforced AppArmor denial before allowing the test binary
-              if: runner.os == 'Linux'
-              run: bash ../scripts/test-apparmor.sh "$PWD/target/${{ matrix.target }}/release/happy-agent-supervisor"
+            - name: Verify an enforced AppArmor denial before allowing the executable
+              run: bash packages/happy-agent-supervisor/scripts/test-apparmor.sh "$HAPPY_AGENT_TEST_COMPUTE_BINARY" supervisor
 
-            - name: Allow namespaces only for the supervisor test binaries
-              if: runner.os == 'Linux'
-              # Keep Ubuntu's global restriction enabled. The two exact build paths receive the
+            - name: Allow namespaces only for the built executable
+              # Keep Ubuntu's global restriction enabled. The exact build path receives the
               # application allowance; unrelated processes and the negative test remain confined.
               run: |
                   test "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns)" = 1
-                  sudo tee /etc/apparmor.d/happy-supervisor-tests >/dev/null <<EOF
+                  sudo tee /etc/apparmor.d/happy-agent-native-tests >/dev/null <<EOF
                   abi <abi/4.0>,
                   include <tunables/global>
-                  profile happy-supervisor-tests "$PWD/target/${{ matrix.target }}/{debug,release}/happy-agent-supervisor" flags=(unconfined) {
+                  profile happy-agent-native-tests "$HAPPY_AGENT_TEST_COMPUTE_BINARY" flags=(unconfined) {
                       userns,
                   }
                   EOF
-                  sudo apparmor_parser --replace /etc/apparmor.d/happy-supervisor-tests
+                  sudo apparmor_parser --replace /etc/apparmor.d/happy-agent-native-tests
 
-            - name: Run the native test suite
-              # Tests run against the shipped target, not the host default, so what is proven is
-              # what is published. `--test-threads=1` keeps the behaviour tests from racing each
-              # other over namespaces and listeners.
-              run: cargo test --locked --target "${{ matrix.target }}" -- --test-threads=1
+            - name: Prove supervised services under a delegated cgroup
+              run: >-
+                  bash "$DELEGATE" --command bash "$EXPECT" "supervisor services" exact 14 "$PROOF_LOGS" --
+                  cargo test --locked -p happy-agent --test supervisor-services -- --include-ignored --test-threads=1
 
-            - name: Lint
-              run: cargo clippy --locked --all-targets --target "${{ matrix.target }}" -- -D warnings
+            - name: Prove the product service PTY and gateway teardown under a delegated cgroup
+              run: >-
+                  bash "$DELEGATE" --command bash "$EXPECT" "product service kernel" exact 1 "$PROOF_LOGS" --
+                  cargo test --locked -p happy-agent --bin happy-agent
+                  product::services::tests::native_service_uses_a_pty_and_revokes_an_established_gateway_before_cleanup
+                  -- --include-ignored --exact --test-threads=1
 
-            - name: Upload the binary
+            - name: Prove the supervisor boundary
+              if: ${{ !inputs.services_only }}
+              # `--test-threads=1` keeps the behaviour tests from racing over namespaces and listeners.
+              run: >-
+                  bash "$EXPECT" "supervisor behavior" exact 22 "$PROOF_LOGS" --
+                  cargo test --locked -p happy-agent --test supervisor-behavior -- --test-threads=1
+
+            - name: Prove the outgoing proxy
+              if: ${{ !inputs.services_only }}
+              run: >-
+                  bash "$EXPECT" "supervisor outgoing proxy" exact 10 "$PROOF_LOGS" --
+                  cargo test --locked -p happy-agent --test supervisor-outgoing-proxy -- --test-threads=1
+
+            - name: Prove the daemon's compute through a real restart
+              if: ${{ !inputs.services_only }}
+              run: >-
+                  bash "$EXPECT" "daemon compute" exact 2 "$PROOF_LOGS" --
+                  cargo test --locked -p happy-agent --test original_agent_restart compute_acceptance:: -- --test-threads=1
+
+            - name: Prove the file tools
+              if: ${{ !inputs.services_only }}
+              run: >-
+                  bash "$EXPECT" "file tools" exact 14 "$PROOF_LOGS" --
+                  cargo test --locked -p happy-agent --bin happy-agent product::tools::files::tests:: -- --test-threads=1
+
+            - name: Prove the runner peer
+              if: ${{ !inputs.services_only }}
+              run: >-
+                  bash "$EXPECT" "runner peer" exact 6 "$PROOF_LOGS" --
+                  cargo test --locked -p happy-agent --bin happy-agent native_runner_ -- --test-threads=1
+
+            - name: Prove workflows
+              if: ${{ !inputs.services_only }}
+              run: >-
+                  bash "$EXPECT" "workflows" exact 4 "$PROOF_LOGS" --
+                  cargo test --locked -p happy-agent --bin happy-agent product::bots::tests::workflow_ -- --test-threads=1
+
+            - name: Prove the restricted runner command end to end
+              if: ${{ !inputs.services_only }}
+              run: |
+                  set -o pipefail
+                  mkdir -p "$PROOF_LOGS"
+                  node packages/happy-agent/tests/runner/restricted-cli.mjs 2>&1 | tee "$PROOF_LOGS/restricted-runner-cli.log"
+                  echo '| restricted runner CLI | completed | exit 0 | pass |' >> "$GITHUB_STEP_SUMMARY"
+
+            - name: Upload the proof logs
+              if: ${{ always() }}
               uses: actions/upload-artifact@v4
               with:
-                  name: happy-agent-supervisor-${{ matrix.target }}
-                  path: packages/happy-agent-supervisor/native/target/${{ matrix.target }}/release/happy-agent-supervisor
-                  if-no-files-found: error
+                  name: native-proof-${{ matrix.runner }}
+                  path: .native-proof
+                  if-no-files-found: warn
+
+    native-macos:
+        if: ${{ !inputs.windows_only && !inputs.services_only }}
+        name: Native boundary on ${{ matrix.runner }}
+        runs-on: ${{ matrix.runner }}
+        timeout-minutes: 60
+        strategy:
+            fail-fast: false
+            matrix:
+                runner: [macos-15, macos-15-intel]
+        env:
+            CARGO_TERM_COLOR: never
+            PROOF_LOGS: ${{ github.workspace }}/.native-proof
+            EXPECT: packages/happy-agent-supervisor/scripts/expect-rust-tests.sh
+        steps:
+            - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+            - name: Install the pinned Rust toolchain
+              run: rustup show active-toolchain || rustup toolchain install
+
+            - name: Record the kernel
+              run: |
+                  { echo '### Kernel on ${{ matrix.runner }}'; echo '```'; uname -a; sw_vers; echo '```'; echo '| Suite | Result | Expected | Verdict |'; echo '| --- | --- | --- | --- |'; } | tee -a "$GITHUB_STEP_SUMMARY"
+
+            - name: Build the single executable and its test binaries
+              run: |
+                  cargo build --locked -p happy-agent --bin happy-agent
+                  cargo test --locked -p happy-agent --test supervisor-behavior --test supervisor-outgoing-proxy --no-run
+
+            - name: Prove the Seatbelt boundary
+              run: >-
+                  bash "$EXPECT" "supervisor behavior" exact 7 "$PROOF_LOGS" --
+                  cargo test --locked -p happy-agent --test supervisor-behavior -- --test-threads=1
+
+            - name: Prove the outgoing proxy
+              run: >-
+                  bash "$EXPECT" "supervisor outgoing proxy" exact 10 "$PROOF_LOGS" --
+                  cargo test --locked -p happy-agent --test supervisor-outgoing-proxy -- --test-threads=1
+
+            - name: Upload the proof logs
+              if: ${{ always() }}
+              uses: actions/upload-artifact@v4
+              with:
+                  name: native-proof-${{ matrix.runner }}
+                  path: .native-proof
+                  if-no-files-found: warn
 
     package:
         if: ${{ !inputs.windows_only && !inputs.services_only }}
