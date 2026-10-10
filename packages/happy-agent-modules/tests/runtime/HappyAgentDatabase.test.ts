@@ -112,6 +112,12 @@ describe("openHappyAgentDatabase", () => {
 
         await expect(runDeadlockProbe(databasePath)).resolves.toBeUndefined();
     }, 20_000);
+    it("keeps the database responsive when a workspace mutation joins a carried transaction", async () => {
+        const directory = await createTestDirectory();
+        await expect(
+            runDeadlockProbe(join(directory, "agent.sqlite"), "WorkspaceMutationDeadlock.child.ts"),
+        ).resolves.toBeUndefined();
+    }, 20_000);
 });
 
 async function createTestDirectory(): Promise<string> {
@@ -133,8 +139,11 @@ function deferred<Value>(): {
     return { promise, resolve };
 }
 
-async function runDeadlockProbe(databasePath: string): Promise<void> {
-    const childPath = resolve(import.meta.dirname, "HappyAgentDatabaseDeadlock.child.ts");
+async function runDeadlockProbe(
+    databasePath: string,
+    childName = "HappyAgentDatabaseDeadlock.child.ts",
+): Promise<void> {
+    const childPath = resolve(import.meta.dirname, childName);
     const child = spawn(process.execPath, ["--import", "tsx", childPath, databasePath], {
         cwd: resolve(import.meta.dirname, "../../../.."),
         stdio: ["ignore", "pipe", "pipe"],
@@ -175,7 +184,7 @@ async function runDeadlockProbe(databasePath: string): Promise<void> {
                         child.kill("SIGKILL");
                         finish(
                             new Error(
-                                "The mixed tool batch deadlocked the global database; an unrelated read did not finish.",
+                                "The concurrent operations deadlocked the global database; an unrelated read did not finish.",
                             ),
                         );
                     }, 1_000);

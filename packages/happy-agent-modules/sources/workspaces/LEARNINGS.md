@@ -125,3 +125,13 @@ project an empty list, so startup does not emit an update per project. The file 
 of truth and the API does not write it; a list the catalog cannot hold is still run as written and
 only not shown. The home project is left alone: it states no workspace configuration, and a watch
 on a person's home directory would observe everything they own for nothing.
+
+## Database ownership precedes workspace mutation ownership
+
+Ordinary workspace changes took the module mutation lock before opening their database
+transaction. Subtask creation already held a database transaction when it requested the same
+module lock. Concurrent calls could each wait for the other, blocking unrelated profile,
+project, and Desktop bootstrap queries while health continued to respond. Every mutation now
+enters the caller-composable database transaction before acquiring the module lock. A gated
+child-process regression exercises both entry paths together and requires unrelated database
+reads to finish as well.

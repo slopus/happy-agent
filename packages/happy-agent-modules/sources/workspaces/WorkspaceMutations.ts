@@ -163,22 +163,28 @@ export class WorkspaceMutations {
         ctx: Context,
         work: (txCtx: Context) => Promise<WorkspaceTransactionChange>,
     ): Promise<WorkspaceTransactionChange> {
-        return await this.#oneAtATime.runInLock(ctx, async (lockCtx) => {
-            let expected: WorkspaceTransactionChange | undefined;
-            const raw = await requirePromise(
-                lockCtx.inTx(async (txCtx) => {
-                    const change = await work(txCtx);
-                    expected = deepFreeze(structuredClone(change));
-                    return structuredClone(expected);
+        // Every entry acquires the database before the module lock, including callers
+        // that already carry a transaction. The opposite order can wait on that caller
+        // while it waits on this lock, blocking the whole shared database.
+        return await ctx.inTx(
+            async (txCtx) =>
+                await this.#oneAtATime.runInLock(txCtx, async (lockCtx) => {
+                    let expected: WorkspaceTransactionChange | undefined;
+                    const raw = await requirePromise(
+                        lockCtx.inTx(async (txCtx) => {
+                            const change = await work(txCtx);
+                            expected = deepFreeze(structuredClone(change));
+                            return structuredClone(expected);
+                        }),
+                        "Workspace store transaction",
+                    );
+                    assertWorkspaceTransactionChange(raw);
+                    if (expected === undefined || !sameJson(raw, expected)) {
+                        throw new Error("Workspace transaction returned a substituted change.");
+                    }
+                    return raw;
                 }),
-                "Workspace store transaction",
-            );
-            assertWorkspaceTransactionChange(raw);
-            if (expected === undefined || !sameJson(raw, expected)) {
-                throw new Error("Workspace transaction returned a substituted change.");
-            }
-            return raw;
-        });
+        );
     }
 
     async getRequired(ctx: Context, workspaceId: string): Promise<Workspace> {
