@@ -20,5 +20,7 @@ pub use terminal::{Control, create_terminal};
 
 mod admission;
 #[cfg(test)]
+mod readonly_audit;
+#[cfg(test)]
 mod tests;
 pub use admission::require_full_access;

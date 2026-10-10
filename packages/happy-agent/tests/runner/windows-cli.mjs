@@ -24,6 +24,10 @@ let runner,
     next = 1;
 const pending = new Map();
 const streams = new Map();
+let failTransport;
+const transportFailure = new Promise((_, fail) => {
+    failTransport = fail;
+});
 const permissions = { mode: "full_access", network: { egress: true, localBinding: true } };
 function encode(header, body = Buffer.alloc(0)) {
     const bytes = Buffer.from(JSON.stringify(header));
@@ -38,7 +42,7 @@ function rpc(method, params, body) {
     const id = next++;
     const answer = new Promise((ok) => pending.set(id, ok));
     send({ type: "request", id, method, params }, body);
-    return answer.then(({ header, body }) => {
+    return Promise.race([answer, transportFailure]).then(({ header, body }) => {
         assert(!header.error, JSON.stringify(header));
         return { result: header.result, body };
     });
@@ -54,9 +58,12 @@ function stream(id) {
         },
         async until(predicate) {
             while (!predicate(value))
-                await new Promise((ok) => {
-                    changed = ok;
-                });
+                await Promise.race([
+                    new Promise((ok) => {
+                        changed = ok;
+                    }),
+                    transportFailure,
+                ]);
             return value;
         },
     };
@@ -117,6 +124,7 @@ const ready = new Promise((ok, fail) =>
                 }
             } catch (error) {
                 fail(error);
+                failTransport(error);
             }
         });
     }),
@@ -154,6 +162,7 @@ try {
     const exited = once(runner, "exit");
     await Promise.race([
         ready,
+        transportFailure,
         exited.then(([code]) => {
             throw new Error(`Runner exited before ready (${code}): ${log}`);
         }),
@@ -217,7 +226,7 @@ try {
             "-NoProfile",
             "-NonInteractive",
             "-Command",
-            '[Console]::WriteLine("TTY_READY:"+[Console]::BufferWidth+"x"+[Console]::BufferHeight); $line=[Console]::ReadLine(); [Console]::WriteLine("TTY_RESULT:"+$line+":"+[Console]::BufferWidth+"x"+[Console]::BufferHeight); [Console]::Error.WriteLine("TTY_ERROR"); exit 7',
+            '[Console]::WriteLine("TTY_READY:"+[Console]::WindowWidth+"x"+[Console]::WindowHeight); $line=[Console]::ReadLine(); [Console]::WriteLine("TTY_RESULT:"+$line+":"+[Console]::WindowWidth+"x"+[Console]::WindowHeight); [Console]::Error.WriteLine("TTY_ERROR"); exit 7',
         ],
         terminal: { cols: 84, rows: 21, name: "xterm-256color" },
     });
