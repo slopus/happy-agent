@@ -671,13 +671,129 @@ async fn native_runner_binary_peer_executes_all_32_source_methods() {
     client.write_all(b"connected").await.unwrap();
     assert_eq!(peer.data(32).await, b"connected");
     peer.release(32).await;
+    let file_request = json!({
+        "computeId":"machine", "agent":"private-worker-probe", "vendor":"claude",
+        "mode":"full_access", "reads":[],
+        "call":{"id":"private-file-probe","call":{"name":"Write","arguments":
+            json!({"file_path":root.join("private-file-effect"),"content":"private"}).to_string()}}
+    });
+    let private_methods: [(&str, Value, &str); 4] = [
+        (
+            "compute.createContainer",
+            json!({"computeId":"private-compute","cwd":root}),
+            "Container compute policy is reserved for the private Docker worker.",
+        ),
+        (
+            "compute.secretShell",
+            json!({"computeId":"machine","options":{"command":"printf private > private-shell-effect","permissions":full()},"environment":{"OWNED_PRIVATE_PROBE":"private"},"hiddenEnvironmentVariables":[]}),
+            "Secret shell provisioning is reserved for the private Docker worker.",
+        ),
+        (
+            "compute.fileTool",
+            file_request.clone(),
+            "Native file tool execution is reserved for the private Docker worker.",
+        ),
+        (
+            "compute.filePolicy",
+            file_request,
+            "Native file policy inspection is reserved for the private Docker worker.",
+        ),
+    ];
+    for (method, params, message) in &private_methods {
+        let (_, schema, _) = METHODS.iter().find(|(name, _, _)| name == method).unwrap();
+        assert!(
+            graph.runners.schemas.valid(schema, params).unwrap(),
+            "{method}"
+        );
+        let id = peer.next;
+        peer.next += 1;
+        peer.send(
+            json!({"type":"request","id":id,"method":method,"params":params}),
+            &[],
+        )
+        .await;
+        let response = peer
+            .matching(|header| header["type"] == "response" && header["id"] == id)
+            .await;
+        assert_eq!(
+            response.0,
+            json!({"type":"response","id":id,"error":{"name":"Error","code":"ERUNNER","message":message}}),
+            "{method} must reach the private-worker guard with valid parameters"
+        );
+        assert!(response.1.is_empty(), "{method}");
+        assert!(!root.join("private-shell-effect").exists(), "{method}");
+        assert!(!root.join("private-file-effect").exists(), "{method}");
+    }
+    // A refused private creation must not install ownership, and ordinary
+    // public requests remain usable after all four private-method refusals.
+    assert_eq!(
+        peer.rpc(
+            "compute.create",
+            json!({"computeId":"private-compute","cwd":root}),
+            &[]
+        )
+        .await
+        .0["retained"],
+        false
+    );
+    peer.rpc(
+        "compute.dispose",
+        json!({"computeId":"private-compute"}),
+        &[],
+    )
+    .await;
     peer.rpc("compute.dispose", json!({"computeId":"machine"}), &[])
         .await;
+    // Source's runnerProtocol.ts exposes these 32 public methods. Private
+    // same-executable Docker methods require the negative coverage above.
+    let source_methods: [&str; 32] = [
+        "compute.create",
+        "compute.dispose",
+        "fs.chmod",
+        "fs.exists",
+        "fs.lstat",
+        "fs.lstatMany",
+        "fs.mkdir",
+        "fs.move",
+        "fs.readFile",
+        "fs.readFileBuffer",
+        "fs.readdir",
+        "fs.readdirPage",
+        "fs.realpath",
+        "fs.rm",
+        "fs.setModificationTime",
+        "fs.stat",
+        "fs.writeFile",
+        "net.accept",
+        "net.connect",
+        "net.listen",
+        "process.resize",
+        "process.signal",
+        "process.start",
+        "shell.detachSession",
+        "shell.interruptSession",
+        "shell.killAllSessions",
+        "shell.killSession",
+        "shell.readSession",
+        "shell.run",
+        "shell.startSession",
+        "shell.writeSession",
+        "watch.start",
+    ];
     assert_eq!(
         peer.methods,
+        source_methods.iter().map(|name| name.to_string()).collect()
+    );
+    assert_eq!(
         METHODS
             .iter()
             .map(|(name, _, _)| name.to_string())
+            .collect::<std::collections::BTreeSet<_>>(),
+        source_methods
+            .iter()
+            .copied()
+            .chain(private_methods.iter().map(|(name, _, _)| *name))
+            .map(str::to_owned)
             .collect()
     );
     peer.goodbye().await;

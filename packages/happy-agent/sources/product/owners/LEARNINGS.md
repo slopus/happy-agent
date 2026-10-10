@@ -94,3 +94,11 @@ TypeBox validates record structure before the Source lifecycle assertions valida
 Project archival times, Home readiness and failure reasons must remain consistent with the row.
 A project update that moves time backward is refused and rolled back; workspace updates advance
 to at least the previous update time plus one millisecond, including archival and attachment.
+
+The runner's internal method registry includes four private Docker worker methods in addition
+to Source's 32 public methods. Comparing successful public calls against the entire registry
+incorrectly treated private methods as public coverage. The binary-peer test keeps the explicit
+Source inventory and all 32 real operations, sends valid requests for each private method,
+and requires its exact private-worker refusal. Rejected requests create no file or shell effect
+and no compute ownership; public requests remain usable after the refusals. Registry additions
+must update either the explicit public inventory or the exercised private cases.
