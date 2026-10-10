@@ -2,7 +2,17 @@ name: Verify Windows native runtime
 
 on:
     workflow_dispatch:
+        inputs:
+            native_only:
+                description: Execute kernel regressions without building the product executable
+                type: boolean
+                default: false
     workflow_call:
+        inputs:
+            native_only:
+                description: Execute kernel regressions without building the product executable
+                type: boolean
+                default: false
 
 permissions:
     contents: read
@@ -12,6 +22,8 @@ jobs:
         name: Execute native Windows process regressions
         runs-on: windows-2025
         timeout-minutes: 20
+        env:
+            CARGO_TERM_COLOR: never
         steps:
             - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
             - name: Configure the existing Windows release target
@@ -19,11 +31,18 @@ jobs:
             - name: Compile the Windows process owner and its tests
               run: cargo test --locked -p happy-agent-supervisor --lib --target x86_64-pc-windows-msvc --no-run
             - name: Execute real Job, ConPTY, pipe, environment, and shutdown tests
-              run: cargo test --locked -p happy-agent-supervisor --lib --target x86_64-pc-windows-msvc -- --test-threads=1
+              run: |
+                  $output = cargo test --locked -p happy-agent-supervisor --lib --target x86_64-pc-windows-msvc -- --test-threads=1 --nocapture 2>&1
+                  $status = $LASTEXITCODE
+                  $output | ForEach-Object { $_.ToString() }
+                  if ($status -ne 0) { exit $status }
+                  $result = $output | Select-String '^test result: ok\. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in [0-9.]+s$'
+                  if (@($result).Count -ne 1) { throw 'The Windows kernel gate must execute exactly 15 tests without failures, ignored tests, or filters.' }
 
     product-runtime:
         name: Verify the Windows product executable
         needs: process-owner
+        if: ${{ !inputs.native_only }}
         runs-on: windows-2025
         timeout-minutes: 45
         steps:

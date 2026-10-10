@@ -26,6 +26,10 @@ on:
                 description: Validate only the native Windows runtime and its single executable
                 type: boolean
                 default: false
+            windows_native_only:
+                description: Execute only the native Windows kernel regressions
+                type: boolean
+                default: false
             distribution_only:
                 description: Build, package, and verify the five release targets without signing or publishing
                 type: boolean
@@ -35,12 +39,12 @@ permissions:
     contents: read
 
 concurrency:
-    group: verify-supervisor-${{ github.ref }}-${{ inputs.services_only }}-${{ inputs.windows_only }}-${{ inputs.distribution_only }}
+    group: verify-supervisor-${{ github.ref }}-${{ inputs.services_only }}-${{ inputs.windows_only }}-${{ inputs.distribution_only }}-${{ inputs.windows_native_only }}
     cancel-in-progress: true
 
 jobs:
     compute-services:
-        if: ${{ !inputs.distribution_only && (inputs.services_only || !inputs.windows_only) }}
+        if: ${{ !inputs.windows_native_only && !inputs.distribution_only && (inputs.services_only || !inputs.windows_only) }}
         name: Published service runtime on ${{ matrix.runner }}
         runs-on: ${{ matrix.runner }}
         timeout-minutes: 20
@@ -77,11 +81,13 @@ jobs:
         name: Native Windows runtime
         permissions:
             contents: read
-        if: ${{ !inputs.services_only && !inputs.distribution_only }}
+        if: ${{ inputs.windows_native_only || (!inputs.services_only && !inputs.distribution_only) }}
         uses: ./.github/workflows/verify-native-windows.yml
+        with:
+            native_only: ${{ inputs.windows_native_only }}
 
     native-linux:
-        if: ${{ !inputs.windows_only && !inputs.distribution_only }}
+        if: ${{ !inputs.windows_native_only && !inputs.windows_only && !inputs.distribution_only }}
         name: Native boundary on ${{ matrix.runner }}
         runs-on: ${{ matrix.runner }}
         timeout-minutes: 90
@@ -230,7 +236,7 @@ jobs:
                   if-no-files-found: warn
 
     native-macos:
-        if: ${{ !inputs.windows_only && !inputs.services_only && !inputs.distribution_only }}
+        if: ${{ !inputs.windows_native_only && !inputs.windows_only && !inputs.services_only && !inputs.distribution_only }}
         name: Native boundary on ${{ matrix.runner }}
         runs-on: ${{ matrix.runner }}
         timeout-minutes: 60
@@ -276,7 +282,7 @@ jobs:
                   if-no-files-found: warn
 
     package:
-        if: ${{ !inputs.windows_only && !inputs.services_only && !inputs.distribution_only }}
+        if: ${{ !inputs.windows_native_only && !inputs.windows_only && !inputs.services_only && !inputs.distribution_only }}
         name: TypeScript package
         runs-on: ubuntu-24.04
         timeout-minutes: 20
@@ -307,7 +313,7 @@ jobs:
               run: pnpm --filter @slopus/happy-agent-supervisor build
 
     distribution:
-        if: ${{ inputs.distribution_only }}
+        if: ${{ !inputs.windows_native_only && inputs.distribution_only }}
         name: Distribution for ${{ matrix.target }}
         runs-on: ${{ matrix.runner }}
         timeout-minutes: 60
@@ -425,7 +431,7 @@ jobs:
                   retention-days: 7
 
     distribution-set:
-        if: ${{ inputs.distribution_only }}
+        if: ${{ !inputs.windows_native_only && inputs.distribution_only }}
         needs: distribution
         name: Five-target distribution
         runs-on: ubuntu-24.04
