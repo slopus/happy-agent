@@ -68,8 +68,14 @@ worker pool before a command could receive stdin.
 The source Windows ACL sandbox creates placeholders for protected names that
 start absent and cannot preserve a filename denial through deletion and
 recreation. That violates the required absence invariant. Workspace write and
-Auto fail before launch with the specific missing boundary. Read only also
-fails until the source dedicated-account, token, read-denial and firewall roles
+Auto fail before launch with the specific missing boundary.
+
+Read only is assessed independently of that filename issue. A real Windows
+kernel regression reproduces Source's elevated restricting SID pattern and
+confirms an actual write to an existing Everyone-writable file. The token's
+Everyone restricting SID accepts that grant, so Source's token cannot establish
+a denial of all writes outside isolated TEMP unchanged. Read only fails until a
+correct token boundary and the dedicated-account, read-denial and firewall roles
 are established and verified. Full access process tests do not prove restricted
 policy enforcement. Windows shell interruption retains Source's unavailable
 result; explicit termination and cleanup use the Job.

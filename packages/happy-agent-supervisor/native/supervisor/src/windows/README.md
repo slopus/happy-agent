@@ -52,10 +52,17 @@ execution; an existing-path-only port would still weaken that invariant.
 Workspace write and Auto therefore remain unavailable until an atomic filename
 boundary is established.
 
-The source Read only path is distinct: `token.rs` constructs a restricted token
-with `WRITE_RESTRICTED`, while `setup.rs`, the dedicated sandbox account and
-runner, path ACLs, and WFP provide the remaining boundary. A same-user restricted
-token alone cannot enforce sensitive read denials or block networking. This
-runtime has not established and verified those source roles, including inherited
-handle, hardlink and reparse-point cases, so Read only also remains unavailable.
-No placeholder, driver, or replacement host policy is installed.
+Read only is assessed independently of that filename issue. The elevated source
+token uses `WRITE_RESTRICTED` with capability, user, logon, and Everyone
+restricting SIDs. A real Windows kernel regression reproduces that token pattern,
+checks its returned restrictions and impersonation level, and confirms that it
+can open and write an existing Everyone-writable file. The second access check
+accepts the Everyone grant, so the source token cannot establish a denial of all
+writes outside isolated TEMP unchanged.
+
+The dedicated sandbox account and runner, path ACLs, and WFP also belong to the
+Read only boundary. A same-user restricted token alone cannot enforce sensitive
+read denials or block networking. This runtime has not established and verified
+those source roles, including inherited handle, hardlink and reparse-point
+cases, so Read only remains unavailable. No placeholder, driver, or replacement
+host policy is installed.
