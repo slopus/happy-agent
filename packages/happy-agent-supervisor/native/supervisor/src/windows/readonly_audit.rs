@@ -8,16 +8,17 @@ use std::{
     io::{self, Write},
 };
 use windows_sys::Win32::{
-    Foundation::{GENERIC_WRITE, LocalFree},
+    Foundation::{GENERIC_WRITE, HANDLE, LocalFree},
     Security::{
         AccessCheck,
         Authorization::{
             ConvertStringSecurityDescriptorToSecurityDescriptorW, ConvertStringSidToSidW,
         },
-        CreateRestrictedToken, DISABLE_MAX_PRIVILEGE, DuplicateToken, GENERIC_MAPPING,
+        CreateRestrictedToken, DISABLE_MAX_PRIVILEGE, DuplicateToken, EqualSid, GENERIC_MAPPING,
         GetTokenInformation, ImpersonateLoggedOnUser, LUA_TOKEN, PRIVILEGE_SET, RevertToSelf,
         SECURITY_ATTRIBUTES, SID_AND_ATTRIBUTES, SecurityImpersonation, TOKEN_DUPLICATE,
-        TOKEN_QUERY, TOKEN_USER, TokenUser, WRITE_RESTRICTED,
+        TOKEN_GROUPS, TOKEN_INFORMATION_CLASS, TOKEN_QUERY, TOKEN_USER, TokenHasRestrictions,
+        TokenImpersonationLevel, TokenLogonSid, TokenRestrictedSids, TokenUser, WRITE_RESTRICTED,
     },
     Storage::FileSystem::{
         CREATE_NEW, CreateFileW, FILE_ALL_ACCESS, FILE_ATTRIBUTE_NORMAL, FILE_GENERIC_EXECUTE,
@@ -54,6 +55,22 @@ fn sid(value: &str) -> io::Result<Local> {
     checked(unsafe { ConvertStringSidToSidW(value.as_ptr(), &mut sid) })?;
     Ok(Local(sid))
 }
+fn token_information(token: HANDLE, class: TOKEN_INFORMATION_CLASS) -> io::Result<Vec<usize>> {
+    let mut needed = 0;
+    unsafe { GetTokenInformation(token, class, std::ptr::null_mut(), 0, &mut needed) };
+    assert!(needed != 0, "Windows returned no token information size");
+    let mut information = vec![0usize; (needed as usize).div_ceil(std::mem::size_of::<usize>())];
+    checked(unsafe {
+        GetTokenInformation(
+            token,
+            class,
+            information.as_mut_ptr().cast(),
+            needed,
+            &mut needed,
+        )
+    })?;
+    Ok(information)
+}
 
 #[test]
 fn source_everyone_restricting_sid_still_grants_everyone_writable_file_access() -> io::Result<()> {
@@ -68,20 +85,14 @@ fn source_everyone_restricting_sid_still_grants_everyone_writable_file_access() 
     let base = unsafe { own(base)? };
     let everyone = sid("S-1-1-0")?;
     let capability = sid("S-1-5-21-10-20-30-40")?;
-    let mut needed = 0;
-    unsafe { GetTokenInformation(raw(&base), TokenUser, std::ptr::null_mut(), 0, &mut needed) };
-    assert!(needed != 0, "Windows returned no token user size");
-    let mut user = vec![0usize; (needed as usize).div_ceil(std::mem::size_of::<usize>())];
-    checked(unsafe {
-        GetTokenInformation(
-            raw(&base),
-            TokenUser,
-            user.as_mut_ptr().cast(),
-            needed,
-            &mut needed,
-        )
-    })?;
+    let user = token_information(raw(&base), TokenUser)?;
     let user_sid = unsafe { (*user.as_ptr().cast::<TOKEN_USER>()).User.Sid };
+    let logon = token_information(raw(&base), TokenLogonSid)?;
+    let logon_groups = unsafe { &*logon.as_ptr().cast::<TOKEN_GROUPS>() };
+    assert_eq!(
+        logon_groups.GroupCount, 1,
+        "the Source token needs a logon SID"
+    );
     // Source includes Everyone, its capability and the dedicated account's user
     // SID among its restricting SIDs. Adding logon or route SIDs cannot subtract
     // the Everyone grant: the second access check accepts any granting SID.
@@ -92,6 +103,10 @@ fn source_everyone_restricting_sid_still_grants_everyone_writable_file_access() 
         },
         SID_AND_ATTRIBUTES {
             Sid: user_sid,
+            Attributes: 0,
+        },
+        SID_AND_ATTRIBUTES {
+            Sid: logon_groups.Groups[0].Sid,
             Attributes: 0,
         },
         SID_AND_ATTRIBUTES {
@@ -114,12 +129,32 @@ fn source_everyone_restricting_sid_still_grants_everyone_writable_file_access() 
         )
     })?;
     let restricted = unsafe { own(restricted)? };
+    let restrictions = token_information(raw(&restricted), TokenHasRestrictions)?;
+    assert_ne!(restrictions[0] as u32, 0);
+    let restricted_sids = token_information(raw(&restricted), TokenRestrictedSids)?;
+    let groups = unsafe { &*restricted_sids.as_ptr().cast::<TOKEN_GROUPS>() };
+    let entries =
+        unsafe { std::slice::from_raw_parts(groups.Groups.as_ptr(), groups.GroupCount as usize) };
+    for expected in &restricting {
+        assert!(
+            entries
+                .iter()
+                .any(|entry| unsafe { EqualSid(entry.Sid, expected.Sid) } != 0),
+            "Windows must retain every Source restricting SID"
+        );
+    }
     let mut impersonation = std::ptr::null_mut();
     checked(unsafe {
         DuplicateToken(raw(&restricted), SecurityImpersonation, &mut impersonation)
     })?;
     let impersonation = unsafe { own(impersonation)? };
-    let descriptor = wide(OsStr::new("O:SYG:SYD:P(A;;GA;;;WD)"))?;
+    let level = token_information(raw(&impersonation), TokenImpersonationLevel)?;
+    assert_eq!(level[0] as u32, SecurityImpersonation as u32);
+    // AccessCheck compares already-mapped ACE masks. Unlike opening a file,
+    // it does not expand a generic GA ACE to the file's specific rights.
+    let descriptor = wide(OsStr::new(&format!(
+        "O:SYG:SYD:P(A;;{FILE_ALL_ACCESS:#x};;;WD)"
+    )))?;
     let mut security = std::ptr::null_mut();
     checked(unsafe {
         ConvertStringSecurityDescriptorToSecurityDescriptorW(
@@ -136,33 +171,38 @@ fn source_everyone_restricting_sid_still_grants_everyone_writable_file_access() 
         GenericExecute: FILE_GENERIC_EXECUTE,
         GenericAll: FILE_ALL_ACCESS,
     };
-    let mut privileges: PRIVILEGE_SET = unsafe { std::mem::zeroed() };
-    let mut privilege_bytes = std::mem::size_of::<PRIVILEGE_SET>() as u32;
-    let mut granted = 0;
-    let mut allowed = 0;
-    checked(unsafe {
-        AccessCheck(
-            security.0,
-            raw(&impersonation),
-            FILE_WRITE_DATA,
-            &mapping,
-            &mut privileges,
-            &mut privilege_bytes,
-            &mut granted,
-            &mut allowed,
-        )
-    })?;
-    assert_ne!(
-        allowed, 0,
-        "the Source token's Everyone SID grants file writes"
-    );
-    assert_ne!(granted & FILE_WRITE_DATA, 0);
+    let mut original = std::ptr::null_mut();
+    checked(unsafe { DuplicateToken(raw(&base), SecurityImpersonation, &mut original) })?;
+    let original = unsafe { own(original)? };
+    for (token, description) in [
+        (&original, "the original token"),
+        (&impersonation, "the Source restricted token"),
+    ] {
+        let mut privileges: PRIVILEGE_SET = unsafe { std::mem::zeroed() };
+        let mut privilege_bytes = std::mem::size_of::<PRIVILEGE_SET>() as u32;
+        let mut granted = 0;
+        let mut allowed = 0;
+        checked(unsafe {
+            AccessCheck(
+                security.0,
+                raw(token),
+                FILE_WRITE_DATA,
+                &mapping,
+                &mut privileges,
+                &mut privilege_bytes,
+                &mut granted,
+                &mut allowed,
+            )
+        })?;
+        assert_ne!(allowed, 0, "Everyone grants file writes to {description}");
+        assert_ne!(granted & FILE_WRITE_DATA, 0);
+    }
 
     // The same access grant reaches a real file. No host ACLs or accounts are
     // modified: the object is created with this DACL inside an owned temp dir.
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("everyone-writable");
-    let file_descriptor = wide(OsStr::new("D:P(A;;GA;;;WD)"))?;
+    let file_descriptor = wide(OsStr::new(&format!("D:P(A;;{FILE_ALL_ACCESS:#x};;;WD)")))?;
     let mut file_security = std::ptr::null_mut();
     checked(unsafe {
         ConvertStringSecurityDescriptorToSecurityDescriptorW(
