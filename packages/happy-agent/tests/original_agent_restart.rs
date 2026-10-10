@@ -1,5 +1,12 @@
 #![cfg(unix)]
 
+#[path = "compute/pty_and_processes.rs"]
+mod compute_acceptance;
+#[path = "api/questions.rs"]
+mod question_acceptance;
+#[path = "compute/vendor_file_tools.rs"]
+mod vendor_file_tools;
+
 use rusqlite::{Connection, params};
 use serde_json::{Value, json};
 use std::{
@@ -49,8 +56,9 @@ impl Installation {
             .expect("original command");
         assert!(
             output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stderr),
+            std::fs::read_to_string(self.home.join("agent/daemon.log")).unwrap_or_default()
         );
     }
     fn client(&self) -> (reqwest::Client, String) {
@@ -119,6 +127,10 @@ impl Installation {
                     "009-project-workspace-setup-commands",
                     "010-project-runner",
                 ],
+            ),
+            (
+                "workspaces",
+                vec!["001-workspaces-catalog", "002-drop-workspace-replay-state", "003-workspace-path", "004-workspace-git-record", "005-workspace-without-owner", "006-workspace-agent-associations", "007-workspace-hierarchy", "008-workspace-service-cleanup", "009-workspace-subtask", "010-workspace-runner-and-image"],
             ),
         ] {
             for (position, key) in keys.into_iter().enumerate() {
@@ -580,10 +592,12 @@ async fn scripted_provider(
     );
     let (sender, receiver) = mpsc::channel(count);
     let task = tokio::spawn(async move {
-        for _ in 0..count {
+        let mut observed = 0;
+        let mut naming_requests = 0;
+        while observed < count {
             let (mut socket, _) = listener.accept().await.expect("inference");
             let mut bytes = Vec::new();
-            let request = loop {
+            let request: Value = loop {
                 let mut buffer = [0; 8192];
                 let n = socket.read(&mut buffer).await.expect("request bytes");
                 assert!(n > 0, "complete request");
@@ -605,15 +619,23 @@ async fn scripted_provider(
                     }
                 }
             };
-            let (respond, response) = tokio::sync::oneshot::channel();
-            sender
-                .send(Exchange { request, respond })
-                .await
-                .expect("observed request");
-            let response = tokio::time::timeout(Duration::from_secs(5), response)
-                .await
-                .expect("bounded scripted response")
-                .expect("scripted response");
+            let response = if request["client_metadata"]["session_id"].as_str().is_some_and(|id| id.starts_with("naming:")) {
+                naming_requests += 1;
+                assert!(naming_requests <= 128, "bounded independent naming requests");
+                assert_eq!(request["tools"], json!([]), "Source naming inference has no ordinary tool loop");
+                text_response("<title>Native fixture work</title>")
+            } else {
+                observed += 1;
+                let (respond, response) = tokio::sync::oneshot::channel();
+                sender
+                    .send(Exchange { request, respond })
+                    .await
+                    .expect("observed request");
+                tokio::time::timeout(Duration::from_secs(5), response)
+                    .await
+                    .expect("bounded scripted response")
+                    .expect("scripted response")
+            };
             let body = response
                 .iter()
                 .map(|event| format!("data: {event}\r\n\r\n"))
@@ -2285,4 +2307,115 @@ async fn shutdown_during_initial_command_wait_preserves_the_claim_and_never_repe
     );
     installation.command("stop");
     provider.await.expect("two provider exchanges");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn fresh_auto_review_uses_private_inference_and_elevates_only_the_reviewed_command() {
+    use sha2::{Digest, Sha256};
+    let (endpoint, mut requests, provider) = scripted_provider(4).await;
+    let installation = Installation::new();
+    installation.seed(&endpoint);
+    let database = Connection::open(installation.home.join("agent/agent.sqlite")).unwrap();
+    database.execute("DELETE FROM happy_agent_values WHERE owner_id=?1 OR (owner_id='' AND key=?2)", params![AGENT, format!("agentSystem.config.{AGENT}")]).unwrap();
+    database.execute("DELETE FROM happy_agent_module_project_root_agents WHERE agent_id=?1", [AGENT]).unwrap();
+    drop(database);
+    installation.command("start");
+    let (client, token) = installation.client();
+    let agent = "agentfreshreviewfixture";
+    let created = client.post("http://happy/v0/agents").bearer_auth(&token).json(&json!({"workspaceId":WORKSPACE,"id":agent})).send().await.unwrap();
+    assert_eq!(created.status(), 201);
+    let outside = installation._directory.path().join("reviewed-external-effect");
+    let denied = installation._directory.path().join("unreviewed-external-effect");
+    let authorization = format!("Write the exact file {} containing approved once. Then report the result.", outside.display());
+    let mode = json!({"providerId":"fixture","modelId":"openai/gpt-5.6-sol","effort":"medium","serviceTier":null,"permissionMode":"auto"});
+    assert_eq!(client.post(format!("http://happy/v0/agents/{agent}/send")).bearer_auth(&token).json(&json!({"id":"messagefreshreviewfixture","text":authorization,"profile":null,"mode":mode})).send().await.unwrap().status(), 202);
+    let main = exchange(&mut requests).await;
+    main.respond.send(command_response("native-reviewed-escalation", "exec_command", json!({"cmd":format!("printf 'approved once' > '{}'", outside.display()),"sandbox_permissions":"require_escalated","justification":"Write the exact file authorized in the user message.","yield_time_ms":1000}))).unwrap();
+    let review = tokio::time::timeout(Duration::from_secs(5), requests.recv()).await.unwrap_or_else(|error| panic!("No private review: {error}; daemon log: {}", std::fs::read_to_string(installation.home.join("agent/daemon.log")).unwrap_or_default())).expect("private reviewer inference");
+    let review_text = review.request.to_string();
+    assert!(review_text.contains(&authorization), "The full real user authorization reaches the private reviewer: {review_text}");
+    assert!(review_text.contains("proposed_action"), "The source permission wrapper reaches the reviewer.");
+    assert_ne!(review.request["model"], main.request["model"], "The original same-account hidden review route is selected.");
+    review.respond.send(text_response("<review><outcome>allow</outcome><risk_level>medium</risk_level><user_authorization>high</user_authorization><rationale>The person authorized this exact file write.</rationale></review>")).unwrap();
+    let next = exchange(&mut requests).await;
+    let result = command_output(&next.request, "native-reviewed-escalation");
+    assert!(result.contains("Process exited with code 0"), "The reviewed command executes: {result}");
+    assert_eq!(std::fs::read_to_string(&outside).unwrap(), "approved once");
+    next.respond.send(command_response("native-after-review-sandbox", "exec_command", json!({"cmd":format!("printf unexpected > '{}'", denied.display()),"workdir":installation._directory.path(),"yield_time_ms":1000}))).unwrap();
+    let final_turn = exchange(&mut requests).await;
+    let result = command_output(&final_turn.request, "native-after-review-sandbox");
+    assert!(result.contains("working directory is outside its workspace"), "The next command uses the restored Auto sandbox: {result}");
+    assert!(!denied.exists());
+    final_turn.respond.send(text_response("The authorized write completed and the later command remained sandboxed.")).unwrap();
+    let page = tokio::time::timeout(Duration::from_secs(5), async { loop {
+        let page: Value = client.get(format!("http://happy/v0/agents/{agent}/messages")).bearer_auth(&token).send().await.unwrap().json().await.unwrap();
+        if page["runs"][0]["status"] == "completed" { break page; }
+        tokio::task::yield_now().await;
+    }}).await.unwrap();
+    let reviewed = page["runs"][0]["messages"].as_array().unwrap().iter().flat_map(|message| message["content"].as_array().into_iter().flatten()).find(|block| block["type"] == "tool_call" && block["name"] == "exec_command" && block["arguments"]["sandbox_permissions"] == "require_escalated").unwrap();
+    assert_eq!(reviewed["review"]["outcome"], "allowed");
+    assert_eq!(reviewed["elevated"], true);
+    assert!(!page.to_string().contains("The person authorized this exact file write.</rationale>"), "The private reviewer transcript is absent from public history.");
+    installation.command("stop");
+    let private = Connection::open(installation.home.join("agent/auto-agent.sqlite")).unwrap();
+    let reviewer = format!("r{}", &format!("{:x}", Sha256::digest(agent.as_bytes()))[..31]);
+    let cursor: String = private.query_row("SELECT value_json FROM happy_agent_values WHERE owner_id='' AND key=?1", [format!("agentSystem.autoCursor.{reviewer}")], |row| row.get(0)).expect("the original private cursor key");
+    let cursor: Value = serde_json::from_str(&cursor).unwrap();
+    assert_eq!(cursor.as_object().unwrap().len(), 4);
+    assert_eq!(cursor["lastReviewNormal"], true);
+    let leaked: i64 = private.query_row("SELECT count(*) FROM sqlite_master WHERE type='table' AND (name LIKE '%history%' OR name LIKE '%usage%' OR name LIKE '%events%')", [], |row| row.get(0)).unwrap();
+    assert_eq!(leaked, 0, "The private reviewer has no public feature stores.");
+    let main = Connection::open(installation.home.join("agent/agent.sqlite")).unwrap();
+    let settings: String = main.query_row("SELECT value_json FROM happy_agent_values WHERE owner_id=?1 AND key='settings'", [agent], |row| row.get(0)).unwrap();
+    assert_eq!(serde_json::from_str::<Value>(&settings).unwrap()["permissionMode"], "auto");
+    let leaked: i64 = main.query_row("SELECT count(*) FROM happy_agent_values WHERE owner_id='' AND key=?1", [format!("agentSystem.config.{reviewer}")], |row| row.get(0)).unwrap();
+    assert_eq!(leaked, 0, "The private reviewer is absent from the public agent catalog.");
+    provider.await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn restored_uncertified_auto_evidence_preserves_original_rows_and_returns_unproven_without_inference() {
+    let (endpoint, mut requests, provider) = scripted_provider(1).await;
+    let installation = Installation::new();
+    installation.seed(&endpoint);
+    let database = Connection::open(installation.home.join("agent/agent.sqlite")).unwrap();
+    database.execute_batch("CREATE TABLE happy_agent_auto_evidence(agent_id TEXT NOT NULL,generation INTEGER NOT NULL,position INTEGER NOT NULL,category TEXT NOT NULL,entry_json TEXT NOT NULL,trusted_user_evidence INTEGER NOT NULL,trusted_user_evidence_truncated INTEGER NOT NULL,PRIMARY KEY(agent_id,generation,position));CREATE TABLE happy_agent_auto_state(agent_id TEXT PRIMARY KEY,generation INTEGER NOT NULL,next_position INTEGER NOT NULL,archive_healthy INTEGER NOT NULL);CREATE TABLE happy_agent_auto_user_evidence(agent_id TEXT NOT NULL,call_id TEXT NOT NULL,content_json TEXT NOT NULL,PRIMARY KEY(agent_id,call_id));").unwrap();
+    database.execute("INSERT INTO happy_agent_migrations VALUES('auto','001-auto-evidence',0)", []).unwrap();
+    let archived = json!({"role":"user","blocks":[{"type":"text","text":"Retained historical authorization with no complete-archive proof."}]}).to_string();
+    database.execute("INSERT INTO happy_agent_auto_evidence VALUES(?1,0,0,'message',?2,1,0)", params![AGENT,&archived]).unwrap();
+    database.execute("INSERT INTO happy_agent_auto_state VALUES(?1,0,1,1)", [AGENT]).unwrap();
+    let mut record: Value = serde_json::from_str(&database.query_row::<String,_,_>("SELECT record_json FROM happy_agent_records WHERE owner_id=?1 AND position=1", [AGENT], |row| row.get(0)).unwrap()).unwrap();
+    let mut arguments: Value = serde_json::from_str(record["block"]["arguments"].as_str().unwrap()).unwrap();
+    arguments["sandbox_permissions"] = json!("require_escalated");
+    arguments["justification"] = json!("The restored agent requested this exact external action.");
+    record["block"]["arguments"] = json!(arguments.to_string());
+    database.execute("UPDATE happy_agent_records SET record_json=?2 WHERE owner_id=?1 AND position=1", params![AGENT,record.to_string()]).unwrap();
+    let settings = json!({"provider":"fixture","model":"openai/gpt-5.6-sol","effort":"medium","permissionMode":"auto"});
+    database.execute("UPDATE happy_agent_values SET value_json=?2 WHERE owner_id=?1 AND key='settings'", params![AGENT,settings.to_string()]).unwrap();
+    drop(database);
+    installation.command("start");
+    let continuation = exchange(&mut requests).await;
+    let text = continuation.request.to_string();
+    assert!(!text.contains("<proposed_action>"), "An uncertified original archive must not start reviewer inference.");
+    assert!(text.contains("The automatic permission review could not run"), "The original unproven refusal reaches main inference: {text}");
+    assert!(text.contains("No judgement was made about the action itself."));
+    assert!(!installation._directory.path().join("workspace/recovery-count").exists());
+    continuation.respond.send(text_response("The restored action remains unproven because its archive cannot prove completeness.")).unwrap();
+    let page = completed(&installation).await;
+    let reviewed = page["runs"][0]["messages"].as_array().unwrap().iter().flat_map(|message| message["content"].as_array().into_iter().flatten()).find(|block| block["type"] == "tool_call" && block["id"] == CALL).unwrap();
+    assert_eq!(reviewed["review"]["outcome"], "unproven");
+    assert_eq!(reviewed["review"]["kind"], "unavailable");
+    assert!(reviewed["review"].get("risk").is_none());
+    assert!(reviewed["review"].get("userAuthorization").is_none());
+    assert_eq!(reviewed["elevated"], false);
+    installation.command("stop");
+    let database = Connection::open(installation.home.join("agent/agent.sqlite")).unwrap();
+    let retained: (String, String, i64, i64) = database.query_row("SELECT category,entry_json,trusted_user_evidence,trusted_user_evidence_truncated FROM happy_agent_auto_evidence WHERE agent_id=?1 AND generation=0 AND position=0", [AGENT], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?))).unwrap();
+    assert_eq!(retained, ("message".into(), archived, 1, 0));
+    assert_eq!(database.query_row::<i64,_,_>("SELECT count(*) FROM happy_agent_auto_native_generations WHERE agent_id=?1", [AGENT], |row| row.get(0)).unwrap(), 0);
+    drop(database);
+    installation.command("start");
+    assert_eq!(completed(&installation).await["runs"], page["runs"]);
+    installation.command("stop");
+    provider.await.unwrap();
 }

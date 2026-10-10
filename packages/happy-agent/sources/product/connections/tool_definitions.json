@@ -1,0 +1,144 @@
+[
+    {
+        "name": "list_remote_connections",
+        "description": "List configured remote Happy Agent installations without exposing credentials or contacting them. Only active admin bots may use this tool.",
+        "parameters": {
+            "additionalProperties": false,
+            "type": "object",
+            "properties": {}
+        },
+        "defer": true
+    },
+    {
+        "name": "set_remote_connection",
+        "description": "Register or replace a remote Happy Agent after deploying it. Supply its case-sensitive Tailcat address and API port, plus its fixed standalone bearer token or WorkOS organization ID. This enables authenticated clients of this installation to access the remote's entire API. Saves machine runtime configuration; never deploys or deletes a remote. Only active admin bots may use this tool.",
+        "parameters": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": ["id", "connection"],
+            "properties": {
+                "id": {
+                    "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+                    "type": "string"
+                },
+                "connection": {
+                    "anyOf": [
+                        {
+                            "anyOf": [
+                                {
+                                    "additionalProperties": false,
+                                    "type": "object",
+                                    "required": ["name", "address", "token"],
+                                    "properties": {
+                                        "enabled": {
+                                            "const": true,
+                                            "type": "boolean"
+                                        },
+                                        "name": {
+                                            "minLength": 1,
+                                            "maxLength": 256,
+                                            "pattern": "^(?=.*\\S)[^\\u0000-\\u001f\\u007f]+$",
+                                            "type": "string"
+                                        },
+                                        "address": {
+                                            "minLength": 3,
+                                            "maxLength": 8192,
+                                            "pattern": "^tc[A-Za-z0-9_-]+$",
+                                            "type": "string"
+                                        },
+                                        "port": {
+                                            "minimum": 1,
+                                            "maximum": 65535,
+                                            "type": "integer"
+                                        },
+                                        "token": {
+                                            "pattern": "^[A-Za-z0-9_-]{43}$",
+                                            "type": "string"
+                                        }
+                                    }
+                                },
+                                {
+                                    "additionalProperties": false,
+                                    "type": "object",
+                                    "required": ["name", "address", "workos_organization_id"],
+                                    "properties": {
+                                        "enabled": {
+                                            "const": true,
+                                            "type": "boolean"
+                                        },
+                                        "name": {
+                                            "minLength": 1,
+                                            "maxLength": 256,
+                                            "pattern": "^(?=.*\\S)[^\\u0000-\\u001f\\u007f]+$",
+                                            "type": "string"
+                                        },
+                                        "address": {
+                                            "minLength": 3,
+                                            "maxLength": 8192,
+                                            "pattern": "^tc[A-Za-z0-9_-]+$",
+                                            "type": "string"
+                                        },
+                                        "port": {
+                                            "minimum": 1,
+                                            "maximum": 65535,
+                                            "type": "integer"
+                                        },
+                                        "workos_organization_id": {
+                                            "pattern": "^org_[A-Za-z0-9]+$",
+                                            "maxLength": 160,
+                                            "type": "string"
+                                        }
+                                    }
+                                }
+                            ]
+                        },
+                        {
+                            "additionalProperties": false,
+                            "type": "object",
+                            "required": ["enabled"],
+                            "properties": {
+                                "enabled": {
+                                    "const": false,
+                                    "type": "boolean"
+                                }
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        "defer": true
+    },
+    {
+        "name": "remove_remote_connection",
+        "description": "Remove a remote Happy Agent from the local connection roster and close its active proxy requests. Does not delete the remote or its data. Only active admin bots may use this tool.",
+        "parameters": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": ["id"],
+            "properties": {
+                "id": {
+                    "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+                    "type": "string"
+                }
+            }
+        },
+        "defer": true
+    },
+    {
+        "name": "check_remote_connection_health",
+        "description": "Check a configured remote Happy Agent's authenticated health endpoint through Tailcat. Reports reachability, authentication, readiness, and protocol version without exposing credentials. Bounded to 30 seconds. Team checks use the connected Cloud user's organization-scoped token. Available only to active admin bots.",
+        "parameters": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": ["id"],
+            "properties": {
+                "id": {
+                    "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+                    "type": "string"
+                }
+            }
+        },
+        "defer": true
+    }
+]

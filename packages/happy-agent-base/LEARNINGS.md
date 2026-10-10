@@ -29,6 +29,21 @@ deterministic private-core test retains state across turns and a compatible
 selection, then verifies route retirement and shutdown destruction. Retention is
 bounded and optional, so cache admission cannot fail a successful inference.
 
+## Tool replay and steering are separate execution contracts
+
+The native restoration path initially checked only reloadability, rejecting original durable tools
+such as timed waits. It now asks each owning module independently about durability and reloadability
+and permits replay when either is true. Committed steering also cancels a separately registered
+execution token only for tools their owners declare steerable; it leaves the turn's token alive.
+Registration reads already queued steering after installing its token so a message committed just
+before execution cannot miss that boundary. Four deterministic SQLite tests reproduce the two old
+failures and verify replay identity, reloadable replay, and refusal to replay a call with neither
+flag. Three additional unchanged tests reproduce and verify graceful drain: reloadable calls park
+without a result, steerable calls receive the original stopping error, and ordinary calls finish
+their result transaction before stopping. The lifecycle's drain signal is distinct from root
+shutdown. Cancelled executions can unwind in owned tasks, bounded to 10,000 retained handles;
+full close gives those tasks one shared five-second cleanup budget before aborting remaining tasks.
+
 ## Completed SQLite transactions return their connection to the upstream pool
 
 The older libSQL client handed its connection to each transaction without taking it back,

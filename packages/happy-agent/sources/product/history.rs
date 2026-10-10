@@ -99,7 +99,7 @@ impl HistoryModule {
         for block in blocks.iter().filter(|block| block["type"] == "tool_call") {
             ctx.database().execute("INSERT INTO happy_agent_module_history_tool_calls(agent_id,call_id,record_id) VALUES(?1,?2,?3)",params![agent,block["callId"].as_str(),message["recordId"].as_str()])?;
         }
-        if publish {
+        if publish && message["hideFromUser"] != true {
             self.events.record_history_message(
                 ctx,
                 agent,
@@ -184,19 +184,19 @@ impl HistoryModule {
         })
     }
     pub async fn validate_requested_arguments(
-        self: &Arc<Self>,
+        &self,
         agent: &str,
         call: &str,
         raw: &str,
     ) -> Result<()> {
-        let history = self.clone();
+        let schemas = Schemas::new()?;
         let agent = agent.to_owned();
         let call = call.to_owned();
         let requested = self.runtime.transact(move |ctx| {
             let encoded: Option<String> = ctx.database().query_row("SELECT message_json FROM happy_agent_module_history WHERE agent_id=?1 AND record_id=(SELECT record_id FROM happy_agent_module_history_tool_calls WHERE agent_id=?1 AND call_id=?2)",params![agent,call],|row|row.get(0)).optional()?;
             let Some(encoded) = encoded else { return Ok(false); };
             let message: Value = serde_json::from_str(&encoded)?;
-            anyhow::ensure!(history.schemas.valid("historyMessage", &message)?, "The tool's owning history message is invalid.");
+            anyhow::ensure!(schemas.valid("historyMessage", &message)?, "The tool's owning history message is invalid.");
             Ok(message["blocks"].as_array().into_iter().flatten().any(|block|block["type"]=="tool_call" && block["callId"]==call && block["requested"]==true))
         }).await?;
         if requested {
@@ -250,6 +250,9 @@ impl HistoryModule {
         let mut result = json!({"type":"tool_result","callId":call,"toolName":name,"output":output,"display":display});
         if is_error {
             result["isError"] = json!(true);
+        } else if let Some(presentation)=ctx.value(agent,&format!("native.history.toolPresentation.{call}"))? {
+            anyhow::ensure!(self.schemas.valid("historyToolPresentation",&presentation)?,"History module received an invalid tool presentation.");
+            result["presentation"]=presentation;
         }
         blocks.push(result);
         let counters = stats("assistant", blocks);
@@ -265,6 +268,60 @@ impl HistoryModule {
             message["runId"].clone(),
             self.message_resource(&message, false),
         )?;
+        ctx.database().execute("DELETE FROM happy_agent_values WHERE owner_id=?1 AND key=?2",params![agent,format!("native.history.toolPresentation.{call}")])?;
+        Ok(())
+    }
+    pub fn record_tool_presentation(&self,ctx:&Context<'_>,agent:&str,call:&str,presentation:&Value)->Result<()> {
+        anyhow::ensure!(self.schemas.valid("historyAgentId",&json!(agent))?&&self.schemas.valid("cuid2",&json!(call))?&&self.schemas.valid("historyToolPresentation",presentation)?,"History module received an invalid tool presentation.");
+        let exists:bool=ctx.database().query_row("SELECT EXISTS(SELECT 1 FROM happy_agent_module_history_tool_calls WHERE agent_id=?1 AND call_id=?2)",params![agent,call],|row|row.get(0))?;
+        anyhow::ensure!(exists,"The tool presentation has no owning history call.");
+        let key=format!("native.history.toolPresentation.{call}");
+        if let Some(previous)=ctx.value(agent,&key)? {anyhow::ensure!(previous==*presentation,"The tool call already has another result presentation.");return Ok(());}
+        ctx.put_value(agent,&key,presentation)
+    }
+    pub fn record_tool_review(&self, ctx: &Context<'_>, agent: &str, call: &str, elevated: bool, review: &Value) -> Result<()> {
+        anyhow::ensure!(self.schemas.valid("toolPermissionReview", review)?, "The tool permission review is invalid.");
+        let encoded: Option<String> = ctx.database().query_row("SELECT message_json FROM happy_agent_module_history WHERE agent_id=?1 AND record_id=(SELECT record_id FROM happy_agent_module_history_tool_calls WHERE agent_id=?1 AND call_id=?2)", params![agent, call], |row| row.get(0)).optional()?;
+        let encoded = encoded.context("The reviewed tool call is missing from public message history.")?;
+        let mut message: Value = serde_json::from_str(&encoded)?;
+        anyhow::ensure!(self.schemas.valid("historyMessage", &message)?, "The reviewed tool's owning history message is invalid.");
+        let block = message["blocks"].as_array_mut().context("The history blocks are missing.")?.iter_mut().find(|block| block["type"] == "tool_call" && block["callId"] == call).context("The tool-call index points to a message without that call.")?;
+        if block.get("review").is_some() || block.get("elevated").is_some() {
+            anyhow::ensure!(block["review"] == *review && block["elevated"] == elevated, "The tool call already has another permission review.");
+            return Ok(());
+        }
+        block["review"] = review.clone(); block["elevated"] = json!(elevated);
+        anyhow::ensure!(self.schemas.valid("historyMessage", &message)? && message.to_string().len() <= 64 * 1024 * 1024, "The reviewed history message exceeds its durable bounds.");
+        ctx.database().execute("UPDATE happy_agent_module_history SET message_json=?3 WHERE agent_id=?1 AND record_id=?2", params![agent,message["recordId"].as_str(),message.to_string()])?;
+        self.events.record_history_message(ctx, agent, "message.updated", message["runId"].clone(), self.message_resource(&message, false))?;
+        Ok(())
+    }
+    pub fn tool_spawn_presentation(&self, ctx: &Context<'_>, agent: &str, call: &str) -> Result<Option<Value>> {
+        anyhow::ensure!(self.schemas.valid("historyAgentId", &json!(agent))? && self.schemas.valid("cuid2", &json!(call))?, "The history module received an invalid spawn lookup.");
+        let encoded: Option<String> = ctx.database().query_row("SELECT message_json FROM happy_agent_module_history WHERE agent_id=?1 AND record_id=(SELECT record_id FROM happy_agent_module_history_tool_calls WHERE agent_id=?1 AND call_id=?2 LIMIT 1) LIMIT 1", params![agent,call], |row| row.get(0)).optional()?;
+        let Some(encoded) = encoded else { return Ok(None); };
+        let message: Value = serde_json::from_str(&encoded)?;
+        anyhow::ensure!(self.schemas.valid("historyMessage", &message)?, "The stored spawn message is invalid.");
+        Ok(message["blocks"].as_array().context("The history message has no blocks.")?.iter().find(|block| block["type"] == "tool_call" && block["callId"] == call).and_then(|block| block.get("spawnPresentation")).cloned())
+    }
+    pub fn record_tool_spawn_presentation(&self, ctx: &Context<'_>, agent: &str, call: &str, presentation: &Value) -> Result<()> {
+        anyhow::ensure!(self.schemas.valid("ownerAgentSpawnPresentation", presentation)?, "The history module received an invalid spawn presentation.");
+        let previous = self.tool_spawn_presentation(ctx, agent, call)?;
+        for field in ["model", "agentId"] {
+            if let (Some(previous), Some(next)) = (previous.as_ref().and_then(|previous| previous.get(field)), presentation.get(field)) {
+                anyhow::ensure!(previous == next, "The spawning tool call already has another resolved identity.");
+            }
+        }
+        let mut resolved = json!({"type":"agent_spawn"});
+        for field in ["model", "agentId"] { if let Some(value) = previous.as_ref().and_then(|previous| previous.get(field)).or_else(|| presentation.get(field)) { resolved[field] = value.clone(); } }
+        if previous.as_ref() == Some(&resolved) { return Ok(()); }
+        let encoded: Option<String> = ctx.database().query_row("SELECT message_json FROM happy_agent_module_history WHERE agent_id=?1 AND record_id=(SELECT record_id FROM happy_agent_module_history_tool_calls WHERE agent_id=?1 AND call_id=?2 LIMIT 1) LIMIT 1", params![agent,call], |row| row.get(0)).optional()?;
+        let mut message: Value = serde_json::from_str(&encoded.context("The spawning tool call is missing from history.")?)?;
+        let block = message["blocks"].as_array_mut().context("The history message has no blocks.")?.iter_mut().find(|block| block["type"] == "tool_call" && block["callId"] == call && block["name"] == "create_agent").context("The spawn presentation does not belong to a creation call.")?;
+        block["spawnPresentation"] = resolved;
+        anyhow::ensure!(self.schemas.valid("historyMessage", &message)? && message.to_string().len() <= 64 * 1024 * 1024, "The spawn presentation exceeds its durable message bounds.");
+        ctx.database().execute("UPDATE happy_agent_module_history SET message_json=?3 WHERE agent_id=?1 AND record_id=?2", params![agent,message["recordId"].as_str(),message.to_string()])?;
+        self.events.record_history_message(ctx, agent, "message.updated", message["runId"].clone(), self.message_resource(&message, false))?;
         Ok(())
     }
     pub fn finish_run(
@@ -347,6 +404,7 @@ impl HistoryModule {
                         call["presentation"]=json!({"type":"exec_command","command":block["arguments"]["cmd"],"output":result.get("output").cloned().unwrap_or(json!(""))});
                         if omit {call.as_object_mut().expect("tool resource").remove("arguments");call.as_object_mut().expect("tool resource").remove("result");}
                     }
+                    if let Some(presentation)=result.and_then(|result|result.get("presentation")) {call["presentation"]=presentation.clone();if omit {call.as_object_mut().expect("tool resource").remove("arguments");call.as_object_mut().expect("tool resource").remove("result");}}
                     for field in ["elevated","review","spawnPresentation"] {if let Some(value)=block.get(field){call[field]=value.clone();}}
                     content.push(call);
                 },

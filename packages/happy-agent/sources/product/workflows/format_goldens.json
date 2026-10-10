@@ -1,0 +1,312 @@
+{
+    "runs": [
+        {
+            "run": {
+                "id": "source-run",
+                "agentId": "source-agent",
+                "workflow": "Review",
+                "description": "Verify a change",
+                "agentCount": 2,
+                "logs": ["Started"],
+                "logsTruncated": false,
+                "createdAt": 100,
+                "startedAt": 100,
+                "updatedAt": 101,
+                "status": "running",
+                "phase": "Review"
+            },
+            "text": "Review (source-run) is running.\nVerify a change\nAgents started: 2.\nCurrent phase: Review.\n\nProgress notes:\nStarted"
+        },
+        {
+            "run": {
+                "id": "source-run",
+                "agentId": "source-agent",
+                "workflow": "Review",
+                "description": "Verify a change",
+                "agentCount": 2,
+                "logs": ["Started"],
+                "logsTruncated": false,
+                "createdAt": 100,
+                "startedAt": 100,
+                "updatedAt": 101,
+                "status": "paused",
+                "pausedAt": 101
+            },
+            "text": "Review (source-run) is paused, and can be resumed.\nVerify a change\nAgents started: 2.\n\nProgress notes:\nStarted"
+        },
+        {
+            "run": {
+                "id": "source-run",
+                "agentId": "source-agent",
+                "workflow": "Review",
+                "description": "Verify a change",
+                "agentCount": 2,
+                "logs": ["Started"],
+                "logsTruncated": false,
+                "createdAt": 100,
+                "startedAt": 100,
+                "updatedAt": 101,
+                "status": "completed",
+                "finishedAt": 101,
+                "output": "Verified"
+            },
+            "text": "Review (source-run) is completed.\nVerify a change\nAgents started: 2.\n\nResult:\nVerified\n\nProgress notes:\nStarted"
+        },
+        {
+            "run": {
+                "id": "source-run",
+                "agentId": "source-agent",
+                "workflow": "Review",
+                "description": "Verify a change",
+                "agentCount": 2,
+                "logs": ["Started"],
+                "logsTruncated": false,
+                "createdAt": 100,
+                "startedAt": 100,
+                "updatedAt": 101,
+                "status": "failed",
+                "finishedAt": 101,
+                "error": "An agent did not answer"
+            },
+            "text": "Review (source-run) is failed.\nVerify a change\nAgents started: 2.\nIt failed with: An agent did not answer\n\nProgress notes:\nStarted"
+        },
+        {
+            "run": {
+                "id": "source-run",
+                "agentId": "source-agent",
+                "workflow": "Review",
+                "description": "Verify a change",
+                "agentCount": 2,
+                "logs": ["Started"],
+                "logsTruncated": false,
+                "createdAt": 100,
+                "startedAt": 100,
+                "updatedAt": 101,
+                "status": "cancelled",
+                "finishedAt": 101
+            },
+            "text": "Review (source-run) is cancelled.\nVerify a change\nAgents started: 2.\n\nProgress notes:\nStarted"
+        }
+    ],
+    "page": {
+        "page": {
+            "agentId": "source-agent",
+            "cursor": 0,
+            "runs": [
+                {
+                    "id": "source-run",
+                    "agentId": "source-agent",
+                    "workflow": "Review",
+                    "description": "Verify a change",
+                    "agentCount": 2,
+                    "logs": ["Started"],
+                    "logsTruncated": false,
+                    "createdAt": 100,
+                    "startedAt": 100,
+                    "updatedAt": 101,
+                    "status": "running",
+                    "phase": "Review"
+                },
+                {
+                    "id": "source-run",
+                    "agentId": "source-agent",
+                    "workflow": "Review",
+                    "description": "Verify a change",
+                    "agentCount": 2,
+                    "logs": ["Started"],
+                    "logsTruncated": false,
+                    "createdAt": 100,
+                    "startedAt": 100,
+                    "updatedAt": 101,
+                    "status": "paused",
+                    "pausedAt": 101
+                },
+                {
+                    "id": "source-run",
+                    "agentId": "source-agent",
+                    "workflow": "Review",
+                    "description": "Verify a change",
+                    "agentCount": 2,
+                    "logs": ["Started"],
+                    "logsTruncated": false,
+                    "createdAt": 100,
+                    "startedAt": 100,
+                    "updatedAt": 101,
+                    "status": "completed",
+                    "finishedAt": 101,
+                    "output": "Verified"
+                },
+                {
+                    "id": "source-run",
+                    "agentId": "source-agent",
+                    "workflow": "Review",
+                    "description": "Verify a change",
+                    "agentCount": 2,
+                    "logs": ["Started"],
+                    "logsTruncated": false,
+                    "createdAt": 100,
+                    "startedAt": 100,
+                    "updatedAt": 101,
+                    "status": "failed",
+                    "finishedAt": 101,
+                    "error": "An agent did not answer"
+                },
+                {
+                    "id": "source-run",
+                    "agentId": "source-agent",
+                    "workflow": "Review",
+                    "description": "Verify a change",
+                    "agentCount": 2,
+                    "logs": ["Started"],
+                    "logsTruncated": false,
+                    "createdAt": 100,
+                    "startedAt": 100,
+                    "updatedAt": 101,
+                    "status": "cancelled",
+                    "finishedAt": 101
+                }
+            ],
+            "totalRuns": 9,
+            "nextCursor": 5
+        },
+        "text": "Review (source-run) — running, 2 agents.\nReview (source-run) — paused, and can be resumed, 2 agents.\nReview (source-run) — completed, 2 agents.\nReview (source-run) — failed, 2 agents.\nReview (source-run) — cancelled, 2 agents.\nMore runs follow; read from 5."
+    },
+    "logs": {
+        "page": {
+            "agentId": "source-agent",
+            "id": "source-run",
+            "cursor": 2,
+            "lines": [
+                {
+                    "position": 2,
+                    "text": "Third line"
+                }
+            ],
+            "totalLines": 5,
+            "nextCursor": 3
+        },
+        "text": "3. Third line\nMore notes follow; read from 3."
+    },
+    "emptyPage": "No workflow runs.",
+    "emptyLogs": "This workflow has recorded no progress notes.",
+    "serialized": [
+        {
+            "value": null,
+            "text": "null"
+        },
+        {
+            "value": "Final result",
+            "text": "Final result"
+        },
+        {
+            "value": {
+                "ok": true,
+                "values": [1, 2]
+            },
+            "text": "{\n  \"ok\": true,\n  \"values\": [\n    1,\n    2\n  ]\n}"
+        }
+    ],
+    "structured": [
+        {
+            "text": "```json\n{\"ok\":true}\n```",
+            "schema": {
+                "type": "object",
+                "required": ["ok"],
+                "properties": {
+                    "ok": {
+                        "type": "boolean"
+                    }
+                }
+            },
+            "output": {
+                "ok": true
+            }
+        },
+        {
+            "text": "\"ok\"",
+            "schema": {
+                "type": "string",
+                "minLength": 100
+            },
+            "output": "ok"
+        },
+        {
+            "text": "{\"other\":1}",
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "requiredNumber": {
+                        "type": "number"
+                    }
+                },
+                "additionalProperties": false
+            },
+            "output": {
+                "other": 1
+            }
+        },
+        {
+            "text": "{\"number\":\"ignored\"}",
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "number": {
+                        "type": "number"
+                    },
+                    "invalid": 3
+                }
+            },
+            "output": {
+                "number": "ignored"
+            }
+        },
+        {
+            "text": "4",
+            "schema": {
+                "anyOf": [
+                    {
+                        "type": "string"
+                    },
+                    {
+                        "type": "integer"
+                    }
+                ]
+            },
+            "output": 4
+        },
+        {
+            "text": "{\"ok\":true}",
+            "schema": {
+                "enum": [
+                    {
+                        "ok": true
+                    }
+                ]
+            },
+            "error": "The workflow agent did not return JSON matching its schema."
+        },
+        {
+            "text": "prose {\"ok\":true}",
+            "schema": {
+                "type": "object"
+            },
+            "error": "The workflow agent did not return JSON matching its schema."
+        }
+    ],
+    "options": [
+        {
+            "input": {
+                "effort": "medium",
+                "model": "  openai/gpt-5.6-terra  ",
+                "provider": "  codex  ",
+                "label": "  Keep label  "
+            },
+            "normalized": {
+                "effort": "medium",
+                "model": "openai/gpt-5.6-terra",
+                "provider": "codex",
+                "label": "  Keep label  "
+            }
+        }
+    ]
+}

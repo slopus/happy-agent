@@ -1,0 +1,14 @@
+[
+    {
+        "name": "set_tailcat_enabled",
+        "durable": true,
+        "reloadable": false,
+        "steerable": false
+    },
+    {
+        "name": "get_tailcat_status",
+        "durable": false,
+        "reloadable": true,
+        "steerable": false
+    }
+]

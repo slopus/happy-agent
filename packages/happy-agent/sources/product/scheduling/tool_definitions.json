@@ -1,0 +1,237 @@
+[
+    {
+        "name": "wait",
+        "description": "Pause for up to 24 hours. Give the duration in seconds, minutes, hours, or days, as fields or as text such as '90 seconds' or '1h 30m'. The wait survives a restart, and any new message in this chat ends it early; the result says how much time actually passed.",
+        "parameters": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": ["duration"],
+            "properties": {
+                "duration": {
+                    "anyOf": [
+                        {
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "type": "string"
+                        },
+                        {
+                            "additionalProperties": false,
+                            "minProperties": 1,
+                            "type": "object",
+                            "properties": {
+                                "seconds": {
+                                    "minimum": 0,
+                                    "maximum": 8640000000000000,
+                                    "type": "number"
+                                },
+                                "minutes": {
+                                    "minimum": 0,
+                                    "maximum": 8640000000000000,
+                                    "type": "number"
+                                },
+                                "hours": {
+                                    "minimum": 0,
+                                    "maximum": 8640000000000000,
+                                    "type": "number"
+                                },
+                                "days": {
+                                    "minimum": 0,
+                                    "maximum": 8640000000000000,
+                                    "type": "number"
+                                }
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        "defer": true
+    },
+    {
+        "name": "wait_until",
+        "description": "Pause until a date at most 24 hours away. Write it as ISO 8601, RFC 2822, or a Unix timestamp in seconds or milliseconds; a date already past returns at once. The wait survives a restart, and any new message in this chat ends it early.",
+        "parameters": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": ["at"],
+            "properties": {
+                "at": {
+                    "anyOf": [
+                        {
+                            "minLength": 1,
+                            "maxLength": 128,
+                            "type": "string"
+                        },
+                        {
+                            "minimum": -8640000000000000,
+                            "maximum": 8640000000000000,
+                            "type": "number"
+                        }
+                    ]
+                }
+            }
+        },
+        "defer": true
+    },
+    {
+        "name": "schedule_message",
+        "description": "Send a message at a future time to any agent whose ID you know, including yourself. Give the time as a duration in `in`, or as a date in `at` written as ISO 8601, RFC 2822, or a Unix timestamp. The message is kept and delivered even if this session restarts first.",
+        "parameters": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": ["input"],
+            "properties": {
+                "input": {
+                    "anyOf": [
+                        {
+                            "additionalProperties": false,
+                            "type": "object",
+                            "required": ["agent_id", "message", "in"],
+                            "properties": {
+                                "agent_id": {
+                                    "minLength": 2,
+                                    "maxLength": 32,
+                                    "pattern": "^[a-z][a-z0-9]*$",
+                                    "type": "string"
+                                },
+                                "message": {
+                                    "minLength": 1,
+                                    "maxLength": 50000,
+                                    "type": "string"
+                                },
+                                "in": {
+                                    "anyOf": [
+                                        {
+                                            "minLength": 1,
+                                            "maxLength": 256,
+                                            "type": "string"
+                                        },
+                                        {
+                                            "additionalProperties": false,
+                                            "minProperties": 1,
+                                            "type": "object",
+                                            "properties": {
+                                                "seconds": {
+                                                    "minimum": 0,
+                                                    "maximum": 8640000000000000,
+                                                    "type": "number"
+                                                },
+                                                "minutes": {
+                                                    "minimum": 0,
+                                                    "maximum": 8640000000000000,
+                                                    "type": "number"
+                                                },
+                                                "hours": {
+                                                    "minimum": 0,
+                                                    "maximum": 8640000000000000,
+                                                    "type": "number"
+                                                },
+                                                "days": {
+                                                    "minimum": 0,
+                                                    "maximum": 8640000000000000,
+                                                    "type": "number"
+                                                }
+                                            }
+                                        }
+                                    ]
+                                }
+                            }
+                        },
+                        {
+                            "additionalProperties": false,
+                            "type": "object",
+                            "required": ["agent_id", "message", "at"],
+                            "properties": {
+                                "agent_id": {
+                                    "minLength": 2,
+                                    "maxLength": 32,
+                                    "pattern": "^[a-z][a-z0-9]*$",
+                                    "type": "string"
+                                },
+                                "message": {
+                                    "minLength": 1,
+                                    "maxLength": 50000,
+                                    "type": "string"
+                                },
+                                "at": {
+                                    "anyOf": [
+                                        {
+                                            "minLength": 1,
+                                            "maxLength": 128,
+                                            "type": "string"
+                                        },
+                                        {
+                                            "minimum": -8640000000000000,
+                                            "maximum": 8640000000000000,
+                                            "type": "number"
+                                        }
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        "defer": true
+    },
+    {
+        "name": "list_scheduled_messages",
+        "description": "List the messages you have scheduled, soonest first, one bounded page at a time. Every ID shown is complete and can be cancelled.",
+        "parameters": {
+            "additionalProperties": false,
+            "type": "object",
+            "properties": {
+                "limit": {
+                    "minimum": 1,
+                    "maximum": 100,
+                    "type": "integer"
+                },
+                "cursor": {
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "type": "string"
+                },
+                "status": {
+                    "anyOf": [
+                        {
+                            "const": "pending",
+                            "type": "string"
+                        },
+                        {
+                            "const": "delivered",
+                            "type": "string"
+                        },
+                        {
+                            "const": "undelivered",
+                            "type": "string"
+                        },
+                        {
+                            "const": "cancelled",
+                            "type": "string"
+                        }
+                    ]
+                }
+            }
+        },
+        "defer": true
+    },
+    {
+        "name": "cancel_scheduled_message",
+        "description": "Withdraw a message you scheduled, by ID. A message already delivered stays delivered.",
+        "parameters": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": ["scheduleId"],
+            "properties": {
+                "scheduleId": {
+                    "minLength": 2,
+                    "maxLength": 32,
+                    "pattern": "^[a-z][a-z0-9]*$",
+                    "type": "string"
+                }
+            }
+        },
+        "defer": true
+    }
+]

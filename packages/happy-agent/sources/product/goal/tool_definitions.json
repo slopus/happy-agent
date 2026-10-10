@@ -1,0 +1,64 @@
+[
+    {
+        "name": "create_goal",
+        "description": "Create a persistent goal only when the user explicitly asks for long-running goal execution.\nDo not infer a goal from an ordinary task. A new goal cannot replace an unfinished goal.",
+        "parameters": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": ["objective"],
+            "properties": {
+                "objective": {
+                    "minLength": 1,
+                    "maxLength": 20000,
+                    "type": "string"
+                }
+            }
+        },
+        "defer": true
+    },
+    {
+        "name": "get_goal",
+        "description": "Get the persistent goal for this agent, including its objective and status.",
+        "parameters": {
+            "additionalProperties": false,
+            "type": "object",
+            "properties": {}
+        },
+        "defer": true
+    },
+    {
+        "name": "update_goal",
+        "description": "Mark the persistent goal complete or blocked.\nUse complete only when the full objective is achieved and verified with no required work remaining.\nUse blocked only when meaningful progress cannot continue without user input or an external state change.\nPausing, resuming, and clearing a goal are controlled by the user.",
+        "parameters": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": ["status"],
+            "properties": {
+                "status": {
+                    "description": "The terminal status for the current goal.",
+                    "anyOf": [
+                        {
+                            "const": "complete",
+                            "type": "string"
+                        },
+                        {
+                            "const": "blocked",
+                            "type": "string"
+                        }
+                    ]
+                }
+            }
+        },
+        "defer": true
+    },
+    {
+        "name": "clear_goal",
+        "description": "Clear the persistent goal when the user explicitly abandons it. Use update_goal with blocked when work cannot continue but the objective should remain recorded.",
+        "parameters": {
+            "additionalProperties": false,
+            "type": "object",
+            "properties": {}
+        },
+        "defer": true
+    }
+]

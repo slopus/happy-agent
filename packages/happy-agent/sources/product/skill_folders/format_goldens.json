@@ -1,0 +1,19 @@
+[
+    {
+        "folders": [],
+        "text": "No extra skill folders are configured. Skills are found only in the standard .agents/skills folders."
+    },
+    {
+        "folders": [
+            {
+                "path": "/user/skills",
+                "source": "user"
+            },
+            {
+                "path": "/live/skills",
+                "source": "runtime"
+            }
+        ],
+        "text": "Extra skill folders:\n- /user/skills (from happy.toml, only the user can remove it)\n- /live/skills (added live)"
+    }
+]

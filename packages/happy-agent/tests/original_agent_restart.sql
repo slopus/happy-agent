@@ -16,6 +16,13 @@ CREATE TABLE happy_agent_active_runs(agent_id TEXT PRIMARY KEY,state_json TEXT N
 CREATE TABLE happy_agent_latest_events(agent_id TEXT PRIMARY KEY,event_id TEXT NOT NULL,occurred_at INTEGER NOT NULL,previous_event_id TEXT);
 CREATE TABLE happy_agent_module_workspace_agents(workspace_id TEXT NOT NULL,agent_id TEXT PRIMARY KEY,order_key TEXT NOT NULL);
 CREATE INDEX happy_agent_module_workspace_agents_workspace_order ON happy_agent_module_workspace_agents(workspace_id,order_key,agent_id);
+CREATE TABLE happy_agent_module_workspaces(id TEXT PRIMARY KEY,project_ref TEXT NOT NULL,name TEXT NOT NULL,name_key TEXT NOT NULL,name_configured INTEGER NOT NULL,branch TEXT NOT NULL,storage_key TEXT NOT NULL,kind TEXT NOT NULL,path TEXT NOT NULL,base_ref TEXT,base_commit TEXT,git_common_dir TEXT,presence TEXT NOT NULL,status TEXT NOT NULL,order_key TEXT NOT NULL,version INTEGER NOT NULL,creator_session_id TEXT,git_ahead INTEGER NOT NULL,git_behind INTEGER NOT NULL,git_detached INTEGER NOT NULL,git_head TEXT,git_upstream TEXT,initialization_attempt INTEGER NOT NULL,initialization_error TEXT,created_at BIGINT NOT NULL,updated_at BIGINT NOT NULL,archived_at BIGINT,parent_id TEXT NOT NULL DEFAULT '',service_cleanup TEXT,subtask_agent_id TEXT,runner_id TEXT,docker_image TEXT);
+CREATE INDEX happy_agent_module_workspaces_order ON happy_agent_module_workspaces(project_ref,order_key,id);
+CREATE UNIQUE INDEX happy_agent_module_workspaces_path ON happy_agent_module_workspaces(path);
+CREATE UNIQUE INDEX happy_agent_module_workspaces_branch ON happy_agent_module_workspaces(project_ref,branch);
+CREATE UNIQUE INDEX happy_agent_module_workspaces_storage_key ON happy_agent_module_workspaces(project_ref,storage_key);
+CREATE UNIQUE INDEX happy_agent_module_workspaces_name_key ON happy_agent_module_workspaces(project_ref,name_key);
+CREATE INDEX happy_agent_module_workspaces_project_parent_order ON happy_agent_module_workspaces(project_ref,parent_id,order_key,id);
 CREATE TABLE happy_agent_module_projects(
     id TEXT PRIMARY KEY,repository_ref TEXT NOT NULL,runner_id TEXT NOT NULL DEFAULT '',
     kind TEXT NOT NULL,storage_key TEXT NOT NULL UNIQUE,name TEXT NOT NULL,name_source TEXT NOT NULL,

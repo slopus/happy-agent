@@ -1,0 +1,20 @@
+[
+    {
+        "name": "get_presence",
+        "durable": true,
+        "reloadable": true,
+        "steerable": false
+    },
+    {
+        "name": "list_presences",
+        "durable": true,
+        "reloadable": true,
+        "steerable": false
+    },
+    {
+        "name": "set_presence",
+        "durable": true,
+        "reloadable": false,
+        "steerable": false
+    }
+]

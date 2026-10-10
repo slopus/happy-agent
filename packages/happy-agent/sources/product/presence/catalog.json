@@ -1,0 +1,34 @@
+[
+    {
+        "id": "online",
+        "status": "online",
+        "title": "Online",
+        "emoji": "🟢",
+        "prompt": "The user is at the keyboard and can answer questions right away.",
+        "answerWaitMs": null
+    },
+    {
+        "id": "away",
+        "status": "away",
+        "title": "Away",
+        "emoji": "🌙",
+        "prompt": "The user is away and cannot be reached. Do not wait for an answer. Decide with your best judgement, keep working, and record anything the user should look at later.",
+        "answerWaitMs": 0
+    },
+    {
+        "id": "offline",
+        "status": "offline",
+        "title": "Offline",
+        "emoji": "⚫",
+        "prompt": "The user is offline and cannot be reached. Continue on your own and record anything the user should look at later.",
+        "answerWaitMs": 0
+    },
+    {
+        "id": "dnd",
+        "status": "dnd",
+        "title": "Do not disturb",
+        "emoji": "🔕",
+        "prompt": "The user has asked not to be disturbed. Continue on your own and record anything the user should look at later.",
+        "answerWaitMs": 0
+    }
+]

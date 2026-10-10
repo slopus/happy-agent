@@ -24,8 +24,10 @@ its own event. Mutation admission occurs before reading an HTTP body, so drainin
 it already accepted while rejecting later mutations. SSE hello and drain publication share the
 journal lock to keep a concurrent subscriber from missing both the sticky state and its event.
 
-An original tool row means dispatch already happened. Restart may retry only a reloadable tool;
-an ordinary shell call returns the original interruption result instead. An unanswered private
+An original tool row means dispatch already happened. Restart may retry a tool whose owner declares
+it durable or reloadable; a call with neither flag returns the original interruption result.
+Durability permits replay after a crash, while reloadability permits parking a call during graceful
+drain. The two flags are independent. An unanswered private
 call without a tool row has not dispatched and may execute once. The recovered result keeps the
 Base call ID in public history and the provider's native correlation ID in inference context.
 Pending history blocks must flush under their original inference ID before the result updates
@@ -140,3 +142,10 @@ The opaque key preserves an account's managed session across compatible model,
 effort and permission selections, and rebuilds it for changed account, protocol,
 endpoint or tool definitions. A private-core regression verifies the lifetime,
 and the existing daemon recovery, history and real command checks remain green.
+
+The root default provider is selected once after the startup credential scan,
+matching the original agent system. An agent with no explicit provider uses that
+same account for inference and usage attribution. Later scans may change account
+availability but must not silently move an existing default agent to another
+account; optional model and effort settings remain absent when the user did not
+configure them.

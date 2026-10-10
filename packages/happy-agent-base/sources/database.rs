@@ -19,6 +19,14 @@ pub struct DatabaseLocation {
     pub store_lock: PathBuf,
 }
 
+/// A feature owns the exact body of its shipped procedural migration. The
+/// database owns prefix validation, transaction boundaries and its ledger.
+#[derive(Clone, Copy)]
+pub struct NativeMigration {
+    pub key: &'static str,
+    pub apply: fn(&DatabaseContext<'_>) -> Result<()>,
+}
+
 struct Database {
     database: Connection,
     owner: Connection,
@@ -32,6 +40,8 @@ pub struct DatabaseContext<'a> {
     database: &'a Connection,
     owner: usize,
     after_commit: std::cell::RefCell<Vec<Box<dyn FnOnce() + Send>>>,
+    claims: std::cell::RefCell<std::collections::BTreeSet<(String, String)>>,
+    operations: std::cell::RefCell<std::collections::BTreeSet<(String, String)>>,
 }
 impl DatabaseContext<'_> {
     pub fn database(&self) -> &Connection {
@@ -45,6 +55,28 @@ impl DatabaseContext<'_> {
         );
         observers.push(Box::new(work));
         Ok(())
+    }
+    /// Transaction-owned deduplication, discarded on both commit and rollback.
+    /// This never changes the context's database identity or execution state.
+    pub fn claim_once(&self, namespace: &str, key: &str) -> Result<bool> {
+        let mut claims = self.claims.borrow_mut();
+        let claim = (namespace.to_owned(), key.to_owned());
+        if claims.contains(&claim) { return Ok(false); }
+        anyhow::ensure!(claims.len() < 10_000 && claims.iter().map(|(namespace,key)| namespace.len()+key.len()).sum::<usize>() + namespace.len()+key.len() <= 4 * 1024 * 1024, "Transaction claims exceed their memory budget.");
+        Ok(claims.insert(claim))
+    }
+    /// Reentrant hooks use this transaction's current values but cannot recurse
+    /// into the operation currently publishing their change.
+    pub fn with_operation<T>(&self, namespace: &str, key: &str, work: impl FnOnce() -> Result<T>) -> Result<T> {
+        let operation = (namespace.to_owned(), key.to_owned());
+        {
+            let mut active = self.operations.borrow_mut();
+            anyhow::ensure!(active.len() < 10_000 && !active.contains(&operation), "The operation cannot reenter its own transactional hook.");
+            active.insert(operation.clone());
+        }
+        let result = work();
+        self.operations.borrow_mut().remove(&operation);
+        result
     }
 }
 
@@ -157,6 +189,8 @@ impl SqliteDatabase {
                 database: &transaction,
                 owner: Arc::as_ptr(&runtime) as usize,
                 after_commit: std::cell::RefCell::new(Vec::new()),
+                claims: std::cell::RefCell::new(std::collections::BTreeSet::new()),
+                operations: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             };
             let value = work(&context)?;
             let observers = context.after_commit.into_inner();
@@ -190,6 +224,23 @@ impl SqliteDatabase {
             )
         })
         .await?
+    }
+
+    pub async fn migrate_native(self: &Arc<Self>, module: &'static str, migrations: &'static [NativeMigration]) -> Result<()> {
+        let keys = migrations.iter().map(|migration| migration.key).collect::<Vec<_>>();
+        let applied = self.transact(move |ctx| applied_prefix(ctx.database(), module, &keys)).await?;
+        for (index, migration) in migrations.iter().copied().enumerate().skip(applied) {
+            self.transact(move |ctx| {
+                let keys = migrations.iter().map(|migration| migration.key).collect::<Vec<_>>();
+                let current = applied_prefix(ctx.database(), module, &keys)?;
+                if current > index { return Ok(()); }
+                anyhow::ensure!(current == index, "The native migration sequence changed during application.");
+                (migration.apply)(ctx)?;
+                ctx.database().execute("INSERT INTO happy_agent_migrations(module_key,migration_key,position) VALUES(?1,?2,?3)", params![module,migration.key,index as i64])?;
+                Ok(())
+            }).await?;
+        }
+        Ok(())
     }
 
     pub async fn close(self: &Arc<Self>) -> Result<()> {
@@ -231,16 +282,27 @@ impl Drop for SqliteDatabase {
 }
 
 fn migrate(database: &mut Connection, module: &str, migrations: &[(&str, &str)]) -> Result<()> {
+    let keys = migrations.iter().map(|migration| migration.0).collect::<Vec<_>>();
+    let applied = applied_prefix(database, module, &keys)?;
+    for (index, (key, sql)) in migrations.iter().enumerate().skip(applied) {
+        let transaction = database.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        transaction.execute_batch(sql)?;
+        transaction.execute("INSERT INTO happy_agent_migrations(module_key,migration_key,position) VALUES(?1,?2,?3)",params![module,key,index as i64])?;
+        transaction.commit()?;
+    }
+    Ok(())
+}
+fn applied_prefix(database: &Connection, module: &str, keys: &[&str]) -> Result<usize> {
     let applied = {
-        let mut statement = database.prepare("SELECT migration_key,position FROM happy_agent_migrations WHERE module_key=?1 ORDER BY position")?;
+        let mut statement = database.prepare("SELECT migration_key,position FROM happy_agent_migrations WHERE module_key=?1 ORDER BY position LIMIT ?2")?;
         statement
-            .query_map([module], |row| {
+            .query_map(params![module, i64::try_from(keys.len().saturating_add(1))?], |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?
     };
     for (index, (key, position)) in applied.iter().enumerate() {
-        if migrations.get(index).map(|migration| migration.0) != Some(key.as_str())
+        if keys.get(index).copied() != Some(key.as_str())
             || *position != index as i64
         {
             bail!(
@@ -248,13 +310,7 @@ fn migrate(database: &mut Connection, module: &str, migrations: &[(&str, &str)])
             );
         }
     }
-    for (index, (key, sql)) in migrations.iter().enumerate().skip(applied.len()) {
-        let transaction = database.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        transaction.execute_batch(sql)?;
-        transaction.execute("INSERT INTO happy_agent_migrations(module_key,migration_key,position) VALUES(?1,?2,?3)",params![module,key,index as i64])?;
-        transaction.commit()?;
-    }
-    Ok(())
+    Ok(applied.len())
 }
 
 fn storage_lock(path: &Path) -> Result<String> {

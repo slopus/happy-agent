@@ -7,8 +7,11 @@ mod tools;
 mod types;
 
 pub use agent::{Agent, SessionFactory};
-pub use agent_system::{AcceptedInput, AgentModule, AgentScope, AgentSystem, Inference};
-pub use database::{DatabaseContext, DatabaseLocation, SqliteDatabase};
+pub use agent_system::{
+    AcceptedInput, AgentModule, AgentScope, AgentSystem, Inference, ToolAuthorization,
+    ToolPermissionPolicy,
+};
+pub use database::{DatabaseContext, DatabaseLocation, NativeMigration, SqliteDatabase};
 pub use runtime_schemas::RuntimeSchemas;
 pub use tools::{PermissionDecision, Tool, ToolContext, ToolResult};
 pub use types::*;

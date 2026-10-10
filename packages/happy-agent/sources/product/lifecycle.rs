@@ -27,6 +27,7 @@ pub struct LifecycleModule {
     database_open: AtomicBool,
     ready: AtomicBool,
     draining: AtomicBool,
+    drain_signal: CancellationToken,
     shutting_down: AtomicBool,
     pub shutdown: CancellationToken,
 }
@@ -53,6 +54,9 @@ impl happy_agent_base::AgentModule for LifecycleModule {
     fn draining(&self) -> bool {
         self.is_draining()
     }
+    fn drain_signal(&self) -> Option<CancellationToken> {
+        Some(self.drain_signal.clone())
+    }
     fn stage(&self, id: &str, stage: Option<&str>) {
         self.set_agent_stage(id, stage);
     }
@@ -71,6 +75,7 @@ impl LifecycleModule {
             database_open: AtomicBool::new(false),
             ready: AtomicBool::new(false),
             draining: AtomicBool::new(false),
+            drain_signal: CancellationToken::new(),
             shutting_down: AtomicBool::new(false),
             shutdown: CancellationToken::new(),
         })
@@ -98,6 +103,7 @@ impl LifecycleModule {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let changed = !self.draining.swap(true, Ordering::AcqRel);
         drop(mutations);
+        self.drain_signal.cancel();
         self.write_drain_state()?;
         Ok(changed)
     }

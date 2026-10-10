@@ -1,0 +1,84 @@
+[
+    {
+        "name": "list_bots",
+        "description": "List bots on this installation, including archived bots: persistent single-conversation assistants, each with its own folder. The result includes each bot's ID, display name, username, status, avatar status, and the folder it works in. Omit hasAvatar to list all bots, set it to false to show only bots without an avatar, or true to show only bots with one. Use send_bot_message with a bot's ID to talk to an active one.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "hasAvatar": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "defer": true
+    },
+    {
+        "name": "create_bot",
+        "description": "Create one persistent bot with its own identity, folder, and one continuous conversation. Optionally provide a short display name such as \"Scout\"; otherwise the bot is ready immediately and takes its name from its first user message. The optional snake_case username names the folder and cannot change later. Send messages through send_bot_message.",
+        "parameters": {
+            "additionalProperties": false,
+            "type": "object",
+            "properties": {
+                "name": {
+                    "maxLength": 256,
+                    "minLength": 1,
+                    "pattern": "^(?=.*\\S)[^\\x00-\\x1f\\x7f]+$",
+                    "type": "string"
+                },
+                "username": {
+                    "maxLength": 64,
+                    "minLength": 1,
+                    "pattern": "^[a-z][a-z0-9_]{0,63}$",
+                    "type": "string"
+                }
+            }
+        },
+        "defer": true
+    },
+    {
+        "name": "send_bot_message",
+        "description": "Send a message to a bot by its ID. Find IDs with list_bots.\n\nThe message joins the bot's one continuous conversation: an idle bot starts working on it immediately, and a busy bot picks it up when its current work ends. Delivery returns right away; the bot's answer arrives as a message when it has one, so carry on with other work in the meantime.",
+        "parameters": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": ["botId", "text"],
+            "properties": {
+                "botId": {
+                    "minLength": 2,
+                    "maxLength": 32,
+                    "pattern": "^[a-z][a-z0-9]*$",
+                    "type": "string"
+                },
+                "text": {
+                    "minLength": 1,
+                    "maxLength": 100000,
+                    "type": "string"
+                }
+            }
+        },
+        "defer": true
+    },
+    {
+        "name": "set_bot_avatar",
+        "description": "Set a bot's avatar from an image file in your own folder. Omit botId to set your own picture. Only active admin bots may supply another bot's ID, including an archived bot; find IDs and missing avatars with list_bots. Give the path to a PNG, JPEG, or WebP image, up to 8 MiB; write or generate the image first, then point this tool at it. The picture is resized to a square-fitting WebP.",
+        "parameters": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": ["path"],
+            "properties": {
+                "path": {
+                    "minLength": 1,
+                    "maxLength": 4096,
+                    "type": "string"
+                },
+                "botId": {
+                    "minLength": 2,
+                    "maxLength": 32,
+                    "pattern": "^[a-z][a-z0-9]*$",
+                    "type": "string"
+                }
+            }
+        },
+        "defer": true
+    }
+]

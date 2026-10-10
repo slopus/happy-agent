@@ -1,0 +1,27 @@
+[
+    {
+        "name": "set_tailcat_enabled",
+        "description": "Enable or disable Tailcat internet exposure for this Happy Agent installation. Enabling opens an account-free Tailcat tunnel around the active API transport and keeps its stable identity across restarts. Happy Agent API authentication remains in force.",
+        "parameters": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": ["enabled"],
+            "properties": {
+                "enabled": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "defer": true
+    },
+    {
+        "name": "get_tailcat_status",
+        "description": "Read whether Tailcat internet exposure is enabled and open. When open, the result includes the stable Tailcat connection address.",
+        "parameters": {
+            "additionalProperties": false,
+            "type": "object",
+            "properties": {}
+        },
+        "defer": true
+    }
+]

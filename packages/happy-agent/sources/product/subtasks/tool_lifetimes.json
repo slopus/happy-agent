@@ -1,0 +1,14 @@
+[
+    {
+        "name": "create_subtask",
+        "durable": true,
+        "reloadable": false,
+        "steerable": false
+    },
+    {
+        "name": "archive_subtask",
+        "durable": true,
+        "reloadable": false,
+        "steerable": false
+    }
+]

@@ -1,0 +1,56 @@
+[
+    {
+        "name": "desktopState",
+        "durable": false,
+        "reloadable": false,
+        "steerable": false
+    },
+    {
+        "name": "desktopOpen",
+        "durable": false,
+        "reloadable": false,
+        "steerable": false
+    },
+    {
+        "name": "workspaceCreate",
+        "durable": false,
+        "reloadable": false,
+        "steerable": false
+    },
+    {
+        "name": "sessionCreate",
+        "durable": false,
+        "reloadable": false,
+        "steerable": false
+    },
+    {
+        "name": "botCreate",
+        "durable": false,
+        "reloadable": false,
+        "steerable": false
+    },
+    {
+        "name": "sessionRead",
+        "durable": false,
+        "reloadable": false,
+        "steerable": false
+    },
+    {
+        "name": "sessionSend",
+        "durable": false,
+        "reloadable": false,
+        "steerable": false
+    },
+    {
+        "name": "sessionWatch",
+        "durable": false,
+        "reloadable": false,
+        "steerable": false
+    },
+    {
+        "name": "composerDraftAppend",
+        "durable": false,
+        "reloadable": false,
+        "steerable": false
+    }
+]

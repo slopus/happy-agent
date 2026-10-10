@@ -1,0 +1,290 @@
+{
+    "codex": [
+        {
+            "name": "exec_command",
+            "durable": false,
+            "reloadable": false,
+            "steerable": false,
+            "autoPermissionInstructions": "For exec_command, request full-access execution with sandbox_permissions: \"require_escalated\" and include a concise justification. Keep sandbox_permissions at \"use_default\" or omit it to stay sandboxed. Put only the attached secret IDs this exact command needs in secrets. Secret provisioning is reviewed separately and does not change the sandbox; secrets and escalation may be used independently or together."
+        },
+        {
+            "name": "write_stdin",
+            "durable": false,
+            "reloadable": false,
+            "steerable": false
+        },
+        {
+            "name": "kill_session",
+            "durable": false,
+            "reloadable": false,
+            "steerable": false
+        },
+        {
+            "name": "apply_patch",
+            "durable": false,
+            "reloadable": false,
+            "steerable": false,
+            "autoPermissionInstructions": "For apply_patch, request reviewed Full access for this patch with sandbox_permissions: \"require_escalated\" and a concise justification. Protected and outside-workspace paths are also reviewed automatically without the flag. Approval elevates only this call; Read only and Workspace write never elevate."
+        },
+        {
+            "name": "view_image",
+            "durable": true,
+            "reloadable": true,
+            "steerable": false
+        }
+    ],
+    "claude": [
+        {
+            "name": "BashOutput",
+            "durable": false,
+            "reloadable": false,
+            "steerable": false
+        },
+        {
+            "name": "Bash",
+            "durable": false,
+            "reloadable": false,
+            "steerable": false,
+            "autoPermissionInstructions": "For Bash, request full-access execution with dangerouslyDisableSandbox: true only when the workspace sandbox blocks necessary work. Commands without it remain sandboxed. Put only the attached secret IDs this exact command needs in secrets. Secret provisioning is reviewed separately and does not change the sandbox; secrets and escalation may be used independently or together."
+        },
+        {
+            "name": "Read",
+            "durable": true,
+            "reloadable": true,
+            "steerable": false
+        },
+        {
+            "name": "Edit",
+            "durable": false,
+            "reloadable": false,
+            "steerable": false,
+            "autoPermissionInstructions": "For Edit, request reviewed Full access for this file change with dangerouslyDisableSandbox: true. Protected and outside-workspace paths are also reviewed automatically without the flag. Approval elevates only this call; Read only and Workspace write never elevate."
+        },
+        {
+            "name": "Write",
+            "durable": false,
+            "reloadable": false,
+            "steerable": false,
+            "autoPermissionInstructions": "For Write, request reviewed Full access for this file change with dangerouslyDisableSandbox: true. Protected and outside-workspace paths are also reviewed automatically without the flag. Approval elevates only this call; Read only and Workspace write never elevate."
+        },
+        {
+            "name": "Glob",
+            "durable": true,
+            "reloadable": true,
+            "steerable": false
+        },
+        {
+            "name": "Grep",
+            "durable": true,
+            "reloadable": true,
+            "steerable": false
+        },
+        {
+            "name": "BashStop",
+            "durable": false,
+            "reloadable": false,
+            "steerable": false
+        },
+        {
+            "name": "BashInput",
+            "durable": false,
+            "reloadable": false,
+            "steerable": false
+        }
+    ],
+    "grok": [
+        {
+            "name": "run_terminal_command",
+            "durable": false,
+            "reloadable": false,
+            "steerable": false,
+            "autoPermissionInstructions": "For run_terminal_command, request full-access execution with sandbox_permissions: \"require_escalated\" and say in the description why the sandbox has to be left. Keep sandbox_permissions at \"use_default\" or omit it to stay sandboxed. Put only the attached secret IDs this exact command needs in secrets. Secret provisioning is reviewed separately and does not change the sandbox; secrets and escalation may be used independently or together."
+        },
+        {
+            "name": "read_file",
+            "durable": true,
+            "reloadable": true,
+            "steerable": false
+        },
+        {
+            "name": "write",
+            "durable": false,
+            "reloadable": false,
+            "steerable": false,
+            "autoPermissionInstructions": "For write, request reviewed Full access for this file change with sandbox_permissions: \"require_escalated\" and explain why in description. Protected and outside-workspace paths are also reviewed automatically without the flag. Approval elevates only this call; Read only and Workspace write never elevate."
+        },
+        {
+            "name": "search_replace",
+            "durable": false,
+            "reloadable": false,
+            "steerable": false,
+            "autoPermissionInstructions": "For search_replace, request reviewed Full access for this file change with sandbox_permissions: \"require_escalated\" and explain why in description. Protected and outside-workspace paths are also reviewed automatically without the flag. Approval elevates only this call; Read only and Workspace write never elevate."
+        },
+        {
+            "name": "list_dir",
+            "durable": true,
+            "reloadable": true,
+            "steerable": false
+        },
+        {
+            "name": "grep",
+            "durable": true,
+            "reloadable": true,
+            "steerable": false
+        },
+        {
+            "name": "get_command_or_subagent_output",
+            "durable": false,
+            "reloadable": false,
+            "steerable": false
+        },
+        {
+            "name": "kill_command_or_subagent",
+            "durable": false,
+            "reloadable": false,
+            "steerable": false
+        },
+        {
+            "name": "send_command_input",
+            "durable": false,
+            "reloadable": false,
+            "steerable": false
+        }
+    ],
+    "kimi": [
+        {
+            "name": "Bash",
+            "durable": false,
+            "reloadable": false,
+            "steerable": false,
+            "autoPermissionInstructions": "Commands stay sandboxed by default. sandbox_permissions: require_escalated requests review and temporary Full access for one command. Secret selection is reviewed separately and stays sandboxed. Read only and Workspace write never elevate."
+        },
+        {
+            "name": "Read",
+            "durable": true,
+            "reloadable": true,
+            "steerable": false,
+            "autoPermissionInstructions": "sandbox_permissions: require_escalated requests reviewed Full access for one call. Outside-workspace, symlink-escaping, and protected write paths are also reviewed automatically. Read only and Workspace write never elevate."
+        },
+        {
+            "name": "Write",
+            "durable": false,
+            "reloadable": false,
+            "steerable": false,
+            "autoPermissionInstructions": "sandbox_permissions: require_escalated requests reviewed Full access for one call. Outside-workspace, symlink-escaping, and protected write paths are also reviewed automatically. Read only and Workspace write never elevate."
+        },
+        {
+            "name": "Edit",
+            "durable": false,
+            "reloadable": false,
+            "steerable": false,
+            "autoPermissionInstructions": "sandbox_permissions: require_escalated requests reviewed Full access for one call. Outside-workspace, symlink-escaping, and protected write paths are also reviewed automatically. Read only and Workspace write never elevate."
+        },
+        {
+            "name": "Glob",
+            "durable": true,
+            "reloadable": true,
+            "steerable": false,
+            "autoPermissionInstructions": "sandbox_permissions: require_escalated requests reviewed Full access for one call. Outside-workspace, symlink-escaping, and protected write paths are also reviewed automatically. Read only and Workspace write never elevate."
+        },
+        {
+            "name": "Grep",
+            "durable": true,
+            "reloadable": true,
+            "steerable": false,
+            "autoPermissionInstructions": "sandbox_permissions: require_escalated requests reviewed Full access for one call. Outside-workspace, symlink-escaping, and protected write paths are also reviewed automatically. Read only and Workspace write never elevate."
+        },
+        {
+            "name": "ReadMediaFile",
+            "durable": true,
+            "reloadable": true,
+            "steerable": false,
+            "autoPermissionInstructions": "sandbox_permissions: require_escalated requests reviewed Full access for one call. Outside-workspace, symlink-escaping, and protected write paths are also reviewed automatically. Read only and Workspace write never elevate."
+        },
+        {
+            "name": "TaskOutput",
+            "durable": false,
+            "reloadable": false,
+            "steerable": false
+        },
+        {
+            "name": "TaskInput",
+            "durable": false,
+            "reloadable": false,
+            "steerable": false
+        },
+        {
+            "name": "TaskStop",
+            "durable": false,
+            "reloadable": false,
+            "steerable": false
+        }
+    ],
+    "glm": [
+        {
+            "name": "BashOutput",
+            "durable": false,
+            "reloadable": false,
+            "steerable": false
+        },
+        {
+            "name": "Bash",
+            "durable": false,
+            "reloadable": false,
+            "steerable": false,
+            "autoPermissionInstructions": "For Bash, request full-access execution with dangerouslyDisableSandbox: true only when the workspace sandbox blocks necessary work. Commands without it remain sandboxed. Put only the attached secret IDs this exact command needs in secrets. Secret provisioning is reviewed separately and does not change the sandbox; secrets and escalation may be used independently or together."
+        },
+        {
+            "name": "Read",
+            "durable": true,
+            "reloadable": true,
+            "steerable": false
+        },
+        {
+            "name": "Edit",
+            "durable": false,
+            "reloadable": false,
+            "steerable": false,
+            "autoPermissionInstructions": "For Edit, request reviewed Full access for this file change with dangerouslyDisableSandbox: true. Protected and outside-workspace paths are also reviewed automatically without the flag. Approval elevates only this call; Read only and Workspace write never elevate."
+        },
+        {
+            "name": "Write",
+            "durable": false,
+            "reloadable": false,
+            "steerable": false,
+            "autoPermissionInstructions": "For Write, request reviewed Full access for this file change with dangerouslyDisableSandbox: true. Protected and outside-workspace paths are also reviewed automatically without the flag. Approval elevates only this call; Read only and Workspace write never elevate."
+        },
+        {
+            "name": "Glob",
+            "durable": true,
+            "reloadable": true,
+            "steerable": false
+        },
+        {
+            "name": "Grep",
+            "durable": true,
+            "reloadable": true,
+            "steerable": false
+        },
+        {
+            "name": "BashStop",
+            "durable": false,
+            "reloadable": false,
+            "steerable": false
+        },
+        {
+            "name": "BashInput",
+            "durable": false,
+            "reloadable": false,
+            "steerable": false
+        }
+    ],
+    "common": [
+        {
+            "name": "read_agent_history",
+            "durable": true,
+            "reloadable": true,
+            "steerable": false
+        }
+    ]
+}

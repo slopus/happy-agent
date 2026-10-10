@@ -30,6 +30,18 @@ pub struct Inference<'a> {
     pub finished_at: u64,
     pub outcome: &'a Outcome,
 }
+/// Permission behavior is supplied by the tool that owns the execution.
+pub struct ToolPermissionPolicy {
+    pub should_review_in_auto_mode: bool,
+    pub should_run_in_full_access_in_auto_mode: bool,
+    pub requires_auto_or_full_access: bool,
+    pub action: String,
+    pub instructions: Option<String>,
+}
+pub enum ToolAuthorization {
+    Continue { settings: Option<Value> },
+    Denied { message: Message, stop_turn: bool },
+}
 
 /// Actual feature modules extend the single durable loop through their hooks.
 /// No hook receives an application host or a collection of ambient services.
@@ -41,6 +53,9 @@ pub trait AgentModule: Send + Sync {
     }
     fn draining(&self) -> bool {
         false
+    }
+    fn drain_signal(&self) -> Option<CancellationToken> {
+        None
     }
     fn stage(&self, _id: &str, _stage: Option<&str>) {}
     fn compatible(&self, _previous: &Value, _next: &Value) -> Option<Result<bool>> {
@@ -57,6 +72,11 @@ pub trait AgentModule: Send + Sync {
     fn history_erased(&self, _ctx: &DatabaseContext<'_>, _scope: &AgentScope<'_>) -> Result<()> {
         Ok(())
     }
+    fn created(&self, _ctx: &DatabaseContext<'_>, _scope: &AgentScope<'_>) -> Result<()> {
+        Ok(())
+    }
+    fn metadata_changed(&self, _ctx: &DatabaseContext<'_>, _scope: &AgentScope<'_>, _change: &Value) -> Result<()> { Ok(()) }
+    fn metadata_committed(&self, _id: &str, _configuration: &Value, _change: &Value) {}
     fn accepted(
         &self,
         _ctx: &DatabaseContext<'_>,
@@ -66,6 +86,7 @@ pub trait AgentModule: Send + Sync {
     ) -> Result<()> {
         Ok(())
     }
+    fn accepted_batch(&self,_ctx:&DatabaseContext<'_>,_scope:&AgentScope<'_>,_inputs:&[AcceptedInput],_steering:bool)->Result<()> {Ok(())}
     fn record(
         &self,
         _ctx: &DatabaseContext<'_>,
@@ -121,6 +142,15 @@ pub trait AgentModule: Send + Sync {
     ) -> Result<()> {
         Ok(())
     }
+    fn before_tool_result(
+        &self,
+        _ctx: &DatabaseContext<'_>,
+        _scope: &AgentScope<'_>,
+        _call: &Value,
+        _result: &Message,
+    ) -> Result<()> {
+        Ok(())
+    }
     fn settlement_status(
         &self,
         _ctx: &DatabaseContext<'_>,
@@ -137,10 +167,45 @@ pub trait AgentModule: Send + Sync {
     ) -> Result<()> {
         Ok(())
     }
+    fn settled_detail(&self, ctx: &DatabaseContext<'_>, scope: &AgentScope<'_>, status: &str, reason: &str, _error: Option<&str>) -> Result<()> {
+        self.settled(ctx, scope, status, reason)
+    }
+    fn loop_error(&self, _ctx: &DatabaseContext<'_>, _scope: &AgentScope<'_>, _error: &str) -> Result<()> { Ok(()) }
     fn tools(&self, _scope: &AgentScope<'_>) -> Vec<ToolDefinition> {
         Vec::new()
     }
+    async fn available_tools(&self, scope: &AgentScope<'_>) -> Result<Vec<ToolDefinition>> { Ok(self.tools(scope)) }
+    async fn after_start(&self) -> Result<()> { Ok(()) }
+    fn before_loop_transactional(&self, _ctx: &DatabaseContext<'_>, _scope: &AgentScope<'_>, _loop_id: &str) -> Result<()> { Ok(()) }
+    fn after_turn_transactional(&self, _ctx: &DatabaseContext<'_>, _scope: &AgentScope<'_>, _loop_id: &str, _turn_id: Option<&str>, _aborted: bool) -> Result<()> { Ok(()) }
+    fn after_loop_transactional(&self, _ctx: &DatabaseContext<'_>, _scope: &AgentScope<'_>, _loop_id: &str) -> Result<()> { Ok(()) }
+    async fn before_loop(&self, _scope: &AgentScope<'_>, _cancel: CancellationToken) -> Result<()> { Ok(()) }
     fn reloadable(&self, _call: &Value) -> Option<bool> {
+        None
+    }
+    fn durable(&self, _call: &Value) -> Option<bool> {
+        None
+    }
+    fn steerable(&self, _call: &Value) -> Option<bool> {
+        None
+    }
+    async fn before_tool(&self, _scope: &AgentScope<'_>, _call: &Value) -> Result<()> {
+        Ok(())
+    }
+    fn permission_policy(
+        &self,
+        _scope: &AgentScope<'_>,
+        _call: &Value,
+    ) -> Option<Result<ToolPermissionPolicy>> {
+        None
+    }
+    async fn authorize_tool(
+        &self,
+        _scope: &AgentScope<'_>,
+        _call: &Value,
+        _policy: &ToolPermissionPolicy,
+        _cancel: CancellationToken,
+    ) -> Option<ToolAuthorization> {
         None
     }
     async fn instructions(&self, _scope: &AgentScope<'_>) -> Result<String> {
@@ -170,6 +235,7 @@ pub trait AgentModule: Send + Sync {
     ) -> Option<Message> {
         None
     }
+    fn execute_transactional_tool(&self, _ctx: &DatabaseContext<'_>, _scope: &AgentScope<'_>, _call: &Value) -> Option<Result<Message>> { None }
     async fn permission_changed(&self, _agent: &str, _previous: &str, _next: &str) {}
     async fn close(&self) {}
 }
@@ -179,8 +245,11 @@ pub struct AgentSystem {
     modules: Vec<Arc<dyn AgentModule>>,
     schemas: RuntimeSchemas,
     shutdown: CancellationToken,
+    drain: CancellationToken,
     workers: Mutex<BTreeMap<String, Worker>>,
     sessions: Mutex<BTreeMap<String, CachedSession>>,
+    steerable_executions: Mutex<BTreeMap<String, BTreeMap<String, CancellationToken>>>,
+    tool_executions: Mutex<BTreeMap<String, tokio::task::JoinHandle<()>>>,
 }
 struct CachedSession {
     key: String,
@@ -192,6 +261,22 @@ struct Worker {
     cancel: CancellationToken,
     finished: Arc<tokio::sync::Notify>,
 }
+struct SteerableExecution {
+    system: std::sync::Weak<AgentSystem>,
+    agent: String,
+    call: String,
+}
+impl Drop for SteerableExecution {
+    fn drop(&mut self) {
+        if let Some(system) = self.system.upgrade() {
+            let mut executions = system.steerable_executions.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Some(agent) = executions.get_mut(&self.agent) {
+                if let Some(token) = agent.remove(&self.call) { token.cancel(); }
+                if agent.is_empty() { executions.remove(&self.agent); }
+            }
+        }
+    }
+}
 struct Snapshot {
     configuration: Value,
     settings: Value,
@@ -200,6 +285,8 @@ struct Snapshot {
     context: SessionContext,
     open_calls: Vec<Value>,
     native_ids: BTreeMap<String, String>,
+    abort_requested: bool,
+    loop_error: Option<String>,
 }
 impl Snapshot {
     fn scope<'a>(&'a self, id: &'a str) -> AgentScope<'a> {
@@ -210,21 +297,18 @@ impl Snapshot {
         }
     }
 }
+enum AsyncToolOutcome {
+    Returned(Option<Message>),
+    Reloading,
+}
 impl AgentSystem {
     pub fn new(database: Arc<SqliteDatabase>, modules: Vec<Arc<dyn AgentModule>>) -> Result<Self> {
-        static SCHEMAS: OnceLock<std::result::Result<RuntimeSchemas, String>> = OnceLock::new();
-        let schemas = SCHEMAS
-            .get_or_init(|| {
-                RuntimeSchemas::compile(include_str!("agent_schemas.json"))
-                    .map_err(|error| format!("{error:#}"))
-            })
-            .as_ref()
-            .map_err(|error| anyhow::anyhow!("{error}"))?
-            .clone();
+        let schemas = stored_schemas()?.clone();
         let shutdown = modules
             .iter()
             .find_map(|module| module.shutdown())
             .context("The agent system has no owning lifetime.")?;
+        let drain = modules.iter().find_map(|module| module.drain_signal()).unwrap_or_default();
         let mut names = std::collections::BTreeSet::new();
         for module in &modules {
             anyhow::ensure!(
@@ -237,34 +321,189 @@ impl AgentSystem {
             modules,
             schemas,
             shutdown,
+            drain,
             workers: Mutex::new(BTreeMap::new()),
             sessions: Mutex::new(BTreeMap::new()),
+            steerable_executions: Mutex::new(BTreeMap::new()),
+            tool_executions: Mutex::new(BTreeMap::new()),
         })
     }
     pub fn configuration(&self, ctx: &DatabaseContext<'_>, id: &str) -> Result<Option<Value>> {
         self.database.assert_context(ctx)?;
+        Self::stored_configuration(ctx, id)
+    }
+    /// Read the authoritative catalog in the caller's transaction without
+    /// requiring the live worker collection to have been initialized.
+    pub fn stored_configuration(ctx: &DatabaseContext<'_>, id: &str) -> Result<Option<Value>> {
+        let schemas = stored_schemas()?;
+        anyhow::ensure!(schemas.valid("cuid2", &json!(id))?, "The agent identity is invalid.");
         let root = read(ctx, "", &format!("agentSystem.config.{id}"))?;
         if root.is_none() {
             return Ok(None);
         }
-        Ok(read(ctx, id, "agentConfig")?.or(root))
+        let configuration = read(ctx, id, "agentConfig")?.or(root);
+        anyhow::ensure!(configuration.as_ref().is_some_and(|value| schemas.valid("agentConfig", value).unwrap_or(false)), "The stored agent configuration is invalid.");
+        Ok(configuration)
     }
     pub fn owed(&self, ctx: &DatabaseContext<'_>, id: &str) -> Result<Option<Value>> {
         Ok(read(ctx, id, "owed")?
             .filter(|value| self.schemas.valid("owed", value).unwrap_or(false)))
     }
+    pub fn parent(&self, ctx: &DatabaseContext<'_>, id: &str) -> Result<Option<String>> {
+        self.database.assert_context(ctx)?;
+        Self::stored_parent(ctx, id)
+    }
+    pub fn stored_parent(ctx: &DatabaseContext<'_>, id: &str) -> Result<Option<String>> {
+        anyhow::ensure!(Self::stored_configuration(ctx, id)?.is_some(), "The agent does not exist.");
+        read(ctx, "", &format!("agentSystem.parent.{id}"))?.map(|parent| { anyhow::ensure!(stored_schemas()?.valid("cuid2", &parent)?, "The stored parent identity is invalid."); Ok(parent.as_str().unwrap().to_owned()) }).transpose()
+    }
+    pub fn children(&self, ctx: &DatabaseContext<'_>, id: &str) -> Result<Vec<String>> {
+        self.database.assert_context(ctx)?;
+        Self::stored_children(ctx, id)
+    }
+    pub fn stored_children(ctx: &DatabaseContext<'_>, id: &str) -> Result<Vec<String>> {
+        anyhow::ensure!(Self::stored_configuration(ctx, id)?.is_some(), "The agent does not exist.");
+        let prefix = "agentSystem.parent.";
+        let mut statement = ctx.database().prepare("SELECT substr(key,length(?1)+1) FROM happy_agent_values WHERE owner_id='' AND substr(key,1,length(?1))=?1 AND value_json=?2 ORDER BY key LIMIT 10001")?;
+        let children = statement.query_map(params![prefix,json!(id).to_string()], |row| row.get::<_,String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
+        anyhow::ensure!(children.len() <= 10_000, "The agent ancestry exceeds its traversal bound.");
+        for child in &children { anyhow::ensure!(stored_schemas()?.valid("cuid2", &json!(child))?, "The stored child identity is invalid."); }
+        Ok(children)
+    }
+    pub fn set_parent(&self, ctx: &DatabaseContext<'_>, id: &str, parent: &str) -> Result<()> {
+        self.database.assert_context(ctx)?;
+        anyhow::ensure!(id != parent && self.configuration(ctx, id)?.is_some() && self.configuration(ctx, parent)?.is_some(), "The agent parent relationship is invalid.");
+        if let Some(existing) = self.parent(ctx, id)? { anyhow::ensure!(existing == parent, "The agent already has a different parent."); return Ok(()); }
+        let mut cursor = Some(parent.to_owned()); let mut visited = std::collections::BTreeSet::new();
+        while let Some(ancestor) = cursor { anyhow::ensure!(ancestor != id && visited.len() < 10_000 && visited.insert(ancestor.clone()), "The agent parent relationship contains a cycle."); cursor = self.parent(ctx, &ancestor)?; }
+        write(ctx, "", &format!("agentSystem.parent.{id}"), &json!(parent))
+    }
+    /// Persist cancellation with its owning loop before signaling after commit.
+    pub fn request_abort(self: &Arc<Self>, ctx: &DatabaseContext<'_>, id: &str) -> Result<()> {
+        self.database.assert_context(ctx)?;
+        anyhow::ensure!(self.configuration(ctx, id)?.is_some(), "The agent does not exist.");
+        let Some(owed) = self.owed(ctx, id)? else { return Ok(()); };
+        write(ctx, id, "nativeAbort", &json!({"loopId":owed["loopId"]}))?;
+        let cancel = self.workers.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(id).map(|worker| worker.cancel.clone());
+        ctx.after_commit(move || { if let Some(cancel) = cancel { cancel.cancel(); } })
+    }
     pub fn create(&self, ctx: &DatabaseContext<'_>, id: &str, configuration: &Value) -> Result<()> {
+        self.create_from(ctx, id, configuration, None)
+    }
+    pub fn create_from(&self, ctx: &DatabaseContext<'_>, id: &str, configuration: &Value, creator: Option<&str>) -> Result<()> {
         self.database.assert_context(ctx)?;
         anyhow::ensure!(
             self.schemas.valid("cuid2", &json!(id))?
                 && self.schemas.valid("agentConfig", configuration)?,
             "The new agent configuration is invalid."
         );
-        if self.configuration(ctx, id)?.is_some() {
-            return Ok(());
+        anyhow::ensure!(self.configuration(ctx, id)?.is_none(), "The agent identity already exists.");
+        let mut configuration = configuration.clone();
+        let mut provenance = json!({"createdAt":now()});
+        if let Some(creator) = creator {
+            anyhow::ensure!(self.schemas.valid("cuid2", &json!(creator))?, "The agent creator identity is invalid.");
+            provenance["createdBy"] = json!(creator);
         }
-        write(ctx, "", &format!("agentSystem.config.{id}"), configuration)?;
-        write(ctx, id, "agentConfig", configuration)
+        configuration["provenance"] = provenance;
+        anyhow::ensure!(self.schemas.valid("agentConfig", &configuration)?, "The owned agent configuration is invalid.");
+        write(ctx, "", &format!("agentSystem.config.{id}"), &configuration)?;
+        write(ctx, id, "agentConfig", &configuration)?;
+        let settings = json!({});
+        let scope = AgentScope {
+            id,
+            configuration: &configuration,
+            settings: &settings,
+        };
+        for module in &self.modules {
+            module.created(ctx, &scope)?;
+        }
+        Ok(())
+    }
+    /// Merge the caller's fields into the transaction's latest metadata. Hooks,
+    /// configuration replacement and their notifications share this commit.
+    pub fn update_metadata(self: &Arc<Self>, ctx: &DatabaseContext<'_>, id: &str, update: &Value) -> Result<()> {
+        self.database.assert_context(ctx)?;
+        anyhow::ensure!(self.schemas.valid("agentMetadata", update)?, "The agent metadata is not valid.");
+        ctx.with_operation("agent.metadata", id, || {
+            let mut configuration = self.configuration(ctx, id)?.context("The agent does not exist.")?;
+            let previous = configuration.get("metadata").cloned().unwrap_or(json!({}));
+            anyhow::ensure!(self.schemas.valid("agentMetadata", &previous)?, "The agent metadata is not valid.");
+            let mut metadata = previous.clone();
+            metadata.as_object_mut().context("The agent metadata is not valid.")?.extend(update.as_object().context("The agent metadata is not valid.")?.clone());
+            anyhow::ensure!(self.schemas.valid("agentMetadata", &metadata)?, "The agent metadata is not valid.");
+            configuration["metadata"] = metadata.clone();
+            anyhow::ensure!(self.schemas.valid("agentConfig", &configuration)?, "The agent configuration is not valid.");
+            let change = json!({"agentId":id,"previousMetadata":previous,"update":update,"metadata":metadata});
+            write(ctx, id, "agentConfig", &configuration)?;
+            let settings = read(ctx, id, "settings")?.unwrap_or(json!({}));
+            let scope = AgentScope { id, configuration: &configuration, settings: &settings };
+            for module in &self.modules { module.metadata_changed(ctx, &scope, &change)?; }
+            let system = self.clone(); let id = id.to_owned();
+            ctx.after_commit(move || { for module in &system.modules { module.metadata_committed(&id, &configuration, &change); } })
+        })
+    }
+    /// The caller first stops the identity's worker and retires its session.
+    /// Removal and subsequent recreation can share the caller's transaction.
+    pub fn remove(&self, ctx: &DatabaseContext<'_>, id: &str) -> Result<()> {
+        self.database.assert_context(ctx)?;
+        anyhow::ensure!(
+            !self
+                .workers
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .contains_key(id),
+            "An active agent must be stopped before removal."
+        );
+        ctx.database()
+            .execute("DELETE FROM happy_agent_records WHERE owner_id=?1", [id])?;
+        ctx.database().execute(
+            "DELETE FROM happy_agent_values WHERE owner_id=?1 OR (owner_id='' AND key IN (?2,?3))",
+            params![id, format!("agentSystem.config.{id}"), format!("agentSystem.parent.{id}")],
+        )?;
+        Ok(())
+    }
+    pub async fn retire_session(&self, id: &str) {
+        let cached = self
+            .sessions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(id);
+        if let Some(mut cached) = cached {
+            cached.session.destroy().await;
+        }
+    }
+    pub async fn wait_for_idle(&self, id: &str, cancel: &CancellationToken) -> Result<()> {
+        loop {
+            let finished = self
+                .workers
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .get(id)
+                .map(|worker| worker.finished.clone());
+            if let Some(finished) = finished {
+                let notified = finished.notified();
+                tokio::pin!(notified);
+                notified.as_mut().enable();
+                if self
+                    .workers
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .get(id)
+                    .is_some_and(|worker| Arc::ptr_eq(&worker.finished, &finished))
+                {
+                    tokio::select! { _ = notified => {}, _ = cancel.cancelled() => anyhow::bail!("The agent wait was stopped.") };
+                }
+            } else {
+                let id = id.to_owned();
+                let database = self.database.clone();
+                let owed = database.transact(move |ctx| read(ctx, &id, "owed")).await?;
+                anyhow::ensure!(
+                    owed.is_none(),
+                    "The agent stopped with incomplete durable work."
+                );
+                return Ok(());
+            }
+        }
     }
     pub fn enqueue(
         self: &Arc<Self>,
@@ -273,6 +512,17 @@ impl AgentSystem {
         input: &Value,
         steering: bool,
     ) -> Result<()> {
+        self.enqueue_with_receipt(ctx, agent, input, steering).map(|_| ())
+    }
+    /// Returns whether the stable message identity was newly admitted. An
+    /// existing identity succeeds without replacing or scheduling its payload.
+    pub fn enqueue_with_receipt(
+        self: &Arc<Self>,
+        ctx: &DatabaseContext<'_>,
+        agent: &str,
+        input: &Value,
+        steering: bool,
+    ) -> Result<bool> {
         self.database.assert_context(ctx)?;
         anyhow::ensure!(
             self.schemas.valid("queuedInput", input)?,
@@ -285,6 +535,11 @@ impl AgentSystem {
         let id = input["id"]
             .as_str()
             .context("The queued input has no identity.")?;
+        let admitted = ctx.database().execute(
+            "INSERT INTO happy_agent_values(owner_id,key,value_json) VALUES(?1,?2,'true') ON CONFLICT(owner_id,key) DO NOTHING",
+            params![agent, format!("message.{id}")],
+        )?;
+        if admitted == 0 { return Ok(false); }
         let prefix = if steering { "steering." } else { "send." };
         let last: Option<String> = ctx.database().query_row("SELECT max(key) FROM happy_agent_values WHERE owner_id=?1 AND substr(key,1,length(?2))=?2", params![agent, prefix], |row| row.get(0))?;
         let timestamp = format!("{:014}", now());
@@ -301,10 +556,6 @@ impl AgentSystem {
             }
         }
         ctx.database().execute(
-            "INSERT INTO happy_agent_values(owner_id,key,value_json) VALUES(?1,?2,'true')",
-            params![agent, format!("message.{id}")],
-        )?;
-        ctx.database().execute(
             "INSERT INTO happy_agent_values(owner_id,key,value_json) VALUES(?1,?2,?3)",
             params![
                 agent,
@@ -312,7 +563,9 @@ impl AgentSystem {
                 input.to_string()
             ],
         )?;
-        if self.owed(ctx, agent)?.is_none() {
+        if let Some(mut owed) = self.owed(ctx, agent)? {
+            if owed["stage"] == "settlement" { owed["stage"] = json!("inference"); write(ctx, agent, "owed", &owed)?; }
+        } else {
             write(
                 ctx,
                 agent,
@@ -322,7 +575,15 @@ impl AgentSystem {
         }
         let system = self.clone();
         let agent = agent.to_owned();
-        ctx.after_commit(move || system.start_worker(agent))
+        ctx.after_commit(move || {
+            if steering {
+                if let Some(executions) = system.steerable_executions.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(&agent) {
+                    for token in executions.values() { token.cancel(); }
+                }
+            }
+            system.start_worker(agent);
+        })?;
+        Ok(true)
     }
     pub async fn load(self: &Arc<Self>) -> Result<()> {
         let system = self.clone();
@@ -343,6 +604,10 @@ impl AgentSystem {
             self.stage(&id, Some(&stage));
             self.start_worker(id);
         }
+        let tasks = self.modules.iter().map(|module| { let module = module.clone(); tokio::spawn(async move { module.after_start().await }) }).collect::<Vec<_>>();
+        let mut results = Vec::with_capacity(tasks.len());
+        for task in tasks { results.push(task.await.map_err(anyhow::Error::from).and_then(|result| result)); }
+        for result in results { result?; }
         Ok(())
     }
     fn stage(&self, id: &str, stage: Option<&str>) {
@@ -389,22 +654,27 @@ impl AgentSystem {
                             );
                         }
                         system.stage(&worker_id, None);
-                        let mut workers = system
-                            .workers
-                            .lock()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner);
-                        let again = result.is_ok()
-                            && !system.shutdown.is_cancelled()
-                            && !owned_cancel.is_cancelled()
-                            && !system.modules.iter().any(|module| module.draining())
-                            && workers
-                                .get(&worker_id)
-                                .is_some_and(|worker| worker.wake != generation);
-                        if !again {
-                            workers.remove(&worker_id);
-                            owned_finished.notify_waiters();
-                            return;
+                        let (again, fresh_lifetime) = {
+                            let mut workers = system.workers.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                            let woke = result.is_ok()
+                                && !system.shutdown.is_cancelled()
+                                && !system.modules.iter().any(|module| module.draining())
+                                && workers.get(&worker_id).is_some_and(|worker| worker.wake != generation);
+                            let again = woke && !owned_cancel.is_cancelled();
+                            if !again { workers.remove(&worker_id); owned_finished.notify_waiters(); }
+                            (again, woke && owned_cancel.is_cancelled())
+                        };
+                        if again { continue; }
+                        if fresh_lifetime {
+                            // Cancellation owns the settled turn. A later accepted
+                            // turn can carry a committed wake across retirement,
+                            // but must never inherit that cancelled lifetime.
+                            let owner = system.clone(); let id = worker_id.clone();
+                            if system.database.transact(move |ctx| Ok(owner.owed(ctx, &id)?.is_some())).await.unwrap_or(false) {
+                                system.start_worker(worker_id.clone());
+                            }
                         }
+                        return;
                     }
                 }),
             },
@@ -449,6 +719,14 @@ impl AgentSystem {
         );
         for (_, worker) in workers {
             let _ = worker.handle.await;
+        }
+        let executions=std::mem::take(&mut*self.tool_executions.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
+        let deadline=tokio::time::Instant::now()+std::time::Duration::from_secs(5);
+        for (_,mut execution) in executions {
+            if tokio::time::timeout_at(deadline,&mut execution).await.is_err() {
+                execution.abort();
+                let _=execution.await;
+            }
         }
         let sessions = std::mem::take(
             &mut *self
@@ -516,18 +794,25 @@ impl AgentSystem {
             records.push(value);
         }
         let (context, open_calls, native_ids) = restore_context(records)?;
+        let owed = self.owed(ctx, id)?;
+        let abort = read(ctx, id, "nativeAbort")?;
+        if let Some(abort) = &abort { anyhow::ensure!(self.schemas.valid("nativeAbort", abort)?, "The stored agent cancellation intent is invalid."); }
+        let abort_requested = abort.as_ref().is_some_and(|abort| owed.as_ref().is_some_and(|owed| abort["loopId"] == owed["loopId"]));
         Ok(Snapshot {
             configuration,
             settings,
-            owed: self.owed(ctx, id)?,
+            owed,
             calls,
             context,
             open_calls,
             native_ids,
+            abort_requested,
+            loop_error: read(ctx, id, &format!("kv.{id}.run.core.error"))?.and_then(|value| value.as_str().map(str::to_owned)),
         })
     }
     async fn work(self: &Arc<Self>, id: &str, cancel: &CancellationToken) -> Result<()> {
         let mut restored = true;
+        let mut entered_loop = None;
         loop {
             if self.shutdown.is_cancelled() {
                 return Ok(());
@@ -538,6 +823,7 @@ impl AgentSystem {
                 .database
                 .transact(move |ctx| system.snapshot(ctx, &agent))
                 .await?;
+            if snapshot.abort_requested { cancel.cancel(); }
             let Some(owed) = snapshot.owed.as_ref() else {
                 return Ok(());
             };
@@ -547,6 +833,53 @@ impl AgentSystem {
             self.stage(id, Some(stage));
             if self.modules.iter().any(|module| module.draining()) {
                 return Ok(());
+            }
+            if owed.get("settlementId").is_some() && snapshot.loop_error.is_some() {
+                self.settle(id, "failed", "error").await?;
+                return Ok(());
+            }
+            let loop_id = owed["loopId"].as_str().context("The owed work has no loop identity.")?;
+            if entered_loop.as_deref() != Some(loop_id) && !cancel.is_cancelled() {
+                let system=self.clone();let agent=id.to_owned();let loop_identity=loop_id.to_owned();
+                let preparation=self.database.transact(move|ctx|{
+                    let snapshot=system.snapshot(ctx,&agent)?;
+                    for module in &system.modules {module.before_loop_transactional(ctx,&snapshot.scope(&agent),&loop_identity)?;}
+                    Ok(())
+                }).await;
+                let hooks = self.modules.iter().filter(|_|preparation.is_ok()).map(|module| {
+                    let module = module.clone();
+                    let configuration = snapshot.configuration.clone();
+                    let settings = snapshot.settings.clone();
+                    let agent = id.to_owned();
+                    let cancel = cancel.clone();
+                    tokio::spawn(async move { module.before_loop(&AgentScope { id: &agent, configuration: &configuration, settings: &settings }, cancel).await })
+                }).collect::<Vec<_>>();
+                let mut hooks = hooks;
+                let outcome: Result<()> = match preparation {Err(error)=>Err(error),Ok(())=>tokio::select! {
+                    _ = self.shutdown.cancelled() => { for hook in &hooks { hook.abort(); } for hook in hooks { let _ = hook.await; } return Ok(()); },
+                    _ = cancel.cancelled() => { for hook in &hooks { hook.abort(); } for hook in hooks { let _ = hook.await; } Ok(()) },
+                    outcome = async {
+                        let mut first_error = None;
+                        for hook in hooks.iter_mut() {
+                            let result = hook.await.context("An agent loop hook stopped unexpectedly.").and_then(|result| result);
+                            if first_error.is_none() { first_error = result.err(); }
+                        }
+                        first_error.map_or(Ok(()), Err)
+                    } => outcome,
+                }};
+                if let Err(error) = outcome {
+                    let message = format!("{error:#}");
+                    let system = self.clone(); let agent = id.to_owned();
+                    self.database.transact(move |ctx| {
+                        write(ctx, &agent, &format!("kv.{agent}.run.core.error"), &json!(message))?;
+                        let snapshot = system.snapshot(ctx, &agent)?;
+                        for module in &system.modules { module.loop_error(ctx, &snapshot.scope(&agent), &message)?; }
+                        Ok(())
+                    }).await?;
+                    self.settle(id, "failed", "error").await?;
+                    return Ok(());
+                }
+                entered_loop = Some(loop_id.to_owned());
             }
             if !snapshot.calls.is_empty() {
                 self.execute_batch(id, snapshot, restored, cancel).await?;
@@ -635,8 +968,15 @@ impl AgentSystem {
             let configuration = system.configuration(ctx, &agent)?.context("The accepting agent is missing.")?;
             let scope = AgentScope { id: &agent, configuration: &configuration, settings: &settings };
             system.adopt_model(ctx, &scope, &previous)?;
+            write(ctx, &agent, "settings", &settings)?;
+            let mut owed = system.owed(ctx, &agent)?.context("Acceptance has no owed loop identity.")?;
+            owed["stage"] = json!("inference"); owed["turnId"] = json!(cuid2::create_id());
+            for field in ["inferenceId", "settlementId"] { owed.as_object_mut().context("The owed work is invalid.")?.remove(field); }
+            write(ctx, &agent, "owed", &owed)?;
             let mut accepted = Vec::new();
             for (key, input) in batch {
+                let configuration=system.configuration(ctx,&agent)?.context("The accepting agent is missing.")?;
+                let scope=AgentScope {id:&agent,configuration:&configuration,settings:&settings};
                 let id = input["id"].as_str().context("The accepted message identifier is missing.")?;
                 let metadata = input.get("metadata").cloned().unwrap_or(json!({}));
                 let content = input["message"]["content"].as_array().context("The queued input content is invalid.")?;
@@ -650,13 +990,11 @@ impl AgentSystem {
                     Some(json!({"id":call,"name":request["name"],"arguments":arguments}))
                 } else { None };
                 accepted.push(AcceptedInput { input, requested_call });
+                for module in &system.modules {module.accepted(ctx,&scope,std::slice::from_ref(accepted.last().context("The accepted input is missing.")?),prefix=="steering.")?;}
             }
-            write(ctx, &agent, "settings", &settings)?;
-            let mut owed = system.owed(ctx, &agent)?.context("Acceptance has no owed loop identity.")?;
-            owed["stage"] = json!("inference"); owed["turnId"] = json!(cuid2::create_id());
-            for field in ["inferenceId", "settlementId"] { owed.as_object_mut().context("The owed work is invalid.")?.remove(field); }
-            write(ctx, &agent, "owed", &owed)?;
-            for module in &system.modules { module.accepted(ctx, &scope, &accepted, prefix == "steering.")?; }
+            let configuration=system.configuration(ctx,&agent)?.context("The accepting agent is missing.")?;
+            let scope=AgentScope {id:&agent,configuration:&configuration,settings:&settings};
+            for module in &system.modules { module.accepted_batch(ctx, &scope, &accepted, prefix == "steering.")?; }
             let previous = previous["permissionMode"].as_str().unwrap_or("auto"); let next = settings["permissionMode"].as_str().unwrap_or("auto");
             Ok((true, (previous != next).then(|| (previous.to_owned(), next.to_owned()))))
         }).await?;
@@ -772,30 +1110,97 @@ impl AgentSystem {
             if self.shutdown.is_cancelled() {
                 return Ok(());
             }
+            let mut stop_turn = false;
             let message = if let Some(committed) = call.get("committed") {
                 serde_json::from_value(committed.clone())?
             } else if cancel.is_cancelled() {
                 tool_error(call, "The tool call was aborted.")
             } else if restored
-                && !self
-                    .modules
-                    .iter()
-                    .find_map(|module| module.reloadable(call))
-                    .unwrap_or(false)
+                && !(self.modules.iter().find_map(|module| module.durable(call)).unwrap_or(false)
+                    || self.modules.iter().find_map(|module| module.reloadable(call)).unwrap_or(false))
             {
                 tool_error(
                     call,
                     "The tool call was interrupted by a restart and was not retried.",
                 )
             } else {
-                let mut result = None;
+                let mut settings = snapshot.settings.clone();
+                let mut rejection = None;
                 for module in &self.modules {
-                    if let Some(message) = module
-                        .execute_tool(&snapshot.scope(id), call, cancel.child_token())
-                        .await
-                    {
-                        result = Some(message);
+                    if let Err(error) = module.before_tool(&snapshot.scope(id), call).await {
+                        rejection = Some(tool_error(call, &format!("{error:#}")));
                         break;
+                    }
+                }
+                if rejection.is_none() && let Some(policy) = self
+                    .modules
+                    .iter()
+                    .find_map(|module| module.permission_policy(&snapshot.scope(id), call))
+                {
+                    match policy {
+                        Err(error) => rejection = Some(tool_error(call, &format!("{error:#}"))),
+                        Ok(policy) => {
+                            let mut authorized = false;
+                            for module in &self.modules {
+                                let scope = AgentScope {
+                                    id,
+                                    configuration: &snapshot.configuration,
+                                    settings: &settings,
+                                };
+                                if let Some(authorization) = module
+                                    .authorize_tool(&scope, call, &policy, cancel.child_token())
+                                    .await
+                                {
+                                    authorized = true;
+                                    match authorization {
+                                        ToolAuthorization::Continue {
+                                            settings: Some(override_settings),
+                                        } => settings = override_settings,
+                                        ToolAuthorization::Continue { settings: None } => {}
+                                        ToolAuthorization::Denied {
+                                            message,
+                                            stop_turn: stop,
+                                        } => {
+                                            rejection = Some(message);
+                                            stop_turn = stop;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                            if !authorized && (policy.should_review_in_auto_mode || policy.requires_auto_or_full_access) {
+                                rejection = Some(tool_error(call, "Automatic review is unavailable for this action; it has not been proven safe to execute."));
+                            }
+                        }
+                    }
+                }
+                let mut result;
+                if let Some(message) = rejection {
+                    result = Some(message);
+                } else {
+                    let system = self.clone(); let agent = id.to_owned(); let tool = call.clone(); let pending_key = key.clone(); let scoped_settings = settings.clone(); let configuration = snapshot.configuration.clone();
+                    let transactional = self.database.transact(move |ctx| {
+                        let call_id = tool["id"].as_str().context("The transactional tool has no identity.")?;
+                        let claim_key = format!("toolResult.{call_id}");
+                        if let Some(retained) = read(ctx, &agent, &claim_key)? { return Ok(Some(serde_json::from_value(retained)?)); }
+                        let scope = AgentScope { id: &agent, configuration: &configuration, settings: &scoped_settings };
+                        for module in &system.modules {
+                            if let Some(message) = module.execute_transactional_tool(ctx, &scope, &tool) {
+                                let message = message?;
+                                let retained = serde_json::to_value(&message)?;
+                                write(ctx, &agent, &claim_key, &retained)?;
+                                let mut committed = tool.clone(); committed["committed"] = retained; write(ctx, &agent, &pending_key, &committed)?;
+                                return Ok(Some(message));
+                            }
+                        }
+                        Ok(None)
+                    }).await;
+                    match transactional { Ok(message) => result = message, Err(error) => result = Some(tool_error(call, &format!("{error:#}"))) }
+                    if result.is_none() {
+                        match self.execute_owned_tool(id,&snapshot.configuration,&settings,call,cancel).await? {
+                            AsyncToolOutcome::Returned(message)=>result=message,
+                            AsyncToolOutcome::Reloading=>return Ok(()),
+                        }
                     }
                 }
                 result.unwrap_or_else(|| tool_error(call, "The requested tool is unavailable."))
@@ -828,6 +1233,7 @@ impl AgentSystem {
                 write(ctx, &agent, &claim, &result)?;
                 let mut committed = call.clone(); committed["committed"] = result.clone(); write(ctx, &agent, &key, &committed)?;
                 let result: Message = serde_json::from_value(result)?;
+                for module in &system.modules { module.before_tool_result(ctx, &scope, &call, &result)?; }
                 let mut private = serde_json::to_value(&result)?; private["callId"] = json!(native);
                 system.append_record(ctx, &scope, &json!({"type":"tool","id":id,"message":private}))?;
                 for module in &system.modules { module.tool_result(ctx, &scope, &call, &result)?; }
@@ -838,8 +1244,56 @@ impl AgentSystem {
                 if remaining == 0 { let mut owed = system.owed(ctx, &agent)?.context("The tools lost their owed loop identity.")?; owed["stage"] = json!("inference"); owed.as_object_mut().context("The owed work is invalid.")?.remove("inferenceId"); write(ctx, &agent, "owed", &owed)?; }
                 Ok(())
             }).await?;
+            if stop_turn {
+                cancel.cancel();
+            }
+            if self.drain.is_cancelled() { return Ok(()); }
         }
         Ok(())
+    }
+    async fn execute_owned_tool(self:&Arc<Self>,id:&str,configuration:&Value,settings:&Value,call:&Value,cancel:&CancellationToken)->Result<AsyncToolOutcome> {
+        let execution_cancel=cancel.child_token();
+        let steerable=self.modules.iter().find_map(|module|module.steerable(call)).unwrap_or(false);
+        let reloadable=self.modules.iter().find_map(|module|module.reloadable(call)).unwrap_or(false);
+        let call_id=call["id"].as_str().context("The executing tool has no identity.")?.to_owned();
+        let guard=if steerable {
+            let mut executions=self.steerable_executions.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            anyhow::ensure!(executions.values().map(BTreeMap::len).sum::<usize>()<10_000,"Steerable executions exceed the agent catalog bound.");
+            executions.entry(id.to_owned()).or_default().insert(call_id.clone(),execution_cancel.clone());
+            Some(SteerableExecution{system:Arc::downgrade(self),agent:id.to_owned(),call:call_id.clone()})
+        } else {None};
+        if steerable {
+            let database=self.database.clone();let agent=id.to_owned();
+            let pending=database.transact(move|ctx|Ok(ctx.database().query_row("SELECT EXISTS(SELECT 1 FROM happy_agent_values WHERE owner_id=?1 AND key GLOB 'steering.*')",[agent],|row|row.get::<_,bool>(0))?)).await?;
+            if pending {execution_cancel.cancel();}
+        }
+        let (sender,mut receiver)=tokio::sync::oneshot::channel();
+        {
+            let mut executions=self.tool_executions.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            executions.retain(|_,execution|!execution.is_finished());
+            anyhow::ensure!(executions.len()<10_000&&!executions.contains_key(&call_id),"An earlier tool execution is still unwinding or the execution bound was reached.");
+            let modules=self.modules.clone();let agent=id.to_owned();let configuration=configuration.clone();let settings=settings.clone();let call=call.clone();let token=execution_cancel.clone();
+            let task=tokio::spawn(async move {
+                let scope=AgentScope{id:&agent,configuration:&configuration,settings:&settings};
+                let mut result=None;
+                for module in modules {if let Some(message)=module.execute_tool(&scope,&call,token.clone()).await {result=Some(message);break;}}
+                let _=sender.send(result);
+            });
+            executions.insert(call_id.clone(),task);
+        }
+        let outcome=tokio::select! {
+            biased;
+            _=self.drain.cancelled(), if reloadable||steerable=>{
+                execution_cancel.cancel();
+                if reloadable {AsyncToolOutcome::Reloading} else {AsyncToolOutcome::Returned(Some(tool_error(call,"The tool call was interrupted while the agent was stopping.")))}
+            },
+            returned=&mut receiver=>{
+                self.tool_executions.lock().unwrap_or_else(std::sync::PoisonError::into_inner).remove(&call_id);
+                AsyncToolOutcome::Returned(returned.context("The tool execution stopped before returning its result.")?)
+            }
+        };
+        drop(guard);
+        Ok(outcome)
     }
     async fn infer(
         self: &Arc<Self>,
@@ -852,18 +1306,8 @@ impl AgentSystem {
         let system = self.clone();
         let agent = id.to_owned();
         let identity = inference.clone();
-        let settings = snapshot.settings.clone();
-        let configuration = snapshot.configuration.clone();
         self.database
             .transact(move |ctx| {
-                let scope = AgentScope {
-                    id: &agent,
-                    settings: &settings,
-                    configuration: &configuration,
-                };
-                for module in &system.modules {
-                    module.before_inference(ctx, &scope, &identity)?;
-                }
                 let mut owed = system
                     .owed(ctx, &agent)?
                     .context("Inference has no owed loop identity.")?;
@@ -879,9 +1323,19 @@ impl AgentSystem {
             if !instruction.is_empty() {
                 instructions.push(instruction);
             }
-            tools.extend(module.tools(&snapshot.scope(id)));
+            tools.extend(module.available_tools(&snapshot.scope(id)).await?);
         }
         snapshot.context.instructions = instructions.join("\n\n");
+        let system = self.clone();
+        let agent = id.to_owned();
+        let identity = inference.clone();
+        let settings = snapshot.settings.clone();
+        let configuration = snapshot.configuration.clone();
+        self.database.transact(move |ctx| {
+            let scope = AgentScope { id: &agent, settings: &settings, configuration: &configuration };
+            for module in &system.modules { module.before_inference(ctx, &scope, &identity)?; }
+            Ok(())
+        }).await?;
         let mut selected = None;
         for module in &self.modules {
             let key = match module.session_key(&snapshot.scope(id), &tools) {
@@ -1041,6 +1495,9 @@ impl AgentSystem {
                         _ => "stop",
                     }),
                 )?;
+                if let Outcome::Error { error } = &outcome {
+                    write(ctx, &agent, &format!("kv.{agent}.run.core.error"), &json!(error.message))?;
+                }
                 let inference = Inference {
                     id: &identity,
                     started_at: began,
@@ -1075,6 +1532,17 @@ impl AgentSystem {
             .await
     }
     async fn settle(self: &Arc<Self>, id: &str, status: &str, reason: &str) -> Result<()> {
+        let system = self.clone(); let agent = id.to_owned();
+        self.database.transact(move |ctx| {
+            if let Some(mut owed) = system.owed(ctx, &agent)? {
+                if owed.get("settlementId").is_none() {
+                    owed["stage"] = json!("settlement");
+                    owed["settlementId"] = json!(cuid2::create_id());
+                }
+                write(ctx, &agent, "owed", &owed)?;
+            }
+            Ok(())
+        }).await?;
         let system = self.clone();
         let id = id.to_owned();
         let status = status.to_owned();
@@ -1082,11 +1550,32 @@ impl AgentSystem {
         self.database
             .transact(move |ctx| {
                 let snapshot = system.snapshot(ctx, &id)?;
-                for module in &system.modules {
-                    module.settled(ctx, &snapshot.scope(&id), &status, &reason)?;
+                if let Some(owed)=&snapshot.owed {
+                    let loop_id=owed["loopId"].as_str().context("Settlement lost its loop identity.")?;
+                    let closed_key=format!("kv.{id}.run.core.closedLoop");
+                    let closed=read(ctx,&id,&closed_key)?;
+                    if let Some(closed)=&closed {anyhow::ensure!(system.schemas.valid("nativeAbort",closed)?,"The completed loop identity is invalid.");}
+                    if closed.as_ref().is_none_or(|closed|closed["loopId"]!=loop_id) {
+                        for module in &system.modules {module.after_turn_transactional(ctx,&snapshot.scope(&id),loop_id,owed["turnId"].as_str(),status=="aborted")?;}
+                        for module in &system.modules {module.after_loop_transactional(ctx,&snapshot.scope(&id),loop_id)?;}
+                        write(ctx,&id,&closed_key,&json!({"loopId":loop_id}))?;
+                    }
+                    if system.owed(ctx,&id)?.is_some_and(|owed|owed["stage"]!="settlement") {
+                        write(ctx,&id,"owed",&json!({"stage":"inference","loopId":cuid2::create_id()}))?;
+                        delete(ctx,&id,"nativeAbort")?;
+                        return Ok(());
+                    }
                 }
+                let error = read(ctx, &id, &format!("kv.{id}.run.core.error"))?;
+                for module in &system.modules {
+                    module.settled_detail(ctx, &snapshot.scope(&id), &status, &reason, error.as_ref().and_then(Value::as_str))?;
+                }
+                let reopened = system.owed(ctx, &id)?.is_some_and(|owed| owed["stage"] != "settlement");
                 delete(ctx, &id, "owed")?;
-                delete_scope(ctx, &id, &format!("kv.{id}.run."))
+                delete(ctx, &id, "nativeAbort")?;
+                delete_scope(ctx, &id, &format!("kv.{id}.run."))?;
+                if reopened { write(ctx, &id, "owed", &json!({"stage":"inference","loopId":cuid2::create_id()}))?; }
+                Ok(())
             })
             .await
     }
@@ -1222,6 +1711,13 @@ impl DatabaseContext<'_> {
     pub fn put_value(&self, owner: &str, key: &str, value: &Value) -> Result<()> {
         write(self, owner, key, value)
     }
+    pub fn delete_value(&self, owner: &str, key: &str) -> Result<()> {
+        delete(self, owner, key)
+    }
+}
+fn stored_schemas() -> Result<&'static RuntimeSchemas> {
+    static SCHEMAS: OnceLock<std::result::Result<RuntimeSchemas, String>> = OnceLock::new();
+    SCHEMAS.get_or_init(|| RuntimeSchemas::compile(include_str!("agent_schemas.json")).map_err(|error| format!("{error:#}"))).as_ref().map_err(|error| anyhow::anyhow!("{error}"))
 }
 fn read(ctx: &DatabaseContext<'_>, owner: &str, key: &str) -> Result<Option<Value>> {
     let value: Option<String> = ctx

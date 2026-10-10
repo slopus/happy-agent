@@ -15,19 +15,18 @@ pub(super) struct Capture {
     entries: VecDeque<Value>,
     usage: Value,
     inferred: bool,
-    pub normal: bool,
-    pub failed: bool,
+    completion: Completion,
     pub final_text: Option<String>,
     pub final_incomplete: bool,
 }
+enum Completion { Pending, Normal, ToolCall, Length, Error(String), Cancelled }
 impl Default for Capture {
     fn default() -> Self {
         Self {
             entries: VecDeque::new(),
             usage: json!({"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0}),
             inferred: false,
-            normal: false,
-            failed: false,
+            completion: Completion::Pending,
             final_text: None,
             final_incomplete: false,
         }
@@ -85,8 +84,7 @@ impl Capture {
     }
     pub fn outcome(&mut self, outcome: &Outcome) -> Result<()> {
         self.inferred = true;
-        self.normal = matches!(outcome, Outcome::Normal { .. });
-        self.failed = matches!(outcome, Outcome::Error { .. });
+        self.completion = match outcome { Outcome::Normal { .. } => Completion::Normal, Outcome::ToolCall { .. } => Completion::ToolCall, Outcome::Length { .. } => Completion::Length, Outcome::Error { error } => Completion::Error(error.to_string()), Outcome::Cancelled => Completion::Cancelled };
         if let Outcome::Normal { usage } | Outcome::ToolCall { usage } | Outcome::Length { usage } =
             outcome
         {
@@ -124,13 +122,19 @@ impl Capture {
     }
     pub fn decision(&self, user_evidence_omitted: bool) -> Result<Value> {
         anyhow::ensure!(
-            self.normal && !self.failed && !self.final_incomplete,
+            matches!(self.completion, Completion::Normal) && !self.final_incomplete,
             "Automatic permission review did not complete; the action has not been proven safe to execute."
         );
         super::verdict::completed(
             self.final_text.as_deref().unwrap_or(""),
             user_evidence_omitted,
         )
+    }
+    pub fn route_unavailable(&self) -> bool {
+        !self.inferred || match &self.completion {
+            Completion::Error(message) => regex_lite::Regex::new(r"(?i)\bmodel\b[^\n]*\b(?:does not exist|not found)\b").expect("original missing-model pattern").is_match(message),
+            _ => false,
+        }
     }
 }
 

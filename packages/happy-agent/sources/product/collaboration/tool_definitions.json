@@ -1,0 +1,111 @@
+[
+    {
+        "name": "create_agent",
+        "description": "Create a hidden collaborator for internal work, such as research. Bots and subtasks use create_subtask only for substantial, distinct workstreams (e.g. changes across projects) or explicit subtask requests, within eligibility and depth limits. Handle small steps inline. Usually create second-level subtasks only on explicit user request.\n\nThe collaborator works on its own. This call returns as soon as the task is delivered, and anything the collaborator has to say arrives later as a message — nothing here waits for it.\nOne root agent tree may contain at most 3 ordinary collaborators. Reuse one with send_agent_message after reaching the limit. The maximum depth is 3 agents including the root.\nChoose an exact model and effort. Omitting provider uses your current provider when it serves that model; otherwise provider is optional only when the model ID is unambiguous. This is the only chance to choose: a collaborator's model, effort, and permissions cannot be changed afterwards.",
+        "parameters": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": ["title", "model", "effort", "text"],
+            "properties": {
+                "title": {
+                    "minLength": 1,
+                    "maxLength": 256,
+                    "type": "string"
+                },
+                "model": {
+                    "minLength": 1,
+                    "maxLength": 256,
+                    "type": "string"
+                },
+                "effort": {
+                    "anyOf": [
+                        {
+                            "const": "off",
+                            "type": "string"
+                        },
+                        {
+                            "const": "minimal",
+                            "type": "string"
+                        },
+                        {
+                            "const": "low",
+                            "type": "string"
+                        },
+                        {
+                            "const": "medium",
+                            "type": "string"
+                        },
+                        {
+                            "const": "high",
+                            "type": "string"
+                        },
+                        {
+                            "const": "xhigh",
+                            "type": "string"
+                        },
+                        {
+                            "const": "max",
+                            "type": "string"
+                        }
+                    ]
+                },
+                "provider": {
+                    "minLength": 1,
+                    "maxLength": 256,
+                    "type": "string"
+                },
+                "serviceTier": {
+                    "const": "priority",
+                    "type": "string"
+                },
+                "text": {
+                    "minLength": 1,
+                    "maxLength": 50000,
+                    "type": "string"
+                }
+            }
+        },
+        "defer": true
+    },
+    {
+        "name": "send_agent_message",
+        "description": "Send a message to any existing agent by its Agent ID, including an agent in another workspace. Agent IDs are unguessable and must be shared with you.\n\nMessages are one-way and steer the recipient's active turn in either direction. This returns as soon as the message is delivered, and there is nothing to wait on.",
+        "parameters": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": ["toAgentId", "text"],
+            "properties": {
+                "toAgentId": {
+                    "minLength": 2,
+                    "maxLength": 32,
+                    "pattern": "^[a-z][a-z0-9]*$",
+                    "type": "string"
+                },
+                "text": {
+                    "minLength": 1,
+                    "maxLength": 50000,
+                    "type": "string"
+                }
+            }
+        },
+        "defer": true
+    },
+    {
+        "name": "interrupt_agent",
+        "description": "Immediately abort a collaborator's current turn and every running descendant. Nothing waits for them to settle, and the agents remain available for follow-up work later.",
+        "parameters": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": ["targetAgentId"],
+            "properties": {
+                "targetAgentId": {
+                    "minLength": 2,
+                    "maxLength": 32,
+                    "pattern": "^[a-z][a-z0-9]*$",
+                    "type": "string"
+                }
+            }
+        },
+        "defer": true
+    }
+]

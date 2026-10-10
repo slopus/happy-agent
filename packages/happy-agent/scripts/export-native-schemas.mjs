@@ -1,11 +1,14 @@
 import { createRequire } from "node:module";
 import { writeFileSync } from "node:fs";
+import { sourcePrivateSchema } from "./source-private-schema.mjs";
 import {
     documentBodySchema,
     securityDocumentBodySchema,
     agentCreateBodySchema,
     messageSendBodySchema,
     agentModeSchema,
+    questionAnswerBodySchema,
+    questionIdSchema,
 } from "../../happy-agent-modules/sources/api/ApiSchemas.ts";
 import {
     eventIdSchema,
@@ -16,6 +19,7 @@ import {
     historyToolArgumentsSchema,
     historyAgentIdSchema,
     historyToolResultBlockSchema,
+    historyToolPresentationSchema,
 } from "../../happy-agent-modules/sources/history/HistoryMessage.ts";
 import { readAgentHistoryTool } from "../../happy-agent-modules/sources/history/tools/read_agent_history.ts";
 import { selectHistoryPage } from "../../happy-agent-modules/sources/history/impl/selectHistoryPage.ts";
@@ -84,6 +88,113 @@ import {
 } from "../../happy-agent-modules/sources/auto/impl/reviewerModelForAgent.ts";
 import { reviewerAgentId } from "../../happy-agent-modules/sources/auto/impl/reviewerAgentId.ts";
 import { boundReviewTranscript } from "../../happy-agent-modules/sources/auto/impl/boundReviewTranscript.ts";
+import { nodeStateSchema } from "../../happy-agent-modules/sources/node/NodeState.ts";
+import { globalSkillsStateSchema } from "../../happy-agent-modules/sources/skills/persistence/globalSkillsState.ts";
+import { skillEntrySchema } from "../../happy-agent-modules/sources/skills/Skills.ts";
+import { toolPermissionReviewSchema } from "../../happy-agent-modules/sources/permissions/ToolPermissionReview.ts";
+import { permissionModeGuidance } from "../../happy-agent-modules/sources/permissions/impl/permissionModeGuidance.ts";
+import { serviceSchemas } from "../sources/product/services/schema-export.mjs";
+import { cloudSchemas } from "../sources/product/cloud/schema-export.mjs";
+import { secretSchemas, secretTools } from "../sources/product/secrets/schema-export.mjs";
+import {
+    collaborationSchemas,
+    collaborationTools,
+} from "../sources/product/collaboration/schema-export.mjs";
+import { subtaskSchemas, subtaskTools } from "../sources/product/subtasks/schema-export.mjs";
+import { liveSchemas } from "../sources/product/live/schema-export.mjs";
+import {
+    computeProcessSchemas,
+    computeTools,
+    computeReviewerTools,
+} from "../sources/product/tools/schema-export.mjs";
+import {
+    presenceSchemas,
+    presenceTools,
+    presenceCatalog,
+} from "../sources/product/presence/schema-export.mjs";
+import { userInputSchemas, userInputTools } from "../sources/product/user_input/schema-export.mjs";
+import { questionResource } from "../../happy-agent-modules/sources/api/ApiResourceProjection.ts";
+import {
+    schedulingSchemas,
+    schedulingTools,
+} from "../sources/product/scheduling/schema-export.mjs";
+import { tasksSchemas, tasksTools } from "../sources/product/tasks/schema-export.mjs";
+import { goalSchemas, goalTools } from "../sources/product/goal/schema-export.mjs";
+import { workflowsSchemas, workflowsTools } from "../sources/product/workflows/schema-export.mjs";
+import {
+    skillFoldersSchemas,
+    skillFoldersTools,
+} from "../sources/product/skill_folders/schema-export.mjs";
+import { titleSchemas } from "../sources/product/titles/schema-export.mjs";
+import { workspaceNamingSchemas } from "../sources/product/owners/workspace-schema-export.mjs";
+import { LIVE_CONTROLLER_TOOLS } from "../../happy-agent-modules/sources/live/impl/runLiveController.ts";
+import {
+    tailcatAddressSchema,
+    tailcatStatusSchema,
+    tailcatTransportTargetSchema,
+} from "../../happy-agent-modules/sources/tailcat/Tailcat.ts";
+import {
+    remoteConnectionEntrySchema,
+    remoteConnectionsConfigSchema,
+} from "../../happy-agent-modules/sources/config/RemoteConnectionConfig.ts";
+import {
+    botRecordSchema,
+    createBotInputSchema,
+    botAvatarAssetSchema,
+} from "../../happy-agent-modules/sources/bots/Bot.ts";
+import { botEventSchema } from "../../happy-agent-modules/sources/bots/BotEvent.ts";
+import { botSystemKeySchema } from "../../happy-agent-modules/sources/bots/BotSystemKey.ts";
+import {
+    titleNamesWantedSchema,
+    titleNameRequestSchema,
+    titleRefineRequestSchema,
+} from "../../happy-agent-modules/sources/titles/Title.ts";
+import {
+    listConnectionsTool,
+    setConnectionTool,
+    removeConnectionTool,
+} from "../../happy-agent-modules/sources/connections/tools/connectionTools.ts";
+import { checkConnectionHealthTool } from "../../happy-agent-modules/sources/connections/tools/check_remote_connection_health.ts";
+import { connectionHealthSchema } from "../../happy-agent-modules/sources/connections/ConnectionHealth.ts";
+import { setTailcatEnabledTool } from "../../happy-agent-modules/sources/tailcat/tools/set_tailcat_enabled.ts";
+import { getTailcatStatusTool } from "../../happy-agent-modules/sources/tailcat/tools/get_tailcat_status.ts";
+import { listBotsTool } from "../../happy-agent-modules/sources/bots/tools/list_bots.ts";
+import { createBotTool } from "../../happy-agent-modules/sources/bots/tools/create_bot.ts";
+import { sendBotMessageTool } from "../../happy-agent-modules/sources/bots/tools/send_bot_message.ts";
+import { setBotAvatarTool } from "../../happy-agent-modules/sources/bots/tools/set_bot_avatar.ts";
+import { projectSettingsSchema } from "../../happy-agent-modules/sources/projects/ProjectSettings.ts";
+import {
+    projectDurableArgumentsSchema,
+    projectProvisionResultSchema,
+} from "../../happy-agent-modules/sources/projects/ProjectDurableFunctions.ts";
+import {
+    workspaceSchema,
+    workspaceBaseRefSchema,
+    workspaceNameSchema,
+} from "../../happy-agent-modules/sources/workspaces/Workspace.ts";
+import {
+    workspaceAgentAttachmentSchema,
+    workspaceAgentAssociationSchema,
+} from "../../happy-agent-modules/sources/workspaces/WorkspaceAgent.ts";
+import {
+    workspaceDurableArgumentsSchema,
+    workspaceProvisionResultSchema,
+} from "../../happy-agent-modules/sources/workspaces/WorkspaceDurableFunctions.ts";
+import {
+    gitRepositoryFactsSchema,
+    projectCreatorSchema,
+} from "../../happy-agent-modules/sources/git/types.ts";
+import { gitRepositoryProbeSchema } from "../../happy-agent-modules/sources/git/probeGitRepository.ts";
+import { workspaceBaseSchema } from "../../happy-agent-modules/sources/git/resolveWorkspaceBase.ts";
+import { workspaceFolderSettingsSchema } from "../../happy-agent-modules/sources/workspaces/impl/loadWorkspaceFolderSettings.ts";
+import { runnersConfigSchema } from "../../happy-agent-modules/sources/config/RunnerConfig.ts";
+import { githubTokenSchema } from "../../happy-agent-modules/sources/config/impl/discoverGithubCliToken.ts";
+import { happyAgentConfigValuesSchema } from "../../happy-agent-modules/sources/config/ConfigModule.ts";
+import {
+    runnerFrameHeaderSchema,
+    runnerMethods,
+    runnerAcceptedConnectionSchema,
+} from "../../happy-agent-compute/sources/runner/runnerProtocol.ts";
 import {
     durableFunctionCallSchema,
     durableFunctionInvokeSchema,
@@ -98,17 +209,89 @@ import {
     projectOrderKeySchema,
     projectTimestampSchema,
     projectVersionSchema,
+    projectSchema,
+    projectRemoteSourceSchema,
+    projectAvatarAssetSchema,
 } from "../../happy-agent-modules/sources/projects/Project.ts";
 
 // Build-time reference data only; the released daemon evaluates the serialized
 // TypeBox contract in Rust and does not load JavaScript.
 const require = createRequire(new URL("../../happy-agent-modules/package.json", import.meta.url));
 const { Type } = require("@sinclair/typebox");
-const { agentConfigSchema, cuid2Schema, agentPermissionModeSchema } = await import(
-    require.resolve("@slopus/happy-agent-base")
+const { partialValuesSchema, providerInputSchemas, DEFAULT_VALUES } = await sourcePrivateSchema(
+    new URL("../../happy-agent-modules/sources/config/ConfigModule.ts", import.meta.url),
+    ["partialValuesSchema", "providerInputSchemas", "DEFAULT_VALUES"],
 );
+writeFileSync(
+    new URL("../sources/product/config/default_values.json", import.meta.url),
+    `${JSON.stringify(DEFAULT_VALUES, null, 2)}\n`,
+);
+writeFileSync(
+    new URL("../sources/product/configuration_schemas.json", import.meta.url),
+    `${JSON.stringify({ partialValues: partialValuesSchema, providers: providerInputSchemas }, null, 2)}\n`,
+);
+const { agentConfigSchema, agentMetadataSchema, cuid2Schema, agentPermissionModeSchema } =
+    await import(require.resolve("@slopus/happy-agent-base"));
 const { providerModelFamily, PROVIDER_MODEL_COMPATIBILITY_MATRIX } = await import(
     require.resolve("@slopus/happy-providers")
+);
+const { codexAuthFileSchema } = await sourcePrivateSchema(
+    new URL(
+        "./vendors/codex/impl/auth.js",
+        new URL(require.resolve("@slopus/happy-providers"), "file:"),
+    ),
+    ["codexAuthFileSchema"],
+);
+writeFileSync(
+    new URL("../../happy-providers/sources/credentials/schemas.json", import.meta.url),
+    `${JSON.stringify({ codexAuth: codexAuthFileSchema, claudeAuth: Type.Object({ claudeAiOauth: Type.Optional(Type.Object({ accessToken: Type.Optional(Type.String()) }, { additionalProperties: true })) }, { additionalProperties: true }), grokAuth: Type.Object({}, { additionalProperties: true }), grokRecord: Type.Object({ key: Type.Optional(Type.String()) }, { additionalProperties: true }), codexClaims: Type.Object({ "https://api.openai.com/auth": Type.Optional(Type.Object({ chatgpt_account_id: Type.Optional(Type.String()) }, { additionalProperties: true })) }, { additionalProperties: true }) }, null, 2)}\n`,
+);
+const {
+    nodeNameSchema,
+    globalSkillSchema,
+    skillRelativePathSchema,
+    skillPageQuerySchema,
+    skillPageCursorSchema,
+    skillsUpdatedPayloadSchema,
+    runnerListResponseSchema,
+} = await import(require.resolve("@slopus/happy-agent-client"));
+const {
+    connectionIdSchema,
+    connectionSchema,
+    connectionsUpdatedPayloadSchema,
+    reorderConnectionRequestSchema,
+    resourceVersionSchema,
+    healthResponseSchema,
+    botUsernameSchema,
+    botNameSchema,
+} = await import(require.resolve("@slopus/happy-agent-client"));
+const {
+    liveSessionSchema,
+    liveControlClientMessageSchema,
+    liveControlServerMessageSchema,
+    liveDesktopActionSchema,
+    liveDesktopActionResultSchema,
+    createLiveSessionRequestSchema,
+    closeLiveSessionRequestSchema,
+    liveCredentialSchema,
+    liveDesktopIdSchema,
+} = await import(require.resolve("@slopus/happy-agent-client"));
+const { agentSpawnPresentationSchema } = await import(
+    require.resolve("@slopus/happy-agent-client")
+);
+const { createWorkspaceRequestSchema } = await import(
+    require.resolve("@slopus/happy-agent-client")
+);
+const {
+    configResponseSchema,
+    configPatchSchema,
+    providerScanResponseSchema,
+    providerVerificationRequestSchema,
+    providerVerificationResponseSchema,
+} = await import(require.resolve("@slopus/happy-agent-client"));
+const { runtimeConfigPatchSchema } = await sourcePrivateSchema(
+    new URL("../../happy-agent-modules/sources/api/ApiModule.ts", import.meta.url),
+    ["runtimeConfigPatchSchema"],
 );
 // The factory closes over compute only in execution/review functions. Reading
 // its schema and descriptor neither constructs compute nor executes a command.
@@ -116,6 +299,140 @@ const execCommand = codexExecCommandTool(undefined);
 const writeStdin = codexWriteStdinTool(undefined);
 const killSession = codexKillSessionTool(undefined);
 const readHistory = readAgentHistoryTool(undefined, "build-reference");
+const remoteTools = [
+    listConnectionsTool(undefined, "build-reference"),
+    setConnectionTool({ entrySchema: remoteConnectionEntrySchema }, "build-reference"),
+    removeConnectionTool(undefined, "build-reference"),
+    checkConnectionHealthTool(undefined, "build-reference"),
+];
+const tailcatTools = [
+    setTailcatEnabledTool(undefined, "build-reference"),
+    getTailcatStatusTool(undefined, "build-reference"),
+];
+const botTools = [
+    listBotsTool(undefined),
+    createBotTool(undefined, "build-reference"),
+    sendBotMessageTool(undefined, "build-reference"),
+    setBotAvatarTool(undefined, "build-reference"),
+];
+for (const [name, tools] of [
+    ["connections", remoteTools],
+    ["tailcat", tailcatTools],
+    ["bots", botTools],
+    ["secrets", secretTools],
+    ["live", LIVE_CONTROLLER_TOOLS],
+    ["collaboration", collaborationTools],
+    ["subtasks", subtaskTools],
+    ["presence", presenceTools],
+    ["user_input", userInputTools],
+    ["scheduling", schedulingTools],
+    ["tasks", tasksTools],
+    ["goal", goalTools],
+    ["workflows", workflowsTools],
+    ["skill_folders", skillFoldersTools],
+]) {
+    writeFileSync(
+        new URL(`../sources/product/${name}/tool_definitions.json`, import.meta.url),
+        `${JSON.stringify(
+            tools.map((tool) => ({
+                name: tool.name,
+                description: tool.description,
+                parameters: tool.parameters,
+                defer: tool.defer,
+            })),
+            null,
+            2,
+        )}\n`,
+    );
+    writeFileSync(
+        new URL(`../sources/product/${name}/tool_lifetimes.json`, import.meta.url),
+        `${JSON.stringify(
+            tools.map((tool) => ({
+                name: tool.name,
+                durable: tool.durable ?? false,
+                reloadable: tool.reloadable ?? false,
+                steerable: tool.steerable ?? false,
+            })),
+            null,
+            2,
+        )}\n`,
+    );
+}
+writeFileSync(
+    new URL("../sources/product/presence/catalog.json", import.meta.url),
+    `${JSON.stringify(presenceCatalog, null, 2)}\n`,
+);
+const questionBase = {
+    id: "sourcequestion",
+    askingAgentId: "sourceagent",
+    question: "Which database?",
+    context: "Choose storage.",
+    status: "pending",
+    createdAt: 1767571200000,
+    updatedAt: 1767571200000,
+};
+const questionCases = [
+    questionBase,
+    {
+        ...questionBase,
+        header: "Storage",
+        options: { multiSelect: true, choices: [{ label: "SQLite", description: "Local." }] },
+        status: "answered",
+        answer: { selectedOptions: ["SQLite"], text: "Use the local file." },
+        answeredAt: 1767571200001,
+        updatedAt: 1767571200001,
+    },
+    {
+        ...questionBase,
+        questions: [
+            { id: "database", header: "Database", question: "Which database?" },
+            { id: "region", question: "Which region?" },
+        ],
+        status: "answered",
+        answers: { database: "SQLite", region: { selectedOptions: ["Europe"], text: "Paris" } },
+        answer: "SQLite",
+        answeredAt: 1767571200001,
+        updatedAt: 1767571200001,
+        deadlineAt: 1767571260000,
+    },
+    ...["cancelled", "away", "timed_out"].map((status) => ({
+        ...questionBase,
+        status,
+        updatedAt: 1767571200002,
+    })),
+];
+writeFileSync(
+    new URL("../sources/product/api/question_goldens.json", import.meta.url),
+    `${JSON.stringify(
+        questionCases.map((request) => ({
+            request,
+            runId: "sourcerun",
+            expected: questionResource(request, "sourcerun"),
+        })),
+        null,
+        2,
+    )}\n`,
+);
+writeFileSync(
+    new URL("../sources/product/permission_guidance.json", import.meta.url),
+    `${JSON.stringify(
+        Object.fromEntries(
+            ["read_only", "workspace_write", "auto", "full_access"].map((mode) => [
+                mode,
+                permissionModeGuidance(
+                    mode,
+                    [execCommand, writeStdin, killSession, readHistory].map((tool) => ({
+                        ...(tool.autoPermissionInstructions === undefined
+                            ? {}
+                            : { autoPermissionInstructions: tool.autoPermissionInstructions }),
+                    })),
+                ),
+            ]),
+        ),
+        null,
+        2,
+    )}\n`,
+);
 const text = Type.Object({ type: Type.Literal("text"), text: Type.String() });
 const image = Type.Object({
     type: Type.Literal("image"),
@@ -201,6 +518,226 @@ const family = Type.Union([
     Type.Literal("glm"),
 ]);
 const schemas = {
+    ownerConfigResponse: configResponseSchema,
+    ownerConfigPatch: configPatchSchema,
+    ownerRuntimeConfigPatch: runtimeConfigPatchSchema,
+    ownerRuntimeProviderState: Type.Object(
+        { enabled: Type.Optional(Type.Boolean()), autoEnable: Type.Optional(Type.Boolean()) },
+        { additionalProperties: false },
+    ),
+    ownerProviderScanResponse: providerScanResponseSchema,
+    ownerProviderVerificationRequest: providerVerificationRequestSchema,
+    ownerProviderVerificationResponse: providerVerificationResponseSchema,
+    ownerQuestionAnswer: questionAnswerBodySchema,
+    ownerQuestionId: questionIdSchema,
+    ownerPresenceConfiguration: happyAgentConfigValuesSchema.properties.presence,
+    ...serviceSchemas,
+    ...cloudSchemas,
+    ...secretSchemas,
+    ...collaborationSchemas,
+    ...subtaskSchemas,
+    ...liveSchemas,
+    ...computeProcessSchemas,
+    ...presenceSchemas,
+    ...userInputSchemas,
+    ...schedulingSchemas,
+    ...tasksSchemas,
+    ...goalSchemas,
+    ...workflowsSchemas,
+    ...skillFoldersSchemas,
+    ...titleSchemas,
+    ...workspaceNamingSchemas,
+    ownerLiveSession: liveSessionSchema,
+    ownerLiveClientMessage: liveControlClientMessageSchema,
+    ownerLiveServerMessage: liveControlServerMessageSchema,
+    ownerLiveDesktopAction: liveDesktopActionSchema,
+    ownerLiveDesktopActionResult: liveDesktopActionResultSchema,
+    ownerLiveCreateRequest: createLiveSessionRequestSchema,
+    ownerLiveCloseRequest: closeLiveSessionRequestSchema,
+    ownerLiveDesktopId: liveDesktopIdSchema,
+    ownerLiveCredential: liveCredentialSchema,
+    ownerAgentSpawnPresentation: agentSpawnPresentationSchema,
+    ownerLiveStartArgs: Type.Object({ id: Type.String() }, { additionalProperties: false }),
+    ownerTailcatAddress: tailcatAddressSchema,
+    ownerBotUsername: botUsernameSchema,
+    ownerBotName: botNameSchema,
+    ownerBotRecord: botRecordSchema,
+    ownerBotCreate: createBotInputSchema,
+    ownerBotAvatarMetadata: Type.Omit(botAvatarAssetSchema, ["bytes"]),
+    ownerBotEvent: botEventSchema,
+    ownerBotSystemKey: botSystemKeySchema,
+    ownerTitleWanted: titleNamesWantedSchema,
+    ownerTitleNameRequest: titleNameRequestSchema,
+    ownerTitleRefineRequest: titleRefineRequestSchema,
+    ownerTailcatStatus: tailcatStatusSchema,
+    ownerTailcatTarget: tailcatTransportTargetSchema,
+    ownerRemoteEntry: remoteConnectionEntrySchema,
+    ownerRemoteEntries: remoteConnectionsConfigSchema,
+    ownerConnectionId: connectionIdSchema,
+    ownerConnectionSnapshot: connectionsUpdatedPayloadSchema,
+    ownerConnectionPreviousSnapshot: Type.Object({
+        connections: Type.Array(Type.Omit(connectionSchema, ["orderKey"]), { maxItems: 100 }),
+        version: resourceVersionSchema,
+    }),
+    ownerConnectionReorder: reorderConnectionRequestSchema,
+    ownerResourceVersion: resourceVersionSchema,
+    ownerHealthResponse: healthResponseSchema,
+    ownerConnectionHealth: connectionHealthSchema,
+    ...Object.fromEntries(
+        [...remoteTools, ...tailcatTools, ...botTools].map((tool) => [
+            `ownerTool_${tool.name}`,
+            tool.parameters,
+        ]),
+    ),
+    ownerReconcileArgs: Type.Object({}, { additionalProperties: false }),
+    ownerProject: projectSchema,
+    ownerProjectRemoteSource: projectRemoteSourceSchema,
+    ownerProjectAvatarAssetMetadata: Type.Omit(projectAvatarAssetSchema, ["bytes"]),
+    ownerProjectSettings: projectSettingsSchema,
+    ownerProjectDisplayNameGuard: Type.String({ minLength: 1, pattern: "^[^\\p{Cc}\\p{Cf}]+$" }),
+    ownerProjectBaseRefGuard: Type.String({ maxLength: 200, pattern: "^(?!-)[^\\p{Cc}\\p{Cf}]*$" }),
+    ownerProjectArgs: projectDurableArgumentsSchema,
+    ownerProjectProvision: projectProvisionResultSchema,
+    ownerWorkspace: workspaceSchema,
+    ownerWorkspaceCreateRequest: createWorkspaceRequestSchema,
+    ownerWorkspaceAgentAttachment: workspaceAgentAttachmentSchema,
+    ownerWorkspaceAgentAssociation: workspaceAgentAssociationSchema,
+    ownerWorkspaceBaseRef: workspaceBaseRefSchema,
+    ownerWorkspaceName: workspaceNameSchema,
+    ownerWorkspaceArgs: workspaceDurableArgumentsSchema,
+    ownerWorkspaceProvision: workspaceProvisionResultSchema,
+    ownerGitFacts: gitRepositoryFactsSchema,
+    ownerGitCreator: projectCreatorSchema,
+    ownerHostingAvatarMetadata: Type.Object({
+        avatar_url: Type.Optional(Type.String()),
+        links: Type.Optional(
+            Type.Object({
+                avatar: Type.Optional(Type.Object({ href: Type.Optional(Type.String()) })),
+            }),
+        ),
+    }),
+    ownerGitCredentialRepository: Type.String({
+        pattern: "^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}/[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$",
+    }),
+    ownerGitCredentialToken: Type.String({
+        minLength: 1,
+        maxLength: 65536,
+        pattern: "^[^\\u0000]+$",
+    }),
+    ownerGitCredentialCapability: Type.String({ pattern: "^[0-9a-f]{64}$" }),
+    ownerGitProbe: gitRepositoryProbeSchema,
+    ownerWorkspaceBase: workspaceBaseSchema,
+    ownerFolderSettings: workspaceFolderSettingsSchema,
+    ownerWorkspaceConfigInput: partialValuesSchema.properties.workspace,
+    ownerConfigPartialValues: partialValuesSchema,
+    ownerConfigTable: Type.Record(Type.String(), Type.Unknown(), { maxProperties: 512 }),
+    ...Object.fromEntries(
+        Object.entries(providerInputSchemas).map(([kind, schema]) => [
+            `ownerProviderInput_${kind}`,
+            schema,
+        ]),
+    ),
+    ownerRunnersConfiguration: Type.Object(
+        {
+            entries: runnersConfigSchema.properties.entries,
+            defaultId: Type.Optional(runnersConfigSchema.properties.default),
+        },
+        { additionalProperties: false },
+    ),
+    ownerRunnerSnapshot: runnerListResponseSchema,
+    ownerRunnerFrame: runnerFrameHeaderSchema,
+    ownerRunnerAcceptedConnection: runnerAcceptedConnectionSchema,
+    ownerGithubToken: githubTokenSchema,
+    ownerManagedNetwork: happyAgentConfigValuesSchema.properties.network,
+    ...Object.fromEntries(
+        [
+            "compute.create",
+            "compute.dispose",
+            "fs.exists",
+            "fs.lstat",
+            "fs.mkdir",
+            "fs.move",
+            "fs.realpath",
+            "fs.readFileBuffer",
+            "fs.readdir",
+            "fs.rm",
+            "process.start",
+            "process.signal",
+            "shell.run",
+            "net.listen",
+            "net.accept",
+        ].flatMap((method) => [
+            [`ownerRunnerParams_${method.replaceAll(".", "_")}`, runnerMethods[method].params],
+            [`ownerRunnerResult_${method.replaceAll(".", "_")}`, runnerMethods[method].result],
+        ]),
+    ),
+    ownerExactEmpty: Type.Object({}, { additionalProperties: false }),
+    ownerOpenEmpty: Type.Object({}),
+    ownerNull: Type.Null(),
+    computeAbortNotice: Type.Object(
+        {
+            id: Type.String({ minLength: 1, maxLength: 128, pattern: "^[a-z0-9]+$" }),
+            killedAt: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
+            processTrees: Type.Integer({ minimum: 1, maximum: 10000 }),
+            sessions: Type.Array(
+                Type.Object(
+                    {
+                        command: Type.String({ maxLength: 1000 }),
+                        sessionId: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
+                    },
+                    { additionalProperties: false },
+                ),
+                { maxItems: 16 },
+            ),
+        },
+        { additionalProperties: false },
+    ),
+    nodeState: nodeStateSchema,
+    nodeName: nodeNameSchema,
+    globalSkillsState: globalSkillsStateSchema,
+    globalSkill: globalSkillSchema,
+    skillRelativePath: skillRelativePathSchema,
+    skillEntry: skillEntrySchema,
+    skillPageQuery: skillPageQuerySchema,
+    skillPageCursor: skillPageCursorSchema,
+    skillsUpdatedPayload: skillsUpdatedPayloadSchema,
+    ownerSkillPagePosition: Type.Object(
+        { revision: Type.String(), offset: Type.Integer({ minimum: 0 }) },
+        { additionalProperties: false },
+    ),
+    ownerSkillEnablement: Type.Record(
+        Type.String({ minLength: 1, maxLength: 4096 }),
+        Type.Boolean(),
+        { maxProperties: 10000 },
+    ),
+    ownerSkillMetadata: Type.Object(
+        {
+            description: Type.String({ maxLength: 1024 }),
+            disableModelInvocation: Type.Optional(Type.Literal(true)),
+            name: Type.String({ maxLength: 128 }),
+        },
+        { additionalProperties: false },
+    ),
+    nativeAutoArguments: Type.Object(
+        {
+            request: Type.Omit(permissionReviewRequestSchema, ["signal"]),
+            configuration: agentConfigSchema,
+            route: autoReviewerRouteSchema,
+        },
+        { additionalProperties: false },
+    ),
+    nativeAutoOutcome: Type.Union([
+        permissionReviewDecisionSchema,
+        Type.Object(
+            {
+                outcome: Type.Literal("unproven"),
+                kind: Type.Union([Type.Literal("unavailable"), Type.Literal("timed_out")]),
+                reason: Type.String({ minLength: 1, maxLength: 4096 }),
+            },
+            { additionalProperties: false },
+        ),
+    ]),
+    toolPermissionReview: toolPermissionReviewSchema,
     autoTranscriptMessage: autoTranscriptMessageSchema,
     autoEvidenceEntry: autoEvidenceEntrySchema,
     autoEvidenceState: autoEvidenceStateSchema,
@@ -246,12 +783,14 @@ const schemas = {
     historyLimit: Type.Integer({ minimum: 1, maximum: 500 }),
     execCommand: execCommand.parameters,
     historyToolName: historyToolResultBlockSchema.properties.toolName,
+    historyToolPresentation: historyToolPresentationSchema,
     writeStdin: writeStdin.parameters,
     killSession: killSession.parameters,
     unifiedExecOutput: execCommand.returnType,
     commandSessionId: Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
     cuid2: cuid2Schema,
     agentConfig: agentConfigSchema,
+    agentMetadata: agentMetadataSchema,
     agentCreate: agentCreateBodySchema,
     agentSend: messageSendBodySchema,
     agentMode: agentModeSchema,
@@ -339,6 +878,7 @@ const schemas = {
         inferenceId: Type.Optional(cuid2Schema),
         settlementId: Type.Optional(cuid2Schema),
     }),
+    nativeAbort: Type.Object({ loopId: cuid2Schema }, { additionalProperties: false }),
     sessionMessage,
     pendingCall: Type.Object({
         id: cuid2Schema,
@@ -477,7 +1017,15 @@ writeFileSync(
 );
 writeFileSync(
     new URL("../sources/product/tool_definitions.json", import.meta.url),
-    `${JSON.stringify({ codex: [execCommand, writeStdin, killSession].map((tool) => ({ name: tool.name, description: tool.description, parameters: tool.parameters, defer: tool.defer })), common: [{ name: readHistory.name, description: readHistory.description, parameters: readHistory.parameters, defer: readHistory.defer }] }, null, 2)}\n`,
+    `${JSON.stringify({ ...Object.fromEntries(Object.entries(computeTools).map(([vendor, tools]) => [vendor, tools.map((tool) => ({ name: tool.name, description: tool.description, parameters: tool.parameters, defer: tool.defer }))])), common: [{ name: readHistory.name, description: readHistory.description, parameters: readHistory.parameters, defer: readHistory.defer }] }, null, 2)}\n`,
+);
+writeFileSync(
+    new URL("../sources/product/tools/reviewer_definitions.json", import.meta.url),
+    `${JSON.stringify(Object.fromEntries(Object.entries(computeReviewerTools).map(([vendor, tools]) => [vendor, tools.map((tool) => ({ name: tool.name, description: tool.description, parameters: tool.parameters, defer: tool.defer }))])), null, 2)}\n`,
+);
+writeFileSync(
+    new URL("../sources/product/tools/tool_guidance.json", import.meta.url),
+    `${JSON.stringify(Object.fromEntries(Object.entries({ ...computeTools, common: [readHistory] }).map(([vendor, tools]) => [vendor, tools.map((tool) => ({ name: tool.name, durable: tool.durable ?? false, reloadable: tool.reloadable ?? false, steerable: tool.steerable ?? false, ...(tool.autoPermissionInstructions === undefined ? {} : { autoPermissionInstructions: tool.autoPermissionInstructions }) }))])), null, 2)}\n`,
 );
 writeFileSync(
     new URL("../../happy-agent-base/sources/agent_schemas.json", import.meta.url),
@@ -485,10 +1033,12 @@ writeFileSync(
         Object.fromEntries(
             [
                 "agentConfig",
+                "agentMetadata",
                 "cuid2",
                 "permissionMode",
                 "queuedInput",
                 "owed",
+                "nativeAbort",
                 "sessionMessage",
                 "pendingCall",
                 "privateRecord",
@@ -914,7 +1464,7 @@ const privateCatalogs = Object.fromEntries(
     ]),
 );
 writeFileSync(
-    new URL("../sources/product/auto/model_catalogs.json", import.meta.url),
+    new URL("../sources/product/auto_model_catalogs.json", import.meta.url),
     `${JSON.stringify(privateCatalogs, null, 2)}\n`,
 );
 const routeCases = [];

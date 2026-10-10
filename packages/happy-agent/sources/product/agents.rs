@@ -1,18 +1,18 @@
 use super::{
     config::ConfigModule,
+    agent_runtime::AgentRuntimeModule,
     events::EventsModule,
     history::HistoryModule,
     identity::{now, resource_version},
-    lifecycle::LifecycleModule,
     projects::ProjectsModule,
     runtime::{Context, RuntimeModule},
     schemas::Schemas,
-    tools::ToolsModule,
     usage::UsageModule,
     workspaces::WorkspacesModule,
+    tools::ToolsModule,
+    user_input::UserInputModule,
 };
 use anyhow::{Context as _, Result};
-use happy_agent_base::AgentSystem;
 use serde_json::{Value, json};
 use std::sync::Arc;
 
@@ -24,7 +24,9 @@ pub struct AgentSystemModule {
     usage: Arc<UsageModule>,
     projects: Arc<ProjectsModule>,
     workspaces: Arc<WorkspacesModule>,
-    system: Arc<AgentSystem>,
+    system: Arc<AgentRuntimeModule>,
+    tools: Arc<ToolsModule>,
+    user_input:Arc<UserInputModule>,
     schemas: Schemas,
 }
 #[derive(Debug)]
@@ -54,22 +56,13 @@ impl AgentSystemModule {
         runtime: Arc<RuntimeModule>,
         events: Arc<EventsModule>,
         history: Arc<HistoryModule>,
-        tools: Arc<ToolsModule>,
         usage: Arc<UsageModule>,
-        lifecycle: Arc<LifecycleModule>,
         projects: Arc<ProjectsModule>,
         workspaces: Arc<WorkspacesModule>,
+        system: Arc<AgentRuntimeModule>,
+        tools: Arc<ToolsModule>,
+        user_input:Arc<UserInputModule>,
     ) -> Result<Self> {
-        let system = Arc::new(AgentSystem::new(
-            runtime.database(),
-            vec![
-                config.clone(),
-                lifecycle,
-                history.clone(),
-                tools,
-                usage.clone(),
-            ],
-        )?);
         Ok(Self {
             config,
             runtime,
@@ -79,6 +72,8 @@ impl AgentSystemModule {
             projects,
             workspaces,
             system,
+            tools,
+            user_input,
             schemas: Schemas::new()?,
         })
     }
@@ -90,6 +85,26 @@ impl AgentSystemModule {
     }
     pub fn configuration(&self, ctx: &Context<'_>, id: &str) -> Result<Option<Value>> {
         self.system.configuration(ctx, id)
+    }
+    pub fn install(&self, module:Arc<dyn happy_agent_base::AgentModule>)->Result<()> {self.system.install(module)}
+    pub fn parent_of(&self,ctx:&Context<'_>,id:&str)->Result<Option<String>> {self.system.parent(ctx,id)}
+    pub fn update_question_metadata(&self,ctx:&Context<'_>,id:&str,question:Option<&str>)->Result<()> {self.system.update_metadata(ctx,id,&json!({"pendingQuestionId":question}))}
+    pub fn update_process_count(&self,ctx:&Context<'_>,id:&str,count:usize)->Result<()> {
+        let Some(configuration)=self.configuration(ctx,id)? else{return Ok(());};
+        if configuration["metadata"]["processes"]["running"].as_u64()==Some(count as u64){return Ok(());}
+        self.system.update_metadata(ctx,id,&json!({"processes":{"running":count}}))
+    }
+    pub fn reconcile_process_counts(&self,ctx:&Context<'_>)->Result<()> {
+        let mut ids=self.runtime.agents_with_running_process_metadata(ctx)?.into_iter().collect::<std::collections::BTreeSet<_>>();ids.extend(self.tools.process_agents());
+        for id in ids {self.update_process_count(ctx,&id,self.tools.running_processes(&id))?;}Ok(())
+    }
+    pub async fn activity(self:&Arc<Self>,id:String)->Result<Option<Value>> {
+        let agents=self.clone();self.runtime.transact(move|ctx| {
+            if agents.resource(ctx,&id)?.is_none(){return Ok(None);}
+            let mut children=agents.system.children(ctx,&id)?.into_iter().map(|id|agents.resource(ctx,&id)?.ok_or_else(||anyhow::anyhow!("The child agent has no public resource."))).collect::<Result<Vec<_>>>()?;
+            children.sort_by(|left,right|right["createdAt"].as_u64().cmp(&left["createdAt"].as_u64()).then_with(||left["id"].as_str().cmp(&right["id"].as_str())));
+            Ok(Some(json!({"subagents":children,"processes":agents.tools.list_processes(&id)})))
+        }).await
     }
     pub async fn focused(self: &Arc<Self>, id: String) -> Result<Option<Value>> {
         let agents = self.clone();
@@ -245,18 +260,14 @@ impl AgentSystemModule {
             |event| event.0.clone(),
         );
         let owed = self.system.owed(ctx, id)?;
-        let status = match owed.as_ref().and_then(|owed| owed["stage"].as_str()) {
-            Some("inference") => "thinking",
-            Some("tools") => "running_tools",
-            Some(_) => "working",
-            None => "idle",
-        };
+        let status=if owed.is_some(){"working"}else{"idle"};
+        let pending=self.user_input.list_page(ctx,id,&json!({"askingAgentId":id,"status":"pending","limit":1}))?["requests"][0].get("id").cloned().unwrap_or(Value::Null);
         let archived = metadata.get("archivedAt").cloned().unwrap_or(Value::Null);
         let order = association
             .as_ref()
             .map(|association| association.1.clone());
         Ok(Some(
-            json!({"id":id,"workspaceId":association.map(|association|association.0).unwrap_or_default(),"parentAgentId":parent,"subtask":false,"subtasks":[],"subtaskOrderKey":null,"userVisible":order.is_some(),"managedByAnotherAgent":parent.is_some(),"canSendMessages":parent.is_none()&&archived.is_null(),"title":metadata.get("title").cloned().unwrap_or(Value::Null),"titleStatus":if metadata["title"].is_string(){"ready"}else{"idle"},"status":status,"subagents":{"total":children,"running":0},"processes":{"running":0},"pendingQuestionId":null,"unread":metadata.get("unread").cloned().unwrap_or(Value::Null),"orderKey":order,"lastCursor":self.events.agent_cursor(id),"version":version,"createdAt":created,"updatedAt":updated,"archivedAt":archived}),
+            json!({"id":id,"workspaceId":association.map(|association|association.0).unwrap_or_default(),"parentAgentId":parent,"subtask":false,"subtasks":[],"subtaskOrderKey":null,"userVisible":order.is_some(),"managedByAnotherAgent":parent.is_some(),"canSendMessages":parent.is_none()&&archived.is_null(),"title":metadata.get("title").cloned().unwrap_or(Value::Null),"titleStatus":if metadata["title"].is_string(){"ready"}else{"idle"},"status":status,"subagents":{"total":children,"running":0},"processes":{"running":self.tools.running_processes(id)},"pendingQuestionId":pending,"unread":metadata.get("unread").cloned().unwrap_or(Value::Null),"orderKey":order,"lastCursor":self.events.agent_cursor(id),"version":version,"createdAt":created,"updatedAt":updated,"archivedAt":archived}),
         ))
     }
 }

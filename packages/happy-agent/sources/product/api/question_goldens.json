@@ -1,0 +1,247 @@
+[
+    {
+        "request": {
+            "id": "sourcequestion",
+            "askingAgentId": "sourceagent",
+            "question": "Which database?",
+            "context": "Choose storage.",
+            "status": "pending",
+            "createdAt": 1767571200000,
+            "updatedAt": 1767571200000
+        },
+        "runId": "sourcerun",
+        "expected": {
+            "id": "sourcequestion",
+            "agentId": "sourceagent",
+            "runId": "sourcerun",
+            "status": "pending",
+            "questions": [
+                {
+                    "id": "sourcequestion",
+                    "header": "Question",
+                    "question": "Which database?",
+                    "multiSelect": false,
+                    "options": []
+                }
+            ],
+            "autoResolveAt": null,
+            "answers": null,
+            "version": "019b8b74-1800-7000-8000-00000025c817",
+            "createdAt": 1767571200000,
+            "answeredAt": null
+        }
+    },
+    {
+        "request": {
+            "id": "sourcequestion",
+            "askingAgentId": "sourceagent",
+            "question": "Which database?",
+            "context": "Choose storage.",
+            "status": "answered",
+            "createdAt": 1767571200000,
+            "updatedAt": 1767571200001,
+            "header": "Storage",
+            "options": {
+                "multiSelect": true,
+                "choices": [
+                    {
+                        "label": "SQLite",
+                        "description": "Local."
+                    }
+                ]
+            },
+            "answer": {
+                "selectedOptions": ["SQLite"],
+                "text": "Use the local file."
+            },
+            "answeredAt": 1767571200001
+        },
+        "runId": "sourcerun",
+        "expected": {
+            "id": "sourcequestion",
+            "agentId": "sourceagent",
+            "runId": "sourcerun",
+            "status": "answered",
+            "questions": [
+                {
+                    "id": "sourcequestion",
+                    "header": "Storage",
+                    "question": "Which database?",
+                    "multiSelect": true,
+                    "options": [
+                        {
+                            "label": "SQLite",
+                            "description": "Local."
+                        }
+                    ]
+                }
+            ],
+            "autoResolveAt": null,
+            "answers": {
+                "sourcequestion": ["SQLite", "Use the local file."]
+            },
+            "version": "019b8b74-1801-7000-8000-00000045c817",
+            "createdAt": 1767571200000,
+            "answeredAt": 1767571200001
+        }
+    },
+    {
+        "request": {
+            "id": "sourcequestion",
+            "askingAgentId": "sourceagent",
+            "question": "Which database?",
+            "context": "Choose storage.",
+            "status": "answered",
+            "createdAt": 1767571200000,
+            "updatedAt": 1767571200001,
+            "questions": [
+                {
+                    "id": "database",
+                    "header": "Database",
+                    "question": "Which database?"
+                },
+                {
+                    "id": "region",
+                    "question": "Which region?"
+                }
+            ],
+            "answers": {
+                "database": "SQLite",
+                "region": {
+                    "selectedOptions": ["Europe"],
+                    "text": "Paris"
+                }
+            },
+            "answer": "SQLite",
+            "answeredAt": 1767571200001,
+            "deadlineAt": 1767571260000
+        },
+        "runId": "sourcerun",
+        "expected": {
+            "id": "sourcequestion",
+            "agentId": "sourceagent",
+            "runId": "sourcerun",
+            "status": "answered",
+            "questions": [
+                {
+                    "id": "database",
+                    "header": "Database",
+                    "question": "Which database?",
+                    "multiSelect": false,
+                    "options": []
+                },
+                {
+                    "id": "region",
+                    "header": "Question",
+                    "question": "Which region?",
+                    "multiSelect": false,
+                    "options": []
+                }
+            ],
+            "autoResolveAt": 1767571260000,
+            "answers": {
+                "database": ["SQLite"],
+                "region": ["Europe", "Paris"]
+            },
+            "version": "019b8b74-1801-7000-8000-00000045c817",
+            "createdAt": 1767571200000,
+            "answeredAt": 1767571200001
+        }
+    },
+    {
+        "request": {
+            "id": "sourcequestion",
+            "askingAgentId": "sourceagent",
+            "question": "Which database?",
+            "context": "Choose storage.",
+            "status": "cancelled",
+            "createdAt": 1767571200000,
+            "updatedAt": 1767571200002
+        },
+        "runId": "sourcerun",
+        "expected": {
+            "id": "sourcequestion",
+            "agentId": "sourceagent",
+            "runId": "sourcerun",
+            "status": "canceled",
+            "questions": [
+                {
+                    "id": "sourcequestion",
+                    "header": "Question",
+                    "question": "Which database?",
+                    "multiSelect": false,
+                    "options": []
+                }
+            ],
+            "autoResolveAt": null,
+            "answers": null,
+            "version": "019b8b74-1802-7000-8000-00000065c817",
+            "createdAt": 1767571200000,
+            "answeredAt": null
+        }
+    },
+    {
+        "request": {
+            "id": "sourcequestion",
+            "askingAgentId": "sourceagent",
+            "question": "Which database?",
+            "context": "Choose storage.",
+            "status": "away",
+            "createdAt": 1767571200000,
+            "updatedAt": 1767571200002
+        },
+        "runId": "sourcerun",
+        "expected": {
+            "id": "sourcequestion",
+            "agentId": "sourceagent",
+            "runId": "sourcerun",
+            "status": "canceled",
+            "questions": [
+                {
+                    "id": "sourcequestion",
+                    "header": "Question",
+                    "question": "Which database?",
+                    "multiSelect": false,
+                    "options": []
+                }
+            ],
+            "autoResolveAt": null,
+            "answers": null,
+            "version": "019b8b74-1802-7000-8000-00000065c817",
+            "createdAt": 1767571200000,
+            "answeredAt": null
+        }
+    },
+    {
+        "request": {
+            "id": "sourcequestion",
+            "askingAgentId": "sourceagent",
+            "question": "Which database?",
+            "context": "Choose storage.",
+            "status": "timed_out",
+            "createdAt": 1767571200000,
+            "updatedAt": 1767571200002
+        },
+        "runId": "sourcerun",
+        "expected": {
+            "id": "sourcequestion",
+            "agentId": "sourceagent",
+            "runId": "sourcerun",
+            "status": "canceled",
+            "questions": [
+                {
+                    "id": "sourcequestion",
+                    "header": "Question",
+                    "question": "Which database?",
+                    "multiSelect": false,
+                    "options": []
+                }
+            ],
+            "autoResolveAt": null,
+            "answers": null,
+            "version": "019b8b74-1802-7000-8000-00000065c817",
+            "createdAt": 1767571200000,
+            "answeredAt": null
+        }
+    }
+]

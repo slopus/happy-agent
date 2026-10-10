@@ -1,6 +1,6 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use happy_agent_base::{AgentModule, AgentScope, AgentSystem, DatabaseLocation, SqliteDatabase};
+use happy_agent_base::{AgentModule, AgentScope, AgentSystem, DatabaseLocation, SqliteDatabase, ToolAuthorization, ToolPermissionPolicy};
 use happy_providers::{
     Compaction, Event, Outcome, RunRequest, Session, SessionContext, ToolDefinition, Usage,
 };
@@ -14,6 +14,134 @@ use std::{
 };
 use tokio::sync::{Notify, mpsc};
 use tokio_util::sync::CancellationToken;
+
+struct MetadataOwner {
+    shutdown: CancellationToken,
+    system: Mutex<std::sync::Weak<AgentSystem>>,
+    committed: Mutex<Vec<serde_json::Value>>,
+    recursive_refused: AtomicBool,
+}
+#[async_trait]
+impl AgentModule for MetadataOwner {
+    fn name(&self) -> &'static str { "metadata-owner-fixture" }
+    fn shutdown(&self) -> Option<CancellationToken> { Some(self.shutdown.clone()) }
+    fn metadata_changed(&self, ctx: &happy_agent_base::DatabaseContext<'_>, scope: &AgentScope<'_>, change: &serde_json::Value) -> Result<()> {
+        assert_eq!(scope.configuration["metadata"], change["metadata"]);
+        ctx.put_value(scope.id, "fixture.metadata-owner", change)?;
+        let system = self.system.lock().unwrap().upgrade().unwrap();
+        self.recursive_refused.store(system.update_metadata(ctx, scope.id, &json!({"recursive":true})).is_err(), Ordering::Release);
+        anyhow::ensure!(change["update"]["reject"] != true, "The owning hook rejected this metadata update.");
+        Ok(())
+    }
+    fn metadata_committed(&self, _id: &str, _configuration: &serde_json::Value, change: &serde_json::Value) { self.committed.lock().unwrap().push(change.clone()); }
+}
+
+#[tokio::test]
+async fn metadata_merges_the_transaction_snapshot_and_publishes_only_after_commit() {
+    let directory = tempfile::tempdir().unwrap();
+    let database = Arc::new(SqliteDatabase::new());
+    database.load(DatabaseLocation { directory: directory.path().into(), database: directory.path().join("agent.sqlite"), ownership: directory.path().join("agent.sqlite.lock"), store_lock: directory.path().join("agent.lock") }).await.unwrap();
+    let owner = Arc::new(MetadataOwner { shutdown: CancellationToken::new(), system: Mutex::new(std::sync::Weak::new()), committed: Mutex::new(Vec::new()), recursive_refused: AtomicBool::new(false) });
+    let system = Arc::new(AgentSystem::new(database.clone(), vec![owner.clone()]).unwrap());
+    *owner.system.lock().unwrap() = Arc::downgrade(&system);
+    let target = system.clone();
+    database.transact(move |ctx| target.create(ctx, "metadatafixture", &json!({"metadata":{"title":"Original","retained":true}}))).await.unwrap();
+    let target = system.clone(); let observer = owner.clone();
+    database.transact(move |ctx| {
+        target.update_metadata(ctx, "metadatafixture", &json!({"title":"First"}))?;
+        target.update_metadata(ctx, "metadatafixture", &json!({"color":"blue"}))?;
+        assert!(observer.committed.lock().unwrap().is_empty());
+        assert_eq!(target.configuration(ctx, "metadatafixture")?.unwrap()["metadata"], json!({"title":"First","retained":true,"color":"blue"}));
+        Ok(())
+    }).await.unwrap();
+    assert!(owner.recursive_refused.load(Ordering::Acquire));
+    assert_eq!(owner.committed.lock().unwrap().len(), 2);
+    assert_eq!(owner.committed.lock().unwrap()[1]["previousMetadata"], json!({"title":"First","retained":true}));
+    let target = system.clone();
+    assert!(database.transact(move |ctx| target.update_metadata(ctx, "metadatafixture", &json!({"title":"Rejected","reject":true}))).await.is_err());
+    assert_eq!(owner.committed.lock().unwrap().len(), 2);
+    let target = system.clone();
+    database.transact(move |ctx| {
+        assert_eq!(target.configuration(ctx, "metadatafixture")?.unwrap()["metadata"], json!({"title":"First","retained":true,"color":"blue"}));
+        assert_eq!(ctx.value("metadatafixture", "fixture.metadata-owner")?.unwrap()["update"], json!({"color":"blue"}));
+        assert!(target.update_metadata(ctx, "metadatafixture", &json!({"title":123})).is_err());
+        Ok(())
+    }).await.unwrap();
+    system.close().await; database.close().await.unwrap();
+}
+
+struct AuthorizedRuntime {
+    shutdown: CancellationToken,
+    executed: Mutex<Vec<(String, String)>>,
+    refusals: AtomicUsize,
+}
+#[async_trait]
+impl AgentModule for AuthorizedRuntime {
+    fn name(&self) -> &'static str { "private-permission-fixture" }
+    fn shutdown(&self) -> Option<CancellationToken> { Some(self.shutdown.clone()) }
+    fn permission_policy(&self, _scope: &AgentScope<'_>, _call: &serde_json::Value) -> Option<Result<ToolPermissionPolicy>> {
+        Some(Ok(ToolPermissionPolicy { should_review_in_auto_mode: true, should_run_in_full_access_in_auto_mode: false, requires_auto_or_full_access: false, action: "the fixture action".into(), instructions: None }))
+    }
+    async fn authorize_tool(&self, scope: &AgentScope<'_>, call: &serde_json::Value, _policy: &ToolPermissionPolicy, _cancel: CancellationToken) -> Option<ToolAuthorization> {
+        let arguments: serde_json::Value = serde_json::from_str(call["call"]["arguments"].as_str().unwrap()).unwrap();
+        assert_eq!(scope.settings["permissionMode"], "auto", "The next action sees the persisted mode");
+        Some(if arguments["step"] == "full" {
+            let mut settings = scope.settings.clone(); settings["permissionMode"] = json!("full_access");
+            ToolAuthorization::Continue { settings: Some(settings) }
+        } else if arguments["step"] == "deny" {
+            let count = self.refusals.fetch_add(1, Ordering::SeqCst) + 1;
+            ToolAuthorization::Denied { message: happy_providers::Message::Tool { call_id: call["id"].as_str().unwrap().into(), content: vec![happy_providers::Block::text(&format!("Review refusal {count}"))], is_error: true, vendor: None }, stop_turn: count == 3 }
+        } else { ToolAuthorization::Continue { settings: None } })
+    }
+    async fn execute_tool(&self, scope: &AgentScope<'_>, call: &serde_json::Value, _cancel: CancellationToken) -> Option<happy_providers::Message> {
+        let arguments: serde_json::Value = serde_json::from_str(call["call"]["arguments"].as_str().unwrap()).unwrap();
+        self.executed.lock().unwrap().push((arguments["step"].as_str().unwrap().into(), scope.settings["permissionMode"].as_str().unwrap().into()));
+        Some(happy_providers::Message::Tool { call_id: call["id"].as_str().unwrap().into(), content: vec![happy_providers::Block::text("Ran once")], is_error: false, vendor: None })
+    }
+    async fn session(&self, _scope: &AgentScope<'_>, _tools: Vec<ToolDefinition>) -> Option<Result<Box<dyn Session>>> { Some(Ok(Box::new(AuthorizedSession))) }
+}
+struct AuthorizedSession;
+#[async_trait]
+impl Session for AuthorizedSession {
+    async fn run(&mut self, _request: RunRequest, _cancel: CancellationToken, events: mpsc::Sender<Event>) {
+        events.send(Event::BlockStart).await.unwrap();
+        for (index, step) in ["full", "sandbox", "deny", "deny", "deny", "after"].into_iter().enumerate() {
+            let call_id = format!("provider{index}");
+            events.send(Event::ToolCallStart { call_id: call_id.clone(), name: "fixture".into(), namespace: None, server: false, vendor: None }).await.unwrap();
+            events.send(Event::ToolCallEnd { call_id, arguments: json!({"step":step}).to_string(), incomplete: false, vendor: None }).await.unwrap();
+        }
+        events.send(Event::BlockStop).await.unwrap();
+        events.send(Event::Done { outcome: Outcome::ToolCall { usage: Usage::default() } }).await.unwrap();
+    }
+    async fn compact(&mut self, _context: SessionContext, _prompt: Option<String>, _cancel: CancellationToken) -> Compaction { panic!("This fixture does not compact.") }
+    async fn destroy(&mut self) {}
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn authorization_scopes_one_execution_and_commits_the_last_refusal_before_stopping_the_batch() {
+    let directory = tempfile::tempdir().unwrap();
+    let database = Arc::new(SqliteDatabase::new());
+    database.load(DatabaseLocation { directory: directory.path().into(), database: directory.path().join("auto-agent.sqlite"), ownership: directory.path().join("auto-agent.sqlite.lock"), store_lock: directory.path().join("auto-agent.lock") }).await.unwrap();
+    let runtime = Arc::new(AuthorizedRuntime { shutdown: CancellationToken::new(), executed: Mutex::new(Vec::new()), refusals: AtomicUsize::new(0) });
+    let system = Arc::new(AgentSystem::new(database.clone(), vec![runtime.clone()]).unwrap());
+    let owner = system.clone();
+    database.transact(move |ctx| {
+        owner.create(ctx, "permissionreviewer", &json!({"provenance":{"createdAt":1700000000000u64},"environment":{"osVersion":"fixture","platform":"linux","workingDirectory":"/","shell":"/bin/bash"},"modules":{},"metadata":{}}))?;
+        owner.enqueue(ctx, "permissionreviewer", &json!({"id":"permissioninput","message":{"role":"user","content":[{"type":"text","text":"Inspect this workspace"}]},"metadata":{"messageOrigin":"user"},"options":{"provider":"fixture","model":"fixture","effort":"low","permissionMode":"auto"}}), false)
+    }).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(5), system.wait_for_idle("permissionreviewer", &CancellationToken::new())).await.unwrap().unwrap();
+    assert_eq!(*runtime.executed.lock().unwrap(), vec![("full".into(), "full_access".into()), ("sandbox".into(), "auto".into())]);
+    database.transact(|ctx| {
+        let stored: String = ctx.database().query_row("SELECT value_json FROM happy_agent_values WHERE owner_id='permissionreviewer' AND key='settings'", [], |row| row.get(0))?;
+        assert_eq!(serde_json::from_str::<serde_json::Value>(&stored)?["permissionMode"], "auto");
+        let mut statement = ctx.database().prepare("SELECT record_json FROM happy_agent_records WHERE owner_id='permissionreviewer' ORDER BY position")?;
+        let records = statement.query_map([], |row| row.get::<_,String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?.join("\n");
+        assert!(records.contains("Review refusal 3"), "The stopping refusal remains a durable tool result");
+        assert!(records.contains("The tool call was aborted."), "Later actions in the same batch never run");
+        Ok(())
+    }).await.unwrap();
+    runtime.shutdown.cancel(); system.close().await; database.close().await.unwrap();
+}
 
 struct ManagedRuntime {
     shutdown: CancellationToken,
@@ -426,4 +554,34 @@ async fn aborting_a_private_review_preserves_queued_input_and_keeps_the_root_and
     runtime.shutdown.cancel();
     system.close().await;
     database.close().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_new_turn_accepted_after_abort_settlement_restarts_with_a_fresh_worker_lifetime() {
+    let directory = tempfile::tempdir().unwrap();
+    let database = Arc::new(SqliteDatabase::new());
+    database.load(DatabaseLocation { directory: directory.path().into(), database: directory.path().join("auto-agent.sqlite"), ownership: directory.path().join("auto-agent.sqlite.lock"), store_lock: directory.path().join("auto-agent.lock") }).await.unwrap();
+    let (requests, mut received) = mpsc::channel(4);
+    let runtime = Arc::new(PrivateRuntime { shutdown: CancellationToken::new(), requests, wait_once: AtomicBool::new(true), gate_next_exit: AtomicBool::new(true), exited: Notify::new(), gate: (Mutex::new(false), Condvar::new()) });
+    let _release = ReleaseOnDrop(runtime.clone());
+    let system = Arc::new(AgentSystem::new(database.clone(), vec![runtime.clone()]).unwrap());
+    let owner = system.clone();
+    database.transact(move |ctx| {
+        owner.create(ctx, "reviewerstopped", &json!({"provenance":{"createdAt":1700000000000u64},"environment":{"osVersion":"fixture","platform":"linux","workingDirectory":"/","shell":"/bin/bash"},"modules":{},"metadata":{}}))?;
+        owner.enqueue(ctx, "reviewerstopped", &json!({"id":"firstabortedreview","message":{"role":"user","content":[{"type":"text","text":"Wait for abort"}]},"options":{"provider":"fixture","model":"review-model","permissionMode":"read_only"}}), false)
+    }).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(5), received.recv()).await.unwrap().unwrap();
+    let owner = system.clone();
+    database.transact(move |ctx| owner.request_abort(ctx, "reviewerstopped")).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(5), runtime.exited.notified()).await.unwrap();
+    let owner = system.clone();
+    database.transact(move |ctx| {
+        assert!(owner.owed(ctx, "reviewerstopped")?.is_none(), "The aborted turn settled before the new input arrived");
+        owner.enqueue(ctx, "reviewerstopped", &json!({"id":"freshreviewafterabort","message":{"role":"user","content":[{"type":"text","text":"Start a genuinely new turn"}]}}), false)
+    }).await.unwrap();
+    runtime.release();
+    let restarted = tokio::time::timeout(Duration::from_secs(5), received.recv()).await;
+    runtime.shutdown.cancel(); system.close().await; database.close().await.unwrap();
+    let restarted = restarted.expect("A fresh turn accepted while the cancelled worker retires must start without another delivery").unwrap();
+    assert!(matches!(&restarted.context.messages.last().unwrap().content()[0], happy_providers::Block::Text { text } if text == "Start a genuinely new turn"));
 }

@@ -1,0 +1,20 @@
+[
+    {
+        "name": "create_agent",
+        "durable": true,
+        "reloadable": false,
+        "steerable": false
+    },
+    {
+        "name": "send_agent_message",
+        "durable": true,
+        "reloadable": false,
+        "steerable": false
+    },
+    {
+        "name": "interrupt_agent",
+        "durable": false,
+        "reloadable": false,
+        "steerable": false
+    }
+]

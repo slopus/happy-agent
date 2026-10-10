@@ -1,16 +1,26 @@
 mod native_cli;
 mod product;
 
-fn main() {
+// Monty's limit remains unarmed in the daemon and is set only in its isolated child.
+#[global_allocator]
+static ALLOCATOR: monty_alloc::LimitedAllocator = monty_alloc::LimitedAllocator;
+
+fn main() -> std::process::ExitCode {
     let mut arguments = std::env::args_os();
     let _ = arguments.next();
     let command = arguments.next().unwrap_or_else(|| "--help".into());
+    if command == "subprocess" {
+        return product::workflows::worker::run();
+    }
+    if command == "compute-regex" {
+        return product::compute_regex_worker();
+    }
     // The supervisor forks and installs OS policy before any async threads exist.
     if command == "supervisor" {
         #[cfg(unix)]
         {
             happy_agent_supervisor::run(arguments);
-            return;
+            return std::process::ExitCode::SUCCESS;
         }
         #[cfg(not(unix))]
         {
@@ -25,11 +35,11 @@ fn main() {
             "Happy Agent {}",
             option_env!("HAPPY_AGENT_RELEASE_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"))
         );
-        return;
+        return std::process::ExitCode::SUCCESS;
     }
     if command == "--help" || command == "-h" {
         print!("{}", include_str!("product/usage.txt"));
-        return;
+        return std::process::ExitCode::SUCCESS;
     }
     let result = (|| {
         let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -66,4 +76,5 @@ fn main() {
         eprintln!("Happy Agent: {error:#}");
         std::process::exit(1);
     }
+    std::process::ExitCode::SUCCESS
 }

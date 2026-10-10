@@ -1,0 +1,20 @@
+[
+    {
+        "name": "request_user_input",
+        "durable": true,
+        "reloadable": true,
+        "steerable": false
+    },
+    {
+        "name": "read_user_input",
+        "durable": true,
+        "reloadable": true,
+        "steerable": false
+    },
+    {
+        "name": "cancel_ask",
+        "durable": false,
+        "reloadable": false,
+        "steerable": false
+    }
+]

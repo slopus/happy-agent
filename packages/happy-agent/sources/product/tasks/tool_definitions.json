@@ -1,0 +1,385 @@
+[
+    {
+        "name": "create_task",
+        "description": "Create one persistent task in this agent's task list.",
+        "parameters": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": ["title"],
+            "properties": {
+                "activeForm": {
+                    "minLength": 1,
+                    "maxLength": 500,
+                    "type": "string"
+                },
+                "title": {
+                    "minLength": 1,
+                    "maxLength": 500,
+                    "type": "string"
+                },
+                "detail": {
+                    "maxLength": 4000,
+                    "type": "string"
+                },
+                "metadata": {
+                    "maxProperties": 64,
+                    "type": "object",
+                    "patternProperties": {
+                        "^(.*)$": {
+                            "$id": "T4",
+                            "anyOf": [
+                                {
+                                    "type": "null"
+                                },
+                                {
+                                    "type": "boolean"
+                                },
+                                {
+                                    "type": "number"
+                                },
+                                {
+                                    "maxLength": 2000,
+                                    "type": "string"
+                                },
+                                {
+                                    "maxItems": 64,
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "T4"
+                                    }
+                                },
+                                {
+                                    "maxProperties": 64,
+                                    "type": "object",
+                                    "patternProperties": {
+                                        "^(.*)$": {
+                                            "$ref": "T4"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                },
+                "owner": {
+                    "minLength": 1,
+                    "maxLength": 256,
+                    "type": "string"
+                },
+                "priority": {
+                    "anyOf": [
+                        {
+                            "const": "low",
+                            "type": "string"
+                        },
+                        {
+                            "const": "normal",
+                            "type": "string"
+                        },
+                        {
+                            "const": "high",
+                            "type": "string"
+                        }
+                    ]
+                },
+                "dependsOn": {
+                    "maxItems": 64,
+                    "uniqueItems": true,
+                    "type": "array",
+                    "items": {
+                        "minLength": 1,
+                        "maxLength": 128,
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "defer": true
+    },
+    {
+        "name": "list_tasks",
+        "description": "List a bounded page of this agent's persistent tasks in their current order. Follow nextOffset until all tasks are read.",
+        "parameters": {
+            "additionalProperties": false,
+            "type": "object",
+            "properties": {
+                "offset": {
+                    "minimum": 0,
+                    "type": "integer"
+                },
+                "limit": {
+                    "minimum": 1,
+                    "maximum": 50,
+                    "type": "integer"
+                }
+            }
+        },
+        "defer": true
+    },
+    {
+        "name": "get_task",
+        "description": "Read one persistent task by id. Follow detail and dependency offsets to inspect long detail or dependency lists.",
+        "parameters": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": ["id"],
+            "properties": {
+                "id": {
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "type": "string"
+                },
+                "detailOffset": {
+                    "minimum": 0,
+                    "maximum": 4000,
+                    "type": "integer"
+                },
+                "detailLimit": {
+                    "minimum": 1,
+                    "maximum": 1024,
+                    "type": "integer"
+                },
+                "dependencyOffset": {
+                    "minimum": 0,
+                    "maximum": 64,
+                    "type": "integer"
+                },
+                "dependencyLimit": {
+                    "minimum": 1,
+                    "maximum": 64,
+                    "type": "integer"
+                }
+            }
+        },
+        "defer": true
+    },
+    {
+        "name": "update_task",
+        "description": "Update a task's title, detail, assignment, metadata, status, or dependencies. Use complete_task when the task is finished; use deleted status to remove it.",
+        "parameters": {
+            "additionalProperties": false,
+            "minProperties": 2,
+            "type": "object",
+            "required": ["id"],
+            "properties": {
+                "id": {
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "type": "string"
+                },
+                "activeForm": {
+                    "anyOf": [
+                        {
+                            "minLength": 1,
+                            "maxLength": 500,
+                            "type": "string"
+                        },
+                        {
+                            "type": "null"
+                        }
+                    ]
+                },
+                "title": {
+                    "minLength": 1,
+                    "maxLength": 500,
+                    "type": "string"
+                },
+                "detail": {
+                    "anyOf": [
+                        {
+                            "maxLength": 4000,
+                            "type": "string"
+                        },
+                        {
+                            "type": "null"
+                        }
+                    ]
+                },
+                "metadata": {
+                    "maxProperties": 64,
+                    "type": "object",
+                    "patternProperties": {
+                        "^(.*)$": {
+                            "anyOf": [
+                                {
+                                    "$id": "T4",
+                                    "anyOf": [
+                                        {
+                                            "type": "null"
+                                        },
+                                        {
+                                            "type": "boolean"
+                                        },
+                                        {
+                                            "type": "number"
+                                        },
+                                        {
+                                            "maxLength": 2000,
+                                            "type": "string"
+                                        },
+                                        {
+                                            "maxItems": 64,
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "T4"
+                                            }
+                                        },
+                                        {
+                                            "maxProperties": 64,
+                                            "type": "object",
+                                            "patternProperties": {
+                                                "^(.*)$": {
+                                                    "$ref": "T4"
+                                                }
+                                            }
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "null"
+                                }
+                            ]
+                        }
+                    }
+                },
+                "owner": {
+                    "anyOf": [
+                        {
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "type": "string"
+                        },
+                        {
+                            "type": "null"
+                        }
+                    ]
+                },
+                "priority": {
+                    "anyOf": [
+                        {
+                            "const": "low",
+                            "type": "string"
+                        },
+                        {
+                            "const": "normal",
+                            "type": "string"
+                        },
+                        {
+                            "const": "high",
+                            "type": "string"
+                        }
+                    ]
+                },
+                "status": {
+                    "anyOf": [
+                        {
+                            "anyOf": [
+                                {
+                                    "const": "pending",
+                                    "type": "string"
+                                },
+                                {
+                                    "const": "in_progress",
+                                    "type": "string"
+                                },
+                                {
+                                    "const": "completed",
+                                    "type": "string"
+                                }
+                            ]
+                        },
+                        {
+                            "const": "deleted",
+                            "type": "string"
+                        }
+                    ]
+                },
+                "dependsOn": {
+                    "maxItems": 64,
+                    "uniqueItems": true,
+                    "type": "array",
+                    "items": {
+                        "minLength": 1,
+                        "maxLength": 128,
+                        "type": "string"
+                    }
+                },
+                "addBlocks": {
+                    "maxItems": 500,
+                    "uniqueItems": true,
+                    "type": "array",
+                    "items": {
+                        "minLength": 1,
+                        "maxLength": 128,
+                        "type": "string"
+                    }
+                },
+                "addBlockedBy": {
+                    "maxItems": 64,
+                    "uniqueItems": true,
+                    "type": "array",
+                    "items": {
+                        "minLength": 1,
+                        "maxLength": 128,
+                        "type": "string"
+                    }
+                },
+                "removeBlocks": {
+                    "maxItems": 500,
+                    "uniqueItems": true,
+                    "type": "array",
+                    "items": {
+                        "minLength": 1,
+                        "maxLength": 128,
+                        "type": "string"
+                    }
+                },
+                "removeBlockedBy": {
+                    "maxItems": 64,
+                    "uniqueItems": true,
+                    "type": "array",
+                    "items": {
+                        "minLength": 1,
+                        "maxLength": 128,
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "defer": true
+    },
+    {
+        "name": "complete_task",
+        "description": "Mark a task completed after its work has been finished and verified.",
+        "parameters": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": ["id"],
+            "properties": {
+                "id": {
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "type": "string"
+                }
+            }
+        },
+        "defer": true
+    },
+    {
+        "name": "remove_task",
+        "description": "Remove an obsolete task from this agent's persistent task list and unlink its dependencies.",
+        "parameters": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": ["id"],
+            "properties": {
+                "id": {
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "type": "string"
+                }
+            }
+        },
+        "defer": true
+    }
+]

@@ -1,0 +1,199 @@
+[
+    {
+        "name": "request_user_input",
+        "description": "Ask the human one to four related questions and wait for an explicit answer, cancellation, away, or timeout outcome. Put the shared Markdown background in context once, and put each short header, question, and its options in questions. Use the questions array even when asking only one question. This request is durable across daemon restarts. Set autoResolutionMs from 60000 to 240000 only when continuing with your best judgement is acceptable if nobody answers. Use read_user_input to read more detail from a completed request.",
+        "parameters": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": ["questions", "context"],
+            "properties": {
+                "questions": {
+                    "minItems": 1,
+                    "maxItems": 4,
+                    "type": "array",
+                    "items": {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["question"],
+                        "properties": {
+                            "id": {
+                                "minLength": 1,
+                                "maxLength": 128,
+                                "type": "string"
+                            },
+                            "header": {
+                                "minLength": 1,
+                                "maxLength": 64,
+                                "type": "string"
+                            },
+                            "question": {
+                                "minLength": 1,
+                                "maxLength": 4000,
+                                "type": "string"
+                            },
+                            "options": {
+                                "anyOf": [
+                                    {
+                                        "additionalProperties": false,
+                                        "type": "object",
+                                        "required": ["choices", "multiSelect"],
+                                        "properties": {
+                                            "choices": {
+                                                "minItems": 1,
+                                                "maxItems": 32,
+                                                "type": "array",
+                                                "items": {
+                                                    "additionalProperties": false,
+                                                    "type": "object",
+                                                    "required": ["label", "description"],
+                                                    "properties": {
+                                                        "label": {
+                                                            "minLength": 1,
+                                                            "maxLength": 256,
+                                                            "type": "string"
+                                                        },
+                                                        "description": {
+                                                            "minLength": 1,
+                                                            "maxLength": 2000,
+                                                            "type": "string"
+                                                        }
+                                                    }
+                                                }
+                                            },
+                                            "multiSelect": {
+                                                "type": "boolean"
+                                            }
+                                        }
+                                    },
+                                    {
+                                        "minItems": 1,
+                                        "maxItems": 32,
+                                        "type": "array",
+                                        "items": {
+                                            "additionalProperties": false,
+                                            "type": "object",
+                                            "required": ["label", "description"],
+                                            "properties": {
+                                                "label": {
+                                                    "minLength": 1,
+                                                    "maxLength": 256,
+                                                    "type": "string"
+                                                },
+                                                "description": {
+                                                    "minLength": 1,
+                                                    "maxLength": 2000,
+                                                    "type": "string"
+                                                }
+                                            }
+                                        }
+                                    }
+                                ]
+                            },
+                            "multiSelect": {
+                                "type": "boolean"
+                            }
+                        }
+                    }
+                },
+                "context": {
+                    "minLength": 1,
+                    "maxLength": 100000,
+                    "type": "string"
+                },
+                "autoResolutionMs": {
+                    "minimum": 60000,
+                    "maximum": 240000,
+                    "type": "integer"
+                }
+            }
+        },
+        "defer": false
+    },
+    {
+        "name": "read_user_input",
+        "description": "Read a durable user-input request and a bounded page of its full detail. Use the returned cursor to continue when more detail remains.",
+        "parameters": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": ["requestId"],
+            "properties": {
+                "requestId": {
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "type": "string"
+                },
+                "cursor": {
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "type": "string"
+                },
+                "limit": {
+                    "minimum": 1,
+                    "maximum": 4000,
+                    "type": "integer"
+                },
+                "detailOffset": {
+                    "minimum": 0,
+                    "maximum": 200000,
+                    "type": "integer"
+                },
+                "detailLimit": {
+                    "minimum": 1,
+                    "maximum": 4000,
+                    "type": "integer"
+                }
+            }
+        },
+        "defer": false
+    },
+    {
+        "name": "cancel_ask",
+        "description": "Withdraw a question you asked the user that is still waiting for an answer. Use this when you continued without the user and the answer is no longer needed. The request ID is reported when a question stops waiting.",
+        "parameters": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": ["input"],
+            "properties": {
+                "input": {
+                    "anyOf": [
+                        {
+                            "additionalProperties": false,
+                            "type": "object",
+                            "required": ["requestId"],
+                            "properties": {
+                                "requestId": {
+                                    "minLength": 1,
+                                    "maxLength": 128,
+                                    "type": "string"
+                                },
+                                "reason": {
+                                    "minLength": 1,
+                                    "maxLength": 2000,
+                                    "type": "string"
+                                }
+                            }
+                        },
+                        {
+                            "additionalProperties": false,
+                            "type": "object",
+                            "required": ["ask_id"],
+                            "properties": {
+                                "ask_id": {
+                                    "minLength": 1,
+                                    "maxLength": 128,
+                                    "type": "string"
+                                },
+                                "reason": {
+                                    "minLength": 1,
+                                    "maxLength": 2000,
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        "defer": false
+    }
+]

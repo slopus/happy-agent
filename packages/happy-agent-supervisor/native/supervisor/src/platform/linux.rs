@@ -322,13 +322,9 @@ fn run_namespace_init(
     if workload == 0 {
         close_fd(status_write);
         reset_signal_handlers();
-        if policy.service.is_some() {
-            if let Err(error) = establish_service_terminal_group() {
-                eprintln!("happy-agent-supervisor: cannot attach service input: {error}");
-                unsafe { libc::_exit(125) };
-            }
-        } else {
-            let _ = unsafe { libc::setpgid(0, 0) };
+        if let Err(error) = establish_workload_terminal_group() {
+            eprintln!("happy-agent-supervisor: cannot attach command input: {error}");
+            unsafe { libc::_exit(125) };
         }
         if let Some(cgroup) = &mut cgroup
             && let Err(error) = cgroup.enter()
@@ -905,8 +901,8 @@ fn bring_loopback_up() -> SupervisorResult<()> {
 
 /// A separate workload group must become the foreground group of its private PTY before exec.
 /// Otherwise a terminal read stops it with SIGTTIN (or fails with EIO for an orphaned group).
-fn establish_service_terminal_group() -> SupervisorResult<()> {
-    syscall_zero("create service command process group", unsafe {
+fn establish_workload_terminal_group() -> SupervisorResult<()> {
+    syscall_zero("create command process group", unsafe {
         libc::setpgid(0, 0)
     })?;
     if unsafe { libc::isatty(libc::STDIN_FILENO) } != 1 {

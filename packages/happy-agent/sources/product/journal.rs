@@ -68,9 +68,15 @@ impl Journal {
         payload: impl FnOnce(&str) -> Value,
         owner: Option<String>,
     ) -> Arc<Entry> {
+        self.append_with_cursor_at(kind,payload,owner,now())
+    }
+    pub fn append_at(&mut self,kind:&str,payload:Value,owner:Option<String>,occurred_at:u64)->Arc<Entry> {
+        self.append_with_cursor_at(kind,|_|payload,owner,occurred_at)
+    }
+    fn append_with_cursor_at(&mut self,kind:&str,payload:impl FnOnce(&str)->Value,owner:Option<String>,occurred_at:u64)->Arc<Entry> {
         let cursor = self.versions.next();
         let payload = payload(&cursor);
-        let envelope = json!({"cursor":cursor,"occurredAt":now(),"type":kind,"payload":payload});
+        let envelope = json!({"cursor":cursor,"occurredAt":occurred_at,"type":kind,"payload":payload});
         let bytes = envelope.to_string().len();
         let entry = Arc::new(Entry {
             envelope,

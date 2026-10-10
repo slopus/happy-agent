@@ -24,6 +24,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "002-native-complete-generation",
         "CREATE TABLE happy_agent_auto_native_generations(agent_id TEXT PRIMARY KEY,generation INTEGER NOT NULL);",
     ),
+    (
+        "003-native-durable-reviews",
+        "CREATE TABLE happy_agent_auto_native_reviews(agent_id TEXT NOT NULL,call_id TEXT NOT NULL,review_id TEXT NOT NULL,result_json TEXT NOT NULL,PRIMARY KEY(agent_id,call_id));",
+    ),
 ];
 
 pub(super) struct EvidenceStore {

@@ -1,0 +1,32 @@
+[
+    {
+        "name": "wait",
+        "durable": true,
+        "reloadable": false,
+        "steerable": true
+    },
+    {
+        "name": "wait_until",
+        "durable": true,
+        "reloadable": false,
+        "steerable": true
+    },
+    {
+        "name": "schedule_message",
+        "durable": true,
+        "reloadable": false,
+        "steerable": false
+    },
+    {
+        "name": "list_scheduled_messages",
+        "durable": true,
+        "reloadable": true,
+        "steerable": false
+    },
+    {
+        "name": "cancel_scheduled_message",
+        "durable": true,
+        "reloadable": false,
+        "steerable": false
+    }
+]

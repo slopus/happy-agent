@@ -1,0 +1,2081 @@
+{
+    "partialValues": {
+        "additionalProperties": false,
+        "type": "object",
+        "properties": {
+            "skill_enablement": {
+                "maxProperties": 10000,
+                "type": "object",
+                "patternProperties": {
+                    "^(.*)$": {
+                        "type": "boolean"
+                    }
+                }
+            },
+            "node": {
+                "additionalProperties": false,
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "minLength": 1,
+                        "maxLength": 128,
+                        "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                        "type": "string"
+                    }
+                }
+            },
+            "profile": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": ["name", "email"],
+                "properties": {
+                    "name": {
+                        "minLength": 1,
+                        "maxLength": 128,
+                        "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f\\u061c\\u200b\\u200e\\u200f\\u202a-\\u202e\\u2060-\\u2064\\u2066-\\u206f]+$",
+                        "type": "string"
+                    },
+                    "email": {
+                        "minLength": 3,
+                        "maxLength": 254,
+                        "pattern": "^[^\\s@<>]+@[^\\s@<>]+\\.[^\\s@<>]+$",
+                        "type": "string"
+                    }
+                }
+            },
+            "api": {
+                "additionalProperties": false,
+                "type": "object",
+                "properties": {
+                    "token": {
+                        "pattern": "^[A-Za-z0-9_-]{43}$",
+                        "type": "string"
+                    }
+                }
+            },
+            "connections": {
+                "additionalProperties": false,
+                "maxProperties": 100,
+                "type": "object",
+                "patternProperties": {
+                    "^[a-z][a-z0-9_-]{0,63}$": {
+                        "anyOf": [
+                            {
+                                "anyOf": [
+                                    {
+                                        "additionalProperties": false,
+                                        "type": "object",
+                                        "required": ["name", "address", "token"],
+                                        "properties": {
+                                            "enabled": {
+                                                "const": true,
+                                                "type": "boolean"
+                                            },
+                                            "name": {
+                                                "minLength": 1,
+                                                "maxLength": 256,
+                                                "pattern": "^(?=.*\\S)[^\\u0000-\\u001f\\u007f]+$",
+                                                "type": "string"
+                                            },
+                                            "address": {
+                                                "minLength": 3,
+                                                "maxLength": 8192,
+                                                "pattern": "^tc[A-Za-z0-9_-]+$",
+                                                "type": "string"
+                                            },
+                                            "port": {
+                                                "minimum": 1,
+                                                "maximum": 65535,
+                                                "type": "integer"
+                                            },
+                                            "token": {
+                                                "pattern": "^[A-Za-z0-9_-]{43}$",
+                                                "type": "string"
+                                            }
+                                        }
+                                    },
+                                    {
+                                        "additionalProperties": false,
+                                        "type": "object",
+                                        "required": ["name", "address", "workos_organization_id"],
+                                        "properties": {
+                                            "enabled": {
+                                                "const": true,
+                                                "type": "boolean"
+                                            },
+                                            "name": {
+                                                "minLength": 1,
+                                                "maxLength": 256,
+                                                "pattern": "^(?=.*\\S)[^\\u0000-\\u001f\\u007f]+$",
+                                                "type": "string"
+                                            },
+                                            "address": {
+                                                "minLength": 3,
+                                                "maxLength": 8192,
+                                                "pattern": "^tc[A-Za-z0-9_-]+$",
+                                                "type": "string"
+                                            },
+                                            "port": {
+                                                "minimum": 1,
+                                                "maximum": 65535,
+                                                "type": "integer"
+                                            },
+                                            "workos_organization_id": {
+                                                "pattern": "^org_[A-Za-z0-9]+$",
+                                                "maxLength": 160,
+                                                "type": "string"
+                                            }
+                                        }
+                                    }
+                                ]
+                            },
+                            {
+                                "additionalProperties": false,
+                                "type": "object",
+                                "required": ["enabled"],
+                                "properties": {
+                                    "enabled": {
+                                        "const": false,
+                                        "type": "boolean"
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                }
+            },
+            "runners": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": ["entries"],
+                "properties": {
+                    "default": {
+                        "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+                        "type": "string"
+                    },
+                    "entries": {
+                        "additionalProperties": false,
+                        "maxProperties": 32,
+                        "type": "object",
+                        "patternProperties": {
+                            "^[a-z][a-z0-9_-]{0,63}$": {
+                                "additionalProperties": false,
+                                "type": "object",
+                                "required": ["name", "token"],
+                                "properties": {
+                                    "name": {
+                                        "minLength": 1,
+                                        "maxLength": 128,
+                                        "pattern": "^(?=.*\\S)[^\\u0000-\\u001f\\u007f]+$",
+                                        "type": "string"
+                                    },
+                                    "token": {
+                                        "pattern": "^[A-Za-z0-9_-]{43}$",
+                                        "type": "string"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "docker": {
+                "additionalProperties": false,
+                "type": "object",
+                "properties": {
+                    "container": {
+                        "maxLength": 16384,
+                        "type": "string"
+                    },
+                    "env": {
+                        "maxProperties": 512,
+                        "type": "object",
+                        "patternProperties": {
+                            "^(.*)$": {
+                                "maxLength": 16384,
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "image": {
+                        "maxLength": 16384,
+                        "type": "string"
+                    },
+                    "mounts": {
+                        "maxItems": 256,
+                        "type": "array",
+                        "items": {
+                            "additionalProperties": true,
+                            "type": "object",
+                            "required": ["source", "target"],
+                            "properties": {
+                                "read_only": {
+                                    "type": "boolean"
+                                },
+                                "source": {
+                                    "minLength": 1,
+                                    "maxLength": 4096,
+                                    "pattern": "^[^\\u0000]+$",
+                                    "type": "string"
+                                },
+                                "target": {
+                                    "maxLength": 16384,
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "name": {
+                        "maxLength": 16384,
+                        "type": "string"
+                    },
+                    "socket_path": {
+                        "minLength": 1,
+                        "maxLength": 4096,
+                        "pattern": "^[^\\u0000]+$",
+                        "type": "string"
+                    },
+                    "workdir": {
+                        "maxLength": 16384,
+                        "type": "string"
+                    }
+                }
+            },
+            "defaults": {
+                "additionalProperties": false,
+                "type": "object",
+                "properties": {
+                    "effort": {
+                        "maxLength": 16384,
+                        "type": "string"
+                    },
+                    "instructions": {
+                        "maxLength": 16384,
+                        "type": "string"
+                    },
+                    "model": {
+                        "maxLength": 16384,
+                        "type": "string"
+                    },
+                    "permission_mode": {
+                        "anyOf": [
+                            {
+                                "const": "auto",
+                                "type": "string"
+                            },
+                            {
+                                "const": "read_only",
+                                "type": "string"
+                            },
+                            {
+                                "const": "workspace_write",
+                                "type": "string"
+                            },
+                            {
+                                "const": "full_access",
+                                "type": "string"
+                            }
+                        ]
+                    },
+                    "provider": {
+                        "maxLength": 16384,
+                        "type": "string"
+                    },
+                    "service_tier": {
+                        "anyOf": [
+                            {
+                                "anyOf": [
+                                    {
+                                        "const": "fast",
+                                        "type": "string"
+                                    },
+                                    {
+                                        "const": "ultrafast",
+                                        "type": "string"
+                                    }
+                                ]
+                            },
+                            {
+                                "const": "default",
+                                "type": "string"
+                            }
+                        ]
+                    }
+                }
+            },
+            "features": {
+                "additionalProperties": false,
+                "type": "object",
+                "properties": {
+                    "cross_workspace": {
+                        "type": "boolean"
+                    },
+                    "workflows": {
+                        "type": "boolean"
+                    },
+                    "workspaces": {
+                        "type": "boolean"
+                    }
+                }
+            },
+            "feature": {
+                "additionalProperties": false,
+                "type": "object",
+                "properties": {
+                    "codemode": {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "properties": {
+                            "enabled": {
+                                "type": "boolean"
+                            },
+                            "engine": {
+                                "anyOf": [
+                                    {
+                                        "const": "monty",
+                                        "type": "string"
+                                    },
+                                    {
+                                        "const": "bun",
+                                        "type": "string"
+                                    }
+                                ]
+                            }
+                        }
+                    },
+                    "tailcat": {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "properties": {
+                            "enabled": {
+                                "type": "boolean"
+                            },
+                            "port": {
+                                "maximum": 65535,
+                                "minimum": 1,
+                                "type": "integer"
+                            }
+                        }
+                    },
+                    "team": {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "properties": {
+                            "authentication": {
+                                "anyOf": [
+                                    {
+                                        "const": "workos",
+                                        "type": "string"
+                                    },
+                                    {
+                                        "const": "jwt",
+                                        "type": "string"
+                                    }
+                                ]
+                            },
+                            "enabled": {
+                                "type": "boolean"
+                            },
+                            "host": {
+                                "maxLength": 255,
+                                "minLength": 1,
+                                "pattern": "^[^\\s\\u0000-\\u001f\\u007f]+$",
+                                "type": "string"
+                            },
+                            "owner_workos_user_id": {
+                                "maxLength": 160,
+                                "minLength": 7,
+                                "pattern": "^user_[A-Za-z0-9]+$",
+                                "type": "string"
+                            },
+                            "jwt": {
+                                "additionalProperties": false,
+                                "type": "object",
+                                "required": [
+                                    "algorithms",
+                                    "audience",
+                                    "issuer",
+                                    "authorization_url",
+                                    "client_id",
+                                    "name",
+                                    "token_url"
+                                ],
+                                "properties": {
+                                    "algorithms": {
+                                        "maxItems": 13,
+                                        "minItems": 1,
+                                        "type": "array",
+                                        "items": {
+                                            "anyOf": [
+                                                {
+                                                    "const": "RS256",
+                                                    "type": "string"
+                                                },
+                                                {
+                                                    "const": "RS384",
+                                                    "type": "string"
+                                                },
+                                                {
+                                                    "const": "RS512",
+                                                    "type": "string"
+                                                },
+                                                {
+                                                    "const": "PS256",
+                                                    "type": "string"
+                                                },
+                                                {
+                                                    "const": "PS384",
+                                                    "type": "string"
+                                                },
+                                                {
+                                                    "const": "PS512",
+                                                    "type": "string"
+                                                },
+                                                {
+                                                    "const": "ES256",
+                                                    "type": "string"
+                                                },
+                                                {
+                                                    "const": "ES384",
+                                                    "type": "string"
+                                                },
+                                                {
+                                                    "const": "ES512",
+                                                    "type": "string"
+                                                },
+                                                {
+                                                    "const": "EdDSA",
+                                                    "type": "string"
+                                                },
+                                                {
+                                                    "const": "HS256",
+                                                    "type": "string"
+                                                },
+                                                {
+                                                    "const": "HS384",
+                                                    "type": "string"
+                                                },
+                                                {
+                                                    "const": "HS512",
+                                                    "type": "string"
+                                                }
+                                            ]
+                                        }
+                                    },
+                                    "audience": {
+                                        "maxLength": 2048,
+                                        "minLength": 1,
+                                        "type": "string"
+                                    },
+                                    "issuer": {
+                                        "maxLength": 2048,
+                                        "minLength": 1,
+                                        "type": "string"
+                                    },
+                                    "authorization_url": {
+                                        "maxLength": 2048,
+                                        "minLength": 1,
+                                        "type": "string"
+                                    },
+                                    "client_id": {
+                                        "maxLength": 256,
+                                        "minLength": 1,
+                                        "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                                        "type": "string"
+                                    },
+                                    "jwks_refresh_interval_sec": {
+                                        "maximum": 86400,
+                                        "minimum": 60,
+                                        "type": "integer"
+                                    },
+                                    "jwks_url": {
+                                        "maxLength": 2048,
+                                        "minLength": 1,
+                                        "type": "string"
+                                    },
+                                    "name": {
+                                        "maxLength": 64,
+                                        "minLength": 1,
+                                        "pattern": "^(?=.*\\S)[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                                        "type": "string"
+                                    },
+                                    "public_key": {
+                                        "maxLength": 16384,
+                                        "minLength": 1,
+                                        "type": "string"
+                                    },
+                                    "secret_env": {
+                                        "maxLength": 256,
+                                        "minLength": 1,
+                                        "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                                        "type": "string"
+                                    },
+                                    "refresh_url": {
+                                        "maxLength": 2048,
+                                        "minLength": 1,
+                                        "type": "string"
+                                    },
+                                    "scope": {
+                                        "maxLength": 1024,
+                                        "minLength": 1,
+                                        "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                                        "type": "string"
+                                    },
+                                    "token_url": {
+                                        "maxLength": 2048,
+                                        "minLength": 1,
+                                        "type": "string"
+                                    },
+                                    "user_id_claim": {
+                                        "maxLength": 256,
+                                        "minLength": 1,
+                                        "type": "string"
+                                    }
+                                }
+                            },
+                            "owner_user_id": {
+                                "maxLength": 256,
+                                "minLength": 1,
+                                "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                                "type": "string"
+                            },
+                            "port": {
+                                "maximum": 65535,
+                                "minimum": 0,
+                                "type": "integer"
+                            },
+                            "workos_client_id": {
+                                "maxLength": 160,
+                                "minLength": 8,
+                                "pattern": "^client_[A-Za-z0-9]+$",
+                                "type": "string"
+                            },
+                            "workos_organization_id": {
+                                "maxLength": 160,
+                                "minLength": 6,
+                                "pattern": "^org_[A-Za-z0-9]+$",
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
+            "gemini": {
+                "additionalProperties": false,
+                "type": "object",
+                "properties": {
+                    "api_key": {
+                        "maxLength": 16384,
+                        "type": "string"
+                    }
+                }
+            },
+            "mcp_servers": {
+                "maxProperties": 512,
+                "type": "object",
+                "patternProperties": {
+                    "^(.*)$": {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "properties": {
+                            "args": {
+                                "maxItems": 256,
+                                "type": "array",
+                                "items": {
+                                    "maxLength": 16384,
+                                    "type": "string"
+                                }
+                            },
+                            "bearer_token_env_var": {
+                                "maxLength": 16384,
+                                "type": "string"
+                            },
+                            "command": {
+                                "minLength": 1,
+                                "maxLength": 16384,
+                                "type": "string"
+                            },
+                            "cwd": {
+                                "minLength": 1,
+                                "maxLength": 4096,
+                                "pattern": "^[^\\u0000]+$",
+                                "type": "string"
+                            },
+                            "disabled_tools": {
+                                "maxItems": 256,
+                                "type": "array",
+                                "items": {
+                                    "maxLength": 16384,
+                                    "type": "string"
+                                }
+                            },
+                            "enabled": {
+                                "type": "boolean"
+                            },
+                            "enabled_tools": {
+                                "maxItems": 256,
+                                "type": "array",
+                                "items": {
+                                    "maxLength": 16384,
+                                    "type": "string"
+                                }
+                            },
+                            "env": {
+                                "maxProperties": 512,
+                                "type": "object",
+                                "patternProperties": {
+                                    "^(.*)$": {
+                                        "maxLength": 16384,
+                                        "type": "string"
+                                    }
+                                }
+                            },
+                            "http_headers": {
+                                "maxProperties": 512,
+                                "type": "object",
+                                "patternProperties": {
+                                    "^(.*)$": {
+                                        "maxLength": 16384,
+                                        "type": "string"
+                                    }
+                                }
+                            },
+                            "oauth_client_id_env_var": {
+                                "maxLength": 16384,
+                                "type": "string"
+                            },
+                            "oauth_client_secret_env_var": {
+                                "maxLength": 16384,
+                                "type": "string"
+                            },
+                            "oauth_scopes": {
+                                "maxItems": 256,
+                                "type": "array",
+                                "items": {
+                                    "maxLength": 16384,
+                                    "type": "string"
+                                }
+                            },
+                            "startup_timeout_sec": {
+                                "exclusiveMinimum": 0,
+                                "maximum": 600,
+                                "type": "number"
+                            },
+                            "tool_timeout_sec": {
+                                "exclusiveMinimum": 0,
+                                "maximum": 600,
+                                "type": "number"
+                            },
+                            "transport": {
+                                "const": "http",
+                                "type": "string"
+                            },
+                            "url": {
+                                "minLength": 1,
+                                "maxLength": 16384,
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
+            "network": {
+                "additionalProperties": false,
+                "type": "object",
+                "properties": {
+                    "allow_local_binding": {
+                        "type": "boolean"
+                    },
+                    "allowed_domains": {
+                        "maxItems": 256,
+                        "type": "array",
+                        "items": {
+                            "maxLength": 16384,
+                            "type": "string"
+                        }
+                    },
+                    "allowed_loopback_ports": {
+                        "maxItems": 256,
+                        "type": "array",
+                        "items": {
+                            "minimum": 1,
+                            "maximum": 65535,
+                            "type": "integer"
+                        }
+                    },
+                    "allowed_ports": {
+                        "maxItems": 256,
+                        "type": "array",
+                        "items": {
+                            "minimum": 1,
+                            "maximum": 65535,
+                            "type": "integer"
+                        }
+                    },
+                    "denied_domains": {
+                        "maxItems": 256,
+                        "type": "array",
+                        "items": {
+                            "maxLength": 16384,
+                            "type": "string"
+                        }
+                    }
+                }
+            },
+            "observation": {
+                "additionalProperties": false,
+                "type": "object",
+                "properties": {
+                    "history_dump": {
+                        "type": "boolean"
+                    },
+                    "log_level": {
+                        "anyOf": [
+                            {
+                                "const": "trace",
+                                "type": "string"
+                            },
+                            {
+                                "const": "debug",
+                                "type": "string"
+                            },
+                            {
+                                "const": "info",
+                                "type": "string"
+                            },
+                            {
+                                "const": "warn",
+                                "type": "string"
+                            },
+                            {
+                                "const": "error",
+                                "type": "string"
+                            },
+                            {
+                                "const": "fatal",
+                                "type": "string"
+                            }
+                        ]
+                    },
+                    "logs": {
+                        "type": "boolean"
+                    },
+                    "traces": {
+                        "type": "boolean"
+                    },
+                    "traces_endpoint": {
+                        "minLength": 1,
+                        "maxLength": 2048,
+                        "pattern": "^https?://[^\\s]+$",
+                        "type": "string"
+                    }
+                }
+            },
+            "p2p": {
+                "additionalProperties": false,
+                "type": "object",
+                "properties": {
+                    "direct": {
+                        "additionalProperties": true,
+                        "type": "object",
+                        "properties": {
+                            "listen": {
+                                "maxLength": 16384,
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "enable_direct": {
+                        "type": "boolean"
+                    },
+                    "enable_iroh": {
+                        "type": "boolean"
+                    },
+                    "enable_ssh": {
+                        "type": "boolean"
+                    },
+                    "expose_api": {
+                        "type": "boolean"
+                    },
+                    "iroh": {
+                        "additionalProperties": true,
+                        "type": "object",
+                        "properties": {
+                            "relay_url": {
+                                "maxLength": 16384,
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "name": {
+                        "maxLength": 16384,
+                        "type": "string"
+                    },
+                    "primary_id": {
+                        "maxLength": 16384,
+                        "type": "string"
+                    },
+                    "role": {
+                        "anyOf": [
+                            {
+                                "const": "primary",
+                                "type": "string"
+                            },
+                            {
+                                "const": "secondary",
+                                "type": "string"
+                            }
+                        ]
+                    }
+                }
+            },
+            "permissions": {
+                "additionalProperties": false,
+                "type": "object",
+                "properties": {
+                    "protected_paths": {
+                        "maxItems": 128,
+                        "uniqueItems": true,
+                        "type": "array",
+                        "items": {
+                            "minLength": 1,
+                            "maxLength": 512,
+                            "pattern": "^(?!/)(?!~(?:/|$))(?!.*(?:^|/)\\.\\.(?:/|$))[^\\\\\\r\\n]+$",
+                            "type": "string"
+                        }
+                    }
+                }
+            },
+            "presence": {
+                "additionalProperties": false,
+                "type": "object",
+                "properties": {
+                    "current": {
+                        "maxLength": 16384,
+                        "type": "string"
+                    },
+                    "fallback": {
+                        "maxLength": 16384,
+                        "type": "string"
+                    },
+                    "states": {
+                        "maxProperties": 512,
+                        "type": "object",
+                        "patternProperties": {
+                            "^(.*)$": {
+                                "additionalProperties": false,
+                                "type": "object",
+                                "properties": {
+                                    "answer_wait": {
+                                        "anyOf": [
+                                            {
+                                                "maxLength": 16384,
+                                                "type": "string"
+                                            },
+                                            {
+                                                "type": "null"
+                                            }
+                                        ]
+                                    },
+                                    "emoji": {
+                                        "maxLength": 16384,
+                                        "type": "string"
+                                    },
+                                    "prompt": {
+                                        "maxLength": 16384,
+                                        "type": "string"
+                                    },
+                                    "title": {
+                                        "maxLength": 16384,
+                                        "type": "string"
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "until": {
+                        "anyOf": [
+                            {
+                                "type": "string"
+                            },
+                            {
+                                "type": "number"
+                            }
+                        ]
+                    }
+                }
+            },
+            "provider_default_enable": {
+                "type": "boolean"
+            },
+            "providers": {
+                "maxProperties": 64,
+                "type": "object",
+                "patternProperties": {
+                    "^(.*)$": {
+                        "anyOf": [
+                            {
+                                "additionalProperties": false,
+                                "type": "object",
+                                "properties": {
+                                    "auto_enable": {
+                                        "type": "boolean"
+                                    },
+                                    "credential_isolation": {
+                                        "const": true,
+                                        "type": "boolean"
+                                    },
+                                    "enabled": {
+                                        "type": "boolean"
+                                    },
+                                    "hidden": {
+                                        "type": "boolean"
+                                    },
+                                    "exclude_models": {
+                                        "maxItems": 256,
+                                        "type": "array",
+                                        "items": {
+                                            "maxLength": 16384,
+                                            "type": "string"
+                                        }
+                                    },
+                                    "exclude_subagent_models": {
+                                        "maxItems": 256,
+                                        "type": "array",
+                                        "items": {
+                                            "maxLength": 16384,
+                                            "type": "string"
+                                        }
+                                    },
+                                    "include_models": {
+                                        "maxItems": 256,
+                                        "type": "array",
+                                        "items": {
+                                            "maxLength": 16384,
+                                            "type": "string"
+                                        }
+                                    },
+                                    "include_subagent_models": {
+                                        "maxItems": 256,
+                                        "type": "array",
+                                        "items": {
+                                            "maxLength": 16384,
+                                            "type": "string"
+                                        }
+                                    },
+                                    "p2p_share": {
+                                        "anyOf": [
+                                            {
+                                                "const": "owner_only",
+                                                "type": "string"
+                                            },
+                                            {
+                                                "const": "shared",
+                                                "type": "string"
+                                            },
+                                            {
+                                                "const": "disabled",
+                                                "type": "string"
+                                            }
+                                        ]
+                                    },
+                                    "bearer_token": {
+                                        "maxLength": 16384,
+                                        "type": "string"
+                                    },
+                                    "bearer_token_env_var": {
+                                        "maxLength": 16384,
+                                        "type": "string"
+                                    },
+                                    "config_file": {
+                                        "minLength": 1,
+                                        "maxLength": 4096,
+                                        "pattern": "^[^\\u0000]+$",
+                                        "type": "string"
+                                    },
+                                    "credentials_file": {
+                                        "minLength": 1,
+                                        "maxLength": 4096,
+                                        "pattern": "^[^\\u0000]+$",
+                                        "type": "string"
+                                    },
+                                    "model_overrides": {
+                                        "maxProperties": 512,
+                                        "type": "object",
+                                        "patternProperties": {
+                                            "^(.*)$": {
+                                                "additionalProperties": true,
+                                                "type": "object",
+                                                "properties": {
+                                                    "endpoint": {
+                                                        "maxLength": 16384,
+                                                        "type": "string"
+                                                    },
+                                                    "region": {
+                                                        "maxLength": 16384,
+                                                        "type": "string"
+                                                    },
+                                                    "transport": {
+                                                        "anyOf": [
+                                                            {
+                                                                "const": "mantle",
+                                                                "type": "string"
+                                                            },
+                                                            {
+                                                                "const": "runtime",
+                                                                "type": "string"
+                                                            }
+                                                        ]
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    },
+                                    "profile": {
+                                        "maxLength": 16384,
+                                        "type": "string"
+                                    },
+                                    "region": {
+                                        "maxLength": 16384,
+                                        "type": "string"
+                                    },
+                                    "search_model": {
+                                        "maxLength": 16384,
+                                        "type": "string"
+                                    },
+                                    "type": {
+                                        "const": "bedrock",
+                                        "type": "string"
+                                    }
+                                }
+                            },
+                            {
+                                "additionalProperties": false,
+                                "type": "object",
+                                "properties": {
+                                    "auto_enable": {
+                                        "type": "boolean"
+                                    },
+                                    "credential_isolation": {
+                                        "const": true,
+                                        "type": "boolean"
+                                    },
+                                    "enabled": {
+                                        "type": "boolean"
+                                    },
+                                    "hidden": {
+                                        "type": "boolean"
+                                    },
+                                    "exclude_models": {
+                                        "maxItems": 256,
+                                        "type": "array",
+                                        "items": {
+                                            "maxLength": 16384,
+                                            "type": "string"
+                                        }
+                                    },
+                                    "exclude_subagent_models": {
+                                        "maxItems": 256,
+                                        "type": "array",
+                                        "items": {
+                                            "maxLength": 16384,
+                                            "type": "string"
+                                        }
+                                    },
+                                    "include_models": {
+                                        "maxItems": 256,
+                                        "type": "array",
+                                        "items": {
+                                            "maxLength": 16384,
+                                            "type": "string"
+                                        }
+                                    },
+                                    "include_subagent_models": {
+                                        "maxItems": 256,
+                                        "type": "array",
+                                        "items": {
+                                            "maxLength": 16384,
+                                            "type": "string"
+                                        }
+                                    },
+                                    "p2p_share": {
+                                        "anyOf": [
+                                            {
+                                                "const": "owner_only",
+                                                "type": "string"
+                                            },
+                                            {
+                                                "const": "shared",
+                                                "type": "string"
+                                            },
+                                            {
+                                                "const": "disabled",
+                                                "type": "string"
+                                            }
+                                        ]
+                                    },
+                                    "api_key": {
+                                        "maxLength": 16384,
+                                        "type": "string"
+                                    },
+                                    "auth_token": {
+                                        "maxLength": 16384,
+                                        "type": "string"
+                                    },
+                                    "config_dir": {
+                                        "minLength": 1,
+                                        "maxLength": 4096,
+                                        "pattern": "^[^\\u0000]+$",
+                                        "type": "string"
+                                    },
+                                    "executable": {
+                                        "minLength": 1,
+                                        "maxLength": 4096,
+                                        "pattern": "^[^\\u0000]+$",
+                                        "type": "string"
+                                    },
+                                    "oauth_token": {
+                                        "maxLength": 16384,
+                                        "type": "string"
+                                    },
+                                    "type": {
+                                        "const": "claude",
+                                        "type": "string"
+                                    }
+                                }
+                            },
+                            {
+                                "additionalProperties": false,
+                                "type": "object",
+                                "properties": {
+                                    "auto_enable": {
+                                        "type": "boolean"
+                                    },
+                                    "credential_isolation": {
+                                        "const": true,
+                                        "type": "boolean"
+                                    },
+                                    "enabled": {
+                                        "type": "boolean"
+                                    },
+                                    "hidden": {
+                                        "type": "boolean"
+                                    },
+                                    "exclude_models": {
+                                        "maxItems": 256,
+                                        "type": "array",
+                                        "items": {
+                                            "maxLength": 16384,
+                                            "type": "string"
+                                        }
+                                    },
+                                    "exclude_subagent_models": {
+                                        "maxItems": 256,
+                                        "type": "array",
+                                        "items": {
+                                            "maxLength": 16384,
+                                            "type": "string"
+                                        }
+                                    },
+                                    "include_models": {
+                                        "maxItems": 256,
+                                        "type": "array",
+                                        "items": {
+                                            "maxLength": 16384,
+                                            "type": "string"
+                                        }
+                                    },
+                                    "include_subagent_models": {
+                                        "maxItems": 256,
+                                        "type": "array",
+                                        "items": {
+                                            "maxLength": 16384,
+                                            "type": "string"
+                                        }
+                                    },
+                                    "p2p_share": {
+                                        "anyOf": [
+                                            {
+                                                "const": "owner_only",
+                                                "type": "string"
+                                            },
+                                            {
+                                                "const": "shared",
+                                                "type": "string"
+                                            },
+                                            {
+                                                "const": "disabled",
+                                                "type": "string"
+                                            }
+                                        ]
+                                    },
+                                    "api_key": {
+                                        "maxLength": 16384,
+                                        "type": "string"
+                                    },
+                                    "auth_file": {
+                                        "minLength": 1,
+                                        "maxLength": 4096,
+                                        "pattern": "^[^\\u0000]+$",
+                                        "type": "string"
+                                    },
+                                    "base_url": {
+                                        "maxLength": 16384,
+                                        "type": "string"
+                                    },
+                                    "transport": {
+                                        "anyOf": [
+                                            {
+                                                "const": "auto",
+                                                "type": "string"
+                                            },
+                                            {
+                                                "const": "sse",
+                                                "type": "string"
+                                            },
+                                            {
+                                                "const": "websocket",
+                                                "type": "string"
+                                            },
+                                            {
+                                                "const": "websocket-cached",
+                                                "type": "string"
+                                            }
+                                        ]
+                                    },
+                                    "type": {
+                                        "const": "codex",
+                                        "type": "string"
+                                    }
+                                }
+                            },
+                            {
+                                "additionalProperties": false,
+                                "type": "object",
+                                "properties": {
+                                    "auto_enable": {
+                                        "type": "boolean"
+                                    },
+                                    "credential_isolation": {
+                                        "const": true,
+                                        "type": "boolean"
+                                    },
+                                    "enabled": {
+                                        "type": "boolean"
+                                    },
+                                    "hidden": {
+                                        "type": "boolean"
+                                    },
+                                    "exclude_models": {
+                                        "maxItems": 256,
+                                        "type": "array",
+                                        "items": {
+                                            "maxLength": 16384,
+                                            "type": "string"
+                                        }
+                                    },
+                                    "exclude_subagent_models": {
+                                        "maxItems": 256,
+                                        "type": "array",
+                                        "items": {
+                                            "maxLength": 16384,
+                                            "type": "string"
+                                        }
+                                    },
+                                    "include_models": {
+                                        "maxItems": 256,
+                                        "type": "array",
+                                        "items": {
+                                            "maxLength": 16384,
+                                            "type": "string"
+                                        }
+                                    },
+                                    "include_subagent_models": {
+                                        "maxItems": 256,
+                                        "type": "array",
+                                        "items": {
+                                            "maxLength": 16384,
+                                            "type": "string"
+                                        }
+                                    },
+                                    "p2p_share": {
+                                        "anyOf": [
+                                            {
+                                                "const": "owner_only",
+                                                "type": "string"
+                                            },
+                                            {
+                                                "const": "shared",
+                                                "type": "string"
+                                            },
+                                            {
+                                                "const": "disabled",
+                                                "type": "string"
+                                            }
+                                        ]
+                                    },
+                                    "api_key": {
+                                        "maxLength": 16384,
+                                        "type": "string"
+                                    },
+                                    "auth_file": {
+                                        "minLength": 1,
+                                        "maxLength": 4096,
+                                        "pattern": "^[^\\u0000]+$",
+                                        "type": "string"
+                                    },
+                                    "base_url": {
+                                        "maxLength": 16384,
+                                        "type": "string"
+                                    },
+                                    "type": {
+                                        "const": "grok",
+                                        "type": "string"
+                                    }
+                                }
+                            },
+                            {
+                                "additionalProperties": false,
+                                "type": "object",
+                                "required": ["type"],
+                                "properties": {
+                                    "auto_enable": {
+                                        "type": "boolean"
+                                    },
+                                    "enabled": {
+                                        "type": "boolean"
+                                    },
+                                    "hidden": {
+                                        "type": "boolean"
+                                    },
+                                    "exclude_models": {
+                                        "maxItems": 256,
+                                        "type": "array",
+                                        "items": {
+                                            "maxLength": 16384,
+                                            "type": "string"
+                                        }
+                                    },
+                                    "exclude_subagent_models": {
+                                        "maxItems": 256,
+                                        "type": "array",
+                                        "items": {
+                                            "maxLength": 16384,
+                                            "type": "string"
+                                        }
+                                    },
+                                    "include_models": {
+                                        "maxItems": 256,
+                                        "type": "array",
+                                        "items": {
+                                            "maxLength": 16384,
+                                            "type": "string"
+                                        }
+                                    },
+                                    "include_subagent_models": {
+                                        "maxItems": 256,
+                                        "type": "array",
+                                        "items": {
+                                            "maxLength": 16384,
+                                            "type": "string"
+                                        }
+                                    },
+                                    "p2p_share": {
+                                        "anyOf": [
+                                            {
+                                                "const": "owner_only",
+                                                "type": "string"
+                                            },
+                                            {
+                                                "const": "shared",
+                                                "type": "string"
+                                            },
+                                            {
+                                                "const": "disabled",
+                                                "type": "string"
+                                            }
+                                        ]
+                                    },
+                                    "providers": {
+                                        "minItems": 1,
+                                        "maxItems": 256,
+                                        "uniqueItems": true,
+                                        "type": "array",
+                                        "items": {
+                                            "maxLength": 16384,
+                                            "type": "string"
+                                        }
+                                    },
+                                    "strategy": {
+                                        "const": "round_robin",
+                                        "type": "string"
+                                    },
+                                    "type": {
+                                        "const": "smart",
+                                        "type": "string"
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                }
+            },
+            "settings": {
+                "additionalProperties": false,
+                "type": "object",
+                "properties": {
+                    "compact_completed_turns": {
+                        "type": "boolean"
+                    },
+                    "completion_chime": {
+                        "type": "boolean"
+                    },
+                    "daemon_heap_snapshots": {
+                        "type": "boolean"
+                    },
+                    "durable_global_event_queue": {
+                        "type": "boolean"
+                    },
+                    "ethan": {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "properties": {
+                            "enabled": {
+                                "type": "boolean"
+                            }
+                        }
+                    },
+                    "happy_integration": {
+                        "type": "boolean"
+                    },
+                    "inference_max_retries": {
+                        "minimum": 0,
+                        "maximum": 100,
+                        "type": "integer"
+                    },
+                    "max_collaboration_depth": {
+                        "minimum": 1,
+                        "maximum": 64,
+                        "type": "integer"
+                    },
+                    "max_collaborators": {
+                        "minimum": 1,
+                        "maximum": 1000,
+                        "type": "integer"
+                    },
+                    "menu_bar": {
+                        "type": "boolean"
+                    },
+                    "show_reasoning": {
+                        "type": "boolean"
+                    },
+                    "show_usage": {
+                        "type": "boolean"
+                    },
+                    "tool_result_retention_days": {
+                        "minimum": 0,
+                        "maximum": 36500,
+                        "type": "integer"
+                    }
+                }
+            },
+            "skills": {
+                "additionalProperties": false,
+                "type": "object",
+                "properties": {
+                    "directories": {
+                        "maxItems": 256,
+                        "uniqueItems": true,
+                        "type": "array",
+                        "items": {
+                            "minLength": 1,
+                            "maxLength": 4096,
+                            "pattern": "^[^\\u0000\\r\\n]+$",
+                            "type": "string"
+                        }
+                    }
+                }
+            },
+            "theme": {
+                "additionalProperties": false,
+                "type": "object",
+                "properties": {
+                    "accent": {
+                        "maxLength": 16384,
+                        "type": "string"
+                    },
+                    "brand": {
+                        "maxLength": 16384,
+                        "type": "string"
+                    },
+                    "error": {
+                        "maxLength": 16384,
+                        "type": "string"
+                    },
+                    "primary": {
+                        "maxLength": 16384,
+                        "type": "string"
+                    },
+                    "secondary": {
+                        "maxLength": 16384,
+                        "type": "string"
+                    },
+                    "success": {
+                        "maxLength": 16384,
+                        "type": "string"
+                    },
+                    "warning": {
+                        "maxLength": 16384,
+                        "type": "string"
+                    }
+                }
+            },
+            "workspace": {
+                "additionalProperties": false,
+                "type": "object",
+                "properties": {
+                    "keep_copies_on_archive": {
+                        "type": "boolean"
+                    },
+                    "keep_worktrees_on_archive": {
+                        "type": "boolean"
+                    },
+                    "protected_sync": {
+                        "maxItems": 128,
+                        "uniqueItems": true,
+                        "type": "array",
+                        "items": {
+                            "minLength": 1,
+                            "maxLength": 512,
+                            "pattern": "^(?!/)(?!~(?:/|$))(?!.*(?:^|/)\\.\\.(?:/|$))[^\\\\\\r\\n]+$",
+                            "type": "string"
+                        }
+                    },
+                    "setup_commands": {
+                        "maxItems": 256,
+                        "type": "array",
+                        "items": {
+                            "maxLength": 16384,
+                            "type": "string"
+                        }
+                    },
+                    "sync": {
+                        "maxItems": 128,
+                        "uniqueItems": true,
+                        "type": "array",
+                        "items": {
+                            "minLength": 1,
+                            "maxLength": 512,
+                            "pattern": "^(?!/)(?!~(?:/|$))(?!.*(?:^|/)\\.\\.(?:/|$))[^\\\\\\r\\n]+$",
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "providers": {
+        "bedrock": {
+            "additionalProperties": false,
+            "type": "object",
+            "properties": {
+                "auto_enable": {
+                    "type": "boolean"
+                },
+                "credential_isolation": {
+                    "const": true,
+                    "type": "boolean"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "hidden": {
+                    "type": "boolean"
+                },
+                "exclude_models": {
+                    "maxItems": 256,
+                    "type": "array",
+                    "items": {
+                        "maxLength": 16384,
+                        "type": "string"
+                    }
+                },
+                "exclude_subagent_models": {
+                    "maxItems": 256,
+                    "type": "array",
+                    "items": {
+                        "maxLength": 16384,
+                        "type": "string"
+                    }
+                },
+                "include_models": {
+                    "maxItems": 256,
+                    "type": "array",
+                    "items": {
+                        "maxLength": 16384,
+                        "type": "string"
+                    }
+                },
+                "include_subagent_models": {
+                    "maxItems": 256,
+                    "type": "array",
+                    "items": {
+                        "maxLength": 16384,
+                        "type": "string"
+                    }
+                },
+                "p2p_share": {
+                    "anyOf": [
+                        {
+                            "const": "owner_only",
+                            "type": "string"
+                        },
+                        {
+                            "const": "shared",
+                            "type": "string"
+                        },
+                        {
+                            "const": "disabled",
+                            "type": "string"
+                        }
+                    ]
+                },
+                "bearer_token": {
+                    "maxLength": 16384,
+                    "type": "string"
+                },
+                "bearer_token_env_var": {
+                    "maxLength": 16384,
+                    "type": "string"
+                },
+                "config_file": {
+                    "minLength": 1,
+                    "maxLength": 4096,
+                    "pattern": "^[^\\u0000]+$",
+                    "type": "string"
+                },
+                "credentials_file": {
+                    "minLength": 1,
+                    "maxLength": 4096,
+                    "pattern": "^[^\\u0000]+$",
+                    "type": "string"
+                },
+                "model_overrides": {
+                    "maxProperties": 512,
+                    "type": "object",
+                    "patternProperties": {
+                        "^(.*)$": {
+                            "additionalProperties": true,
+                            "type": "object",
+                            "properties": {
+                                "endpoint": {
+                                    "maxLength": 16384,
+                                    "type": "string"
+                                },
+                                "region": {
+                                    "maxLength": 16384,
+                                    "type": "string"
+                                },
+                                "transport": {
+                                    "anyOf": [
+                                        {
+                                            "const": "mantle",
+                                            "type": "string"
+                                        },
+                                        {
+                                            "const": "runtime",
+                                            "type": "string"
+                                        }
+                                    ]
+                                }
+                            }
+                        }
+                    }
+                },
+                "profile": {
+                    "maxLength": 16384,
+                    "type": "string"
+                },
+                "region": {
+                    "maxLength": 16384,
+                    "type": "string"
+                },
+                "search_model": {
+                    "maxLength": 16384,
+                    "type": "string"
+                },
+                "type": {
+                    "const": "bedrock",
+                    "type": "string"
+                }
+            }
+        },
+        "claude": {
+            "additionalProperties": false,
+            "type": "object",
+            "properties": {
+                "auto_enable": {
+                    "type": "boolean"
+                },
+                "credential_isolation": {
+                    "const": true,
+                    "type": "boolean"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "hidden": {
+                    "type": "boolean"
+                },
+                "exclude_models": {
+                    "maxItems": 256,
+                    "type": "array",
+                    "items": {
+                        "maxLength": 16384,
+                        "type": "string"
+                    }
+                },
+                "exclude_subagent_models": {
+                    "maxItems": 256,
+                    "type": "array",
+                    "items": {
+                        "maxLength": 16384,
+                        "type": "string"
+                    }
+                },
+                "include_models": {
+                    "maxItems": 256,
+                    "type": "array",
+                    "items": {
+                        "maxLength": 16384,
+                        "type": "string"
+                    }
+                },
+                "include_subagent_models": {
+                    "maxItems": 256,
+                    "type": "array",
+                    "items": {
+                        "maxLength": 16384,
+                        "type": "string"
+                    }
+                },
+                "p2p_share": {
+                    "anyOf": [
+                        {
+                            "const": "owner_only",
+                            "type": "string"
+                        },
+                        {
+                            "const": "shared",
+                            "type": "string"
+                        },
+                        {
+                            "const": "disabled",
+                            "type": "string"
+                        }
+                    ]
+                },
+                "api_key": {
+                    "maxLength": 16384,
+                    "type": "string"
+                },
+                "auth_token": {
+                    "maxLength": 16384,
+                    "type": "string"
+                },
+                "config_dir": {
+                    "minLength": 1,
+                    "maxLength": 4096,
+                    "pattern": "^[^\\u0000]+$",
+                    "type": "string"
+                },
+                "executable": {
+                    "minLength": 1,
+                    "maxLength": 4096,
+                    "pattern": "^[^\\u0000]+$",
+                    "type": "string"
+                },
+                "oauth_token": {
+                    "maxLength": 16384,
+                    "type": "string"
+                },
+                "type": {
+                    "const": "claude",
+                    "type": "string"
+                }
+            }
+        },
+        "codex": {
+            "additionalProperties": false,
+            "type": "object",
+            "properties": {
+                "auto_enable": {
+                    "type": "boolean"
+                },
+                "credential_isolation": {
+                    "const": true,
+                    "type": "boolean"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "hidden": {
+                    "type": "boolean"
+                },
+                "exclude_models": {
+                    "maxItems": 256,
+                    "type": "array",
+                    "items": {
+                        "maxLength": 16384,
+                        "type": "string"
+                    }
+                },
+                "exclude_subagent_models": {
+                    "maxItems": 256,
+                    "type": "array",
+                    "items": {
+                        "maxLength": 16384,
+                        "type": "string"
+                    }
+                },
+                "include_models": {
+                    "maxItems": 256,
+                    "type": "array",
+                    "items": {
+                        "maxLength": 16384,
+                        "type": "string"
+                    }
+                },
+                "include_subagent_models": {
+                    "maxItems": 256,
+                    "type": "array",
+                    "items": {
+                        "maxLength": 16384,
+                        "type": "string"
+                    }
+                },
+                "p2p_share": {
+                    "anyOf": [
+                        {
+                            "const": "owner_only",
+                            "type": "string"
+                        },
+                        {
+                            "const": "shared",
+                            "type": "string"
+                        },
+                        {
+                            "const": "disabled",
+                            "type": "string"
+                        }
+                    ]
+                },
+                "api_key": {
+                    "maxLength": 16384,
+                    "type": "string"
+                },
+                "auth_file": {
+                    "minLength": 1,
+                    "maxLength": 4096,
+                    "pattern": "^[^\\u0000]+$",
+                    "type": "string"
+                },
+                "base_url": {
+                    "maxLength": 16384,
+                    "type": "string"
+                },
+                "transport": {
+                    "anyOf": [
+                        {
+                            "const": "auto",
+                            "type": "string"
+                        },
+                        {
+                            "const": "sse",
+                            "type": "string"
+                        },
+                        {
+                            "const": "websocket",
+                            "type": "string"
+                        },
+                        {
+                            "const": "websocket-cached",
+                            "type": "string"
+                        }
+                    ]
+                },
+                "type": {
+                    "const": "codex",
+                    "type": "string"
+                }
+            }
+        },
+        "grok": {
+            "additionalProperties": false,
+            "type": "object",
+            "properties": {
+                "auto_enable": {
+                    "type": "boolean"
+                },
+                "credential_isolation": {
+                    "const": true,
+                    "type": "boolean"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "hidden": {
+                    "type": "boolean"
+                },
+                "exclude_models": {
+                    "maxItems": 256,
+                    "type": "array",
+                    "items": {
+                        "maxLength": 16384,
+                        "type": "string"
+                    }
+                },
+                "exclude_subagent_models": {
+                    "maxItems": 256,
+                    "type": "array",
+                    "items": {
+                        "maxLength": 16384,
+                        "type": "string"
+                    }
+                },
+                "include_models": {
+                    "maxItems": 256,
+                    "type": "array",
+                    "items": {
+                        "maxLength": 16384,
+                        "type": "string"
+                    }
+                },
+                "include_subagent_models": {
+                    "maxItems": 256,
+                    "type": "array",
+                    "items": {
+                        "maxLength": 16384,
+                        "type": "string"
+                    }
+                },
+                "p2p_share": {
+                    "anyOf": [
+                        {
+                            "const": "owner_only",
+                            "type": "string"
+                        },
+                        {
+                            "const": "shared",
+                            "type": "string"
+                        },
+                        {
+                            "const": "disabled",
+                            "type": "string"
+                        }
+                    ]
+                },
+                "api_key": {
+                    "maxLength": 16384,
+                    "type": "string"
+                },
+                "auth_file": {
+                    "minLength": 1,
+                    "maxLength": 4096,
+                    "pattern": "^[^\\u0000]+$",
+                    "type": "string"
+                },
+                "base_url": {
+                    "maxLength": 16384,
+                    "type": "string"
+                },
+                "type": {
+                    "const": "grok",
+                    "type": "string"
+                }
+            }
+        },
+        "smart": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": ["type"],
+            "properties": {
+                "auto_enable": {
+                    "type": "boolean"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "hidden": {
+                    "type": "boolean"
+                },
+                "exclude_models": {
+                    "maxItems": 256,
+                    "type": "array",
+                    "items": {
+                        "maxLength": 16384,
+                        "type": "string"
+                    }
+                },
+                "exclude_subagent_models": {
+                    "maxItems": 256,
+                    "type": "array",
+                    "items": {
+                        "maxLength": 16384,
+                        "type": "string"
+                    }
+                },
+                "include_models": {
+                    "maxItems": 256,
+                    "type": "array",
+                    "items": {
+                        "maxLength": 16384,
+                        "type": "string"
+                    }
+                },
+                "include_subagent_models": {
+                    "maxItems": 256,
+                    "type": "array",
+                    "items": {
+                        "maxLength": 16384,
+                        "type": "string"
+                    }
+                },
+                "p2p_share": {
+                    "anyOf": [
+                        {
+                            "const": "owner_only",
+                            "type": "string"
+                        },
+                        {
+                            "const": "shared",
+                            "type": "string"
+                        },
+                        {
+                            "const": "disabled",
+                            "type": "string"
+                        }
+                    ]
+                },
+                "providers": {
+                    "minItems": 1,
+                    "maxItems": 256,
+                    "uniqueItems": true,
+                    "type": "array",
+                    "items": {
+                        "maxLength": 16384,
+                        "type": "string"
+                    }
+                },
+                "strategy": {
+                    "const": "round_robin",
+                    "type": "string"
+                },
+                "type": {
+                    "const": "smart",
+                    "type": "string"
+                }
+            }
+        }
+    }
+}

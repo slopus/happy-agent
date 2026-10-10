@@ -1,0 +1,1055 @@
+{
+    "codex": [
+        {
+            "name": "exec_command",
+            "description": "Runs a command, returning output or a session ID for ongoing interaction.",
+            "parameters": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": ["cmd"],
+                "properties": {
+                    "cmd": {
+                        "description": "Shell command to execute.",
+                        "type": "string"
+                    },
+                    "workdir": {
+                        "description": "Working directory for the command. Defaults to the turn cwd.",
+                        "type": "string"
+                    },
+                    "yield_time_ms": {
+                        "description": "Wait before yielding output. Defaults to 10000 ms; effective range is 250-30000 ms. Reaching it leaves the command running and hands back a session ID rather than killing it.",
+                        "type": "number"
+                    },
+                    "max_output_tokens": {
+                        "description": "Output token budget. Defaults to 10000 tokens; larger requests may be capped by policy.",
+                        "type": "number"
+                    },
+                    "shell": {
+                        "description": "Shell binary to launch. Defaults to the machine's default shell.",
+                        "type": "string"
+                    },
+                    "tty": {
+                        "description": "Run the command under a PTY, for programs that behave differently without a terminal. Defaults to false, which uses pipes.",
+                        "type": "boolean"
+                    },
+                    "sandbox_permissions": {
+                        "description": "Request reviewed execution outside the workspace sandbox in Auto mode. Defaults to use_default.",
+                        "anyOf": [
+                            {
+                                "const": "use_default",
+                                "type": "string"
+                            },
+                            {
+                                "const": "require_escalated",
+                                "type": "string"
+                            }
+                        ]
+                    },
+                    "justification": {
+                        "description": "Concise user-facing reason why sandbox escalation is needed. Use only with require_escalated.",
+                        "type": "string"
+                    },
+                    "secrets": {
+                        "description": "IDs of attached secret bundles to expose to this command as environment variables. Choose only what this command needs; use an empty array for none. Selection is reviewed in Auto mode but does not leave the sandbox.",
+                        "maxItems": 256,
+                        "uniqueItems": true,
+                        "type": "array",
+                        "items": {
+                            "minLength": 1,
+                            "maxLength": 128,
+                            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                            "type": "string"
+                        }
+                    }
+                }
+            },
+            "defer": false
+        },
+        {
+            "name": "write_stdin",
+            "description": "Writes to an existing shell session and returns recent output. Use it for REPLs started by exec_command; end each cell with a newline. Leave chars empty to poll a session without typing anything into it.",
+            "parameters": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": ["session_id"],
+                "properties": {
+                    "session_id": {
+                        "description": "Identifier of the running shell session.",
+                        "type": "number"
+                    },
+                    "chars": {
+                        "description": "Bytes to write to stdin. Defaults to empty, which polls without writing.",
+                        "type": "string"
+                    },
+                    "yield_time_ms": {
+                        "description": "Wait before yielding output. Non-empty writes default to 250 ms and cap at 30000 ms; empty polls default to 5000 ms and cap at 300000 ms.",
+                        "type": "number"
+                    },
+                    "max_output_tokens": {
+                        "description": "Output token budget. Defaults to 10000 tokens; larger requests may be capped by policy.",
+                        "type": "number"
+                    }
+                }
+            },
+            "defer": false
+        }
+    ],
+    "claude": [
+        {
+            "name": "Bash",
+            "description": "Executes a command using the Unix shell listed in the environment and returns its output.\n\n- Every Bash call starts in the primary working directory. A directory change affects only that call.\n- Environment variables and shell functions do not carry over between commands.\n- Prefer the dedicated file and search tools over shell equivalents when one fits.\n- `timeout` is in milliseconds: default 120000, max 600000. It is how long you wait, not how long the command may live: a command still running when the wait ends keeps running in the background and comes back with a shell ID.\n- `run_in_background` starts the command in the background right away, waiting about 3 seconds to see that it did not fall over. Use it for dev servers and watchers. No `&` needed.\n- Read a background shell with `BashOutput`, type into it with `BashInput`, and stop it with `BashStop`.\n\n# Git\n- Interactive flags such as `git rebase -i` and `git add -i` are not supported.\n- Use the `gh` CLI for GitHub operations.\n- Commit or push only when the user asks.\n\nHappy Agent extensions: `dangerouslyDisableSandbox` requests one reviewed Full-access execution in Auto mode; it never bypasses Read only or Workspace write mode. `secrets` selects attached secret bundles to expose to this command as environment variables. Secret selection is reviewed separately and stays sandboxed unless `dangerouslyDisableSandbox` is also true.\n\nOutput is truncated to the last 40000 characters.",
+            "parameters": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": ["command"],
+                "properties": {
+                    "command": {
+                        "description": "The command to execute",
+                        "type": "string"
+                    },
+                    "timeout": {
+                        "description": "Optional timeout in milliseconds (max 600000)",
+                        "maximum": 600000,
+                        "minimum": 0,
+                        "type": "number"
+                    },
+                    "description": {
+                        "description": "Clear, concise description of what this command does in active voice. Never use words like \"complex\" or \"risk\" in the description.",
+                        "type": "string"
+                    },
+                    "run_in_background": {
+                        "description": "Set to true to run this command in the background.",
+                        "type": "boolean"
+                    },
+                    "tty": {
+                        "description": "Run the command under a terminal, for programs that behave differently without one. Defaults to false.",
+                        "type": "boolean"
+                    },
+                    "dangerouslyDisableSandbox": {
+                        "description": "Request reviewed execution outside the workspace sandbox in Auto mode. Use only when the sandbox blocks a necessary command.",
+                        "type": "boolean"
+                    },
+                    "secrets": {
+                        "description": "IDs of attached secret bundles to expose to this command as environment variables. Choose only what this command needs; use an empty array for none.",
+                        "maxItems": 256,
+                        "uniqueItems": true,
+                        "type": "array",
+                        "items": {
+                            "minLength": 1,
+                            "maxLength": 128,
+                            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                            "type": "string"
+                        }
+                    }
+                }
+            },
+            "defer": false
+        },
+        {
+            "name": "Read",
+            "description": "Reads a file from the local filesystem. Paths outside the active workspace may require permission or be blocked by the selected permission mode.\nIf the user provides a path to a file, assume the path is valid. It is okay to read a file that does not exist; an error will be returned.\n\nUsage:\n- The file_path parameter must be an absolute path, not a relative path\n- By default, it reads up to 2000 lines starting from the beginning of the file\n- You can optionally specify a line offset and limit (especially handy for long files), but it's recommended to read the whole file by not providing these parameters\n- Results are returned using cat -n format, with line numbers starting at 1\n- This tool reads common image formats (for example PNG and JPG) and presents them visually.\n- Jupyter notebooks (.ipynb files) are not supported. Ask the user to export the notebook to a plain-text format before reading it.\n- This tool can only read files, not directories. To read a directory, use an ls command via the Bash tool.\n- You will regularly be asked to read screenshots. If the user provides a path to a screenshot, ALWAYS use this tool to view the file at the path. This tool will work with all temporary file paths.\n- Empty files are returned as `(empty file)`.",
+            "parameters": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": ["file_path"],
+                "properties": {
+                    "file_path": {
+                        "description": "The absolute path to the file to read",
+                        "type": "string"
+                    },
+                    "offset": {
+                        "description": "The line number to start reading from. Only provide if the file is too large to read at once",
+                        "minimum": 0,
+                        "type": "integer"
+                    },
+                    "limit": {
+                        "description": "The number of lines to read. Only provide if the file is too large to read at once.",
+                        "exclusiveMinimum": 0,
+                        "type": "integer"
+                    }
+                }
+            },
+            "defer": false
+        },
+        {
+            "name": "Glob",
+            "description": "- Fast file pattern matching tool that works with any codebase size\n- Supports glob patterns like \"**/*.js\" or \"src/**/*.ts\"\n- Returns matching file paths sorted by modification time\n- Use this tool when you need to find files by name patterns\n- When you are doing an open ended search that may require multiple rounds of globbing and grepping, use the Agent tool instead",
+            "parameters": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": ["pattern"],
+                "properties": {
+                    "pattern": {
+                        "description": "The glob pattern to match files against",
+                        "type": "string"
+                    },
+                    "path": {
+                        "description": "The directory to search in. If not specified, the current working directory will be used. IMPORTANT: Omit this field to use the default directory. DO NOT enter \"undefined\" or \"null\" - simply omit it for the default behavior. Must be a valid directory path if provided.",
+                        "type": "string"
+                    }
+                }
+            },
+            "defer": false
+        },
+        {
+            "name": "Grep",
+            "description": "A powerful search tool for file contents\n\n  Usage:\n  - ALWAYS use Grep for search tasks. NEVER invoke `grep` or `rg` as a Bash command. The Grep tool has been optimized for correct permissions and access.\n  - Supports full regex syntax (e.g., \"log.*Error\", \"function\\s+\\w+\")\n  - Filter files with glob parameter (e.g., \"*.js\", \"*.{ts,tsx}\") or type parameter (e.g., \"js\", \"py\", \"rust\")\n  - Output modes: \"content\" shows matching lines, \"files_with_matches\" shows only file paths (default), \"count\" shows match counts\n  - Multiline matching: By default patterns match within single lines only. For cross-line patterns like `struct \\{[\\s\\S]*?field`, use `multiline: true`\n  - Output is capped at 100 entries by default or 40000 characters, and lines are capped at 400 characters\n",
+            "parameters": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": ["pattern"],
+                "properties": {
+                    "pattern": {
+                        "description": "The regular expression pattern to search for in file contents",
+                        "type": "string"
+                    },
+                    "path": {
+                        "description": "File or directory to search in. Defaults to current working directory.",
+                        "type": "string"
+                    },
+                    "glob": {
+                        "description": "Glob pattern to filter files (e.g. \"*.js\", \"*.{ts,tsx}\")",
+                        "type": "string"
+                    },
+                    "output_mode": {
+                        "description": "Output mode: \"content\" shows matching lines (supports -A/-B/-C context, -n line numbers, head_limit), \"files_with_matches\" shows file paths (supports head_limit), \"count\" shows match counts (supports head_limit). Defaults to \"files_with_matches\".",
+                        "anyOf": [
+                            {
+                                "const": "content",
+                                "type": "string"
+                            },
+                            {
+                                "const": "files_with_matches",
+                                "type": "string"
+                            },
+                            {
+                                "const": "count",
+                                "type": "string"
+                            }
+                        ]
+                    },
+                    "-B": {
+                        "description": "Number of lines to show before each match. Requires output_mode: \"content\", ignored otherwise.",
+                        "type": "number"
+                    },
+                    "-A": {
+                        "description": "Number of lines to show after each match. Requires output_mode: \"content\", ignored otherwise.",
+                        "type": "number"
+                    },
+                    "-C": {
+                        "description": "Alias for context.",
+                        "type": "number"
+                    },
+                    "context": {
+                        "description": "Number of lines to show before and after each match. Requires output_mode: \"content\", ignored otherwise.",
+                        "type": "number"
+                    },
+                    "-n": {
+                        "description": "Show line numbers in output. Requires output_mode: \"content\", ignored otherwise. Defaults to true.",
+                        "type": "boolean"
+                    },
+                    "-i": {
+                        "description": "Case insensitive search",
+                        "type": "boolean"
+                    },
+                    "type": {
+                        "description": "File type to search. Common types: js, py, rust, go, java, etc. More efficient than glob for standard file types.",
+                        "type": "string"
+                    },
+                    "head_limit": {
+                        "description": "Limit output to first N lines/entries, equivalent to \"| head -N\". Works across all output modes: content (limits output lines), files_with_matches (limits file paths), count (limits count entries). Defaults to 100 when unspecified. Pass 0 to remove the entry limit; the character and line-length limits still apply.",
+                        "type": "number"
+                    },
+                    "offset": {
+                        "description": "Skip first N lines/entries before applying head_limit, equivalent to \"| tail -n +N | head -N\". Works across all output modes. Defaults to 0.",
+                        "type": "number"
+                    },
+                    "multiline": {
+                        "description": "Enable multiline mode where . matches newlines and patterns can span lines. Default: false.",
+                        "type": "boolean"
+                    }
+                }
+            },
+            "defer": false
+        },
+        {
+            "name": "BashInput",
+            "description": "Type into a background shell command and read what it prints back.\n\nUse it to answer a prompt, drive a REPL, or interrupt with Ctrl-C (\"\\u0003\"). End a line with a newline, the way you would when typing. Only the output that arrived since your last read comes back.",
+            "parameters": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": ["bash_id", "input"],
+                "properties": {
+                    "bash_id": {
+                        "description": "The background shell identifier.",
+                        "type": "string"
+                    },
+                    "input": {
+                        "description": "Characters to send. Use \"\\u0003\" for Ctrl-C, which interrupts without ending the command.",
+                        "type": "string"
+                    },
+                    "timeout": {
+                        "default": 250,
+                        "description": "How long to wait for output afterwards, in milliseconds.",
+                        "maximum": 30000,
+                        "minimum": 0,
+                        "type": "number"
+                    }
+                }
+            },
+            "defer": false
+        }
+    ],
+    "grok": [
+        {
+            "name": "run_terminal_command",
+            "description": "Run a bash command in the current working directory and return its output.\n\nUsage notes:\n- You can specify an optional timeout in milliseconds, up to 300000. If not specified, foreground commands wait 120000ms. The timeout is how long you wait, not how long the command may live: a command still running when the wait ends keeps running and comes back with a task_id.\n- Use background for long-running commands such as development servers and long builds. It waits about 3 seconds to see that the command did not fall over; do not add '&' to the command.\n- Read a background command with get_command_or_subagent_output, type into it with send_command_input, and stop it with kill_command_or_subagent.\n- Environment variables and shell functions do not carry over between commands.\n- Use secrets to select only the attached secret bundles this command needs as environment variables. Selection is reviewed separately and stays sandboxed unless sandbox_permissions also requests escalation.\n- Output may be truncated before it is returned.",
+            "parameters": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": ["command", "description"],
+                "properties": {
+                    "command": {
+                        "description": "The bash command to run.",
+                        "type": "string"
+                    },
+                    "description": {
+                        "description": "One sentence explaining why this command needs to run and how it contributes to the goal.",
+                        "type": "string"
+                    },
+                    "background": {
+                        "description": "Set true for a long-running command. Returns a task_id while the command continues in the background. Defaults to false.",
+                        "type": "boolean"
+                    },
+                    "timeout": {
+                        "description": "Optional timeout in milliseconds (max 300000). Defaults to 120000. A timeout of 0 means the default.",
+                        "maximum": 300000,
+                        "minimum": 0,
+                        "type": "integer"
+                    },
+                    "tty": {
+                        "description": "Run the command under a terminal, for programs that behave differently without one. Defaults to false.",
+                        "type": "boolean"
+                    },
+                    "sandbox_permissions": {
+                        "description": "Request reviewed execution outside the workspace sandbox in Auto mode. Defaults to use_default.",
+                        "anyOf": [
+                            {
+                                "const": "use_default",
+                                "type": "string"
+                            },
+                            {
+                                "const": "require_escalated",
+                                "type": "string"
+                            }
+                        ]
+                    },
+                    "secrets": {
+                        "description": "IDs of attached secret bundles to expose to this command as environment variables. Choose only what this command needs; use an empty array for none.",
+                        "maxItems": 256,
+                        "uniqueItems": true,
+                        "type": "array",
+                        "items": {
+                            "minLength": 1,
+                            "maxLength": 128,
+                            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                            "type": "string"
+                        }
+                    }
+                }
+            },
+            "defer": false
+        },
+        {
+            "name": "read_file",
+            "description": "Read a file.\n\nUsage:\n- target_file can be a relative path in the workspace or an absolute path.\n- By default, it reads up to 1000 lines starting from the beginning of the file.\n- Results are returned with line numbers starting at 1 in the format LINE_NUMBER→LINE_CONTENT.\n- Reading records the file's current state so a later write can detect if somebody else changed it first.",
+            "parameters": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": ["target_file"],
+                "properties": {
+                    "target_file": {
+                        "description": "The path of the file to read. You can use a relative path in the workspace or an absolute path.",
+                        "type": "string"
+                    },
+                    "offset": {
+                        "description": "The line number to start reading from. Only provide it if the file is too large to read at once.",
+                        "minimum": 1,
+                        "type": "integer"
+                    },
+                    "limit": {
+                        "description": "The number of lines to read. Only provide it if the file is too large to read at once.",
+                        "minimum": 1,
+                        "type": "integer"
+                    }
+                }
+            },
+            "defer": false
+        },
+        {
+            "name": "list_dir",
+            "description": "Lists files and directories in a given path. The target_directory parameter can be relative to the workspace root or absolute.\n\nOther details:\n- The result does not display dot-files and dot-directories.\n- A directory's own name ends in a slash, so you can tell at a glance what you can descend into.\n- Large directories are truncated; use list_dir on a narrower path or grep to explore further.",
+            "parameters": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": ["target_directory"],
+                "properties": {
+                    "target_directory": {
+                        "description": "Path to the directory to list, relative to the workspace root or absolute.",
+                        "type": "string"
+                    }
+                }
+            },
+            "defer": false
+        },
+        {
+            "name": "grep",
+            "description": "Search file contents with regular expressions (ripgrep).\n\n- Use full regular-expression syntax and pass the pattern without surrounding quotes.\n- Respects .gitignore.\n- Only filter by type or glob when you are sure of the file type.\n- Output is ripgrep-style and large results are capped.",
+            "parameters": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": ["pattern"],
+                "properties": {
+                    "pattern": {
+                        "description": "The regular expression pattern to search for in file contents.",
+                        "type": "string"
+                    },
+                    "path": {
+                        "description": "File or directory to search. Defaults to the workspace path.",
+                        "type": "string"
+                    },
+                    "glob": {
+                        "description": "Glob pattern used to filter files, such as '*.ts'.",
+                        "type": "string"
+                    },
+                    "-B": {
+                        "description": "Number of lines to show before each match.",
+                        "minimum": 0,
+                        "type": "integer"
+                    },
+                    "-A": {
+                        "description": "Number of lines to show after each match.",
+                        "minimum": 0,
+                        "type": "integer"
+                    },
+                    "-C": {
+                        "description": "Number of lines to show before and after each match.",
+                        "minimum": 0,
+                        "type": "integer"
+                    },
+                    "-i": {
+                        "description": "Case-insensitive search. Defaults to false.",
+                        "type": "boolean"
+                    },
+                    "type": {
+                        "description": "File type to search, such as js, py, rust, or go.",
+                        "type": "string"
+                    },
+                    "head_limit": {
+                        "description": "Limit output to the first N lines. Defaults to 200.",
+                        "minimum": 1,
+                        "maximum": 10000,
+                        "type": "integer"
+                    },
+                    "multiline": {
+                        "description": "Enable multiline mode, where patterns can span lines. Defaults to false.",
+                        "type": "boolean"
+                    }
+                }
+            },
+            "defer": false
+        },
+        {
+            "name": "send_command_input",
+            "description": "Type into a running background command and read what it prints back.\n\nUse it to answer a prompt, drive a REPL, or interrupt with Ctrl-C (\"\\u0003\"). End a line with a newline, the way you would when typing. Only the output that arrived since your last read comes back.",
+            "parameters": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": ["task_id", "input"],
+                "properties": {
+                    "task_id": {
+                        "description": "Task ID of the running background command.",
+                        "type": "string"
+                    },
+                    "input": {
+                        "description": "Characters to send. Use \"\\u0003\" for Ctrl-C, which interrupts without ending the command.",
+                        "type": "string"
+                    },
+                    "timeout_ms": {
+                        "description": "How long to wait for output afterwards. Defaults to 250ms.",
+                        "maximum": 30000,
+                        "minimum": 0,
+                        "type": "integer"
+                    }
+                }
+            },
+            "defer": false
+        }
+    ],
+    "kimi": [
+        {
+            "name": "Bash",
+            "description": "Execute a command in the environment's shell. Each call starts in the primary working directory; cwd selects another directory for this call. Prefer Read, Write, Edit, Glob, and Grep for file work. timeout is the foreground wait in seconds, default 60, maximum 300. A command that outlives the wait keeps running in the background and returns a task_id. run_in_background starts it in the background immediately, watching about three seconds for startup. Read new output with TaskOutput, send characters with TaskInput, and stop the process tree with TaskStop. Completion notifications arrive automatically. secrets selects attached secret bundles for this command; selection is reviewed independently of sandbox escalation.",
+            "parameters": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": ["command"],
+                "properties": {
+                    "command": {
+                        "minLength": 1,
+                        "description": "The command to execute.",
+                        "type": "string"
+                    },
+                    "cwd": {
+                        "description": "Working directory for this command; defaults to the primary working directory.",
+                        "type": "string"
+                    },
+                    "timeout": {
+                        "minimum": 1,
+                        "maximum": 300,
+                        "default": 60,
+                        "description": "Foreground wait in seconds. A command that outlives this wait keeps running in the background.",
+                        "type": "integer"
+                    },
+                    "run_in_background": {
+                        "description": "Start as a background shell task, with a brief startup wait.",
+                        "type": "boolean"
+                    },
+                    "tty": {
+                        "description": "Happy extension: run under a terminal for interactive programs. Defaults to false.",
+                        "type": "boolean"
+                    },
+                    "description": {
+                        "description": "Short description of the command's purpose.",
+                        "type": "string"
+                    },
+                    "sandbox_permissions": {
+                        "description": "Request reviewed Full access for this exact call when the workspace sandbox blocks necessary work. Defaults to use_default.",
+                        "anyOf": [
+                            {
+                                "const": "use_default",
+                                "type": "string"
+                            },
+                            {
+                                "const": "require_escalated",
+                                "type": "string"
+                            }
+                        ]
+                    },
+                    "justification": {
+                        "description": "Concise reason why this call needs Full access.",
+                        "type": "string"
+                    },
+                    "secrets": {
+                        "maxItems": 256,
+                        "uniqueItems": true,
+                        "description": "Attached secret bundle IDs needed by this exact command. Omit or pass an empty array for none.",
+                        "type": "array",
+                        "items": {
+                            "minLength": 1,
+                            "maxLength": 128,
+                            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                            "type": "string"
+                        }
+                    }
+                }
+            },
+            "defer": false
+        },
+        {
+            "name": "Read",
+            "description": "Read a UTF-8 text file, with line numbers. Relative paths resolve against the working directory. Directories and binary files return errors. Source files are limited to 8 MiB. line_offset is 1-based; negative values begin at the last N lines, paging forward. n_lines selects the number of lines. max_chars defaults to 100000, with an effective range of 1024 to 500000 characters including status. Long lines may be fragmented: copy the Next Read arguments to resume without gaps. column_offset is a zero-based character offset in the first displayed line; it is only supported for forward reads. Pure CRLF files display LF; Edit preserves their CRLF endings. Other carriage returns display as \\r; use actual carriage returns in Edit arguments. For images, use ReadMediaFile. Session attachment URLs and UTF-16 decoding are not supported.",
+            "parameters": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": ["path"],
+                "properties": {
+                    "path": {
+                        "type": "string"
+                    },
+                    "line_offset": {
+                        "anyOf": [
+                            {
+                                "minimum": 1,
+                                "type": "integer"
+                            },
+                            {
+                                "maximum": -1,
+                                "type": "integer"
+                            }
+                        ]
+                    },
+                    "column_offset": {
+                        "minimum": 0,
+                        "type": "integer"
+                    },
+                    "n_lines": {
+                        "minimum": 1,
+                        "type": "integer"
+                    },
+                    "max_chars": {
+                        "minimum": 1,
+                        "type": "integer"
+                    },
+                    "sandbox_permissions": {
+                        "description": "Request reviewed Full access for this exact call when the workspace sandbox blocks necessary work. Defaults to use_default.",
+                        "anyOf": [
+                            {
+                                "const": "use_default",
+                                "type": "string"
+                            },
+                            {
+                                "const": "require_escalated",
+                                "type": "string"
+                            }
+                        ]
+                    },
+                    "justification": {
+                        "description": "Concise reason why this call needs Full access.",
+                        "type": "string"
+                    }
+                }
+            },
+            "defer": false
+        },
+        {
+            "name": "Glob",
+            "description": "Find files by glob pattern, newest modified first. A bare pattern like *.ts searches at any depth. Supports *, **, ?, and brace alternatives. path is the search directory, default working directory. Results are files only; .git directories and symbolic links are skipped. This bounded filesystem scan includes ignored files and does not implement ripgrep ignore rules. head_limit defaults to 100; 0 removes the page-count limit within the 10000-file retention bound. offset skips matched paths. Output is bounded to 60000 characters; follow next_offset when more collected matches remain. Scan limits may leave uncollected files; narrow the search when the scan is incomplete.",
+            "parameters": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": ["pattern"],
+                "properties": {
+                    "pattern": {
+                        "type": "string"
+                    },
+                    "path": {
+                        "type": "string"
+                    },
+                    "head_limit": {
+                        "minimum": 0,
+                        "maximum": 10000,
+                        "type": "integer"
+                    },
+                    "offset": {
+                        "minimum": 0,
+                        "maximum": 10000,
+                        "type": "integer"
+                    },
+                    "sandbox_permissions": {
+                        "description": "Request reviewed Full access for this exact call when the workspace sandbox blocks necessary work. Defaults to use_default.",
+                        "anyOf": [
+                            {
+                                "const": "use_default",
+                                "type": "string"
+                            },
+                            {
+                                "const": "require_escalated",
+                                "type": "string"
+                            }
+                        ]
+                    },
+                    "justification": {
+                        "description": "Concise reason why this call needs Full access.",
+                        "type": "string"
+                    }
+                }
+            },
+            "defer": false
+        },
+        {
+            "name": "Grep",
+            "description": "Search text file contents with JavaScript regular expressions in a bounded filesystem scan. Use Read for a known file's contents. path selects a file or directory. glob matches relative paths under the search root; bare patterns match at any depth. Supports a bounded subset of .gitignore rules; include_ignored, .ignore, and .rgignore are unavailable. output_mode defaults to files_with_matches; content shows lines, count_matches shows path:count entries. -C overrides -A and -B. head_limit defaults to 250; 0 removes the entry limit within a 10000-entry cap. offset is capped at 100000. Matching lines are capped at 400 characters, output at 40000 characters, and source files at 1 million bytes. Scan and regex work limits may leave incomplete results, reported as truncated. This tool does not use ripgrep.",
+            "parameters": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": ["pattern"],
+                "properties": {
+                    "pattern": {
+                        "type": "string"
+                    },
+                    "path": {
+                        "type": "string"
+                    },
+                    "glob": {
+                        "type": "string"
+                    },
+                    "type": {
+                        "type": "string"
+                    },
+                    "output_mode": {
+                        "anyOf": [
+                            {
+                                "const": "content",
+                                "type": "string"
+                            },
+                            {
+                                "const": "files_with_matches",
+                                "type": "string"
+                            },
+                            {
+                                "const": "count_matches",
+                                "type": "string"
+                            }
+                        ]
+                    },
+                    "-i": {
+                        "type": "boolean"
+                    },
+                    "-n": {
+                        "type": "boolean"
+                    },
+                    "-A": {
+                        "minimum": 0,
+                        "maximum": 10000,
+                        "type": "integer"
+                    },
+                    "-B": {
+                        "minimum": 0,
+                        "maximum": 10000,
+                        "type": "integer"
+                    },
+                    "-C": {
+                        "minimum": 0,
+                        "maximum": 10000,
+                        "type": "integer"
+                    },
+                    "head_limit": {
+                        "minimum": 0,
+                        "maximum": 10000,
+                        "type": "integer"
+                    },
+                    "offset": {
+                        "minimum": 0,
+                        "maximum": 100000,
+                        "type": "integer"
+                    },
+                    "multiline": {
+                        "type": "boolean"
+                    },
+                    "sandbox_permissions": {
+                        "description": "Request reviewed Full access for this exact call when the workspace sandbox blocks necessary work. Defaults to use_default.",
+                        "anyOf": [
+                            {
+                                "const": "use_default",
+                                "type": "string"
+                            },
+                            {
+                                "const": "require_escalated",
+                                "type": "string"
+                            }
+                        ]
+                    },
+                    "justification": {
+                        "description": "Concise reason why this call needs Full access.",
+                        "type": "string"
+                    }
+                }
+            },
+            "defer": false
+        },
+        {
+            "name": "ReadMediaFile",
+            "description": "Read a PNG, JPEG, WebP, or GIF image from the filesystem. This Bedrock model does not support video; session attachment URLs are unavailable. Source limit: 20 MiB and 40 million decoded pixels. Output limit: 3 MiB. By default images are resized to at most 2048 pixels per edge and delivered as PNG. region selects original-image pixels and preserves crop resolution. full_resolution skips resizing; oversized output returns an error asking for a smaller region. Animated images show their first frame. Original and delivered dimensions are reported; add region offsets when converting crop coordinates to original-image pixels. Re-read generated or edited images before continuing.",
+            "parameters": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": ["path"],
+                "properties": {
+                    "path": {
+                        "type": "string"
+                    },
+                    "region": {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["x", "y", "width", "height"],
+                        "properties": {
+                            "x": {
+                                "minimum": 0,
+                                "type": "integer"
+                            },
+                            "y": {
+                                "minimum": 0,
+                                "type": "integer"
+                            },
+                            "width": {
+                                "minimum": 1,
+                                "type": "integer"
+                            },
+                            "height": {
+                                "minimum": 1,
+                                "type": "integer"
+                            }
+                        }
+                    },
+                    "full_resolution": {
+                        "type": "boolean"
+                    },
+                    "sandbox_permissions": {
+                        "description": "Request reviewed Full access for this exact call when the workspace sandbox blocks necessary work. Defaults to use_default.",
+                        "anyOf": [
+                            {
+                                "const": "use_default",
+                                "type": "string"
+                            },
+                            {
+                                "const": "require_escalated",
+                                "type": "string"
+                            }
+                        ]
+                    },
+                    "justification": {
+                        "description": "Concise reason why this call needs Full access.",
+                        "type": "string"
+                    }
+                }
+            },
+            "defer": false
+        },
+        {
+            "name": "TaskOutput",
+            "description": "Read the current status and new output of a shell task started by Bash. Always non-blocking. Completion is reported automatically; use this for a progress check you will act on. Only output since the previous read is returned, bounded to 60000 characters. This tool manages shell tasks only; no full-log output_path is provided.",
+            "parameters": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": ["task_id"],
+                "properties": {
+                    "task_id": {
+                        "description": "The background shell task ID to inspect.",
+                        "type": "string"
+                    }
+                }
+            },
+            "defer": false
+        },
+        {
+            "name": "TaskInput",
+            "description": "Happy extension: send characters to a running shell task and collect new output. End a line with a newline; use \\u0003 for Ctrl-C. timeout is a wait in milliseconds, default 250, maximum 30000. Input is reviewed and stays inside the process's existing boundary, including its selected secret environment.",
+            "parameters": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": ["task_id", "input"],
+                "properties": {
+                    "task_id": {
+                        "type": "string"
+                    },
+                    "input": {
+                        "type": "string"
+                    },
+                    "timeout": {
+                        "minimum": 0,
+                        "maximum": 30000,
+                        "type": "integer"
+                    }
+                }
+            },
+            "defer": false
+        }
+    ],
+    "glm": [
+        {
+            "name": "Bash",
+            "description": "Executes a command using the Unix shell listed in the environment and returns its output.\n\n- Every Bash call starts in the primary working directory. A directory change affects only that call.\n- Environment variables and shell functions do not carry over between commands.\n- Prefer the dedicated file and search tools over shell equivalents when one fits.\n- `timeout` is in milliseconds: default 120000, max 600000. It is how long you wait, not how long the command may live: a command still running when the wait ends keeps running in the background and comes back with a shell ID.\n- `run_in_background` starts the command in the background right away, waiting about 3 seconds to see that it did not fall over. Use it for dev servers and watchers. No `&` needed.\n- Read a background shell with `BashOutput`, type into it with `BashInput`, and stop it with `BashStop`.\n\n# Git\n- Interactive flags such as `git rebase -i` and `git add -i` are not supported.\n- Use the `gh` CLI for GitHub operations.\n- Commit or push only when the user asks.\n\nHappy Agent extensions: `dangerouslyDisableSandbox` requests one reviewed Full-access execution in Auto mode; it never bypasses Read only or Workspace write mode. `secrets` selects attached secret bundles to expose to this command as environment variables. Secret selection is reviewed separately and stays sandboxed unless `dangerouslyDisableSandbox` is also true.\n\nOutput is truncated to the last 40000 characters.",
+            "parameters": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": ["command"],
+                "properties": {
+                    "command": {
+                        "description": "The command to execute",
+                        "type": "string"
+                    },
+                    "timeout": {
+                        "description": "Optional timeout in milliseconds (max 600000)",
+                        "maximum": 600000,
+                        "minimum": 0,
+                        "type": "number"
+                    },
+                    "description": {
+                        "description": "Clear, concise description of what this command does in active voice. Never use words like \"complex\" or \"risk\" in the description.",
+                        "type": "string"
+                    },
+                    "run_in_background": {
+                        "description": "Set to true to run this command in the background.",
+                        "type": "boolean"
+                    },
+                    "tty": {
+                        "description": "Run the command under a terminal, for programs that behave differently without one. Defaults to false.",
+                        "type": "boolean"
+                    },
+                    "dangerouslyDisableSandbox": {
+                        "description": "Request reviewed execution outside the workspace sandbox in Auto mode. Use only when the sandbox blocks a necessary command.",
+                        "type": "boolean"
+                    },
+                    "secrets": {
+                        "description": "IDs of attached secret bundles to expose to this command as environment variables. Choose only what this command needs; use an empty array for none.",
+                        "maxItems": 256,
+                        "uniqueItems": true,
+                        "type": "array",
+                        "items": {
+                            "minLength": 1,
+                            "maxLength": 128,
+                            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                            "type": "string"
+                        }
+                    }
+                }
+            },
+            "defer": false
+        },
+        {
+            "name": "Read",
+            "description": "Reads a file from the local filesystem. Paths outside the active workspace may require permission or be blocked by the selected permission mode.\nIf the user provides a path to a file, assume the path is valid. It is okay to read a file that does not exist; an error will be returned.\n\nUsage:\n- The file_path parameter must be an absolute path, not a relative path\n- By default, it reads up to 2000 lines starting from the beginning of the file\n- You can optionally specify a line offset and limit (especially handy for long files), but it's recommended to read the whole file by not providing these parameters\n- Results are returned using cat -n format, with line numbers starting at 1\n- This tool reads text files. Image input is not supported by the current model.\n- Jupyter notebooks (.ipynb files) are not supported. Ask the user to export the notebook to a plain-text format before reading it.\n- This tool can only read files, not directories. To read a directory, use an ls command via the Bash tool.\n- Empty files are returned as `(empty file)`.",
+            "parameters": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": ["file_path"],
+                "properties": {
+                    "file_path": {
+                        "description": "The absolute path to the file to read",
+                        "type": "string"
+                    },
+                    "offset": {
+                        "description": "The line number to start reading from. Only provide if the file is too large to read at once",
+                        "minimum": 0,
+                        "type": "integer"
+                    },
+                    "limit": {
+                        "description": "The number of lines to read. Only provide if the file is too large to read at once.",
+                        "exclusiveMinimum": 0,
+                        "type": "integer"
+                    }
+                }
+            },
+            "defer": false
+        },
+        {
+            "name": "Glob",
+            "description": "- Fast file pattern matching tool that works with any codebase size\n- Supports glob patterns like \"**/*.js\" or \"src/**/*.ts\"\n- Returns matching file paths sorted by modification time\n- Use this tool when you need to find files by name patterns\n- When you are doing an open ended search that may require multiple rounds of globbing and grepping, use the Agent tool instead",
+            "parameters": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": ["pattern"],
+                "properties": {
+                    "pattern": {
+                        "description": "The glob pattern to match files against",
+                        "type": "string"
+                    },
+                    "path": {
+                        "description": "The directory to search in. If not specified, the current working directory will be used. IMPORTANT: Omit this field to use the default directory. DO NOT enter \"undefined\" or \"null\" - simply omit it for the default behavior. Must be a valid directory path if provided.",
+                        "type": "string"
+                    }
+                }
+            },
+            "defer": false
+        },
+        {
+            "name": "Grep",
+            "description": "A powerful search tool for file contents\n\n  Usage:\n  - ALWAYS use Grep for search tasks. NEVER invoke `grep` or `rg` as a Bash command. The Grep tool has been optimized for correct permissions and access.\n  - Supports full regex syntax (e.g., \"log.*Error\", \"function\\s+\\w+\")\n  - Filter files with glob parameter (e.g., \"*.js\", \"*.{ts,tsx}\") or type parameter (e.g., \"js\", \"py\", \"rust\")\n  - Output modes: \"content\" shows matching lines, \"files_with_matches\" shows only file paths (default), \"count\" shows match counts\n  - Multiline matching: By default patterns match within single lines only. For cross-line patterns like `struct \\{[\\s\\S]*?field`, use `multiline: true`\n  - Output is capped at 100 entries by default or 40000 characters, and lines are capped at 400 characters\n",
+            "parameters": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": ["pattern"],
+                "properties": {
+                    "pattern": {
+                        "description": "The regular expression pattern to search for in file contents",
+                        "type": "string"
+                    },
+                    "path": {
+                        "description": "File or directory to search in. Defaults to current working directory.",
+                        "type": "string"
+                    },
+                    "glob": {
+                        "description": "Glob pattern to filter files (e.g. \"*.js\", \"*.{ts,tsx}\")",
+                        "type": "string"
+                    },
+                    "output_mode": {
+                        "description": "Output mode: \"content\" shows matching lines (supports -A/-B/-C context, -n line numbers, head_limit), \"files_with_matches\" shows file paths (supports head_limit), \"count\" shows match counts (supports head_limit). Defaults to \"files_with_matches\".",
+                        "anyOf": [
+                            {
+                                "const": "content",
+                                "type": "string"
+                            },
+                            {
+                                "const": "files_with_matches",
+                                "type": "string"
+                            },
+                            {
+                                "const": "count",
+                                "type": "string"
+                            }
+                        ]
+                    },
+                    "-B": {
+                        "description": "Number of lines to show before each match. Requires output_mode: \"content\", ignored otherwise.",
+                        "type": "number"
+                    },
+                    "-A": {
+                        "description": "Number of lines to show after each match. Requires output_mode: \"content\", ignored otherwise.",
+                        "type": "number"
+                    },
+                    "-C": {
+                        "description": "Alias for context.",
+                        "type": "number"
+                    },
+                    "context": {
+                        "description": "Number of lines to show before and after each match. Requires output_mode: \"content\", ignored otherwise.",
+                        "type": "number"
+                    },
+                    "-n": {
+                        "description": "Show line numbers in output. Requires output_mode: \"content\", ignored otherwise. Defaults to true.",
+                        "type": "boolean"
+                    },
+                    "-i": {
+                        "description": "Case insensitive search",
+                        "type": "boolean"
+                    },
+                    "type": {
+                        "description": "File type to search. Common types: js, py, rust, go, java, etc. More efficient than glob for standard file types.",
+                        "type": "string"
+                    },
+                    "head_limit": {
+                        "description": "Limit output to first N lines/entries, equivalent to \"| head -N\". Works across all output modes: content (limits output lines), files_with_matches (limits file paths), count (limits count entries). Defaults to 100 when unspecified. Pass 0 to remove the entry limit; the character and line-length limits still apply.",
+                        "type": "number"
+                    },
+                    "offset": {
+                        "description": "Skip first N lines/entries before applying head_limit, equivalent to \"| tail -n +N | head -N\". Works across all output modes. Defaults to 0.",
+                        "type": "number"
+                    },
+                    "multiline": {
+                        "description": "Enable multiline mode where . matches newlines and patterns can span lines. Default: false.",
+                        "type": "boolean"
+                    }
+                }
+            },
+            "defer": false
+        },
+        {
+            "name": "BashInput",
+            "description": "Type into a background shell command and read what it prints back.\n\nUse it to answer a prompt, drive a REPL, or interrupt with Ctrl-C (\"\\u0003\"). End a line with a newline, the way you would when typing. Only the output that arrived since your last read comes back.",
+            "parameters": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": ["bash_id", "input"],
+                "properties": {
+                    "bash_id": {
+                        "description": "The background shell identifier.",
+                        "type": "string"
+                    },
+                    "input": {
+                        "description": "Characters to send. Use \"\\u0003\" for Ctrl-C, which interrupts without ending the command.",
+                        "type": "string"
+                    },
+                    "timeout": {
+                        "default": 250,
+                        "description": "How long to wait for output afterwards, in milliseconds.",
+                        "maximum": 30000,
+                        "minimum": 0,
+                        "type": "number"
+                    }
+                }
+            },
+            "defer": false
+        }
+    ]
+}

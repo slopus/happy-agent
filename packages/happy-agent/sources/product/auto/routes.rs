@@ -7,7 +7,7 @@ use std::sync::OnceLock;
 pub(super) fn catalogs() -> &'static Value {
     static CATALOGS: OnceLock<Value> = OnceLock::new();
     CATALOGS.get_or_init(|| {
-        let value = serde_json::from_str(include_str!("model_catalogs.json"))
+        let value = serde_json::from_str(include_str!("../auto_model_catalogs.json"))
             .expect("source-generated private model catalogs");
         assert!(
             Schemas::new()

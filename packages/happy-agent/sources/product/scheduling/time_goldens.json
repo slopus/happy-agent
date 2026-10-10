@@ -1,0 +1,183 @@
+{
+    "durations": [
+        {
+            "input": "90 seconds",
+            "milliseconds": 90000
+        },
+        {
+            "input": "1h 30m",
+            "milliseconds": 5400000
+        },
+        {
+            "input": "1 hour, 30 minutes",
+            "milliseconds": 5400000
+        },
+        {
+            "input": "0.001 seconds",
+            "milliseconds": 1
+        },
+        {
+            "input": "0 seconds",
+            "milliseconds": 0
+        },
+        {
+            "input": {
+                "seconds": 1.25,
+                "minutes": 2
+            },
+            "milliseconds": 121250
+        },
+        {
+            "input": {
+                "days": 1
+            },
+            "milliseconds": 86400000
+        }
+    ],
+    "instants": [
+        {
+            "input": "2026-03-08T07:00:00Z",
+            "milliseconds": 1772953200000
+        },
+        {
+            "input": "Mon, 05 Jan 2026 00:00:00 +0000",
+            "milliseconds": 1767571200000
+        },
+        {
+            "input": 1767571200,
+            "milliseconds": 1767571200000
+        },
+        {
+            "input": "1767571200",
+            "milliseconds": 1767571200000
+        },
+        {
+            "input": 1767571200000,
+            "milliseconds": 1767571200000
+        },
+        {
+            "input": "-1.5",
+            "milliseconds": -1500
+        }
+    ],
+    "human": [
+        {
+            "input": 0,
+            "text": "0 milliseconds"
+        },
+        {
+            "input": 1,
+            "text": "1 milliseconds"
+        },
+        {
+            "input": 999,
+            "text": "999 milliseconds"
+        },
+        {
+            "input": 1000,
+            "text": "1 second"
+        },
+        {
+            "input": 1500,
+            "text": "1.5 seconds"
+        },
+        {
+            "input": 60000,
+            "text": "1 minute"
+        },
+        {
+            "input": 90000,
+            "text": "1.5 minutes"
+        },
+        {
+            "input": 3600000,
+            "text": "1 hour"
+        },
+        {
+            "input": 5400000,
+            "text": "1.5 hours"
+        },
+        {
+            "input": 86400000,
+            "text": "1 day"
+        }
+    ],
+    "wait": {
+        "waitId": "sourcewait",
+        "agentId": "sourceagent",
+        "outcome": "elapsed",
+        "kind": "wait",
+        "dueAt": 1767571200000,
+        "startedAt": 1767571198500,
+        "endedAt": 1767571200000,
+        "elapsedMs": 1500
+    },
+    "waitText": "The wait finished after 1.5 seconds.",
+    "schedule": {
+        "id": "sourceschedule",
+        "senderAgentId": "sourceagent",
+        "targetAgentId": "targetagent",
+        "message": "Scheduled text",
+        "dueAt": 1767571200000,
+        "status": "pending",
+        "createdAt": 1767571198500,
+        "updatedAt": 1767571198500
+    },
+    "scheduleText": "Message sourceschedule to agent targetagent is waiting to be delivered; due 2026-01-05T00:00:00.000Z.",
+    "cancellationText": "Message sourceschedule is now waiting to be delivered.",
+    "page": {
+        "schedules": [
+            {
+                "id": "sourceschedule",
+                "senderAgentId": "sourceagent",
+                "targetAgentId": "targetagent",
+                "message": "Scheduled text",
+                "dueAt": 1767571200000,
+                "status": "pending",
+                "createdAt": 1767571198500,
+                "updatedAt": 1767571198500
+            },
+            {
+                "id": "secondmessage",
+                "senderAgentId": "sourceagent",
+                "targetAgentId": "sourceagent",
+                "message": "Scheduled text",
+                "dueAt": 1767571200000,
+                "status": "cancelled",
+                "createdAt": 1767571198500,
+                "updatedAt": 1767571198500
+            }
+        ],
+        "limit": 50,
+        "nextCursor": "2"
+    },
+    "pageText": {
+        "page": {
+            "schedules": [
+                {
+                    "id": "sourceschedule",
+                    "senderAgentId": "sourceagent",
+                    "targetAgentId": "targetagent",
+                    "message": "Scheduled text",
+                    "dueAt": 1767571200000,
+                    "status": "pending",
+                    "createdAt": 1767571198500,
+                    "updatedAt": 1767571198500
+                },
+                {
+                    "id": "secondmessage",
+                    "senderAgentId": "sourceagent",
+                    "targetAgentId": "sourceagent",
+                    "message": "Scheduled text",
+                    "dueAt": 1767571200000,
+                    "status": "cancelled",
+                    "createdAt": 1767571198500,
+                    "updatedAt": 1767571198500
+                }
+            ],
+            "limit": 50,
+            "nextCursor": "2"
+        },
+        "text": "sourceschedule | to targetagent | waiting to be delivered | due 2026-01-05T00:00:00.000Z\nsecondmessage | to sourceagent | cancelled before delivery | due 2026-01-05T00:00:00.000Z\nMore messages start at cursor 2."
+    }
+}

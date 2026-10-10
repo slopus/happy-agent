@@ -1,10 +1,23 @@
 use super::{
     agents::{AgentRequestError, AgentSystemModule},
     config::{ConfigModule, Document},
+    cloud::{CloudModule, CloudOperationError},
+    connections::{ConnectionsModule, RemoteConnectionError},
     events::{Entry, EventsModule},
     identity::now,
     lifecycle::LifecycleModule,
+    live::{LiveModule, LiveSubscription},
     schemas::Schemas,
+    runtime::RuntimeModule,
+    secrets::SecretsModule,
+    projects::ProjectsModule,
+    workspaces::WorkspacesModule,
+    bots::BotsModule,
+    tools::ToolsModule,
+    user_input::{UserInputModule,UserInputSubscription},
+    auto::AutoModule,
+    provider_scan::ProviderScanModule,
+    owners::NodeModule,
 };
 use bytes::Bytes;
 use futures_util::stream;
@@ -22,7 +35,14 @@ use std::{
 };
 use subtle::ConstantTimeEq;
 
-type Body = UnsyncBoxBody<Bytes, Infallible>;
+type Body = UnsyncBoxBody<Bytes, anyhow::Error>;
+mod secrets;
+mod live;
+mod metadata;
+mod processes;
+mod questions;
+mod mutation;
+mod configuration;
 
 pub struct ApiModule {
     config: Arc<ConfigModule>,
@@ -31,6 +51,22 @@ pub struct ApiModule {
     schemas: Schemas,
     events: Arc<EventsModule>,
     agents: Arc<AgentSystemModule>,
+    runtime: Arc<RuntimeModule>,
+    cloud: Arc<CloudModule>,
+    connections: Arc<ConnectionsModule>,
+    secrets: Arc<SecretsModule>,
+    projects: Arc<ProjectsModule>,
+    workspaces: Arc<WorkspacesModule>,
+    bots: Arc<BotsModule>,
+    live: Arc<LiveModule>,
+    _live_events: LiveSubscription,
+    tools: Arc<ToolsModule>,
+    process_events: OnceLock<processes::ProcessEvents>,
+    user_input:Arc<UserInputModule>,
+    auto:Arc<AutoModule>,
+    question_events:OnceLock<UserInputSubscription>,
+    provider_scan:Arc<ProviderScanModule>,
+    node:Arc<NodeModule>,
 }
 
 impl ApiModule {
@@ -39,15 +75,54 @@ impl ApiModule {
         lifecycle: Arc<LifecycleModule>,
         events: Arc<EventsModule>,
         agents: Arc<AgentSystemModule>,
-    ) -> anyhow::Result<Self> {
-        Ok(Self {
+        runtime: Arc<RuntimeModule>,
+        cloud: Arc<CloudModule>,
+        connections: Arc<ConnectionsModule>,
+        secrets: Arc<SecretsModule>,
+        projects: Arc<ProjectsModule>,
+        workspaces: Arc<WorkspacesModule>,
+        bots: Arc<BotsModule>,
+        live: Arc<LiveModule>,
+        tools: Arc<ToolsModule>,
+        user_input:Arc<UserInputModule>,
+        auto:Arc<AutoModule>,
+        provider_scan:Arc<ProviderScanModule>,
+        node:Arc<NodeModule>,
+    ) -> anyhow::Result<Arc<Self>> {
+        let journal = events.clone();
+        let live_events = live.on_event(Arc::new(move |event| {
+            // Local installations have one authenticated owner. Team transports
+            // supply the owner audience at their public event boundary.
+            if let Some(kind) = event["type"].as_str() { journal.with_journal(|journal| journal.append(kind, event["payload"].clone(), None)); }
+        }))?;
+        let module=Arc::new(Self {
             config,
             lifecycle,
             token: OnceLock::new(),
             schemas: Schemas::new()?,
             events,
             agents,
-        })
+            runtime,
+            cloud,
+            connections,
+            secrets,
+            projects,
+            workspaces,
+            bots,
+            live,
+            _live_events: live_events,
+            tools,
+            process_events:OnceLock::new(),
+            user_input,
+            auto,
+            question_events:OnceLock::new(),
+            provider_scan,
+            node,
+        });
+        module.agents.install(module.clone())?;
+        module.start_process_events()?;
+        module.start_question_events()?;
+        Ok(module)
     }
     pub fn prepare_token(&self) -> anyhow::Result<()> {
         let token = self.config.prepare_token()?;
@@ -133,6 +208,15 @@ impl ApiModule {
             None
         };
         let result = match (method.as_str(), path.as_str()) {
+            _ if path=="/v0/config"||path=="/v0/providers/scan"||path.starts_with("/v0/providers/")=>self.configuration_route(request).await,
+            ("GET", "/v0/connections") => {
+                let connections = self.connections.clone();
+                match self.runtime.transact(move |ctx| connections.snapshot(ctx)).await { Ok(value) => response(200,value), Err(failure) => internal(failure) }
+            }
+            _ if path.starts_with("/v0/connections/") => self.connection(request).await,
+            _ if path == "/v0/cloud" || path.starts_with("/v0/cloud/") => self.cloud(request).await,
+            _ if path == "/v0/secrets" || path.starts_with("/v0/secrets/") => self.secret_route(request).await,
+            _ if path == "/v0/live/sessions" || path.starts_with("/v0/live/sessions/") => self.live_route(request).await,
             ("GET", "/") => response(200, json!({"text":"Welcome to Happy Agent!"})),
             ("POST", "/v0/drain") => match self.begin_drain() {
                 Ok(()) => response(202, json!({"draining":true,"pid":std::process::id()})),
@@ -160,12 +244,67 @@ impl ApiModule {
                 },
                 Err(response) => response,
             },
+            _ if path.starts_with("/v0/agents/")&&(method=="GET"&&path.ends_with("/activity")||method=="DELETE"&&path.contains("/processes/"))=>self.process_route(request).await,
+            _ if path.starts_with("/v0/agents/")&&(method=="GET"&&path.ends_with("/question")||method=="POST"&&path.contains("/question/"))=>self.question_route(request).await,
             _ if ["GET", "POST"].contains(&method.as_str()) && path.starts_with("/v0/agents/") => {
                 self.agent(request).await
             }
             _ => error(404, "not_found", "Not found."),
         };
         Ok(result)
+    }
+    async fn connection(&self, request: Request<Incoming>) -> Response<Body> {
+        let path = request.uri().path().to_owned();
+        let Some((id, operation)) = path.strip_prefix("/v0/connections/").and_then(|path| path.split_once('/')) else { return error(404,"not_found","Not found."); };
+        if !self.schemas.valid("ownerConnectionId", &json!(id)).unwrap_or(false) { return error(404,"not_found","The remote connection was not found."); }
+        if operation.starts_with("api/") {
+            let mut remote_path = format!("/{}", &operation[4..]);
+            if let Some(query) = request.uri().query() { remote_path.push('?'); remote_path.push_str(query); }
+            let id = id.to_owned();
+            return match self.connections.forward(request.map(|body| body.map_err(anyhow::Error::from).boxed_unsync()), &id, &remote_path, self.lifecycle.shutdown.child_token()).await { Ok(response) => response, Err(failure) => internal(failure) };
+        }
+        if request.method() == hyper::Method::POST && operation == "reorder" {
+            let mut values = request.headers().get_all(hyper::header::IF_MATCH).iter();
+            let expected = values.next().and_then(|value| value.to_str().ok()).map(str::to_owned);
+            if values.next().is_some() || !expected.as_ref().is_some_and(|value| self.schemas.valid("ownerResourceVersion", &json!(value)).unwrap_or(false)) { return error(400,"invalid_request","A valid If-Match resource version is required."); }
+            let expected = expected.expect("the validated resource version");
+            let id = id.to_owned();
+            let body = match read_json_limited(request, 2 * 1024, false).await { Ok(body) => body, Err(response) => return response };
+            let module = self.connections.clone();
+            return match self.runtime.transact(move |ctx| module.reorder(ctx, &id, &body, &expected)).await { Ok(value) => response(200,value),Err(failure) => internal(failure) };
+        }
+        error(404,"not_found","Not found.")
+    }
+    async fn cloud(&self, request: Request<Incoming>) -> Response<Body> {
+        let method = request.method().clone(); let path = request.uri().path().to_owned();
+        if method == hyper::Method::GET && path == "/v0/cloud" { return response(200,json!({"cloud":self.cloud.status()})); }
+        if self.config.team_enabled() && (path == "/v0/cloud/auth/start" || path == "/v0/cloud/auth/complete" || path == "/v0/cloud/organizations" || path.starts_with("/v0/cloud/organizations/")) { return error(501,"unsupported","Connecting or managing a Cloud account is unavailable in team mode."); }
+        if method == hyper::Method::GET && path == "/v0/cloud/organizations" { return match self.cloud.list_organizations().await { Ok(organizations) => response(200,organizations), Err(failure) => internal(failure) }; }
+        let (schema, optional, limit) = match (method.as_str(), path.as_str()) {
+            ("POST", "/v0/cloud/auth/start") => ("cloudStartRequest",false,8 * 1024),
+            ("POST", "/v0/cloud/auth/complete") => ("cloudCompleteRequest",false,8 * 1024),
+            ("DELETE", "/v0/cloud/auth") | ("POST", "/v0/cloud/access-token") => ("cloudMutationRequest",true,2 * 1024),
+            ("POST", "/v0/cloud/organizations") => ("cloudCreateOrganizationRequest",false,2 * 1024),
+            ("DELETE", _) if path.starts_with("/v0/cloud/organizations/") => ("cloudMutationRequest",true,2 * 1024),
+            _ => return error(404,"not_found","Not found."),
+        };
+        let body = match read_json_limited(request,limit,optional).await { Ok(body) => body, Err(response) => return response };
+        if !self.schemas.valid(schema,&body).unwrap_or(false) { return error(400,"invalid_request","The Cloud request is invalid."); }
+        let mutation = body.get("mutationId").cloned();
+        let result = match (method.as_str(),path.as_str()) {
+            ("POST","/v0/cloud/auth/start") => self.cloud.start(&body).await.map(|cloud| (200,json!({"cloud":cloud}))),
+            ("POST","/v0/cloud/auth/complete") => self.cloud.complete(&body).await.map(|cloud| (200,json!({"cloud":cloud}))),
+            ("DELETE","/v0/cloud/auth") => { let cloud = self.cloud.clone(); self.runtime.transact(move |ctx| cloud.disconnect(ctx, mutation.as_ref())).await.map(|cloud| (200,json!({"cloud":cloud}))) },
+            ("POST","/v0/cloud/access-token") => self.cloud.mint_with_mutation(mutation).await.map(|value| (200,value)),
+            ("POST","/v0/cloud/organizations") => self.cloud.create_organization_with_mutation(body["name"].as_str().expect("the validated organization name"),mutation).await.map(|organization| (201,json!({"organization":organization}))),
+            ("DELETE",_) => {
+                let id = path.strip_prefix("/v0/cloud/organizations/").expect("the matched organization route");
+                if id.contains('/') || !self.schemas.valid("cloudOrganizationId",&json!(id)).unwrap_or(false) { return error(400,"invalid_request","The Cloud organization ID is invalid."); }
+                self.cloud.delete_organization_with_mutation(id,mutation).await.map(|()| (200,json!({"deleted":true})))
+            }
+            _ => unreachable!("the matched Cloud operation"),
+        };
+        match result { Ok((status,value)) => response(status,value), Err(failure) => internal(failure) }
     }
     async fn agent(&self, request: Request<Incoming>) -> Response<Body> {
         let path = request.uri().path().to_owned();
@@ -392,7 +531,7 @@ impl ApiModule {
         };
         let frames = stream::unfold(state, |mut state| async move {
             if let Some(hello) = state.hello.take() {
-                return Some((Ok::<_, Infallible>(Frame::data(hello)), state));
+                return Some((Ok::<_, anyhow::Error>(Frame::data(hello)), state));
             }
             loop {
                 if state.shutdown.is_cancelled() {
@@ -463,19 +602,22 @@ fn event_frame(entry: &Entry) -> Bytes {
     ))
 }
 async fn read_json(request: Request<Incoming>) -> Result<Value, Response<Body>> {
+    read_json_limited(request,48 * 1024 * 1024,false).await
+}
+async fn read_json_limited(request: Request<Incoming>, limit: usize, optional: bool) -> Result<Value, Response<Body>> {
     let body = tokio::time::timeout(
         Duration::from_secs(30),
-        Limited::new(request.into_body(), 48 * 1024 * 1024).collect(),
+        Limited::new(request.into_body(), limit).collect(),
     )
     .await;
     match body {
-        Ok(Ok(body)) => serde_json::from_slice(&body.to_bytes()).map_err(|_| {
+        Ok(Ok(body)) => { let body = body.to_bytes(); if optional && body.is_empty() { return Ok(json!({})); } serde_json::from_slice(&body).map_err(|_| {
             error(
                 400,
                 "invalid_request",
                 "The request body must contain valid JSON.",
             )
-        }),
+        }) },
         Ok(Err(_)) => Err(error(
             400,
             "invalid_request",
@@ -489,7 +631,7 @@ async fn read_json(request: Request<Incoming>) -> Result<Value, Response<Body>> 
     }
 }
 fn response(status: u16, value: Value) -> Response<Body> {
-    let mut response = Response::new(Full::new(Bytes::from(value.to_string())).boxed_unsync());
+    let mut response = Response::new(Full::new(Bytes::from(value.to_string())).map_err(|never| match never {}).boxed_unsync());
     *response.status_mut() =
         StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
     response.headers_mut().insert(
@@ -506,6 +648,19 @@ fn error(status: u16, code: &str, message: &str) -> Response<Body> {
     response(status, json!({"error":message,"code":code}))
 }
 fn internal(failure: anyhow::Error) -> Response<Body> {
+    if let Some(failure) = failure.downcast_ref::<super::live::LiveError>() {
+        let mut value = json!({"error":failure.message,"code":failure.code});
+        if let Some(session) = &failure.session { value["session"] = session.clone(); }
+        return response(failure.status,value);
+    }
+    if let Some(failure) = failure.downcast_ref::<CloudOperationError>() {
+        return response(failure.status,json!({"error":failure.message,"code":failure.code,"cloud":failure.cloud}));
+    }
+    if let Some(failure) = failure.downcast_ref::<RemoteConnectionError>() {
+        let mut value = json!({"error":failure.message,"code":failure.code});
+        if let Some(current) = &failure.current { value["currentVersion"] = current["version"].clone(); value["connections"] = current["connections"].clone(); }
+        return response(failure.status,value);
+    }
     if let Some(failure) = failure.downcast_ref::<AgentRequestError>() {
         return error(failure.status, failure.code, failure.message);
     }

@@ -1,0 +1,20 @@
+[
+    {
+        "name": "list_skill_folders",
+        "durable": false,
+        "reloadable": true,
+        "steerable": false
+    },
+    {
+        "name": "add_skill_folder",
+        "durable": true,
+        "reloadable": false,
+        "steerable": false
+    },
+    {
+        "name": "remove_skill_folder",
+        "durable": true,
+        "reloadable": false,
+        "steerable": false
+    }
+]

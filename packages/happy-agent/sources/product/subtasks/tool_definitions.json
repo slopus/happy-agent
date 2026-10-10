@@ -1,0 +1,111 @@
+[
+    {
+        "name": "create_subtask",
+        "description": "Create a user-visible subtask you coordinate. Only bots and subtasks may create one; depth is limited to two levels below a bot, not two siblings.\n\nReserve subtasks for substantial, distinct workstreams, such as changes across projects; handle small steps inline. Usually create second-level subtasks only on explicit user request. Honor explicit subtask requests; use create_agent for internal research.\n\nSidebar title: prefer 2–3 words; 4 at most, as a last resort. Put details in text.\n\nOmit workspace to share your filesystem, or supply workspace with projectId and a short name for a new workspace. Work starts after setup.\n\nReturns the agent ID without waiting. Coordinate via send_agent_message and archive direct subtasks with archive_subtask. Users can message or archive them. There is no wait tool.\n\nKeep delegated work in the subtask. Ask its agent through send_agent_message for progress, findings, diffs, verification, or follow-up changes. Do not directly inspect or modify its files or run commands in its workspace. Direct access to another workspace often requires elevated permissions and review by the reviewer model; talking to its agent avoids unnecessary permission reviews.\n\nChoose a model and effort. Omitting provider uses your current provider when it offers that model.\n\n",
+        "parameters": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": ["title", "text", "model", "effort"],
+            "properties": {
+                "title": {
+                    "minLength": 1,
+                    "maxLength": 256,
+                    "type": "string"
+                },
+                "text": {
+                    "minLength": 1,
+                    "maxLength": 50000,
+                    "type": "string"
+                },
+                "model": {
+                    "minLength": 1,
+                    "maxLength": 256,
+                    "type": "string"
+                },
+                "effort": {
+                    "anyOf": [
+                        {
+                            "const": "off",
+                            "type": "string"
+                        },
+                        {
+                            "const": "minimal",
+                            "type": "string"
+                        },
+                        {
+                            "const": "low",
+                            "type": "string"
+                        },
+                        {
+                            "const": "medium",
+                            "type": "string"
+                        },
+                        {
+                            "const": "high",
+                            "type": "string"
+                        },
+                        {
+                            "const": "xhigh",
+                            "type": "string"
+                        },
+                        {
+                            "const": "max",
+                            "type": "string"
+                        }
+                    ]
+                },
+                "provider": {
+                    "minLength": 1,
+                    "maxLength": 256,
+                    "type": "string"
+                },
+                "serviceTier": {
+                    "const": "priority",
+                    "type": "string"
+                },
+                "workspace": {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": ["projectId", "name"],
+                    "properties": {
+                        "projectId": {
+                            "minLength": 2,
+                            "maxLength": 32,
+                            "pattern": "^[a-z][a-z0-9]*$",
+                            "type": "string"
+                        },
+                        "name": {
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "type": "string"
+                        },
+                        "baseRef": {
+                            "minLength": 1,
+                            "maxLength": 1024,
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
+        "defer": true
+    },
+    {
+        "name": "archive_subtask",
+        "description": "Archive one of your direct subtasks. Only its coordinating bot or subtask may do this. Stops the target's current work and running descendants, but marks only the target archived. A workspace-bound subtask's workspace is archived with it; a shared-filesystem subtask leaves the shared folder untouched. Conversation history remains, but archival is final: nobody can restore the subtask. Repeating archival is harmless.",
+        "parameters": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": ["agentId"],
+            "properties": {
+                "agentId": {
+                    "minLength": 2,
+                    "maxLength": 32,
+                    "pattern": "^[a-z][a-z0-9]*$",
+                    "type": "string"
+                }
+            }
+        },
+        "defer": true
+    }
+]

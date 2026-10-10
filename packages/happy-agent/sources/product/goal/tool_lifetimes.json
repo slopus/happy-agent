@@ -1,0 +1,26 @@
+[
+    {
+        "name": "create_goal",
+        "durable": true,
+        "reloadable": false,
+        "steerable": false
+    },
+    {
+        "name": "get_goal",
+        "durable": true,
+        "reloadable": true,
+        "steerable": false
+    },
+    {
+        "name": "update_goal",
+        "durable": true,
+        "reloadable": false,
+        "steerable": false
+    },
+    {
+        "name": "clear_goal",
+        "durable": true,
+        "reloadable": false,
+        "steerable": false
+    }
+]

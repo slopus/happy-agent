@@ -69,7 +69,8 @@ impl happy_agent_base::AgentModule for UsageModule {
                 .events
                 .run_id(ctx, scope.id)?
                 .context("Inference has no public run identity.")?;
-            let mut record = json!({"id":inference.id,"kind":"inference","agentId":scope.id,"runId":run,"provider":scope.settings["provider"],"state":state,"tokens":{"input":usage.input,"output":usage.output,"cacheRead":usage.cache_read,"cacheWrite":usage.cache_write},"startedAt":inference.started_at,"finishedAt":inference.finished_at,"durationMs":inference.finished_at-inference.started_at});
+            let provider=scope.settings["provider"].as_str().map(str::to_owned).map(Ok).unwrap_or_else(||self.config.default_provider())?;
+            let mut record = json!({"id":inference.id,"kind":"inference","agentId":scope.id,"runId":run,"provider":provider,"state":state,"tokens":{"input":usage.input,"output":usage.output,"cacheRead":usage.cache_read,"cacheWrite":usage.cache_write},"startedAt":inference.started_at,"finishedAt":inference.finished_at,"durationMs":inference.finished_at-inference.started_at});
             for field in ["model", "effort"] {
                 if let Some(value) = scope.settings.get(field) {
                     record[field] = value.clone();

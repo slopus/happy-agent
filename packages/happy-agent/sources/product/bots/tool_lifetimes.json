@@ -1,0 +1,26 @@
+[
+    {
+        "name": "list_bots",
+        "durable": false,
+        "reloadable": true,
+        "steerable": false
+    },
+    {
+        "name": "create_bot",
+        "durable": true,
+        "reloadable": false,
+        "steerable": false
+    },
+    {
+        "name": "send_bot_message",
+        "durable": true,
+        "reloadable": false,
+        "steerable": false
+    },
+    {
+        "name": "set_bot_avatar",
+        "durable": true,
+        "reloadable": false,
+        "steerable": false
+    }
+]

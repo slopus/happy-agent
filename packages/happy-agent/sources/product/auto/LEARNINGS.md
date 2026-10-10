@@ -31,8 +31,18 @@ when required human evidence was skipped, truncated before storage or omitted
 by that budget. An omitted-evidence flag is never merely display metadata for
 an executing approval.
 
-These helpers are currently verified outside daemon startup. They do not yet
-install the private reviewer, tool policies, scoped elevation or refusal circuit.
+Auto installs its real private reviewer at daemon startup. The reviewer uses the
+same account's curated route, an independent private database, and its own read
+only tools. Public history carries only the decision. An original daemon fixture
+proves that one approved command receives temporary Full access, the next command
+uses the restored Auto sandbox, and the original private cursor is persisted.
+Restoring an uncertified archive returns unproven without reviewer inference and
+preserves its original evidence rows.
+
+Every migration for this store is applied in one ordered owning sequence.
+Applying later native migrations in a second prefix check rejected a database
+that had just applied the original migrations. Startup now recognizes the full
+sequence without changing any existing migration contents.
 
 A verdict comes only from normally completed trailing reviewer text. Contiguous
 final text blocks join in order; a later thinking block or tool result ends that

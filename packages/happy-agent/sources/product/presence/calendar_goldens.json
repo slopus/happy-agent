@@ -1,0 +1,114 @@
+[
+    {
+        "schedule": {
+            "id": "source-window",
+            "timeZone": "America/New_York",
+            "days": [0],
+            "startTime": "01:55",
+            "endTime": "02:05",
+            "presence": {
+                "status": "away"
+            }
+        },
+        "at": 1772953140000,
+        "active": true
+    },
+    {
+        "schedule": {
+            "id": "source-window",
+            "timeZone": "America/New_York",
+            "days": [0],
+            "startTime": "01:55",
+            "endTime": "02:05",
+            "presence": {
+                "status": "away"
+            }
+        },
+        "at": 1772953200000,
+        "active": false
+    },
+    {
+        "schedule": {
+            "id": "source-window",
+            "timeZone": "America/New_York",
+            "days": [0],
+            "startTime": "01:15",
+            "endTime": "01:45",
+            "presence": {
+                "status": "away"
+            }
+        },
+        "at": 1793511000000,
+        "active": true
+    },
+    {
+        "schedule": {
+            "id": "source-window",
+            "timeZone": "America/New_York",
+            "days": [0],
+            "startTime": "01:15",
+            "endTime": "01:45",
+            "presence": {
+                "status": "away"
+            }
+        },
+        "at": 1793514600000,
+        "active": true
+    },
+    {
+        "schedule": {
+            "id": "source-window",
+            "timeZone": "Asia/Tokyo",
+            "days": [1],
+            "startTime": "23:00",
+            "endTime": "01:00",
+            "presence": {
+                "status": "away"
+            }
+        },
+        "at": 1767540600000,
+        "active": true
+    },
+    {
+        "schedule": {
+            "id": "source-window",
+            "timeZone": "Asia/Tokyo",
+            "days": [1],
+            "startTime": "23:00",
+            "endTime": "01:00",
+            "presence": {
+                "status": "away"
+            }
+        },
+        "at": 1767537000000,
+        "active": false
+    },
+    {
+        "schedule": {
+            "id": "source-window",
+            "timeZone": "Asia/Kathmandu",
+            "days": [2],
+            "startTime": "00:00",
+            "endTime": "01:00",
+            "presence": {
+                "status": "away"
+            }
+        },
+        "at": 1767636900000,
+        "active": true
+    },
+    {
+        "schedule": {
+            "id": "source-window",
+            "timeZone": "UTC",
+            "days": [1],
+            "startTime": "00:00",
+            "endTime": "00:00",
+            "presence": {
+                "status": "away"
+            }
+        },
+        "at": 1767571200000,
+        "active": false
+    }
+]

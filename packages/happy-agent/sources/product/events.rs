@@ -27,18 +27,18 @@ const MIGRATIONS: &[(&str, &str)] = &[
 pub struct EventsModule {
     runtime: Arc<RuntimeModule>,
     versions: Mutex<Versions>,
-    journal: Mutex<Journal>,
+    journal: Arc<Mutex<Journal>>,
     schemas: Schemas,
 }
 struct Publication {
     durable: Value,
-    public: Value,
+    public: Option<Value>,
 }
 impl From<Value> for Publication {
     fn from(public: Value) -> Self {
         Self {
             durable: public.clone(),
-            public,
+            public:Some(public),
         }
     }
 }
@@ -47,7 +47,7 @@ impl EventsModule {
         Ok(Self {
             runtime,
             versions: Mutex::new(Versions::new()),
-            journal: Mutex::new(Journal::new()),
+            journal: Arc::new(Mutex::new(Journal::new())),
             schemas: Schemas::new()?,
         })
     }
@@ -91,7 +91,7 @@ impl EventsModule {
         self.with_journal(|journal| journal.agent_cursor(id).to_owned())
     }
     pub fn record(
-        self: &Arc<Self>,
+        &self,
         ctx: &Context<'_>,
         agent: Option<&str>,
         kind: &str,
@@ -105,7 +105,7 @@ impl EventsModule {
         self.record_at(ctx, agent, kind, payload.into(), id, now())
     }
     pub fn record_history_message(
-        self: &Arc<Self>,
+        &self,
         ctx: &Context<'_>,
         agent: &str,
         kind: &str,
@@ -127,13 +127,13 @@ impl EventsModule {
             ctx,
             Some(agent),
             kind,
-            Publication { durable, public },
+            Publication { durable, public:Some(public) },
             id,
             now(),
         )
     }
     pub fn record_versioned(
-        self: &Arc<Self>,
+        &self,
         ctx: &Context<'_>,
         agent: &str,
         previous: &str,
@@ -155,7 +155,7 @@ impl EventsModule {
         )
     }
     pub fn record_agent_created(
-        self: &Arc<Self>,
+        &self,
         ctx: &Context<'_>,
         id: &str,
         mut agent: Value,
@@ -183,7 +183,7 @@ impl EventsModule {
         )
     }
     fn record_at(
-        self: &Arc<Self>,
+        &self,
         ctx: &Context<'_>,
         agent: Option<&str>,
         kind: &str,
@@ -220,12 +220,11 @@ impl EventsModule {
             )?;
             db.execute("INSERT INTO happy_agent_event_state(key,value) VALUES('origin_cursor',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[boundary])?;
         }
-        let events = self.clone();
+        let Some(payload)=payload.public else{return Ok(id);};
+        let journal = self.journal.clone();
         let kind = kind.to_owned();
-        let payload = payload.public;
         ctx.after_commit(move || {
-            events.with_journal(|journal| {
-                journal.append_with_cursor(
+            journal.lock().unwrap_or_else(std::sync::PoisonError::into_inner).append_with_cursor(
                     &kind,
                     |cursor| {
                         let mut payload = payload;
@@ -236,9 +235,20 @@ impl EventsModule {
                     },
                     None,
                 );
-            })
         })?;
         Ok(id)
+    }
+    pub fn latest_transition(&self,ctx:&Context<'_>,agent:&str)->Result<Option<(String,u64,Option<String>)>> {
+        Ok(ctx.database().query_row("SELECT event_id,occurred_at,previous_event_id FROM happy_agent_latest_events WHERE agent_id=?1",[agent],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?))).optional()?)
+    }
+    pub fn publish(&self,ctx:&Context<'_>,kind:&str,payload:Value,occurred_at:u64)->Result<()> {
+        self.runtime.assert_context(ctx)?;
+        anyhow::ensure!(self.schemas.valid("appendEvent",&json!({"type":kind,"payload":payload}))?,"The public event payload is invalid.");
+        let journal=self.journal.clone();let kind=kind.to_owned();ctx.after_commit(move||{journal.lock().unwrap_or_else(std::sync::PoisonError::into_inner).append_at(&kind,payload,None,occurred_at);})
+    }
+    pub fn publish_ephemeral_process(&self,kind:&str,payload:Value)->Result<()> {
+        anyhow::ensure!(self.schemas.valid("appendEvent",&json!({"type":kind,"payload":payload}))?,"The public process event is invalid.");
+        self.with_journal(|journal|journal.append(kind,payload,None));Ok(())
     }
     pub fn latest(&self, ctx: &Context<'_>, agent: &str) -> Result<Option<(String, i64)>> {
         Ok(ctx
@@ -294,3 +304,16 @@ impl EventsModule {
         Ok(id)
     }
 }
+
+#[async_trait::async_trait]
+impl happy_agent_base::AgentModule for EventsModule {
+    fn name(&self) -> &'static str { "events" }
+    fn metadata_changed(&self, ctx: &Context<'_>, scope: &happy_agent_base::AgentScope<'_>, change: &Value) -> Result<()> {
+        let id=self.versions.lock().unwrap_or_else(std::sync::PoisonError::into_inner).next();
+        self.record_at(ctx,Some(scope.id),"agent.metadata-changed",Publication {durable:change.clone(),public:None},id,now())?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests;

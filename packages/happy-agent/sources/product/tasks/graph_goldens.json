@@ -1,0 +1,118 @@
+{
+    "input": [
+        {
+            "id": "first",
+            "title": "Build release",
+            "detail": "Prepare artifacts",
+            "activeForm": "Building release",
+            "owner": "Agent",
+            "status": "pending",
+            "priority": "high",
+            "dependsOn": [],
+            "blocks": [],
+            "createdAt": 100,
+            "updatedAt": 100,
+            "ordering": 0
+        },
+        {
+            "id": "second",
+            "title": "Publish release",
+            "status": "in_progress",
+            "priority": "normal",
+            "dependsOn": ["first"],
+            "blocks": [],
+            "metadata": {
+                "channel": "preview",
+                "reviewed": false
+            },
+            "createdAt": 100,
+            "updatedAt": 100,
+            "ordering": 1
+        }
+    ],
+    "normalized": [
+        {
+            "id": "first",
+            "title": "Build release",
+            "detail": "Prepare artifacts",
+            "activeForm": "Building release",
+            "owner": "Agent",
+            "status": "pending",
+            "priority": "high",
+            "dependsOn": [],
+            "blocks": ["second"],
+            "createdAt": 100,
+            "updatedAt": 100,
+            "ordering": 0
+        },
+        {
+            "id": "second",
+            "title": "Publish release",
+            "status": "in_progress",
+            "priority": "normal",
+            "dependsOn": ["first"],
+            "blocks": [],
+            "metadata": {
+                "channel": "preview",
+                "reviewed": false
+            },
+            "createdAt": 100,
+            "updatedAt": 100,
+            "ordering": 1
+        }
+    ],
+    "rows": [
+        "first [pending, high] (Agent) Build release",
+        "second [in_progress, normal] Publish release [blocked by first]"
+    ],
+    "detail": {
+        "task": {
+            "id": "second",
+            "title": "Publish release",
+            "status": "in_progress",
+            "priority": "normal",
+            "dependsOn": ["first"],
+            "blocks": [],
+            "metadata": {
+                "channel": "preview",
+                "reviewed": false
+            },
+            "createdAt": 100,
+            "updatedAt": 100,
+            "ordering": 1
+        },
+        "detail": "Longer context",
+        "detailOffset": 0,
+        "detailTotal": 3000,
+        "nextDetailOffset": 14,
+        "dependencies": ["first"],
+        "dependencyOffset": 0,
+        "dependencyTotal": 1
+    },
+    "detailText": "second [in_progress, normal] Publish release [blocked by first]\nDetail [0/3000]: Longer context\nDepends on [0/1]: first\nMetadata: {\"channel\":\"preview\",\"reviewed\":false}\nMore detail starts at offset 14.",
+    "titleNormalization": [
+        {
+            "input": "  Build release  ",
+            "normalized": "Build release"
+        },
+        {
+            "input": "﻿Build release﻿",
+            "normalized": "Build release"
+        },
+        {
+            "input": "Build release",
+            "normalized": "Build release"
+        }
+    ],
+    "detailNormalization": [
+        {
+            "input": "   ",
+            "normalized": null
+        },
+        {
+            "input": "  Details 😀  ",
+            "normalized": "Details 😀"
+        }
+    ],
+    "cycle": true
+}

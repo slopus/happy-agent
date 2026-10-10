@@ -1,3 +1,24 @@
+/// The application owns orphaned descendants of its shells until their known
+/// process groups have been stopped and reaped. Individual owners never reap
+/// arbitrary children belonging to another module or Tokio's process manager.
+pub fn prepare_child_reaping() -> anyhow::Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        static PREPARED: std::sync::OnceLock<Result<(), i32>> = std::sync::OnceLock::new();
+        match PREPARED.get_or_init(|| {
+            if unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) } == 0 {
+                Ok(())
+            } else {
+                Err(std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EINVAL))
+            }
+        }) {
+            Ok(()) => {}
+            Err(error) => return Err(std::io::Error::from_raw_os_error(*error).into()),
+        }
+    }
+    Ok(())
+}
+
 pub fn process_running(pid: u32) -> bool {
     if pid == 0 || pid > i32::MAX as u32 {
         return false;

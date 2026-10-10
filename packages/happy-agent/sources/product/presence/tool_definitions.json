@@ -1,0 +1,138 @@
+[
+    {
+        "name": "get_presence",
+        "description": "Read the user's current presence status and optional status message.",
+        "parameters": {
+            "additionalProperties": false,
+            "type": "object",
+            "properties": {}
+        },
+        "defer": true
+    },
+    {
+        "name": "list_presences",
+        "description": "List the configured presence states and their waiting guidance.",
+        "parameters": {
+            "additionalProperties": false,
+            "type": "object",
+            "properties": {}
+        },
+        "defer": true
+    },
+    {
+        "name": "set_presence",
+        "description": "Set the user's presence only when the user explicitly asked you to change it. You may set an absolute expiry with until and choose a fallbackPresenceId. Never infer consent from conversation context.",
+        "parameters": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": ["input"],
+            "properties": {
+                "input": {
+                    "anyOf": [
+                        {
+                            "additionalProperties": false,
+                            "type": "object",
+                            "required": ["presenceId"],
+                            "properties": {
+                                "presenceId": {
+                                    "minLength": 1,
+                                    "maxLength": 128,
+                                    "type": "string"
+                                },
+                                "message": {
+                                    "minLength": 1,
+                                    "maxLength": 240,
+                                    "type": "string"
+                                },
+                                "until": {
+                                    "minimum": 0,
+                                    "maximum": 8640000000000000,
+                                    "type": "integer"
+                                },
+                                "fallbackPresenceId": {
+                                    "minLength": 1,
+                                    "maxLength": 128,
+                                    "type": "string"
+                                }
+                            }
+                        },
+                        {
+                            "additionalProperties": false,
+                            "type": "object",
+                            "required": ["status"],
+                            "properties": {
+                                "status": {
+                                    "anyOf": [
+                                        {
+                                            "const": "online",
+                                            "type": "string"
+                                        },
+                                        {
+                                            "const": "away",
+                                            "type": "string"
+                                        },
+                                        {
+                                            "const": "offline",
+                                            "type": "string"
+                                        },
+                                        {
+                                            "const": "dnd",
+                                            "type": "string"
+                                        }
+                                    ]
+                                },
+                                "message": {
+                                    "minLength": 1,
+                                    "maxLength": 240,
+                                    "type": "string"
+                                },
+                                "until": {
+                                    "minimum": 0,
+                                    "maximum": 8640000000000000,
+                                    "type": "integer"
+                                },
+                                "fallbackPresenceId": {
+                                    "minLength": 1,
+                                    "maxLength": 128,
+                                    "type": "string"
+                                }
+                            }
+                        },
+                        {
+                            "additionalProperties": false,
+                            "type": "object",
+                            "required": ["status", "presenceId"],
+                            "properties": {
+                                "status": {
+                                    "const": "custom",
+                                    "type": "string"
+                                },
+                                "presenceId": {
+                                    "minLength": 1,
+                                    "maxLength": 128,
+                                    "type": "string"
+                                },
+                                "message": {
+                                    "minLength": 1,
+                                    "maxLength": 240,
+                                    "type": "string"
+                                },
+                                "until": {
+                                    "minimum": 0,
+                                    "maximum": 8640000000000000,
+                                    "type": "integer"
+                                },
+                                "fallbackPresenceId": {
+                                    "minLength": 1,
+                                    "maxLength": 128,
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        "defer": true
+    }
+]

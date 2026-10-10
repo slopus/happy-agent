@@ -1,0 +1,38 @@
+[
+    {
+        "name": "create_task",
+        "durable": true,
+        "reloadable": false,
+        "steerable": false
+    },
+    {
+        "name": "list_tasks",
+        "durable": true,
+        "reloadable": true,
+        "steerable": false
+    },
+    {
+        "name": "get_task",
+        "durable": true,
+        "reloadable": true,
+        "steerable": false
+    },
+    {
+        "name": "update_task",
+        "durable": true,
+        "reloadable": false,
+        "steerable": false
+    },
+    {
+        "name": "complete_task",
+        "durable": true,
+        "reloadable": false,
+        "steerable": false
+    },
+    {
+        "name": "remove_task",
+        "durable": true,
+        "reloadable": false,
+        "steerable": false
+    }
+]

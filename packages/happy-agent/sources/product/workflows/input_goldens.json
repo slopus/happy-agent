@@ -1,0 +1,126 @@
+[
+    {
+        "value": null,
+        "encoded": "EgA="
+    },
+    {
+        "value": true,
+        "encoded": "GAE="
+    },
+    {
+        "value": 17,
+        "encoded": "ICI="
+    },
+    {
+        "value": 1.5,
+        "encoded": "MQAAAAAAAPg/"
+    },
+    {
+        "value": 9007199254740992,
+        "encoded": "MQAAAAAAAEBD"
+    },
+    {
+        "value": -9223372036854776000,
+        "encoded": "IP///////////wE="
+    },
+    {
+        "value": "A source string",
+        "encoded": "Og9BIHNvdXJjZSBzdHJpbmc="
+    },
+    {
+        "value": [1, "value"],
+        "encoded": "Sg0KAiACCgc6BXZhbHVl"
+    },
+    {
+        "value": {
+            "1": 1,
+            "2": 2,
+            "ordinary": true
+        },
+        "encoded": "YigKCQoDOgExEgIgAgoJCgM6ATISAiAEChAKCjoIb3JkaW5hcnkSAhgB"
+    },
+    {
+        "value": {
+            "__monty_type__": "Ellipsis"
+        },
+        "encoded": "CgA="
+    },
+    {
+        "value": {
+            "__monty_type__": "NotImplemented"
+        },
+        "encoded": "6gEA"
+    },
+    {
+        "value": {
+            "__monty_type__": "Date",
+            "year": 2026,
+            "month": 6,
+            "day": 3
+        },
+        "encoded": "egcI6g8QBhgD"
+    },
+    {
+        "value": {
+            "__monty_type__": "DateTime",
+            "year": 2026,
+            "month": 6,
+            "day": 3,
+            "hour": 12,
+            "minute": 30,
+            "second": 0,
+            "microsecond": 10,
+            "offsetSeconds": 3600,
+            "timezoneName": "Example"
+        },
+        "encoded": "ggEbCOoPEAYYAyAMKB4wADgKQJAcSgdFeGFtcGxl"
+    },
+    {
+        "value": {
+            "__monty_type__": "TimeDelta",
+            "days": 2,
+            "seconds": 3,
+            "microseconds": 4
+        },
+        "encoded": "igEGCAIQAxgE"
+    },
+    {
+        "value": {
+            "__monty_type__": "TimeZone",
+            "offsetSeconds": -3600,
+            "name": "Example"
+        },
+        "encoded": "kgEUCPDj/////////wESB0V4YW1wbGU="
+    },
+    {
+        "value": {
+            "__monty_type__": "Type",
+            "value": "int"
+        },
+        "encoded": "ogEDaW50"
+    },
+    {
+        "value": {
+            "__monty_type__": "BuiltinFunction",
+            "value": "len"
+        },
+        "encoded": "qgEDbGVu"
+    },
+    {
+        "value": {
+            "__monty_type__": "Exception",
+            "excType": "ValueError",
+            "message": "Source error"
+        },
+        "encoded": "mgEaCgpWYWx1ZUVycm9yEgxTb3VyY2UgZXJyb3I="
+    },
+    {
+        "value": {
+            "__monty_type__": "FileHandle",
+            "path": "/virtual-file",
+            "mode": "rt",
+            "position": 2
+        },
+        "encoded": "ugEUCg0vdmlydHVhbC1maWxlEgFyGAI="
+    }
+]

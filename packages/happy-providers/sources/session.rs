@@ -411,15 +411,13 @@ impl HttpSession {
             );
             headers.insert("anthropic-beta","context-1m-2025-08-07,interleaved-thinking-2025-05-14,compact-2026-01-12,structured-outputs-2025-12-15".parse().map_err(|_| invalid("Invalid Anthropic beta header."))?);
             if self.config.bedrock.is_none() {
-                headers.remove("authorization");
-                headers.insert(
-                    "x-api-key",
-                    self.credential
-                        .anthropic_api_key()
-                        .await
-                        .parse()
-                        .map_err(|_| invalid("The Anthropic API key is invalid."))?,
-                );
+                let (bearer,oauth)=self.credential.anthropic_authentication().await;
+                if bearer {
+                    if oauth {let beta=headers["anthropic-beta"].to_str().map_err(|_|invalid("The Anthropic beta header is invalid."))?;headers.insert("anthropic-beta",format!("{beta},oauth-2025-04-20").parse().map_err(|_|invalid("The Anthropic beta header is invalid."))?);}
+                } else {
+                    headers.remove("authorization");
+                    headers.insert("x-api-key",self.credential.anthropic_api_key().await.parse().map_err(|_| invalid("The Anthropic API key is invalid."))?);
+                }
             }
         }
         if self.config.kind == ProviderKind::Grok {

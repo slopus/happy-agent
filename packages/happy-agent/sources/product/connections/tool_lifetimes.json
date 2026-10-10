@@ -1,0 +1,26 @@
+[
+    {
+        "name": "list_remote_connections",
+        "durable": true,
+        "reloadable": false,
+        "steerable": false
+    },
+    {
+        "name": "set_remote_connection",
+        "durable": true,
+        "reloadable": false,
+        "steerable": false
+    },
+    {
+        "name": "remove_remote_connection",
+        "durable": true,
+        "reloadable": false,
+        "steerable": false
+    },
+    {
+        "name": "check_remote_connection_health",
+        "durable": true,
+        "reloadable": false,
+        "steerable": false
+    }
+]

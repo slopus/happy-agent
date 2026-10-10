@@ -15,6 +15,9 @@ impl AgentModule for HistoryModule {
     fn name(&self) -> &'static str {
         "history"
     }
+    async fn before_tool(&self, scope: &AgentScope<'_>, call: &Value) -> Result<()> {
+        self.validate_requested_arguments(scope.id, call["id"].as_str().unwrap_or(""), call["call"]["arguments"].as_str().unwrap_or("")).await
+    }
     fn model_changed(
         &self,
         ctx: &Context<'_>,
@@ -106,6 +109,9 @@ impl AgentModule for HistoryModule {
                     .iter()
                     .map(|block| {
                         let mut block = block.clone();
+                        if block["type"] == "reasoning" {
+                            return json!({"type":"thinking","thinking":block["text"]});
+                        }
                         if block["type"] == "image" {
                             block["mediaType"] = block["mimeType"].clone();
                             block
@@ -115,9 +121,17 @@ impl AgentModule for HistoryModule {
                         }
                         block
                     })
+                    .filter(|block| block["type"] != "thinking" || !block["thinking"].is_null())
                     .collect::<Vec<_>>();
-                json!({"recordId":id,"role":if metadata["messageOrigin"]=="user"{"user"}else{"agent"},"at":created,"runId":run,"blocks":blocks,"delivery":if steering{"steer"}else{"queue"},"profile":null})
+                let role = if entry["message"]["role"] == "system" { "system" } else if metadata["messageOrigin"] == "user" { "user" } else { "agent" };
+                let mut message = json!({"recordId":id,"role":role,"at":created,"runId":run,"blocks":blocks});
+                if role == "user" { message["delivery"] = json!(if steering { "steer" } else { "queue" }); message["profile"] = Value::Null; }
+                message
             };
+            if message["role"] == "agent" || message["role"] == "system" {
+                if let Some(sender) = metadata.get("senderAgentId").filter(|sender| self.schemas.valid("historyAgentId", sender).unwrap_or(false)) { message["senderAgentId"] = sender.clone(); }
+            }
+            if let Some(hidden) = metadata.get("hideFromUser") { message["hideFromUser"] = hidden.clone(); }
             if message["role"] == "user"
                 && message.get("mode").is_none()
                 && let Some(mode) = metadata.get("mode")
@@ -136,9 +150,12 @@ impl AgentModule for HistoryModule {
             .chain(accepted_ids.iter().cloned())
             .collect::<Vec<_>>();
         self.events.store_active(ctx, agent, &json!({"acceptedMessageIds":all_ids,"activeIndex":null,"activeKind":null,"argumentBuffers":{},"blocks":[],"callIndexes":{},"hasProviderEvent":false,"runId":run,"stopReason":"stop","text":""}))?;
-        let started = self.run(ctx, agent, &run)?;
         if steering && let Some(finished) = finished {
-            self.events.record(ctx, Some(agent), "run.boundary", json!({"agentId":agent,"finishedRun":finished,"startedRun":started,"acceptedMessageIds":accepted_ids}))?;
+            // This value exists only inside the admission transaction: the
+            // batch hook consumes it before commit, and rollback discards it.
+            let staged=json!({"agentId":agent,"finishedRun":finished,"startedRun":self.run(ctx,agent,&run)?,"acceptedMessageIds":accepted_ids});
+            anyhow::ensure!(self.schemas.valid("appendEvent",&json!({"type":"run.boundary","payload":staged}))?,"The staged acceptance boundary is invalid.");
+            ctx.put_value(agent,"native.history.acceptanceBoundary",&staged)?;
         } else {
             if let Some(finished) = finished {
                 self.events.record(
@@ -148,13 +165,18 @@ impl AgentModule for HistoryModule {
                     json!({"agentId":agent,"run":finished}),
                 )?;
             }
-            self.events.record(
-                ctx,
-                Some(agent),
-                "run.started",
-                json!({"agentId":agent,"run":started,"acceptedMessageIds":accepted_ids}),
-            )?;
         }
+        Ok(())
+    }
+    fn accepted_batch(&self,ctx:&Context<'_>,scope:&AgentScope<'_>,inputs:&[AcceptedInput],steering:bool)->Result<()> {
+        let agent=scope.id;let run=self.events.run_id(ctx,agent)?.context("The accepted batch has no public run.")?;let started=self.run(ctx,agent,&run)?;
+        let ids=inputs.iter().map(|input|input.input["id"].clone()).collect::<Vec<_>>();
+        if steering&&let Some(mut boundary)=ctx.value(agent,"native.history.acceptanceBoundary")? {
+            anyhow::ensure!(self.schemas.valid("appendEvent",&json!({"type":"run.boundary","payload":boundary}))?,"The staged acceptance boundary is invalid.");
+            boundary["startedRun"]=started;boundary["acceptedMessageIds"]=json!(ids);
+            ctx.database().execute("DELETE FROM happy_agent_values WHERE owner_id=?1 AND key='native.history.acceptanceBoundary'",[agent])?;
+            self.events.record(ctx,Some(agent),"run.boundary",boundary)?;
+        } else {self.events.record(ctx,Some(agent),"run.started",json!({"agentId":agent,"run":started,"acceptedMessageIds":ids}))?;}
         Ok(())
     }
     fn before_tools(&self, ctx: &Context<'_>, scope: &AgentScope<'_>) -> Result<()> {
@@ -261,6 +283,10 @@ impl AgentModule for HistoryModule {
             self.append(ctx, scope.id, &json!({"role":"error","at":inference.finished_at,"blocks":[{"type":"text","text":error.to_string()}],"recordId":format!("{}-error",inference.id),"runId":self.events.run_id(ctx,scope.id)?}))?;
         }
         Ok(())
+    }
+    fn loop_error(&self, ctx: &Context<'_>, scope: &AgentScope<'_>, error: &str) -> Result<()> {
+        let owed = ctx.value(scope.id, "owed")?.context("The failed loop has no identity.")?;
+        self.append(ctx, scope.id, &json!({"role":"error","at":super::super::identity::now(),"blocks":[{"type":"text","text":error}],"recordId":format!("{}-error",owed["loopId"].as_str().context("The failed loop has no identity.")?),"runId":self.events.run_id(ctx,scope.id)?}))
     }
     fn tool_result(
         &self,

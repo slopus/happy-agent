@@ -1,0 +1,335 @@
+{
+    "requests": [
+        {
+            "request": {
+                "id": "source-request",
+                "askingAgentId": "source-agent",
+                "question": "Choose a scope",
+                "header": "Release scope",
+                "context": "Shared context 😀",
+                "options": {
+                    "choices": [
+                        {
+                            "label": "Agent",
+                            "description": "Ship Agent"
+                        },
+                        {
+                            "label": "Terminal",
+                            "description": "Ship Terminal"
+                        }
+                    ],
+                    "multiSelect": false
+                },
+                "createdAt": 1000,
+                "updatedAt": 1000,
+                "status": "pending"
+            },
+            "text": "Request source-request:\n[Release scope] Choose a scope\nOptions:\n- Agent: Ship Agent\n- Terminal: Ship Terminal\nStatus: Waiting for an answer",
+            "short": "Request source-requ…"
+        },
+        {
+            "request": {
+                "id": "source-request",
+                "askingAgentId": "source-agent",
+                "question": "Choose a scope",
+                "header": "Release scope",
+                "context": "Shared context 😀",
+                "options": {
+                    "choices": [
+                        {
+                            "label": "Agent",
+                            "description": "Ship Agent"
+                        },
+                        {
+                            "label": "Terminal",
+                            "description": "Ship Terminal"
+                        }
+                    ],
+                    "multiSelect": false
+                },
+                "createdAt": 1000,
+                "updatedAt": 1200,
+                "status": "answered",
+                "answer": {
+                    "text": "Agent please",
+                    "selectedOptions": ["Agent"]
+                },
+                "answeredAt": 1200
+            },
+            "text": "Request source-request:\n[Release scope] Choose a scope\nOptions:\n- Agent: Ship Agent\n- Terminal: Ship Terminal\nStatus: Answered\nAnswer:\nSelected: Agent\nAgent please",
+            "short": "Request source-requ…"
+        },
+        {
+            "request": {
+                "id": "source-request",
+                "askingAgentId": "source-agent",
+                "question": "Choose a scope",
+                "header": "Release scope",
+                "context": "Shared context 😀",
+                "options": {
+                    "choices": [
+                        {
+                            "label": "Agent",
+                            "description": "Ship Agent"
+                        },
+                        {
+                            "label": "Terminal",
+                            "description": "Ship Terminal"
+                        }
+                    ],
+                    "multiSelect": false
+                },
+                "createdAt": 1000,
+                "updatedAt": 1200,
+                "status": "cancelled",
+                "reason": "No longer needed",
+                "cancelledAt": 1200
+            },
+            "text": "Request source-request:\n[Release scope] Choose a scope\nOptions:\n- Agent: Ship Agent\n- Terminal: Ship Terminal\nStatus: Cancelled\nReason: No longer needed",
+            "short": "Request source-requ…"
+        },
+        {
+            "request": {
+                "id": "source-request",
+                "askingAgentId": "source-agent",
+                "question": "Choose a scope",
+                "header": "Release scope",
+                "context": "Shared context 😀",
+                "options": {
+                    "choices": [
+                        {
+                            "label": "Agent",
+                            "description": "Ship Agent"
+                        },
+                        {
+                            "label": "Terminal",
+                            "description": "Ship Terminal"
+                        }
+                    ],
+                    "multiSelect": false
+                },
+                "createdAt": 1000,
+                "updatedAt": 1200,
+                "status": "away",
+                "presence": {
+                    "title": "Away",
+                    "emoji": "💤",
+                    "prompt": "Continue carefully.",
+                    "answerWaitMs": 0,
+                    "changesAt": 600000
+                },
+                "waitedMs": 0,
+                "completedAt": 1200
+            },
+            "text": "Request source-request:\n[Release scope] Choose a scope\nOptions:\n- Agent: Ship Agent\n- Terminal: Ship Terminal\nStatus: The question was not asked interactively because the user is Away 💤. Continue carefully. The user expects to change this state in about 10 minutes. The question is waiting in the user's inbox as ask source-request; call cancel_ask with that id if you no longer need an answer. Continue on your own with your best judgement.",
+            "short": "Request source-requ…"
+        },
+        {
+            "request": {
+                "id": "source-request",
+                "askingAgentId": "source-agent",
+                "question": "Choose a scope",
+                "header": "Release scope",
+                "context": "Shared context 😀",
+                "options": {
+                    "choices": [
+                        {
+                            "label": "Agent",
+                            "description": "Ship Agent"
+                        },
+                        {
+                            "label": "Terminal",
+                            "description": "Ship Terminal"
+                        }
+                    ],
+                    "multiSelect": false
+                },
+                "createdAt": 1000,
+                "updatedAt": 121000,
+                "status": "timed_out",
+                "deadlineAt": 121000,
+                "timedOutAt": 121000,
+                "waitedMs": 120000
+            },
+            "text": "Request source-request:\n[Release scope] Choose a scope\nOptions:\n- Agent: Ship Agent\n- Terminal: Ship Terminal\nStatus: Nobody answered within 2 minutes, and the user is unavailable ⚠️. The question is waiting in the user's inbox as ask source-request; call cancel_ask with that id if you no longer need an answer. Continue on your own with your best judgement.",
+            "short": "Request source-requ…"
+        }
+    ],
+    "page": {
+        "requests": [
+            {
+                "id": "source-request",
+                "askingAgentId": "source-agent",
+                "question": "Choose a scope",
+                "header": "Release scope",
+                "context": "Shared context 😀",
+                "options": {
+                    "choices": [
+                        {
+                            "label": "Agent",
+                            "description": "Ship Agent"
+                        },
+                        {
+                            "label": "Terminal",
+                            "description": "Ship Terminal"
+                        }
+                    ],
+                    "multiSelect": false
+                },
+                "createdAt": 1000,
+                "updatedAt": 1000,
+                "status": "pending"
+            },
+            {
+                "id": "source-request",
+                "askingAgentId": "source-agent",
+                "question": "Choose a scope",
+                "header": "Release scope",
+                "context": "Shared context 😀",
+                "options": {
+                    "choices": [
+                        {
+                            "label": "Agent",
+                            "description": "Ship Agent"
+                        },
+                        {
+                            "label": "Terminal",
+                            "description": "Ship Terminal"
+                        }
+                    ],
+                    "multiSelect": false
+                },
+                "createdAt": 1000,
+                "updatedAt": 1200,
+                "status": "answered",
+                "answer": {
+                    "text": "Agent please",
+                    "selectedOptions": ["Agent"]
+                },
+                "answeredAt": 1200
+            },
+            {
+                "id": "source-request",
+                "askingAgentId": "source-agent",
+                "question": "Choose a scope",
+                "header": "Release scope",
+                "context": "Shared context 😀",
+                "options": {
+                    "choices": [
+                        {
+                            "label": "Agent",
+                            "description": "Ship Agent"
+                        },
+                        {
+                            "label": "Terminal",
+                            "description": "Ship Terminal"
+                        }
+                    ],
+                    "multiSelect": false
+                },
+                "createdAt": 1000,
+                "updatedAt": 1200,
+                "status": "cancelled",
+                "reason": "No longer needed",
+                "cancelledAt": 1200
+            },
+            {
+                "id": "source-request",
+                "askingAgentId": "source-agent",
+                "question": "Choose a scope",
+                "header": "Release scope",
+                "context": "Shared context 😀",
+                "options": {
+                    "choices": [
+                        {
+                            "label": "Agent",
+                            "description": "Ship Agent"
+                        },
+                        {
+                            "label": "Terminal",
+                            "description": "Ship Terminal"
+                        }
+                    ],
+                    "multiSelect": false
+                },
+                "createdAt": 1000,
+                "updatedAt": 1200,
+                "status": "away",
+                "presence": {
+                    "title": "Away",
+                    "emoji": "💤",
+                    "prompt": "Continue carefully.",
+                    "answerWaitMs": 0,
+                    "changesAt": 600000
+                },
+                "waitedMs": 0,
+                "completedAt": 1200
+            },
+            {
+                "id": "source-request",
+                "askingAgentId": "source-agent",
+                "question": "Choose a scope",
+                "header": "Release scope",
+                "context": "Shared context 😀",
+                "options": {
+                    "choices": [
+                        {
+                            "label": "Agent",
+                            "description": "Ship Agent"
+                        },
+                        {
+                            "label": "Terminal",
+                            "description": "Ship Terminal"
+                        }
+                    ],
+                    "multiSelect": false
+                },
+                "createdAt": 1000,
+                "updatedAt": 121000,
+                "status": "timed_out",
+                "deadlineAt": 121000,
+                "timedOutAt": 121000,
+                "waitedMs": 120000
+            }
+        ],
+        "cursor": "0",
+        "limit": 50,
+        "nextCursor": "5"
+    },
+    "pageText": "source-request · Waiting for an answer · Choose a scope\nsource-request · Answered · Choose a scope\nsource-request · Cancelled · Choose a scope\nsource-request · The question was not asked interactively because the user is Away 💤. Continue carefully. The user expects to change this state in about 10 minutes. The question is waiting in the user's inbox as ask source-request; call cancel_ask with that id if you no longer need an answer. Continue on your own with your best judgement. · Choose a scope\nsource-request · Nobody answered within 2 minutes, and the user is unavailable ⚠️. The question is waiting in the user's inbox as ask source-request; call cancel_ask with that id if you no longer need an answer. Continue on your own with your best judgement. · Choose a scope\nNext cursor: 5",
+    "detail": {
+        "request": {
+            "id": "source-request",
+            "askingAgentId": "source-agent",
+            "question": "Choose a scope",
+            "header": "Release scope",
+            "context": "Shared context 😀",
+            "options": {
+                "choices": [
+                    {
+                        "label": "Agent",
+                        "description": "Ship Agent"
+                    },
+                    {
+                        "label": "Terminal",
+                        "description": "Ship Terminal"
+                    }
+                ],
+                "multiSelect": false
+            },
+            "createdAt": 1000,
+            "updatedAt": 1200,
+            "status": "answered",
+            "answer": {
+                "text": "Agent please",
+                "selectedOptions": ["Agent"]
+            },
+            "answeredAt": 1200
+        },
+        "detail": "Questions:\nChoose a scope\n\nContext:\nShared context 😀",
+        "cursor": 0,
+        "detailTotal": 60,
+        "nextCursor": "60"
+    },
+    "detailText": "Request source-request:\n[Release scope] Choose a scope\nOptions:\n- Agent: Ship Agent\n- Terminal: Ship Terminal\nStatus: Answered\nAnswer:\nSelected: Agent\nAgent please\nQuestions:\nChoose a scope\n\nContext:\nShared context 😀\nNext cursor: 60"
+}

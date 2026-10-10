@@ -1,0 +1,44 @@
+[
+    {
+        "name": "run_workflow",
+        "durable": false,
+        "reloadable": false,
+        "steerable": false
+    },
+    {
+        "name": "list_workflows",
+        "durable": true,
+        "reloadable": true,
+        "steerable": false
+    },
+    {
+        "name": "workflow_status",
+        "durable": true,
+        "reloadable": true,
+        "steerable": false
+    },
+    {
+        "name": "cancel_workflow",
+        "durable": false,
+        "reloadable": false,
+        "steerable": false
+    },
+    {
+        "name": "resume_workflow",
+        "durable": false,
+        "reloadable": false,
+        "steerable": false
+    },
+    {
+        "name": "wait_workflow",
+        "durable": false,
+        "reloadable": false,
+        "steerable": false
+    },
+    {
+        "name": "workflow_logs",
+        "durable": true,
+        "reloadable": true,
+        "steerable": false
+    }
+]

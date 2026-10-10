@@ -1,0 +1,414 @@
+[
+    {
+        "name": "desktopState",
+        "description": "Read this window's bounded visible desktop context.",
+        "parameters": {
+            "additionalProperties": false,
+            "type": "object",
+            "properties": {}
+        }
+    },
+    {
+        "name": "desktopOpen",
+        "description": "Open an explicitly identified visible desktop target.",
+        "parameters": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": ["target"],
+            "properties": {
+                "target": {
+                    "anyOf": [
+                        {
+                            "additionalProperties": false,
+                            "type": "object",
+                            "required": ["kind", "connectionId", "projectId", "groupId"],
+                            "properties": {
+                                "kind": {
+                                    "const": "project",
+                                    "type": "string"
+                                },
+                                "connectionId": {
+                                    "minLength": 1,
+                                    "maxLength": 128,
+                                    "pattern": "^(?=.*\\S)[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                                    "type": "string"
+                                },
+                                "projectId": {
+                                    "minLength": 1,
+                                    "maxLength": 128,
+                                    "pattern": "^(?=.*\\S)[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                                    "type": "string"
+                                },
+                                "groupId": {
+                                    "minLength": 1,
+                                    "maxLength": 128,
+                                    "pattern": "^(?=.*\\S)[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                                    "type": "string"
+                                }
+                            }
+                        },
+                        {
+                            "additionalProperties": false,
+                            "type": "object",
+                            "required": [
+                                "kind",
+                                "connectionId",
+                                "projectId",
+                                "groupId",
+                                "workspaceId"
+                            ],
+                            "properties": {
+                                "kind": {
+                                    "const": "workspace",
+                                    "type": "string"
+                                },
+                                "connectionId": {
+                                    "minLength": 1,
+                                    "maxLength": 128,
+                                    "pattern": "^(?=.*\\S)[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                                    "type": "string"
+                                },
+                                "projectId": {
+                                    "minLength": 1,
+                                    "maxLength": 128,
+                                    "pattern": "^(?=.*\\S)[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                                    "type": "string"
+                                },
+                                "groupId": {
+                                    "minLength": 1,
+                                    "maxLength": 128,
+                                    "pattern": "^(?=.*\\S)[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                                    "type": "string"
+                                },
+                                "workspaceId": {
+                                    "minLength": 1,
+                                    "maxLength": 128,
+                                    "pattern": "^(?=.*\\S)[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                                    "type": "string"
+                                }
+                            }
+                        },
+                        {
+                            "additionalProperties": false,
+                            "type": "object",
+                            "required": ["kind", "connectionId", "groupId", "sessionId"],
+                            "properties": {
+                                "kind": {
+                                    "const": "session",
+                                    "type": "string"
+                                },
+                                "connectionId": {
+                                    "minLength": 1,
+                                    "maxLength": 128,
+                                    "pattern": "^(?=.*\\S)[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                                    "type": "string"
+                                },
+                                "groupId": {
+                                    "minLength": 1,
+                                    "maxLength": 128,
+                                    "pattern": "^(?=.*\\S)[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                                    "type": "string"
+                                },
+                                "sessionId": {
+                                    "minLength": 1,
+                                    "maxLength": 128,
+                                    "pattern": "^(?=.*\\S)[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                                    "type": "string"
+                                }
+                            }
+                        },
+                        {
+                            "additionalProperties": false,
+                            "type": "object",
+                            "required": ["kind", "connectionId", "groupId", "sessionId", "botId"],
+                            "properties": {
+                                "kind": {
+                                    "const": "bot",
+                                    "type": "string"
+                                },
+                                "connectionId": {
+                                    "minLength": 1,
+                                    "maxLength": 128,
+                                    "pattern": "^(?=.*\\S)[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                                    "type": "string"
+                                },
+                                "groupId": {
+                                    "minLength": 1,
+                                    "maxLength": 128,
+                                    "pattern": "^(?=.*\\S)[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                                    "type": "string"
+                                },
+                                "sessionId": {
+                                    "minLength": 1,
+                                    "maxLength": 128,
+                                    "pattern": "^(?=.*\\S)[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                                    "type": "string"
+                                },
+                                "botId": {
+                                    "minLength": 1,
+                                    "maxLength": 128,
+                                    "pattern": "^(?=.*\\S)[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    ]
+                }
+            }
+        }
+    },
+    {
+        "name": "workspaceCreate",
+        "description": "Create a workspace using the ordinary UI and its defaults.",
+        "parameters": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": ["project"],
+            "properties": {
+                "project": {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": ["connectionId", "projectId"],
+                    "properties": {
+                        "connectionId": {
+                            "minLength": 1,
+                            "maxLength": 128,
+                            "pattern": "^(?=.*\\S)[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                            "type": "string"
+                        },
+                        "projectId": {
+                            "minLength": 1,
+                            "maxLength": 128,
+                            "pattern": "^(?=.*\\S)[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        }
+    },
+    {
+        "name": "sessionCreate",
+        "description": "Create a conversation; an optional prompt is only a draft.",
+        "parameters": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": ["group"],
+            "properties": {
+                "group": {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": ["connectionId", "groupId"],
+                    "properties": {
+                        "connectionId": {
+                            "minLength": 1,
+                            "maxLength": 128,
+                            "pattern": "^(?=.*\\S)[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                            "type": "string"
+                        },
+                        "groupId": {
+                            "minLength": 1,
+                            "maxLength": 128,
+                            "pattern": "^(?=.*\\S)[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                            "type": "string"
+                        }
+                    }
+                },
+                "prompt": {
+                    "minLength": 1,
+                    "maxLength": 16384,
+                    "pattern": "\\S",
+                    "type": "string"
+                }
+            }
+        }
+    },
+    {
+        "name": "botCreate",
+        "description": "Open ordinary bot creation, never grant administration; a prompt is a draft.",
+        "parameters": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": ["connectionId"],
+            "properties": {
+                "connectionId": {
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "pattern": "^(?=.*\\S)[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                    "type": "string"
+                },
+                "name": {
+                    "minLength": 1,
+                    "maxLength": 256,
+                    "pattern": "\\S",
+                    "type": "string"
+                },
+                "prompt": {
+                    "minLength": 1,
+                    "maxLength": 16384,
+                    "pattern": "\\S",
+                    "type": "string"
+                }
+            }
+        }
+    },
+    {
+        "name": "sessionRead",
+        "description": "Read bounded public messages and structured status for a visible conversation.",
+        "parameters": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": ["target"],
+            "properties": {
+                "target": {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": ["connectionId", "groupId", "sessionId"],
+                    "properties": {
+                        "connectionId": {
+                            "minLength": 1,
+                            "maxLength": 128,
+                            "pattern": "^(?=.*\\S)[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                            "type": "string"
+                        },
+                        "groupId": {
+                            "minLength": 1,
+                            "maxLength": 128,
+                            "pattern": "^(?=.*\\S)[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                            "type": "string"
+                        },
+                        "sessionId": {
+                            "minLength": 1,
+                            "maxLength": 128,
+                            "pattern": "^(?=.*\\S)[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        }
+    },
+    {
+        "name": "sessionSend",
+        "description": "Stage exact text for independent human review and Send. This does NOT send it or answer questions.",
+        "parameters": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": ["target", "text"],
+            "properties": {
+                "target": {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": ["connectionId", "groupId", "sessionId"],
+                    "properties": {
+                        "connectionId": {
+                            "minLength": 1,
+                            "maxLength": 128,
+                            "pattern": "^(?=.*\\S)[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                            "type": "string"
+                        },
+                        "groupId": {
+                            "minLength": 1,
+                            "maxLength": 128,
+                            "pattern": "^(?=.*\\S)[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                            "type": "string"
+                        },
+                        "sessionId": {
+                            "minLength": 1,
+                            "maxLength": 128,
+                            "pattern": "^(?=.*\\S)[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                            "type": "string"
+                        }
+                    }
+                },
+                "text": {
+                    "minLength": 1,
+                    "maxLength": 16384,
+                    "pattern": "\\S",
+                    "type": "string"
+                }
+            }
+        }
+    },
+    {
+        "name": "sessionWatch",
+        "description": "Select or deselect one conversation for public status updates. At most five may be watched.",
+        "parameters": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": ["target", "enabled"],
+            "properties": {
+                "target": {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": ["connectionId", "groupId", "sessionId"],
+                    "properties": {
+                        "connectionId": {
+                            "minLength": 1,
+                            "maxLength": 128,
+                            "pattern": "^(?=.*\\S)[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                            "type": "string"
+                        },
+                        "groupId": {
+                            "minLength": 1,
+                            "maxLength": 128,
+                            "pattern": "^(?=.*\\S)[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                            "type": "string"
+                        },
+                        "sessionId": {
+                            "minLength": 1,
+                            "maxLength": 128,
+                            "pattern": "^(?=.*\\S)[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                            "type": "string"
+                        }
+                    }
+                },
+                "enabled": {
+                    "type": "boolean"
+                }
+            }
+        }
+    },
+    {
+        "name": "composerDraftAppend",
+        "description": "Append text to an existing draft without replacing draft text or attachments.",
+        "parameters": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": ["target", "text"],
+            "properties": {
+                "target": {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": ["connectionId", "groupId", "sessionId"],
+                    "properties": {
+                        "connectionId": {
+                            "minLength": 1,
+                            "maxLength": 128,
+                            "pattern": "^(?=.*\\S)[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                            "type": "string"
+                        },
+                        "groupId": {
+                            "minLength": 1,
+                            "maxLength": 128,
+                            "pattern": "^(?=.*\\S)[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                            "type": "string"
+                        },
+                        "sessionId": {
+                            "minLength": 1,
+                            "maxLength": 128,
+                            "pattern": "^(?=.*\\S)[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                            "type": "string"
+                        }
+                    }
+                },
+                "text": {
+                    "minLength": 1,
+                    "maxLength": 16384,
+                    "pattern": "\\S",
+                    "type": "string"
+                }
+            }
+        }
+    }
+]

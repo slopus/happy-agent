@@ -1,0 +1,50 @@
+[
+    {
+        "name": "list_skill_folders",
+        "description": "List the extra folders this Happy Agent installation scans for skills, beside ~/.agents/skills and each project's .agents/skills. Only active admin bots may use it.",
+        "parameters": {
+            "additionalProperties": false,
+            "type": "object",
+            "properties": {}
+        },
+        "defer": true
+    },
+    {
+        "name": "add_skill_folder",
+        "description": "Add a folder, given as an absolute path on this machine, that every agent on this Happy Agent installation scans for skills. Each subdirectory of the folder that contains a SKILL.md becomes a skill, exactly like ~/.agents/skills. The change is saved in runtime.toml and applies from each agent's next turn. Only active admin bots may use it.",
+        "parameters": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": ["path"],
+            "properties": {
+                "path": {
+                    "minLength": 1,
+                    "maxLength": 4096,
+                    "pattern": "^/[^\\u0000\\r\\n]*$",
+                    "description": "The absolute path of a folder whose subdirectories each contain a SKILL.md.",
+                    "type": "string"
+                }
+            }
+        },
+        "defer": true
+    },
+    {
+        "name": "remove_skill_folder",
+        "description": "Stop scanning a skill folder, given as an absolute path, that was added to this Happy Agent installation. The folder and its files are left untouched. Folders listed in the user's happy.toml cannot be removed with this tool. The change is saved in runtime.toml and applies from each agent's next turn. Only active admin bots may use it.",
+        "parameters": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": ["path"],
+            "properties": {
+                "path": {
+                    "minLength": 1,
+                    "maxLength": 4096,
+                    "pattern": "^/[^\\u0000\\r\\n]*$",
+                    "description": "The absolute path of a folder whose subdirectories each contain a SKILL.md.",
+                    "type": "string"
+                }
+            }
+        },
+        "defer": true
+    }
+]

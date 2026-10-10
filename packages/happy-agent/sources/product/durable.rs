@@ -24,6 +24,13 @@ const MIGRATIONS: &[(&str, &str)] = &[(
 )];
 const MAX_PENDING: usize = 10_000;
 const MAX_BYTES: usize = 64 * 1024 * 1024;
+const SHIPPED_FUNCTIONS: &[&str] = &[
+    "cloud.expire-authorization", "cloud.refresh-session", "connections-reconcile",
+    "live-start-once", "node-save-runtime-name", "projects.provision", "projects.archive",
+    "projects.cleanup", "services.execution", "global-skills-watch",
+    "global-skills-write-preferences", "subtasks.start", "subtasks.archive",
+    "tailcat-reconcile", "workspaces.provision", "workspaces.archive",
+];
 
 /// Native function bodies belong to the module that registers them. This seam
 /// carries only this module's public call/KV types, never application host handles.
@@ -120,8 +127,27 @@ impl DurableFunctionsModule {
     pub async fn load(self: &Arc<Self>) -> Result<()> {
         self.runtime.migrate("durableFunctions", MIGRATIONS).await
     }
+    #[cfg(test)]
+    pub fn write_test_checkpoint(self: &Arc<Self>, ctx: &Context<'_>, call: &str, key: &str, value: &Value) -> Result<()> {
+        self.runtime.assert_context(ctx)?;
+        anyhow::ensure!(self.read(ctx, call)?.is_some(), "The fixture checkpoint has no pending durable call.");
+        CallKv { module: self.clone(), prefix: format!("call.{call}."), cancel: CancellationToken::new() }.write(ctx, key, value)
+    }
     /// Called at the system's after-start barrier, after every owner registered.
     pub async fn start(self: &Arc<Self>) -> Result<()> {
+        // An incomplete port must never classify a shipped owner as removed
+        // and delete its only durable recovery intent. No recovery mutation
+        // starts before this check has succeeded for the whole stored catalog.
+        let module = self.clone();
+        self.runtime.transact(move |ctx| {
+            let mut statement = ctx.database().prepare("SELECT DISTINCT \"function\" FROM durable_function_calls ORDER BY \"function\" LIMIT 10001")?;
+            for (index, name) in statement.query_map([], |row| row.get::<_, String>(0))?.enumerate() {
+                anyhow::ensure!(index < MAX_PENDING, "The durable recovery catalog exceeds its restoration bound.");
+                let name = name?;
+                anyhow::ensure!(!SHIPPED_FUNCTIONS.contains(&name.as_str()) || module.definition(&name).is_some(), "Durable startup cannot restore the original owner {name}; all pending calls and checkpoints have been retained.");
+            }
+            Ok(())
+        }).await?;
         {
             let _definitions = self
                 .definitions
@@ -284,6 +310,11 @@ impl DurableFunctionsModule {
             module.dispatch();
         })?;
         Ok(true)
+    }
+    pub fn has_pending(&self, ctx: &Context<'_>, operation: &str) -> Result<bool> {
+        self.runtime.assert_context(ctx)?;
+        anyhow::ensure!(self.schemas.valid("durableOperationId", &json!(operation))?, "The durable function operation ID is invalid.");
+        Ok(self.read_operation(ctx, operation)?.is_some())
     }
     fn read_operation(&self, ctx: &Context<'_>, operation: &str) -> Result<Option<Value>> {
         let id: Option<String> = ctx
@@ -477,6 +508,7 @@ impl DurableFunctionsModule {
                 let _ = task.await;
             }
         }
+        self.definitions.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clear();
     }
 }
 impl CallKv {
@@ -938,6 +970,28 @@ mod tests {
             })
             .await
             .expect("selective state deletion");
+        fixture.close().await;
+    }
+
+    #[tokio::test]
+    async fn an_incomplete_shipped_registry_preserves_every_original_call_and_checkpoint() {
+        let fixture = Fixture::new().await;
+        fixture.runtime.transact(|ctx| {
+            for (id, function) in [("originalprojectcall", "projects.provision"), ("genuinelyremovedcall", "removed.feature")] {
+                ctx.database().execute("INSERT INTO durable_function_calls VALUES(?1,NULL,?2,'{}','[]',1)", params![id, function])?;
+                ctx.database().execute("INSERT INTO durable_function_kv VALUES(?1,'true')", [format!("call.{id}.checkpoint")])?;
+            }
+            Ok(())
+        }).await.unwrap();
+        let failure = fixture.module.start().await.unwrap_err();
+        assert!(failure.to_string().contains("projects.provision"));
+        fixture.runtime.transact(|ctx| {
+            for table in ["durable_function_calls", "durable_function_kv"] {
+                let count: usize = ctx.database().query_row(&format!("SELECT count(*) FROM {table}"), [], |row| row.get(0))?;
+                assert_eq!(count, 2, "The incomplete registry cannot remove any owed work");
+            }
+            Ok(())
+        }).await.unwrap();
         fixture.close().await;
     }
 

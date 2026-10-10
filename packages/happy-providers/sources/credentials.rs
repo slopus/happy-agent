@@ -4,6 +4,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{collections::BTreeMap, path::PathBuf, sync::Arc, time::Duration};
 use tokio::sync::Mutex;
+mod discovery;
+
+#[derive(Debug,thiserror::Error)]
+#[error("The selected provider has no local credential. Sign in through its native assistant or configure this account.")]
+pub struct CredentialUnavailable;
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
@@ -17,16 +22,33 @@ pub enum CredentialSource {
     Codex {
         #[serde(default)]
         auth_file: Option<PathBuf>,
+        #[serde(default = "ambient_default")]
+        ambient: bool,
     },
     Grok {
         #[serde(default)]
         auth_file: Option<PathBuf>,
+        #[serde(default = "ambient_default")]
+        ambient: bool,
+    },
+    Claude {
+        #[serde(default)]
+        oauth_token: Option<String>,
+        #[serde(default)]
+        api_key: Option<String>,
+        #[serde(default)]
+        auth_token: Option<String>,
+        #[serde(default)]
+        config_dir: Option<PathBuf>,
+        #[serde(default = "ambient_default")]
+        ambient: bool,
     },
     Aws {
         #[serde(default)]
         profile: Option<String>,
     },
 }
+fn ambient_default()->bool {true}
 impl std::fmt::Debug for CredentialSource {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -35,14 +57,17 @@ impl std::fmt::Debug for CredentialSource {
                 .debug_struct("Environment")
                 .field("variable", variable)
                 .finish(),
-            Self::Codex { auth_file } => f
+            Self::Codex { auth_file,ambient } => f
                 .debug_struct("Codex")
                 .field("auth_file", auth_file)
+                .field("ambient",ambient)
                 .finish(),
-            Self::Grok { auth_file } => f
+            Self::Grok { auth_file,ambient } => f
                 .debug_struct("Grok")
                 .field("auth_file", auth_file)
+                .field("ambient",ambient)
                 .finish(),
+            Self::Claude {config_dir,ambient,..}=>f.debug_struct("Claude").field("config_dir",config_dir).field("ambient",ambient).finish_non_exhaustive(),
             Self::Aws { profile } => f.debug_struct("Aws").field("profile", profile).finish(),
         }
     }
@@ -68,31 +93,22 @@ struct Auth {
     file: Option<PathBuf>,
     original: Option<Value>,
     codex_session: bool,
-}
-
-#[derive(Deserialize)]
-struct CodexAuth {
-    #[serde(default)]
-    auth_mode: Option<String>,
-    #[serde(default, rename = "OPENAI_API_KEY")]
-    api_key: Option<String>,
-    #[serde(default)]
-    tokens: Option<CodexTokens>,
-}
-#[derive(Deserialize)]
-struct CodexTokens {
-    #[serde(default)]
-    access_token: Option<String>,
-    #[serde(default)]
-    account_id: Option<String>,
-}
-#[derive(Deserialize)]
-struct GrokRecord {
-    #[serde(default)]
-    key: Option<String>,
+    claude_bearer: bool,
+    claude_oauth: bool,
 }
 
 impl Credential {
+    /// Usage belongs to a subscription credential, even when the CLI also stores an API key.
+    pub(crate) async fn account(source:CredentialSource)->anyhow::Result<Option<Self>> {
+        let state=match &source {
+            CredentialSource::Codex{auth_file,ambient}=>{let state=discovery::codex(auth_file.as_deref(),*ambient).await?;if !state.codex_session{return Ok(None);}state},
+            CredentialSource::Grok{auth_file,ambient}=>discovery::grok_account(auth_file.as_deref(),*ambient).await?,
+            CredentialSource::Claude{oauth_token,api_key,auth_token,config_dir,ambient}=>{if api_key.is_some(){return Ok(None);}discovery::claude_account(oauth_token.as_deref().or(auth_token.as_deref()),config_dir.as_deref(),*ambient).await?},
+            _=>return Ok(None),
+        };
+        Ok(Some(Self{source,state:Arc::new(Mutex::new(state)),aws:None}))
+    }
+    pub(crate) async fn grok_user_id(&self)->Option<String>{self.state.lock().await.original.as_ref().and_then(|value|value["https://auth.x.ai::b1a00492-073a-47ea-816f-4c329264a828"]["user_id"].as_str()).map(str::to_owned)}
     pub async fn load(source: CredentialSource, region: &str) -> anyhow::Result<Self> {
         let mut state = Auth::default();
         let mut aws = None;
@@ -102,40 +118,9 @@ impl Credential {
                 state.token = std::env::var(variable)
                     .map_err(|_| anyhow::anyhow!("Set {variable} before using this provider."))?;
             }
-            CredentialSource::Codex { auth_file } => {
-                let file = auth_file
-                    .clone()
-                    .unwrap_or(native_auth_path("CODEX_HOME", ".codex")?);
-                let contents = tokio::fs::read(&file).await?;
-                let auth: CodexAuth = serde_json::from_slice(&contents)?;
-                if auth.auth_mode.as_deref() == Some("apikey") {
-                    state.token = auth.api_key.unwrap_or_default();
-                } else {
-                    let tokens = auth.tokens.ok_or_else(|| {
-                        anyhow::anyhow!("Sign in through Codex before using this provider.")
-                    })?;
-                    state.token = tokens.access_token.unwrap_or_default();
-                    state.account = tokens.account_id;
-                    state.codex_session = true;
-                }
-                state.original = Some(serde_json::from_slice(&contents)?);
-                state.file = Some(file);
-            }
-            CredentialSource::Grok { auth_file } => {
-                let file = auth_file
-                    .clone()
-                    .unwrap_or(native_auth_path("GROK_HOME", ".grok")?);
-                let records: BTreeMap<String, GrokRecord> =
-                    serde_json::from_slice(&tokio::fs::read(file).await?)?;
-                // The caller selected this source; do not silently select another account.
-                let record = records
-                    .get("https://auth.x.ai::b1a00492-073a-47ea-816f-4c329264a828")
-                    .or_else(|| records.get("xai::api_key"))
-                    .ok_or_else(|| {
-                        anyhow::anyhow!("Sign in through Grok before using this provider.")
-                    })?;
-                state.token = record.key.clone().unwrap_or_default();
-            }
+            CredentialSource::Codex {auth_file,ambient}=>state=discovery::codex(auth_file.as_deref(),*ambient).await?,
+            CredentialSource::Grok {auth_file,ambient}=>state=discovery::grok(auth_file.as_deref(),*ambient).await?,
+            CredentialSource::Claude {oauth_token,api_key,auth_token,config_dir,ambient}=>state=discovery::claude(oauth_token.as_deref(),api_key.as_deref(),auth_token.as_deref(),config_dir.as_deref(),*ambient).await?,
             CredentialSource::Aws { profile } => {
                 let mut loader = aws_config::defaults(aws_config::BehaviorVersion::latest())
                     .region(aws_config::Region::new(region.to_owned()));
@@ -151,8 +136,8 @@ impl Credential {
             }
         }
         anyhow::ensure!(
-            aws.is_some() || !state.token.trim().is_empty(),
-            "The selected provider credential is empty."
+            aws.is_some() || !state.token.trim().is_empty() || state.codex_session&&!state.token.is_empty(),
+            CredentialUnavailable
         );
         Ok(Self {
             source,
@@ -225,6 +210,7 @@ impl Credential {
     pub async fn anthropic_api_key(&self) -> String {
         self.state.lock().await.token.clone()
     }
+    pub async fn anthropic_authentication(&self)->(bool,bool) {let state=self.state.lock().await;(state.claude_bearer,state.claude_oauth)}
     /// Refresh is provider-owned; outer code never replays inference on its own.
     pub async fn refresh_codex(&self, client: &reqwest::Client) -> Result<bool, ProviderError> {
         let mut auth = self.state.lock().await;

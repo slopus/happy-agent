@@ -141,6 +141,54 @@
             }
         }
     },
+    "agentMetadata": {
+        "allOf": [
+            {
+                "type": "object",
+                "properties": {
+                    "title": {
+                        "type": "string"
+                    }
+                }
+            },
+            {
+                "type": "object",
+                "patternProperties": {
+                    "^(.*)$": {
+                        "$id": "T0",
+                        "anyOf": [
+                            {
+                                "type": "string"
+                            },
+                            {
+                                "type": "number"
+                            },
+                            {
+                                "type": "boolean"
+                            },
+                            {
+                                "type": "null"
+                            },
+                            {
+                                "type": "array",
+                                "items": {
+                                    "$ref": "T0"
+                                }
+                            },
+                            {
+                                "type": "object",
+                                "patternProperties": {
+                                    "^(.*)$": {
+                                        "$ref": "T0"
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                }
+            }
+        ]
+    },
     "cuid2": {
         "minLength": 2,
         "maxLength": 32,
@@ -713,6 +761,19 @@
                 "type": "string"
             },
             "settlementId": {
+                "minLength": 2,
+                "maxLength": 32,
+                "pattern": "^[a-z][a-z0-9]*$",
+                "type": "string"
+            }
+        }
+    },
+    "nativeAbort": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": ["loopId"],
+        "properties": {
+            "loopId": {
                 "minLength": 2,
                 "maxLength": 32,
                 "pattern": "^[a-z][a-z0-9]*$",
