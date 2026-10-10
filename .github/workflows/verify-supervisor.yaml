@@ -541,5 +541,6 @@ jobs:
               with:
                   name: native-docker-proof
                   path: .native-docker-proof
+                  include-hidden-files: true
                   if-no-files-found: error
                   retention-days: 7

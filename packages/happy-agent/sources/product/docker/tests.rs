@@ -1,7 +1,7 @@
 use super::*;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-fn tool_json(message: &happy_providers::Message) -> Value {
+fn codex_command_text(message: &happy_providers::Message) -> (&str, &str) {
     let happy_providers::Message::Tool {
         content,
         is_error: false,
@@ -13,7 +13,18 @@ fn tool_json(message: &happy_providers::Message) -> Value {
     let happy_providers::Block::Text { text } = &content[0] else {
         panic!("{content:?}")
     };
-    serde_json::from_str(text).unwrap()
+    // Source formatUnifiedExecOutput renders the model-visible status and
+    // output as text. These short fixtures have no truncation metadata.
+    let (wall_time, sections) = text.split_once('\n').expect("Missing Codex wall time.");
+    assert!(
+        wall_time.starts_with("Wall time: ") && wall_time.ends_with(" seconds"),
+        "{text}"
+    );
+    let (status, output) = sections
+        .split_once("\nOutput:\n")
+        .expect("Missing Codex output section.");
+    assert!(!status.contains('\n'), "Unexpected Codex metadata: {text}");
+    (status, output)
 }
 
 #[tokio::test]
@@ -714,18 +725,18 @@ async fn native_docker_owns_skills_files_stdin_pty_processes_permissions_and_cle
         Ok(())
     }).await.unwrap();
     let omitted=fixture.file("exec_command",json!({"cmd":"test -z \"${COMPUTE_SELECTED+x}\" && test -z \"${COMPUTE_HIDDEN+x}\" && test -z \"${CARGO_MANIFEST_DIR+x}\" && test -z \"${HAPPY_CONTAINER_WORKER+x}\" && printf hidden","yield_time_ms":1000}),"full_access").await;
-    let omitted = tool_json(&omitted);
-    assert_eq!(omitted["exit_code"], 0, "{omitted}");
-    assert_eq!(omitted["output"], "hidden");
+    let (status, output) = codex_command_text(&omitted);
+    assert_eq!(status, "Process exited with code 0", "{omitted:?}");
+    assert_eq!(output, "hidden");
     std::fs::write(
         fixture.root.join("selected-fixture-expected"),
         "selected-fixture-value\n",
     )
     .unwrap();
     let selected=fixture.file("exec_command",json!({"cmd":"read -r expected < selected-fixture-expected && test \"$COMPUTE_SELECTED\" = \"$expected\" && test -z \"${COMPUTE_HIDDEN+x}\" && printf selected","secrets":["container-selected"],"yield_time_ms":1000}),"full_access").await;
-    let selected = tool_json(&selected);
-    assert_eq!(selected["exit_code"], 0, "{selected}");
-    assert_eq!(selected["output"], "selected");
+    let (status, output) = codex_command_text(&selected);
+    assert_eq!(status, "Process exited with code 0", "{selected:?}");
+    assert_eq!(output, "selected");
     let protected = fixture.root.join("happy.toml");
     assert!(
         compute
@@ -968,14 +979,14 @@ async fn native_docker_owns_skills_files_stdin_pty_processes_permissions_and_cle
         ),
         "{descendant:?}"
     );
-    let happy_providers::Message::Tool { content, .. } = descendant else {
-        unreachable!()
-    };
-    let happy_providers::Block::Text { text } = &content[0] else {
-        unreachable!()
-    };
-    let descendant: Value = serde_json::from_str(text).unwrap();
-    let id = descendant["session_id"].as_u64().unwrap();
+    let (status, output) = codex_command_text(&descendant);
+    assert_eq!(output, "(no new output)");
+    let id = status
+        .strip_prefix("Process running with session ID ")
+        .expect("The live command must expose its Codex session ID.")
+        .parse::<u64>()
+        .unwrap();
+    assert!(id > 0, "{descendant:?}");
     fixture
         .tools
         .hard_kill_agent_processes(&fixture.agent)
@@ -988,20 +999,15 @@ async fn native_docker_owns_skills_files_stdin_pty_processes_permissions_and_cle
             "full_access",
         )
         .await;
-    let happy_providers::Message::Tool {
-        content,
-        is_error: false,
-        ..
-    } = stopped
-    else {
-        panic!("{stopped:?}")
-    };
-    let happy_providers::Block::Text { text } = &content[0] else {
-        unreachable!()
-    };
-    let stopped: Value = serde_json::from_str(text).unwrap();
-    assert!(stopped.get("exit_code").is_some(), "{stopped}");
-    assert!(stopped.get("session_id").is_none(), "{stopped}");
+    let (status, output) = codex_command_text(&stopped);
+    // Source deliberately omits exit_code for a signal-stopped session. Its
+    // terminal text also carries no running session ID.
+    assert_eq!(
+        status,
+        "Process ended without an exit code, which is what a stopped session looks like",
+        "{stopped:?}"
+    );
+    assert_eq!(output, "(no new output)");
     assert_eq!(
         live.read(5000, true, &cancel).await.unwrap().unwrap()["status"],
         "running",

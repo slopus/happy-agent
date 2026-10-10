@@ -57,3 +57,10 @@ Secrets are resolved by the existing Secrets owner for the exact selected agent,
 project and workspace scopes. Only selected values enter one container shell.
 Attached but omitted names and private runner credentials are removed from its
 environment; the worker never inherits the daemon's environment.
+
+The first real Engine fixture parsed Codex command replies as JSON, but Source
+renders model-visible status and output as text. The fixture now checks the exact
+Source status, output bytes and running session ID. A signal-stopped session uses
+Source's explicit terminal message without an exit code. The Engine gate retains
+all file, shell, input, PTY, secret, permission and teardown assertions; reaching
+one earlier assertion does not establish later behavior.
