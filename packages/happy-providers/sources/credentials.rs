@@ -4,7 +4,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{collections::BTreeMap, path::PathBuf, sync::Arc, time::Duration};
 use tokio::sync::Mutex;
+use tokio_util::sync::CancellationToken;
 mod discovery;
+mod grok;
+
+/// How often an idle daemon rotates stored Codex and Grok logins through
+/// [`Credential::refresh_for_maintenance`], so a login unused for days is still valid when needed.
+pub const CREDENTIAL_MAINTENANCE_INTERVAL: Duration = Duration::from_secs(3 * 60 * 60);
 
 #[derive(Debug,thiserror::Error)]
 #[error("The selected provider has no local credential. Sign in through its native assistant or configure this account.")]
@@ -93,6 +99,8 @@ struct Auth {
     file: Option<PathBuf>,
     original: Option<Value>,
     codex_session: bool,
+    /// The token is Grok CLI's OAuth session, which this credential keeps refreshed.
+    grok_session: bool,
     claude_bearer: bool,
     claude_oauth: bool,
 }
@@ -108,7 +116,7 @@ impl Credential {
         };
         Ok(Some(Self{source,state:Arc::new(Mutex::new(state)),aws:None}))
     }
-    pub(crate) async fn grok_user_id(&self)->Option<String>{self.state.lock().await.original.as_ref().and_then(|value|value["https://auth.x.ai::b1a00492-073a-47ea-816f-4c329264a828"]["user_id"].as_str()).map(str::to_owned)}
+    pub(crate) async fn grok_user_id(&self)->Option<String>{self.state.lock().await.original.as_ref().and_then(|value|value[grok::OAUTH_SCOPE]["user_id"].as_str()).map(str::to_owned)}
     pub async fn load(source: CredentialSource, region: &str) -> anyhow::Result<Self> {
         let mut state = Auth::default();
         let mut aws = None;
@@ -156,6 +164,7 @@ impl Credential {
         region: &str,
         service: &str,
     ) -> Result<reqwest::header::HeaderMap, ProviderError> {
+        self.ensure_grok_fresh().await;
         let mut headers = reqwest::header::HeaderMap::new();
         if let Some(provider) = &self.aws {
             let credential =
@@ -211,6 +220,82 @@ impl Credential {
         self.state.lock().await.token.clone()
     }
     pub async fn anthropic_authentication(&self)->(bool,bool) {let state=self.state.lock().await;(state.claude_bearer,state.claude_oauth)}
+    /// Renews a Grok session token before it is sent when its stored expiry has passed or is
+    /// about to. Failure is not fatal: the request proceeds and the upstream response decides.
+    pub(crate) async fn ensure_grok_fresh(&self) {
+        let expiring = {
+            let auth = self.state.lock().await;
+            auth.grok_session
+                && auth.original.as_ref().is_none_or(|store| {
+                    grok::expired(&store[grok::OAUTH_SCOPE], grok::EARLY_REFRESH_MS, grok::now_ms())
+                })
+        };
+        if expiring {
+            self.refresh_grok().await;
+        }
+    }
+    /// Rotates a stored Codex or Grok login without inference. `Ok(false)` reports a refresh that
+    /// could not complete, and other credentials have nothing to maintain. Cancellation stops
+    /// only this wait: a rotation already in flight still completes and is kept.
+    pub async fn refresh_for_maintenance(
+        &self,
+        cancel: &CancellationToken,
+    ) -> Result<bool, ProviderError> {
+        let cancelled = || {
+            ProviderError::new(ErrorKind::Unclassified, "Credential refresh was cancelled.")
+        };
+        if cancel.is_cancelled() {
+            return Err(cancelled());
+        }
+        let (grok_session, codex_session) = {
+            let auth = self.state.lock().await;
+            (auth.grok_session, auth.codex_session)
+        };
+        if !grok_session && !codex_session {
+            return Ok(false);
+        }
+        let this = self.clone();
+        let rotation = tokio::spawn(async move {
+            if grok_session {
+                this.refresh_grok_now().await
+            } else {
+                let Ok(client) = reqwest::Client::builder()
+                    .connect_timeout(Duration::from_secs(30))
+                    .build()
+                else {
+                    return false;
+                };
+                this.refresh_codex(&client).await.unwrap_or(false)
+            }
+        });
+        tokio::select! {
+            _ = cancel.cancelled() => Err(cancelled()),
+            refreshed = rotation => Ok(refreshed.unwrap_or(false)),
+        }
+    }
+    /// Runs in its own task so a caller that stops waiting cannot interrupt the store write.
+    async fn refresh_grok(&self) -> bool {
+        let this = self.clone();
+        tokio::spawn(async move { this.refresh_grok_now().await })
+            .await
+            .unwrap_or(false)
+    }
+    async fn refresh_grok_now(&self) -> bool {
+        let (file, token) = {
+            let auth = self.state.lock().await;
+            match (&auth.file, auth.grok_session) {
+                (Some(file), true) => (file.clone(), auth.token.clone()),
+                _ => return false,
+            }
+        };
+        let Some((token, store)) = grok::refresh(&file, &token).await else {
+            return false;
+        };
+        let mut auth = self.state.lock().await;
+        auth.token = token;
+        auth.original = Some(store);
+        true
+    }
     /// Refresh is provider-owned; outer code never replays inference on its own.
     pub async fn refresh_codex(&self, client: &reqwest::Client) -> Result<bool, ProviderError> {
         let mut auth = self.state.lock().await;

@@ -4,7 +4,9 @@ pub mod protocol;
 mod session;
 mod types;
 
-pub use credentials::{Credential, CredentialSource, CredentialUnavailable};
+pub use credentials::{
+    CREDENTIAL_MAINTENANCE_INTERVAL, Credential, CredentialSource, CredentialUnavailable,
+};
 pub use error::{ErrorKind, ProviderError};
 pub use session::{BedrockTransport, HttpSession, ProviderConfig, ProviderKind, Transport};
 pub use types::*;

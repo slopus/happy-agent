@@ -10,7 +10,7 @@ fn valid(name:&str,value:&Value)->Result<bool> {
     let schemas=SCHEMAS.get_or_init(||{let sources:BTreeMap<String,Value>=serde_json::from_str(include_str!("schemas.json")).expect("Captured credential schemas");sources.into_iter().map(|(name,schema)|(name,jsonschema::validator_for(&schema).expect("Valid TypeBox credential schema"))).collect()});
     Ok(schemas.get(name).context("The credential schema is unavailable.")?.is_valid(value))
 }
-async fn read(path:&Path)->Result<Option<Vec<u8>>> {
+pub(super) async fn read(path:&Path)->Result<Option<Vec<u8>>> {
     let path=path.to_owned();
     let opened=tokio::task::spawn_blocking(move||{let mut options=std::fs::OpenOptions::new();options.read(true);#[cfg(unix)]{use std::os::unix::fs::OpenOptionsExt;options.custom_flags(libc::O_NONBLOCK);}options.open(path)}).await?;
     let file=match opened {Ok(file)=>tokio::fs::File::from_std(file),Err(error) if error.kind()==std::io::ErrorKind::NotFound=>return Ok(None),Err(error)=>return Err(error.into())};
@@ -43,7 +43,7 @@ pub(super) async fn grok(path:Option<&Path>,ambient:bool)->Result<Auth> {
     let Some(bytes)=read(&file).await? else{return Err(CredentialUnavailable.into());};
     if bytes.iter().all(u8::is_ascii_whitespace){return Err(CredentialUnavailable.into());}
     let value:Value=serde_json::from_slice(&bytes)?;
-    if valid("grokAuth",&value)? {for key in ["xai::api_key","https://auth.x.ai::b1a00492-073a-47ea-816f-4c329264a828"] {if valid("grokRecord",&value[key])?&&let Some(token)=value[key]["key"].as_str().filter(|token|!token.trim().is_empty()){return Ok(Auth{token:token.to_owned(),file:Some(file),original:Some(value),..Auth::default()});}}}
+    if valid("grokAuth",&value)? {for key in ["xai::api_key",super::grok::OAUTH_SCOPE] {if valid("grokRecord",&value[key])?&&let Some(token)=value[key]["key"].as_str().filter(|token|!token.trim().is_empty()){return Ok(Auth{token:token.to_owned(),file:Some(file),original:Some(value),grok_session:key==super::grok::OAUTH_SCOPE,..Auth::default()});}}}
     Err(CredentialUnavailable.into())
 }
 pub(super) async fn grok_account(path:Option<&Path>,ambient:bool)->Result<Auth> {
@@ -51,8 +51,8 @@ pub(super) async fn grok_account(path:Option<&Path>,ambient:bool)->Result<Auth> 
     let file=match path{Some(path)=>path.to_owned(),None=>native_auth_path("GROK_HOME",".grok")?};
     let Some(bytes)=read(&file).await?else{return Err(CredentialUnavailable.into());};
     if bytes.iter().all(u8::is_ascii_whitespace){return Err(CredentialUnavailable.into());}
-    let value:Value=serde_json::from_slice(&bytes)?;let scope="https://auth.x.ai::b1a00492-073a-47ea-816f-4c329264a828";
-    if valid("grokAuth",&value)?&&valid("grokRecord",&value[scope])?&&let Some(token)=value[scope]["key"].as_str().filter(|token|!token.trim().is_empty()){return Ok(Auth{token:token.to_owned(),file:Some(file),original:Some(value),..Auth::default()});}
+    let value:Value=serde_json::from_slice(&bytes)?;let scope=super::grok::OAUTH_SCOPE;
+    if valid("grokAuth",&value)?&&valid("grokRecord",&value[scope])?&&let Some(token)=value[scope]["key"].as_str().filter(|token|!token.trim().is_empty()){return Ok(Auth{token:token.to_owned(),file:Some(file),original:Some(value),grok_session:true,..Auth::default()});}
     Err(CredentialUnavailable.into())
 }
 pub(super) async fn claude_account(oauth:Option<&str>,directory:Option<&Path>,ambient:bool)->Result<Auth> {
