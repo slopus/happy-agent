@@ -62,7 +62,7 @@ regress = { version = "=0.11.1", features = ["utf16"] }
 tracing.workspace = true
 rusqlite = { workspace = true, features = ["fallible_uint"] }
 serde.workspace = true
-serde_json.workspace = true
+serde_json = { workspace = true, features = ["float_roundtrip"] }
 serde_yaml = "0.9.34"
 sha2.workspace = true
 subtle = "2.6.1"

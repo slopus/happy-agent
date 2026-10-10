@@ -499,6 +499,12 @@ async fn remembered_file_changes_reject_edits_and_read_stamps_roll_back_with_the
     let fixture = Fixture::new().await;
     let path = fixture.root.join("app.ts");
     std::fs::write(&path, "const a = 1;\n").unwrap();
+    std::fs::File::options()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_modified(std::time::UNIX_EPOCH + std::time::Duration::new(1_791_615_436, 209_500))
+        .unwrap();
     let cancel = CancellationToken::new();
     let read = fixture
         .files
@@ -530,6 +536,20 @@ async fn remembered_file_changes_reject_edits_and_read_stamps_roll_back_with_the
         .unwrap();
     assert!(absent.is_none());
     fixture.record("sourcefiles", &read).await;
+    let unchanged = fixture
+        .files
+        .edit(
+            "sourcefiles",
+            &fixture.configuration,
+            "workspace_write",
+            "claude",
+            &json!({"file_path":path,"old_string":"1","new_string":"2"}),
+            &cancel,
+        )
+        .await
+        .unwrap();
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "const a = 2;\n");
+    assert_eq!(unchanged.value["presentation"]["type"], "file_diff");
     let old = std::fs::metadata(&path).unwrap().modified().unwrap();
     std::fs::write(&path, "const a = 99;\n").unwrap();
     std::fs::File::options()

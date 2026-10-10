@@ -153,3 +153,12 @@ bound command handles. Only the runner's explicit unknown-compute error proves
 a request did no work and permits its one recovery attempt. A disconnected or
 timed-out request remains unproven. Unsupported local container execution fails
 before launching anything on the host.
+
+## Retained read timestamps preserve their exact JSON numbers
+
+Nanosecond file timestamps can produce a millisecond number whose shortest JSON
+encoding the default parser reads one floating-point step away. An unchanged file
+then looks stale after its read knowledge passes through persistence or a worker
+transport. Happy Agent enables exact floating-point JSON round trips throughout
+its executable. The edit check still compares the complete timestamp; rounding
+or adding a tolerance would allow a real change to be discarded.
