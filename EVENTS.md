@@ -1,7 +1,7 @@
 # Happy Agent event reference
 
 Happy Agent emits session events for transcript changes, run lifecycle, configuration,
-interactive input, tasks, goals, subagents, and workflows. This document lists
+interactive input, goals, subagents, and workflows. This document lists
 every event in the session protocol and every lower-level event carried by
 `agent_event`.
 
@@ -64,7 +64,6 @@ event queue. Durable events remain available after a server restart.
 | `user_input_requested`          | The agent opens a structured question for the user.                                                   | Complete `UserInputRequest`, including `requestId` and `questions`                                         | Yes    |
 | `user_input_resolved`           | A structured question is answered or cancelled.                                                       | `requestId`, `status`, optional `answers`                                                                  | Yes    |
 | `mcp_servers_changed`           | The session's active MCP server set changes.                                                          | `servers`                                                                                                  | Yes    |
-| `tasks_changed`                 | Session tasks are created, updated, linked, or cleared.                                               | `tasks`: complete current task list                                                                        | Yes    |
 | `goal_changed`                  | A goal is created, changes status, completes, or is cleared.                                          | `goal`: current `SessionGoal` or `null`                                                                    | Yes    |
 | `subagent_changed`              | A child agent's summary changes and its parent is notified.                                           | `subagent`: current `SubagentSummary`                                                                      | Yes    |
 | `workflow_changed`              | A workflow starts, advances, logs, completes, errors, or stops.                                       | `update`: incremental `WorkflowRunUpdate`                                                                  | Yes    |

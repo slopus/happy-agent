@@ -56,6 +56,13 @@ shared `/v0/workspaces` HTTP and model-tool surfaces, while bot creation, listin
 agent messaging remain usable. When workspace routes are enabled, a bot's unlisted dedicated
 workspace is addressable by ID for files, terminals, and the workspace proxy.
 
+## Tasks
+
+Bots create tasks through the tasks module's `create_task`; bot and task identities are reserved
+against each other. A task's agent gets `list_bots` and `send_bot_message` but not `create_bot` or
+`set_bot_avatar`, and when a bot created the task its instructions name that bot as the one to
+report to.
+
 ## Runners
 
 While runners are configured, a new bot's folder is created on the default runner, recorded as the

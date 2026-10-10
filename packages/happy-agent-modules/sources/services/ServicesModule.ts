@@ -27,6 +27,7 @@ import { Value } from "@sinclair/typebox/value";
 import { afterCommit, backoff, detach, type Context } from "@steve.kite/stdlib";
 
 import type { BotsModule } from "../bots/index.js";
+import type { TasksModule } from "../tasks/index.js";
 import type { ComputeModule } from "../compute/index.js";
 import type { ConfigModule } from "../config/index.js";
 import type { DurableFunctionsModule } from "../durableFunctions/index.js";
@@ -95,6 +96,7 @@ export class ServicesModule implements AgentModule {
         readonly workspaces: WorkspacesModule,
         readonly projects: ProjectsModule,
         readonly bots: BotsModule,
+        readonly tasks: TasksModule,
         readonly durableFunctions: DurableFunctionsModule,
         readonly events: EventsModule,
     ) {
@@ -211,6 +213,13 @@ export class ServicesModule implements AgentModule {
                     path: bot.path,
                     available: bot.status === "active",
                 };
+            const task = await this.tasks.forAgent(ctx, current);
+            if (task !== undefined)
+                return {
+                    workspaceId: task.workspaceId,
+                    path: task.path,
+                    available: task.status === "active",
+                };
             if (this.config.configuration.values.features.workspaces) {
                 const workspaceId = await this.workspaces.workspaceForAgent(ctx, current);
                 if (workspaceId !== undefined) return await this.workspace(ctx, workspaceId);
@@ -234,6 +243,9 @@ export class ServicesModule implements AgentModule {
         const bot = await this.bots.forWorkspace(ctx, workspaceId);
         if (bot !== undefined)
             return { workspaceId, path: bot.path, available: bot.status === "active" };
+        const task = await this.tasks.forWorkspace(ctx, workspaceId);
+        if (task !== undefined)
+            return { workspaceId, path: task.path, available: task.status === "active" };
         const project = await this.projects.get(ctx, workspaceId);
         if (project !== undefined)
             return {

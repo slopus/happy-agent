@@ -10,9 +10,9 @@ export function archiveSubtaskTool(subtasks: SubtasksModule, actingAgentId: stri
         capabilities: [
             "Archive a direct subtask together with its own workspace, preserving conversation history.",
         ],
-        searchKeywords: ["archive subtask", "finish task", "stop task"],
+        searchKeywords: ["archive subtask", "finish subtask", "stop subtask"],
         description:
-            "Archive one of your direct subtasks. Only its coordinating bot or subtask may do this. Stops the target's current work and running descendants, but marks only the target archived. A workspace-bound subtask's workspace is archived with it; a shared-filesystem subtask leaves the shared folder untouched. Conversation history remains, but archival is final: nobody can restore the subtask. Repeating archival is harmless.",
+            "Archive one of your direct subtasks. Only its coordinating bot, task, or subtask may do this. Stops the target's current work and running descendants, but marks only the target archived. A workspace-bound subtask's workspace is archived with it; a shared-filesystem subtask leaves the shared folder untouched. Conversation history remains, but archival is final: nobody can restore the subtask. Repeating archival is harmless.",
         parameters: archiveSubtaskInputSchema,
         returnType: archiveSubtaskInputSchema,
         durable: true,

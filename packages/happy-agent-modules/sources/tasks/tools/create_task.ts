@@ -1,69 +1,53 @@
-import { Type } from "@sinclair/typebox";
-import { defineAgentTool } from "@slopus/happy-agent-base";
+import { createId } from "@paralleldrive/cuid2";
+import { defineAgentTool, type AgentKV } from "@slopus/happy-agent-base";
+import { Type, type Static } from "@sinclair/typebox";
 
+import { taskNameSchema, taskRecordSchema } from "../Task.js";
 import type { TasksModule } from "../TasksModule.js";
-import {
-    taskActiveFormSchema,
-    taskSchema,
-    taskDetailSchema,
-    taskIdSchema,
-    taskMetadataSchema,
-    taskMutationErrorSchema,
-    taskOwnerSchema,
-    taskPrioritySchema,
-    taskTitleSchema,
-    TaskValidationError,
-    type TaskCreateInput,
-} from "../Task.js";
 
-const taskToolCreateInputSchema = Type.Object(
+const createTaskToolInputSchema = Type.Object(
     {
-        activeForm: Type.Optional(taskActiveFormSchema),
-        title: taskTitleSchema,
-        detail: Type.Optional(taskDetailSchema),
-        metadata: Type.Optional(taskMetadataSchema),
-        owner: Type.Optional(taskOwnerSchema),
-        priority: Type.Optional(taskPrioritySchema),
-        dependsOn: Type.Optional(Type.Array(taskIdSchema, { maxItems: 64, uniqueItems: true })),
+        name: taskNameSchema,
+        text: Type.Optional(Type.String({ minLength: 1, maxLength: 100_000 })),
     },
     { additionalProperties: false },
 );
+type CreateTaskToolInput = Static<typeof createTaskToolInputSchema>;
 
-const createTaskToolResultSchema = Type.Union([
-    Type.Object({ task: taskSchema }, { additionalProperties: false }),
-    taskMutationErrorSchema,
-]);
-
-/** Create one durable task using the stable invocation ID as its task ID. */
-export function createTaskTool(tasks: TasksModule, agentId: string) {
+/** Create one persistent task: its folder, its one conversation, and its owner. */
+export function createTaskTool(tasks: TasksModule, actingAgentId: string, kv: AgentKV) {
     return defineAgentTool({
         name: "create_task",
         defer: true,
-        capabilities: ["Create, inspect, update, complete, and remove persistent tasks."],
-        searchKeywords: ["add task", "create todo", "work item", "task dependency"],
-        description: "Create one persistent task in this agent's task list.",
-        parameters: taskToolCreateInputSchema,
-        returnType: createTaskToolResultSchema,
+        capabilities: [
+            "Create, list, message, and archive persistent tasks with their own folders.",
+        ],
+        searchKeywords: ["make a task", "new task", "create task", "task folder"],
+        description: [
+            "Create one persistent task: a user-visible conversation with its own dedicated folder, owned by the person you are working for. A task has no avatar; it can create its own subtasks for project work.",
+            'Give it a short name such as "Fix login redirect"; prefer 2–3 words, 4 at most. Put the details in text, which is delivered as the task\'s first message and starts its work. Omit text to create an idle task for the person to open.',
+            "Returns the task without waiting. Talk to it later with send_task_message; there is no wait tool.",
+        ].join("\n\n"),
+        parameters: createTaskToolInputSchema,
+        returnType: taskRecordSchema,
         durable: true,
-        transactional: true,
         shouldReviewInAutoMode: () => false,
-        execute: async (ctx, input: TaskCreateInput, call) => {
-            try {
-                const task = await tasks.create(ctx, agentId, { ...input, id: call.id });
-                return { task };
-            } catch (error) {
-                if (!(error instanceof TaskValidationError)) throw error;
-                return { success: false, taskId: call.id, error: error.message };
-            }
+        // A task outlives the call that made it, so its identity is minted once and remembered in
+        // this invocation's own store. A repeated call after an interruption finds the task it
+        // already created instead of minting a duplicate.
+        execute: async (ctx, input: CreateTaskToolInput, call) => {
+            const ownerUserId = await tasks.ownerFor(ctx, kv);
+            return await tasks.create(ctx, {
+                ...input,
+                id: await call.kv.getOrCreate(ctx, "taskId", () => createId()),
+                creatorAgentId: actingAgentId,
+                ...(ownerUserId === undefined ? {} : { ownerUserId }),
+            });
         },
-        toLLM: (result) => [
+        toLLM: (task) => [
             {
                 type: "text",
-                text: tasks.formatMutationForModel(
-                    "task" in result
-                        ? `Task created: ${result.task.id}\n${result.task.title}`
-                        : `Task ${result.taskId} could not be created: ${result.error}`,
-                ),
+                text: `Task created: ${task.name} — id ${task.id}, folder ${task.path}. Send it messages with send_task_message.`,
             },
         ],
     });

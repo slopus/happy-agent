@@ -5,13 +5,14 @@ lets their direct coordinator archive them. Existing collaboration messaging and
 handle interaction; users may also archive through the API.
 
 ```text
-Bot
+Bot or task
 └── Subtask (shared folder or project workspace)
     ├── Subtask in project A's workspace
     └── Subtask in project B's workspace
 ```
 
-The two-level limit counts ancestry, not siblings. Ordinary agents cannot create subtasks.
+Active bots and active tasks are the roots of subtask trees. The two-level limit counts ancestry
+below that root, not siblings. Ordinary agents cannot create subtasks.
 Creation commits the agent, optional workspace association, and Durable Functions startup intent
 together. Initial delivery waits for workspace readiness and uses the agent ID as its durable
 message identity. Every full API agent includes its active direct subtasks recursively, including

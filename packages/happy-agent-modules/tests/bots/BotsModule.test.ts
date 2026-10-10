@@ -33,6 +33,7 @@ import { DurableFunctionsModule } from "../../sources/durableFunctions/index.js"
 import { GitModule } from "../../sources/git/index.js";
 import { HistoryModule } from "../../sources/history/index.js";
 import { SecretsModule } from "../../sources/secrets/index.js";
+import { taskMigrations, TasksModule } from "../../sources/tasks/index.js";
 import { TitlesModule } from "../../sources/titles/index.js";
 import { WorkspacesModule } from "../../sources/workspaces/index.js";
 import { projectMigrations } from "../../sources/projects/index.js";
@@ -716,7 +717,7 @@ describe("BotsModule", () => {
                     "",
                     "Keep delegated work in its subtask. Use send_agent_message to ask the subtask agent for progress, findings, diffs, verification, or follow-up changes. Do not directly inspect or modify its files, run commands in its workspace, or take over its work. Direct access to another workspace often requires elevated permissions and review by the reviewer model; talking to the subtask agent keeps the work in its own workspace and avoids unnecessary permission reviews.",
                     "",
-                    'When the user says "make a task" or "create a task", use create_subtask to create a user-visible subtask, not the task-tracking tools. A task-list entry is not a substitute for a subtask. Interpret such a request as task tracking only when the user explicitly asks for a checklist or task-list entry.',
+                    'When the user says "make a task" or "create a task", use create_task. A task is a persistent, user-visible conversation with its own folder, owned by the person who asked; it has no avatar and creates its own subtasks for project work. Give it a short name, put the work in its opening text, and follow up with send_task_message and list_tasks. Use create_subtask only when the user asks for a subtask or the work is a delegated part of your own conversation.',
                     "",
                     "For other work, prefer create_subtask for substantial, distinct workstreams; handle small steps inline. Usually create second-level subtasks only on explicit user request. If the user explicitly asks for a subtask, use create_subtask. Use create_agent for internal research. Coordinate via send_agent_message and archive_subtask; do not wait for subtasks.",
                 ].join("\n"),
@@ -758,7 +759,7 @@ async function started(name: string, workspacesEnabled: boolean, script: Scripte
         },
     );
     const database = moduleDatabase(
-        [...projectMigrations, ...workspaceMigrations, ...botMigrations],
+        [...projectMigrations, ...workspaceMigrations, ...botMigrations, ...taskMigrations],
         name,
     );
     await database.ready;
@@ -778,7 +779,17 @@ async function started(name: string, workspacesEnabled: boolean, script: Scripte
     );
     const titles = new TitlesModule(config, new HistoryModule(), workspaces);
     const naming = vi.spyOn(titles, "suggestBotName");
-    const bots = new BotsModule(config, abort, titles, projects, workspaces, runners);
+    const tasks = new TasksModule(
+        config,
+        abort,
+        projects,
+        workspaces,
+        runners,
+        compute,
+        new DurableFunctionsModule(),
+    );
+    tasks.beforeStart(database.context, agents.asRef());
+    const bots = new BotsModule(config, abort, titles, projects, workspaces, runners, tasks);
     const hooks = bots.beforeStart(database.context, agents.asRef());
     const events: BotEvent[] = [];
     const agentKVs = new Map<string, AgentKV>();
@@ -792,6 +803,7 @@ async function started(name: string, workspacesEnabled: boolean, script: Scripte
     return {
         agents,
         bots,
+        tasks,
         database,
         events,
         provider,

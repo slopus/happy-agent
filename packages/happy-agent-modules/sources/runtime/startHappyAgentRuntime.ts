@@ -455,13 +455,23 @@ export async function startHappyAgentRuntime(
             runners,
         );
         const titles = new TitlesModule(config, history, workspaces);
-        const bots = new BotsModule(config, abort, titles, projects, workspaces, runners);
+        const tasks = new TasksModule(
+            config,
+            abort,
+            projects,
+            workspaces,
+            runners,
+            compute.computeModule,
+            durableFunctions,
+        );
+        const bots = new BotsModule(config, abort, titles, projects, workspaces, runners, tasks);
         const services = new ServicesModule(
             config,
             compute.computeModule,
             workspaces,
             projects,
             bots,
+            tasks,
             durableFunctions,
             events,
         );
@@ -480,6 +490,7 @@ export async function startHappyAgentRuntime(
         const collaboration = new CollaborationModule(config, abort, history);
         const subtasks = new SubtasksModule(
             bots,
+            tasks,
             collaboration,
             workspaces,
             durableFunctions,
@@ -537,7 +548,6 @@ export async function startHappyAgentRuntime(
         const modelSwitch = new ModelSwitchModule(history);
         const toolDiscovery = new ToolDiscoveryModule(config);
         const search = new SearchModule(config);
-        const tasks = new TasksModule();
         const usage = new UsageModule(events);
         const compactions = new CompactionsModule(events, usage, history);
         const slashCommands = new SlashCommandsModule(events, compactions, compute.skillsModule);
@@ -658,7 +668,6 @@ export async function startHappyAgentRuntime(
             autoModule,
             presence,
             goal,
-            tasks,
             usage,
             providerUsage,
             events,
@@ -671,6 +680,7 @@ export async function startHappyAgentRuntime(
             globalSkills,
             live,
             bots,
+            tasks,
             node,
             skillFolders,
             tailcat,

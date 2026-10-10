@@ -156,7 +156,7 @@ its public methods, and its storage and event contracts.
 | Module                                            | What it adds                                                                                               |
 | ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
 | [Goal](sources/goal/README.md)                    | One durable long-running objective per agent, kept moving until complete, blocked, paused, or cleared.     |
-| [Tasks](sources/tasks/README.md)                  | A durable task list with dependencies, priority, ordering, and acyclicity validation.                      |
+| [Tasks](sources/tasks/README.md)                  | Persistent owned conversations with dedicated folders, created by bots and rooting their own subtasks.     |
 | [Scheduling](sources/scheduling/README.md)        | Durable waits an agent can take, and messages it asks to be delivered to itself later.                     |
 | [Workflows](sources/workflows/README.md)          | Run a sandboxed Python script that orchestrates agents, and inspect, wait for, resume or cancel it.        |
 | [Usage](sources/usage/README.md)                  | Advisory token and timing accounting for one agent and its tree, which never fails a turn.                 |

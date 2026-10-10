@@ -1386,6 +1386,11 @@ export class ConfigModule implements AgentModule {
         return join(this.configuration.paths.publicHome, "Bots");
     }
 
+    /** The public root for dedicated task folders, beside the bot folders. */
+    get tasksHome(): string {
+        return join(this.configuration.paths.publicHome, "Tasks");
+    }
+
     /** Installed global skills live on this daemon's machine, independently of its config home. */
     get globalSkillsRoot(): string {
         return join(this.#environment.HOME?.trim() || homedir(), ".agents", "skills");
@@ -1546,6 +1551,14 @@ export class ConfigModule implements AgentModule {
             throw new Error("The bot username cannot name a folder.");
         }
         return join(this.botsHome, username);
+    }
+
+    /** One immutable task folder below the configuration-owned task root. */
+    taskPath(folderName: string): string {
+        if (!/^[a-z][a-z0-9_]{0,63}$/.test(folderName)) {
+            throw new Error("The task folder name cannot name a folder.");
+        }
+        return join(this.tasksHome, folderName);
     }
 
     private constructor(
@@ -2599,6 +2612,14 @@ export class ConfigModule implements AgentModule {
             throw new Error("The bot username cannot name a folder.");
         }
         return join(home, platform === "darwin" ? "Happy" : "happy", "Bots", username);
+    }
+
+    /** A task's folder on a runner with this home and platform, laid out like bot folders. */
+    taskPathOn(home: string, platform: NodeJS.Platform, folderName: string): string {
+        if (!/^[a-z][a-z0-9_]{0,63}$/.test(folderName)) {
+            throw new Error("The task folder name cannot name a folder.");
+        }
+        return join(home, platform === "darwin" ? "Happy" : "happy", "Tasks", folderName);
     }
 
     /** The folder managed workspaces live under on a runner with this home and platform. */

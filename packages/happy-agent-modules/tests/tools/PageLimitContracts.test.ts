@@ -7,8 +7,7 @@ import {
     projectPageQuerySchema,
 } from "../../sources/projects/index.js";
 import { SECRETS_PAGE_SIZE, secretListInputSchema } from "../../sources/secrets/index.js";
-import { taskPageQuerySchema } from "../../sources/tasks/TaskPage.js";
-import { MAX_TASK_PAGE_SIZE } from "../../sources/tasks/TasksModule.js";
+import { listTasksInputSchema, MAX_TASK_PAGE_SIZE } from "../../sources/tasks/tools/list_tasks.js";
 import {
     MAX_USER_INPUT_PAGE_SIZE,
     userInputListQuerySchema,
@@ -42,7 +41,7 @@ describe("common tool page limits", () => {
             },
             {
                 name: "tasks",
-                schema: taskPageQuerySchema,
+                schema: listTasksInputSchema,
                 schemaLimit: MAX_TASK_PAGE_SIZE,
                 runtimeLimit: MAX_TASK_PAGE_SIZE,
             },

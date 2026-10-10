@@ -5,7 +5,16 @@
 Treating every parent-managed agent as a hidden, read-only subagent prevents a person from
 participating in delegated work. Subtasks explicitly retain their parent while allowing user
 messages and archival. Ordinary subagents keep their existing restrictions. Depth is limited to
-two subtask levels below a bot, not two children, so one task may coordinate several projects.
+two subtask levels below a bot or task, not two children, so one subtask may coordinate several
+projects.
+
+## Tasks are subtask roots beside bots
+
+Tasks, persistent conversations with their own folders, were asked to have subtasks. Rather than
+introduce a second delegation mechanism, an active task is now a root exactly like an active bot:
+it may create subtasks two levels deep, archive its direct subtasks, and receives the same
+coordinator guidance. Bots still create subtasks directly, so existing subtask trees and the
+public API are unchanged.
 
 ## Coordinators create and archive; existing messaging handles interaction
 

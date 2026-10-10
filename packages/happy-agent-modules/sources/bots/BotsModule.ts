@@ -20,6 +20,7 @@ import { AbortModule } from "../abort/index.js";
 import { ConfigModule } from "../config/index.js";
 import { ProjectsModule } from "../projects/index.js";
 import type { RunnersModule } from "../runners/index.js";
+import { TasksModule } from "../tasks/index.js";
 import { WorkspacesModule } from "../workspaces/index.js";
 import { senderAgentIdMetadata } from "../impl/messageOrigin.js";
 import { MAX_NAMING_MESSAGE_CHARS, TitlesModule } from "../titles/index.js";
@@ -59,6 +60,7 @@ import {
 } from "./BotStore.js";
 import { formatBotIdentityPrompt } from "./impl/formatBotIdentityPrompt.js";
 import { formatChiefOfStaffInstructions } from "./impl/formatChiefOfStaffInstructions.js";
+import { formatTaskCreatorPrompt } from "./impl/formatTaskCreatorPrompt.js";
 import { loadChiefOfStaffAvatar } from "./impl/loadChiefOfStaffAvatar.js";
 import { createBotTool } from "./tools/create_bot.js";
 import { listBotsTool } from "./tools/list_bots.js";
@@ -84,6 +86,7 @@ export class BotsModule implements AgentModule {
     readonly #namingTasks = new Map<string, Promise<void>>();
     readonly #titles: TitlesModule;
     readonly #runners: RunnersModule;
+    readonly #tasks: TasksModule;
     #agents: AgentSystemRef | undefined;
     #closed = false;
     #lifetime: RootContext | undefined;
@@ -95,9 +98,11 @@ export class BotsModule implements AgentModule {
         projects: ProjectsModule,
         workspaces: WorkspacesModule,
         runners: RunnersModule,
+        tasks: TasksModule,
     ) {
         this.#config = config;
         this.#runners = runners;
+        this.#tasks = tasks;
         this.#abort = abort;
         this.#titles = titles;
         this.#projects = projects;
@@ -110,10 +115,16 @@ export class BotsModule implements AgentModule {
         },
         instructions: async (ctx: Context, scope: AgentModuleScope): Promise<string> => {
             const bot = await readBotByAgent(ctx, scope.agent.id);
-            if (bot === undefined) return "";
-            return bot.systemKey === CHIEF_OF_STAFF_SYSTEM_KEY
-                ? formatChiefOfStaffInstructions(bot)
-                : formatBotIdentityPrompt(bot);
+            if (bot !== undefined) {
+                return bot.systemKey === CHIEF_OF_STAFF_SYSTEM_KEY
+                    ? formatChiefOfStaffInstructions(bot)
+                    : formatBotIdentityPrompt(bot);
+            }
+            // A task a bot created reports back to that bot, which it reaches by bot ID.
+            const task = await this.#tasks.forAgent(ctx, scope.agent.id);
+            if (task?.creatorAgentId === undefined) return "";
+            const creator = await readBotByAgent(ctx, task.creatorAgentId);
+            return creator === undefined ? "" : formatTaskCreatorPrompt(creator);
         },
         tools: async (ctx: Context, scope: AgentModuleScope): Promise<readonly AnyAgentTool[]> => {
             const roster = [
@@ -124,6 +135,11 @@ export class BotsModule implements AgentModule {
             // Bots manage their own picture; admin bots may also manage other bots' pictures.
             if ((await readBotByAgent(ctx, scope.agent.id)) !== undefined) {
                 return [...roster, setBotAvatarTool(this, scope.agent.id)];
+            }
+            // A task talks to bots, including the one that created it, but never creates one:
+            // a bot that may not create bots must not gain that through a task it created.
+            if ((await this.#tasks.forAgent(ctx, scope.agent.id)) !== undefined) {
+                return [listBotsTool(this), sendBotMessageTool(this, scope.agent.id)];
             }
             // Bots belong to the conversation a person is having. A subagent is one pair of
             // hands inside the task it was given and does not manage the bot roster.
@@ -737,6 +753,7 @@ export class BotsModule implements AgentModule {
             (await readBot(ctx, id)) !== undefined ||
             (await readBotByWorkspace(ctx, id)) !== undefined ||
             (await readBotByAgent(ctx, id)) !== undefined ||
+            (await this.#tasks.hasIdentity(ctx, id)) ||
             (await this.#requireAgents().config(ctx, id)) !== undefined ||
             (await this.#projects.get(ctx, id)) !== undefined ||
             (await this.#workspaces.hasIdentity(ctx, id))

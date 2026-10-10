@@ -1,1207 +1,765 @@
+import { createId } from "@paralleldrive/cuid2";
 import {
-    agentDatabaseRun,
-    type AgentDatabase,
-    type AgentDatabaseFacade,
+    cuid2Schema,
+    currentAgentEnvironment,
+    type AgentConfig,
+    type AgentKV,
     type AgentModule,
     type AgentModuleHooks,
     type AgentModuleScope,
+    type AgentSystemRef,
     type AnyAgentTool,
 } from "@slopus/happy-agent-base";
-import { Type, type Static } from "@sinclair/typebox";
+import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
-import { afterCommit, type Context } from "@steve.kite/stdlib";
-import { sql } from "drizzle-orm";
+import { computePermissions, RunnerUnavailableError } from "@slopus/happy-agent-compute";
+import { afterCommit, backoff, type Context } from "@steve.kite/stdlib";
+
+import { AbortModule } from "../abort/index.js";
+import { ComputeModule } from "../compute/index.js";
+import { ConfigModule } from "../config/index.js";
+import { DurableFunctionsModule } from "../durableFunctions/index.js";
+import { ProjectsModule } from "../projects/index.js";
+import type { RunnersModule } from "../runners/index.js";
+import { WorkspacesModule } from "../workspaces/index.js";
+import { isUserOriginMetadata, senderAgentIdMetadata } from "../impl/messageOrigin.js";
 
 import {
-    taskEventIdSchema,
-    taskEventListenerSchema,
-    taskEventPayloadSchema,
+    archiveTaskCleanupSchema,
+    createTaskInputSchema,
+    STANDALONE_TASK_MEMBER,
+    taskMemberIdSchema,
+    taskRecordSchema,
+    TASK_ARCHIVE_FUNCTION,
+    TaskConflictError,
+    TaskInputError,
+    TaskNotFoundError,
+    type CreateTaskInput,
+    type TaskCreation,
+    type TaskMemberId,
+    type TaskMembership,
+    type TaskRecord,
+} from "./Task.js";
+import {
     taskEventSchema,
     type TaskEvent,
     type TaskEventListener,
-    type TaskEventPayload,
+    type TaskUnsubscribe,
 } from "./TaskEvent.js";
+import { taskMigrations } from "./TaskMigrations.js";
 import {
-    taskCreateInputSchema,
-    taskActiveFormSchema,
-    taskDetailSchema,
-    taskIdSchema,
-    taskPrioritySchema,
-    taskSchema,
-    taskStatusSchema,
-    taskTitleSchema,
-    taskTimestampSchema,
-    taskUpdateInputSchema,
-    taskOwnerSchema,
-    assertTaskMetadata,
-    assertTaskMetadataPatch,
-    assertTaskMetadataStructure,
-    TaskValidationError,
-    type Task,
-    type TaskCreateInput,
-    type TaskMetadata,
-    type TaskMetadataPatch,
-    type TaskPriority,
-    type TaskUpdateInput,
-} from "./Task.js";
-import {
-    taskPageQuerySchema,
-    taskPageSchema,
-    type TaskPage,
-    type TaskPageQuery,
-} from "./TaskPage.js";
-import {
-    MAX_TASK_DEPENDENCY_PAGE_SIZE,
-    MAX_TASK_DETAIL_PAGE_SIZE,
-    taskDetailPageSchema,
-    taskDetailQuerySchema,
-    type TaskDetailPage,
-    type TaskDetailQuery,
-} from "./TaskDetailPage.js";
-import { taskKV } from "./impl/taskKV.js";
-import { completeTaskTool } from "./tools/complete_task.js";
+    deleteMembership,
+    insertMembership,
+    insertTask,
+    readMembership,
+    readMemberships,
+    readTask,
+    readTaskByAgent,
+    readTaskByFolderName,
+    readTaskByWorkspace,
+    readTasks,
+    updateMembershipOrder,
+    updateTask,
+} from "./TaskStore.js";
+import { deriveTaskFolderName } from "./impl/deriveTaskFolderName.js";
+import { formatTaskIdentityPrompt } from "./impl/formatTaskIdentityPrompt.js";
+import { taskOrderKeyBetween } from "./impl/taskOrderKeyBetween.js";
+import { archiveTaskTool } from "./tools/archive_task.js";
 import { createTaskTool } from "./tools/create_task.js";
-import { getTaskTool } from "./tools/get_task.js";
 import { listTasksTool } from "./tools/list_tasks.js";
-import { removeTaskTool } from "./tools/remove_task.js";
-import { updateTaskTool } from "./tools/update_task.js";
+import { sendTaskMessageTool } from "./tools/send_task_message.js";
 
-/** The largest list the stored shape will hold, whatever any other bound says. */
-export const MAX_TASKS = 500;
-/** How many tasks one agent may keep at once. */
-export const MAX_TASKS_PER_AGENT = 100;
-/** The priority a task gets when its creator does not choose one. */
-export const DEFAULT_TASK_PRIORITY: TaskPriority = "normal";
-/** The largest page `list_tasks` will return, and its size when the caller asks for none. */
-export const MAX_TASK_PAGE_SIZE = 50;
-/** The character budget every rendering of a task, page, or lookup is cut to fit. */
-export const MAX_TASK_OUTPUT_CHARACTERS = 12_000;
+/** The latest human sender of each agent's conversation, who owns the tasks that agent creates. */
+const OWNER_KEY = "owner";
+const ownerSchema = Type.Union([cuid2Schema, Type.Null()]);
 
-const taskListSchema = Type.Array(taskSchema, { maxItems: MAX_TASKS });
-const taskReorderIdsSchema = Type.Array(taskIdSchema, {
-    maxItems: MAX_TASKS,
-    uniqueItems: true,
-});
-const agentIdSchema = Type.String({ minLength: 1, maxLength: 256 });
-
-interface TaskChange<Result> {
-    readonly result: Result;
-    readonly event?: TaskEvent;
-}
+/** The catalog manages its tasks' folders; the agent sandbox does not apply to that work. */
+const PRODUCT = computePermissions("full_access");
 
 /**
- * A bounded persistent task list.
+ * Persistent task conversations, each with a dedicated folder and an owner.
  *
- * One instance serves all agents in a collection. Every agent's list is kept under that agent's
- * module-owned table, and each mutation uses the context database transaction as the
- * read-decide-write boundary. The module owns no database, filesystem, or agent lifecycle.
+ * A task is modeled on a bot: one root agent for its whole life in one folder of its own, with the
+ * same identity reservation, folder placement, lifecycle, and messaging. It has no avatar and no
+ * administration. It records the person it belongs to and the agent that created it, and it is
+ * the root of its own subtasks. Any person may join a task, which puts it in their own list in an
+ * order only they control; the owner joins when the task is created.
  */
 export class TasksModule implements AgentModule {
     readonly name = "tasks";
-    readonly migrations = [
-        [
-            "001-task-state",
-            async (_ctx: Context, database: AgentDatabaseFacade<AgentDatabase>): Promise<void> => {
-                await agentDatabaseRun(
-                    database,
-                    sql`CREATE TABLE IF NOT EXISTS happy_agent_task_state (
-                        agent_id TEXT PRIMARY KEY,
-                        tasks_json TEXT NOT NULL
-                    )`,
-                );
-            },
-        ],
-    ] as const;
+    readonly migrations = taskMigrations;
 
-    /**
-     * In-flight mutation queues, one per agent. This is ordering, not state: nothing about a task
-     * lives here, and an idle agent leaves no entry behind.
-     */
-    readonly #mutations = new Map<string, Promise<void>>();
-    readonly #transactionalListeners = new Set<TaskEventListener>();
+    readonly #abort: AbortModule;
+    readonly #compute: ComputeModule;
+    readonly #config: ConfigModule;
+    readonly #durableFunctions: DurableFunctionsModule;
+    readonly #projects: ProjectsModule;
+    readonly #runners: RunnersModule;
+    readonly #workspaces: WorkspacesModule;
     readonly #listeners = new Set<TaskEventListener>();
+    #agents: AgentSystemRef | undefined;
 
-    /**
-     * Watch changes from inside the transaction that commits them, so a subscriber's own writes
-     * land with the task list or not at all — and a subscriber that throws rolls the mutation back.
-     *
-     * Returns the function that stops the subscription.
-     */
-    onEventTransactional(listener: TaskEventListener): () => void {
-        assertTaskEventListener(listener);
-        this.#transactionalListeners.add(listener);
-        return () => this.#transactionalListeners.delete(listener);
+    constructor(
+        config: ConfigModule,
+        abort: AbortModule,
+        projects: ProjectsModule,
+        workspaces: WorkspacesModule,
+        runners: RunnersModule,
+        compute: ComputeModule,
+        durableFunctions: DurableFunctionsModule,
+    ) {
+        this.#config = config;
+        this.#abort = abort;
+        this.#projects = projects;
+        this.#workspaces = workspaces;
+        this.#runners = runners;
+        this.#compute = compute;
+        this.#durableFunctions = durableFunctions;
+        // Archival is committed first; ending the archived agent's machine and background
+        // processes follows the commit and survives a restart in between.
+        durableFunctions.register({
+            name: TASK_ARCHIVE_FUNCTION,
+            argumentsSchema: archiveTaskCleanupSchema,
+            resultSchema: Type.Null(),
+            executor: async (ctx, call) => {
+                await backoff(ctx, async (attemptCtx) => {
+                    const task = await readTaskByAgent(attemptCtx, call.arguments.agentId);
+                    if (task?.status === "archived") {
+                        await this.#compute.archiveAgent(attemptCtx, task.agentId);
+                    }
+                });
+                return null;
+            },
+        });
     }
 
-    /**
-     * Watch changes once they are durable. The task list has already committed by the time this
-     * runs, so a failure here is reported and never turned into a failed mutation.
-     *
-     * Returns the function that stops the subscription.
-     */
-    onEvent(listener: TaskEventListener): () => void {
-        assertTaskEventListener(listener);
+    readonly #hooks: AgentModuleHooks = {
+        instructions: async (ctx: Context, scope: AgentModuleScope): Promise<string> => {
+            const task = await readTaskByAgent(ctx, scope.agent.id);
+            if (task === undefined) return "";
+            return formatTaskIdentityPrompt(task, this.ownerLabel(task));
+        },
+        tools: async (ctx: Context, scope: AgentModuleScope): Promise<readonly AnyAgentTool[]> => {
+            // A task delegates through subtasks, not through more tasks, and a subagent or
+            // subtask is one pair of hands inside work it was given.
+            if ((await readTaskByAgent(ctx, scope.agent.id)) !== undefined) return [];
+            if ((await this.#requireAgents().parentOf(ctx, scope.agent.id)) !== null) return [];
+            return [
+                createTaskTool(this, scope.agent.id, scope.kv),
+                listTasksTool(this, scope.kv),
+                sendTaskMessageTool(this, scope.agent.id),
+                archiveTaskTool(this, scope.agent.id),
+            ];
+        },
+        // Ownership follows the human whose message the agent is working on, in consumption
+        // order. Agent-generated messages never change it; an unidentified human clears it.
+        messageAcceptedTransact: async (hookCtx, scope, accepted) => {
+            if (accepted.message.role !== "user" || !isUserOriginMetadata(accepted.metadata)) {
+                return;
+            }
+            const userId = accepted.metadata?.["userId"];
+            const owner = Value.Check(cuid2Schema, userId) ? userId : null;
+            if ((await scope.kv.read(hookCtx, OWNER_KEY)) === owner) return;
+            await scope.kv.write(hookCtx, OWNER_KEY, owner);
+        },
+    };
+
+    readonly beforeStart = (_ctx: Context, agents: AgentSystemRef): AgentModuleHooks => {
+        this.#agents = agents;
+        return this.#hooks;
+    };
+
+    onEvent(listener: TaskEventListener): TaskUnsubscribe {
         this.#listeners.add(listener);
         return () => this.#listeners.delete(listener);
     }
 
-    /** Return this agent's tasks in deterministic display order. */
-    async list(ctx: Context, agentId: string): Promise<readonly Task[]> {
-        this.#assertAgentId(agentId);
-        return this.#sort(await this.#read(ctx, agentId));
+    /** Every task, archived ones included, oldest first. */
+    async list(ctx: Context): Promise<readonly TaskRecord[]> {
+        return structuredClone(await readTasks(ctx));
     }
 
-    /** Return one bounded page; callers can follow nextOffset until every task is visible. */
-    async listPage(ctx: Context, agentId: string, query: TaskPageQuery = {}): Promise<TaskPage> {
-        this.#assertAgentId(agentId);
-        if (query.limit !== undefined && query.limit > MAX_TASK_PAGE_SIZE) {
-            throw new Error(`Task page limit cannot exceed ${MAX_TASK_PAGE_SIZE}.`);
-        }
-        if (!Value.Check(taskPageQuerySchema, query)) {
-            throw new Error("Invalid task page query.");
-        }
-        const limit = query.limit ?? MAX_TASK_PAGE_SIZE;
-        const offset = query.offset ?? 0;
-        const tasks = await this.#read(ctx, agentId);
-        const visibleTasks = tasks.map((task) => taskForTaskList(task, tasks));
-        const requestedTasks = visibleTasks.slice(offset, offset + limit);
-        const pageTasks = this.#fitModelPage(requestedTasks, offset, tasks.length);
-        const page: TaskPage = {
-            tasks: pageTasks,
-            offset,
-            limit,
-            total: tasks.length,
-            ...(offset + pageTasks.length < tasks.length
-                ? { nextOffset: offset + pageTasks.length }
-                : {}),
-        };
-        if (!Value.Check(taskPageSchema, page)) {
-            throw new Error("Tasks module created an invalid task page.");
-        }
-        return page;
-    }
-
-    /** Return one task, or undefined when the ID is not present. */
-    async get(ctx: Context, agentId: string, taskId: string): Promise<Task | undefined> {
-        this.#assertAgentId(agentId);
-        this.#assertTaskId(taskId);
-        const task = (await this.#read(ctx, agentId)).find((candidate) => candidate.id === taskId);
-        return task === undefined ? undefined : structuredClone(task);
-    }
-
-    /** Read bounded detail and dependency slices for model-facing lookup pagination. */
-    async getPage(
+    /** The tasks one member joined, in that member's own order. */
+    async listForMember(
         ctx: Context,
-        agentId: string,
-        taskId: string,
-        query: TaskDetailQuery = {},
-    ): Promise<TaskDetailPage> {
-        this.#assertAgentId(agentId);
-        this.#assertTaskId(taskId);
-        if (!Value.Check(taskDetailQuerySchema, query)) {
-            throw new Error("Invalid task detail query.");
-        }
-        const task = await this.get(ctx, agentId, taskId);
-        if (task === undefined) return { task: null };
-
-        const detail = task.detail ?? "";
-        const detailOffset = query.detailOffset ?? 0;
-        const dependencyOffset = query.dependencyOffset ?? 0;
-        const detailLimit =
-            query.detailLimit ?? Math.min(MAX_TASK_DETAIL_PAGE_SIZE, detail.length || 1);
-        const dependencyLimit = query.dependencyLimit ?? MAX_TASK_DEPENDENCY_PAGE_SIZE;
-        const page: TaskDetailPage = {
-            task,
-            detail: detail.slice(detailOffset, detailOffset + detailLimit),
-            detailOffset,
-            detailTotal: detail.length,
-            ...(detailOffset + detailLimit < detail.length
-                ? { nextDetailOffset: detailOffset + detailLimit }
-                : {}),
-            dependencies: task.dependsOn.slice(
-                dependencyOffset,
-                dependencyOffset + dependencyLimit,
-            ),
-            dependencyOffset,
-            dependencyTotal: task.dependsOn.length,
-            ...(dependencyOffset + dependencyLimit < task.dependsOn.length
-                ? { nextDependencyOffset: dependencyOffset + dependencyLimit }
-                : {}),
-        };
-        return this.#fitTaskDetailPage(page);
-    }
-
-    /** Create one task. An existing ID is always a conflict. */
-    async create(ctx: Context, agentId: string, input: TaskCreateInput): Promise<Task> {
-        this.#assertAgentId(agentId);
-        this.#assertInput(taskCreateInputSchema, input, "create");
-        const id = input.id ?? this.#newTaskId();
-        const change = await this.#change(ctx, agentId, async (txCtx, tasks, eventId, at) => {
-            const title = normalizeTitle(input.title);
-            const detail = normalizeDetail(input.detail);
-            const priority = input.priority ?? DEFAULT_TASK_PRIORITY;
-            this.#assertTaskId(id);
-            const existing = tasks.find((task) => task.id === id);
-            if (existing !== undefined) {
-                throw new TaskValidationError(`Task "${id}" already exists.`);
+        memberId: TaskMemberId,
+    ): Promise<readonly { readonly task: TaskRecord; readonly membership: TaskMembership }[]> {
+        this.#assertMember(memberId);
+        return await ctx.inTx(async (txCtx) => {
+            const listed: { task: TaskRecord; membership: TaskMembership }[] = [];
+            for (const membership of await readMemberships(txCtx, memberId)) {
+                const task = await readTask(txCtx, membership.taskId);
+                if (task !== undefined) listed.push({ task, membership });
             }
-            if (tasks.length >= MAX_TASKS_PER_AGENT) {
-                throw new TaskValidationError(
-                    `This agent already has the maximum of ${MAX_TASKS_PER_AGENT} tasks.`,
-                );
-            }
-            const dependsOn = [...(input.dependsOn ?? [])];
-            validateDependencyIds(tasks, id, dependsOn);
-            const metadata =
-                input.metadata === undefined ? undefined : cloneMetadata(input.metadata);
-            const task: Task = {
-                id,
-                title,
-                ...(detail === undefined ? {} : { detail }),
-                ...(input.activeForm === undefined
-                    ? {}
-                    : { activeForm: normalizeActiveForm(input.activeForm) }),
-                blocks: [],
-                status: "pending",
-                priority,
-                dependsOn,
-                ...(metadata === undefined ? {} : { metadata }),
-                ...(input.owner === undefined ? {} : { owner: normalizeOwner(input.owner) }),
-                createdAt: at,
-                updatedAt: at,
-                ordering: nextOrdering(tasks),
-            };
-            const nextTasks = syncDependencyEdges([...tasks, task]);
-            this.#validateTasks(nextTasks);
-            return {
-                result: nextTasks.find((candidate) => candidate.id === id) as Task,
-                tasks: nextTasks,
-                event: this.#event(
-                    {
-                        type: "task_created",
-                        agentId,
-                        task: nextTasks.find((candidate) => candidate.id === id) as Task,
-                    },
-                    eventId,
-                    at,
-                ),
-            };
+            return structuredClone(listed);
         });
-        return change.result;
     }
 
-    /** Update a task while retaining its stable ID and ordering. */
-    async update(
+    async membership(
         ctx: Context,
-        agentId: string,
         taskId: string,
-        changes: TaskUpdateInput,
-    ): Promise<Task> {
-        this.#assertAgentId(agentId);
-        this.#assertTaskId(taskId);
-        this.#assertInput(taskUpdateInputSchema, changes, "update");
-        const change = await this.#change(ctx, agentId, async (txCtx, tasks, eventId, at) => {
-            const existing = tasks.find((task) => task.id === taskId);
-            if (existing === undefined) {
-                throw new TaskValidationError(`Task "${taskId}" does not exist.`);
-            }
-            const candidate = this.#applyUpdate(tasks, taskId, changes, at);
-            if (!candidate.changed) return { result: existing };
-            const updatedTask = candidate.tasks.find((task) => task.id === taskId) as Task;
-            void txCtx;
-            const event =
-                updatedTask.status === "completed" && existing.status !== "completed"
-                    ? this.#event(
-                          { type: "task_completed", agentId, task: updatedTask },
-                          eventId,
-                          at,
-                      )
-                    : this.#event(
-                          { type: "task_updated", agentId, task: updatedTask, changes },
-                          eventId,
-                          at,
-                      );
-            return {
-                result: updatedTask,
-                tasks: candidate.tasks,
-                event,
-            };
-        });
-        return change.result;
+        memberId: TaskMemberId,
+    ): Promise<TaskMembership | undefined> {
+        this.#assertMember(memberId);
+        return structuredClone(await readMembership(ctx, taskId, memberId));
     }
 
-    /** Mark one task complete. Completing it twice returns the same task. */
-    async complete(ctx: Context, agentId: string, taskId: string): Promise<Task> {
-        this.#assertAgentId(agentId);
-        this.#assertTaskId(taskId);
-        const change = await this.#change(ctx, agentId, async (txCtx, tasks, eventId, at) => {
-            const existing = tasks.find((task) => task.id === taskId);
-            if (existing === undefined) {
-                throw new TaskValidationError(`Task "${taskId}" does not exist.`);
-            }
-            if (existing.status === "completed") return { result: existing };
-            const task: Task = {
-                ...existing,
-                status: "completed",
-                updatedAt: at,
-            };
-            void txCtx;
-            return {
-                result: task,
-                tasks: tasks.map((candidate) => (candidate.id === taskId ? task : candidate)),
-                event: this.#event({ type: "task_completed", agentId, task }, eventId, at),
-            };
-        });
-        return change.result;
+    /**
+     * Who a person is as a task member. A standalone installation is one person; in team mode a
+     * person is their user ID, and without one there is nobody to place the task with.
+     */
+    memberFor(userId: string | undefined): TaskMemberId | undefined {
+        if (!this.#config.configuration.values.feature.team.enabled) return STANDALONE_TASK_MEMBER;
+        return userId;
     }
 
-    /** Remove a task and unlink it from every remaining task's dependency graph. */
-    async remove(ctx: Context, agentId: string, taskId: string): Promise<boolean> {
-        this.#assertAgentId(agentId);
-        this.#assertTaskId(taskId);
-        const change = await this.#change(ctx, agentId, async (txCtx, tasks, eventId, at) => {
-            const existing = tasks.find((task) => task.id === taskId);
-            if (existing === undefined) return { result: false };
-            const remaining = compactOrdering(
-                tasks.filter((task) => task.id !== taskId),
-                at,
-            );
-            const unlinked = remaining.map((task) =>
-                task.dependsOn.includes(taskId)
-                    ? {
-                          ...task,
-                          dependsOn: task.dependsOn.filter((dependency) => dependency !== taskId),
-                          updatedAt: at,
-                      }
-                    : task,
-            );
-            const normalized = syncDependencyEdges(unlinked);
-            void txCtx;
-            return {
-                result: true,
-                tasks: normalized,
-                event: this.#event({ type: "task_removed", agentId, taskId }, eventId, at),
-            };
+    /**
+     * Put the task at the top of the member's list. Joining again changes nothing and reports the
+     * existing membership, so a retried join is harmless.
+     */
+    async join(
+        ctx: Context,
+        taskId: string,
+        memberId: TaskMemberId,
+    ): Promise<{ readonly membership: TaskMembership; readonly joined: boolean }> {
+        this.#assertMember(memberId);
+        return await ctx.inTx(async (txCtx) => {
+            await this.#required(txCtx, taskId);
+            const existing = await readMembership(txCtx, taskId, memberId);
+            if (existing !== undefined) return { membership: existing, joined: false };
+            return { membership: await this.#join(txCtx, taskId, memberId), joined: true };
         });
-        return change.result;
     }
 
-    /** Set an exact complete order for all current tasks. */
+    /** Take the task out of the member's list. Leaving a task one never joined changes nothing. */
+    async leave(
+        ctx: Context,
+        taskId: string,
+        memberId: TaskMemberId,
+    ): Promise<TaskMembership | undefined> {
+        this.#assertMember(memberId);
+        return await ctx.inTx(async (txCtx) => {
+            await this.#required(txCtx, taskId);
+            const existing = await readMembership(txCtx, taskId, memberId);
+            if (existing === undefined) return undefined;
+            await deleteMembership(txCtx, taskId, memberId);
+            this.#publish(txCtx, {
+                eventId: globalThis.crypto.randomUUID(),
+                at: Date.now(),
+                type: "task_left",
+                membership: existing,
+            });
+            return existing;
+        });
+    }
+
+    /**
+     * Move a task within one member's list, after another task that member joined or first. Only
+     * that member's order key changes; every other member's list stays as it was.
+     */
     async reorder(
         ctx: Context,
-        agentId: string,
-        taskIds: readonly string[],
-    ): Promise<readonly Task[]> {
-        this.#assertAgentId(agentId);
-        if (!Value.Check(taskReorderIdsSchema, taskIds)) {
-            throw new TaskValidationError(
-                "Task reorder expects a unique bounded list of task IDs.",
-            );
-        }
-        const change = await this.#change(ctx, agentId, async (txCtx, tasks, eventId, at) => {
-            if (taskIds.length !== tasks.length) {
-                throw new TaskValidationError(
-                    "Task reorder must include every current task exactly once.",
-                );
-            }
-            const byId = new Map(tasks.map((task) => [task.id, task]));
-            const reordered = taskIds.map((taskId, ordering) => {
-                const task = byId.get(taskId);
-                if (task === undefined) {
-                    throw new TaskValidationError(`Task "${taskId}" does not exist.`);
-                }
-                return task.ordering === ordering ? task : { ...task, ordering, updatedAt: at };
-            });
-            const normalized = syncDependencyEdges(reordered);
-            this.#validateTasks(normalized);
-            if (reordered.every((task, index) => task.id === tasks[index]?.id)) {
-                return { result: this.#sort(tasks) };
-            }
-            void txCtx;
-            return {
-                result: normalized,
-                tasks: normalized,
-                event: this.#event(
-                    { type: "tasks_reordered", agentId, tasks: [...normalized] },
-                    eventId,
-                    at,
-                ),
-            };
-        });
-        return change.result;
-    }
-
-    /** Clear all tasks for one agent and return how many were removed. */
-    async reset(ctx: Context, agentId: string): Promise<number> {
-        this.#assertAgentId(agentId);
-        const change = await this.#change(ctx, agentId, async (txCtx, tasks, eventId, at) => {
-            if (tasks.length === 0) return { result: 0 };
-            void txCtx;
-            return {
-                result: tasks.length,
-                tasks: [],
-                event: this.#event(
-                    { type: "tasks_reset", agentId, removed: tasks.length },
-                    eventId,
-                    at,
-                ),
-            };
-        });
-        return change.result;
-    }
-
-    readonly #hooks: AgentModuleHooks = {
-        /** The common provider-neutral task tools exposed to each agent. */
-        tools: (_ctx: Context, scope: AgentModuleScope): readonly AnyAgentTool[] => [
-            createTaskTool(this, scope.agent.id),
-            listTasksTool(this, scope.agent.id),
-            getTaskTool(this, scope.agent.id),
-            updateTaskTool(this, scope.agent.id),
-            completeTaskTool(this, scope.agent.id),
-            removeTaskTool(this, scope.agent.id),
-        ],
-    };
-
-    readonly beforeStart = (): AgentModuleHooks => this.#hooks;
-
-    /** Render a bounded model-facing task summary without changing the structured result. */
-    formatForModel(tasks: readonly Task[]): string {
-        const completed = new Set(
-            tasks.filter((task) => task.status === "completed").map((task) => task.id),
-        );
-        const full =
-            tasks.length === 0
-                ? "No tasks."
-                : tasks
-                      .map((task) => {
-                          const unresolved = task.dependsOn.filter(
-                              (dependency) => !completed.has(dependency),
-                          );
-                          return [
-                              compactTaskRow({ ...task, dependsOn: unresolved }),
-                              ...(task.activeForm === undefined
-                                  ? []
-                                  : [`  Active form: ${task.activeForm}`]),
-                              ...(task.detail === undefined ? [] : [`  Detail: ${task.detail}`]),
-                              ...(task.metadata === undefined
-                                  ? []
-                                  : [`  Metadata: ${JSON.stringify(task.metadata)}`]),
-                          ].join("\n");
-                      })
-                      .join("\n");
-        if (full.length <= MAX_TASK_OUTPUT_CHARACTERS) return full;
-        return `${full.slice(0, MAX_TASK_OUTPUT_CHARACTERS - 32)}\n[task list truncated]`;
-    }
-
-    /**
-     * Render a list page without hiding any returned task identity.
-     *
-     * `listPage` already reduces the returned page until these compact rows fit
-     * `MAX_TASK_OUTPUT_CHARACTERS`. Full detail remains available through `get_task`.
-     */
-    formatPageForModel(page: TaskPage): string {
-        if (!Value.Check(taskPageSchema, page)) {
-            throw new Error("Cannot format an invalid task page.");
-        }
-        const rows = page.tasks.map(compactTaskRow);
-        const suffix =
-            page.nextOffset === undefined ? "" : `\nMore tasks start at offset ${page.nextOffset}.`;
-        const output = `${rows.length === 0 ? "No tasks." : rows.join("\n")}${suffix}`;
-        if (output.length > MAX_TASK_OUTPUT_CHARACTERS) {
-            throw new Error("Task page exceeds its model-output bound.");
-        }
-        return output;
-    }
-
-    /**
-     * Bound one rendered mutation result to the same model-output limit as every other rendering.
-     *
-     * A mutation answer echoes fields the caller supplied, and a title alone may be longer than
-     * the bound, so the sentence a tool hands back is cut to fit and says that it was.
-     */
-    formatMutationForModel(text: string): string {
-        if (text.length <= MAX_TASK_OUTPUT_CHARACTERS) return text;
-        const suffix = "\n[truncated]";
-        return `${text.slice(0, MAX_TASK_OUTPUT_CHARACTERS - suffix.length)}${suffix}`;
-    }
-
-    /** Render one bounded task lookup page and preserve every returned cursor. */
-    formatDetailPageForModel(page: TaskDetailPage): string {
-        if (!Value.Check(taskDetailPageSchema, page)) {
-            throw new Error("Cannot format an invalid task detail page.");
-        }
-        if (page.task === null) return "That task does not exist.";
-        const output = formatTaskDetailPage(page, MAX_TASK_OUTPUT_CHARACTERS);
-        if (output.length > MAX_TASK_OUTPUT_CHARACTERS) {
-            throw new Error("Task detail page exceeds its model-output bound.");
-        }
-        return output;
-    }
-
-    async #change<Result>(
-        ctx: Context,
-        agentId: string,
-        decide: (
-            txCtx: Context,
-            tasks: readonly Task[],
-            eventId: string,
-            at: number,
-        ) => Promise<TaskChange<Result> & { readonly tasks?: readonly Task[] }>,
-    ): Promise<TaskChange<Result>> {
-        const eventId = globalThis.crypto.randomUUID();
-        this.#assertEventId(eventId);
-        const at = this.#timestamp();
-        return await this.#serialize(agentId, async () =>
-            ctx.inTx(async (txCtx) => {
-                const store = taskKV(agentId);
-                // The context transaction is the durable boundary for the complete
-                // read-decide-write operation. The module deliberately keeps no authoritative
-                // per-agent state in memory.
-                const tasks = await this.#readFromKV(txCtx, store);
-                const decided = await decide(txCtx, tasks, eventId, at);
-                const event = decided.event;
-                if (decided.tasks !== undefined) {
-                    this.#validateTasks(decided.tasks);
-                    await this.#write(txCtx, store, decided.tasks);
-                } else if (event?.type === "task_created") {
-                    await this.#write(txCtx, store, [...tasks, event.task]);
-                } else if (event?.type === "task_updated") {
-                    await this.#write(
-                        txCtx,
-                        store,
-                        tasks.map((task) => (task.id === event.task.id ? event.task : task)),
-                    );
-                } else if (event?.type === "task_completed") {
-                    await this.#write(
-                        txCtx,
-                        store,
-                        tasks.map((task) => (task.id === event.task.id ? event.task : task)),
-                    );
-                }
-                if (event !== undefined) {
-                    for (const listener of this.#transactionalListeners) {
-                        await listener(txCtx, event);
-                    }
-                    // The post-commit observer is told about a change that has already landed, so
-                    // it is handed the caller's context rather than the transaction's: by the time
-                    // it runs, the transaction context has ended and cannot read anything back.
-                    afterCommit(txCtx, () => this.#notifyPostCommit(ctx, event));
-                }
-                return decided;
-            }),
-        );
-    }
-
-    /**
-     * Run one agent's mutations one at a time.
-     *
-     * A transaction orders durable writes, but it does not keep two concurrent mutations from both
-     * reading the same list before either has written: interleaved read-decide-write turns
-     * simultaneous creates into one surviving task and silently drops the rest. Mutations for one
-     * agent therefore queue behind each other in this process, while different agents stay
-     * independent.
-     */
-    async #serialize<Result>(agentId: string, work: () => Promise<Result>): Promise<Result> {
-        const previous = this.#mutations.get(agentId) ?? Promise.resolve();
-        const current = previous.then(work, work);
-        // The queue only orders work; a failed mutation must not fail the one waiting behind it.
-        const tail = current.then(
-            () => undefined,
-            () => undefined,
-        );
-        this.#mutations.set(agentId, tail);
-        try {
-            return await current;
-        } finally {
-            if (this.#mutations.get(agentId) === tail) this.#mutations.delete(agentId);
-        }
-    }
-
-    async #read(ctx: Context, agentId: string): Promise<readonly Task[]> {
-        return await this.#readFromKV(ctx, taskKV(agentId));
-    }
-
-    async #readFromKV(ctx: Context, kv: ReturnType<typeof taskKV>): Promise<readonly Task[]> {
-        const value = await kv.read(ctx);
-        if (value === undefined) return [];
-        if (!Value.Check(taskListSchema, value)) {
-            throw new Error("The stored task list is invalid.");
-        }
-        this.#validateTasks(value);
-        return this.#sort(value);
-    }
-
-    async #write(
-        ctx: Context,
-        kv: ReturnType<typeof taskKV>,
-        tasks: readonly Task[],
-    ): Promise<void> {
-        this.#validateTasks(tasks);
-        await kv.write(ctx, this.#sort(tasks));
-    }
-
-    #applyUpdate(
-        tasks: readonly Task[],
         taskId: string,
-        changes: TaskUpdateInput,
-        at: number,
-    ): { readonly tasks: readonly Task[]; readonly task: Task; readonly changed: boolean } {
-        const original = new Map(tasks.map((task) => [task.id, structuredClone(task)]));
-        const working = new Map(tasks.map((task) => [task.id, structuredClone(task)]));
-        const existing = working.get(taskId);
-        if (existing === undefined) {
-            throw new TaskValidationError(`Task "${taskId}" does not exist.`);
-        }
-
-        let detail = existing.detail;
-        if (changes.detail !== undefined) detail = normalizeDetail(changes.detail ?? undefined);
-        let activeForm = existing.activeForm;
-        if (changes.activeForm !== undefined) {
-            activeForm =
-                changes.activeForm === null ? undefined : normalizeActiveForm(changes.activeForm);
-        }
-        let owner = existing.owner;
-        if (changes.owner !== undefined) {
-            owner = changes.owner === null ? undefined : normalizeOwner(changes.owner);
-        }
-        let metadata = existing.metadata;
-        if (changes.metadata !== undefined) {
-            assertTaskMetadataPatch(changes.metadata);
-            metadata = applyMetadataPatch(existing.metadata, changes.metadata);
-        }
-        const candidate: Task = {
-            ...existing,
-            ...(detail === undefined ? {} : { detail }),
-            ...(activeForm === undefined ? {} : { activeForm }),
-            ...(owner === undefined ? {} : { owner }),
-            ...(metadata === undefined ? {} : { metadata }),
-            title: changes.title === undefined ? existing.title : normalizeTitle(changes.title),
-            priority: changes.priority ?? existing.priority,
-            status: changes.status ?? existing.status,
-            dependsOn:
-                changes.dependsOn === undefined ? [...existing.dependsOn] : [...changes.dependsOn],
-        };
-        if (detail === undefined) delete candidate.detail;
-        if (activeForm === undefined) delete candidate.activeForm;
-        if (owner === undefined) delete candidate.owner;
-        if (metadata === undefined) delete candidate.metadata;
-        working.set(taskId, candidate);
-
-        for (const dependency of [
-            ...(changes.dependsOn ?? []),
-            ...(changes.addBlockedBy ?? []),
-            ...(changes.removeBlockedBy ?? []),
-        ]) {
-            this.#assertTaskId(dependency);
-            if (dependency === taskId) {
-                throw new TaskValidationError(`Task "${taskId}" cannot depend on itself.`);
+        memberId: TaskMemberId,
+        afterId: string | null,
+    ): Promise<TaskMembership> {
+        this.#assertMember(memberId);
+        if (afterId === taskId)
+            throw new TaskConflictError("A task cannot be placed after itself.");
+        return await ctx.inTx(async (txCtx) => {
+            await this.#required(txCtx, taskId);
+            const current = await readMembership(txCtx, taskId, memberId);
+            if (current === undefined) {
+                throw new TaskConflictError("Join the task before moving it in your list.");
             }
-            if (!working.has(dependency)) {
-                throw new TaskValidationError(`Task dependency "${dependency}" does not exist.`);
+            const all = await readMemberships(txCtx, memberId);
+            const position = all.findIndex((membership) => membership.taskId === taskId);
+            // Already in place: a key between the same neighbours would only churn the order.
+            if ((afterId === null ? undefined : afterId) === all[position - 1]?.taskId) {
+                return current;
             }
-        }
-        for (const blockedTaskId of [
-            ...(changes.addBlocks ?? []),
-            ...(changes.removeBlocks ?? []),
-        ]) {
-            this.#assertTaskId(blockedTaskId);
-            if (blockedTaskId === taskId) {
-                throw new TaskValidationError(`Task "${taskId}" cannot depend on itself.`);
+            const ordered = all.filter((membership) => membership.taskId !== taskId);
+            const afterIndex =
+                afterId === null
+                    ? -1
+                    : ordered.findIndex((membership) => membership.taskId === afterId);
+            if (afterId !== null && afterIndex < 0) {
+                throw new TaskConflictError("The task to place after is not in your list.");
             }
-            if (!working.has(blockedTaskId)) {
-                throw new TaskValidationError(`Task dependency "${blockedTaskId}" does not exist.`);
-            }
-        }
-
-        const updated = working.get(taskId) as Task;
-        if (changes.addBlockedBy !== undefined) {
-            updated.dependsOn = appendUnique(updated.dependsOn, changes.addBlockedBy);
-        }
-        if (changes.removeBlockedBy !== undefined) {
-            updated.dependsOn = updated.dependsOn.filter(
-                (dependency) => !changes.removeBlockedBy?.includes(dependency),
+            const orderKey = taskOrderKeyBetween(
+                afterIndex < 0 ? null : (ordered[afterIndex]?.orderKey ?? null),
+                ordered[afterIndex + 1]?.orderKey ?? null,
             );
+            const moved: TaskMembership = { ...current, orderKey };
+            await updateMembershipOrder(txCtx, moved);
+            this.#publish(txCtx, {
+                eventId: globalThis.crypto.randomUUID(),
+                at: Date.now(),
+                type: "task_reordered",
+                membership: moved,
+            });
+            return structuredClone(moved);
+        });
+    }
+
+    async get(ctx: Context, taskId: string): Promise<TaskRecord | undefined> {
+        return structuredClone(await readTask(ctx, taskId));
+    }
+
+    async forWorkspace(ctx: Context, workspaceId: string): Promise<TaskRecord | undefined> {
+        return structuredClone(await readTaskByWorkspace(ctx, workspaceId));
+    }
+
+    async forAgent(ctx: Context, agentId: string): Promise<TaskRecord | undefined> {
+        return structuredClone(await readTaskByAgent(ctx, agentId));
+    }
+
+    /** Whether a task, its dedicated workspace, or its agent already holds this identity. */
+    async hasIdentity(ctx: Context, id: string): Promise<boolean> {
+        return (
+            (await readTask(ctx, id)) !== undefined ||
+            (await readTaskByWorkspace(ctx, id)) !== undefined ||
+            (await readTaskByAgent(ctx, id)) !== undefined
+        );
+    }
+
+    /**
+     * The team user an agent's work currently belongs to, read from this module's store for that
+     * agent: the latest identified human sender in its conversation, or `undefined` when there is
+     * none, as on a standalone installation.
+     */
+    async ownerFor(ctx: Context, kv: AgentKV): Promise<string | undefined> {
+        const owner = await kv.read(ctx, OWNER_KEY);
+        if (owner === undefined || owner === null) return undefined;
+        if (!Value.Check(ownerSchema, owner)) {
+            throw new Error("The stored task owner identity is invalid.");
         }
-        for (const blockedTaskId of changes.addBlocks ?? []) {
-            const blockedTask = working.get(blockedTaskId) as Task;
-            blockedTask.dependsOn = appendUnique(blockedTask.dependsOn, [taskId]);
+        return owner;
+    }
+
+    /**
+     * The owner as the model reads it. Team sender notifications introduce each person by this
+     * same installation-local user ID, so the ID alone identifies them without a profile lookup.
+     */
+    ownerLabel(task: Pick<TaskRecord, "ownerUserId">): string | undefined {
+        return task.ownerUserId === undefined ? undefined : `user ID \`${task.ownerUserId}\``;
+    }
+
+    /**
+     * Create the row, its folder, its ordinary root agent, and the opening message in one
+     * database transaction.
+     *
+     * Every read that justifies the write happens inside that transaction, so the identities and
+     * the folder name it settles on cannot go stale before the insert. The folder is made after
+     * the row: a name the database refuses aborts the transaction before anything reaches disk.
+     */
+    async create(ctx: Context, input: CreateTaskInput): Promise<TaskRecord> {
+        return (await this.createWithResult(ctx, input)).task;
+    }
+
+    /** Reports creation inside its transaction so a retry cannot repeat post-creation work. */
+    async createWithResult(ctx: Context, input: CreateTaskInput): Promise<TaskCreation> {
+        if (!Value.Check(createTaskInputSchema, input)) throw new TaskInputError();
+        if (input.text !== undefined && input.creatorAgentId === undefined) {
+            throw new TaskInputError("An opening message needs the agent that sends it.");
         }
-        for (const blockedTaskId of changes.removeBlocks ?? []) {
-            const blockedTask = working.get(blockedTaskId) as Task;
-            blockedTask.dependsOn = blockedTask.dependsOn.filter(
-                (dependency) => dependency !== taskId,
+        return await ctx.inTx(async (txCtx) => {
+            if (input.id !== undefined) {
+                const existing = await readTask(txCtx, input.id);
+                if (existing !== undefined) {
+                    if (
+                        (input.workspaceId !== undefined &&
+                            input.workspaceId !== existing.workspaceId) ||
+                        (input.agentId !== undefined && input.agentId !== existing.agentId)
+                    ) {
+                        throw new TaskConflictError(
+                            "The requested identities do not match this task.",
+                            existing,
+                        );
+                    }
+                    return { task: structuredClone(existing), created: false };
+                }
+            }
+            const agents = this.#requireAgents();
+            const supplied = [input.id, input.workspaceId, input.agentId].filter(
+                (id) => id !== undefined,
             );
-        }
-
-        const changedIds = new Set<string>();
-        for (const [id, task] of working) {
-            const before = original.get(id) as Task;
-            if (!sameTask(before, task)) changedIds.add(id);
-        }
-        if (changedIds.size === 0) {
-            return { task: existing, tasks, changed: false };
-        }
-        for (const id of changedIds) {
-            const task = working.get(id) as Task;
-            working.set(id, { ...task, updatedAt: at });
-        }
-        const normalized = syncDependencyEdges([...working.values()]);
-        this.#validateTasks(normalized);
-        return {
-            task: normalized.find((task) => task.id === taskId) as Task,
-            tasks: normalized,
-            changed: true,
-        };
-    }
-
-    #newTaskId(): string {
-        const id = globalThis.crypto.randomUUID();
-        this.#assertTaskId(id);
-        return id;
-    }
-
-    #event(payload: TaskEventPayload, eventId: string, at: number): TaskEvent {
-        if (!Value.Check(taskEventPayloadSchema, payload)) {
-            throw new Error("Tasks module created an invalid event payload.");
-        }
-        const event = { ...payload, eventId, at };
-        if (!Value.Check(taskEventSchema, event)) {
-            throw new Error("Tasks module created an invalid event.");
-        }
-        return deepFreeze(structuredClone(event));
-    }
-
-    async #notifyPostCommit(ctx: Context, event: TaskEvent): Promise<void> {
-        for (const listener of this.#listeners) {
-            try {
-                await listener(ctx, event);
-            } catch (error: unknown) {
-                // The change is already durable; one subscriber cannot make it look failed, and it
-                // cannot starve the subscribers queued behind it either.
-                ctx.log.warn(
-                    "A task subscriber failed after the change was already committed.",
-                    { agentId: event.agentId, eventId: event.eventId, type: event.type },
-                    error,
+            const reserved = new Set(supplied);
+            if (reserved.size !== supplied.length) {
+                throw new TaskConflictError(
+                    "The task, workspace, and agent must have distinct identities.",
                 );
             }
-        }
-    }
-
-    #validateTasks(tasks: readonly Task[]): void {
-        if (tasks.length > MAX_TASKS_PER_AGENT || !Value.Check(taskListSchema, tasks)) {
-            throw new TaskValidationError(
-                "The task list exceeds its bounds or has an invalid shape.",
-            );
-        }
-        if (new Set(tasks.map((task) => task.id)).size !== tasks.length) {
-            throw new TaskValidationError("Task IDs must be unique.");
-        }
-        const orderings = [...tasks]
-            .map((task) => task.ordering)
-            .sort((left, right) => left - right);
-        if (!orderings.every((ordering, index) => ordering === index)) {
-            throw new TaskValidationError("Task ordering must be unique and contiguous from zero.");
-        }
-        if (hasCycle(tasks)) {
-            throw new TaskValidationError("Task dependencies cannot contain a cycle.");
-        }
-        for (const task of tasks) {
-            if (task.updatedAt < task.createdAt) {
-                throw new TaskValidationError(`Task "${task.id}" has an invalid timestamp order.`);
+            for (const id of reserved) {
+                if (await this.#identityInUse(txCtx, id)) {
+                    throw new TaskConflictError("A requested identity is already in use.");
+                }
             }
-            if (normalizeTitle(task.title) !== task.title) {
-                throw new TaskValidationError(`Task "${task.id}" has an invalid title.`);
-            }
-            if (task.detail !== undefined && normalizeDetail(task.detail) !== task.detail) {
-                throw new TaskValidationError(`Task "${task.id}" has invalid detail.`);
-            }
-            if (
-                task.activeForm !== undefined &&
-                normalizeActiveForm(task.activeForm) !== task.activeForm
-            ) {
-                throw new TaskValidationError(`Task "${task.id}" has invalid active form.`);
-            }
-            if (task.owner !== undefined && normalizeOwner(task.owner) !== task.owner) {
-                throw new TaskValidationError(`Task "${task.id}" has invalid owner.`);
-            }
-            if (task.metadata !== undefined) assertTaskMetadata(task.metadata);
-            validateDependencyIds(tasks, task.id, task.dependsOn);
-        }
-        const expectedBlocks = deriveBlocks(tasks);
-        for (const task of tasks) {
-            if (!sameIds(task.blocks, expectedBlocks.get(task.id) ?? [])) {
-                throw new TaskValidationError(
-                    `Task "${task.id}" has inconsistent reverse dependencies.`,
-                );
-            }
-        }
-    }
-
-    #assertInput(
-        schema: typeof taskCreateInputSchema | typeof taskUpdateInputSchema,
-        value: unknown,
-        action: string,
-    ): void {
-        // Metadata is the one field a caller can make self-referential, and the schema walk itself
-        // would recurse into it forever, so its shape is established before anything else looks.
-        if (typeof value === "object" && value !== null && "metadata" in value) {
-            assertTaskMetadataStructure((value as { readonly metadata: unknown }).metadata);
-        }
-        if (!Value.Check(schema, value)) {
-            throw new TaskValidationError(`Invalid task ${action} input.`);
-        }
-    }
-
-    #assertAgentId(agentId: string): void {
-        if (!Value.Check(agentIdSchema, agentId)) {
-            throw new TaskValidationError("Task agent ID is invalid.");
-        }
-    }
-
-    #assertTaskId(taskId: string): void {
-        if (!Value.Check(taskIdSchema, taskId)) {
-            throw new TaskValidationError("Task ID is invalid.");
-        }
-    }
-
-    #assertEventId(eventId: string): void {
-        if (!Value.Check(taskEventIdSchema, eventId)) {
-            throw new Error("Task event ID is invalid.");
-        }
-    }
-
-    #timestamp(): number {
-        const value = Date.now();
-        if (!Value.Check(taskTimestampSchema, value)) {
-            throw new Error("The system clock is outside the range a task timestamp can hold.");
-        }
-        return value;
-    }
-
-    #sort(tasks: readonly Task[]): readonly Task[] {
-        return [...tasks]
-            .sort(
-                (left, right) => left.ordering - right.ordering || left.id.localeCompare(right.id),
-            )
-            .map((task) => structuredClone(task));
-    }
-
-    #fitModelPage(requested: readonly Task[], offset: number, total: number): Task[] {
-        if (requested.length === 0) return [];
-        const visible: Task[] = [];
-        for (const task of requested) {
-            const candidate = [...visible, task];
-            const nextOffset = offset + candidate.length;
-            const suffix = nextOffset < total ? `\nMore tasks start at offset ${nextOffset}.` : "";
-            const output = `${candidate.map(compactTaskRow).join("\n")}${suffix}`;
-            if (output.length > MAX_TASK_OUTPUT_CHARACTERS) break;
-            visible.push(task);
-        }
-        if (visible.length === 0) {
-            throw new Error("The task output bound is too small to show one task identity.");
-        }
-        return visible;
-    }
-
-    #fitTaskDetailPage(page: TaskDetailPage): TaskDetailPage {
-        if (page.task === null) return page;
-        let detail = page.detail;
-        let dependencies = [...page.dependencies];
-        for (;;) {
-            // Keep one visible character/identity whenever the corresponding source has more
-            // data. A zero-length retained slice would make its cursor repeat forever.
-            const candidate: TaskDetailPage = {
-                task: page.task,
-                detail,
-                detailOffset: page.detailOffset,
-                detailTotal: page.detailTotal,
-                dependencies,
-                dependencyOffset: page.dependencyOffset,
-                dependencyTotal: page.dependencyTotal,
-                ...(page.detailOffset + detail.length < page.detailTotal
-                    ? { nextDetailOffset: page.detailOffset + detail.length }
-                    : {}),
-                ...(page.dependencyOffset + dependencies.length < page.dependencyTotal
-                    ? { nextDependencyOffset: page.dependencyOffset + dependencies.length }
-                    : {}),
+            const taskId = input.id ?? (await this.#unusedIdentity(txCtx, reserved));
+            reserved.add(taskId);
+            const workspaceId = input.workspaceId ?? (await this.#unusedIdentity(txCtx, reserved));
+            reserved.add(workspaceId);
+            const agentId = input.agentId ?? (await this.#unusedIdentity(txCtx, reserved));
+            const folderName = await this.#chooseFolderName(txCtx, input.name, input.folderName);
+            // A task's folder goes where a bot's would: the default runner once runners are
+            // configured, otherwise this installation's public folder.
+            const runnerId = this.#runners.enabled ? this.#runners.defaultRunnerId : undefined;
+            const path = this.#taskPath(runnerId, folderName);
+            const now = Date.now();
+            const config: AgentConfig = {
+                provenance: { createdAt: now },
+                environment: {
+                    ...currentAgentEnvironment(),
+                    workingDirectory: path,
+                },
+                // A task's conversation is the task, so it is called what the task is called
+                // and automatic naming never writes over it.
+                metadata: { title: input.name, updatedAt: now, version: 1 },
+                modules: {
+                    compute: {
+                        cwd: path,
+                        ...(runnerId === undefined ? {} : { runnerId }),
+                        secretScope: { workspaceId },
+                    },
+                },
             };
-            if (
-                formatTaskDetailPage(candidate, MAX_TASK_OUTPUT_CHARACTERS).length <=
-                MAX_TASK_OUTPUT_CHARACTERS
-            ) {
-                return candidate;
+            await agents.create(txCtx, config, { id: agentId, parent: null });
+            const task: TaskRecord = {
+                id: taskId,
+                name: input.name,
+                folderName,
+                ...(input.ownerUserId === undefined ? {} : { ownerUserId: input.ownerUserId }),
+                ...(input.creatorAgentId === undefined
+                    ? {}
+                    : { creatorAgentId: input.creatorAgentId }),
+                workspaceId,
+                workspaceVersion: 1,
+                workspaceUpdatedAt: now,
+                agentId,
+                path,
+                ...(runnerId === undefined ? {} : { runnerId }),
+                status: "active",
+                version: 1,
+                createdAt: now,
+                updatedAt: now,
+            };
+            await insertTask(txCtx, task);
+            // The unique folder, path, workspace, and agent columns have accepted this task by
+            // now. An existing directory is the folder of a creation that was rolled back after
+            // making it, and is taken up again.
+            const machine = await this.#runners.machine(runnerId);
+            const existingFolder = await machine.fs
+                .stat(PRODUCT, path)
+                .catch((error: NodeJS.ErrnoException) => {
+                    if (error.code === "ENOENT") return undefined;
+                    throw error;
+                });
+            if (existingFolder !== undefined && !existingFolder.isDirectory) {
+                throw new TaskConflictError("The task folder path is already in use.");
             }
-            if (detail.length > 1) {
-                const excess = Math.max(
-                    1,
-                    formatTaskDetailPage(candidate, MAX_TASK_OUTPUT_CHARACTERS).length -
-                        MAX_TASK_OUTPUT_CHARACTERS,
-                );
-                detail = detail.slice(0, Math.max(1, detail.length - excess));
-                continue;
+            await machine.fs.mkdir(PRODUCT, path, { recursive: true });
+            if (input.text !== undefined && input.creatorAgentId !== undefined) {
+                // The agent ID doubles as the opening message's identity: it is new, and it is
+                // never reused, so the opening is delivered exactly once with the task.
+                await this.#deliver(txCtx, input.creatorAgentId, task, input.text, agentId);
             }
-            if (dependencies.length > 1) {
-                dependencies = dependencies.slice(0, -1);
-                continue;
+            this.#publish(txCtx, {
+                eventId: globalThis.crypto.randomUUID(),
+                at: now,
+                type: "task_created",
+                task,
+            });
+            // The owner finds the new task at the top of their own list.
+            const owner = this.memberFor(input.ownerUserId);
+            if (owner !== undefined) await this.#join(txCtx, taskId, owner);
+            return { task: structuredClone(task), created: true };
+        });
+    }
+
+    /**
+     * Deliver one message into the task's conversation. It queues behind the current run and
+     * starts one when the task is idle. The caller-supplied message ID makes redelivery after an
+     * interruption idempotent.
+     */
+    async sendMessage(
+        ctx: Context,
+        fromAgentId: string,
+        taskId: string,
+        text: string,
+        messageId: string,
+    ): Promise<TaskRecord> {
+        const task = await this.#required(ctx, taskId);
+        if (task.status === "archived") {
+            throw new TaskConflictError("The task is archived and cannot receive messages.");
+        }
+        if (task.agentId === fromAgentId) {
+            throw new TaskConflictError("A task cannot send a message to itself.");
+        }
+        await this.#deliver(ctx, fromAgentId, task, text, messageId);
+        return structuredClone(task);
+    }
+
+    /** Renames the task and its conversation together. The folder and identities do not move. */
+    async rename(
+        ctx: Context,
+        taskId: string,
+        name: string,
+        expectedVersion: number,
+    ): Promise<TaskRecord> {
+        return await ctx.inTx(async (txCtx) => {
+            const current = await this.#required(txCtx, taskId);
+            this.#assertVersion(current, expectedVersion);
+            if (current.name === name) return current;
+            await this.#updateAgentMetadata(txCtx, current.agentId, { title: name });
+            return await this.#change(txCtx, current, (task) => ({ ...task, name }));
+        });
+    }
+
+    /**
+     * Archive the task: stop its work, archive its agent, and record durable cleanup of the
+     * agent's machine, all in one transaction. The folder stays on disk and history stays
+     * readable; archival is logical, never a deletion.
+     */
+    async archive(ctx: Context, taskId: string, expectedVersion: number): Promise<TaskRecord> {
+        return await ctx.inTx(async (txCtx) => {
+            const current = await this.#required(txCtx, taskId);
+            this.#assertVersion(current, expectedVersion);
+            return await this.#archive(txCtx, current);
+        });
+    }
+
+    /** Archive through the tool: only the agent that created the task may do this. */
+    async archiveForAgent(
+        ctx: Context,
+        actingAgentId: string,
+        taskId: string,
+    ): Promise<TaskRecord> {
+        return await ctx.inTx(async (txCtx) => {
+            const current = await this.#required(txCtx, taskId);
+            if (current.creatorAgentId !== actingAgentId) {
+                throw new TaskConflictError("Only the agent that created a task may archive it.");
             }
-            throw new Error("The task output bound is too small to show one task identity.");
+            return await this.#archive(txCtx, current);
+        });
+    }
+
+    async unarchive(ctx: Context, taskId: string, expectedVersion: number): Promise<TaskRecord> {
+        return await ctx.inTx(async (txCtx) => {
+            const current = await this.#required(txCtx, taskId);
+            this.#assertVersion(current, expectedVersion);
+            if (current.status === "active") return current;
+            await this.#durableFunctions.cancel(txCtx, `task-archive:${current.agentId}`);
+            await this.#updateAgentMetadata(txCtx, current.agentId, { archivedAt: null });
+            return await this.#change(txCtx, current, (task) => {
+                const active: TaskRecord = { ...task, status: "active" };
+                delete active.archivedAt;
+                return active;
+            });
+        });
+    }
+
+    async #archive(ctx: Context, current: TaskRecord): Promise<TaskRecord> {
+        if (current.status === "archived") return current;
+        const now = Date.now();
+        await this.#abort.abort(ctx, current.agentId);
+        await this.#updateAgentMetadata(ctx, current.agentId, { archivedAt: now });
+        await this.#durableFunctions.invoke(ctx, {
+            function: TASK_ARCHIVE_FUNCTION,
+            arguments: { agentId: current.agentId },
+            operationId: `task-archive:${current.agentId}`,
+            lockKeys: [`task:${current.agentId}`],
+        });
+        return await this.#change(ctx, current, (task) => ({
+            ...task,
+            status: "archived",
+            archivedAt: now,
+        }));
+    }
+
+    async #join(ctx: Context, taskId: string, memberId: TaskMemberId): Promise<TaskMembership> {
+        const first = (await readMemberships(ctx, memberId))[0];
+        const membership: TaskMembership = {
+            taskId,
+            memberId,
+            orderKey: taskOrderKeyBetween(null, first?.orderKey ?? null),
+            joinedAt: Date.now(),
+        };
+        await insertMembership(ctx, membership);
+        this.#publish(ctx, {
+            eventId: globalThis.crypto.randomUUID(),
+            at: membership.joinedAt,
+            type: "task_joined",
+            membership,
+        });
+        return structuredClone(membership);
+    }
+
+    #assertMember(memberId: TaskMemberId): void {
+        if (!Value.Check(taskMemberIdSchema, memberId)) {
+            throw new TaskInputError("The task member is invalid.");
         }
     }
-}
 
-function normalizeTitle(title: string): string {
-    const normalized = title.trim();
-    if (!Value.Check(taskTitleSchema, normalized)) {
-        throw new TaskValidationError(
-            "Task title must not be empty and must be at most 500 characters.",
+    async #deliver(
+        ctx: Context,
+        fromAgentId: string,
+        task: TaskRecord,
+        text: string,
+        messageId: string,
+    ): Promise<void> {
+        const accepted = await this.#requireAgents().send(
+            ctx,
+            task.agentId,
+            {
+                role: "agent",
+                author: { id: fromAgentId, description: `Agent ${fromAgentId}` },
+                content: [{ type: "text", text: `Message from agent ${fromAgentId}:\n\n${text}` }],
+            },
+            {
+                id: messageId,
+                metadata: {
+                    tasks: { fromAgentId, taskId: task.id },
+                    ...senderAgentIdMetadata(fromAgentId),
+                },
+            },
         );
-    }
-    return normalized;
-}
-
-function normalizeDetail(detail: string | undefined): string | undefined {
-    if (detail === undefined) return undefined;
-    const normalized = detail.trim();
-    if (!Value.Check(taskDetailSchema, normalized)) {
-        throw new TaskValidationError("Task detail must be at most 4000 characters.");
-    }
-    return normalized.length === 0 ? undefined : normalized;
-}
-
-function normalizeActiveForm(activeForm: string): string {
-    const normalized = activeForm.trim();
-    if (!Value.Check(taskActiveFormSchema, normalized)) {
-        throw new TaskValidationError(
-            "Task active form must not be empty and must be at most 500 characters.",
-        );
-    }
-    return normalized;
-}
-
-function normalizeOwner(owner: string): string {
-    const normalized = owner.trim();
-    if (!Value.Check(taskOwnerSchema, normalized)) {
-        throw new TaskValidationError(
-            "Task owner must not be empty and must be at most 256 characters.",
-        );
-    }
-    return normalized;
-}
-
-function cloneMetadata(metadata: TaskMetadata): TaskMetadata {
-    assertTaskMetadata(metadata);
-    return structuredClone(metadata);
-}
-
-function applyMetadataPatch(
-    existing: TaskMetadata | undefined,
-    patch: TaskMetadataPatch,
-): TaskMetadata {
-    const next: Record<string, unknown> = existing === undefined ? {} : structuredClone(existing);
-    for (const [key, value] of Object.entries(patch)) {
-        if (value === null) delete next[key];
-        else next[key] = structuredClone(value);
-    }
-    assertTaskMetadata(next);
-    return next as TaskMetadata;
-}
-
-function validateDependencyIds(
-    tasks: readonly Task[],
-    taskId: string,
-    dependsOn: readonly string[],
-): void {
-    for (const dependency of dependsOn) {
-        if (dependency === taskId) {
-            throw new TaskValidationError(`Task "${taskId}" cannot depend on itself.`);
-        }
-        if (!tasks.some((task) => task.id === dependency)) {
-            throw new TaskValidationError(`Task dependency "${dependency}" does not exist.`);
+        if (accepted.id !== messageId) {
+            throw new Error("Agent Base did not preserve the requested message ID.");
         }
     }
-}
 
-function appendUnique(values: readonly string[], additions: readonly string[]): string[] {
-    const next = [...values];
-    for (const value of additions) {
-        if (!next.includes(value)) next.push(value);
+    /** A task's folder on the machine it goes to. */
+    #taskPath(runnerId: string | undefined, folderName: string): string {
+        if (runnerId === undefined) return this.#config.taskPath(folderName);
+        const home = this.#runners.home(runnerId);
+        if (home === undefined) {
+            throw new RunnerUnavailableError(
+                `The runner ${this.#runners.displayName(runnerId)} has never connected, so it has nowhere to put a task's folder yet.`,
+            );
+        }
+        return this.#config.taskPathOn(
+            home,
+            this.#runners.platform(runnerId) ?? "linux",
+            folderName,
+        );
     }
-    return next;
-}
 
-function syncDependencyEdges(tasks: readonly Task[]): readonly Task[] {
-    const blocks = deriveBlocks(tasks);
-    return tasks.map((task) => ({
-        ...structuredClone(task),
-        blocks: [...(blocks.get(task.id) ?? [])],
-    }));
-}
+    /**
+     * Apply one decided change to a task read in this same transaction. The stored version is
+     * asserted again by the update itself, so a row that moved in between is refused.
+     */
+    async #change(
+        ctx: Context,
+        current: TaskRecord,
+        decide: (task: TaskRecord) => TaskRecord | undefined,
+    ): Promise<TaskRecord> {
+        const decided = decide(structuredClone(current));
+        if (decided === undefined) return current;
+        const next: TaskRecord = {
+            ...decided,
+            version: current.version + 1,
+            updatedAt: Math.max(Date.now(), current.updatedAt + 1),
+        };
+        if (next.status !== current.status || next.archivedAt !== current.archivedAt) {
+            next.workspaceVersion = current.workspaceVersion + 1;
+            next.workspaceUpdatedAt = next.updatedAt;
+        }
+        if (!Value.Check(taskRecordSchema, next)) throw new Error("The task mutation is invalid.");
+        const stored = await updateTask(ctx, next, current.version);
+        this.#publish(ctx, {
+            eventId: globalThis.crypto.randomUUID(),
+            at: stored.updatedAt,
+            type: "task_updated",
+            task: stored,
+            previousTask: current,
+        });
+        return stored;
+    }
 
-function deriveBlocks(tasks: readonly Task[]): Map<string, string[]> {
-    const blocks = new Map(tasks.map((task) => [task.id, [] as string[]]));
-    for (const task of [...tasks].sort((left, right) => left.ordering - right.ordering)) {
-        for (const dependency of task.dependsOn) {
-            const dependents = blocks.get(dependency);
-            if (dependents !== undefined && !dependents.includes(task.id)) {
-                dependents.push(task.id);
+    /** Write task-owned agent metadata, advancing the agent's own version and timestamp. */
+    async #updateAgentMetadata(
+        ctx: Context,
+        agentId: string,
+        update: Readonly<Record<string, unknown>>,
+    ): Promise<void> {
+        const agents = this.#requireAgents();
+        const config = await agents.config(ctx, agentId);
+        if (config === undefined) throw new Error("The task agent was not found.");
+        const version =
+            typeof config.metadata?.["version"] === "number" ? config.metadata["version"] + 1 : 1;
+        await agents.updateMetadata(ctx, agentId, { ...update, updatedAt: Date.now(), version });
+    }
+
+    async #chooseFolderName(ctx: Context, name: string, supplied?: string): Promise<string> {
+        if (supplied !== undefined) {
+            if ((await readTaskByFolderName(ctx, supplied)) !== undefined) {
+                throw new TaskConflictError("That task folder name is already in use.");
             }
+            return supplied;
+        }
+        const base = deriveTaskFolderName(name);
+        for (let suffix = 1; suffix < 1_000_000; suffix += 1) {
+            const tail = suffix === 1 ? "" : `_${String(suffix)}`;
+            const folderName = `${base.slice(0, 64 - tail.length)}${tail}`;
+            if ((await readTaskByFolderName(ctx, folderName)) === undefined) return folderName;
+        }
+        throw new TaskConflictError("A unique task folder name could not be chosen.");
+    }
+
+    async #unusedIdentity(ctx: Context, excluded: ReadonlySet<string>): Promise<string> {
+        for (;;) {
+            const id = createId();
+            if (excluded.has(id)) continue;
+            if (await this.#identityInUse(ctx, id)) continue;
+            return id;
         }
     }
-    return blocks;
-}
 
-function sameTask(left: Task, right: Task): boolean {
-    return (
-        left.id === right.id &&
-        left.title === right.title &&
-        left.detail === right.detail &&
-        left.activeForm === right.activeForm &&
-        left.owner === right.owner &&
-        left.status === right.status &&
-        left.priority === right.priority &&
-        sameIds(left.dependsOn, right.dependsOn) &&
-        sameIds(left.blocks, right.blocks) &&
-        left.createdAt === right.createdAt &&
-        left.updatedAt === right.updatedAt &&
-        left.ordering === right.ordering &&
-        JSON.stringify(left.metadata) === JSON.stringify(right.metadata)
-    );
-}
-
-function taskForTaskList(task: Task, tasks: readonly Task[]): Task {
-    const completed = new Set(
-        tasks
-            .filter((candidate) => candidate.status === "completed")
-            .map((candidate) => candidate.id),
-    );
-    return {
-        ...structuredClone(task),
-        dependsOn: task.dependsOn.filter((dependency) => !completed.has(dependency)),
-    };
-}
-
-function sameIds(left: readonly string[], right: readonly string[]): boolean {
-    return left.length === right.length && left.every((id, index) => id === right[index]);
-}
-
-function nextOrdering(tasks: readonly Task[]): number {
-    return tasks.reduce((largest, task) => Math.max(largest, task.ordering), -1) + 1;
-}
-
-function compactOrdering(tasks: readonly Task[], at: number): readonly Task[] {
-    return [...tasks]
-        .sort((left, right) => left.ordering - right.ordering || left.id.localeCompare(right.id))
-        .map((task, ordering) =>
-            task.ordering === ordering ? task : { ...task, ordering, updatedAt: at },
-        );
-}
-
-function compactTaskRow(task: Task): string {
-    const fixedPrefix = `${task.id} [${task.status}, ${task.priority}] `;
-    const ownerPrefix =
-        task.owner === undefined ? fixedPrefix : `${fixedPrefix.slice(0, -1)} (${task.owner}) `;
-    const prefix = ownerPrefix.length <= 150 ? ownerPrefix : fixedPrefix;
-    const maxTitleCharacters = Math.max(1, 200 - prefix.length);
-    const title =
-        task.title.length <= maxTitleCharacters
-            ? task.title
-            : `${task.title.slice(0, Math.max(1, maxTitleCharacters - 1))}…`;
-    const dependencyText =
-        task.dependsOn.length === 0 ? "" : ` [blocked by ${task.dependsOn.join(", ")}]`;
-    const row = `${prefix}${title}`;
-    return row.length + dependencyText.length <= 200 ? `${row}${dependencyText}` : row;
-}
-
-function formatTaskDetailPage(
-    page: Extract<TaskDetailPage, { task: Task }>,
-    maxOutputCharacters?: number,
-): string {
-    const lines = [compactTaskRow(page.task)];
-    if (page.task.activeForm !== undefined) {
-        lines.push(`Active form: ${page.task.activeForm}`);
-    }
-    if (page.task.owner !== undefined) {
-        lines.push(`Owner: ${page.task.owner}`);
-    }
-    if (page.detail.length > 0) {
-        lines.push(`Detail [${page.detailOffset}/${page.detailTotal}]: ${page.detail}`);
-    }
-    if (page.dependencies.length > 0) {
-        lines.push(
-            `Depends on [${page.dependencyOffset}/${page.dependencyTotal}]: ${page.dependencies.join(", ")}`,
+    async #identityInUse(ctx: Context, id: string): Promise<boolean> {
+        return (
+            (await this.hasIdentity(ctx, id)) ||
+            (await this.#requireAgents().config(ctx, id)) !== undefined ||
+            (await this.#projects.get(ctx, id)) !== undefined ||
+            (await this.#workspaces.hasIdentity(ctx, id))
         );
     }
-    if (page.task.blocks.length > 0) {
-        lines.push(`Blocks: ${page.task.blocks.join(", ")}`);
-    }
-    if (page.task.metadata !== undefined) {
-        lines.push(`Metadata: ${JSON.stringify(page.task.metadata)}`);
-    }
-    if (page.nextDetailOffset !== undefined) {
-        lines.push(`More detail starts at offset ${page.nextDetailOffset}.`);
-    }
-    if (page.nextDependencyOffset !== undefined) {
-        lines.push(`More dependencies start at offset ${page.nextDependencyOffset}.`);
-    }
-    const full = lines.join("\n");
-    if (maxOutputCharacters === undefined || full.length <= maxOutputCharacters) return full;
 
-    // A maximum-length task ID and dependency ID cannot both fit in the ordinary header at the
-    // schema's 256-character minimum. The compact form may omit the redundant task header while
-    // the caller is already looking up that task, preserving every dependency identity and cursor.
-    const compactWithHeader = formatCompactTaskDetailPage(page, true);
-    if (compactWithHeader.length <= maxOutputCharacters) return compactWithHeader;
-    return formatCompactTaskDetailPage(page, false);
+    async #required(ctx: Context, taskId: string): Promise<TaskRecord> {
+        const task = await readTask(ctx, taskId);
+        if (task === undefined) throw new TaskNotFoundError();
+        return task;
+    }
+
+    #assertVersion(task: TaskRecord, expectedVersion: number): void {
+        if (task.version !== expectedVersion) throw new TaskConflictError("The task has changed.");
+    }
+
+    #publish(ctx: Context, event: TaskEvent): void {
+        if (!Value.Check(taskEventSchema, event)) throw new Error("The task event is invalid.");
+        const frozen = deepFreeze(structuredClone(event)) as TaskEvent;
+        afterCommit(ctx, async (eventCtx) => {
+            for (const listener of [...this.#listeners]) {
+                try {
+                    await listener(eventCtx, frozen);
+                } catch (error: unknown) {
+                    eventCtx.log.error(
+                        "A task subscriber failed.",
+                        { eventId: frozen.eventId },
+                        error,
+                    );
+                }
+            }
+        });
+    }
+
+    #requireAgents(): AgentSystemRef {
+        if (this.#agents === undefined) throw new Error("The tasks module has not started.");
+        return this.#agents;
+    }
 }
 
-function formatCompactTaskDetailPage(
-    page: Extract<TaskDetailPage, { task: Task }>,
-    includeHeader: boolean,
-): string {
-    const lines: string[] = includeHeader ? [page.task.id] : [];
-    if (page.detail.length > 0) {
-        lines.push(`Detail: ${page.detail}`);
-    }
-    if (page.dependencies.length > 0) {
-        lines.push(`Depends on: ${page.dependencies.join(", ")}`);
-    }
-    if (page.nextDetailOffset !== undefined) {
-        lines.push(`More detail: ${page.nextDetailOffset}.`);
-    }
-    if (page.nextDependencyOffset !== undefined) {
-        lines.push(`More dependencies: ${page.nextDependencyOffset}.`);
-    }
-    return lines.join("\n");
-}
-
-function deepFreeze<T>(value: T): T {
-    if (value === null || typeof value !== "object" || Object.isFrozen(value)) return value;
-    for (const child of Object.values(value as Record<string, unknown>)) {
-        deepFreeze(child);
-    }
+function deepFreeze<Value>(value: Value): Value {
+    if (typeof value !== "object" || value === null || Object.isFrozen(value)) return value;
+    for (const child of Object.values(value)) deepFreeze(child);
     return Object.freeze(value);
-}
-
-function hasCycle(tasks: readonly Task[]): boolean {
-    const dependencies = new Map(tasks.map((task) => [task.id, task.dependsOn]));
-    const visiting = new Set<string>();
-    const visited = new Set<string>();
-    const visit = (id: string): boolean => {
-        if (visiting.has(id)) return true;
-        if (visited.has(id)) return false;
-        visiting.add(id);
-        for (const dependency of dependencies.get(id) ?? []) {
-            if (visit(dependency)) return true;
-        }
-        visiting.delete(id);
-        visited.add(id);
-        return false;
-    };
-    return tasks.some((task) => visit(task.id));
-}
-
-function assertTaskEventListener(value: unknown): asserts value is TaskEventListener {
-    if (!Value.Check(taskEventListenerSchema, value)) {
-        throw new Error("A task subscriber must be a function taking a context and an event.");
-    }
 }

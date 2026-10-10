@@ -117,6 +117,7 @@ const displayArgumentsSchema = Type.Object(
         target: Type.Optional(nonEmptyString),
         task_id: Type.Optional(nonEmptyString),
         task_ids: Type.Optional(Type.Array(nonEmptyString)),
+        taskId: Type.Optional(nonEmptyString),
         title: Type.Optional(Type.String()),
         toAgentId: Type.Optional(nonEmptyString),
         tool: Type.Optional(Type.String()),
@@ -391,17 +392,13 @@ function exactToolDescription(
         case "clear_goal":
             return "Clearing the current goal";
         case "create_task":
-            return namedDescription("Creating task", args.title);
+            return namedDescription("Creating task", args.name);
         case "list_tasks":
             return "Listing tasks";
-        case "get_task":
-            return targetDescription("Reading task", args.id);
-        case "update_task":
-            return targetDescription("Updating task", args.id);
-        case "complete_task":
-            return targetDescription("Completing task", args.id);
-        case "remove_task":
-            return targetDescription("Removing task", args.id);
+        case "send_task_message":
+            return targetDescription("Sending a message to task", args.taskId);
+        case "archive_task":
+            return targetDescription("Archiving task", args.taskId);
         case "get_usage":
             return "Reading token usage";
         case "get_agent_tree_usage":

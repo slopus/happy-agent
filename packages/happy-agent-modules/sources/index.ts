@@ -26,6 +26,9 @@ export * from "./services/index.js";
 // Bots: persistent single-conversation assistants with dedicated folders and agents.
 export * from "./bots/index.js";
 
+// Tasks: persistent owned conversations with dedicated folders, roots of their own subtasks.
+export * from "./tasks/index.js";
+
 // Tailcat: stable account-free internet exposure, controlled only by active admin bots.
 export * from "./tailcat/index.js";
 export * from "./connections/index.js";
@@ -389,61 +392,6 @@ export {
 } from "./presence/PresenceStore.js";
 export { getPresenceTool } from "./presence/tools/get_presence.js";
 export { setPresenceTool } from "./presence/tools/set_presence.js";
-
-// Tasks: a bounded persistent todo list owned by the module.
-export {
-    TasksModule,
-    DEFAULT_TASK_PRIORITY,
-    MAX_TASKS,
-    MAX_TASKS_PER_AGENT,
-    MAX_TASK_OUTPUT_CHARACTERS,
-    MAX_TASK_PAGE_SIZE,
-} from "./tasks/TasksModule.js";
-export {
-    taskCreateInputSchema,
-    taskDetailSchema,
-    taskIdSchema,
-    taskPrioritySchema,
-    taskSchema,
-    taskStatusSchema,
-    taskTimestampSchema,
-    taskTitleSchema,
-    taskUpdateInputSchema,
-    type Task,
-    type TaskCreateInput,
-    type TaskId,
-    type TaskPriority,
-    type TaskStatus,
-    type TaskUpdateInput,
-} from "./tasks/Task.js";
-export {
-    taskEventIdSchema,
-    taskEventPayloadSchema,
-    taskEventListenerSchema,
-    taskEventSchema,
-    type TaskEvent,
-    type TaskEventListener,
-    type TaskEventPayload,
-} from "./tasks/TaskEvent.js";
-export {
-    MAX_TASK_DEPENDENCY_PAGE_SIZE,
-    MAX_TASK_DETAIL_PAGE_SIZE,
-    taskDetailPageSchema,
-    taskDetailQuerySchema,
-    type TaskDetailPage,
-    type TaskDetailQuery,
-} from "./tasks/TaskDetailPage.js";
-export {
-    taskPageQuerySchema,
-    taskPageSchema,
-    type TaskPage,
-    type TaskPageQuery,
-} from "./tasks/TaskPage.js";
-export { createTaskTool } from "./tasks/tools/create_task.js";
-export { getTaskTool } from "./tasks/tools/get_task.js";
-export { listTasksTool } from "./tasks/tools/list_tasks.js";
-export { updateTaskTool } from "./tasks/tools/update_task.js";
-export { completeTaskTool } from "./tasks/tools/complete_task.js";
 
 // Abort: one transactional cancellation across an agent and its complete descendant tree.
 export * from "./abort/index.js";

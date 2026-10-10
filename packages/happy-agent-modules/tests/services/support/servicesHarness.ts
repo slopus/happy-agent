@@ -29,6 +29,7 @@ import { ProjectsModule } from "../../../sources/projects/index.js";
 import { RunnersModule } from "../../../sources/runners/index.js";
 import { SecretsModule } from "../../../sources/secrets/index.js";
 import { ServicesModule, type ServiceDefinition } from "../../../sources/services/index.js";
+import { TasksModule } from "../../../sources/tasks/index.js";
 import { TitlesModule } from "../../../sources/titles/index.js";
 import { WorkspacesModule } from "../../../sources/workspaces/index.js";
 import { FakeCompute } from "../../compute/support/FakeCompute.js";
@@ -163,23 +164,34 @@ export async function servicesHarness(dispatch = true) {
         const workspaces = new WorkspacesModule(config, projects, git, abort, durable, runners);
         const events = new EventsModule();
         const titles = new TitlesModule(config, new HistoryModule(events), workspaces);
-        const bots = new BotsModule(config, abort, titles, projects, workspaces, runners);
+        const tasks = new TasksModule(
+            config,
+            abort,
+            projects,
+            workspaces,
+            runners,
+            compute,
+            durable,
+        );
+        const bots = new BotsModule(config, abort, titles, projects, workspaces, runners, tasks);
         const services = new ServicesModule(
             config,
             compute,
             workspaces,
             projects,
             bots,
+            tasks,
             durable,
             events,
         );
         const scope = { sharedKV: storage.kv.scoped("services") } as AgentModuleSystemScope;
-        await storage.migrate(ctx, [durable, projects, workspaces, bots, events]);
+        await storage.migrate(ctx, [durable, projects, workspaces, bots, tasks, events]);
         const durableHooks = durable.beforeStart(ctx);
         abort.beforeStart(ctx, agents);
         projects.beforeStart(ctx, agents);
         workspaces.beforeStart(ctx, agents);
         bots.beforeStart(ctx, agents);
+        tasks.beforeStart(ctx, agents);
         await events.beforeStart(ctx);
         const hooks = services.beforeStart(ctx, agents);
         await hooks.agentCreatedTransact!(ctx, scope, { id: ownerId, metadata: undefined });
@@ -210,6 +222,7 @@ export async function servicesHarness(dispatch = true) {
             projects,
             workspaces,
             bots,
+            tasks,
             events,
             agents,
             agentConfigs,

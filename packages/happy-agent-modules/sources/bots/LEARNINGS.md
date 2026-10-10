@@ -21,12 +21,20 @@ verification, and follow-up changes. Direct access to another workspace often re
 permissions and review by the reviewer model. Asking the subtask agent keeps execution with the
 agent that owns the workspace and avoids unnecessary permission reviews.
 
-## Making a task means creating a subtask
+## Making a task means creating a task
 
-The word "task" was ambiguous between delegated work and a task-list entry. Bot-only prompts now
-interpret "make a task" and "create a task" as requests to use `create_subtask`, not task-tracking
-tools. A task-list entry does not create the user-visible conversation the user expects. Only
-interpret such a request as task tracking when it explicitly asks for a checklist or task-list entry.
+"Task" used to be ambiguous between delegated work and a checklist entry, and bots were told to
+answer "make a task" with `create_subtask`. The checklist tools are gone and tasks are now their
+own persistent conversations with folders and owners, so bot prompts map "make a task" and
+"create a task" to `create_task`, and keep `create_subtask` for explicit subtask requests and
+delegated parts of the bot's own conversation.
+
+## Tasks talk to bots but never create them
+
+Task agents are root agents, and root agents that are not bots may create bots without admin
+status. A non-admin bot could have created bots through a task it made, so task agents receive only
+`list_bots` and `send_bot_message`. When a bot created the task, the task's instructions name that
+bot and tell it to report back with `send_bot_message`.
 
 ## Windows bots coordinate WSL as a separate remote installation
 

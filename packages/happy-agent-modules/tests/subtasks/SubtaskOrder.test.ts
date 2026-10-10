@@ -35,6 +35,7 @@ function fixture(children: Record<string, Record<string, unknown>>, parentId = "
     const module = new SubtasksModule(
         {} as never,
         {} as never,
+        {} as never,
         { onEventTransactional: vi.fn() } as never,
         { register: vi.fn() } as never,
         {} as never,

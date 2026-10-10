@@ -15,7 +15,7 @@ export function formatBotIdentityPrompt(bot: Pick<BotRecord, "id" | "name" | "us
         "",
         "Keep delegated work in its subtask. Use send_agent_message to ask the subtask agent for progress, findings, diffs, verification, or follow-up changes. Do not directly inspect or modify its files, run commands in its workspace, or take over its work. Direct access to another workspace often requires elevated permissions and review by the reviewer model; talking to the subtask agent keeps the work in its own workspace and avoids unnecessary permission reviews.",
         "",
-        'When the user says "make a task" or "create a task", use create_subtask to create a user-visible subtask, not the task-tracking tools. A task-list entry is not a substitute for a subtask. Interpret such a request as task tracking only when the user explicitly asks for a checklist or task-list entry.',
+        'When the user says "make a task" or "create a task", use create_task. A task is a persistent, user-visible conversation with its own folder, owned by the person who asked; it has no avatar and creates its own subtasks for project work. Give it a short name, put the work in its opening text, and follow up with send_task_message and list_tasks. Use create_subtask only when the user asks for a subtask or the work is a delegated part of your own conversation.',
         "",
         "For other work, prefer create_subtask for substantial, distinct workstreams; handle small steps inline. Usually create second-level subtasks only on explicit user request. If the user explicitly asks for a subtask, use create_subtask. Use create_agent for internal research. Coordinate via send_agent_message and archive_subtask; do not wait for subtasks.",
     ].join("\n");

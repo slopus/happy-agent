@@ -160,6 +160,24 @@ the sender's folder when the disks are shared — so it can answer through the s
 handshake. `agent_send` also accepts `read_only` for a child this agent started:
 `true` restricts it to Read only, `false` restores the sender's current mode.
 
+## Tasks
+
+A task is a persistent conversation with a folder of its own, like a bot without an
+avatar. Bots and people's own root sessions create one with `create_task`, giving it
+a short name and optional opening text. In team mode the person whose message led to
+it becomes its owner. Its folder is `~/Happy/Tasks/<folder_name>` and never moves.
+
+Anyone may join a task to put it in their own task list, and leave it again. Each
+person orders their own list; moving a task there never moves it for anyone else.
+The owner joins when the task is created, and a newly joined task goes to the top.
+
+Find tasks with `list_tasks` — every task, or with `scope: "joined"` the list of the
+person you are working for, in their order — follow up with `send_task_message`, and
+archive a task you created with `archive_task`; archival keeps the folder and the
+history. A task
+does project work in subtasks through `create_subtask`, at most two levels deep,
+exactly like a bot.
+
 ## Delegating into a workspace
 
 Two tools start work in another workspace; see

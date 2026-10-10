@@ -267,6 +267,7 @@ describe("workspace-owned service runtime", () => {
                 f.workspaces,
                 f.projects,
                 f.bots,
+                f.tasks,
                 recoveredDurable,
                 f.events,
             );
