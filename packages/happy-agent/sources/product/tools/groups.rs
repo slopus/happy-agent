@@ -11,7 +11,7 @@ use std::{
 };
 use tokio::sync::Notify;
 
-const MAX_GROUPS: usize = 128;
+const MAX_GROUPS: usize = 4096;
 #[derive(Default)]
 pub(super) struct Groups(Mutex<BTreeMap<u32, Arc<Group>>>);
 pub(super) struct Group {

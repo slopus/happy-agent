@@ -132,6 +132,7 @@ import { profileSchemas, profileTools } from "../sources/product/profile/schema-
 import { workspaceNamingSchemas } from "../sources/product/owners/workspace-schema-export.mjs";
 import { ownerCatalogSchemas } from "../sources/product/owners/catalog-schema-export.mjs";
 import { projectEditSchemas } from "../sources/product/owners/project-edit-schema-export.mjs";
+import { runnerProgramSchemas } from "../sources/product/owners/runners-program-schema-export.mjs";
 import { agentViewSchemas } from "../sources/product/agents/schema-export.mjs";
 import { workspaceEditSchemas } from "../sources/product/owners/workspace-edit-schema-export.mjs";
 import { LIVE_CONTROLLER_TOOLS } from "../../happy-agent-modules/sources/live/impl/runLiveController.ts";
@@ -256,13 +257,14 @@ const { discoverySchema: grokDiscovery, tokensSchema: grokTokens } = await sourc
     ),
     ["discoverySchema", "tokensSchema"],
 );
-const { authSchema: codexRefreshable, responseSchema: codexRefreshResponse } = await sourcePrivateSchema(
-    new URL(
-        "./vendors/codex/impl/refreshCodexAuthFile.js",
-        new URL(require.resolve("@slopus/happy-providers"), "file:"),
-    ),
-    ["authSchema", "responseSchema"],
-);
+const { authSchema: codexRefreshable, responseSchema: codexRefreshResponse } =
+    await sourcePrivateSchema(
+        new URL(
+            "./vendors/codex/impl/refreshCodexAuthFile.js",
+            new URL(require.resolve("@slopus/happy-providers"), "file:"),
+        ),
+        ["authSchema", "responseSchema"],
+    );
 // The Grok CLI session fields an OIDC refresh needs; the original reads each as a non-empty string.
 const grokRefreshable = Type.Object(
     {
@@ -586,6 +588,7 @@ const schemas = {
     ...workspaceNamingSchemas,
     ...ownerCatalogSchemas,
     ...projectEditSchemas,
+    ...runnerProgramSchemas,
     ...agentViewSchemas,
     ...workspaceEditSchemas,
     ownerLiveSession: liveSessionSchema,

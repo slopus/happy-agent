@@ -60,9 +60,15 @@ struct Peer {
 #[tokio::test]
 async fn product_machine_default_placement_is_metadata_and_local_execution_retains_its_typed_guard()
 {
-    let fixture = Fixture::with_runners("[runners.fixture]\nname = \"Fixture runner\"\ntoken = \"0123456789012345678901234567890123456789012\"\n[runners.second]\nname = \"Another runner\"\ntoken = \"2222222222222222222222222222222222222222222\"\n").await;
-    assert_eq!(fixture.runners.default_runner_id(), None);
-    assert_eq!(fixture.runners.place(None).unwrap(), None);
+    let fixture = Fixture::with_runners("[runners]\ndefault = \"fixture\"\n[runners.fixture]\nname = \"Fixture runner\"\ntoken = \"0123456789012345678901234567890123456789012\"\n[runners.second]\nname = \"Another runner\"\ntoken = \"2222222222222222222222222222222222222222222\"\n").await;
+    assert_eq!(
+        fixture.runners.default_runner_id().as_deref(),
+        Some("fixture")
+    );
+    assert_eq!(
+        fixture.runners.place(None).unwrap().as_deref(),
+        Some("fixture")
+    );
     let error = fixture
         .runners
         .prepare_machine(None, &CancellationToken::new())
@@ -412,7 +418,13 @@ async fn expired_runner_lease_finishes_owned_sessions_without_reconnection() {
     assert_eq!(reports.recv().await.unwrap()["type"], "sessions");
     peer.disconnect().await;
     tokio::time::pause();
-    tokio::time::advance(Duration::from_secs(62)).await;
+    tokio::time::advance(Duration::from_secs(64)).await;
+    tokio::task::yield_now().await;
+    assert!(
+        !compute.active().is_empty(),
+        "Source preserves sessions throughout its sixty-second lease and five-second margin."
+    );
+    tokio::time::advance(Duration::from_secs(2)).await;
     tokio::task::yield_now().await;
     assert!(
         compute.active().is_empty(),

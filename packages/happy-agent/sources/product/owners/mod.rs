@@ -10,7 +10,8 @@ pub use git::{GitModule, PreparedGitCredential};
 pub use global_skills::{GlobalSkillsError, GlobalSkillsModule};
 pub use node::NodeModule;
 pub use runners::{
-    LocalExecutionDisabledError, RunOptions, RunResult, RunnerCompute, RunnerProcess, RunnerServer,
+    LocalExecutionDisabledError, RunOptions, RunResult, RunnerCompute, RunnerProcess,
+    RunnerProgram, RunnerProgramExit, RunnerProgramStdout, RunnerServer,
     RunnerSnapshotSubscription, RunnerTransport, RunnerUnavailableError, RunnersModule,
 };
 #[cfg(test)]

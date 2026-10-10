@@ -8,7 +8,7 @@ use std::collections::VecDeque;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 #[cfg(test)]
 #[path = "runners_server_tests.rs"]
-mod tests;
+pub(super) mod tests;
 
 pub struct RunnerServer {
     runners: Arc<RunnersModule>,
@@ -115,13 +115,22 @@ struct Stream {
 }
 impl RunnersModule {
     pub fn native_server(self: &Arc<Self>, tools: Arc<ToolsModule>) -> Arc<RunnerServer> {
-        Arc::new(RunnerServer {
+        let mut cached = self
+            .native_server
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(server) = cached.as_ref().and_then(std::sync::Weak::upgrade) {
+            return server;
+        }
+        let server = Arc::new(RunnerServer {
             runners: self.clone(),
             tools,
             owner: tokio::sync::Mutex::new(None),
-            stopped: AtomicBool::new(false),
+            stopped: AtomicBool::new(self.closed.load(Ordering::Acquire)),
             leases: Mutex::new(tokio::task::JoinSet::new()),
-        })
+        });
+        *cached = Some(Arc::downgrade(&server));
+        server
     }
 }
 impl RunnerServer {
@@ -148,6 +157,10 @@ impl RunnerServer {
         let sender = connection.sender.clone();
         let owner = {
             let mut current = self.owner.lock().await;
+            anyhow::ensure!(
+                !self.stopped.load(Ordering::Acquire),
+                "The runner is shutting down."
+            );
             if current
                 .as_ref()
                 .is_some_and(|owner| owner.instance != instance)
@@ -257,7 +270,17 @@ impl RunnerServer {
                                 if !self.runners.schemas.valid(params_schema,&header["params"])? {self.error(&sender,id,"ERUNNERPROTOCOL","The daemon sent invalid request parameters.").await?;continue;}
                                 let cancel=connection_stop.child_token();pending.insert(id,cancel.clone());
                                 let server=self.clone();let owner=owner.clone();let sender=sender.clone();let params=header["params"].clone();
-                                requests.spawn(async move {let answer=server.answer(&owner,&method,&params,&body,&cancel).await;match answer {Ok((result,body))=>{let _=server.runners.send(&sender,json!({"type":"response","id":id,"result":result}),&body).await;},Err(error)=>{let code=server.runners.error_code(&error).unwrap_or("ERUNNER");let _=server.error(&sender,id,code,&error.to_string()).await;}}id});
+                                requests.spawn(async move {
+                                    let answer = match server.answer(&owner,&method,&params,&body,&cancel).await {
+                                        Ok((result,body)) => server.runners.send(&sender,json!({"type":"response","id":id,"result":result}),&body).await,
+                                        Err(error) => Err(error),
+                                    };
+                                    if let Err(error) = answer {
+                                        let code=server.runners.error_code(&error).unwrap_or("ERUNNER");
+                                        let _=server.error(&sender,id,code,&error.to_string()).await;
+                                    }
+                                    id
+                                });
                             },
                             "data"|"eof"|"flow"|"close"|"release"=>self.stream_frame(&owner,&header,&body).await?,
                             _=>bail!("The daemon sent a frame that only a runner may send."),
@@ -310,7 +333,7 @@ impl RunnerServer {
         message: &str,
     ) -> Result<()> {
         let message = message.chars().take(8000).collect::<String>();
-        self.runners.send(sender,json!({"type":"response","id":id,"error":{"name":match code{"ERUNNERCOMPUTEUNKNOWN"=>"RunnerComputeUnknownError","ERUNNERBUSY"=>"RunnerBusyError","ERUNNERPROTOCOL"=>"RunnerProtocolError",_=>"Error"},"message":message,"code":code}}),&[]).await
+        self.runners.send(sender,json!({"type":"response","id":id,"error":{"name":match code{"ERUNNERCOMPUTEUNKNOWN"=>"RunnerComputeUnknownError","ERUNNERBUSY"=>"RunnerBusyError","ERUNNERPROTOCOL"=>"RunnerProtocolError","ERUNNERFRAMETOOLARGE"=>"RunnerFrameTooLargeError",_=>"Error"},"message":message,"code":code}}),&[]).await
     }
     async fn send(&self, owner: &Owner, header: Value, body: &[u8]) -> Result<()> {
         let connection = owner
@@ -535,14 +558,16 @@ impl RunnerServer {
             tasks: tokio::sync::Mutex::new(tokio::task::JoinSet::new()),
         });
         let mut streams = owner.streams.lock().await;
-        anyhow::ensure!(
-            streams.len() < 256,
-            "The runner already holds as many streams as it allows."
-        );
-        anyhow::ensure!(
-            !streams.contains_key(&id),
-            "The daemon reused a stream that is still open."
-        );
+        if streams.contains_key(&id) {
+            return Err(super::compute::remote_error(
+                &json!({"name":"RunnerProtocolError","message":"The daemon reused a stream that is still open.","code":"ERUNNERPROTOCOL"}),
+            ));
+        }
+        if streams.len() >= 256 {
+            return Err(super::compute::remote_error(
+                &json!({"name":"RunnerBusyError","message":"The runner already holds as many streams as it allows.","code":"ERUNNERBUSY"}),
+            ));
+        }
         streams.insert(id, stream.clone());
         drop(streams);
         let server = self.clone();

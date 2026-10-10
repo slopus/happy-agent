@@ -22,6 +22,28 @@ deduplication follows the runner epoch across reconnects; lease expiry finishes 
 even without another connection. Command requests check their generation after obtaining a
 bounded channel slot and again on reply, so a lost handle cannot act on a reused remote ID.
 
+Product stdio uses byte windows rather than a fixed queue of frames: valid bursts of small
+chunks must apply backpressure without disconnecting. Stdout credit follows reader delivery,
+stderr drains continuously, and input retains only its unacknowledged window. Stream identities
+belong to the link across reconnects. Detached programs reattach only when the runner confirms
+their retained identities; replay and orphan release run under the connection's lifetime so
+incoming output can drain during recovery. A missing stream or the sixty-second lease plus
+five-second margin makes the handle terminal without claiming an unobserved process exit.
+
+Runners close their cached native server through a weak singleton reference and finish their own
+program handles within a bounded shutdown. Stopping the remote server confirms its local jobs
+are gone, while a separate live client link still waits for retained-stream evidence or lease
+expiry. Closing the owning client finishes its handles without waiting for that lease. Unopened
+or dropped stdout readers discard and credit held bytes, including after exit, so teardown cannot
+wait forever on output with no consumer. EOF accepted before a blocked send remains deliverable
+on retry after cancellation; repeating the same end offset is safe under the stream protocol.
+
+Native runner replies preserve Source error names and codes, including socket refusal and frame
+limits. A reply that exceeds the frame bound returns a small typed error while leaving the link
+usable. All 256 stream slots remain available to real programs; duplicate identities are protocol
+errors before capacity is considered. A handshake rechecks shutdown while holding the owner lock,
+so a delayed welcome cannot create ownership after the server has closed.
+
 A runner connection releases its own session slot when its protocol future is dropped, including
 malformed-message and transport cancellation paths. Cleanup cancels pending requests, starts the
 lease only for that same session, and cannot remove its replacement. The dedicated runner token

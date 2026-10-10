@@ -150,7 +150,12 @@ impl NativeRunnerCompute {
             tokio::net::TcpStream::connect((host, port)),
         )
         .await
-        .context("The network connection timed out.")??)
+        .map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                format!("Connecting to {host}:{port} timed out."),
+            )
+        })??)
     }
     pub async fn listen(&self) -> Result<tokio::net::TcpListener> {
         ensure!(

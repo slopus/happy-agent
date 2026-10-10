@@ -3,10 +3,11 @@ use super::*;
 use crate::product::{
     history::HistoryModule, secrets::SecretsModule, services::ServicesModule, usage::UsageModule,
 };
-struct Graph {
-    fixture: crate::product::owners::Fixture,
-    server: Arc<RunnerServer>,
-    tools: Arc<ToolsModule>,
+pub(in crate::product::owners::runners) struct Graph {
+    pub(in crate::product::owners::runners) fixture: crate::product::owners::Fixture,
+    pub(in crate::product::owners::runners) server: Arc<RunnerServer>,
+    pub(in crate::product::owners::runners) tools: Arc<ToolsModule>,
+    pub(in crate::product::owners::runners) runners: Arc<RunnersModule>,
 }
 impl Drop for Graph {
     fn drop(&mut self) {
@@ -14,7 +15,7 @@ impl Drop for Graph {
     }
 }
 impl Graph {
-    async fn new() -> Self {
+    pub(in crate::product::owners::runners) async fn new() -> Self {
         crate::product::process::prepare_child_reaping().unwrap();
         let fixture = crate::product::owners::Fixture::new().await;
         let usage = Arc::new(
@@ -73,9 +74,15 @@ impl Graph {
             fixture,
             server,
             tools,
+            runners,
         }
     }
-    async fn close(self) {
+    pub(in crate::product::owners::runners) async fn release_runner_owner(&self) {
+        if let Some(owner) = self.server.owner.lock().await.take() {
+            self.server.release(&owner).await.unwrap();
+        }
+    }
+    pub(in crate::product::owners::runners) async fn close(self) {
         self.server.close().await.unwrap();
         self.tools.close().await;
         self.fixture.close().await;
@@ -295,6 +302,114 @@ fn full() -> Value {
 }
 fn path(path: &str) -> Value {
     json!({"computeId":"machine","path":path,"permissions":full()})
+}
+
+#[tokio::test]
+async fn native_runner_keeps_all_256_programs_alive_and_preserves_source_capacity_errors() {
+    async fn response(peer: &mut Peer, stream: u64) -> Value {
+        let id = peer.next;
+        peer.next += 1;
+        peer.send(json!({"type":"request","id":id,"method":"process.start","params":{"computeId":"program-capacity","stream":stream,"command":"/bin/cat","args":[]}}), &[]).await;
+        peer.matching(|header| header["type"] == "response" && header["id"] == id)
+            .await
+            .0
+    }
+
+    let graph = Graph::new().await;
+    let mut peer = Peer::connect(graph.server.clone(), "native-program-capacity", 1000).await;
+    peer.rpc(
+        "compute.create",
+        json!({"computeId":"program-capacity","cwd":graph.fixture.directory.path()}),
+        &[],
+    )
+    .await;
+    let mut failure = None;
+    for stream in 1..=256 {
+        let answer = response(&mut peer, stream).await;
+        if answer.get("error").is_some() {
+            failure = Some((stream, answer));
+            break;
+        }
+    }
+    let mut overflow = Value::Null;
+    let mut duplicate = Value::Null;
+    let mut echoes = Vec::new();
+    if failure.is_none() {
+        overflow = response(&mut peer, 257).await;
+        duplicate = response(&mut peer, 1).await;
+        for stream in 1..=256 {
+            peer.send(
+                json!({"type":"data","stream":stream,"channel":"in","offset":0}),
+                b"still-owned",
+            )
+            .await;
+            echoes.push(peer.data(stream).await);
+        }
+    }
+    peer.goodbye().await;
+    graph.close().await;
+    assert!(
+        failure.is_none(),
+        "Source must keep 256 real runner programs: {failure:?}"
+    );
+    assert_eq!(echoes.len(), 256);
+    assert!(echoes.iter().all(|bytes| bytes == b"still-owned"));
+    assert_eq!(overflow["error"]["name"], "RunnerBusyError", "{overflow}");
+    assert_eq!(overflow["error"]["code"], "ERUNNERBUSY", "{overflow}");
+    assert_eq!(
+        duplicate["error"]["name"], "RunnerProtocolError",
+        "{duplicate}"
+    );
+    assert_eq!(duplicate["error"]["code"], "ERUNNERPROTOCOL", "{duplicate}");
+}
+
+#[tokio::test]
+async fn native_runner_late_welcome_cannot_reopen_a_closed_server() {
+    let graph = Graph::new().await;
+    let (input, incoming) = mpsc::channel(32);
+    let (outgoing, mut output) = mpsc::channel(32);
+    let server = graph.server.clone();
+    let work =
+        tokio::spawn(async move { server.serve(RunnerTransport { incoming, outgoing }).await });
+    let hello = graph.runners.receive(&mut output).await.unwrap();
+    assert_eq!(hello.0["type"], "hello");
+    graph.server.close().await.unwrap();
+    input.send(graph.runners.frame(json!({"type":"welcome","protocol":1,"instanceId":"late-daemon","leaseGraceMs":1000}), &[]).unwrap()).await.unwrap();
+    let greeting =
+        tokio::time::timeout(Duration::from_secs(10), graph.runners.receive(&mut output))
+            .await
+            .unwrap();
+    let reopened = graph.server.owner.lock().await.is_some();
+    if greeting.is_ok() {
+        input
+            .send(
+                graph
+                    .runners
+                    .frame(
+                        json!({"type":"goodbye","reason":"The test daemon is stopping."}),
+                        &[],
+                    )
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+    }
+    drop(input);
+    drop(output);
+    let result = work.await.unwrap();
+    graph.close().await;
+    assert!(
+        greeting.is_err(),
+        "A closed runner must not announce readiness: {greeting:?}"
+    );
+    assert!(
+        !reopened,
+        "The late handshake installed an owner after close."
+    );
+    assert!(
+        result.is_err(),
+        "A closed runner accepted a delayed welcome: {result:?}"
+    );
 }
 
 #[tokio::test]
@@ -619,4 +734,103 @@ async fn native_runner_missing_stat_keeps_the_source_enoent_code() {
     peer.goodbye().await;
     graph.close().await;
     assert_eq!(answer.0["error"]["code"], "ENOENT", "{}", answer.0);
+}
+
+#[tokio::test]
+async fn native_runner_oversized_json_reply_returns_source_error_and_keeps_connection_usable() {
+    let graph = Graph::new().await;
+    let mut peer = Peer::connect(graph.server.clone(), "oversized-reply", 0).await;
+    // JSON expands each NUL to six bytes: the file fits the read bound, its reply does not.
+    std::fs::write(
+        graph.fixture.directory.path().join("expanded-json"),
+        vec![0u8; 12 * 1024 * 1024],
+    )
+    .unwrap();
+    peer.rpc(
+        "compute.create",
+        json!({"computeId":"machine","cwd":graph.fixture.directory.path()}),
+        &[],
+    )
+    .await;
+    let id = peer.next;
+    peer.next += 1;
+    peer.send(
+        json!({"type":"request","id":id,"method":"fs.readFile","params":path("expanded-json")}),
+        &[],
+    )
+    .await;
+    let response = peer
+        .matching(|header| header["type"] == "response" && header["id"] == id)
+        .await;
+    assert_eq!(
+        response.0["error"]["name"], "RunnerFrameTooLargeError",
+        "{}",
+        response.0
+    );
+    assert_eq!(
+        response.0["error"]["code"], "ERUNNERFRAMETOOLARGE",
+        "{}",
+        response.0
+    );
+    assert_eq!(
+        peer.rpc("fs.exists", path("expanded-json"), &[]).await.0["exists"],
+        true
+    );
+    peer.goodbye().await;
+    graph.close().await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn native_runner_refused_connection_keeps_source_error_code_and_releases_stream_slot() {
+    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+    let graph = Graph::new().await;
+    let mut peer = Peer::connect(graph.server.clone(), "refused-connection", 0).await;
+    // Hold the port without listening so another process cannot race to reuse it.
+    let descriptor = unsafe { libc::socket(libc::AF_INET, libc::SOCK_STREAM, 0) };
+    assert!(descriptor >= 0);
+    let socket = unsafe { OwnedFd::from_raw_fd(descriptor) };
+    let mut address: libc::sockaddr_in = unsafe { std::mem::zeroed() };
+    address.sin_family = libc::AF_INET as _;
+    address.sin_addr.s_addr = u32::from_ne_bytes([127, 0, 0, 1]);
+    let mut length = std::mem::size_of_val(&address) as libc::socklen_t;
+    assert_eq!(
+        unsafe {
+            libc::bind(
+                socket.as_raw_fd(),
+                (&address as *const libc::sockaddr_in).cast(),
+                length,
+            )
+        },
+        0
+    );
+    assert_eq!(
+        unsafe {
+            libc::getsockname(
+                socket.as_raw_fd(),
+                (&mut address as *mut libc::sockaddr_in).cast(),
+                &mut length,
+            )
+        },
+        0
+    );
+    peer.rpc(
+        "compute.create",
+        json!({"computeId":"machine","cwd":graph.fixture.directory.path()}),
+        &[],
+    )
+    .await;
+    let id = peer.next;
+    peer.next += 1;
+    peer.send(json!({"type":"request","id":id,"method":"net.connect","params":{"computeId":"machine","stream":33,"host":"127.0.0.1","port":u16::from_be(address.sin_port)}}), &[]).await;
+    let answer = peer
+        .matching(|header| header["type"] == "response" && header["id"] == id)
+        .await;
+    // A failed connection must return the reservation before another stream uses its identity.
+    peer.rpc("process.start", json!({"computeId":"machine","stream":33,"command":"/bin/sh","args":["-c","printf released-slot"]}), &[]).await;
+    assert_eq!(peer.data(33).await, b"released-slot");
+    peer.release(33).await;
+    peer.goodbye().await;
+    graph.close().await;
+    assert_eq!(answer.0["error"]["code"], "ECONNREFUSED", "{}", answer.0);
 }

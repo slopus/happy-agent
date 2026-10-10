@@ -27,21 +27,33 @@ use tokio_util::sync::CancellationToken;
 mod compute;
 #[path = "runners_persistence.rs"]
 mod persistence;
-#[path = "runners_tunnel.rs"]
-mod tunnel;
+#[path = "runners_program.rs"]
+mod program;
 #[path = "runners_server.rs"]
 mod server;
-pub use server::RunnerServer;
+#[path = "runners_tunnel.rs"]
+mod tunnel;
 pub use compute::{RunnerCompute, RunnerProcess};
+pub use program::{RunnerProgram, RunnerProgramExit, RunnerProgramStdout};
+pub use server::RunnerServer;
 
 #[cfg(test)]
 #[path = "runners_compute_tests.rs"]
 mod compute_tests;
+#[cfg(all(test, unix))]
+#[path = "runners_program_tests.rs"]
+mod program_tests;
 
 const FRAME_LIMIT: usize = 64 * 1024 * 1024;
+const LEASE_GRACE_MS: u64 = 60_000;
+const LEASE_MARGIN_MS: u64 = 5_000;
 type Frame = (Value, Vec<u8>);
 type RpcAnswer = oneshot::Sender<Result<Frame>>;
-type StreamSender = mpsc::Sender<Frame>;
+#[derive(Clone)]
+enum StreamSender {
+    Channel(mpsc::Sender<Frame>),
+    Program(std::sync::Weak<RunnerProgram>),
+}
 type StreamReceiver = mpsc::Receiver<Frame>;
 const METHODS: &[(&str, &str, &str)] = &[
     (
@@ -218,6 +230,9 @@ pub struct RunnersModule {
     computes: Mutex<BTreeMap<(String, String), Arc<RunnerCompute>>>,
     snapshot_listeners: Mutex<BTreeMap<u64, SnapshotListener>>,
     next_listener: AtomicU64,
+    programs: Mutex<BTreeMap<u64, Arc<RunnerProgram>>>,
+    next_program: AtomicU64,
+    native_server: Mutex<Option<std::sync::Weak<RunnerServer>>>,
 }
 type SnapshotListener =
     Arc<dyn for<'a> Fn(&crate::product::runtime::Context<'a>, &Value) -> Result<()> + Send + Sync>;
@@ -238,6 +253,7 @@ impl Drop for RunnerSnapshotSubscription {
 }
 struct Link {
     session: Mutex<Option<Arc<Session>>>,
+    next_stream: Arc<AtomicU64>,
     changed: Notify,
     since: AtomicU64,
     reason: Mutex<Option<String>>,
@@ -254,7 +270,7 @@ struct Session {
     requests: Mutex<HashMap<u64, RpcAnswer>>,
     streams: Mutex<HashMap<u64, StreamSender>>,
     next: AtomicU64,
-    next_stream: AtomicU64,
+    next_stream: Arc<AtomicU64>,
     identity: Value,
     product: tokio::sync::Mutex<bool>,
     tunnel: tokio::sync::Mutex<Option<tunnel::Tunnel>>,
@@ -273,11 +289,25 @@ impl ConnectionGuard {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clear();
-        self.session
+        let streams = self
+            .session
             .streams
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clear();
+            .drain()
+            .map(|(_, stream)| stream)
+            .collect::<Vec<_>>();
+        for stream in streams {
+            if let StreamSender::Program(program) = stream
+                && let Some(program) = program.upgrade()
+            {
+                if self.owner.closed.load(Ordering::Acquire) {
+                    program.lost("The runner program owner is shutting down.");
+                } else {
+                    program.detached(&self.session);
+                }
+            }
+        }
         let removed = {
             let mut current = self
                 .link
@@ -388,7 +418,22 @@ impl RunnersModule {
             Some(libc::EACCES) => Some("EACCES"),
             Some(libc::EPERM) => Some("EPERM"),
             Some(libc::EEXIST) => Some("EEXIST"),
-            _ => None,
+            _ => match error.kind() {
+                std::io::ErrorKind::NotFound => Some("ENOENT"),
+                std::io::ErrorKind::PermissionDenied => Some("EACCES"),
+                std::io::ErrorKind::AlreadyExists => Some("EEXIST"),
+                std::io::ErrorKind::ConnectionRefused => Some("ECONNREFUSED"),
+                std::io::ErrorKind::ConnectionReset => Some("ECONNRESET"),
+                std::io::ErrorKind::ConnectionAborted => Some("ECONNABORTED"),
+                std::io::ErrorKind::NotConnected => Some("ENOTCONN"),
+                std::io::ErrorKind::TimedOut => Some("ETIMEDOUT"),
+                std::io::ErrorKind::BrokenPipe => Some("EPIPE"),
+                std::io::ErrorKind::AddrInUse => Some("EADDRINUSE"),
+                std::io::ErrorKind::AddrNotAvailable => Some("EADDRNOTAVAIL"),
+                std::io::ErrorKind::NetworkUnreachable => Some("ENETUNREACH"),
+                std::io::ErrorKind::HostUnreachable => Some("EHOSTUNREACH"),
+                _ => None,
+            },
         }
     }
     pub fn new(
@@ -401,6 +446,7 @@ impl RunnersModule {
             "ownerRunnerSnapshot",
             "ownerRunnerFrame",
             "ownerRunnersConfiguration",
+            "ownerRunnerProgramOptions",
         ] {
             let _ = schemas.valid(name, &Value::Null)?;
         }
@@ -425,6 +471,9 @@ impl RunnersModule {
             computes: Mutex::new(BTreeMap::new()),
             snapshot_listeners: Mutex::new(BTreeMap::new()),
             next_listener: AtomicU64::new(1),
+            programs: Mutex::new(BTreeMap::new()),
+            next_program: AtomicU64::new(1),
+            native_server: Mutex::new(None),
         }))
     }
     pub async fn load(self: &Arc<Self>) -> Result<()> {
@@ -575,6 +624,7 @@ impl RunnersModule {
             .or_insert_with(|| {
                 Arc::new(Link {
                     session: Mutex::new(None),
+                    next_stream: Arc::new(AtomicU64::new(1)),
                     changed: Notify::new(),
                     since: AtomicU64::new(now()),
                     reason: Mutex::new(None),
@@ -630,7 +680,7 @@ impl RunnersModule {
         );
         self.send(
             &transport.outgoing,
-            json!({"type":"welcome","protocol":1,"instanceId":self.instance,"leaseGraceMs":60000}),
+            json!({"type":"welcome","protocol":1,"instanceId":self.instance,"leaseGraceMs":LEASE_GRACE_MS}),
             &[],
         )
         .await?;
@@ -643,13 +693,21 @@ impl RunnersModule {
             ready["type"] == "ready",
             "The runner did not complete its handshake."
         );
+        let programs = self
+            .programs
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .values()
+            .filter(|program| program.runner == id)
+            .cloned()
+            .collect::<Vec<_>>();
         let session = Arc::new(Session {
             sender: transport.outgoing,
             cancel: lifetime.clone(),
             requests: Mutex::new(HashMap::new()),
             streams: Mutex::new(HashMap::new()),
             next: AtomicU64::new(1),
-            next_stream: AtomicU64::new(1),
+            next_stream: link.next_stream.clone(),
             identity: hello["runner"].clone(),
             product: tokio::sync::Mutex::new(false),
             tunnel: tokio::sync::Mutex::new(None),
@@ -687,21 +745,39 @@ impl RunnersModule {
                 reports.sequence = 0;
             }
         }
-        for stream in ready["streams"].as_array().unwrap() {
-            // A product stream whose previous caller failed cannot be replayed.
-            // The peer still owns it until these explicit release frames arrive.
-            self.send(
-                &session.sender,
-                json!({"type":"close","stream":stream}),
-                &[],
-            )
-            .await?;
-            self.send(
-                &session.sender,
-                json!({"type":"release","stream":stream}),
-                &[],
-            )
-            .await?;
+        let survivors = ready["streams"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|stream| stream.as_u64().unwrap())
+            .collect::<std::collections::BTreeSet<_>>();
+        let mut resumed = std::collections::BTreeSet::new();
+        let mut replays = tokio::task::JoinSet::new();
+        for program in programs {
+            if survivors.contains(&program.stream_id()) && program.attached(&session) {
+                resumed.insert(program.stream_id());
+                let connection = session.clone();
+                replays.spawn(async move { program.replay(&connection).await });
+            } else {
+                program.lost(
+                    "The runner no longer has this program; it restarted or released the daemon.",
+                );
+            }
+        }
+        let orphaned = survivors.difference(&resumed).copied().collect::<Vec<_>>();
+        if !orphaned.is_empty() {
+            let module = self.clone();
+            let connection = session.clone();
+            replays.spawn(async move {
+                let releasing = async {
+                    for stream in orphaned {
+                        module.send(&connection.sender, json!({"type":"close","stream":stream}), &[]).await?;
+                        module.send(&connection.sender, json!({"type":"release","stream":stream}), &[]).await?;
+                    }
+                    Ok(())
+                };
+                tokio::select! { biased; _ = connection.cancel.cancelled() => Ok(()), result = releasing => result }
+            });
         }
         link.since.store(now(), Ordering::Release);
         *link
@@ -736,6 +812,7 @@ impl RunnersModule {
                 tokio::select! {
                     biased;
                     _=lifetime.cancelled()=>{if self.closed.load(Ordering::Acquire) || self.lifecycle.shutdown.is_cancelled() {self.send(&session.sender,json!({"type":"goodbye","reason":"The daemon is shutting down."}),&[]).await?;}break;},
+                    replay=replays.join_next(),if !replays.is_empty()=>{if let Some(replay)=replay {replay.context("The runner stream recovery task stopped unexpectedly.")??;}},
                     _=liveness.tick()=>{anyhow::ensure!(last.elapsed()<Duration::from_secs(45),"The runner stopped responding.");self.send(&session.sender,json!({"type":"ping","nonce":session.next.fetch_add(1,Ordering::Relaxed)}),&[]).await?;},
                     frame=self.receive(&mut transport.incoming)=>{
                         let(header,body)=frame?;last=tokio::time::Instant::now();
@@ -744,7 +821,7 @@ impl RunnersModule {
                             "pong"=>{},
                             "response"=>{let pending=session.requests.lock().unwrap_or_else(std::sync::PoisonError::into_inner).remove(&header["id"].as_u64().unwrap_or_default());if let Some(pending)=pending {let response=if let Some(error)=header.get("error") {Err(compute::remote_error(error))} else {Ok((header["result"].clone(),body))};let _=pending.send(response);}},
                             "event"=>{let event=header["event"].as_str().unwrap();anyhow::ensure!(self.schemas.valid(&format!("ownerRunnerEvent_{}",event.replace('.',"_")),&header["params"])? ,"The runner sent an invalid event.");if let Some(seq)=header["seq"].as_u64() {let apply={let mut reports=link.reports.lock().unwrap_or_else(std::sync::PoisonError::into_inner);if seq>reports.sequence {reports.sequence=seq;true}else{false}};if apply {self.compute_event(&id,event,&header["params"]);}self.send(&session.sender,json!({"type":"ack","seq":seq}),&[]).await?;}else{self.compute_event(&id,event,&header["params"]);}},
-                            "data"|"eof"|"exit"|"flow"=>{anyhow::ensure!(body.len()<=65536,"A runner stream chunk exceeds its bound.");let stream=header["stream"].as_u64().unwrap_or_default();let sender=session.streams.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(&stream).cloned();if let Some(sender)=sender {sender.try_send((header,body)).map_err(|_|anyhow::anyhow!("The runner stream exceeded its bounded receive window."))?;} else if header["type"]!="flow" {self.send(&session.sender,json!({"type":"release","stream":stream}),&[]).await?;}},
+                            "data"|"eof"|"exit"|"flow"=>{anyhow::ensure!(body.len()<=65536,"A runner stream chunk exceeds its bound.");let stream=header["stream"].as_u64().unwrap_or_default();let sender=session.streams.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(&stream).cloned();match sender {Some(StreamSender::Channel(sender))=>{sender.try_send((header,body)).map_err(|_|anyhow::anyhow!("The runner stream exceeded its bounded receive window."))?;},Some(StreamSender::Program(program))=>{if let Some(program)=program.upgrade(){if let Some(reply)=program.receive_frame(&session,header,body)?{self.send(&session.sender,reply,&[]).await?;}}else{self.send(&session.sender,json!({"type":"release","stream":stream}),&[]).await?;}},None=>{if header["type"]!="flow"{self.send(&session.sender,json!({"type":"release","stream":stream}),&[]).await?;}}}},
                             "goodbye"=>bail!("{}",header["reason"].as_str().unwrap_or("The runner disconnected.")),
                             _=>bail!("The runner sent an unexpected frame."),
                         }
@@ -763,6 +840,9 @@ impl RunnersModule {
         outcome
     }
     fn start_lease(self: &Arc<Self>, runner: String, link: Arc<Link>) {
+        if self.closed.load(Ordering::Acquire) {
+            return;
+        }
         let cancel = self.lifecycle.shutdown.child_token();
         if let Some(previous) = link
             .lease
@@ -772,7 +852,8 @@ impl RunnersModule {
         {
             previous.cancel();
         }
-        let deadline = tokio::time::Instant::now() + Duration::from_millis(61000);
+        let deadline =
+            tokio::time::Instant::now() + Duration::from_millis(LEASE_GRACE_MS + LEASE_MARGIN_MS);
         let owner = self.clone();
         tokio::spawn(async move {
             tokio::select! { biased;_=cancel.cancelled()=>return,_=tokio::time::sleep_until(deadline)=>{} }
@@ -790,6 +871,17 @@ impl RunnersModule {
                     if *id == runner {
                         compute.lost();
                     }
+                }
+                let programs = owner
+                    .programs
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .values()
+                    .filter(|program| program.runner == runner)
+                    .cloned()
+                    .collect::<Vec<_>>();
+                for program in programs {
+                    program.lost("The runner stayed away longer than its lease; the program is no longer available.");
                 }
             }
         });
@@ -827,10 +919,12 @@ impl RunnersModule {
             "The outgoing runner frame is invalid."
         );
         let header = serde_json::to_vec(&header)?;
-        anyhow::ensure!(
-            header.len() + body.len() + 4 <= FRAME_LIMIT,
-            "The runner frame is too large."
-        );
+        let size = header.len() + body.len() + 4;
+        if size > FRAME_LIMIT {
+            return Err(compute::remote_error(
+                &json!({"message":format!("This transfer needs {size} bytes, but a runner moves at most {FRAME_LIMIT} bytes in one call."),"code":"ERUNNERFRAMETOOLARGE"}),
+            ));
+        }
         let mut frame = Vec::with_capacity(header.len() + body.len() + 4);
         frame.extend_from_slice(&u32::try_from(header.len())?.to_be_bytes());
         frame.extend_from_slice(&header);
@@ -899,6 +993,7 @@ impl RunnersModule {
         let answer=async {
             let frame=self.frame(json!({"type":"request","id":id,"method":method,"params":params}),body)?;
             let permit=tokio::select!{biased;_=cancel.cancelled()=>bail!("The runner request was cancelled before it was sent."),_=session.cancel.cancelled()=>bail!("The runner disconnected before the request was sent."),result=tokio::time::timeout(Duration::from_secs(10),session.sender.reserve())=>result??};
+            anyhow::ensure!(!cancel.is_cancelled() && !session.cancel.is_cancelled(), "The runner request stopped before it was sent.");
             if let Some((compute,generation))=generation {compute.send_session_frame(generation,permit,frame)?;}else{permit.send(frame);}
             let deadline=match method{"shell.run"=>params["options"]["timeoutMs"].as_u64().unwrap_or(30000).min(1800000)+10000,"shell.readSession"=>params["waitMs"].as_u64().unwrap_or(0).min(86400000)+10000,_=>60000};
             tokio::select! {_=cancel.cancelled()=>bail!("The runner request was cancelled; its outcome may be unknown."),_=session.cancel.cancelled()=>bail!("The runner disconnected; the request outcome is unknown."),answer=receiver=>answer.context("The runner request outcome is unknown.")?,_=tokio::time::sleep(Duration::from_millis(deadline))=>bail!("The runner request did not finish in time; its outcome may be unknown.")}
@@ -1644,12 +1739,46 @@ impl RunnersModule {
     }
     pub async fn close(&self) {
         self.closed.store(true, Ordering::Release);
+        let programs = self
+            .programs
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        futures_util::future::join_all(programs.into_iter().map(|program| async move {
+            if let Err(error) = program.close().await {
+                eprintln!("A runner program could not be stopped: {error:#}");
+            }
+            program.lost("The runner program owner is shutting down.");
+        }))
+        .await;
+        let native = {
+            self.native_server
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .as_ref()
+                .and_then(std::sync::Weak::upgrade)
+        };
+        if let Some(native) = native
+            && let Err(error) = native.close().await
+        {
+            eprintln!("The native runner could not finish shutting down: {error:#}");
+        }
         let links = self
             .links
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone();
         for link in links.values() {
+            if let Some(lease) = link
+                .lease
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .take()
+            {
+                lease.cancel();
+            }
             let session = link
                 .session
                 .lock()
@@ -1816,7 +1945,7 @@ mod tests {
             requests: Mutex::new(HashMap::new()),
             streams: Mutex::new(HashMap::new()),
             next: AtomicU64::new(1),
-            next_stream: AtomicU64::new(1),
+            next_stream: Arc::new(AtomicU64::new(1)),
             identity: json!({"version":"1","platform":"linux","arch":"x64","hostname":"test","home":"/test"}),
             product: tokio::sync::Mutex::new(true),
             tunnel: tokio::sync::Mutex::new(None),

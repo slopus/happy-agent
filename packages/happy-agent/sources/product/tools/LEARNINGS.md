@@ -24,6 +24,11 @@ both program and shell cleanup. Program streams use their own 256-program bound;
 they do not inherit the shell's 64-session eviction. Runner shells retain at
 most 64 completed snapshots per compute, independently of ordinary tool sessions.
 
+The shared Unix process-group catalog previously rejected the 129th real program
+despite the runner's larger quota. It now bounds ownership at 4,096 groups,
+retaining every live group until confirmed cleanup instead of forgetting it to
+make room. Runner admission still enforces its own program quota.
+
 Product program terminals receive their requested size and terminal name before
 the child starts, while preserving its configured environment. Ordinary agent
 terminals retain their shared color and pager defaults.

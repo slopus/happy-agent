@@ -55,7 +55,7 @@ impl Drop for StreamRoute {
         send_now(&self.session, json!({"type":"release","stream":self.id}));
     }
 }
-fn send_now(session: &Session, header: Value) {
+pub(super) fn send_now(session: &Session, header: Value) {
     if session.cancel.is_cancelled() {
         return;
     }
@@ -78,7 +78,7 @@ pub(super) fn route(session: &Arc<Session>) -> Result<(StreamRoute, super::Strea
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     anyhow::ensure!(streams.len() < 256, "Too many runner streams are open.");
-    streams.insert(id, sender);
+    streams.insert(id, super::StreamSender::Channel(sender));
     Ok((
         StreamRoute {
             session: session.clone(),

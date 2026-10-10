@@ -119,6 +119,38 @@ async fn runner_programs_do_not_evict_each_other_at_the_shell_session_limit() {
 }
 
 #[tokio::test]
+async fn runner_programs_keep_129_real_process_groups_owned_without_the_old_tool_limit() {
+    let fixture = Fixture::new().await;
+    let request = json!({"computeId":"programs","cwd":fixture.directory.path()});
+    let mut processes = Vec::new();
+    let mut failure = None;
+    for stream in 1..=129 {
+        match fixture
+            .commands
+            .native_runner_process(
+                "group-capacity",
+                &request,
+                &json!({"computeId":"programs","stream":stream,"command":"/bin/cat","args":[]}),
+                &CancellationToken::new(),
+            )
+            .await
+        {
+            Ok(process) => processes.push(process),
+            Err(error) => {
+                failure = Some((stream, error.to_string()));
+                break;
+            }
+        }
+    }
+    fixture.close().await;
+    drop(processes);
+    assert!(
+        failure.is_none(),
+        "Source runner programs must exceed the ordinary tool group limit: {failure:?}"
+    );
+}
+
+#[tokio::test]
 async fn runner_shell_retains_only_the_source_64_completed_snapshots_per_compute() {
     let fixture = Fixture::new().await;
     let request = json!({"computeId":"shells","cwd":fixture.directory.path()});

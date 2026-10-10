@@ -185,8 +185,20 @@ jobs:
             - name: Prove the runner peer
               if: ${{ !inputs.services_only }}
               run: >-
-                  bash "$EXPECT" "runner peer" exact 6 "$PROOF_LOGS" --
+                  bash "$EXPECT" "runner peer" exact 10 "$PROOF_LOGS" --
                   cargo test --locked -p happy-agent --bin happy-agent native_runner_ -- --test-threads=1
+
+            - name: Prove runner program ownership and reconnects
+              if: ${{ !inputs.services_only }}
+              run: >-
+                  bash "$EXPECT" "runner product stdio" exact 10 "$PROOF_LOGS" --
+                  cargo test --locked -p happy-agent --bin happy-agent product::owners::runners::program -- --test-threads=1
+
+            - name: Prove runner program process capacity
+              if: ${{ !inputs.services_only }}
+              run: >-
+                  bash "$EXPECT" "runner program groups" exact 2 "$PROOF_LOGS" --
+                  cargo test --locked -p happy-agent --bin happy-agent runner_programs_ -- --test-threads=1
 
             - name: Prove workflows
               if: ${{ !inputs.services_only }}
