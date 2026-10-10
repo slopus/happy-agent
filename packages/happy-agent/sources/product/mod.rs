@@ -12,6 +12,7 @@ mod durable;
 mod events;
 mod filesystem;
 mod goal;
+mod happy;
 mod history;
 mod identity;
 mod journal;

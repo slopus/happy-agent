@@ -1,0 +1,105 @@
+{
+    "open": {
+        "type": "object",
+        "required": ["sid", "pingInterval", "pingTimeout"],
+        "properties": {
+            "sid": {
+                "minLength": 1,
+                "maxLength": 1024,
+                "type": "string"
+            },
+            "pingInterval": {
+                "minimum": 1,
+                "maximum": 120000,
+                "type": "integer"
+            },
+            "pingTimeout": {
+                "minimum": 1,
+                "maximum": 120000,
+                "type": "integer"
+            }
+        }
+    },
+    "connected": {
+        "type": "object",
+        "required": ["sid"],
+        "properties": {
+            "sid": {
+                "minLength": 1,
+                "maxLength": 1024,
+                "type": "string"
+            }
+        }
+    },
+    "subscription": {
+        "anyOf": [
+            {
+                "type": "object",
+                "required": ["result", "subscribed", "missing"],
+                "properties": {
+                    "result": {
+                        "const": "success",
+                        "type": "string"
+                    },
+                    "subscribed": {
+                        "maxItems": 500,
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "missing": {
+                        "maxItems": 500,
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    }
+                }
+            },
+            {
+                "type": "object",
+                "required": ["result", "reason"],
+                "properties": {
+                    "result": {
+                        "const": "error",
+                        "type": "string"
+                    },
+                    "reason": {
+                        "type": "string"
+                    }
+                }
+            }
+        ]
+    },
+    "update": {
+        "type": "object",
+        "required": ["body"],
+        "properties": {
+            "body": {
+                "type": "object",
+                "required": ["t"],
+                "properties": {
+                    "t": {
+                        "type": "string"
+                    },
+                    "id": {
+                        "type": "string"
+                    },
+                    "sid": {
+                        "type": "string"
+                    }
+                }
+            }
+        }
+    },
+    "rpc": {
+        "type": "object",
+        "required": ["method"],
+        "properties": {
+            "method": {
+                "type": "string"
+            }
+        }
+    }
+}
