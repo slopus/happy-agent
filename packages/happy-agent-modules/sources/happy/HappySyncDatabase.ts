@@ -316,6 +316,16 @@ export function createHappySyncDatabase(ownerId = "") {
             );
         },
 
+        /** Forgets a remote session that was deleted, so nothing is sent to it again. */
+        async clearRemoteSession(ctx: Context, agentId: string, now: number): Promise<void> {
+            await agentDatabaseRun(
+                ctx.db,
+                sql`UPDATE ${sql.raw(SESSIONS_TABLE)}
+                    SET remote_session_id = NULL, updated_at_ms = ${now}
+                    WHERE owner_id = ${ownerId} AND agent_id = ${agentId}`,
+            );
+        },
+
         /** Records the wrapped data key this daemon sends Happy for the session's current tag. */
         async setDataEncryptionKey(
             ctx: Context,

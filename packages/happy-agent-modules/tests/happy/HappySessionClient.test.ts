@@ -1945,6 +1945,26 @@ describe("a session Happy holds under another data key", () => {
         await session.close();
     });
 
+    it("retires an unreadable session by deleting it, without publishing a replacement", async () => {
+        const row = await attach("remote-old");
+        const server = taggedServer({
+            [row.tag]: {
+                createdAt: row.createdAt - 86_400_000,
+                dataEncryptionKey: FOREIGN_DATA_KEY,
+                id: "remote-old",
+                metadata: encodeWith(KEY, { path: "/home/steve/projects/rig" }),
+            },
+        });
+        const { calls, operations } = fakeOperations();
+        await dataKeyClient(server, operations).archive();
+        expect(server.deleted).toEqual(["remote-old"]);
+        expect(server.created).toEqual([]);
+        expect(calls.some((call) => call.kind === "replaceRemoteSession")).toBe(false);
+        expect(
+            (await sync.readSession(store.context, DATA_KEY_AGENT))?.remoteSessionId,
+        ).toBeUndefined();
+    });
+
     it("replaces a session whose metadata does not decrypt", async () => {
         const row = await attach("remote-old");
         const server = taggedServer({

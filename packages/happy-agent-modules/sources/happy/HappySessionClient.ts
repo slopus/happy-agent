@@ -593,6 +593,18 @@ export class HappySessionClient {
         }
         const remote = body.session;
         if (!this.#readableRemoteSession(sent, remote)) {
+            if (this.#archiving) {
+                // Retiring it needs no replacement: the phone could never read it anyway.
+                await this.#deleteRemoteSession(remote.id);
+                await ctx.inTx(async (txCtx) => {
+                    await this.#options.sync.clearRemoteSession(
+                        txCtx,
+                        this.#options.agentId,
+                        Date.now(),
+                    );
+                });
+                return undefined;
+            }
             if (this.#replacedRemoteSession) {
                 throw new Error("Happy holds this session under a key Happy Agent does not have.");
             }
@@ -727,6 +739,13 @@ export class HappySessionClient {
             agentId,
             remoteSessionId,
         });
+        await this.#deleteRemoteSession(remoteSessionId);
+        await this.#options.operations.replaceRemoteSession(context, agentId);
+    }
+
+    /** Deletes a remote session the phone cannot read, as best effort. */
+    async #deleteRemoteSession(remoteSessionId: string): Promise<void> {
+        const { context } = this.#options;
         try {
             const response = await (this.#options.fetch ?? fetch)(
                 `${this.#options.configuration.serverUrl}/v1/sessions/${encodeURIComponent(remoteSessionId)}`,
@@ -746,7 +765,6 @@ export class HappySessionClient {
         } catch (error) {
             context.log.debug("Happy kept an unreadable session.", { remoteSessionId }, error);
         }
-        await this.#options.operations.replaceRemoteSession(context, agentId);
     }
 
     #ensureSocket(remoteSessionId: string): void {
