@@ -43,14 +43,47 @@ pub(super) struct Files {
 }
 impl Files {
     pub(super) fn runner_filesystem(&self, request: &Value) -> Result<ComputeFilesystem> {
-        ensure!(self.schemas.valid("ownerRunnerParams_compute_create", request)?, "The runner compute request is invalid.");
-        ensure!(request.get("docker").is_none(), "Native Docker compute has not been migrated; this runner cannot execute container work on the host.");
-        let environment = self.config.runner_file_environment(request)?;
-        ComputeFilesystem::local(Boundary {
-            root: environment.root, home: environment.home, mode: "full_access".into(),
-            private_paths: environment.private_paths, protected_paths: environment.protected_paths,
-            allowed_write_paths: Vec::new(), denied_read_paths: Vec::new(), denied_write_paths: Vec::new(),
-        }, format!("runner:{}", request["computeId"].as_str().unwrap()))
+        let private = self.config.is_container_worker()
+            && self
+                .schemas
+                .valid("ownerRunnerParams_compute_createContainer", request)?;
+        ensure!(
+            private
+                || self
+                    .schemas
+                    .valid("ownerRunnerParams_compute_create", request)?,
+            "The runner compute request is invalid."
+        );
+        ensure!(
+            request.get("docker").is_none(),
+            "Native Docker compute has not been migrated; this runner cannot execute container work on the host."
+        );
+        let environment = if private {
+            self.config.container_file_environment(request)?
+        } else {
+            self.config.runner_file_environment(request)?
+        };
+        let (restricted_read_paths, restricted_write_paths) = if private {
+            self.config.container_restricted_paths(request)?
+        } else {
+            (Vec::new(), Vec::new())
+        };
+        ComputeFilesystem::local(
+            Boundary {
+                root: environment.root,
+                home: environment.home,
+                mode: "full_access".into(),
+                private_paths: environment.private_paths,
+                protected_paths: environment.protected_paths,
+                allowed_write_paths: Vec::new(),
+                denied_read_paths: Vec::new(),
+                denied_write_paths: Vec::new(),
+                reviewed_paths: None,
+                restricted_read_paths,
+                restricted_write_paths,
+            },
+            format!("runner:{}", request["computeId"].as_str().unwrap()),
+        )
     }
     pub(super) async fn read_workflow_script(
         &self,
@@ -78,6 +111,11 @@ impl Files {
     }
     fn boundary(&self, configuration: &Value, mode: &str) -> Result<Boundary> {
         let environment = self.config.compute_file_environment(configuration)?;
+        let (restricted_read_paths, restricted_write_paths) = configuration
+            .get("_dockerRequest")
+            .map(|request| self.config.container_restricted_paths(request))
+            .transpose()?
+            .unwrap_or_default();
         Ok(Boundary {
             root: environment.root,
             home: environment.home,
@@ -87,6 +125,23 @@ impl Files {
             allowed_write_paths: Vec::new(),
             denied_read_paths: Vec::new(),
             denied_write_paths: Vec::new(),
+            reviewed_paths: configuration
+                .get("_dockerReviewedPaths")
+                .and_then(Value::as_array)
+                .map(|paths| {
+                    paths
+                        .iter()
+                        .map(|binding| {
+                            (
+                                PathBuf::from(binding["path"].as_str().unwrap()),
+                                PathBuf::from(binding["target"].as_str().unwrap()),
+                                binding["write"].as_bool().unwrap(),
+                            )
+                        })
+                        .collect()
+                }),
+            restricted_read_paths,
+            restricted_write_paths,
         })
     }
     pub(super) fn filesystem(
@@ -99,6 +154,17 @@ impl Files {
     pub fn review(&self, configuration: &Value, path: &str, write: bool) -> bool {
         self.boundary(configuration, "auto")
             .map_or(true, |boundary| boundary.review(path, write))
+    }
+    pub(in crate::product::tools) fn review_binding(
+        &self,
+        configuration: &Value,
+        path: &str,
+        write: bool,
+    ) -> Result<Value> {
+        let boundary = self.boundary(configuration, "full_access")?;
+        Ok(
+            json!({"path":boundary.resolve(path)?,"target":boundary.target(path,false)?,"write":write}),
+        )
     }
     pub fn describe(
         &self,

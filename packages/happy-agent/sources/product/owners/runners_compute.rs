@@ -94,6 +94,33 @@ impl RunnersModule {
                 .valid("ownerRunnerParams_compute_create", &parameters)?,
             "The agent's runner policy is invalid."
         );
+        self.open_compute(runner, parameters, cancel).await
+    }
+    pub(super) async fn open_compute(
+        self: &Arc<Self>,
+        runner: &str,
+        parameters: Value,
+        cancel: &CancellationToken,
+    ) -> Result<Arc<RunnerCompute>> {
+        self.local(Some(runner))?;
+        let private = self
+            .embedded
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .contains(runner);
+        anyhow::ensure!(
+            self.schemas.valid(
+                if private {
+                    "ownerRunnerParams_compute_createContainer"
+                } else {
+                    "ownerRunnerParams_compute_create"
+                },
+                &parameters
+            )?,
+            "The compute request is invalid."
+        );
+        let id = parameters["computeId"].as_str().unwrap().to_owned();
+        let cwd = PathBuf::from(parameters["cwd"].as_str().unwrap());
         let compute = {
             let mut computes = self
                 .computes
@@ -114,7 +141,7 @@ impl RunnersModule {
                     owner: Arc::downgrade(self),
                     runner: runner.into(),
                     id: id.clone(),
-                    cwd: environment.root,
+                    cwd,
                     parameters,
                     creation: tokio::sync::Mutex::new(()),
                     state: Mutex::new(State {
@@ -390,9 +417,23 @@ impl RunnerCompute {
         {
             return Ok(());
         }
-        let created = self
-            .owner()?
-            .request(session, "compute.create", self.parameters.clone(), cancel)
+        let owner = self.owner()?;
+        let private = owner
+            .embedded
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .contains(&self.runner);
+        let created = owner
+            .request(
+                session,
+                if private {
+                    "compute.createContainer"
+                } else {
+                    "compute.create"
+                },
+                self.parameters.clone(),
+                cancel,
+            )
             .await?
             .0;
         anyhow::ensure!(
@@ -542,6 +583,74 @@ impl RunnerCompute {
             .0["exists"]
             .as_bool()
             .unwrap())
+    }
+    /// Private same-executable Docker peers can execute the owning native file
+    /// surface; ordinary runners are never sent this additional operation.
+    pub async fn file_tool(&self, params: Value, cancel: &CancellationToken) -> Result<Value> {
+        Ok(self.call("compute.fileTool", params, &[], cancel).await?.0)
+    }
+    pub async fn file_policy(&self, params: Value, cancel: &CancellationToken) -> Result<Value> {
+        Ok(self
+            .call("compute.filePolicy", params, &[], cancel)
+            .await?
+            .0)
+    }
+    pub async fn program(
+        self: &Arc<Self>,
+        options: &Value,
+        cancel: &CancellationToken,
+    ) -> Result<Arc<super::RunnerProgram>> {
+        let owner = self.owner()?;
+        let session = owner.session(&self.runner, cancel).await?;
+        self.ensure_created(&session, cancel).await?;
+        owner
+            .start_program(&self.runner, session, &self.id, options, true, cancel)
+            .await
+    }
+    pub async fn forward(
+        &self,
+        method: &str,
+        params: &Value,
+        body: &[u8],
+        cancel: &CancellationToken,
+    ) -> Result<(Value, Vec<u8>)> {
+        if method == "shell.startSession" {
+            let (mut answer, generation) = self
+                .call_generation(method, params.clone(), body, cancel)
+                .await?;
+            let mut state = self
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            anyhow::ensure!(
+                state.generation == generation,
+                "The Docker command machine changed before its start was confirmed."
+            );
+            let id = self.public_id(&mut state, answer.0["sessionId"].as_u64().unwrap())?;
+            answer.0["sessionId"] = json!(id);
+            return Ok(answer);
+        }
+        if let Some(id) = params["sessionId"].as_u64() {
+            let answer = self
+                .call_process(id, method, params.clone(), body, cancel)
+                .await?;
+            let Some(mut answer) = answer else {
+                return Ok((
+                    match method {
+                        "shell.writeSession" => json!({"written":false}),
+                        "shell.interruptSession" => json!({"interrupted":false}),
+                        "shell.detachSession" => json!({}),
+                        _ => json!({"snapshot":null}),
+                    },
+                    Vec::new(),
+                ));
+            };
+            if answer.0["snapshot"].is_object() {
+                answer.0["snapshot"]["sessionId"] = json!(id);
+            }
+            return Ok(answer);
+        }
+        self.call(method, params.clone(), body, cancel).await
     }
     pub async fn stat(
         &self,
@@ -714,13 +823,25 @@ impl RunnerCompute {
         options: Value,
         cancel: &CancellationToken,
     ) -> Result<RunnerProcess> {
+        self.start_method("shell.startSession", json!({"options":options}), cancel)
+            .await
+    }
+    pub async fn secret_shell(
+        self: &Arc<Self>,
+        options: Value,
+        provisioned: Value,
+        cancel: &CancellationToken,
+    ) -> Result<RunnerProcess> {
+        self.start_method("compute.secretShell",json!({"options":options,"environment":provisioned["environment"],"hiddenEnvironmentVariables":provisioned["hiddenEnvironmentVariables"]}),cancel).await
+    }
+    async fn start_method(
+        self: &Arc<Self>,
+        method: &str,
+        parameters: Value,
+        cancel: &CancellationToken,
+    ) -> Result<RunnerProcess> {
         let (answer, generation) = self
-            .call_generation(
-                "shell.startSession",
-                json!({"options":options}),
-                &[],
-                cancel,
-            )
+            .call_generation(method, parameters, &[], cancel)
             .await?;
         let mut state = self
             .state

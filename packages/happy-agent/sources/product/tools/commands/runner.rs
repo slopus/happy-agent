@@ -11,7 +11,9 @@ pub enum NativeRunnerProcessEvent {
     },
 }
 pub struct NativeRunnerProcess {
-    session: Arc<CommandSession>,
+    session: Option<Arc<CommandSession>>,
+    container: Option<Arc<crate::product::owners::RunnerProgram>>,
+    container_task: Mutex<Option<tokio::task::JoinHandle<()>>>,
     output: Mutex<Option<tokio::sync::mpsc::Receiver<NativeRunnerProcessEvent>>>,
 }
 impl NativeRunnerProcess {
@@ -23,32 +25,46 @@ impl NativeRunnerProcess {
             .context("The process output already has an owner.")
     }
     pub async fn input(&self, bytes: &[u8]) -> Result<()> {
-        let mut input = self.session.stdin.lock().await;
+        if let Some(program) = &self.container {
+            program.write(bytes, &CancellationToken::new()).await?;
+            return Ok(());
+        };
+        let mut input = self.session.as_ref().unwrap().stdin.lock().await;
         if let Some(input) = input.as_mut() {
             input.write_all(bytes).await?;
         }
         Ok(())
     }
     pub async fn end_input(&self) -> Result<()> {
-        let mut input = self.session.stdin.lock().await;
+        if let Some(program) = &self.container {
+            return program.end_input(&CancellationToken::new()).await;
+        };
+        let mut input = self.session.as_ref().unwrap().stdin.lock().await;
         if let Some(mut stream) = input.take() {
-            if self.session.terminal.is_some() {
+            if self.session.as_ref().unwrap().terminal.is_some() {
                 stream.write_all(&[4]).await?;
             }
             stream.shutdown().await?;
         }
         Ok(())
     }
-    pub fn resize(&self, cols: u16, rows: u16) -> Result<()> {
-        if self.session.finished() {
+    pub async fn resize(&self, cols: u16, rows: u16) -> Result<()> {
+        if let Some(program) = &self.container {
+            return program.resize(cols, rows, &CancellationToken::new()).await;
+        };
+        let session = self.session.as_ref().unwrap();
+        if session.finished() {
             return Ok(());
         }
-        if let Some(terminal) = &self.session.terminal {
+        if let Some(terminal) = &session.terminal {
             terminal.resize(cols, rows)?;
         }
         Ok(())
     }
-    pub fn signal(&self, signal: &str) -> Result<()> {
+    pub async fn signal(&self, signal: &str) -> Result<()> {
+        if let Some(program) = &self.container {
+            return program.signal(signal, &CancellationToken::new()).await;
+        };
         let signal = match signal {
             "SIGHUP" => libc::SIGHUP,
             "SIGINT" => libc::SIGINT,
@@ -57,17 +73,58 @@ impl NativeRunnerProcess {
             "SIGTERM" => libc::SIGTERM,
             _ => anyhow::bail!("The process signal is invalid."),
         };
-        self.session.group.signal(signal)?;
+        self.session.as_ref().unwrap().group.signal(signal)?;
         Ok(())
     }
     pub fn stop(&self) {
-        let _ = self.session.group.signal(libc::SIGKILL);
-        self.session.stop.cancel();
+        if let Some(program) = &self.container {
+            program.stop_now();
+        }
+        if let Some(session) = &self.session {
+            let _ = session.group.signal(libc::SIGKILL);
+            session.stop.cancel();
+        }
+    }
+    pub fn container(program: Arc<crate::product::owners::RunnerProgram>) -> Result<Arc<Self>> {
+        let mut stdout = Some(program.take_stdout()?);
+        let mut stderr = Some(program.take_stderr()?);
+        let (sender, receiver) = tokio::sync::mpsc::channel(8);
+        let owned = program.clone();
+        let task = tokio::spawn(async move {
+            while stdout.is_some() || stderr.is_some() {
+                tokio::select! {
+                    result=async {stdout.as_mut().unwrap().recv().await},if stdout.is_some()=>match result {Ok(Some(bytes))=>{if sender.send(NativeRunnerProcessEvent::Data {error:false,bytes}).await.is_err(){owned.stop_now();return;}},Ok(None)=>{stdout=None},Err(_)=>{owned.stop_now();return}},
+                    result=async {stderr.as_mut().unwrap().recv().await},if stderr.is_some()=>match result {Ok(Some(bytes))=>{if sender.send(NativeRunnerProcessEvent::Data {error:true,bytes}).await.is_err(){owned.stop_now();return;}},Ok(None)=>{stderr=None},Err(_)=>{owned.stop_now();return}},
+                }
+            }
+            if let Ok(exit) = owned.wait().await {
+                let _ = sender
+                    .send(NativeRunnerProcessEvent::Exit {
+                        code: exit.exit_code.and_then(|code| i32::try_from(code).ok()),
+                        signal: exit.signal,
+                    })
+                    .await;
+            }
+        });
+        Ok(Arc::new(Self {
+            session: None,
+            container: Some(program),
+            container_task: Mutex::new(Some(task)),
+            output: Mutex::new(Some(receiver)),
+        }))
     }
 }
 impl Drop for NativeRunnerProcess {
     fn drop(&mut self) {
         self.stop();
+        if let Some(task) = self
+            .container_task
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+        {
+            task.abort();
+        }
     }
 }
 pub(super) fn signal_name(signal: i32) -> Option<&'static str> {
@@ -109,9 +166,13 @@ impl CommandSessions {
             )
             .await?;
         Ok(Arc::new(NativeRunnerProcess {
-            session: snapshot
-                .process_session
-                .context("The native product process lost its startup owner.")?,
+            session: Some(
+                snapshot
+                    .process_session
+                    .context("The native product process lost its startup owner.")?,
+            ),
+            container: None,
+            container_task: Mutex::new(None),
             output: Mutex::new(Some(output)),
         }))
     }
@@ -133,6 +194,11 @@ impl CommandSessions {
         let mut arguments = json!({"cmd":options["command"],"tty":options["tty"]==true,"permissions":options["permissions"],"timeoutMs":options["timeoutMs"].as_u64().unwrap_or(120_000)});
         if options["_runnerQuiet"] == true {
             arguments["_runnerQuiet"] = json!(true);
+        }
+        for field in ["_runnerSecretEnvironment", "_runnerHiddenEnvironment"] {
+            if let Some(value) = options.get(field) {
+                arguments[field] = value.clone();
+            }
         }
         for (from, to) in [("cwd", "workdir"), ("shell", "shell")] {
             if let Some(value) = options.get(from) {

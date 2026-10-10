@@ -20,6 +20,7 @@ async fn an_eof_cancelled_while_waiting_for_a_channel_slot_is_delivered_on_retry
         tunnel: AsyncMutex::new(None),
     });
     let program = Arc::new(RunnerProgram {
+        capture_stderr: false,
         owner: Arc::downgrade(&graph.runners),
         runner: "fixture".into(),
         id: 1,

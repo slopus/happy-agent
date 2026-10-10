@@ -12,8 +12,13 @@ impl Schemas {
     pub fn new() -> Result<Self> {
         COMPILED
             .get_or_init(|| {
-                RuntimeSchemas::compile(include_str!("request_schemas.json"))
-                    .map_err(|error| format!("{error:#}"))
+                let mut schemas: Value = serde_json::from_str(include_str!("request_schemas.json"))
+                    .map_err(|error| error.to_string())?;
+                let docker: serde_json::Map<String, Value> =
+                    serde_json::from_str(include_str!("docker/schemas.json"))
+                        .map_err(|error| error.to_string())?;
+                schemas.as_object_mut().unwrap().extend(docker);
+                RuntimeSchemas::compile(&schemas.to_string()).map_err(|error| format!("{error:#}"))
             })
             .as_ref()
             .map(|schemas| Self(schemas.clone()))

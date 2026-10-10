@@ -1,0 +1,1357 @@
+{
+    "ownerRunnerParams_compute_createContainer": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": ["computeId", "cwd"],
+        "properties": {
+            "computeId": {
+                "minLength": 1,
+                "maxLength": 128,
+                "type": "string"
+            },
+            "cwd": {
+                "minLength": 1,
+                "maxLength": 4096,
+                "pattern": "^[^\\u0000]+$",
+                "type": "string"
+            },
+            "policy": {
+                "additionalProperties": false,
+                "type": "object",
+                "properties": {
+                    "protectedProjectFiles": {
+                        "type": "array",
+                        "items": {
+                            "minLength": 1,
+                            "pattern": "^[^/]+$",
+                            "type": "string"
+                        }
+                    },
+                    "networkPolicyFiles": {
+                        "type": "array",
+                        "items": {
+                            "minLength": 1,
+                            "pattern": "^[^/]+$",
+                            "type": "string"
+                        }
+                    },
+                    "privateDirectories": {
+                        "type": "array",
+                        "items": {
+                            "minLength": 1,
+                            "pattern": "^/",
+                            "type": "string"
+                        }
+                    },
+                    "readableDirectories": {
+                        "type": "array",
+                        "items": {
+                            "minLength": 1,
+                            "pattern": "^/",
+                            "type": "string"
+                        }
+                    },
+                    "privatePathVariables": {
+                        "type": "array",
+                        "items": {
+                            "minLength": 1,
+                            "pattern": "\\S",
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "dockerEnvironmentRequest": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": ["computeId", "cwd", "docker"],
+        "properties": {
+            "computeId": {
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "type": "string"
+            },
+            "cwd": {
+                "minLength": 1,
+                "maxLength": 4096,
+                "pattern": "^[^\\u0000]+$",
+                "type": "string"
+            },
+            "policy": {
+                "additionalProperties": false,
+                "type": "object",
+                "properties": {
+                    "protectedProjectFiles": {
+                        "type": "array",
+                        "items": {
+                            "minLength": 1,
+                            "pattern": "^[^/]+$",
+                            "type": "string"
+                        }
+                    },
+                    "networkPolicyFiles": {
+                        "type": "array",
+                        "items": {
+                            "minLength": 1,
+                            "pattern": "^[^/]+$",
+                            "type": "string"
+                        }
+                    },
+                    "privateDirectories": {
+                        "type": "array",
+                        "items": {
+                            "minLength": 1,
+                            "pattern": "^/",
+                            "type": "string"
+                        }
+                    },
+                    "readableDirectories": {
+                        "type": "array",
+                        "items": {
+                            "minLength": 1,
+                            "pattern": "^/",
+                            "type": "string"
+                        }
+                    },
+                    "privatePathVariables": {
+                        "type": "array",
+                        "items": {
+                            "minLength": 1,
+                            "pattern": "\\S",
+                            "type": "string"
+                        }
+                    }
+                }
+            },
+            "docker": {
+                "anyOf": [
+                    {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["workingDirectory", "container"],
+                        "properties": {
+                            "architecture": {
+                                "anyOf": [
+                                    {
+                                        "const": "amd64",
+                                        "type": "string"
+                                    },
+                                    {
+                                        "const": "x64",
+                                        "type": "string"
+                                    },
+                                    {
+                                        "const": "x86_64",
+                                        "type": "string"
+                                    },
+                                    {
+                                        "const": "arm64",
+                                        "type": "string"
+                                    },
+                                    {
+                                        "const": "aarch64",
+                                        "type": "string"
+                                    }
+                                ]
+                            },
+                            "hostPolicy": {
+                                "additionalProperties": false,
+                                "type": "object",
+                                "properties": {
+                                    "protectedProjectFiles": {
+                                        "type": "array",
+                                        "items": {
+                                            "minLength": 1,
+                                            "pattern": "^[^/]+$",
+                                            "type": "string"
+                                        }
+                                    },
+                                    "networkPolicyFiles": {
+                                        "type": "array",
+                                        "items": {
+                                            "minLength": 1,
+                                            "pattern": "^[^/]+$",
+                                            "type": "string"
+                                        }
+                                    },
+                                    "privateDirectories": {
+                                        "type": "array",
+                                        "items": {
+                                            "minLength": 1,
+                                            "pattern": "^/",
+                                            "type": "string"
+                                        }
+                                    },
+                                    "readableDirectories": {
+                                        "type": "array",
+                                        "items": {
+                                            "minLength": 1,
+                                            "pattern": "^/",
+                                            "type": "string"
+                                        }
+                                    },
+                                    "privatePathVariables": {
+                                        "type": "array",
+                                        "items": {
+                                            "minLength": 1,
+                                            "pattern": "\\S",
+                                            "type": "string"
+                                        }
+                                    }
+                                }
+                            },
+                            "socketPath": {
+                                "minLength": 1,
+                                "pattern": "\\S",
+                                "type": "string"
+                            },
+                            "workingDirectory": {
+                                "minLength": 1,
+                                "pattern": "^/",
+                                "type": "string"
+                            },
+                            "container": {
+                                "minLength": 1,
+                                "pattern": "\\S",
+                                "type": "string"
+                            },
+                            "apparmorProfile": {
+                                "not": {}
+                            },
+                            "environment": {
+                                "not": {}
+                            },
+                            "image": {
+                                "not": {}
+                            },
+                            "mounts": {
+                                "not": {}
+                            },
+                            "name": {
+                                "not": {}
+                            }
+                        }
+                    },
+                    {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["workingDirectory", "image"],
+                        "properties": {
+                            "architecture": {
+                                "anyOf": [
+                                    {
+                                        "const": "amd64",
+                                        "type": "string"
+                                    },
+                                    {
+                                        "const": "x64",
+                                        "type": "string"
+                                    },
+                                    {
+                                        "const": "x86_64",
+                                        "type": "string"
+                                    },
+                                    {
+                                        "const": "arm64",
+                                        "type": "string"
+                                    },
+                                    {
+                                        "const": "aarch64",
+                                        "type": "string"
+                                    }
+                                ]
+                            },
+                            "hostPolicy": {
+                                "additionalProperties": false,
+                                "type": "object",
+                                "properties": {
+                                    "protectedProjectFiles": {
+                                        "type": "array",
+                                        "items": {
+                                            "minLength": 1,
+                                            "pattern": "^[^/]+$",
+                                            "type": "string"
+                                        }
+                                    },
+                                    "networkPolicyFiles": {
+                                        "type": "array",
+                                        "items": {
+                                            "minLength": 1,
+                                            "pattern": "^[^/]+$",
+                                            "type": "string"
+                                        }
+                                    },
+                                    "privateDirectories": {
+                                        "type": "array",
+                                        "items": {
+                                            "minLength": 1,
+                                            "pattern": "^/",
+                                            "type": "string"
+                                        }
+                                    },
+                                    "readableDirectories": {
+                                        "type": "array",
+                                        "items": {
+                                            "minLength": 1,
+                                            "pattern": "^/",
+                                            "type": "string"
+                                        }
+                                    },
+                                    "privatePathVariables": {
+                                        "type": "array",
+                                        "items": {
+                                            "minLength": 1,
+                                            "pattern": "\\S",
+                                            "type": "string"
+                                        }
+                                    }
+                                }
+                            },
+                            "socketPath": {
+                                "minLength": 1,
+                                "pattern": "\\S",
+                                "type": "string"
+                            },
+                            "workingDirectory": {
+                                "minLength": 1,
+                                "pattern": "^/",
+                                "type": "string"
+                            },
+                            "container": {
+                                "not": {}
+                            },
+                            "image": {
+                                "minLength": 1,
+                                "pattern": "\\S",
+                                "type": "string"
+                            },
+                            "apparmorProfile": {
+                                "minLength": 1,
+                                "maxLength": 128,
+                                "pattern": "^[A-Za-z0-9_.-]+$",
+                                "type": "string"
+                            },
+                            "environment": {
+                                "type": "object",
+                                "patternProperties": {
+                                    "^(.*)$": {
+                                        "type": "string"
+                                    }
+                                }
+                            },
+                            "mounts": {
+                                "type": "array",
+                                "items": {
+                                    "additionalProperties": false,
+                                    "type": "object",
+                                    "required": ["source", "target"],
+                                    "properties": {
+                                        "source": {
+                                            "minLength": 1,
+                                            "pattern": "\\S",
+                                            "type": "string"
+                                        },
+                                        "target": {
+                                            "minLength": 1,
+                                            "pattern": "^/",
+                                            "type": "string"
+                                        },
+                                        "readOnly": {
+                                            "type": "boolean"
+                                        }
+                                    }
+                                }
+                            },
+                            "name": {
+                                "minLength": 1,
+                                "pattern": "\\S",
+                                "type": "string"
+                            }
+                        }
+                    }
+                ]
+            }
+        }
+    },
+    "ownerRunnerParams_compute_fileTool": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": ["computeId", "agent", "vendor", "mode", "call", "reads"],
+        "properties": {
+            "computeId": {
+                "minLength": 1,
+                "maxLength": 128,
+                "type": "string"
+            },
+            "agent": {
+                "minLength": 1,
+                "maxLength": 128,
+                "type": "string"
+            },
+            "vendor": {
+                "anyOf": [
+                    {
+                        "const": "claude",
+                        "type": "string"
+                    },
+                    {
+                        "const": "codex",
+                        "type": "string"
+                    },
+                    {
+                        "const": "grok",
+                        "type": "string"
+                    },
+                    {
+                        "const": "kimi",
+                        "type": "string"
+                    },
+                    {
+                        "const": "glm",
+                        "type": "string"
+                    }
+                ]
+            },
+            "mode": {
+                "description": "How much of the machine the agent may touch.",
+                "anyOf": [
+                    {
+                        "const": "read_only",
+                        "type": "string"
+                    },
+                    {
+                        "const": "workspace_write",
+                        "type": "string"
+                    },
+                    {
+                        "const": "auto",
+                        "type": "string"
+                    },
+                    {
+                        "const": "full_access",
+                        "type": "string"
+                    }
+                ]
+            },
+            "call": {
+                "type": "object",
+                "required": ["id", "call"],
+                "properties": {
+                    "id": {
+                        "minLength": 1,
+                        "maxLength": 128,
+                        "type": "string"
+                    },
+                    "call": {
+                        "type": "object",
+                        "required": ["name", "arguments"],
+                        "properties": {
+                            "name": {
+                                "minLength": 1,
+                                "maxLength": 128,
+                                "type": "string"
+                            },
+                            "arguments": {
+                                "maxLength": 33554432,
+                                "type": "string"
+                            },
+                            "namespace": {
+                                "minLength": 1,
+                                "maxLength": 128,
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
+            "reads": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": ["path", "mtimeMs"],
+                    "properties": {
+                        "path": {
+                            "type": "string"
+                        },
+                        "mtimeMs": {
+                            "type": "number"
+                        }
+                    }
+                }
+            },
+            "bindings": {
+                "maxItems": 1024,
+                "type": "array",
+                "items": {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": ["path", "target", "write"],
+                    "properties": {
+                        "path": {
+                            "maxLength": 4096,
+                            "type": "string"
+                        },
+                        "target": {
+                            "maxLength": 4096,
+                            "type": "string"
+                        },
+                        "write": {
+                            "type": "boolean"
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "ownerRunnerResult_compute_fileTool": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": ["blocks", "isError", "reads"],
+        "properties": {
+            "blocks": {
+                "maxItems": 16,
+                "type": "array",
+                "items": {
+                    "anyOf": [
+                        {
+                            "additionalProperties": false,
+                            "type": "object",
+                            "required": ["type", "text"],
+                            "properties": {
+                                "type": {
+                                    "const": "text",
+                                    "type": "string"
+                                },
+                                "text": {
+                                    "maxLength": 67108864,
+                                    "type": "string"
+                                }
+                            }
+                        },
+                        {
+                            "additionalProperties": false,
+                            "type": "object",
+                            "required": ["type", "data", "mimeType"],
+                            "properties": {
+                                "type": {
+                                    "const": "image",
+                                    "type": "string"
+                                },
+                                "data": {
+                                    "maxLength": 67108864,
+                                    "type": "string"
+                                },
+                                "mimeType": {
+                                    "maxLength": 128,
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    ]
+                }
+            },
+            "isError": {
+                "type": "boolean"
+            },
+            "reads": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": ["path", "mtimeMs"],
+                    "properties": {
+                        "path": {
+                            "type": "string"
+                        },
+                        "mtimeMs": {
+                            "type": "number"
+                        }
+                    }
+                }
+            },
+            "presentation": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": ["type", "files"],
+                "properties": {
+                    "type": {
+                        "const": "file_diff",
+                        "type": "string"
+                    },
+                    "files": {
+                        "maxItems": 20,
+                        "type": "array",
+                        "items": {
+                            "additionalProperties": false,
+                            "type": "object",
+                            "required": ["path", "kind", "added", "deleted", "hunks"],
+                            "properties": {
+                                "path": {
+                                    "maxLength": 4000,
+                                    "type": "string"
+                                },
+                                "kind": {
+                                    "anyOf": [
+                                        {
+                                            "const": "add",
+                                            "type": "string"
+                                        },
+                                        {
+                                            "const": "delete",
+                                            "type": "string"
+                                        },
+                                        {
+                                            "const": "update",
+                                            "type": "string"
+                                        }
+                                    ]
+                                },
+                                "added": {
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991,
+                                    "type": "integer"
+                                },
+                                "deleted": {
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991,
+                                    "type": "integer"
+                                },
+                                "hunks": {
+                                    "maxItems": 500,
+                                    "type": "array",
+                                    "items": {
+                                        "additionalProperties": false,
+                                        "type": "object",
+                                        "required": ["oldStart", "newStart", "lines"],
+                                        "properties": {
+                                            "oldStart": {
+                                                "minimum": 0,
+                                                "maximum": 9007199254740991,
+                                                "type": "integer"
+                                            },
+                                            "newStart": {
+                                                "minimum": 0,
+                                                "maximum": 9007199254740991,
+                                                "type": "integer"
+                                            },
+                                            "lines": {
+                                                "maxItems": 500,
+                                                "type": "array",
+                                                "items": {
+                                                    "additionalProperties": false,
+                                                    "type": "object",
+                                                    "required": ["kind", "text"],
+                                                    "properties": {
+                                                        "kind": {
+                                                            "anyOf": [
+                                                                {
+                                                                    "const": "context",
+                                                                    "type": "string"
+                                                                },
+                                                                {
+                                                                    "const": "add",
+                                                                    "type": "string"
+                                                                },
+                                                                {
+                                                                    "const": "delete",
+                                                                    "type": "string"
+                                                                }
+                                                            ]
+                                                        },
+                                                        "text": {
+                                                            "maxLength": 4000,
+                                                            "type": "string"
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                },
+                                "language": {
+                                    "maxLength": 256,
+                                    "type": "string"
+                                },
+                                "omittedLines": {
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991,
+                                    "type": "integer"
+                                }
+                            }
+                        }
+                    },
+                    "omittedFiles": {
+                        "minimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                    }
+                }
+            }
+        }
+    },
+    "ownerRunnerParams_compute_filePolicy": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": ["computeId", "agent", "vendor", "mode", "call", "reads"],
+        "properties": {
+            "computeId": {
+                "minLength": 1,
+                "maxLength": 128,
+                "type": "string"
+            },
+            "agent": {
+                "minLength": 1,
+                "maxLength": 128,
+                "type": "string"
+            },
+            "vendor": {
+                "anyOf": [
+                    {
+                        "const": "claude",
+                        "type": "string"
+                    },
+                    {
+                        "const": "codex",
+                        "type": "string"
+                    },
+                    {
+                        "const": "grok",
+                        "type": "string"
+                    },
+                    {
+                        "const": "kimi",
+                        "type": "string"
+                    },
+                    {
+                        "const": "glm",
+                        "type": "string"
+                    }
+                ]
+            },
+            "mode": {
+                "description": "How much of the machine the agent may touch.",
+                "anyOf": [
+                    {
+                        "const": "read_only",
+                        "type": "string"
+                    },
+                    {
+                        "const": "workspace_write",
+                        "type": "string"
+                    },
+                    {
+                        "const": "auto",
+                        "type": "string"
+                    },
+                    {
+                        "const": "full_access",
+                        "type": "string"
+                    }
+                ]
+            },
+            "call": {
+                "type": "object",
+                "required": ["id", "call"],
+                "properties": {
+                    "id": {
+                        "minLength": 1,
+                        "maxLength": 128,
+                        "type": "string"
+                    },
+                    "call": {
+                        "type": "object",
+                        "required": ["name", "arguments"],
+                        "properties": {
+                            "name": {
+                                "minLength": 1,
+                                "maxLength": 128,
+                                "type": "string"
+                            },
+                            "arguments": {
+                                "maxLength": 33554432,
+                                "type": "string"
+                            },
+                            "namespace": {
+                                "minLength": 1,
+                                "maxLength": 128,
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
+            "reads": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": ["path", "mtimeMs"],
+                    "properties": {
+                        "path": {
+                            "type": "string"
+                        },
+                        "mtimeMs": {
+                            "type": "number"
+                        }
+                    }
+                }
+            },
+            "bindings": {
+                "maxItems": 1024,
+                "type": "array",
+                "items": {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": ["path", "target", "write"],
+                    "properties": {
+                        "path": {
+                            "maxLength": 4096,
+                            "type": "string"
+                        },
+                        "target": {
+                            "maxLength": 4096,
+                            "type": "string"
+                        },
+                        "write": {
+                            "type": "boolean"
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "ownerRunnerParams_compute_secretShell": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": ["computeId", "options", "environment", "hiddenEnvironmentVariables"],
+        "properties": {
+            "computeId": {
+                "minLength": 1,
+                "maxLength": 128,
+                "type": "string"
+            },
+            "options": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": ["command", "permissions"],
+                "properties": {
+                    "command": {
+                        "maxLength": 1048576,
+                        "type": "string"
+                    },
+                    "permissions": {
+                        "type": "object",
+                        "required": ["mode", "network"],
+                        "properties": {
+                            "mode": {
+                                "anyOf": [
+                                    {
+                                        "const": "read_only",
+                                        "type": "string"
+                                    },
+                                    {
+                                        "const": "workspace_write",
+                                        "type": "string"
+                                    },
+                                    {
+                                        "const": "auto",
+                                        "type": "string"
+                                    },
+                                    {
+                                        "const": "full_access",
+                                        "type": "string"
+                                    }
+                                ]
+                            },
+                            "allowedReadPaths": {
+                                "type": "array",
+                                "items": {
+                                    "type": "string"
+                                }
+                            },
+                            "deniedReadPaths": {
+                                "type": "array",
+                                "items": {
+                                    "type": "string"
+                                }
+                            },
+                            "allowedWritePaths": {
+                                "type": "array",
+                                "items": {
+                                    "type": "string"
+                                }
+                            },
+                            "deniedWritePaths": {
+                                "type": "array",
+                                "items": {
+                                    "type": "string"
+                                }
+                            },
+                            "network": {
+                                "type": "object",
+                                "required": ["egress", "localBinding"],
+                                "properties": {
+                                    "egress": {
+                                        "type": "boolean"
+                                    },
+                                    "allowedHosts": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "string"
+                                        }
+                                    },
+                                    "localBinding": {
+                                        "type": "boolean"
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "cwd": {
+                        "minLength": 1,
+                        "maxLength": 4096,
+                        "pattern": "^[^\\u0000]+$",
+                        "type": "string"
+                    },
+                    "timeoutMs": {
+                        "minimum": 0,
+                        "type": "integer"
+                    },
+                    "maxOutputBytes": {
+                        "minimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                    },
+                    "shell": {
+                        "minLength": 1,
+                        "maxLength": 4096,
+                        "pattern": "^[^\\u0000]+$",
+                        "type": "string"
+                    },
+                    "tty": {
+                        "type": "boolean"
+                    }
+                }
+            },
+            "environment": {
+                "additionalProperties": false,
+                "maxProperties": 256,
+                "type": "object",
+                "patternProperties": {
+                    "^[A-Za-z_][A-Za-z0-9_]*$": {
+                        "maxLength": 65536,
+                        "pattern": "^[^\\u0000]*$",
+                        "type": "string"
+                    }
+                }
+            },
+            "hiddenEnvironmentVariables": {
+                "maxItems": 4096,
+                "type": "array",
+                "items": {
+                    "maxLength": 1024,
+                    "type": "string"
+                }
+            }
+        }
+    },
+    "ownerRunnerResult_compute_secretShell": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": ["sessionId"],
+        "properties": {
+            "sessionId": {
+                "minimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+            }
+        }
+    },
+    "ownerRunnerResult_compute_filePolicy": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": ["review", "full", "requires", "action", "instructions", "bindings"],
+        "properties": {
+            "review": {
+                "type": "boolean"
+            },
+            "full": {
+                "type": "boolean"
+            },
+            "requires": {
+                "type": "boolean"
+            },
+            "action": {
+                "maxLength": 1048576,
+                "type": "string"
+            },
+            "instructions": {
+                "anyOf": [
+                    {
+                        "maxLength": 1048576,
+                        "type": "string"
+                    },
+                    {
+                        "type": "null"
+                    }
+                ]
+            },
+            "bindings": {
+                "maxItems": 1024,
+                "type": "array",
+                "items": {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": ["path", "target", "write"],
+                    "properties": {
+                        "path": {
+                            "maxLength": 4096,
+                            "type": "string"
+                        },
+                        "target": {
+                            "maxLength": 4096,
+                            "type": "string"
+                        },
+                        "write": {
+                            "type": "boolean"
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "dockerEnvironmentRecord": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": ["request", "closing"],
+        "properties": {
+            "request": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": ["computeId", "cwd", "docker"],
+                "properties": {
+                    "computeId": {
+                        "minLength": 1,
+                        "maxLength": 128,
+                        "pattern": "^[A-Za-z0-9_-]+$",
+                        "type": "string"
+                    },
+                    "cwd": {
+                        "minLength": 1,
+                        "maxLength": 4096,
+                        "pattern": "^[^\\u0000]+$",
+                        "type": "string"
+                    },
+                    "policy": {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "properties": {
+                            "protectedProjectFiles": {
+                                "type": "array",
+                                "items": {
+                                    "minLength": 1,
+                                    "pattern": "^[^/]+$",
+                                    "type": "string"
+                                }
+                            },
+                            "networkPolicyFiles": {
+                                "type": "array",
+                                "items": {
+                                    "minLength": 1,
+                                    "pattern": "^[^/]+$",
+                                    "type": "string"
+                                }
+                            },
+                            "privateDirectories": {
+                                "type": "array",
+                                "items": {
+                                    "minLength": 1,
+                                    "pattern": "^/",
+                                    "type": "string"
+                                }
+                            },
+                            "readableDirectories": {
+                                "type": "array",
+                                "items": {
+                                    "minLength": 1,
+                                    "pattern": "^/",
+                                    "type": "string"
+                                }
+                            },
+                            "privatePathVariables": {
+                                "type": "array",
+                                "items": {
+                                    "minLength": 1,
+                                    "pattern": "\\S",
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "docker": {
+                        "anyOf": [
+                            {
+                                "additionalProperties": false,
+                                "type": "object",
+                                "required": ["workingDirectory", "container"],
+                                "properties": {
+                                    "architecture": {
+                                        "anyOf": [
+                                            {
+                                                "const": "amd64",
+                                                "type": "string"
+                                            },
+                                            {
+                                                "const": "x64",
+                                                "type": "string"
+                                            },
+                                            {
+                                                "const": "x86_64",
+                                                "type": "string"
+                                            },
+                                            {
+                                                "const": "arm64",
+                                                "type": "string"
+                                            },
+                                            {
+                                                "const": "aarch64",
+                                                "type": "string"
+                                            }
+                                        ]
+                                    },
+                                    "hostPolicy": {
+                                        "additionalProperties": false,
+                                        "type": "object",
+                                        "properties": {
+                                            "protectedProjectFiles": {
+                                                "type": "array",
+                                                "items": {
+                                                    "minLength": 1,
+                                                    "pattern": "^[^/]+$",
+                                                    "type": "string"
+                                                }
+                                            },
+                                            "networkPolicyFiles": {
+                                                "type": "array",
+                                                "items": {
+                                                    "minLength": 1,
+                                                    "pattern": "^[^/]+$",
+                                                    "type": "string"
+                                                }
+                                            },
+                                            "privateDirectories": {
+                                                "type": "array",
+                                                "items": {
+                                                    "minLength": 1,
+                                                    "pattern": "^/",
+                                                    "type": "string"
+                                                }
+                                            },
+                                            "readableDirectories": {
+                                                "type": "array",
+                                                "items": {
+                                                    "minLength": 1,
+                                                    "pattern": "^/",
+                                                    "type": "string"
+                                                }
+                                            },
+                                            "privatePathVariables": {
+                                                "type": "array",
+                                                "items": {
+                                                    "minLength": 1,
+                                                    "pattern": "\\S",
+                                                    "type": "string"
+                                                }
+                                            }
+                                        }
+                                    },
+                                    "socketPath": {
+                                        "minLength": 1,
+                                        "pattern": "\\S",
+                                        "type": "string"
+                                    },
+                                    "workingDirectory": {
+                                        "minLength": 1,
+                                        "pattern": "^/",
+                                        "type": "string"
+                                    },
+                                    "container": {
+                                        "minLength": 1,
+                                        "pattern": "\\S",
+                                        "type": "string"
+                                    },
+                                    "apparmorProfile": {
+                                        "not": {}
+                                    },
+                                    "environment": {
+                                        "not": {}
+                                    },
+                                    "image": {
+                                        "not": {}
+                                    },
+                                    "mounts": {
+                                        "not": {}
+                                    },
+                                    "name": {
+                                        "not": {}
+                                    }
+                                }
+                            },
+                            {
+                                "additionalProperties": false,
+                                "type": "object",
+                                "required": ["workingDirectory", "image"],
+                                "properties": {
+                                    "architecture": {
+                                        "anyOf": [
+                                            {
+                                                "const": "amd64",
+                                                "type": "string"
+                                            },
+                                            {
+                                                "const": "x64",
+                                                "type": "string"
+                                            },
+                                            {
+                                                "const": "x86_64",
+                                                "type": "string"
+                                            },
+                                            {
+                                                "const": "arm64",
+                                                "type": "string"
+                                            },
+                                            {
+                                                "const": "aarch64",
+                                                "type": "string"
+                                            }
+                                        ]
+                                    },
+                                    "hostPolicy": {
+                                        "additionalProperties": false,
+                                        "type": "object",
+                                        "properties": {
+                                            "protectedProjectFiles": {
+                                                "type": "array",
+                                                "items": {
+                                                    "minLength": 1,
+                                                    "pattern": "^[^/]+$",
+                                                    "type": "string"
+                                                }
+                                            },
+                                            "networkPolicyFiles": {
+                                                "type": "array",
+                                                "items": {
+                                                    "minLength": 1,
+                                                    "pattern": "^[^/]+$",
+                                                    "type": "string"
+                                                }
+                                            },
+                                            "privateDirectories": {
+                                                "type": "array",
+                                                "items": {
+                                                    "minLength": 1,
+                                                    "pattern": "^/",
+                                                    "type": "string"
+                                                }
+                                            },
+                                            "readableDirectories": {
+                                                "type": "array",
+                                                "items": {
+                                                    "minLength": 1,
+                                                    "pattern": "^/",
+                                                    "type": "string"
+                                                }
+                                            },
+                                            "privatePathVariables": {
+                                                "type": "array",
+                                                "items": {
+                                                    "minLength": 1,
+                                                    "pattern": "\\S",
+                                                    "type": "string"
+                                                }
+                                            }
+                                        }
+                                    },
+                                    "socketPath": {
+                                        "minLength": 1,
+                                        "pattern": "\\S",
+                                        "type": "string"
+                                    },
+                                    "workingDirectory": {
+                                        "minLength": 1,
+                                        "pattern": "^/",
+                                        "type": "string"
+                                    },
+                                    "container": {
+                                        "not": {}
+                                    },
+                                    "image": {
+                                        "minLength": 1,
+                                        "pattern": "\\S",
+                                        "type": "string"
+                                    },
+                                    "apparmorProfile": {
+                                        "minLength": 1,
+                                        "maxLength": 128,
+                                        "pattern": "^[A-Za-z0-9_.-]+$",
+                                        "type": "string"
+                                    },
+                                    "environment": {
+                                        "type": "object",
+                                        "patternProperties": {
+                                            "^(.*)$": {
+                                                "type": "string"
+                                            }
+                                        }
+                                    },
+                                    "mounts": {
+                                        "type": "array",
+                                        "items": {
+                                            "additionalProperties": false,
+                                            "type": "object",
+                                            "required": ["source", "target"],
+                                            "properties": {
+                                                "source": {
+                                                    "minLength": 1,
+                                                    "pattern": "\\S",
+                                                    "type": "string"
+                                                },
+                                                "target": {
+                                                    "minLength": 1,
+                                                    "pattern": "^/",
+                                                    "type": "string"
+                                                },
+                                                "readOnly": {
+                                                    "type": "boolean"
+                                                }
+                                            }
+                                        }
+                                    },
+                                    "name": {
+                                        "minLength": 1,
+                                        "pattern": "\\S",
+                                        "type": "string"
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                }
+            },
+            "closing": {
+                "type": "boolean"
+            },
+            "container": {
+                "minLength": 1,
+                "maxLength": 128,
+                "type": "string"
+            },
+            "exec": {
+                "minLength": 1,
+                "maxLength": 128,
+                "type": "string"
+            }
+        }
+    }
+}

@@ -7,6 +7,14 @@ Source sensitive and product-private read boundaries. Read only mode has no
 write grants or explicit write guards. Host allowlists enable the supervisor's
 managed proxy; naming a host does not also permit a private address it resolves to.
 
+The private Docker worker initially inherited host runner home and credential
+exclusions. Source Docker does not infer those paths inside the selected image.
+Its shell now preserves caller denials, declared Docker private directories and
+variables, and the worker's own runtime directory without adding image home or
+credential exclusions. The distinction comes from the immutable internal worker
+role; ambient environment and ordinary runner requests cannot enable it. Host
+runner policy retains its existing boundaries.
+
 Security review previously interpreted an agent's compute directory as a path on the daemon.
 A remote directory with the same spelling could therefore select unrelated host instructions.
 Configuration now reads only its own global security policy and public configuration folder's

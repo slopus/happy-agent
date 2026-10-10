@@ -120,6 +120,7 @@ pub async fn run(config: ConfigModule) -> Result<()> {
     let lifecycle = Arc::new(LifecycleModule::new(config.clone())?);
     // These feature modules supply shared kernels; standalone startup never opens their database.
     let runtime = Arc::new(runtime::RuntimeModule::new(config.clone()));
+    runtime.load().await?;
     let events = Arc::new(events::EventsModule::new(runtime.clone())?);
     let usage = Arc::new(usage::UsageModule::new(
         runtime.clone(),
@@ -136,6 +137,7 @@ pub async fn run(config: ConfigModule) -> Result<()> {
         runtime.clone(),
         lifecycle.clone(),
     )?);
+    durable.load().await?;
     let secrets = secrets::SecretsModule::new(
         config.clone(),
         runtime.clone(),
@@ -145,22 +147,33 @@ pub async fn run(config: ConfigModule) -> Result<()> {
     let services = services::ServicesModule::new(
         config.clone(),
         runtime.clone(),
-        durable,
+        durable.clone(),
         lifecycle.clone(),
         events.clone(),
     )?;
     let runners = owners::RunnersModule::new(config.clone(), runtime.clone(), lifecycle.clone())?;
+    let docker = docker::DockerModule::new(
+        config.clone(),
+        runtime.clone(),
+        durable.clone(),
+        lifecycle.clone(),
+        runners.clone(),
+    )?;
+    docker.load().await?;
+    runners.load().await?;
     let tools = Arc::new(tools::ToolsModule::new(
         config.clone(),
         history,
         lifecycle.clone(),
-        runtime,
+        runtime.clone(),
         secrets,
         services,
         events,
         runners.clone(),
+        docker,
     )?);
     let server = runners.native_server(tools.clone());
+    durable.start().await?;
     let remote = match &settings.endpoint {
         config::RunnerEndpoint::Tailcat { address, .. } => Some(
             tailcat::TailcatModule::open_runner_remote(&config, address)?,
@@ -228,6 +241,8 @@ pub async fn run(config: ConfigModule) -> Result<()> {
     }
     let released = server.close().await;
     tools.close().await;
+    durable.stop().await;
+    runtime.close().await?;
     if let Some(remote) = remote {
         remote.close().await?;
     }

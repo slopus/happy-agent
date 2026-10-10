@@ -13,6 +13,9 @@ pub(super) struct Boundary {
     pub allowed_write_paths: Vec<PathBuf>,
     pub denied_read_paths: Vec<PathBuf>,
     pub denied_write_paths: Vec<PathBuf>,
+    pub reviewed_paths: Option<Vec<(PathBuf, PathBuf, bool)>>,
+    pub restricted_read_paths: Vec<PathBuf>,
+    pub restricted_write_paths: Vec<PathBuf>,
 }
 
 impl Boundary {
@@ -47,15 +50,35 @@ impl Boundary {
             || !target.starts_with(&self.root)
             || self.private(&path)
             || self.private(&target)
+            || self.restricted(&path, write)
+            || self.restricted(&target, write)
             || (write && (self.protected(&path) || self.protected(&target)))
     }
 
     pub fn target(&self, written: &str, write: bool) -> Result<PathBuf> {
         let path = self.resolve(written)?;
         let target = canonical(&path)?;
+        if let Some(reviewed) = &self.reviewed_paths {
+            ensure!(
+                reviewed.iter().any(|(written, expected, mutable)| {
+                    if write {
+                        *mutable && path == *written && target == *expected
+                    } else if path == *written {
+                        target == *expected
+                    } else {
+                        path.starts_with(written) && target.starts_with(expected)
+                    }
+                }),
+                "The file path changed after permission inspection or is outside the reviewed operation. Inspect it again before continuing."
+            );
+        }
         ensure!(
             !self.private(&path) && !self.private(&target),
             "The private Happy installation directory cannot be accessed through file tools."
+        );
+        ensure!(
+            !self.restricted(&path, write) && !self.restricted(&target, write),
+            "The container host policy blocks access to this path without Full access."
         );
         let denied = if write {
             &self.denied_write_paths
@@ -112,6 +135,18 @@ impl Boundary {
             path.starts_with(private)
                 || canonical(private).is_ok_and(|private| path.starts_with(private))
         })
+    }
+    fn restricted(&self, path: &Path, write: bool) -> bool {
+        self.mode != "full_access"
+            && (if write {
+                &self.restricted_write_paths
+            } else {
+                &self.restricted_read_paths
+            })
+            .iter()
+            .any(|root| {
+                path.starts_with(root) || canonical(root).is_ok_and(|root| path.starts_with(root))
+            })
     }
     fn protected(&self, path: &Path) -> bool {
         self.protected_paths.iter().any(|protected| {
@@ -209,6 +244,9 @@ mod tests {
             allowed_write_paths: Vec::new(),
             denied_read_paths: Vec::new(),
             denied_write_paths: Vec::new(),
+            reviewed_paths: None,
+            restricted_read_paths: Vec::new(),
+            restricted_write_paths: Vec::new(),
         };
         assert!(
             boundary

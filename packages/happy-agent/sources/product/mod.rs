@@ -7,6 +7,7 @@ mod cloud;
 mod collaboration;
 mod connections;
 mod config;
+mod docker;
 mod durable;
 mod events;
 mod filesystem;
@@ -50,6 +51,9 @@ pub use lifecycle::{LifecycleModule, command};
 pub use runner::run as run_runner;
 
 pub(crate) fn compute_regex_worker()->std::process::ExitCode { tools::compute_regex_worker() }
+pub(crate) async fn container_worker() -> anyhow::Result<()> {
+    docker::run_worker().await
+}
 
 use anyhow::Result;
 use std::sync::Arc;
@@ -89,6 +93,13 @@ pub async fn run() -> Result<()> {
     let secrets = secrets::SecretsModule::new(config.clone(), runtime.clone(), durable.clone(), events.clone())?;
     let services = services::ServicesModule::new(config.clone(), runtime.clone(), durable.clone(), lifecycle.clone(), events.clone())?;
     let runners = owners::RunnersModule::new(config.clone(), runtime.clone(), lifecycle.clone())?;
+    let docker = docker::DockerModule::new(
+        config.clone(),
+        runtime.clone(),
+        durable.clone(),
+        lifecycle.clone(),
+        runners.clone(),
+    )?;
     let tools = Arc::new(tools::ToolsModule::new(
         config.clone(),
         history.clone(),
@@ -98,6 +109,7 @@ pub async fn run() -> Result<()> {
         services.clone(),
         events.clone(),
         runners.clone(),
+        docker.clone(),
     )?);
     let node = owners::NodeModule::new(config.clone(), runtime.clone(), durable.clone(), events.clone())?;
     let skills = owners::GlobalSkillsModule::new(config.clone(), runtime.clone(), durable.clone(), events.clone())?;
@@ -182,6 +194,7 @@ pub async fn run() -> Result<()> {
         collaboration.load().await?;
         live.load().await?;
         runners.load().await?;
+        docker.load().await?;
         projects.load().await?;
         workspaces.load().await?;
         bots.load().await?;
@@ -220,6 +233,7 @@ pub async fn run() -> Result<()> {
         .and_then(|result| result);
     lifecycle.begin_shutdown();
     skills.close().await;
+    let docker_closed = docker.close().await;
     durable.stop().await;
     agents.close().await;
     let service_closed = services.close().await;
@@ -235,5 +249,5 @@ pub async fn run() -> Result<()> {
         lifecycle.set_database_open(false);
     }
     let cleaned = lifecycle.cleanup();
-    initialized.and(served).and(service_closed).and(live_closed).and(cloud_closed).and(connections_closed).and(tailcat_closed).and(closed).and(cleaned)
+    initialized.and(served).and(docker_closed).and(service_closed).and(live_closed).and(cloud_closed).and(connections_closed).and(tailcat_closed).and(closed).and(cleaned)
 }

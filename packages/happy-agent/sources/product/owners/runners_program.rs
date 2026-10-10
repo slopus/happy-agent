@@ -96,9 +96,11 @@ pub struct RunnerProgram {
     startup: CancellationToken,
     progress: watch::Sender<u64>,
     sequence: AtomicU64,
+    capture_stderr: bool,
 }
 pub struct RunnerProgramStdout {
     program: Arc<RunnerProgram>,
+    channel: usize,
 }
 struct Starting(Option<Arc<RunnerProgram>>);
 impl Drop for Starting {
@@ -127,6 +129,22 @@ impl RunnersModule {
             "The runner program options are invalid."
         );
         let session = self.machine(runner, cancel).await?;
+        self.start_program(runner, session, "happy-product", options, false, cancel)
+            .await
+    }
+    pub(super) async fn start_program(
+        self: &Arc<Self>,
+        runner: &str,
+        session: Arc<Session>,
+        compute: &str,
+        options: &Value,
+        capture_stderr: bool,
+        cancel: &CancellationToken,
+    ) -> Result<Arc<RunnerProgram>> {
+        ensure!(
+            self.schemas.valid("ownerRunnerProgramOptions", options)?,
+            "The runner program options are invalid."
+        );
         ensure!(
             !self.closed.load(Ordering::Acquire)
                 && !session.cancel.is_cancelled()
@@ -154,6 +172,7 @@ impl RunnersModule {
             startup: CancellationToken::new(),
             progress: watch::channel(0).0,
             sequence: AtomicU64::new(0),
+            capture_stderr,
         });
         {
             let mut programs = self
@@ -178,7 +197,7 @@ impl RunnersModule {
         }
         let mut starting = Starting(Some(program.clone()));
         let mut params = options.clone();
-        params["computeId"] = json!("happy-product");
+        params["computeId"] = json!(compute);
         params["stream"] = json!(stream);
         if params.get("args").is_none() {
             params["args"] = json!([]);
@@ -422,7 +441,7 @@ impl RunnerProgram {
                     );
                     let duplicate = usize::try_from(output.received - offset)?;
                     output.received = end;
-                    if channel == 1 || output.abandoned {
+                    if (channel == 1 && !self.capture_stderr) || output.abandoned {
                         output.consumed = end;
                         Some(
                             json!({"type":"flow","stream":self.stream,"channel":header["channel"],"consumed":end}),
@@ -514,7 +533,50 @@ impl RunnerProgram {
         state.output[0].taken = true;
         Ok(RunnerProgramStdout {
             program: self.clone(),
+            channel: 0,
         })
+    }
+    pub fn take_stderr(self: &Arc<Self>) -> Result<RunnerProgramStdout> {
+        ensure!(
+            self.capture_stderr,
+            "This program does not retain its error stream."
+        );
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        ensure!(
+            !state.output[1].taken,
+            "The runner program error output already has a reader."
+        );
+        state.output[1].taken = true;
+        Ok(RunnerProgramStdout {
+            program: self.clone(),
+            channel: 1,
+        })
+    }
+    pub fn stop_now(&self) {
+        self.send_now(json!({"type":"close","stream":self.stream}));
+    }
+    pub async fn resize(&self, cols: u16, rows: u16, cancel: &CancellationToken) -> Result<()> {
+        let session = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .connection
+            .ready()
+            .context("The runner terminal is disconnected.")?;
+        self.owner
+            .upgrade()
+            .context("The runner program owner is unavailable.")?
+            .request(
+                &session,
+                "process.resize",
+                json!({"stream":self.stream,"cols":cols,"rows":rows}),
+                cancel,
+            )
+            .await?;
+        Ok(())
     }
     async fn send_to(
         &self,
@@ -724,7 +786,10 @@ impl RunnerProgram {
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
                 match &state.phase {
-                    Phase::Exited(exit) if state.output[0].chunks.is_empty() => {
+                    Phase::Exited(exit)
+                        if state.output[0].chunks.is_empty()
+                            && (!self.capture_stderr || state.output[1].chunks.is_empty()) =>
+                    {
                         return Ok(exit.clone());
                     }
                     Phase::Lost(reason) => bail!("{reason}"),
@@ -823,7 +888,7 @@ impl RunnerProgramStdout {
                 if let Phase::Lost(reason) = &state.phase {
                     bail!("{reason}");
                 }
-                let output = &mut state.output[0];
+                let output = &mut state.output[self.channel];
                 if !output.chunks.is_empty() {
                     let size = output.chunks.len().min(CHUNK);
                     let bytes = output.chunks.drain(..size).collect::<Vec<_>>();
@@ -849,7 +914,7 @@ impl RunnerProgramStdout {
                     }
                 };
                 if let Some(session) = session {
-                    if let Err(error) = self.program.send_to(&session, json!({"type":"flow","stream":self.program.stream,"channel":"out","consumed":consumed}), &[], &CancellationToken::new()).await {
+                    if let Err(error) = self.program.send_to(&session, json!({"type":"flow","stream":self.program.stream,"channel":if self.channel==0{"out"}else{"err"},"consumed":consumed}), &[], &CancellationToken::new()).await {
                         if !session.cancel.is_cancelled() { return Err(error); }
                     }
                 }
@@ -871,13 +936,13 @@ impl Drop for RunnerProgramStdout {
                 .state
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            state.output[0].abandoned = true;
-            state.output[0].chunks.clear();
-            state.output[0].consumed = state.output[0].received;
-            state.output[0].consumed
+            state.output[self.channel].abandoned = true;
+            state.output[self.channel].chunks.clear();
+            state.output[self.channel].consumed = state.output[self.channel].received;
+            state.output[self.channel].consumed
         };
         self.program.send_now(
-            json!({"type":"flow","stream":self.program.stream,"channel":"out","consumed":consumed}),
+            json!({"type":"flow","stream":self.program.stream,"channel":if self.channel==0{"out"}else{"err"},"consumed":consumed}),
         );
         self.program.changed();
     }

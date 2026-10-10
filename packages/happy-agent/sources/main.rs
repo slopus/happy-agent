@@ -59,7 +59,10 @@ fn main() -> std::process::ExitCode {
             .build()?;
         let arguments: Vec<_> = arguments.collect();
         runtime.block_on(async move {
-            if ["start", "run", "status", "drain", "stop", "kill", "reload"]
+            if command=="container-worker" {
+                anyhow::ensure!(arguments.is_empty(),"The container worker takes no command-line arguments.");
+                product::container_worker().await
+            } else if ["start", "run", "status", "drain", "stop", "kill", "reload"]
                 .iter()
                 .any(|name| command == *name)
             {

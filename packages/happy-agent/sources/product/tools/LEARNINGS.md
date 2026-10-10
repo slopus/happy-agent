@@ -151,8 +151,12 @@ The product machine's Full access RPCs cannot serve agent tools. Agent computes
 use their own identities, per-call permissions, binary bodies and generation
 bound command handles. Only the runner's explicit unknown-compute error proves
 a request did no work and permits its one recovery attempt. A disconnected or
-timed-out request remains unproven. Unsupported local container execution fails
-before launching anything on the host.
+timed-out request remains unproven. Docker computes use a private runner connection
+to the same executable inside the selected container. Skills, native vendor file
+calls, shell sessions and PTYs use that container connection. Canonical file
+targets are inspected there and bound through execution; the daemon commits
+read knowledge and diffs in the owning result transaction. Startup failure never
+substitutes execution on the host.
 
 ## Retained read timestamps preserve their exact JSON numbers
 

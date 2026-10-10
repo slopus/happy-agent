@@ -2,7 +2,9 @@ use super::filesystem::{atomic_private, private_directory, private_file, remove_
 use anyhow::{Context, Result, bail};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use rand::RngCore;
+mod docker;
 mod environment;
+pub use docker::DockerConfiguration;
 mod mcp;
 mod policy;
 mod presence;
@@ -59,6 +61,7 @@ pub struct ConfigModule {
     workspaces_root: PathBuf,
     runners: serde_json::Value,
     runner_settings: Option<runner::RunnerSettings>,
+    container_worker: bool,
     provider_lifetime: tokio_util::sync::CancellationToken,
     default_provider: OnceLock<String>,
     provider_enablement: Arc<Mutex<BTreeMap<String, bool>>>,
@@ -272,6 +275,9 @@ impl ConfigModule {
         &self,
         configuration: &serde_json::Value,
     ) -> Result<ComputeFileEnvironment> {
+        if let Some(request) = configuration.get("_dockerRequest") {
+            return self.container_file_environment(request);
+        }
         let root = if configuration["modules"]["compute"]["runnerId"]
             .as_str()
             .is_some()
@@ -2286,6 +2292,7 @@ impl ConfigModule {
         )?;
         let runners = normalized_runners(&values)?;
         Ok(Self {
+            container_worker: false,
             paths,
             values,
             global_values,

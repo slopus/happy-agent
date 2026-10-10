@@ -95,6 +95,14 @@ credential_isolation = true
                 services.clone(),
                 fixture.events.clone(),
                 runners.clone(),
+                crate::product::docker::DockerModule::new(
+                    fixture.config.clone(),
+                    fixture.runtime.clone(),
+                    fixture.durable.clone(),
+                    fixture.lifecycle.clone(),
+                    runners.clone(),
+                )
+                .unwrap(),
             )
             .unwrap(),
         );

@@ -221,7 +221,7 @@ impl ToolsModule {
                     && call["call"]["namespace"].as_str() == tool.definition.namespace.as_deref()
             }))
     }
-    fn surface_arguments(&self, call: &Value, tool: &NativeTool) -> Result<Value> {
+    pub(super) fn surface_arguments(&self, call: &Value, tool: &NativeTool) -> Result<Value> {
         let vendor = tool
             .vendor
             .context("The compute definition has no vendor.")?;
@@ -442,6 +442,25 @@ impl ToolsModule {
         let args = self.surface_arguments(call, tool)?;
         let mode = self.mode(settings)?;
         let vendor = tool.vendor.unwrap();
+        if configuration["modules"]["compute"].get("docker").is_some()
+            && !configuration["modules"]["compute"]["runnerId"].is_string()
+            && matches!(
+                tool.implementation,
+                I::ReadFile
+                    | I::ViewImage
+                    | I::WriteFile
+                    | I::EditFile
+                    | I::Glob
+                    | I::Grep
+                    | I::ListDirectory
+                    | I::ApplyPatch
+                    | I::KimiMedia
+            )
+        {
+            return self
+                .docker_file_tool(agent, configuration, mode, call, tool, cancel)
+                .await;
+        }
         let mut lease = match tool.implementation {
             I::ReadFile
             | I::ViewImage

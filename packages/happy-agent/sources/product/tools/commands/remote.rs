@@ -3,6 +3,7 @@ use crate::product::owners::{RunnerCompute, RunnerProcess, RunnersModule};
 
 pub(super) struct Commands {
     runners: Arc<RunnersModule>,
+    docker: Arc<crate::product::docker::DockerModule>,
     lifecycle: Arc<LifecycleModule>,
     processes: Arc<processes::Processes>,
     next: Arc<AtomicU64>,
@@ -15,6 +16,7 @@ struct RemoteSession {
     id: u64,
     command: String,
     started: u64,
+    uses_secrets: bool,
     process: RunnerProcess,
     status: Mutex<(bool, Option<i32>)>,
     read: tokio::sync::Mutex<()>,
@@ -23,12 +25,14 @@ struct RemoteSession {
 impl Commands {
     pub fn new(
         runners: Arc<RunnersModule>,
+        docker: Arc<crate::product::docker::DockerModule>,
         lifecycle: Arc<LifecycleModule>,
         processes: Arc<processes::Processes>,
         next: Arc<AtomicU64>,
     ) -> Self {
         Self {
             runners,
+            docker,
             lifecycle,
             processes,
             next,
@@ -46,6 +50,10 @@ impl Commands {
     }
     pub fn contains(&self, agent: &str, id: u64) -> bool {
         self.session(agent, id).is_ok()
+    }
+    pub fn uses_secrets(&self, agent: &str, id: u64) -> bool {
+        self.session(agent, id)
+            .is_ok_and(|session| session.uses_secrets)
     }
     fn session(&self, agent: &str, id: u64) -> Result<Arc<RemoteSession>> {
         self.sessions
@@ -66,19 +74,25 @@ impl Commands {
         capture: usize,
         cancel: CancellationToken,
     ) -> Result<Snapshot> {
+        let container = configuration["modules"]["compute"].get("docker").is_some()
+            && !configuration["modules"]["compute"]["runnerId"].is_string();
         anyhow::ensure!(
-            !args["secrets"]
-                .as_array()
-                .is_some_and(|selected| !selected.is_empty()),
+            container
+                || !args["secrets"]
+                    .as_array()
+                    .is_some_and(|selected| !selected.is_empty()),
             "Attached secrets are not available to commands on a runner yet."
         );
-        let runner = configuration["modules"]["compute"]["runnerId"]
-            .as_str()
-            .context("The agent's runner is missing.")?;
-        let compute = self
-            .runners
-            .agent_compute(runner, agent, configuration, &cancel)
-            .await?;
+        let compute = if let Some(runner) = configuration["modules"]["compute"]["runnerId"].as_str()
+        {
+            self.runners
+                .agent_compute(runner, agent, configuration, &cancel)
+                .await?
+        } else {
+            self.docker
+                .agent_compute(agent, configuration, &cancel)
+                .await?
+        };
         self.observe(agent, compute.clone())?;
         let mut options = json!({"command":args["cmd"],"permissions":compute.permissions(mode)?,"maxOutputBytes":capture});
         for (input, output) in [("workdir", "cwd"), ("shell", "shell"), ("tty", "tty")] {
@@ -113,13 +127,22 @@ impl Commands {
                     .context("The bounded runner command catalog is full.")?
             }
         };
-        let process = compute.start(options, &cancel).await?;
+        let process = if container {
+            compute
+                .secret_shell(options, args["_computeSecretEnvironment"].clone(), &cancel)
+                .await?
+        } else {
+            compute.start(options, &cancel).await?
+        };
         let id = self.next.fetch_add(1, Ordering::Relaxed);
         let session = Arc::new(RemoteSession {
             owner: agent.into(),
             id,
             command: args["cmd"].as_str().unwrap().into(),
             started: crate::product::identity::now(),
+            uses_secrets: args["secrets"]
+                .as_array()
+                .is_some_and(|selected| !selected.is_empty()),
             process,
             status: Mutex::new((false, None)),
             read: tokio::sync::Mutex::new(()),

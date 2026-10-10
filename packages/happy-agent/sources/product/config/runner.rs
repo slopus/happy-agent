@@ -255,7 +255,9 @@ impl ConfigModule {
         };
         let mut denied_reads = resolve(&permissions["deniedReadPaths"])?;
         denied_reads.extend(environment.private_paths.clone());
-        denied_reads.extend(self.runner_sensitive_read_paths(&environment.home, &root)?);
+        if !self.is_container_worker() {
+            denied_reads.extend(self.runner_sensitive_read_paths(&environment.home, &root)?);
+        }
         let read_only = permissions["mode"] == "read_only";
         let mut denied_writes = Vec::new();
         if !read_only {

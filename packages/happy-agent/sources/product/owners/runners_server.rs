@@ -371,19 +371,26 @@ impl RunnerServer {
                 .ok_or_else(|| std::io::Error::from_raw_os_error(libc::ESRCH))?;
             if let Control::Process(process) = control {
                 if method == "process.resize" {
-                    process.resize(
-                        params["cols"].as_u64().unwrap() as u16,
-                        params["rows"].as_u64().unwrap() as u16,
-                    )?;
+                    process
+                        .resize(
+                            params["cols"].as_u64().unwrap() as u16,
+                            params["rows"].as_u64().unwrap() as u16,
+                        )
+                        .await?;
                 } else {
-                    process.signal(params["signal"].as_str().unwrap())?;
+                    process.signal(params["signal"].as_str().unwrap()).await?;
                 }
             }
             return Ok((json!({}), Vec::new()));
         }
         let id = params["computeId"].as_str().unwrap();
         let answer = match method {
-            "compute.create" => {
+            "compute.create" | "compute.createContainer" => {
+                anyhow::ensure!(
+                    method != "compute.createContainer"
+                        || self.runners.config.is_container_worker(),
+                    "Container compute policy is reserved for the private Docker worker."
+                );
                 let mut computes = owner.computes.lock().await;
                 let retained = computes.contains_key(id);
                 let compute = if let Some(compute) = computes.get(id) {
@@ -399,13 +406,13 @@ impl RunnerServer {
                             &json!({"name":"RunnerBusyError","message":"The runner already holds as many machines as it allows.","code":"ERUNNERBUSY"}),
                         ));
                     }
-                    let compute = self.tools.native_runner_compute(params)?;
+                    let compute = self.tools.native_runner_compute(params).await?;
                     self.observe(owner, id, compute.clone()).await;
                     computes.insert(id.to_owned(), compute.clone());
                     compute
                 };
                 (
-                    json!({"cwd":compute.filesystem.cwd(),"home":compute.filesystem.home(),"kind":"host","supportsSessionInput":true,"retained":retained}),
+                    json!({"cwd":compute.filesystem.cwd(),"home":compute.filesystem.home(),"kind":compute.kind(),"supportsSessionInput":true,"retained":retained}),
                     Vec::new(),
                 )
             }
@@ -430,6 +437,39 @@ impl RunnerServer {
             _ => {
                 let compute=owner.computes.lock().await.get(id).cloned().ok_or_else(||super::compute::remote_error(&json!({"name":"RunnerComputeUnknownError","message":"The runner no longer holds that machine.","code":"ERUNNERCOMPUTEUNKNOWN"})))?;
                 match method {
+                    "compute.secretShell" => {
+                        anyhow::ensure!(
+                            self.runners.config.is_container_worker(),
+                            "Secret shell provisioning is reserved for the private Docker worker."
+                        );
+                        (
+                            compute.secret_shell(params, &compute.lifetime()).await?,
+                            Vec::new(),
+                        )
+                    }
+                    "compute.fileTool" => {
+                        anyhow::ensure!(
+                            self.runners.config.is_container_worker(),
+                            "Native file tool execution is reserved for the private Docker worker."
+                        );
+                        (
+                            self.tools
+                                .container_file_tool(&compute.configuration(), params, cancel)
+                                .await?,
+                            Vec::new(),
+                        )
+                    }
+                    "compute.filePolicy" => {
+                        anyhow::ensure!(
+                            self.runners.config.is_container_worker(),
+                            "Native file policy inspection is reserved for the private Docker worker."
+                        );
+                        (
+                            self.tools
+                                .container_file_policy(&compute.configuration(), params)?,
+                            Vec::new(),
+                        )
+                    }
                     "process.start" => {
                         let stream = self
                             .open(owner, id, params["stream"].as_u64().unwrap(), None)

@@ -10,14 +10,15 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 mod commands;
+mod docker_files;
 mod files;
 pub use files::ComputeFilesystem;
-mod surface;
 mod runner;
-pub use runner::{NativeRunnerCompute,NativeRunnerWatch};
+mod surface;
 use commands::CommandSessions;
+pub use commands::{NativeRunnerProcess, NativeRunnerProcessEvent};
 pub use commands::{ProcessEventListener, ProcessSubscription};
-pub use commands::{NativeRunnerProcess,NativeRunnerProcessEvent};
+pub use runner::{NativeRunnerCompute, NativeRunnerWatch};
 
 pub struct ToolsModule {
     config: Arc<ConfigModule>,
@@ -32,9 +33,11 @@ pub struct ToolsModule {
     services: Arc<super::services::ServicesModule>,
     events: Arc<super::events::EventsModule>,
     runners: Arc<super::owners::RunnersModule>,
+    docker: Arc<super::docker::DockerModule>,
     files: files::Files,
     prepared_reads:
         Arc<std::sync::Mutex<std::collections::BTreeMap<(String, String), PreparedFile>>>,
+    docker_policies: Arc<std::sync::Mutex<std::collections::BTreeMap<(String, String), Value>>>,
     prompted_abort_notices: std::sync::Mutex<std::collections::BTreeMap<String, String>>,
 }
 struct NativeTool {
@@ -118,6 +121,14 @@ impl happy_agent_base::AgentModule for ToolsModule {
                 .context("The tool identity is missing.")?
                 .to_owned(),
         );
+        let policies = self.docker_policies.clone();
+        let policy_key = key.clone();
+        ctx.after_commit(move || {
+            policies
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .remove(&policy_key);
+        })?;
         let read = self
             .prepared_reads
             .lock()
@@ -244,6 +255,7 @@ impl happy_agent_base::AgentModule for ToolsModule {
             .is_some_and(|tool| !matches!(tool.implementation, Implementation::ReadHistory))
         {
             self.assert_local_compute(scope.configuration)?;
+            self.prepare_docker_policy(scope, call).await?;
         }
         Ok(())
     }
@@ -315,6 +327,18 @@ impl ToolsModule {
                 compute,
                 self.mode(scope.settings)?,
             )?))
+        } else if scope.configuration["modules"]["compute"]
+            .get("docker")
+            .is_some()
+        {
+            let compute = self
+                .docker
+                .agent_compute(scope.id, scope.configuration, cancel)
+                .await?;
+            Ok(Some(ComputeFilesystem::runner(
+                compute,
+                self.mode(scope.settings)?,
+            )?))
         } else {
             self.assert_local_compute(scope.configuration)?;
             Ok(Some(self.files.filesystem(
@@ -328,7 +352,10 @@ impl ToolsModule {
         scope: &happy_agent_base::AgentScope<'_>,
         path: &str,
     ) -> Result<happy_agent_base::ToolPermissionPolicy> {
-        let remote = scope.configuration["modules"]["compute"]["runnerId"].is_string();
+        let remote = scope.configuration["modules"]["compute"]["runnerId"].is_string()
+            || scope.configuration["modules"]["compute"]
+                .get("docker")
+                .is_some();
         let reviewed = remote || self.files.review(scope.configuration, path, false);
         Ok(happy_agent_base::ToolPermissionPolicy {
             should_review_in_auto_mode: reviewed,
@@ -357,6 +384,32 @@ impl ToolsModule {
         path: &str,
         cancel: &CancellationToken,
     ) -> Result<String> {
+        if scope.configuration["modules"]["compute"]
+            .get("docker")
+            .is_some()
+            && !scope.configuration["modules"]["compute"]["runnerId"].is_string()
+        {
+            let compute = self
+                .docker
+                .agent_compute(scope.id, scope.configuration, cancel)
+                .await?;
+            let path = compute.resolve(path)?;
+            let bytes = compute
+                .read_file(
+                    &compute.permissions(self.mode(scope.settings)?)?,
+                    &path,
+                    524_288 * 4,
+                    false,
+                    cancel,
+                )
+                .await?;
+            let text = String::from_utf8_lossy(&bytes).into_owned();
+            ensure!(
+                text.encode_utf16().count() <= 524_288,
+                "The workflow script exceeds the character limit."
+            );
+            return Ok(text);
+        }
         if let Some(runner) = scope.configuration["modules"]["compute"]["runnerId"].as_str() {
             let compute = self
                 .runners
@@ -393,6 +446,7 @@ impl ToolsModule {
         services: Arc<super::services::ServicesModule>,
         events: Arc<super::events::EventsModule>,
         runners: Arc<super::owners::RunnersModule>,
+        docker: Arc<super::docker::DockerModule>,
     ) -> Result<Self> {
         let definitions: std::collections::BTreeMap<String, Vec<ToolDefinition>> =
             serde_json::from_str(include_str!("tool_definitions.json"))?;
@@ -405,6 +459,7 @@ impl ToolsModule {
             schemas: Schemas::new()?,
             files: files::Files::new(config.clone(), runtime.clone())?,
             prepared_reads: Arc::new(std::sync::Mutex::new(std::collections::BTreeMap::new())),
+            docker_policies: Arc::new(std::sync::Mutex::new(std::collections::BTreeMap::new())),
             commands: Arc::new(CommandSessions::new(
                 config,
                 lifecycle,
@@ -412,12 +467,14 @@ impl ToolsModule {
                 secrets.clone(),
                 events.clone(),
                 runners.clone(),
+                docker.clone(),
             )?),
             runtime,
             secrets,
             services,
             events,
             runners,
+            docker,
             prompted_abort_notices: std::sync::Mutex::new(std::collections::BTreeMap::new()),
             vendor,
             common,
@@ -434,24 +491,30 @@ impl ToolsModule {
                 self.services.clone(),
                 self.events.clone(),
                 self.runners.clone(),
+                self.docker.clone(),
             )?),
         }))
     }
     pub async fn archive_agent(&self, agent: &str, cancel: &CancellationToken) -> Result<()> {
+        self.docker_policies
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .retain(|(owner, _), _| owner != agent);
         self.prompted_abort_notices
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .remove(agent);
         self.commands.archive_agent(agent, cancel).await?;
         self.runners.dispose_agent_compute(agent, cancel).await?;
+        self.docker.dispose_agent(agent).await?;
         self.services.stop_owner_and_wait(agent, cancel).await
     }
     fn assert_local_compute(&self, configuration: &Value) -> Result<()> {
-        ensure!(
-            configuration["modules"]["compute"].get("docker").is_none()
-                || configuration["modules"]["compute"]["runnerId"].is_string(),
-            "Local Docker compute has not been migrated yet; this agent cannot execute on the host instead."
-        );
+        if configuration["modules"]["compute"].get("docker").is_some()
+            && !configuration["modules"]["compute"]["runnerId"].is_string()
+        {
+            return self.runners.assert_local_execution();
+        }
         if let Some(runner) = configuration["modules"]["compute"]["runnerId"].as_str() {
             self.runners.place(Some(runner))?;
             anyhow::bail!(
@@ -506,6 +569,33 @@ impl ToolsModule {
         call: &Value,
         tool: &NativeTool,
     ) -> Result<happy_agent_base::ToolPermissionPolicy> {
+        if let Some(cached) = self
+            .docker_policies
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&(
+                scope.id.to_owned(),
+                call["id"].as_str().unwrap_or("").to_owned(),
+            ))
+        {
+            ensure!(
+                cached["call"] == *call
+                    && cached["compute"] == scope.configuration["modules"]["compute"]
+                    && cached["vendor"] == tool.vendor.unwrap().as_str(),
+                "The container file operation changed after its permission inspection."
+            );
+            let policy = &cached["policy"];
+            let review = policy["review"]
+                .as_bool()
+                .context("Container permission inspection has not completed.")?;
+            return Ok(happy_agent_base::ToolPermissionPolicy {
+                should_review_in_auto_mode: review,
+                should_run_in_full_access_in_auto_mode: review,
+                requires_auto_or_full_access: false,
+                action: policy["action"].as_str().unwrap().to_owned(),
+                instructions: self.guidance(tool),
+            });
+        }
         if !matches!(
             tool.implementation,
             Implementation::ExecCommand
@@ -602,6 +692,9 @@ impl ToolsModule {
     }
     pub async fn close(&self) {
         self.commands.close().await;
+        if let Err(error) = self.docker.close().await {
+            eprintln!("Docker compute cleanup remains unconfirmed: {error:#}");
+        }
     }
     pub async fn permission_changed(&self, agent: &str, previous: &str, next: &str) {
         let rank = |mode: &str| match mode {

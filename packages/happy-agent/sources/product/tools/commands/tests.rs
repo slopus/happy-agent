@@ -32,14 +32,28 @@ impl Fixture {
         .unwrap();
         secrets.load().await.unwrap();
         let configuration = json!({"modules":{"compute":{"cwd":directory.path()}}});
+        let runners = crate::product::owners::RunnersModule::new(
+            config.clone(),
+            runtime.clone(),
+            lifecycle.clone(),
+        )
+        .unwrap();
+        let docker = crate::product::docker::DockerModule::new(
+            config.clone(),
+            runtime.clone(),
+            durable.clone(),
+            lifecycle.clone(),
+            runners.clone(),
+        )
+        .unwrap();
         let commands = CommandSessions::new(
             config.clone(),
             lifecycle.clone(),
             runtime.clone(),
             secrets.clone(),
             events,
-            crate::product::owners::RunnersModule::new(config, runtime.clone(), lifecycle.clone())
-                .unwrap(),
+            runners,
+            docker,
         )
         .unwrap();
         Self {

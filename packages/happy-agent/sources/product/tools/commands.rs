@@ -190,6 +190,7 @@ impl CommandSessions {
         secrets: Arc<SecretsModule>,
         events: Arc<EventsModule>,
         runners: Arc<crate::product::owners::RunnersModule>,
+        docker: Arc<crate::product::docker::DockerModule>,
     ) -> Result<Self> {
         let processes = Arc::new(processes::Processes::new()?);
         let next = Arc::new(AtomicU64::new(1));
@@ -197,6 +198,7 @@ impl CommandSessions {
         Ok(Self {
             remote: remote::Commands::new(
                 runners,
+                docker,
                 lifecycle.clone(),
                 processes.clone(),
                 next.clone(),
@@ -249,14 +251,38 @@ impl CommandSessions {
         cancel: CancellationToken,
     ) -> Result<Snapshot> {
         anyhow::ensure!(!cancel.is_cancelled(), "The command was interrupted.");
-        if configuration["modules"]["compute"]["runnerId"].is_string() {
+        if configuration["modules"]["compute"]["runnerId"].is_string()
+            || configuration["modules"]["compute"].get("docker").is_some()
+        {
+            let mut arguments = arguments.clone();
+            if configuration["modules"]["compute"].get("docker").is_some()
+                && !configuration["modules"]["compute"]["runnerId"].is_string()
+            {
+                let mut targets = vec![json!({"type":"agent","id":agent})];
+                for (field, kind) in [("projectId", "project"), ("workspaceId", "workspace")] {
+                    if let Some(id) =
+                        configuration["modules"]["compute"]["secretScope"][field].as_str()
+                    {
+                        targets.push(json!({"type":kind,"id":id}));
+                    }
+                }
+                let selected = arguments.get("secrets").cloned().unwrap_or(json!([]));
+                let secrets = self.secrets.clone();
+                let targets = json!(targets);
+                arguments["_computeSecretEnvironment"] = self
+                    .runtime
+                    .transact(move |ctx| {
+                        secrets.resolve_for_command_targets(ctx, &targets, &selected)
+                    })
+                    .await?;
+            }
             return self
                 .remote
                 .start(
                     agent,
                     configuration,
                     mode,
-                    arguments,
+                    &arguments,
                     wait,
                     capture_limit,
                     cancel,
@@ -264,10 +290,6 @@ impl CommandSessions {
                 .await;
         }
         self.remote.assert_local()?;
-        anyhow::ensure!(
-            configuration["modules"]["compute"].get("docker").is_none(),
-            "Local Docker compute has not been migrated yet; this agent cannot execute on the host instead."
-        );
         self.start_local_snapshot(
             agent,
             configuration,
@@ -331,12 +353,24 @@ impl CommandSessions {
             .get("secrets")
             .cloned()
             .unwrap_or_else(|| json!([]));
-        let uses_secrets = selected
-            .as_array()
-            .is_some_and(|selected| !selected.is_empty());
+        let uses_secrets = arguments["_runnerSecretEnvironment"]
+            .as_object()
+            .is_some_and(|values| !values.is_empty())
+            || selected
+                .as_array()
+                .is_some_and(|selected| !selected.is_empty());
         let secrets = self.secrets.clone();
         let provisioned = if runner.is_some() {
-            json!({"hiddenEnvironmentVariables":["HAPPY_RUNNER_TOKEN","HAPPY_RUNNER_ENDPOINT"],"environment":{}})
+            let mut hidden = arguments["_runnerHiddenEnvironment"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
+            hidden.extend([
+                json!("HAPPY_RUNNER_TOKEN"),
+                json!("HAPPY_RUNNER_ENDPOINT"),
+                json!("HAPPY_CONTAINER_WORKER"),
+            ]);
+            json!({"hiddenEnvironmentVariables":hidden,"environment":arguments.get("_runnerSecretEnvironment").cloned().unwrap_or(json!({}))})
         } else {
             self.runtime
                 .transact(move |ctx| secrets.resolve_for_command_targets(ctx, &targets, &selected))
@@ -695,6 +729,7 @@ impl CommandSessions {
     pub fn uses_secrets(&self, agent: &str, id: u64) -> bool {
         self.session(agent, id)
             .is_ok_and(|session| session.uses_secrets)
+            || self.remote.uses_secrets(agent, id)
     }
     pub fn contains(&self, agent: &str, id: u64) -> bool {
         self.session(agent, id).is_ok() || self.remote.contains(agent, id)

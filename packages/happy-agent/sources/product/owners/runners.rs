@@ -25,6 +25,8 @@ use tokio_util::sync::CancellationToken;
 
 #[path = "runners_compute.rs"]
 mod compute;
+#[path = "runners_embedded.rs"]
+mod embedded;
 #[path = "runners_persistence.rs"]
 mod persistence;
 #[path = "runners_program.rs"]
@@ -34,6 +36,7 @@ mod server;
 #[path = "runners_tunnel.rs"]
 mod tunnel;
 pub use compute::{RunnerCompute, RunnerProcess};
+pub use embedded::EmbeddedRunner;
 pub use program::{RunnerProgram, RunnerProgramExit, RunnerProgramStdout};
 pub use server::RunnerServer;
 
@@ -56,6 +59,26 @@ enum StreamSender {
 }
 type StreamReceiver = mpsc::Receiver<Frame>;
 const METHODS: &[(&str, &str, &str)] = &[
+    (
+        "compute.fileTool",
+        "ownerRunnerParams_compute_fileTool",
+        "ownerRunnerResult_compute_fileTool",
+    ),
+    (
+        "compute.filePolicy",
+        "ownerRunnerParams_compute_filePolicy",
+        "ownerRunnerResult_compute_filePolicy",
+    ),
+    (
+        "compute.secretShell",
+        "ownerRunnerParams_compute_secretShell",
+        "ownerRunnerResult_compute_secretShell",
+    ),
+    (
+        "compute.createContainer",
+        "ownerRunnerParams_compute_createContainer",
+        "ownerRunnerResult_compute_create",
+    ),
     (
         "compute.create",
         "ownerRunnerParams_compute_create",
@@ -225,6 +248,7 @@ pub struct RunnersModule {
     schemas: Schemas,
     instance: String,
     links: Mutex<BTreeMap<String, Arc<Link>>>,
+    embedded: Mutex<std::collections::BTreeSet<String>>,
     closed: AtomicBool,
     updates: watch::Sender<Value>,
     computes: Mutex<BTreeMap<(String, String), Arc<RunnerCompute>>>,
@@ -466,6 +490,7 @@ impl RunnersModule {
             schemas,
             instance: uuid::Uuid::new_v4().to_string(),
             links: Mutex::new(BTreeMap::new()),
+            embedded: Mutex::new(std::collections::BTreeSet::new()),
             closed: AtomicBool::new(false),
             updates: watch::channel(Value::Null).0,
             computes: Mutex::new(BTreeMap::new()),
@@ -605,7 +630,12 @@ impl RunnersModule {
             anyhow::ensure!(
                 self.config.runners_configuration()["entries"]
                     .get(id)
-                    .is_some(),
+                    .is_some()
+                    || self
+                        .embedded
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .contains(id),
                 "The runner {id} is not configured."
             );
             Ok(false)

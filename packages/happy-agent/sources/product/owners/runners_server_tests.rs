@@ -66,6 +66,14 @@ impl Graph {
                 services,
                 fixture.events.clone(),
                 runners.clone(),
+                crate::product::docker::DockerModule::new(
+                    fixture.config.clone(),
+                    fixture.runtime.clone(),
+                    fixture.durable.clone(),
+                    fixture.lifecycle.clone(),
+                    runners.clone(),
+                )
+                .unwrap(),
             )
             .unwrap(),
         );
@@ -111,6 +119,7 @@ async fn native_runner_background_start_belongs_to_compute_instead_of_cancelled_
     let compute = graph
         .tools
         .native_runner_compute(&json!({"computeId":"background","cwd":root}))
+        .await
         .unwrap();
     let cancelled_request = CancellationToken::new();
     cancelled_request.cancel();

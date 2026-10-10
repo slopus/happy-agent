@@ -9,11 +9,11 @@ use crate::product::{
     permissions::PermissionsModule,
     presence::PresenceModule,
     scheduling::SchedulingModule,
+    secrets::SecretsModule,
+    services::ServicesModule,
     skills::SkillsModule,
     system_prompt::SystemPromptModule,
     skill_folders::SkillFoldersModule,
-    secrets::SecretsModule,
-    services::ServicesModule,
     subtasks::SubtasksModule,
     tasks::TasksModule,
     tools::ToolsModule,
@@ -175,6 +175,14 @@ transport = "sse"
                 services.clone(),
                 fixture.events.clone(),
                 runners.clone(),
+                crate::product::docker::DockerModule::new(
+                    fixture.config.clone(),
+                    fixture.runtime.clone(),
+                    fixture.durable.clone(),
+                    fixture.lifecycle.clone(),
+                    runners.clone(),
+                )
+                .unwrap(),
             )
             .unwrap(),
         );
