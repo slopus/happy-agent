@@ -890,6 +890,7 @@ impl ServicesModule {
         call: Value,
         kv: CallKv,
         cancel: CancellationToken,
+        reported_error: &mut bool,
     ) -> Result<Value> {
         let arguments = &call["arguments"];
         let workspace = arguments["workspaceId"]
@@ -945,6 +946,7 @@ impl ServicesModule {
                 {
                     Ok(()) => return Ok(Value::Null),
                     Err(error) => {
+                        report_execution_error(reported_error, &error);
                         if cancel.is_cancelled() {
                             return Err(error);
                         }
@@ -1000,7 +1002,8 @@ impl ServicesModule {
             .await;
             let execution = match started {
                 Ok(execution) => execution,
-                Err(_) => {
+                Err(error) => {
+                    report_execution_error(reported_error, &error);
                     drop(startup);
                     self.confirm_record(
                         record,
@@ -1081,6 +1084,7 @@ impl ServicesModule {
             if let Err(error) =
                 execution::reconcile(&record["execution"], &self.schemas, true, &cancel).await
             {
+                report_execution_error(reported_error, &error);
                 drop(cleanup);
                 self.confirm_record(
                     record,
@@ -1105,6 +1109,24 @@ fn id_for(service: &Value) -> Result<String> {
         .map(str::to_owned)
         .context("The service identity is invalid.")
 }
+fn report_execution_error(reported: &mut bool, error: &anyhow::Error) {
+    if *reported {
+        return;
+    }
+    let detail = format!("{error:#}")
+        .chars()
+        .take(1024)
+        .map(|character| {
+            if character.is_control() {
+                ' '
+            } else {
+                character
+            }
+        })
+        .collect::<String>();
+    eprintln!("Service execution remains pending after an error: {detail}");
+    *reported = true;
+}
 impl DurableFunction for ServiceExecutor {
     fn execute(
         self: Arc<Self>,
@@ -1118,15 +1140,22 @@ impl DurableFunction for ServiceExecutor {
                 .upgrade()
                 .context("The services owner is no longer available.")?;
             let mut delay = 100;
+            let mut reported_error = false;
             loop {
                 match module
                     .clone()
-                    .execute(call.clone(), kv.clone(), cancel.clone())
+                    .execute(
+                        call.clone(),
+                        kv.clone(),
+                        cancel.clone(),
+                        &mut reported_error,
+                    )
                     .await
                 {
                     Ok(result) => return Ok(result),
                     Err(error) if cancel.is_cancelled() => return Err(error),
-                    Err(_) => {
+                    Err(error) => {
+                        report_execution_error(&mut reported_error, &error);
                         // DF deliberately never retries errors. This feature must retain its
                         // durable intent while cleanup remains unproven. The committed claim
                         // makes every resumed attempt reconciliation, never another spawn.
