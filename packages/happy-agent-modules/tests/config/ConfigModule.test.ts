@@ -631,6 +631,37 @@ describe("ConfigModule", () => {
         expect(module.anthropicBedrockTransport("bedrock", "anthropic/sonnet-5-5")).toBe("runtime");
     });
 
+    it("offers Haiku 5.5 through Claude with its 1M window and adaptive effort ladder", async () => {
+        const root = await mkdtemp(join(tmpdir(), "happy-agent-haiku-5-5-catalog-"));
+        temporaryDirectories.push(root);
+        const configDirectory = process.platform === "darwin" ? "Happy/Config" : "happy/config";
+        await mkdir(join(root, configDirectory), { recursive: true });
+        await writeFile(
+            join(root, configDirectory, "happy.toml"),
+            "[providers.claude]\nenabled = true\n\n[providers.bedrock]\nenabled = true\n",
+        );
+
+        const module = await ConfigModule.load(join(root, ".happy"));
+
+        expect(
+            module.catalog.find(
+                (model) => model.providerId === "claude" && model.id === "anthropic/haiku-5-5",
+            ),
+        ).toMatchObject({
+            autoCompactWindow: 400_000,
+            contextWindow: 1_000_000,
+            defaultEffort: "medium",
+            effortLevels: ["low", "medium", "high", "xhigh", "max"],
+            enabled: true,
+            name: "Haiku 5.5",
+        });
+        expect(
+            module.catalog.some(
+                (model) => model.providerId === "bedrock" && model.id === "anthropic/haiku-5-5",
+            ),
+        ).toBe(false);
+    });
+
     it("compacts 1M Claude models at the Claude Code team's recommended 400k", async () => {
         const root = await mkdtemp(join(tmpdir(), "happy-agent-claude-compaction-"));
         temporaryDirectories.push(root);
@@ -658,6 +689,7 @@ describe("ConfigModule", () => {
             "anthropic/opus-5-5",
             "anthropic/opus-5",
             "anthropic/sonnet-5-5",
+            "anthropic/haiku-5-5",
             "anthropic/sonnet-5",
         ]) {
             expect(module.modelContext("claude", modelId), modelId).toEqual({

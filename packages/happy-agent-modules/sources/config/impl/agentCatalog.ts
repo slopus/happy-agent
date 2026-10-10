@@ -99,6 +99,10 @@ const MODEL_CONTEXTS: Readonly<Record<string, AgentModelContext>> = Object.freez
         contextWindow: CLAUDE_CONTEXT_WINDOW,
         autoCompactWindow: CLAUDE_AUTO_COMPACT_WINDOW,
     }),
+    "anthropic/haiku-5-5": Object.freeze({
+        contextWindow: CLAUDE_CONTEXT_WINDOW,
+        autoCompactWindow: CLAUDE_AUTO_COMPACT_WINDOW,
+    }),
     "anthropic/sonnet-5": Object.freeze({
         contextWindow: CLAUDE_CONTEXT_WINDOW,
         autoCompactWindow: CLAUDE_AUTO_COMPACT_WINDOW,
@@ -177,6 +181,7 @@ const CATALOG: readonly CatalogAgentModel[] = [
     model("claude", "anthropic/opus-5-5", "Opus 5.5 1M", ALL_BUT_OFF),
     model("claude", "anthropic/opus-5", "Opus 5 1M"),
     model("claude", "anthropic/sonnet-5-5", "Sonnet 5.5", ALL_BUT_OFF),
+    model("claude", "anthropic/haiku-5-5", "Haiku 5.5", ALL_BUT_OFF),
     model("claude", "anthropic/sonnet-5", "Sonnet 5"),
     model("claude", "anthropic/fable-5-1", "Fable 5.1"),
     model("claude", "anthropic/fable-5", "Fable 5"),
