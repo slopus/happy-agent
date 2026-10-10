@@ -17,6 +17,7 @@ use tokio_util::sync::CancellationToken;
 
 #[path = "git_credentials.rs"]
 mod credentials;
+pub use credentials::PreparedGitCredential;
 
 pub struct GitModule {
     config: Arc<ConfigModule>,
@@ -26,6 +27,30 @@ pub struct GitModule {
     credentials: Arc<credentials::GitCredentialBroker>,
 }
 impl GitModule {
+    pub async fn prepare_github_credential(
+        &self,
+        project: &str,
+        creator: &Value,
+        repository: &str,
+        token: &str,
+    ) -> Result<Arc<PreparedGitCredential>> {
+        self.credentials
+            .prepare(project, creator, repository, token)
+            .await
+    }
+    pub fn activate_github_credential(
+        &self,
+        ctx: &crate::product::runtime::Context<'_>,
+        prepared: Arc<PreparedGitCredential>,
+    ) -> Result<()> {
+        ctx.after_commit(move || prepared.activate())
+    }
+    pub fn has_github_credential(&self, project: &str, creator: &Value) -> Result<bool> {
+        Ok(self
+            .credentials
+            .daemon_authentication(project, creator)?
+            .is_some())
+    }
     pub fn new(config: Arc<ConfigModule>, runners: Arc<RunnersModule>) -> Result<Arc<Self>> {
         let schemas = Schemas::new()?;
         for name in [

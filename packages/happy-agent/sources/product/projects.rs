@@ -31,6 +31,9 @@ mod location;
 #[path = "owners/project_registration.rs"]
 mod registration;
 pub use registration::PreparedProjectRegistration;
+#[path = "owners/project_remote.rs"]
+mod remote;
+pub use remote::PreparedRemoteProject;
 #[path = "owners/project_names.rs"]
 mod names;
 #[path = "owners/projects_persistence.rs"]
@@ -51,6 +54,9 @@ mod location_tests;
 #[cfg(test)]
 #[path = "owners/project_registration_tests.rs"]
 mod registration_tests;
+#[cfg(test)]
+#[path = "owners/project_remote_tests.rs"]
+mod remote_tests;
 
 pub struct ProjectsModule {
     runtime: Arc<RuntimeModule>,
@@ -172,6 +178,8 @@ impl ProjectsModule {
             "ownerProjectPreparedAvatar",
             "ownerProjectSettingsUpdate",
             "ownerProjectRegistration",
+            "ownerProjectRemoteRequest",
+            "ownerProjectManagedFolderName",
         ] {
             let _ = schemas.valid(name, &Value::Null)?;
         }
@@ -889,7 +897,7 @@ pub(in crate::product) mod tests {
             self.services.close().await.unwrap();
             self.fixture.close().await;
         }
-        async fn restart(self) -> Self {
+        pub(in crate::product) async fn restart(self) -> Self {
             self.close().await;
             let mut fixture = self.fixture;
             fixture.restart().await;

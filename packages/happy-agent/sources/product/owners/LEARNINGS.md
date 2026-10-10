@@ -51,6 +51,18 @@ are configured. Folder registration validates client-chosen identities, resolves
 the catalog decision, and retains its path and project locks through the caller's atomic change.
 An active duplicate keeps its identity and version; an archived duplicate restores that same row.
 
+Managed clone acceptance holds both the canonical folder and project identity locks through the
+catalog transaction. Exact retries compare the recorded runner, source and credential descriptor;
+a failed clone retries only when its required credential is available, preserving its attempt count.
+The initializing row and Durable Functions clone intent commit together. Prepared GitHub tokens stay
+in bounded private memory, activate after commit and disappear when a rejected transaction releases
+its preparation. Catalog records and events contain only the credential kind.
+
+An explicit standalone import may reuse the installation's GitHub CLI login through a trusted PATH,
+a restricted environment and bounded output and time. Explicit environment tokens take precedence,
+including blank or invalid values, and team mode never discovers the host CLI account. Background
+clone recovery uses only existing in-memory credentials or the environment token getter.
+
 Catalog owners publish complete Source mutation events in the transaction instead of formatting
 API deltas themselves. Failing transactional observers roll back the record, association, image
 bytes and durable intents together. Source no-ops preserve versions; settling an unchanged workspace

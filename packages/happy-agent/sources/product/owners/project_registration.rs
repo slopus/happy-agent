@@ -350,7 +350,7 @@ fn normalized(path: &Path) -> PathBuf {
     }
     result
 }
-fn increment_order_key(key: &str) -> Result<String> {
+pub(super) fn increment_order_key(key: &str) -> Result<String> {
     let mut digits = key.trim_start_matches('0').as_bytes().to_vec();
     if digits.is_empty() {
         digits.push(b'0');

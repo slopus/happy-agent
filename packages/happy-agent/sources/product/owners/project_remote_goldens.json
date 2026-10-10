@@ -1,0 +1,697 @@
+{
+    "cases": [
+        {
+            "kind": "remote",
+            "input": {
+                "name": "  remote-folder  ",
+                "projectId": "projectremotefixtureone",
+                "source": {
+                    "kind": "git",
+                    "url": "https://example.com/owner/repository.git"
+                }
+            },
+            "result": {
+                "id": "projectremotefixtureone",
+                "repositoryRef": "%ROOT%/projects/remote-folder",
+                "kind": "regular",
+                "storageKey": "remote-folder",
+                "name": "remote-folder",
+                "nameSource": "folder",
+                "status": "active",
+                "presence": "missing",
+                "initializationStatus": "initializing",
+                "initializationAttempt": 0,
+                "worktreeSupport": "unknown",
+                "remoteSource": {
+                    "kind": "git",
+                    "url": "https://example.com/owner/repository.git"
+                },
+                "gitAhead": 0,
+                "gitBehind": 0,
+                "gitDetached": false,
+                "orderKey": "00000000000000000001",
+                "version": 1
+            },
+            "events": [
+                {
+                    "type": "project_created",
+                    "project": {
+                        "id": "projectremotefixtureone",
+                        "repositoryRef": "%ROOT%/projects/remote-folder",
+                        "kind": "regular",
+                        "storageKey": "remote-folder",
+                        "name": "remote-folder",
+                        "nameSource": "folder",
+                        "status": "active",
+                        "presence": "missing",
+                        "initializationStatus": "initializing",
+                        "initializationAttempt": 0,
+                        "worktreeSupport": "unknown",
+                        "remoteSource": {
+                            "kind": "git",
+                            "url": "https://example.com/owner/repository.git"
+                        },
+                        "gitAhead": 0,
+                        "gitBehind": 0,
+                        "gitDetached": false,
+                        "orderKey": "00000000000000000001",
+                        "version": 1
+                    }
+                }
+            ]
+        },
+        {
+            "kind": "remote",
+            "input": {
+                "name": "  remote-folder  ",
+                "projectId": "projectremotefixtureone",
+                "source": {
+                    "kind": "git",
+                    "url": "https://example.com/owner/repository.git"
+                }
+            },
+            "result": {
+                "id": "projectremotefixtureone",
+                "repositoryRef": "%ROOT%/projects/remote-folder",
+                "kind": "regular",
+                "storageKey": "remote-folder",
+                "name": "remote-folder",
+                "nameSource": "folder",
+                "status": "active",
+                "presence": "missing",
+                "initializationStatus": "initializing",
+                "initializationAttempt": 0,
+                "worktreeSupport": "unknown",
+                "remoteSource": {
+                    "kind": "git",
+                    "url": "https://example.com/owner/repository.git"
+                },
+                "gitAhead": 0,
+                "gitBehind": 0,
+                "gitDetached": false,
+                "orderKey": "00000000000000000001",
+                "version": 1
+            },
+            "events": []
+        },
+        {
+            "kind": "failed",
+            "input": {
+                "projectId": "projectremotefixtureone",
+                "error": "A deterministic clone failure."
+            },
+            "result": {
+                "id": "projectremotefixtureone",
+                "repositoryRef": "%ROOT%/projects/remote-folder",
+                "kind": "regular",
+                "storageKey": "remote-folder",
+                "name": "remote-folder",
+                "nameSource": "folder",
+                "status": "active",
+                "presence": "missing",
+                "initializationStatus": "failed",
+                "initializationAttempt": 1,
+                "initializationError": "A deterministic clone failure.",
+                "worktreeSupport": "unknown",
+                "remoteSource": {
+                    "kind": "git",
+                    "url": "https://example.com/owner/repository.git"
+                },
+                "gitAhead": 0,
+                "gitBehind": 0,
+                "gitDetached": false,
+                "orderKey": "00000000000000000001",
+                "version": 2
+            },
+            "events": [
+                {
+                    "type": "project_state_changed",
+                    "reason": "initialization_failed",
+                    "project": {
+                        "id": "projectremotefixtureone",
+                        "repositoryRef": "%ROOT%/projects/remote-folder",
+                        "kind": "regular",
+                        "storageKey": "remote-folder",
+                        "name": "remote-folder",
+                        "nameSource": "folder",
+                        "status": "active",
+                        "presence": "missing",
+                        "initializationStatus": "failed",
+                        "initializationAttempt": 1,
+                        "initializationError": "A deterministic clone failure.",
+                        "worktreeSupport": "unknown",
+                        "remoteSource": {
+                            "kind": "git",
+                            "url": "https://example.com/owner/repository.git"
+                        },
+                        "gitAhead": 0,
+                        "gitBehind": 0,
+                        "gitDetached": false,
+                        "orderKey": "00000000000000000001",
+                        "version": 2
+                    },
+                    "previousProject": {
+                        "id": "projectremotefixtureone",
+                        "repositoryRef": "%ROOT%/projects/remote-folder",
+                        "kind": "regular",
+                        "storageKey": "remote-folder",
+                        "name": "remote-folder",
+                        "nameSource": "folder",
+                        "status": "active",
+                        "presence": "missing",
+                        "initializationStatus": "initializing",
+                        "initializationAttempt": 0,
+                        "worktreeSupport": "unknown",
+                        "remoteSource": {
+                            "kind": "git",
+                            "url": "https://example.com/owner/repository.git"
+                        },
+                        "gitAhead": 0,
+                        "gitBehind": 0,
+                        "gitDetached": false,
+                        "orderKey": "00000000000000000001",
+                        "version": 1
+                    }
+                }
+            ]
+        },
+        {
+            "kind": "remote",
+            "input": {
+                "name": "  remote-folder  ",
+                "projectId": "projectremotefixtureone",
+                "source": {
+                    "kind": "git",
+                    "url": "https://example.com/owner/repository.git"
+                }
+            },
+            "result": {
+                "id": "projectremotefixtureone",
+                "repositoryRef": "%ROOT%/projects/remote-folder",
+                "kind": "regular",
+                "storageKey": "remote-folder",
+                "name": "remote-folder",
+                "nameSource": "folder",
+                "status": "active",
+                "presence": "missing",
+                "initializationStatus": "initializing",
+                "initializationAttempt": 1,
+                "worktreeSupport": "unknown",
+                "remoteSource": {
+                    "kind": "git",
+                    "url": "https://example.com/owner/repository.git"
+                },
+                "gitAhead": 0,
+                "gitBehind": 0,
+                "gitDetached": false,
+                "orderKey": "00000000000000000001",
+                "version": 3
+            },
+            "events": [
+                {
+                    "type": "project_state_changed",
+                    "reason": "initialization_retried",
+                    "project": {
+                        "id": "projectremotefixtureone",
+                        "repositoryRef": "%ROOT%/projects/remote-folder",
+                        "kind": "regular",
+                        "storageKey": "remote-folder",
+                        "name": "remote-folder",
+                        "nameSource": "folder",
+                        "status": "active",
+                        "presence": "missing",
+                        "initializationStatus": "initializing",
+                        "initializationAttempt": 1,
+                        "worktreeSupport": "unknown",
+                        "remoteSource": {
+                            "kind": "git",
+                            "url": "https://example.com/owner/repository.git"
+                        },
+                        "gitAhead": 0,
+                        "gitBehind": 0,
+                        "gitDetached": false,
+                        "orderKey": "00000000000000000001",
+                        "version": 3
+                    },
+                    "previousProject": {
+                        "id": "projectremotefixtureone",
+                        "repositoryRef": "%ROOT%/projects/remote-folder",
+                        "kind": "regular",
+                        "storageKey": "remote-folder",
+                        "name": "remote-folder",
+                        "nameSource": "folder",
+                        "status": "active",
+                        "presence": "missing",
+                        "initializationStatus": "failed",
+                        "initializationAttempt": 1,
+                        "initializationError": "A deterministic clone failure.",
+                        "worktreeSupport": "unknown",
+                        "remoteSource": {
+                            "kind": "git",
+                            "url": "https://example.com/owner/repository.git"
+                        },
+                        "gitAhead": 0,
+                        "gitBehind": 0,
+                        "gitDetached": false,
+                        "orderKey": "00000000000000000001",
+                        "version": 2
+                    }
+                }
+            ]
+        },
+        {
+            "kind": "remote",
+            "input": {
+                "name": "different-folder",
+                "projectId": "projectremotefixtureone",
+                "source": {
+                    "kind": "git",
+                    "url": "https://example.com/owner/repository.git"
+                }
+            },
+            "error": {
+                "code": "project_id_conflict",
+                "message": "That project ID already names a different project."
+            }
+        },
+        {
+            "kind": "remote",
+            "input": {
+                "name": "  remote-folder  ",
+                "projectId": "projectremotefixtureone",
+                "source": {
+                    "kind": "git",
+                    "url": "https://example.com/different.git"
+                }
+            },
+            "error": {
+                "code": "project_id_conflict",
+                "message": "That project ID already names a different project."
+            }
+        },
+        {
+            "kind": "remote",
+            "input": {
+                "name": "  remote-folder  ",
+                "projectId": "projectremotefixturetwo",
+                "source": {
+                    "kind": "git",
+                    "url": "https://example.com/owner/repository.git"
+                }
+            },
+            "error": {
+                "code": "project_path_conflict",
+                "message": "That managed project folder already belongs to another project."
+            }
+        },
+        {
+            "kind": "remote",
+            "input": {
+                "name": "  remote-folder  ",
+                "projectId": "projectremotefixtureone",
+                "source": {
+                    "kind": "git",
+                    "url": "https://example.com/owner/repository.git"
+                },
+                "secret": {
+                    "kind": "github"
+                }
+            },
+            "error": {
+                "code": "unsupported_git_source",
+                "message": "GitHub credentials can only be used with a GitHub repository."
+            }
+        },
+        {
+            "kind": "remote",
+            "input": {
+                "name": "../unsafe",
+                "projectId": "projectremotefixtureone",
+                "source": {
+                    "kind": "git",
+                    "url": "https://example.com/owner/repository.git"
+                }
+            },
+            "error": {
+                "code": "invalid_request",
+                "message": "The managed project name must be one folder name."
+            }
+        },
+        {
+            "kind": "remote",
+            "input": {
+                "name": "  remote-folder  ",
+                "projectId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "source": {
+                    "kind": "git",
+                    "url": "https://example.com/owner/repository.git"
+                }
+            },
+            "error": {
+                "code": "invalid_request",
+                "message": "The project ID must be a cuid2 identity."
+            }
+        },
+        {
+            "kind": "remote",
+            "input": {
+                "name": "existing-folder",
+                "projectId": "projectremoteexistingfolder",
+                "source": {
+                    "kind": "git",
+                    "url": "https://example.com/owner/repository.git"
+                }
+            },
+            "error": {
+                "code": "project_path_conflict",
+                "message": "That managed project folder already exists."
+            }
+        },
+        {
+            "kind": "remote",
+            "input": {
+                "name": "github-folder",
+                "projectId": "projectremotegithubfixture",
+                "source": {
+                    "kind": "github",
+                    "repository": "fixture/repository"
+                },
+                "secret": {
+                    "kind": "github"
+                }
+            },
+            "result": {
+                "id": "projectremotegithubfixture",
+                "repositoryRef": "%ROOT%/projects/github-folder",
+                "kind": "regular",
+                "storageKey": "github-folder",
+                "name": "github-folder",
+                "nameSource": "folder",
+                "status": "active",
+                "presence": "missing",
+                "initializationStatus": "initializing",
+                "initializationAttempt": 0,
+                "worktreeSupport": "unknown",
+                "remoteSource": {
+                    "kind": "github",
+                    "repository": "fixture/repository"
+                },
+                "requiredSecretKind": "github",
+                "gitAhead": 0,
+                "gitBehind": 0,
+                "gitDetached": false,
+                "orderKey": "00000000000000000002",
+                "version": 1
+            },
+            "events": [
+                {
+                    "type": "project_created",
+                    "project": {
+                        "id": "projectremotegithubfixture",
+                        "repositoryRef": "%ROOT%/projects/github-folder",
+                        "kind": "regular",
+                        "storageKey": "github-folder",
+                        "name": "github-folder",
+                        "nameSource": "folder",
+                        "status": "active",
+                        "presence": "missing",
+                        "initializationStatus": "initializing",
+                        "initializationAttempt": 0,
+                        "worktreeSupport": "unknown",
+                        "remoteSource": {
+                            "kind": "github",
+                            "repository": "fixture/repository"
+                        },
+                        "requiredSecretKind": "github",
+                        "gitAhead": 0,
+                        "gitBehind": 0,
+                        "gitDetached": false,
+                        "orderKey": "00000000000000000002",
+                        "version": 1
+                    }
+                }
+            ]
+        },
+        {
+            "kind": "failed",
+            "input": {
+                "projectId": "projectremotegithubfixture",
+                "error": "GitHub credentials are unavailable."
+            },
+            "result": {
+                "id": "projectremotegithubfixture",
+                "repositoryRef": "%ROOT%/projects/github-folder",
+                "kind": "regular",
+                "storageKey": "github-folder",
+                "name": "github-folder",
+                "nameSource": "folder",
+                "status": "active",
+                "presence": "missing",
+                "initializationStatus": "failed",
+                "initializationAttempt": 1,
+                "initializationError": "GitHub credentials are unavailable.",
+                "worktreeSupport": "unknown",
+                "remoteSource": {
+                    "kind": "github",
+                    "repository": "fixture/repository"
+                },
+                "requiredSecretKind": "github",
+                "gitAhead": 0,
+                "gitBehind": 0,
+                "gitDetached": false,
+                "orderKey": "00000000000000000002",
+                "version": 2
+            },
+            "events": [
+                {
+                    "type": "project_state_changed",
+                    "reason": "initialization_failed",
+                    "project": {
+                        "id": "projectremotegithubfixture",
+                        "repositoryRef": "%ROOT%/projects/github-folder",
+                        "kind": "regular",
+                        "storageKey": "github-folder",
+                        "name": "github-folder",
+                        "nameSource": "folder",
+                        "status": "active",
+                        "presence": "missing",
+                        "initializationStatus": "failed",
+                        "initializationAttempt": 1,
+                        "initializationError": "GitHub credentials are unavailable.",
+                        "worktreeSupport": "unknown",
+                        "remoteSource": {
+                            "kind": "github",
+                            "repository": "fixture/repository"
+                        },
+                        "requiredSecretKind": "github",
+                        "gitAhead": 0,
+                        "gitBehind": 0,
+                        "gitDetached": false,
+                        "orderKey": "00000000000000000002",
+                        "version": 2
+                    },
+                    "previousProject": {
+                        "id": "projectremotegithubfixture",
+                        "repositoryRef": "%ROOT%/projects/github-folder",
+                        "kind": "regular",
+                        "storageKey": "github-folder",
+                        "name": "github-folder",
+                        "nameSource": "folder",
+                        "status": "active",
+                        "presence": "missing",
+                        "initializationStatus": "initializing",
+                        "initializationAttempt": 0,
+                        "worktreeSupport": "unknown",
+                        "remoteSource": {
+                            "kind": "github",
+                            "repository": "fixture/repository"
+                        },
+                        "requiredSecretKind": "github",
+                        "gitAhead": 0,
+                        "gitBehind": 0,
+                        "gitDetached": false,
+                        "orderKey": "00000000000000000002",
+                        "version": 1
+                    }
+                }
+            ]
+        },
+        {
+            "kind": "remote",
+            "input": {
+                "name": "github-folder",
+                "projectId": "projectremotegithubfixture",
+                "source": {
+                    "kind": "github",
+                    "repository": "fixture/repository"
+                },
+                "secret": {
+                    "kind": "github"
+                }
+            },
+            "result": {
+                "id": "projectremotegithubfixture",
+                "repositoryRef": "%ROOT%/projects/github-folder",
+                "kind": "regular",
+                "storageKey": "github-folder",
+                "name": "github-folder",
+                "nameSource": "folder",
+                "status": "active",
+                "presence": "missing",
+                "initializationStatus": "failed",
+                "initializationAttempt": 1,
+                "initializationError": "GitHub credentials are unavailable.",
+                "worktreeSupport": "unknown",
+                "remoteSource": {
+                    "kind": "github",
+                    "repository": "fixture/repository"
+                },
+                "requiredSecretKind": "github",
+                "gitAhead": 0,
+                "gitBehind": 0,
+                "gitDetached": false,
+                "orderKey": "00000000000000000002",
+                "version": 2
+            },
+            "events": []
+        },
+        {
+            "kind": "remote_credential",
+            "input": {
+                "name": "github-folder",
+                "projectId": "projectremotegithubfixture",
+                "source": {
+                    "kind": "github",
+                    "repository": "fixture/repository"
+                },
+                "secret": {
+                    "kind": "github"
+                }
+            },
+            "result": {
+                "id": "projectremotegithubfixture",
+                "repositoryRef": "%ROOT%/projects/github-folder",
+                "kind": "regular",
+                "storageKey": "github-folder",
+                "name": "github-folder",
+                "nameSource": "folder",
+                "status": "active",
+                "presence": "missing",
+                "initializationStatus": "initializing",
+                "initializationAttempt": 1,
+                "worktreeSupport": "unknown",
+                "remoteSource": {
+                    "kind": "github",
+                    "repository": "fixture/repository"
+                },
+                "requiredSecretKind": "github",
+                "gitAhead": 0,
+                "gitBehind": 0,
+                "gitDetached": false,
+                "orderKey": "00000000000000000002",
+                "version": 3
+            },
+            "events": [
+                {
+                    "type": "project_state_changed",
+                    "reason": "initialization_retried",
+                    "project": {
+                        "id": "projectremotegithubfixture",
+                        "repositoryRef": "%ROOT%/projects/github-folder",
+                        "kind": "regular",
+                        "storageKey": "github-folder",
+                        "name": "github-folder",
+                        "nameSource": "folder",
+                        "status": "active",
+                        "presence": "missing",
+                        "initializationStatus": "initializing",
+                        "initializationAttempt": 1,
+                        "worktreeSupport": "unknown",
+                        "remoteSource": {
+                            "kind": "github",
+                            "repository": "fixture/repository"
+                        },
+                        "requiredSecretKind": "github",
+                        "gitAhead": 0,
+                        "gitBehind": 0,
+                        "gitDetached": false,
+                        "orderKey": "00000000000000000002",
+                        "version": 3
+                    },
+                    "previousProject": {
+                        "id": "projectremotegithubfixture",
+                        "repositoryRef": "%ROOT%/projects/github-folder",
+                        "kind": "regular",
+                        "storageKey": "github-folder",
+                        "name": "github-folder",
+                        "nameSource": "folder",
+                        "status": "active",
+                        "presence": "missing",
+                        "initializationStatus": "failed",
+                        "initializationAttempt": 1,
+                        "initializationError": "GitHub credentials are unavailable.",
+                        "worktreeSupport": "unknown",
+                        "remoteSource": {
+                            "kind": "github",
+                            "repository": "fixture/repository"
+                        },
+                        "requiredSecretKind": "github",
+                        "gitAhead": 0,
+                        "gitBehind": 0,
+                        "gitDetached": false,
+                        "orderKey": "00000000000000000002",
+                        "version": 2
+                    }
+                }
+            ]
+        },
+        {
+            "kind": "remote",
+            "input": {
+                "name": "github-folder",
+                "projectId": "projectremotegithubfixture",
+                "source": {
+                    "kind": "github",
+                    "repository": "fixture/repository"
+                },
+                "secret": {
+                    "kind": "github"
+                }
+            },
+            "result": {
+                "id": "projectremotegithubfixture",
+                "repositoryRef": "%ROOT%/projects/github-folder",
+                "kind": "regular",
+                "storageKey": "github-folder",
+                "name": "github-folder",
+                "nameSource": "folder",
+                "status": "active",
+                "presence": "missing",
+                "initializationStatus": "initializing",
+                "initializationAttempt": 1,
+                "worktreeSupport": "unknown",
+                "remoteSource": {
+                    "kind": "github",
+                    "repository": "fixture/repository"
+                },
+                "requiredSecretKind": "github",
+                "gitAhead": 0,
+                "gitBehind": 0,
+                "gitDetached": false,
+                "orderKey": "00000000000000000002",
+                "version": 3
+            },
+            "events": []
+        }
+    ],
+    "nameCases": [
+        {
+            "name": "🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉",
+            "result": "🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉"
+        },
+        {
+            "name": "🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉",
+            "error": "The name cannot be longer than 100 characters."
+        }
+    ]
+}

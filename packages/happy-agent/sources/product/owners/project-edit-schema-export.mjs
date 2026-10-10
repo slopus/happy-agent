@@ -7,7 +7,10 @@ import {
     projectSetAvatarInputSchema,
 } from "../../../../happy-agent-modules/sources/projects/Project.ts";
 import { projectSettingsUpdateInputSchema } from "../../../../happy-agent-modules/sources/projects/ProjectSettings.ts";
-import { projectRegisterBodySchema } from "../../../../happy-agent-modules/sources/api/ApiSchemas.ts";
+import {
+    projectRegisterBodySchema,
+    projectCloneBodySchema,
+} from "../../../../happy-agent-modules/sources/api/ApiSchemas.ts";
 
 export const projectEditSchemas = {
     ownerProjectEvent: projectEventSchema,
@@ -21,4 +24,9 @@ export const projectEditSchemas = {
     ),
     ownerProjectSettingsUpdate: projectSettingsUpdateInputSchema,
     ownerProjectRegistration: Type.Omit(projectRegisterBodySchema, ["mutationId"]),
+    ownerProjectRemoteRequest: Type.Omit(projectCloneBodySchema, ["mutationId"]),
+    ownerProjectManagedFolderName: Type.String({
+        minLength: 1,
+        pattern: "^(?!\\.{1,2}$)(?!\\.rig$)[^/\\\\]+$",
+    }),
 };

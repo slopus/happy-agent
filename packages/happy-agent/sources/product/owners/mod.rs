@@ -1,15 +1,18 @@
+mod abort;
+mod git;
 mod global_skills;
 mod node;
 mod persistence;
 mod runners;
-mod git;
-mod abort;
 
+pub use abort::AbortModule;
+pub use git::{GitModule, PreparedGitCredential};
 pub use global_skills::{GlobalSkillsError, GlobalSkillsModule};
 pub use node::NodeModule;
-pub use runners::{RunnersModule, RunnerCompute, RunnerProcess, RunnerTransport, RunnerSnapshotSubscription, RunnerUnavailableError, LocalExecutionDisabledError, RunnerServer, RunOptions, RunResult};
-pub use git::GitModule;
-pub use abort::AbortModule;
+pub use runners::{
+    LocalExecutionDisabledError, RunOptions, RunResult, RunnerCompute, RunnerProcess, RunnerServer,
+    RunnerSnapshotSubscription, RunnerTransport, RunnerUnavailableError, RunnersModule,
+};
 #[cfg(test)]
 pub(crate) use tests::Fixture;
 
@@ -54,16 +57,27 @@ mod tests {
                 workflow_worker: None,
             }
         }
-        pub async fn workflow(worker:std::path::PathBuf,endpoint:&str)->Self{
-            let directory=tempfile::tempdir().expect("isolated workflow installation");
-            let initial=ConfigModule::isolated(&directory.path().join(".happy")).unwrap();
+        pub async fn workflow(worker: std::path::PathBuf, endpoint: &str) -> Self {
+            let directory = tempfile::tempdir().expect("isolated workflow installation");
+            let initial = ConfigModule::isolated(&directory.path().join(".happy")).unwrap();
             std::fs::create_dir_all(&initial.paths.configuration).unwrap();
             std::fs::write(initial.paths.configuration.join("happy.toml"),format!("[features]\nworkflows = true\n[providers.fixture]\ntype = \"codex\"\nenabled = true\napi_key = \"fixture-only-token\"\ncredential_isolation = true\nbase_url = \"{endpoint}\"\ntransport = \"sse\"\n")).unwrap();
-            let mut config=ConfigModule::isolated(&directory.path().join(".happy")).unwrap();
+            let mut config = ConfigModule::isolated(&directory.path().join(".happy")).unwrap();
             config.set_workflow_test_executable(worker.clone());
-            let config=Arc::new(config);
-            let(runtime,lifecycle,durable,events,node,skills)=Self::open(config.clone()).await;
-            Self{directory,config,runtime,lifecycle,durable,events,node,skills,workflow_worker:Some(worker)}
+            let config = Arc::new(config);
+            let (runtime, lifecycle, durable, events, node, skills) =
+                Self::open(config.clone()).await;
+            Self {
+                directory,
+                config,
+                runtime,
+                lifecycle,
+                durable,
+                events,
+                node,
+                skills,
+                workflow_worker: Some(worker),
+            }
         }
         async fn open(
             config: Arc<ConfigModule>,
@@ -110,9 +124,12 @@ mod tests {
         }
         pub async fn restart(&mut self) {
             self.close().await;
-            let mut config=ConfigModule::isolated(&self.directory.path().join(".happy")).expect("reload configuration");
-            if let Some(worker)=&self.workflow_worker{config.set_workflow_test_executable(worker.clone());}
-            self.config=Arc::new(config);
+            let mut config = ConfigModule::isolated(&self.directory.path().join(".happy"))
+                .expect("reload configuration");
+            if let Some(worker) = &self.workflow_worker {
+                config.set_workflow_test_executable(worker.clone());
+            }
+            self.config = Arc::new(config);
             (
                 self.runtime,
                 self.lifecycle,
