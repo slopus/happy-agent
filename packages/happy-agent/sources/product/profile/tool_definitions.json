@@ -1,0 +1,12 @@
+[
+    {
+        "name": "get_local_profile",
+        "description": "Read this standalone installation's current profile name and email. Copy these values into the remote machine's [profile] table in happy.toml before startup to avoid manual profile creation. Returns null for missing fields; never invent missing values. Only an active admin bot running as a root agent may use this tool. No API request or credentials are involved.",
+        "parameters": {
+            "additionalProperties": false,
+            "type": "object",
+            "properties": {}
+        },
+        "defer": true
+    }
+]

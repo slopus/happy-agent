@@ -3,6 +3,7 @@ use std::path::{Component, Path, PathBuf};
 
 /// One operation's immutable filesystem boundary. The owning Config module
 /// supplies the workspace and home; tools never derive a second workspace.
+#[derive(Clone)]
 pub(super) struct Boundary {
     pub root: PathBuf,
     pub home: PathBuf,

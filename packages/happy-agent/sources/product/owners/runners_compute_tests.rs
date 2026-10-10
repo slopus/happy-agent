@@ -1,0 +1,308 @@
+//! Regressions at the actual Source-framed runner transport boundary.
+use super::*;
+use tokio::sync::broadcast;
+
+struct Fixture {
+    _directory: tempfile::TempDir,
+    runners: Arc<RunnersModule>,
+    runtime: Arc<RuntimeModule>,
+    lifecycle: Arc<LifecycleModule>,
+}
+impl Fixture {
+    async fn new() -> Self {
+        let directory = tempfile::tempdir().unwrap();
+        let initial = ConfigModule::isolated(&directory.path().join(".happy")).unwrap();
+        std::fs::create_dir_all(&initial.paths.configuration).unwrap();
+        std::fs::write(
+            initial.paths.configuration.join("happy.toml"),
+            "[runners.fixture]\nname = \"Fixture runner\"\ntoken = \"0123456789012345678901234567890123456789012\"\n",
+        )
+        .unwrap();
+        let config = Arc::new(ConfigModule::isolated(&directory.path().join(".happy")).unwrap());
+        let runtime = Arc::new(RuntimeModule::new(config.clone()));
+        runtime.load().await.unwrap();
+        let lifecycle = Arc::new(LifecycleModule::new(config.clone()).unwrap());
+        let runners = RunnersModule::new(config, runtime.clone(), lifecycle.clone()).unwrap();
+        runners.load().await.unwrap();
+        Self {
+            _directory: directory,
+            runners,
+            runtime,
+            lifecycle,
+        }
+    }
+    async fn close(self) {
+        self.runners.close().await;
+        self.lifecycle.shutdown.cancel();
+        self.runtime.close().await.unwrap();
+    }
+    async fn compute(&self, peer: &mut Peer) -> Arc<RunnerCompute> {
+        let owner = self.runners.clone();
+        let call = tokio::spawn(async move {
+            owner.agent_compute("fixture", "fixtureagent", &json!({"modules":{"compute":{"runnerId":"fixture","cwd":"/runner-only-workspace"}}}), &CancellationToken::new()).await
+        });
+        let request = peer.request().await;
+        assert_eq!(request["method"], "compute.create");
+        peer.answer(&request, created(false)).await;
+        call.await.unwrap().unwrap()
+    }
+}
+struct Peer {
+    owner: Arc<RunnersModule>,
+    incoming: mpsc::Sender<Vec<u8>>,
+    outgoing: mpsc::Receiver<Vec<u8>>,
+    accepted: tokio::task::JoinHandle<Result<()>>,
+}
+impl Peer {
+    async fn connect(owner: Arc<RunnersModule>, epoch: &str, retained: &[&str]) -> Self {
+        let (incoming, receiver) = mpsc::channel(16);
+        let (sender, outgoing) = mpsc::channel(16);
+        let accepted_owner = owner.clone();
+        let accepted = tokio::spawn(async move {
+            accepted_owner
+                .accept(
+                    "fixture".into(),
+                    RunnerTransport {
+                        incoming: receiver,
+                        outgoing: sender,
+                    },
+                )
+                .await
+        });
+        let mut peer = Self {
+            owner,
+            incoming,
+            outgoing,
+            accepted,
+        };
+        peer.send(json!({"type":"hello","protocol":{"min":1,"max":1},"runner":{"version":"1","platform":"linux","arch":"x64","hostname":"fixture","home":"/runner-home"}})).await;
+        assert_eq!(peer.next().await["type"], "welcome");
+        peer.send(json!({"type":"ready","epoch":epoch,"computes":retained,"streams":[]}))
+            .await;
+        peer
+    }
+    async fn send(&self, header: Value) {
+        self.owner.send(&self.incoming, header, &[]).await.unwrap();
+    }
+    async fn next(&mut self) -> Value {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let (header, _) = self.owner.receive(&mut self.outgoing).await.unwrap();
+                if header["type"] == "ping" {
+                    self.send(json!({"type":"pong","nonce":header["nonce"]}))
+                        .await;
+                } else {
+                    return header;
+                }
+            }
+        })
+        .await
+        .expect("the runner must answer at the observable transport boundary")
+    }
+    async fn request(&mut self) -> Value {
+        loop {
+            let header = self.next().await;
+            if header["type"] == "cancel" {
+                continue;
+            }
+            assert_eq!(header["type"], "request", "{header}");
+            return header;
+        }
+    }
+    async fn answer(&self, request: &Value, result: Value) {
+        self.send(json!({"type":"response","id":request["id"],"result":result}))
+            .await;
+    }
+    async fn reject(&self, request: &Value, code: &str) {
+        self.send(json!({"type":"response","id":request["id"],"error":{"name":"Error","message":"The runner could not apply this operation.","code":code}})).await;
+    }
+    async fn disconnect(self) {
+        self.send(json!({"type":"goodbye","reason":"The fixture connection ended."}))
+            .await;
+        assert!(self.accepted.await.unwrap().is_err());
+    }
+}
+fn created(retained: bool) -> Value {
+    json!({"cwd":"/runner-only-workspace","home":"/runner-home","kind":"host","supportsSessionInput":true,"retained":retained})
+}
+fn sessions(command: &str) -> Value {
+    json!({"computeId":"agent-fixtureagent","sessions":[{"command":command,"cwd":"/runner-only-workspace","sessionId":0,"status":"running"}]})
+}
+async fn start(compute: &Arc<RunnerCompute>, peer: &mut Peer) -> RunnerProcess {
+    let owner = compute.clone();
+    let call = tokio::spawn(async move {
+        owner.start(json!({"command":"old command","permissions":{"mode":"full_access","network":{"egress":true,"localBinding":true}}}), &CancellationToken::new()).await
+    });
+    let request = peer.request().await;
+    assert_eq!(request["method"], "shell.startSession");
+    peer.answer(&request, json!({"sessionId":0})).await;
+    call.await.unwrap().unwrap()
+}
+
+#[tokio::test]
+async fn runner_reconnect_deduplicates_reports_within_its_epoch() {
+    let fixture = Fixture::new().await;
+    let mut peer = Peer::connect(fixture.runners.clone(), "epoch-a", &[]).await;
+    let compute = fixture.compute(&mut peer).await;
+    let mut reports = compute.on_event();
+    peer.send(
+        json!({"type":"event","seq":1,"event":"shell.sessions","params":sessions("original")}),
+    )
+    .await;
+    assert_eq!(peer.next().await, json!({"type":"ack","seq":1}));
+    assert_eq!(
+        reports.recv().await.unwrap()["sessions"][0]["command"],
+        "original"
+    );
+    peer.disconnect().await;
+    let mut peer = Peer::connect(fixture.runners.clone(), "epoch-a", &["agent-fixtureagent"]).await;
+    peer.send(
+        json!({"type":"event","seq":1,"event":"shell.sessions","params":sessions("duplicate")}),
+    )
+    .await;
+    assert_eq!(peer.next().await, json!({"type":"ack","seq":1}));
+    assert!(
+        matches!(
+            reports.try_recv(),
+            Err(broadcast::error::TryRecvError::Empty)
+        ),
+        "the same report must not be applied twice after reconnect"
+    );
+    peer.send(json!({"type":"event","seq":2,"event":"shell.sessions","params":sessions("later")}))
+        .await;
+    assert_eq!(peer.next().await, json!({"type":"ack","seq":2}));
+    assert_eq!(
+        reports.recv().await.unwrap()["sessions"][0]["command"],
+        "later"
+    );
+    peer.disconnect().await;
+    let mut peer = Peer::connect(fixture.runners.clone(), "epoch-b", &[]).await;
+    peer.send(
+        json!({"type":"event","seq":1,"event":"shell.sessions","params":sessions("new epoch")}),
+    )
+    .await;
+    assert_eq!(peer.next().await, json!({"type":"ack","seq":1}));
+    assert_eq!(compute.active()[0]["command"], "new epoch");
+    peer.disconnect().await;
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn a_runner_filesystem_remains_owned_after_its_reader_returns() {
+    let fixture = Fixture::new().await;
+    let mut peer = Peer::connect(fixture.runners.clone(), "epoch-a", &[]).await;
+    let compute = fixture.compute(&mut peer).await;
+    drop(compute);
+    let owner = fixture.runners.clone();
+    let mut call = tokio::spawn(async move {
+        owner.agent_compute("fixture","fixtureagent",&json!({"modules":{"compute":{"runnerId":"fixture","cwd":"/runner-only-workspace"}}}),&CancellationToken::new()).await
+    });
+    let recreated = tokio::select! {
+        result=&mut call=>{result.unwrap().unwrap();false},
+        request=peer.request()=>{assert_eq!(request["method"],"compute.create");peer.answer(&request,created(true)).await;call.await.unwrap().unwrap();true}
+    };
+    assert!(
+        !recreated,
+        "a completed filesystem reader must not abandon its live compute"
+    );
+    peer.disconnect().await;
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn lost_runner_compute_never_replays_an_old_session_handle() {
+    let fixture = Fixture::new().await;
+    let mut peer = Peer::connect(fixture.runners.clone(), "epoch-a", &[]).await;
+    let compute = fixture.compute(&mut peer).await;
+    let process = start(&compute, &mut peer).await;
+    peer.disconnect().await;
+    let mut peer = Peer::connect(fixture.runners.clone(), "epoch-a", &["agent-fixtureagent"]).await;
+    let mut call =
+        tokio::spawn(async move { process.read(0, false, &CancellationToken::new()).await });
+    let request = peer.request().await;
+    assert_eq!(request["method"], "shell.readSession");
+    peer.reject(&request, "ERUNNERCOMPUTEUNKNOWN").await;
+    let result = tokio::select! {
+        answer = &mut call => answer.unwrap(),
+        request = peer.request() => {
+            assert_eq!(request["method"], "compute.create");
+            peer.answer(&request, created(false)).await;
+            tokio::select! {
+                answer = &mut call => answer.unwrap(),
+                request = peer.request() => {
+                    assert_eq!(request["method"], "shell.readSession");
+                    peer.answer(&request, json!({"snapshot":{"command":"a different command","cwd":"/runner-only-workspace","exitCode":null,"sessionId":0,"status":"running","stderr":"","stderrDelta":"","stdout":"new command output","stdoutDelta":"new command output","timedOut":false}})).await;
+                    call.await.unwrap()
+                }
+            }
+        }
+    };
+    assert!(
+        result.unwrap().is_none(),
+        "a lost session must never read a reused runner ID"
+    );
+    peer.disconnect().await;
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn runner_disposal_keeps_ownership_until_the_peer_confirms_it() {
+    let fixture = Fixture::new().await;
+    let mut peer = Peer::connect(fixture.runners.clone(), "epoch-a", &[]).await;
+    let compute = fixture.compute(&mut peer).await;
+    let owner = compute.clone();
+    let call = tokio::spawn(async move { owner.dispose(&CancellationToken::new()).await });
+    let request = peer.request().await;
+    assert_eq!(request["method"], "compute.dispose");
+    peer.reject(&request, "EBUSY").await;
+    assert!(call.await.unwrap().is_err());
+    let owner = compute.clone();
+    let mut call = tokio::spawn(async move { owner.dispose(&CancellationToken::new()).await });
+    tokio::select! {
+        answer = &mut call => panic!("unconfirmed disposal must remain owned and be retried: {answer:?}"),
+        request = peer.request() => {
+            assert_eq!(request["method"], "compute.dispose");
+            peer.answer(&request, json!({})).await;
+        }
+    }
+    call.await.unwrap().unwrap();
+    compute.dispose(&CancellationToken::new()).await.unwrap();
+    peer.disconnect().await;
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn expired_runner_lease_finishes_owned_sessions_without_reconnection() {
+    let fixture = Fixture::new().await;
+    let mut peer = Peer::connect(fixture.runners.clone(), "epoch-a", &[]).await;
+    let compute = fixture.compute(&mut peer).await;
+    let process = start(&compute, &mut peer).await;
+    let mut reports = compute.on_event();
+    peer.send(
+        json!({"type":"event","seq":1,"event":"shell.sessions","params":sessions("old command")}),
+    )
+    .await;
+    assert_eq!(peer.next().await, json!({"type":"ack","seq":1}));
+    assert_eq!(reports.recv().await.unwrap()["type"], "sessions");
+    peer.disconnect().await;
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(62)).await;
+    tokio::task::yield_now().await;
+    assert!(
+        compute.active().is_empty(),
+        "lease expiry must stop reporting runner work as live"
+    );
+    assert_eq!(
+        reports.try_recv().unwrap()["exit"]["sessionId"],
+        process.id()
+    );
+    assert!(
+        process
+            .read(0, false, &CancellationToken::new())
+            .await
+            .unwrap()
+            .is_none()
+    );
+    tokio::time::resume();
+    fixture.close().await;
+}

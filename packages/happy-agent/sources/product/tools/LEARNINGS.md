@@ -66,6 +66,9 @@ commit. Caller rollback preserves the old knowledge. A bounded staging slot is
 reserved before any mutation; cancellation cannot resurrect a slot already
 consumed by a terminal result. An atomic native write finishes under its owned
 execution even when its caller has stopped waiting.
+Knowledge retains the normalized written path, including a symlink alias,
+while mutations use the checked canonical target. Canonical-only patch stamps
+previously let a later edit through the alias overwrite an external change.
 
 ## Files use the Config-owned boundary
 

@@ -1,0 +1,123 @@
+{
+    "validations": [
+        {
+            "schema": "ownerProfileUpdate",
+            "value": {
+                "name": "Ada Lovelace",
+                "email": "ada@example.test"
+            },
+            "valid": true
+        },
+        {
+            "schema": "ownerProfileUpdate",
+            "value": {
+                "name": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀"
+            },
+            "valid": true
+        },
+        {
+            "schema": "ownerProfileUpdate",
+            "value": {
+                "name": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀"
+            },
+            "valid": false
+        },
+        {
+            "schema": "ownerProfileUpdate",
+            "value": {
+                "name": "Misleading‮name"
+            },
+            "valid": false
+        },
+        {
+            "schema": "ownerProfileUpdate",
+            "value": {
+                "email": "missing-at.example.test"
+            },
+            "valid": false
+        },
+        {
+            "schema": "ownerProfileUpdate",
+            "value": {},
+            "valid": false
+        },
+        {
+            "schema": "ownerProfileUpdate",
+            "value": {
+                "name": null,
+                "email": null
+            },
+            "valid": true
+        }
+    ],
+    "versions": [
+        {
+            "previous": "00000000-03e8-7000-8000-000000000000",
+            "now": 1000,
+            "result": "00000000-03e8-7000-8000-000000000001"
+        },
+        {
+            "previous": "00000000-03e8-7000-8000-000000000000",
+            "now": 999,
+            "result": "00000000-03e8-7000-8000-000000000001"
+        },
+        {
+            "previous": "00000000-03e8-7fff-bfff-ffffffffffff",
+            "now": 999,
+            "result": "00000000-03e9-7000-8000-000000000000"
+        }
+    ],
+    "projections": [
+        {
+            "profile": {
+                "createdAt": 1000,
+                "email": "ada@example.test",
+                "id": "profilefixture",
+                "name": "Ada Lovelace",
+                "parentInstanceId": "fixture-installation",
+                "photo": null,
+                "updatedAt": 1000,
+                "version": "00000000-03e8-7000-8000-000000000000"
+            },
+            "result": {
+                "userId": null,
+                "name": "Ada Lovelace",
+                "email": "ada@example.test",
+                "photo": null,
+                "version": "00000000-03e8-7000-8000-000000000000",
+                "updatedAt": 1000
+            }
+        },
+        {
+            "profile": null,
+            "result": {
+                "userId": null,
+                "name": null,
+                "email": null,
+                "photo": null,
+                "version": "00000000-0000-7000-8000-00000020eab6",
+                "updatedAt": 0
+            }
+        }
+    ],
+    "thumbhashes": [
+        {
+            "width": 1,
+            "height": 1,
+            "rgba": [255, 0, 0, 255],
+            "result": "1fsrB38I9wiIh4hwj3CI+AiIgIAICIgA"
+        },
+        {
+            "width": 2,
+            "height": 1,
+            "rgba": [255, 0, 0, 255, 0, 255, 0, 128],
+            "result": "1auqA727eAiIiIB4iPCIKIkGiIhgePg="
+        },
+        {
+            "width": 1,
+            "height": 1,
+            "rgba": [0, 0, 0, 0],
+            "result": "AAiCBQAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+        }
+    ]
+}

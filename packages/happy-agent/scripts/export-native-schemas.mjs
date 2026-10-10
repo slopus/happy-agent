@@ -125,7 +125,9 @@ import {
     skillFoldersSchemas,
     skillFoldersTools,
 } from "../sources/product/skill_folders/schema-export.mjs";
+import { skillsSchemas, skillsTools } from "../sources/product/skills/schema-export.mjs";
 import { titleSchemas } from "../sources/product/titles/schema-export.mjs";
+import { profileSchemas, profileTools } from "../sources/product/profile/schema-export.mjs";
 import { workspaceNamingSchemas } from "../sources/product/owners/workspace-schema-export.mjs";
 import { LIVE_CONTROLLER_TOOLS } from "../../happy-agent-modules/sources/live/impl/runLiveController.ts";
 import {
@@ -330,6 +332,8 @@ for (const [name, tools] of [
     ["goal", goalTools],
     ["workflows", workflowsTools],
     ["skill_folders", skillFoldersTools],
+    ["skills", skillsTools],
+    ["profile", profileTools],
 ]) {
     writeFileSync(
         new URL(`../sources/product/${name}/tool_definitions.json`, import.meta.url),
@@ -545,6 +549,8 @@ const schemas = {
     ...goalSchemas,
     ...workflowsSchemas,
     ...skillFoldersSchemas,
+    ...skillsSchemas,
+    ...profileSchemas,
     ...titleSchemas,
     ...workspaceNamingSchemas,
     ownerLiveSession: liveSessionSchema,

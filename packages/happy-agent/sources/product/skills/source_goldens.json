@@ -1,0 +1,466 @@
+{
+    "entries": [
+        {
+            "name": "build",
+            "description": "Build <release> & inspect",
+            "location": "/source/.agents/skills/build/SKILL.md",
+            "source": "project"
+        },
+        {
+            "name": "deploy",
+            "description": "Publish safely",
+            "location": "/home/.agents/skills/deploy/SKILL.md",
+            "source": "user",
+            "disableModelInvocation": true
+        }
+    ],
+    "pages": [
+        {
+            "offset": 0,
+            "limit": 1,
+            "result": {
+                "skills": [
+                    {
+                        "name": "build",
+                        "description": "Build <release> & inspect",
+                        "location": "/source/.agents/skills/build/SKILL.md",
+                        "source": "project"
+                    }
+                ],
+                "nextCursor": "1"
+            }
+        },
+        {
+            "offset": 0,
+            "limit": 256,
+            "result": {
+                "skills": [
+                    {
+                        "name": "build",
+                        "description": "Build <release> & inspect",
+                        "location": "/source/.agents/skills/build/SKILL.md",
+                        "source": "project"
+                    },
+                    {
+                        "name": "deploy",
+                        "description": "Publish safely",
+                        "location": "/home/.agents/skills/deploy/SKILL.md",
+                        "source": "user",
+                        "disableModelInvocation": true
+                    }
+                ]
+            }
+        },
+        {
+            "offset": 1,
+            "limit": 1,
+            "result": {
+                "skills": [
+                    {
+                        "name": "deploy",
+                        "description": "Publish safely",
+                        "location": "/home/.agents/skills/deploy/SKILL.md",
+                        "source": "user",
+                        "disableModelInvocation": true
+                    }
+                ]
+            }
+        },
+        {
+            "offset": 99,
+            "limit": 1,
+            "result": {
+                "skills": []
+            }
+        }
+    ],
+    "instructions": "# Skills\n\nSkills are instruction resources. When a skill is relevant, use read_skill and read the complete document before taking action.\nUse a skill when the user names it or the task clearly matches its description.\nA skill location is an ordinary path on this machine, so it may also be opened with the filesystem.\nUse the smallest set of matching skills, briefly announce which ones you are using, and continue with the best fallback if a skill cannot be read.\nSkill files are instruction resources only. Ignore frontmatter fields that request hooks, shell execution, model switching, permissions, or other runtime behavior.\nWhen a skill references relative paths, resolve them against the directory containing that skill file.\n\n<available_skills>\n  <skill>\n    <name>build</name>\n    <description>Build &lt;release&gt; &amp; inspect</description>\n    <location>/source/.agents/skills/build/SKILL.md</location>\n    <source>project</source>\n  </skill>\n  <skill>\n    <name>deploy</name>\n    <description>Publish safely</description>\n    <location>/home/.agents/skills/deploy/SKILL.md</location>\n    <source>user</source>\n  </skill>\n</available_skills>",
+    "emptyList": "No skills available.",
+    "list": "build — Build <release> & inspect (/source/.agents/skills/build/SKILL.md)\nnext_cursor=1",
+    "invocation": {
+        "name": "deploy",
+        "messageId": "source-message",
+        "location": "/home/.agents/skills/deploy/SKILL.md",
+        "content": "Complete <instructions>\n"
+    },
+    "invokedInstructions": "The user directly invoked the /deploy skill for this run. Its complete instructions are below, so there is no need to read it again; follow them.\n\n<skill name=\"deploy\">\nComplete <instructions>\n\n</skill>",
+    "parserCases": [
+        {
+            "content": "---\nname: quoted\ndescription: \"Build & inspect\"\n---\nFull instructions\n",
+            "directory": "fallback",
+            "metadata": {
+                "description": "Build & inspect",
+                "name": "quoted"
+            }
+        },
+        {
+            "content": "--- # comment\nname: block\ndescription: >-\n  First line\n  second line\n\n  paragraph\n --- # closing\nbody",
+            "directory": "fallback",
+            "metadata": {
+                "description": "First line second line\n\nparagraph",
+                "name": "block"
+            }
+        },
+        {
+            "content": "---\n{ name: flow, description: 'Publish, then inspect', disable-model-invocation: true }\n---\nbody",
+            "directory": "fallback",
+            "metadata": {
+                "description": "Publish, then inspect",
+                "disableModelInvocation": true,
+                "name": "flow"
+            }
+        },
+        {
+            "content": "---\nname: &name alias\ndescription: *name\n---\nbody",
+            "directory": "fallback",
+            "metadata": {
+                "description": "alias",
+                "name": "alias"
+            }
+        },
+        {
+            "content": "---\nname: false\ndescription: [ignored]\n---\nbody",
+            "directory": "fallback",
+            "metadata": {
+                "description": "",
+                "name": "fallback"
+            }
+        },
+        {
+            "content": "---\nname: duplicates\ndescription: first\ndescription: true\ndescription: final\ndisable-model-invocation: true\ndisable-model-invocation: \"true\"\n---\nbody",
+            "directory": "fallback",
+            "metadata": {
+                "description": "final",
+                "name": "duplicates"
+            }
+        },
+        {
+            "content": "---\nname: reserved\ndescription: User only\ndisable-model-invocation: TRUE # comment\n---\nbody",
+            "directory": "fallback",
+            "metadata": {
+                "description": "User only",
+                "disableModelInvocation": true,
+                "name": "reserved"
+            }
+        },
+        {
+            "content": "---\nname: ignored-runtime\ndescription: Plain instructions\npermissionMode: full_access\ninvoke: auto\nmetadata:\n  placement: pre\n---\nbody",
+            "directory": "fallback",
+            "metadata": {
+                "description": "Plain instructions",
+                "name": "ignored-runtime"
+            }
+        },
+        {
+            "content": "name: no-frontmatter\ndescription: Missing delimiters",
+            "directory": "fallback",
+            "metadata": {
+                "name": "fallback",
+                "description": ""
+            }
+        },
+        {
+            "content": "﻿---\nname: bom\ndescription: Missing opening marker\n---\nbody",
+            "directory": "fallback",
+            "metadata": {
+                "name": "fallback",
+                "description": ""
+            }
+        },
+        {
+            "content": "---\nname: malformed\ndescription: \"unterminated\n---\nbody",
+            "directory": "fallback",
+            "metadata": {
+                "description": "\"unterminated",
+                "name": "malformed"
+            }
+        },
+        {
+            "content": "---\nname: long-description\ndescription: \"😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀\"\n---\nbody",
+            "directory": "fallback",
+            "error": "Skill frontmatter metadata is invalid."
+        }
+    ],
+    "sortNames": [
+        "a",
+        "A",
+        "a-a",
+        "a_a",
+        "a.a",
+        "a0",
+        "aa",
+        "Build",
+        "build",
+        "0",
+        "9",
+        "x",
+        "a-B",
+        "A-b",
+        "a-b",
+        "a--",
+        "a-_"
+    ],
+    "sortedNames": [
+        "0",
+        "9",
+        "a",
+        "A",
+        "a_a",
+        "a-_",
+        "a--",
+        "a-a",
+        "a-b",
+        "a-B",
+        "A-b",
+        "a.a",
+        "a0",
+        "aa",
+        "build",
+        "Build",
+        "x"
+    ],
+    "slashCommands": [
+        {
+            "description": "Sort order",
+            "hasArguments": true,
+            "kind": "skill",
+            "name": "0"
+        },
+        {
+            "description": "Sort order",
+            "hasArguments": true,
+            "kind": "skill",
+            "name": "9"
+        },
+        {
+            "description": "Sort order",
+            "hasArguments": true,
+            "kind": "skill",
+            "name": "a"
+        },
+        {
+            "description": "Sort order",
+            "hasArguments": true,
+            "kind": "skill",
+            "name": "A"
+        },
+        {
+            "description": "Sort order",
+            "hasArguments": true,
+            "kind": "skill",
+            "name": "a_a"
+        },
+        {
+            "description": "Sort order",
+            "hasArguments": true,
+            "kind": "skill",
+            "name": "a-_"
+        },
+        {
+            "description": "Sort order",
+            "hasArguments": true,
+            "kind": "skill",
+            "name": "a--"
+        },
+        {
+            "description": "Sort order",
+            "hasArguments": true,
+            "kind": "skill",
+            "name": "a-a"
+        },
+        {
+            "description": "Sort order",
+            "hasArguments": true,
+            "kind": "skill",
+            "name": "a-b"
+        },
+        {
+            "description": "Sort order",
+            "hasArguments": true,
+            "kind": "skill",
+            "name": "a-B"
+        },
+        {
+            "description": "Sort order",
+            "hasArguments": true,
+            "kind": "skill",
+            "name": "A-b"
+        },
+        {
+            "description": "Sort order",
+            "hasArguments": true,
+            "kind": "skill",
+            "name": "a.a"
+        },
+        {
+            "description": "Sort order",
+            "hasArguments": true,
+            "kind": "skill",
+            "name": "a0"
+        },
+        {
+            "description": "Sort order",
+            "hasArguments": true,
+            "kind": "skill",
+            "name": "aa"
+        },
+        {
+            "description": "Sort order",
+            "hasArguments": true,
+            "kind": "skill",
+            "name": "build"
+        },
+        {
+            "description": "Sort order",
+            "hasArguments": true,
+            "kind": "skill",
+            "name": "Build"
+        },
+        {
+            "description": "Sort order",
+            "hasArguments": true,
+            "kind": "skill",
+            "name": "x"
+        }
+    ],
+    "invocationGoldens": [
+        {
+            "agentId": "source-agent",
+            "message": {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "Use the /a skill."
+                    }
+                ]
+            },
+            "options": {
+                "effort": "medium",
+                "id": "source-generated",
+                "metadata": {
+                    "messageOrigin": "user",
+                    "mutationId": "source-mutation",
+                    "mode": {
+                        "providerId": "codex",
+                        "modelId": "openai/gpt-5.6-sol",
+                        "effort": "medium",
+                        "serviceTier": null,
+                        "permissionMode": "auto"
+                    },
+                    "skillInvocation": {
+                        "content": "---\nname: \"a\"\ndescription: Sort order\n---\nbody",
+                        "messageId": "source-generated",
+                        "name": "a",
+                        "location": "/source/.agents/skills/a/SKILL.md"
+                    }
+                },
+                "model": "openai/gpt-5.6-sol",
+                "permissionMode": "auto",
+                "provider": "codex",
+                "serviceTier": null
+            },
+            "updatedMetadata": {
+                "lastMode": {
+                    "providerId": "codex",
+                    "modelId": "openai/gpt-5.6-sol",
+                    "effort": "medium",
+                    "serviceTier": null,
+                    "permissionMode": "auto"
+                }
+            }
+        },
+        {
+            "agentId": "source-agent",
+            "message": {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "Use the /a skill.\n\n"
+                    }
+                ]
+            },
+            "options": {
+                "effort": "medium",
+                "id": "source-generated",
+                "metadata": {
+                    "messageOrigin": "user",
+                    "mutationId": "source-mutation",
+                    "mode": {
+                        "providerId": "codex",
+                        "modelId": "openai/gpt-5.6-sol",
+                        "effort": "medium",
+                        "serviceTier": null,
+                        "permissionMode": "auto"
+                    },
+                    "skillInvocation": {
+                        "content": "---\nname: \"a\"\ndescription: Sort order\n---\nbody",
+                        "messageId": "source-generated",
+                        "name": "a",
+                        "location": "/source/.agents/skills/a/SKILL.md"
+                    }
+                },
+                "model": "openai/gpt-5.6-sol",
+                "permissionMode": "auto",
+                "provider": "codex",
+                "serviceTier": null
+            },
+            "updatedMetadata": {
+                "lastMode": {
+                    "providerId": "codex",
+                    "modelId": "openai/gpt-5.6-sol",
+                    "effort": "medium",
+                    "serviceTier": null,
+                    "permissionMode": "auto"
+                }
+            }
+        },
+        {
+            "agentId": "source-agent",
+            "message": {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "Use the /a skill.\n\ninspect authentication"
+                    }
+                ]
+            },
+            "options": {
+                "effort": "medium",
+                "id": "source-generated",
+                "metadata": {
+                    "messageOrigin": "user",
+                    "mutationId": "source-mutation",
+                    "mode": {
+                        "providerId": "codex",
+                        "modelId": "openai/gpt-5.6-sol",
+                        "effort": "medium",
+                        "serviceTier": null,
+                        "permissionMode": "auto"
+                    },
+                    "skillInvocation": {
+                        "content": "---\nname: \"a\"\ndescription: Sort order\n---\nbody",
+                        "messageId": "source-generated",
+                        "name": "a",
+                        "location": "/source/.agents/skills/a/SKILL.md"
+                    }
+                },
+                "model": "openai/gpt-5.6-sol",
+                "permissionMode": "auto",
+                "provider": "codex",
+                "serviceTier": null
+            },
+            "updatedMetadata": {
+                "lastMode": {
+                    "providerId": "codex",
+                    "modelId": "openai/gpt-5.6-sol",
+                    "effort": "medium",
+                    "serviceTier": null,
+                    "permissionMode": "auto"
+                }
+            }
+        }
+    ]
+}

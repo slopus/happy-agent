@@ -29,7 +29,7 @@ fn unknown_compute(error: &anyhow::Error) -> bool {
 }
 
 pub struct RunnerCompute {
-    owner: Arc<RunnersModule>,
+    owner: Weak<RunnersModule>,
     runner: String,
     id: String,
     cwd: PathBuf,
@@ -37,7 +37,12 @@ pub struct RunnerCompute {
     creation: tokio::sync::Mutex<()>,
     state: Mutex<State>,
     updates: broadcast::Sender<Value>,
-    disposed: AtomicBool,
+}
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Lifetime {
+    Open,
+    Closing,
+    Closed,
 }
 struct State {
     ready: Option<Arc<Session>>,
@@ -47,6 +52,7 @@ struct State {
     routes: BTreeMap<u64, (u64, u64)>,
     public: BTreeMap<u64, u64>,
     active: Vec<Value>,
+    lifetime: Lifetime,
 }
 #[derive(Clone)]
 pub struct RunnerProcess {
@@ -88,11 +94,7 @@ impl RunnersModule {
                 .computes
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            computes.retain(|_, compute| compute.strong_count() > 0);
-            if let Some(compute) = computes
-                .get(&(runner.into(), id.clone()))
-                .and_then(Weak::upgrade)
-            {
+            if let Some(compute) = computes.get(&(runner.into(), id.clone())).cloned() {
                 anyhow::ensure!(
                     compute.parameters == parameters,
                     "The agent's runner compute configuration changed while its machine is still owned."
@@ -104,7 +106,7 @@ impl RunnersModule {
                     "The bounded agent runner compute catalog is full."
                 );
                 let compute = Arc::new(RunnerCompute {
-                    owner: self.clone(),
+                    owner: Arc::downgrade(self),
                     runner: runner.into(),
                     id: id.clone(),
                     cwd: environment.root,
@@ -118,11 +120,11 @@ impl RunnersModule {
                         routes: BTreeMap::new(),
                         public: BTreeMap::new(),
                         active: Vec::new(),
+                        lifetime: Lifetime::Open,
                     }),
                     updates: broadcast::channel(128).0,
-                    disposed: AtomicBool::new(false),
                 });
-                computes.insert((runner.into(), id), Arc::downgrade(&compute));
+                computes.insert((runner.into(), id), compute.clone());
                 compute
             }
         };
@@ -130,13 +132,44 @@ impl RunnersModule {
         compute.ensure_created(&session, cancel).await?;
         Ok(compute)
     }
+    pub async fn dispose_agent_compute(
+        &self,
+        agent: &str,
+        cancel: &CancellationToken,
+    ) -> Result<()> {
+        let id = format!("agent-{agent}");
+        let computes = self
+            .computes
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .filter(|((_, known), _)| *known == id)
+            .map(|(_, compute)| compute.clone())
+            .collect::<Vec<_>>();
+        for compute in computes {
+            compute.dispose(cancel).await?;
+        }
+        Ok(())
+    }
 }
 impl RunnerCompute {
+    fn owner(&self) -> Result<Arc<RunnersModule>> {
+        self.owner
+            .upgrade()
+            .context("The runner connection owner is no longer available.")
+    }
     pub(super) fn id(&self) -> &str {
         &self.id
     }
     pub fn cwd(&self) -> &Path {
         &self.cwd
+    }
+    pub fn filesystem_identity(&self) -> String {
+        let state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        format!("runner:{}/{}:{}", self.runner, self.id, state.generation)
     }
     pub fn resolve(&self, written: &str) -> Result<PathBuf> {
         anyhow::ensure!(
@@ -195,7 +228,7 @@ impl RunnerCompute {
         let full = mode == "full_access";
         let value = json!({"mode":mode,"network":{"egress":full,"localBinding":full}});
         anyhow::ensure!(
-            self.owner
+            self.owner()?
                 .schemas
                 .valid("computeRunnerPermissions", &value)?,
             "The runner action's permissions are invalid."
@@ -212,6 +245,42 @@ impl RunnerCompute {
         } else {
             self.lose(&mut state);
         }
+    }
+    pub(super) fn lost(&self) {
+        self.lose(
+            &mut self
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        );
+    }
+    fn assert_open(&self) -> Result<()> {
+        anyhow::ensure!(
+            self.state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .lifetime
+                == Lifetime::Open,
+            "The agent's runner compute is closing or disposed."
+        );
+        Ok(())
+    }
+    pub(super) fn send_session_frame(
+        &self,
+        generation: u64,
+        permit: mpsc::Permit<'_, Vec<u8>>,
+        frame: Vec<u8>,
+    ) -> Result<()> {
+        let state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        anyhow::ensure!(
+            state.lifetime == Lifetime::Open && state.generation == generation,
+            "The runner no longer owns this command session."
+        );
+        permit.send(frame);
+        Ok(())
     }
     fn lose(&self, state: &mut State) {
         state.ready = None;
@@ -300,11 +369,9 @@ impl RunnerCompute {
         session: &Arc<Session>,
         cancel: &CancellationToken,
     ) -> Result<()> {
-        anyhow::ensure!(
-            !self.disposed.load(Ordering::Acquire),
-            "The agent's runner compute is disposed."
-        );
+        self.assert_open()?;
         let _creation = tokio::select! {guard=self.creation.lock()=>guard,_=cancel.cancelled()=>bail!("The runner machine creation was cancelled.")};
+        self.assert_open()?;
         if self
             .state
             .lock()
@@ -316,7 +383,7 @@ impl RunnerCompute {
             return Ok(());
         }
         let created = self
-            .owner
+            .owner()?
             .request(session, "compute.create", self.parameters.clone(), cancel)
             .await?
             .0;
@@ -342,33 +409,112 @@ impl RunnerCompute {
         body: &[u8],
         cancel: &CancellationToken,
     ) -> Result<Frame> {
-        anyhow::ensure!(
-            !self.disposed.load(Ordering::Acquire),
-            "The agent's runner compute is disposed."
-        );
-        let session = self.owner.session(&self.runner, cancel).await?;
+        Ok(self
+            .call_generation(method, parameters, body, cancel)
+            .await?
+            .0)
+    }
+    async fn call_generation(
+        &self,
+        method: &str,
+        mut parameters: Value,
+        body: &[u8],
+        cancel: &CancellationToken,
+    ) -> Result<(Frame, u64)> {
+        self.assert_open()?;
+        let owner = self.owner()?;
+        let session = owner.session(&self.runner, cancel).await?;
         self.ensure_created(&session, cancel).await?;
         parameters["computeId"] = json!(self.id);
-        match self
-            .owner
-            .request_body(&session, method, parameters.clone(), body, cancel)
-            .await
-        {
-            Ok(answer) => Ok(answer),
-            Err(error) if unknown_compute(&error) => {
-                {
-                    let mut state = self
-                        .state
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    self.lose(&mut state);
+        for attempt in 0..2 {
+            let generation = self
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .generation;
+            let answer = self
+                .owner()?
+                .request_body_guarded(
+                    &session,
+                    method,
+                    parameters.clone(),
+                    body,
+                    cancel,
+                    Some((self, generation)),
+                )
+                .await;
+            {
+                let mut state = self
+                    .state
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                anyhow::ensure!(
+                    generation == state.generation,
+                    "The runner machine changed before this operation was confirmed; its outcome is unknown."
+                );
+                match answer {
+                    Ok(answer) => return Ok((answer, generation)),
+                    Err(error) if unknown_compute(&error) && attempt == 0 => self.lose(&mut state),
+                    Err(error) => return Err(error),
                 }
-                self.ensure_created(&session, cancel).await?;
-                self.owner
-                    .request_body(&session, method, parameters, body, cancel)
-                    .await
+            }
+            self.ensure_created(&session, cancel).await?;
+        }
+        unreachable!("each final attempt returns its explicit outcome")
+    }
+    async fn call_process(
+        &self,
+        id: u64,
+        method: &str,
+        mut parameters: Value,
+        body: &[u8],
+        cancel: &CancellationToken,
+    ) -> Result<Option<Frame>> {
+        self.assert_open()?;
+        let owner = self.owner()?;
+        let session = owner.session(&self.runner, cancel).await?;
+        self.ensure_created(&session, cancel).await?;
+        let route = {
+            let state = self
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            state
+                .routes
+                .get(&id)
+                .copied()
+                .filter(|(generation, _)| *generation == state.generation)
+        };
+        let Some((generation, remote)) = route else {
+            return Ok(None);
+        };
+        parameters["computeId"] = json!(self.id);
+        parameters["sessionId"] = json!(remote);
+        let answer = self
+            .owner()?
+            .request_body_guarded(
+                &session,
+                method,
+                parameters,
+                body,
+                cancel,
+                Some((self, generation)),
+            )
+            .await;
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if generation != state.generation {
+            return Ok(None);
+        }
+        match answer {
+            Err(error) if unknown_compute(&error) => {
+                self.lose(&mut state);
+                Ok(None)
             }
             Err(error) => Err(error),
+            Ok(answer) => Ok(Some(answer)),
         }
     }
     pub async fn exists(
@@ -425,6 +571,25 @@ impl RunnerCompute {
             .as_str()
             .unwrap()
             .into())
+    }
+    pub async fn lstat_many(
+        &self,
+        permissions: &Value,
+        paths: &[PathBuf],
+        cancel: &CancellationToken,
+    ) -> Result<Vec<Value>> {
+        Ok(self
+            .call(
+                "fs.lstatMany",
+                json!({"permissions":permissions,"paths":paths}),
+                &[],
+                cancel,
+            )
+            .await?
+            .0["stats"]
+            .as_array()
+            .context("The runner metadata batch is missing.")?
+            .clone())
     }
     pub async fn read_file(
         &self,
@@ -541,22 +706,23 @@ impl RunnerCompute {
         options: Value,
         cancel: &CancellationToken,
     ) -> Result<RunnerProcess> {
-        let result = self
-            .call(
+        let (answer, generation) = self
+            .call_generation(
                 "shell.startSession",
                 json!({"options":options}),
                 &[],
                 cancel,
             )
-            .await?
-            .0;
-        let id = self.public_id(
-            &mut self
-                .state
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner),
-            result["sessionId"].as_u64().unwrap(),
-        )?;
+            .await?;
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        anyhow::ensure!(
+            generation == state.generation,
+            "The runner command's machine was lost before its session was confirmed."
+        );
+        let id = self.public_id(&mut state, answer.0["sessionId"].as_u64().unwrap())?;
         Ok(RunnerProcess {
             compute: self.clone(),
             id,
@@ -571,24 +737,51 @@ impl RunnerCompute {
             .unwrap() as usize)
     }
     pub async fn dispose(&self, cancel: &CancellationToken) -> Result<()> {
-        if self.disposed.swap(true, Ordering::AcqRel) {
-            return Ok(());
+        let _creation = tokio::select! {guard=self.creation.lock()=>guard,_=cancel.cancelled()=>bail!("Runner disposal was cancelled before it was confirmed.")};
+        {
+            let mut state = self
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if state.lifetime == Lifetime::Closed {
+                return Ok(());
+            }
+            state.lifetime = Lifetime::Closing;
         }
-        let session = self.owner.session(&self.runner, cancel).await?;
-        self.owner
+        let owner = self.owner()?;
+        let session = owner.session(&self.runner, cancel).await?;
+        let answer = self
+            .owner()?
             .request(
                 &session,
                 "compute.dispose",
                 json!({"computeId":self.id}),
                 cancel,
             )
-            .await?;
-        self.lose(
-            &mut self
-                .state
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner),
-        );
+            .await;
+        if let Err(error) = answer {
+            if !unknown_compute(&error) {
+                return Err(error);
+            }
+        }
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.lose(&mut state);
+        state.lifetime = Lifetime::Closed;
+        drop(state);
+        let mut computes = owner
+            .computes
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let key = (self.runner.clone(), self.id.clone());
+        if computes
+            .get(&key)
+            .is_some_and(|compute| std::ptr::eq(compute.as_ref(), self))
+        {
+            computes.remove(&key);
+        }
         Ok(())
     }
 }
@@ -597,14 +790,9 @@ impl RunnerProcess {
         self.id
     }
     pub async fn detach(&self, cancel: &CancellationToken) -> Result<()> {
-        if let Some(remote) = self.compute.route(self.id) {
+        if self.compute.route(self.id).is_some() {
             self.compute
-                .call(
-                    "shell.detachSession",
-                    json!({"sessionId":remote}),
-                    &[],
-                    cancel,
-                )
+                .call_process(self.id, "shell.detachSession", json!({}), &[], cancel)
                 .await?;
         }
         Ok(())
@@ -615,20 +803,23 @@ impl RunnerProcess {
         peek: bool,
         cancel: &CancellationToken,
     ) -> Result<Option<Value>> {
-        let Some(remote) = self.compute.route(self.id) else {
+        if self.compute.route(self.id).is_none() {
             return Ok(None);
-        };
-        let mut snapshot = self
+        }
+        let Some(answer) = self
             .compute
-            .call(
+            .call_process(
+                self.id,
                 "shell.readSession",
-                json!({"sessionId":remote,"waitMs":wait,"peek":peek}),
+                json!({"waitMs":wait,"peek":peek}),
                 &[],
                 cancel,
             )
             .await?
-            .0["snapshot"]
-            .clone();
+        else {
+            return Ok(None);
+        };
+        let mut snapshot = answer.0["snapshot"].clone();
         if snapshot.is_null() {
             return Ok(None);
         }
@@ -641,37 +832,33 @@ impl RunnerProcess {
         bytes: &[u8],
         cancel: &CancellationToken,
     ) -> Result<bool> {
-        let Some(remote) = self.compute.route(self.id) else {
+        if self.compute.route(self.id).is_none() {
             return Ok(false);
-        };
+        }
         Ok(self
             .compute
-            .call(
+            .call_process(
+                self.id,
                 "shell.writeSession",
-                json!({"permissions":permissions,"sessionId":remote,"encoding":"bytes"}),
+                json!({"permissions":permissions,"encoding":"bytes"}),
                 bytes,
                 cancel,
             )
             .await?
-            .0["written"]
-            .as_bool()
-            .unwrap())
+            .is_some_and(|answer| answer.0["written"].as_bool().unwrap()))
     }
     pub async fn kill(&self, cancel: &CancellationToken) -> Result<Option<Value>> {
-        let Some(remote) = self.compute.route(self.id) else {
+        if self.compute.route(self.id).is_none() {
+            return Ok(None);
+        }
+        let Some(answer) = self
+            .compute
+            .call_process(self.id, "shell.killSession", json!({}), &[], cancel)
+            .await?
+        else {
             return Ok(None);
         };
-        let mut snapshot = self
-            .compute
-            .call(
-                "shell.killSession",
-                json!({"sessionId":remote}),
-                &[],
-                cancel,
-            )
-            .await?
-            .0["snapshot"]
-            .clone();
+        let mut snapshot = answer.0["snapshot"].clone();
         if snapshot.is_null() {
             return Ok(None);
         }

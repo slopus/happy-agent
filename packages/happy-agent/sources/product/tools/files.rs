@@ -14,11 +14,13 @@ use tokio_util::sync::CancellationToken;
 mod boundary;
 mod diff;
 mod discovery;
+mod filesystem;
 mod kimi;
 mod native;
 mod patch;
 mod regex_worker;
 use boundary::Boundary;
+pub use filesystem::ComputeFilesystem;
 
 pub(super) fn compute_regex_worker() -> std::process::ExitCode {
     regex_worker::run()
@@ -36,6 +38,7 @@ pub(super) struct Files {
     config: Arc<ConfigModule>,
     runtime: Arc<RuntimeModule>,
     schemas: Schemas,
+    identity: String,
 }
 impl Files {
     pub(super) async fn read_workflow_script(
@@ -59,6 +62,7 @@ impl Files {
             config,
             runtime,
             schemas: Schemas::new()?,
+            identity: uuid::Uuid::new_v4().to_string(),
         })
     }
     fn boundary(&self, configuration: &Value, mode: &str) -> Result<Boundary> {
@@ -70,6 +74,13 @@ impl Files {
             private_paths: environment.private_paths,
             protected_paths: environment.protected_paths,
         })
+    }
+    pub(super) fn filesystem(
+        &self,
+        configuration: &Value,
+        mode: &str,
+    ) -> Result<ComputeFilesystem> {
+        ComputeFilesystem::local(self.boundary(configuration, mode)?, self.identity.clone())
     }
     pub fn review(&self, configuration: &Value, path: &str, write: bool) -> bool {
         self.boundary(configuration, "auto")

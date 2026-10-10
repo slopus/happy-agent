@@ -31,6 +31,10 @@ mod persistence;
 mod tunnel;
 pub use compute::{RunnerCompute, RunnerProcess};
 
+#[cfg(test)]
+#[path = "runners_compute_tests.rs"]
+mod compute_tests;
+
 const FRAME_LIMIT: usize = 64 * 1024 * 1024;
 type Frame = (Value, Vec<u8>);
 type RpcAnswer = oneshot::Sender<Result<Frame>>;
@@ -208,13 +212,19 @@ pub struct RunnersModule {
     links: Mutex<BTreeMap<String, Arc<Link>>>,
     closed: AtomicBool,
     updates: watch::Sender<Value>,
-    computes: Mutex<BTreeMap<(String, String), std::sync::Weak<RunnerCompute>>>,
+    computes: Mutex<BTreeMap<(String, String), Arc<RunnerCompute>>>,
 }
 struct Link {
     session: Mutex<Option<Arc<Session>>>,
     changed: Notify,
     since: AtomicU64,
     reason: Mutex<Option<String>>,
+    reports: Mutex<Reports>,
+    lease: Mutex<Option<CancellationToken>>,
+}
+struct Reports {
+    epoch: Option<String>,
+    sequence: u64,
 }
 struct Session {
     sender: mpsc::Sender<Vec<u8>>,
@@ -397,6 +407,11 @@ impl RunnersModule {
                     changed: Notify::new(),
                     since: AtomicU64::new(now()),
                     reason: Mutex::new(None),
+                    reports: Mutex::new(Reports {
+                        epoch: None,
+                        sequence: 0,
+                    }),
+                    lease: Mutex::new(None),
                 })
             })
             .clone())
@@ -474,6 +489,41 @@ impl RunnersModule {
         {
             old.cancel.cancel();
         }
+        if let Some(lease) = link
+            .lease
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+        {
+            lease.cancel();
+        }
+        {
+            let mut reports = link
+                .reports
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let epoch = ready["epoch"].as_str().unwrap();
+            if reports.epoch.as_deref() != Some(epoch) {
+                reports.epoch = Some(epoch.into());
+                reports.sequence = 0;
+            }
+        }
+        for stream in ready["streams"].as_array().unwrap() {
+            // A product stream whose previous caller failed cannot be replayed.
+            // The peer still owns it until these explicit release frames arrive.
+            self.send(
+                &session.sender,
+                json!({"type":"close","stream":stream}),
+                &[],
+            )
+            .await?;
+            self.send(
+                &session.sender,
+                json!({"type":"release","stream":stream}),
+                &[],
+            )
+            .await?;
+        }
         link.since.store(now(), Ordering::Release);
         *link
             .reason
@@ -486,9 +536,7 @@ impl RunnersModule {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .iter()
         {
-            if runner == &id
-                && let Some(compute) = compute.upgrade()
-            {
+            if runner == &id {
                 compute.attached(
                     session.clone(),
                     ready["computes"]
@@ -515,10 +563,10 @@ impl RunnersModule {
         }
         let mut liveness = tokio::time::interval(Duration::from_secs(15));
         let mut last = tokio::time::Instant::now();
-        let mut sequence = 0;
         let outcome:Result<()>=async {
             loop {
                 tokio::select! {
+                    biased;
                     _=lifetime.cancelled()=>{if self.lifecycle.shutdown.is_cancelled() {self.send(&session.sender,json!({"type":"goodbye","reason":"The daemon is shutting down."}),&[]).await?;}break;},
                     _=liveness.tick()=>{anyhow::ensure!(last.elapsed()<Duration::from_secs(45),"The runner stopped responding.");self.send(&session.sender,json!({"type":"ping","nonce":session.next.fetch_add(1,Ordering::Relaxed)}),&[]).await?;},
                     frame=self.receive(&mut transport.incoming)=>{
@@ -527,7 +575,7 @@ impl RunnersModule {
                             "ping"=>self.send(&session.sender,json!({"type":"pong","nonce":header["nonce"]}),&[]).await?,
                             "pong"=>{},
                             "response"=>{let pending=session.requests.lock().unwrap_or_else(std::sync::PoisonError::into_inner).remove(&header["id"].as_u64().unwrap_or_default());if let Some(pending)=pending {let response=if let Some(error)=header.get("error") {Err(compute::remote_error(error))} else {Ok((header["result"].clone(),body))};let _=pending.send(response);}},
-                            "event"=>{let event=header["event"].as_str().unwrap();anyhow::ensure!(self.schemas.valid(&format!("ownerRunnerEvent_{}",event.replace('.',"_")),&header["params"])? ,"The runner sent an invalid event.");if let Some(seq)=header["seq"].as_u64() {anyhow::ensure!(seq<=sequence+1,"The runner event sequence skipped an event.");if seq>sequence {self.compute_event(&id,event,&header["params"]);sequence=seq;}self.send(&session.sender,json!({"type":"ack","seq":sequence}),&[]).await?;}else{self.compute_event(&id,event,&header["params"]);}},
+                            "event"=>{let event=header["event"].as_str().unwrap();anyhow::ensure!(self.schemas.valid(&format!("ownerRunnerEvent_{}",event.replace('.',"_")),&header["params"])? ,"The runner sent an invalid event.");if let Some(seq)=header["seq"].as_u64() {let apply={let mut reports=link.reports.lock().unwrap_or_else(std::sync::PoisonError::into_inner);if seq>reports.sequence {reports.sequence=seq;true}else{false}};if apply {self.compute_event(&id,event,&header["params"]);}self.send(&session.sender,json!({"type":"ack","seq":seq}),&[]).await?;}else{self.compute_event(&id,event,&header["params"]);}},
                             "data"|"eof"|"exit"|"flow"=>{anyhow::ensure!(body.len()<=65536,"A runner stream chunk exceeds its bound.");let stream=header["stream"].as_u64().unwrap_or_default();let sender=session.streams.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(&stream).cloned();if let Some(sender)=sender {sender.try_send((header,body)).map_err(|_|anyhow::anyhow!("The runner stream exceeded its bounded receive window."))?;} else if header["type"]!="flow" {self.send(&session.sender,json!({"type":"release","stream":stream}),&[]).await?;}},
                             "goodbye"=>bail!("{}",header["reason"].as_str().unwrap_or("The runner disconnected.")),
                             _=>bail!("The runner sent an unexpected frame."),
@@ -573,9 +621,42 @@ impl RunnersModule {
                 .err()
                 .map(|error| error.to_string().chars().take(4096).collect());
             link.changed.notify_waiters();
+            self.start_lease(id.clone(), link.clone());
             self.snapshot().await?;
         }
         outcome
+    }
+    fn start_lease(self: &Arc<Self>, runner: String, link: Arc<Link>) {
+        let cancel = self.lifecycle.shutdown.child_token();
+        if let Some(previous) = link
+            .lease
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .replace(cancel.clone())
+        {
+            previous.cancel();
+        }
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(61000);
+        let owner = self.clone();
+        tokio::spawn(async move {
+            tokio::select! { biased;_=cancel.cancelled()=>return,_=tokio::time::sleep_until(deadline)=>{} }
+            let connected = link
+                .session
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if connected.is_none() && !cancel.is_cancelled() {
+                for ((id, _), compute) in owner
+                    .computes
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .iter()
+                {
+                    if *id == runner {
+                        compute.lost();
+                    }
+                }
+            }
+        });
     }
     async fn receive(&self, receiver: &mut mpsc::Receiver<Vec<u8>>) -> Result<(Value, Vec<u8>)> {
         let frame = receiver
@@ -599,6 +680,12 @@ impl RunnersModule {
         Ok((header, frame[4 + length..].to_vec()))
     }
     async fn send(&self, sender: &mpsc::Sender<Vec<u8>>, header: Value, body: &[u8]) -> Result<()> {
+        let frame = self.frame(header, body)?;
+        tokio::time::timeout(Duration::from_secs(10), sender.send(frame))
+            .await?
+            .map_err(|_| anyhow::anyhow!("The runner connection ended."))
+    }
+    fn frame(&self, header: Value, body: &[u8]) -> Result<Vec<u8>> {
         anyhow::ensure!(
             self.schemas.valid("ownerRunnerFrame", &header)?,
             "The outgoing runner frame is invalid."
@@ -612,9 +699,7 @@ impl RunnersModule {
         frame.extend_from_slice(&u32::try_from(header.len())?.to_be_bytes());
         frame.extend_from_slice(&header);
         frame.extend_from_slice(body);
-        tokio::time::timeout(Duration::from_secs(10), sender.send(frame))
-            .await?
-            .map_err(|_| anyhow::anyhow!("The runner connection ended."))
+        Ok(frame)
     }
     async fn request(
         &self,
@@ -634,6 +719,18 @@ impl RunnersModule {
         body: &[u8],
         cancel: &CancellationToken,
     ) -> Result<(Value, Vec<u8>)> {
+        self.request_body_guarded(session, method, params, body, cancel, None)
+            .await
+    }
+    async fn request_body_guarded(
+        &self,
+        session: &Arc<Session>,
+        method: &str,
+        params: Value,
+        body: &[u8],
+        cancel: &CancellationToken,
+        generation: Option<(&RunnerCompute, u64)>,
+    ) -> Result<Frame> {
         anyhow::ensure!(
             !cancel.is_cancelled() && !session.cancel.is_cancelled(),
             "The runner request was cancelled before it was sent."
@@ -664,7 +761,9 @@ impl RunnersModule {
             id,
         };
         let answer=async {
-            tokio::select!{biased;_=cancel.cancelled()=>bail!("The runner request was cancelled before it was sent."),_=session.cancel.cancelled()=>bail!("The runner disconnected before the request was sent."),result=self.send(&session.sender,json!({"type":"request","id":id,"method":method,"params":params}),body)=>result?};
+            let frame=self.frame(json!({"type":"request","id":id,"method":method,"params":params}),body)?;
+            let permit=tokio::select!{biased;_=cancel.cancelled()=>bail!("The runner request was cancelled before it was sent."),_=session.cancel.cancelled()=>bail!("The runner disconnected before the request was sent."),result=tokio::time::timeout(Duration::from_secs(10),session.sender.reserve())=>result??};
+            if let Some((compute,generation))=generation {compute.send_session_frame(generation,permit,frame)?;}else{permit.send(frame);}
             let deadline=match method{"shell.run"=>params["options"]["timeoutMs"].as_u64().unwrap_or(30000).min(1800000)+10000,"shell.readSession"=>params["waitMs"].as_u64().unwrap_or(0).min(86400000)+10000,_=>60000};
             tokio::select! {_=cancel.cancelled()=>bail!("The runner request was cancelled; its outcome may be unknown."),_=session.cancel.cancelled()=>bail!("The runner disconnected; the request outcome is unknown."),answer=receiver=>answer.context("The runner request outcome is unknown.")?,_=tokio::time::sleep(Duration::from_millis(deadline))=>bail!("The runner request did not finish in time; its outcome may be unknown.")}
         }.await;
@@ -692,7 +791,7 @@ impl RunnersModule {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(&(runner.into(), id.into()))
-            .and_then(std::sync::Weak::upgrade)
+            .cloned()
         {
             compute.event(event, params);
         }

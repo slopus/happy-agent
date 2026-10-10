@@ -1516,6 +1516,7 @@ dependencies = [
  "sha2 0.10.9",
  "subtle",
  "tempfile",
+ "thiserror",
  "tokio",
  "tokio-tungstenite 0.28.0",
  "tokio-util",

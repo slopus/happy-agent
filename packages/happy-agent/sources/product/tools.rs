@@ -11,6 +11,7 @@ use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 mod commands;
 mod files;
+pub use files::ComputeFilesystem;
 mod surface;
 use commands::CommandSessions;
 pub use commands::{ProcessEventListener, ProcessSubscription};
@@ -278,6 +279,44 @@ impl happy_agent_base::AgentModule for ToolsModule {
     }
 }
 impl ToolsModule {
+    pub async fn skill_compute(
+        &self,
+        scope: &happy_agent_base::AgentScope<'_>,
+        cancel: &CancellationToken,
+    ) -> Result<Option<ComputeFilesystem>> {
+        ensure!(
+            !scope.id.is_empty(),
+            "The agent identity is unavailable for skill discovery."
+        );
+        let Some(configuration) = scope
+            .configuration
+            .get("modules")
+            .and_then(|modules| modules.get("compute"))
+        else {
+            return Ok(None);
+        };
+        ensure!(
+            self.schemas
+                .valid("computeAgentConfiguration", configuration)?,
+            "The agent's compute configuration is invalid."
+        );
+        if let Some(runner) = scope.configuration["modules"]["compute"]["runnerId"].as_str() {
+            let compute = self
+                .runners
+                .agent_compute(runner, scope.id, scope.configuration, cancel)
+                .await?;
+            Ok(Some(ComputeFilesystem::runner(
+                compute,
+                self.mode(scope.settings)?,
+            )?))
+        } else {
+            self.assert_local_compute(scope.configuration)?;
+            Ok(Some(self.files.filesystem(
+                scope.configuration,
+                self.mode(scope.settings)?,
+            )?))
+        }
+    }
     pub fn workflow_script_policy(
         &self,
         scope: &happy_agent_base::AgentScope<'_>,
@@ -398,6 +437,7 @@ impl ToolsModule {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .remove(agent);
         self.commands.archive_agent(agent, cancel).await?;
+        self.runners.dispose_agent_compute(agent, cancel).await?;
         self.services.stop_owner_and_wait(agent, cancel).await
     }
     fn assert_local_compute(&self, configuration: &Value) -> Result<()> {

@@ -6,6 +6,8 @@ mod compute_acceptance;
 mod question_acceptance;
 #[path = "compute/vendor_file_tools.rs"]
 mod vendor_file_tools;
+#[path = "api/profile.rs"]
+mod profile_acceptance;
 
 use rusqlite::{Connection, params};
 use serde_json::{Value, json};

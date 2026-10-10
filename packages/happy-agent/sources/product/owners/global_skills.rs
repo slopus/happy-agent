@@ -355,6 +355,14 @@ impl GlobalSkillsModule {
             .collect())
     }
 
+    pub fn manages_home(&self, home: Option<&Path>) -> bool {
+        home.is_some_and(|home| home.join(".agents/skills") == self.config.global_skills_root())
+    }
+
+    pub fn parse_metadata(&self, content: &str, directory: &str) -> Result<Value> {
+        frontmatter::parse(content, directory, &self.schemas).map(|(metadata, _)| metadata)
+    }
+
     pub async fn close(&self) {
         self.closed.store(true, Ordering::Release);
         let done = self
@@ -1219,96 +1227,8 @@ fn scan_global_skills(root: &Path, schemas: &Schemas) -> Result<SkillScan> {
     Ok(scan)
 }
 
-mod frontmatter {
-    use super::*;
-    use serde::de::{MapAccess, Visitor};
-    use std::fmt;
-
-    struct MetadataMap(serde_yaml::Mapping);
-    impl<'de> serde::Deserialize<'de> for MetadataMap {
-        fn deserialize<D: serde::Deserializer<'de>>(
-            deserializer: D,
-        ) -> std::result::Result<Self, D::Error> {
-            struct MapVisitor;
-            impl<'de> Visitor<'de> for MapVisitor {
-                type Value = MetadataMap;
-                fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-                    formatter.write_str("a skill frontmatter map")
-                }
-                fn visit_unit<E: serde::de::Error>(self) -> std::result::Result<Self::Value, E> {
-                    Ok(MetadataMap(serde_yaml::Mapping::new()))
-                }
-                fn visit_map<M: MapAccess<'de>>(
-                    self,
-                    mut entries: M,
-                ) -> std::result::Result<Self::Value, M::Error> {
-                    let mut mapping = serde_yaml::Mapping::new();
-                    while let Some((key, value)) =
-                        entries.next_entry::<serde_yaml::Value, serde_yaml::Value>()?
-                    {
-                        // The shipped loader accepts duplicate top-level scalar
-                        // keys and the last value wins, including a kind change.
-                        if matches!(
-                            value,
-                            serde_yaml::Value::String(_) | serde_yaml::Value::Bool(_)
-                        ) {
-                            mapping.insert(key, value);
-                        }
-                    }
-                    Ok(MetadataMap(mapping))
-                }
-            }
-            deserializer.deserialize_any(MapVisitor)
-        }
-    }
-
-    /// YAML syntax belongs to the YAML parser, including aliases and block
-    /// scalars. Runtime metadata still uses the original TypeBox schemas.
-    pub fn parse(content: &str, directory: &str, schemas: &Schemas) -> Result<(Value, String)> {
-        let normalized = content.replace("\r\n", "\n").replace('\r', "\n");
-        let lines = normalized.split('\n').collect::<Vec<_>>();
-        let closing = lines
-            .iter()
-            .enumerate()
-            .skip(1)
-            .find(|(_, line)| marker(line.trim_start_matches([' ', '\t'])))
-            .map(|(index, _)| index);
-        if lines.first().is_none_or(|line| !marker(line)) || closing.is_none() {
-            return Ok((json!({"name":directory,"description":""}), String::new()));
-        }
-        let closing = closing.context("The skill frontmatter is incomplete.")?;
-        let source = format!("{}\n", lines[1..closing].join("\n"));
-        let MetadataMap(mapping) = serde_yaml::from_str(&source)?;
-        let mut metadata = json!({"name":directory,"description":""});
-        for field in ["name", "description"] {
-            if let Some(value) = mapping
-                .get(serde_yaml::Value::String(field.into()))
-                .and_then(serde_yaml::Value::as_str)
-            {
-                metadata[field] = json!(value);
-            }
-        }
-        if mapping
-            .get(serde_yaml::Value::String("disable-model-invocation".into()))
-            .and_then(serde_yaml::Value::as_bool)
-            == Some(true)
-        {
-            metadata["disableModelInvocation"] = json!(true);
-        }
-        anyhow::ensure!(
-            schemas.valid("ownerSkillMetadata", &metadata)?,
-            "Skill frontmatter metadata is invalid."
-        );
-        Ok((metadata, lines[closing + 1..].join("\n")))
-    }
-
-    fn marker(line: &str) -> bool {
-        line.strip_prefix("---").is_some_and(|rest| {
-            let rest = rest.trim_start_matches([' ', '\t']);
-            rest.is_empty() || rest.starts_with('#')
-        })
-    }
-}
+#[path = "global_skills/frontmatter.rs"]
+mod frontmatter;
 
 mod native_watch {
     use super::*;

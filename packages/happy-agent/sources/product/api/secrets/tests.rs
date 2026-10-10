@@ -232,6 +232,7 @@ impl Graph {
             )
             .unwrap(),
         );
+        let profile=crate::product::profile::ProfileModule::new(fixture.config.clone(),bots.clone(),fixture.runtime.clone(),fixture.durable.clone(),agents.clone()).unwrap();profile.load().await.unwrap();
         let api = ApiModule::new(
             fixture.config.clone(),
             fixture.lifecycle.clone(),
@@ -250,6 +251,7 @@ impl Graph {
             auto,
             crate::product::provider_scan::ProviderScanModule::new(fixture.config.clone(),fixture.durable.clone(),fixture.lifecycle.clone()).unwrap(),
             fixture.node.clone(),
+            profile,
         )
         .unwrap();
         agents.prepare().unwrap();

@@ -1,0 +1,46 @@
+[
+    {
+        "name": "list_skills",
+        "description": "List the skills available to this agent.",
+        "parameters": {
+            "additionalProperties": false,
+            "type": "object",
+            "properties": {
+                "cursor": {
+                    "minLength": 1,
+                    "maxLength": 10,
+                    "pattern": "^[0-9]+$",
+                    "type": "string"
+                },
+                "limit": {
+                    "minimum": 1,
+                    "maximum": 256,
+                    "type": "integer"
+                },
+                "query": {
+                    "maxLength": 128,
+                    "type": "string"
+                }
+            }
+        },
+        "defer": true
+    },
+    {
+        "name": "read_skill",
+        "description": "Read the complete instructions for one available skill.",
+        "parameters": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": ["name"],
+            "properties": {
+                "name": {
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*$",
+                    "type": "string"
+                }
+            }
+        },
+        "defer": true
+    }
+]

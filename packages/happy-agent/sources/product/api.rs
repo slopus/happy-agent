@@ -18,6 +18,7 @@ use super::{
     auto::AutoModule,
     provider_scan::ProviderScanModule,
     owners::NodeModule,
+    profile::{ProfileModule,ProfileSubscription},
 };
 use bytes::Bytes;
 use futures_util::stream;
@@ -43,6 +44,7 @@ mod processes;
 mod questions;
 mod mutation;
 mod configuration;
+mod profile;
 
 pub struct ApiModule {
     config: Arc<ConfigModule>,
@@ -67,6 +69,8 @@ pub struct ApiModule {
     question_events:OnceLock<UserInputSubscription>,
     provider_scan:Arc<ProviderScanModule>,
     node:Arc<NodeModule>,
+    profile:Arc<ProfileModule>,
+    _profile_events:ProfileSubscription,
 }
 
 impl ApiModule {
@@ -88,6 +92,7 @@ impl ApiModule {
         auto:Arc<AutoModule>,
         provider_scan:Arc<ProviderScanModule>,
         node:Arc<NodeModule>,
+        profile:Arc<ProfileModule>,
     ) -> anyhow::Result<Arc<Self>> {
         let journal = events.clone();
         let live_events = live.on_event(Arc::new(move |event| {
@@ -95,6 +100,8 @@ impl ApiModule {
             // supply the owner audience at their public event boundary.
             if let Some(kind) = event["type"].as_str() { journal.with_journal(|journal| journal.append(kind, event["payload"].clone(), None)); }
         }))?;
+        let journal=events.clone();let projector=Arc::downgrade(&profile);
+        let profile_events=profile.on_event_transactional(Arc::new(move|ctx,event,snapshot|{let Some(profile)=projector.upgrade()else{return Ok(());};let mut payload=json!({"previousVersion":event["data"]["previousVersion"],"version":event["data"]["version"],"profile":profile.resource(snapshot)});mutation::apply(&mut payload);journal.publish(ctx,"profile.updated",payload,event["createdAt"].as_u64().unwrap())}))?;
         let module=Arc::new(Self {
             config,
             lifecycle,
@@ -118,6 +125,8 @@ impl ApiModule {
             question_events:OnceLock::new(),
             provider_scan,
             node,
+            profile,
+            _profile_events:profile_events,
         });
         module.agents.install(module.clone())?;
         module.start_process_events()?;
@@ -208,6 +217,7 @@ impl ApiModule {
             None
         };
         let result = match (method.as_str(), path.as_str()) {
+            _ if path=="/v0/profile"||path=="/v0/profile/photo"=>self.profile_route(request).await,
             _ if path=="/v0/config"||path=="/v0/providers/scan"||path.starts_with("/v0/providers/")=>self.configuration_route(request).await,
             ("GET", "/v0/connections") => {
                 let connections = self.connections.clone();

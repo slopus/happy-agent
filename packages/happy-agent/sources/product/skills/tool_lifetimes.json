@@ -1,0 +1,14 @@
+[
+    {
+        "name": "list_skills",
+        "durable": false,
+        "reloadable": true,
+        "steerable": false
+    },
+    {
+        "name": "read_skill",
+        "durable": false,
+        "reloadable": true,
+        "steerable": false
+    }
+]

@@ -347,10 +347,18 @@ impl Commands {
             .computes
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .remove(agent);
-        if let Some((compute, task)) = compute {
-            task.abort();
+            .get(agent)
+            .map(|(compute, _)| compute.clone());
+        if let Some(compute) = compute {
             compute.dispose(cancel).await?;
+            if let Some((_, task)) = self
+                .computes
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .remove(agent)
+            {
+                task.abort();
+            }
         }
         self.sessions
             .lock()

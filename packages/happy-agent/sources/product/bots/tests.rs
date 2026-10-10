@@ -1,4 +1,5 @@
 use super::*;
+use happy_providers::{Block, Message};
 use crate::product::{
     auto::AutoModule,
     collaboration::CollaborationModule,
@@ -8,6 +9,8 @@ use crate::product::{
     permissions::PermissionsModule,
     presence::PresenceModule,
     scheduling::SchedulingModule,
+    skills::SkillsModule,
+    skill_folders::SkillFoldersModule,
     secrets::SecretsModule,
     services::ServicesModule,
     subtasks::SubtasksModule,
@@ -37,6 +40,8 @@ struct Graph {
     tasks: Arc<TasksModule>,
     goal: Arc<GoalModule>,
     workflows: Arc<WorkflowsModule>,
+    skills: Arc<SkillsModule>,
+    skill_folders: Arc<SkillFoldersModule>,
 }
 impl Graph {
     fn task_input(&self, title: &str) -> Value {
@@ -291,6 +296,8 @@ transport = "sse"
         )
         .unwrap();
         bots.load().await.unwrap();
+        let skill_folders=SkillFoldersModule::new(fixture.config.clone(),bots.clone(),fixture.runtime.clone(),agents.clone()).unwrap();
+        let skills=SkillsModule::new(fixture.config.clone(),tools.clone(),fixture.skills.clone(),fixture.runtime.clone(),agents.clone()).unwrap();
         let collaboration = CollaborationModule::new(
             fixture.config.clone(),
             fixture.runtime.clone(),
@@ -347,6 +354,8 @@ transport = "sse"
             tasks,
             goal,
             workflows,
+            skills,
+            skill_folders,
         }
     }
     async fn close(&self) {
@@ -3085,5 +3094,103 @@ async fn collaboration_uses_real_ancestry_and_checks_messages_and_interrupts_in_
         })
         .await;
     assert!(failed.is_err());
+    graph.close().await;
+}
+
+fn skill_document(root: &std::path::Path, directory: &str, name: &str, description: &str, extra: &str) -> std::path::PathBuf {
+    let directory=root.join(directory);std::fs::create_dir_all(&directory).unwrap();let path=directory.join("SKILL.md");
+    std::fs::write(&path,format!("---\nname: {name}\ndescription: {description}\n{extra}---\nComplete instructions for {name}.\n")).unwrap();path
+}
+async fn skill_agent(graph: &Graph, cwd: &std::path::Path) -> (String,Value) {
+    let chief=graph.list().await[0]["agentId"].as_str().unwrap().to_owned();let mut config=graph.agent_config(&chief).await;
+    config["modules"]["compute"]["cwd"]=json!(cwd);config["metadata"]=json!({"title":"Skills fixture"});let id=cuid2::create_id();let agents=graph.agents.clone();let acting=id.clone();let saved=config.clone();
+    graph.fixture.runtime.transact(move|ctx|agents.create(ctx,&acting,&saved)).await.unwrap();(id,config)
+}
+#[tokio::test]
+async fn skills_live_compute_discovery_preserves_root_precedence_availability_and_admin_folder_updates() {
+    let graph=Graph::new().await;let project=graph.fixture.directory.path().join("skill-project");let cwd=project.join("nested");std::fs::create_dir_all(&cwd).unwrap();std::fs::write(project.join(".git"),"fixture git marker").unwrap();
+    let standard=project.join(".agents/skills");let local=cwd.join(".agents/skills");let shared=skill_document(&local,"deep","shared","Nearest project","");skill_document(&standard,"outer","shared","Outer project","");
+    let user=graph.fixture.install("shared","---\nname: shared\ndescription: User installation\n---\nUser body\n");
+    let global=graph.fixture.skills.list(json!({})).await.unwrap();let installed=global["skills"].as_array().unwrap().iter().find(|entry|entry["name"]=="shared").unwrap();graph.fixture.skills.set_enabled_current(installed["id"].as_str().unwrap().to_owned(),false,installed["version"].as_str().unwrap().to_owned(),None).await.unwrap();
+    skill_document(&standard,".hidden","hidden","Hidden directory","");skill_document(&standard,"node_modules/ignored","ignored","Dependencies","");std::fs::write(standard.join("SKILL.md"),"---\nname: container\ndescription: Root document is not a skill\n---\nbody").unwrap();
+    let extra=project.join("extra");skill_document(&extra,"extra","extra","Project configured folder","");skill_document(&extra,"shadow","shared","Configured shadow","");std::fs::write(project.join("happy.toml"),"[skills]\ndirectories = [\"extra\"]\n").unwrap();
+    let (id,config)=skill_agent(&graph,&cwd).await;let settings=json!({"permissionMode":"workspace_write"});let scope=AgentScope{id:&id,configuration:&config,settings:&settings};let cancel=CancellationToken::new();
+    let listed=graph.skills.list(&scope,&json!({}),&cancel).await.unwrap();assert_eq!(listed["skills"].as_array().unwrap().iter().map(|skill|skill["name"].as_str().unwrap()).collect::<Vec<_>>(),vec!["extra","shared"]);assert_eq!(listed["skills"][1]["location"],json!(shared));
+    let read=graph.skills.read(&scope,&json!({"name":"shared"}),&cancel).await.unwrap();assert!(read["content"].as_str().unwrap().contains("Nearest project"));assert_eq!(read["location"],json!(shared));assert!(user.join("SKILL.md").is_file());
+    std::fs::write(&shared,"---\nname: shared\ndescription: Edited on disk\n---\nNew complete instructions\n").unwrap();assert!(graph.skills.instructions(&scope).await.unwrap().contains("Edited on disk"));
+    let machine=graph.fixture.directory.path().join("machine-skills");skill_document(&machine,"machine","machine","Added live","");let admin=graph.list().await[0]["agentId"].as_str().unwrap().to_owned();assert_eq!(graph.skill_folders.add(&admin,machine.to_str().unwrap()).await.unwrap()["changed"],true);assert_eq!(graph.skill_folders.add(&admin,machine.to_str().unwrap()).await.unwrap()["changed"],false);
+    assert_eq!(graph.skills.list(&scope,&json!({"query":"Added live"}),&cancel).await.unwrap()["skills"][0]["name"],"machine");assert!(graph.skill_folders.add(&id,machine.to_str().unwrap()).await.is_err());
+    assert_eq!(graph.skill_folders.remove(&admin,machine.to_str().unwrap()).await.unwrap()["changed"],true);assert!(graph.skills.list(&scope,&json!({"query":"machine"}),&cancel).await.unwrap()["skills"].as_array().unwrap().is_empty());
+    std::fs::remove_file(&shared).unwrap();assert_eq!(graph.skills.list(&scope,&json!({"query":"shared"}),&cancel).await.unwrap()["skills"][0]["description"],"Outer project");
+    graph.close().await;
+}
+#[tokio::test]
+async fn skills_user_only_reads_require_accepted_user_origin_and_run_state_rolls_back() {
+    let graph=Graph::new().await;let project=graph.fixture.directory.path().join("reserved-project");std::fs::create_dir_all(&project).unwrap();
+    let path=skill_document(&project.join(".agents/skills"),"deploy","deploy","Explicit deployment","disable-model-invocation: true\npermissionMode: full_access\ninvoke: auto\n");
+    let (id,config)=skill_agent(&graph,&project).await;let settings=json!({"permissionMode":"workspace_write"});let scope=AgentScope{id:&id,configuration:&config,settings:&settings};let cancel=CancellationToken::new();
+    assert!(graph.skills.list(&scope,&json!({}),&cancel).await.unwrap()["skills"].as_array().unwrap().is_empty());assert!(graph.skills.instructions(&scope).await.unwrap().is_empty());
+    let call=json!({"id":"original-skill-call","call":{"name":"read_skill","arguments":"{\"name\":\"deploy\"}"}});
+    let failed=graph.skills.execute_tool(&scope,&call,cancel.clone()).await.unwrap();assert!(matches!(failed,Message::Tool{is_error:true,..}));
+    let module=graph.skills.clone();let acting=id.clone();let saved=config.clone();graph.fixture.runtime.transact(move|ctx|module.accepted(ctx,&AgentScope{id:&acting,configuration:&saved,settings:&json!({})},&[AcceptedInput{input:json!({"metadata":{"messageOrigin":"agent"},"message":{"role":"user","content":[{"type":"tool_call_request","name":"read_skill","arguments":{"name":"deploy"}}]}}),requested_call:None}],false)).await.unwrap();
+    assert!(matches!(graph.skills.execute_tool(&scope,&call,cancel.clone()).await.unwrap(),Message::Tool{is_error:true,..}));
+    let input=json!({"metadata":{"messageOrigin":"user"},"message":{"role":"user","content":[{"type":"tool_call_request","name":"read_skill","arguments":{"name":"deploy"}}]}});
+    let module=graph.skills.clone();let acting=id.clone();let saved=config.clone();let accepted=input.clone();graph.fixture.runtime.transact(move|ctx|{module.accepted(ctx,&AgentScope{id:&acting,configuration:&saved,settings:&json!({})},&[AcceptedInput{input:accepted,requested_call:None}],false)?;anyhow::bail!("Roll back the accepted request.");#[allow(unreachable_code)]Ok::<(),anyhow::Error>(())}).await.unwrap_err();
+    assert!(matches!(graph.skills.execute_tool(&scope,&call,cancel.clone()).await.unwrap(),Message::Tool{is_error:true,..}));
+    let module=graph.skills.clone();let acting=id.clone();let saved=config.clone();graph.fixture.runtime.transact(move|ctx|module.accepted(ctx,&AgentScope{id:&acting,configuration:&saved,settings:&json!({})},&[AcceptedInput{input,requested_call:None}],false)).await.unwrap();
+    match graph.skills.execute_tool(&scope,&call,cancel.clone()).await.unwrap(){Message::Tool{call_id,content,is_error,..}=>{assert_eq!(call_id,"original-skill-call");assert!(!is_error);assert_eq!(content[0],Block::text(std::fs::read_to_string(&path).unwrap()));},_=>panic!("Expected the original skill tool result.")}
+    assert!(graph.skills.read(&scope,&json!({"name":"deploy"}),&cancel).await.is_err());assert!(graph.skills.list(&scope,&json!({}),&cancel).await.unwrap()["skills"].as_array().unwrap().is_empty());
+    let agents=graph.agents.clone();let acting=id.clone();graph.fixture.runtime.transact(move|ctx|{ctx.delete_value(&acting,&format!("kv.{acting}.run.module.skills.skill-read-requests"))?;assert!(agents.configuration(ctx,&acting)?.is_some());Ok(())}).await.unwrap();assert!(matches!(graph.skills.execute_tool(&scope,&call,cancel).await.unwrap(),Message::Tool{is_error:true,..}));
+    graph.close().await;
+}
+
+#[tokio::test]
+async fn skills_real_agent_refreshes_instructions_and_expires_user_only_read_authorization_after_settlement() {
+    let (endpoint,mut requests,server)=naming_provider(vec!["Read the requested skill.","Refused the agent's request.","Observed the edited catalog."]).await;
+    let graph=Graph::new_with_provider(&endpoint).await;let project=graph.fixture.directory.path().join("inference-skills");std::fs::create_dir_all(&project).unwrap();
+    let root=project.join(".agents/skills");let visible=skill_document(&root,"guide","guide","First guide description","");let reserved=skill_document(&root,"deploy","deploy","Hidden from inference","disable-model-invocation: true\n");
+    let (id,_)=skill_agent(&graph,&project).await;let selection=graph.task_input("Skills inference");
+    for (round,origin) in ["user","agent","user"].into_iter().enumerate(){
+        if round==2{std::fs::write(&visible,"---\nname: guide\ndescription: Edited guide description\n---\nUpdated instructions\n").unwrap();}
+        let content=if round<2{json!([{"type":"text","text":"Read the deployment skill."},{"type":"tool_call_request","name":"read_skill","arguments":{"name":"deploy"}}])}else{json!([{"type":"text","text":"Use the available guide."}])};
+        let agents=graph.agents.clone();let acting=id.clone();let model=selection["model"].clone();let effort=selection["effort"].clone();
+        graph.fixture.runtime.transact(move|ctx|agents.enqueue(ctx,&acting,&json!({"id":cuid2::create_id(),"message":{"role":"user","content":content},"options":{"provider":"fixture","model":model,"effort":effort,"permissionMode":"workspace_write"},"metadata":{"messageOrigin":origin}}),false)).await.unwrap();
+        let request=tokio::time::timeout(Duration::from_secs(8),requests.recv()).await.unwrap().unwrap();let instructions=request["instructions"].as_str().unwrap();
+        assert!(instructions.contains(if round==2{"Edited guide description"}else{"First guide description"}));assert!(!instructions.contains("Hidden from inference"));
+        let outputs=request["input"].as_array().unwrap().iter().filter(|item|item["type"]=="function_call_output").filter_map(|item|item["output"].as_str()).collect::<Vec<_>>();
+        if round==0{assert!(outputs.iter().any(|output|*output==std::fs::read_to_string(&reserved).unwrap()));}else if round==1{assert!(outputs.iter().any(|output|output.contains("can only be invoked by the user")));}
+        graph.agents.wait_for_idle(&id,&CancellationToken::new()).await.unwrap();
+    }
+    assert!(requests.try_recv().is_err());server.await.unwrap();graph.close().await;
+}
+#[tokio::test]
+async fn skills_explicit_command_invocation_is_transactional_and_injects_complete_user_only_instructions() {
+    let (endpoint,mut requests,server)=naming_provider(vec!["Followed the explicitly invoked skill."]).await;let graph=Graph::new_with_provider(&endpoint).await;
+    let project=graph.fixture.directory.path().join("slash-invocation");std::fs::create_dir_all(&project).unwrap();let path=skill_document(&project.join(".agents/skills"),"deploy","deploy","User controlled command","disable-model-invocation: true\n");
+    let (id,config)=skill_agent(&graph,&project).await;let scope=AgentScope{id:&id,configuration:&config,settings:&json!({"permissionMode":"workspace_write"})};let cancel=CancellationToken::new();let selection=graph.task_input("Explicit command");
+    let input=json!({"arguments":"inspect authentication","mode":{"providerId":"fixture","modelId":selection["model"],"effort":selection["effort"],"serviceTier":null,"permissionMode":"workspace_write"},"mutationId":"source-command-mutation"});
+    assert_eq!(graph.skills.slash_commands(&scope,&cancel).await.unwrap(),vec![json!({"description":"User controlled command","hasArguments":true,"kind":"skill","name":"deploy"})]);
+    let prepared=graph.skills.prepare_slash_invocation(&scope,"deploy",&input,&cancel).await.unwrap();assert_eq!(prepared["document"]["content"],std::fs::read_to_string(&path).unwrap());
+    let owner=graph.skills.clone();let actor=id.clone();let saved=prepared.clone();graph.fixture.runtime.transact(move|ctx|{owner.invoke_slash_command(ctx,&actor,&saved)?;anyhow::bail!("Roll back the whole command.");#[allow(unreachable_code)]Ok::<(),anyhow::Error>(())}).await.unwrap_err();
+    let agents=graph.agents.clone();let actor=id.clone();graph.fixture.runtime.transact(move|ctx|{assert!(agents.owed(ctx,&actor)?.is_none());assert!(agents.configuration(ctx,&actor)?.unwrap()["metadata"]["lastMode"].is_null());Ok(())}).await.unwrap();assert!(requests.try_recv().is_err());
+    let owner=graph.skills.clone();let actor=id.clone();let saved=prepared.clone();graph.fixture.runtime.transact(move|ctx|owner.invoke_slash_command(ctx,&actor,&saved)).await.unwrap();let request=tokio::time::timeout(Duration::from_secs(8),requests.recv()).await.unwrap().unwrap();
+    assert!(request["instructions"].as_str().unwrap().contains("The user directly invoked the /deploy skill for this run."));assert!(request["instructions"].as_str().unwrap().contains(prepared["document"]["content"].as_str().unwrap()));assert!(provider_input_texts(&request).iter().any(|text|*text=="Use the /deploy skill.\n\ninspect authentication"));
+    graph.agents.wait_for_idle(&id,&cancel).await.unwrap();assert_eq!(graph.agent_config(&id).await["metadata"]["lastMode"],input["mode"]);
+    let history=graph.history.messages(id.clone(),None,None,20,false).await.unwrap();let messages=history["runs"].as_array().unwrap().iter().flat_map(|run|run["messages"].as_array().unwrap()).filter(|message|message["id"]==prepared["messageId"]).collect::<Vec<_>>();assert_eq!(messages.len(),1);assert_eq!(messages[0]["role"],"user");assert_eq!(messages[0]["mode"],input["mode"]);
+    server.await.unwrap();graph.close().await;
+}
+#[cfg(unix)]
+#[tokio::test]
+async fn skills_compute_seam_handles_absence_directory_links_cycles_and_unreadable_documents() {
+    use std::os::unix::fs::symlink;
+    let graph=Graph::new().await;let project=graph.fixture.directory.path().join("linked-skills");let root=project.join(".agents/skills");std::fs::create_dir_all(&root).unwrap();let (id,config)=skill_agent(&graph,&project).await;
+    let settings=json!({"permissionMode":"read_only"});let scope=AgentScope{id:&id,configuration:&config,settings:&settings};let absent=json!({});let no_compute=AgentScope{id:&id,configuration:&absent,settings:&settings};let cancel=CancellationToken::new();
+    assert!(graph.skills.available_tools(&no_compute).await.unwrap().is_empty());assert!(graph.skills.instructions(&no_compute).await.unwrap().is_empty());assert_eq!(graph.skills.read(&no_compute,&json!({"name":"missing"}),&cancel).await.unwrap_err().to_string(),"This agent has no compute.");
+    let target=graph.fixture.directory.path().join("linked-target");let document=skill_document(&target,"linked","linked","Directory link","");symlink(document.parent().unwrap(),root.join("directory-link")).unwrap();symlink(&root,document.parent().unwrap().join("cycle")).unwrap();
+    let file_link=root.join("file-link");std::fs::create_dir_all(&file_link).unwrap();symlink(&document,file_link.join("SKILL.md")).unwrap();let dangling=root.join("dangling");symlink(project.join("missing"),dangling).unwrap();
+    let private=graph.fixture.config.paths.directory.join("private-skill");skill_document(&private,"secret","secret","Private installation","");symlink(&private,root.join("private-link")).unwrap();
+    let oversized=skill_document(&root,"oversized","oversized","Exceeds byte bound","");std::fs::write(&oversized,"x".repeat(262145)).unwrap();
+    let listed=tokio::time::timeout(Duration::from_secs(5),graph.skills.list(&scope,&json!({}),&cancel)).await.unwrap().unwrap();assert_eq!(listed["skills"].as_array().unwrap().len(),1);assert_eq!(listed["skills"][0]["name"],"linked");assert_eq!(listed["skills"][0]["location"],json!(document));
+    assert_eq!(graph.skills.read(&scope,&json!({"name":"linked"}),&cancel).await.unwrap()["content"],std::fs::read_to_string(&document).unwrap());assert!(graph.skills.read(&scope,&json!({"name":"secret"}),&cancel).await.is_err());
     graph.close().await;
 }

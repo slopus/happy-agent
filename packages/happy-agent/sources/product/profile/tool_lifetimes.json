@@ -1,0 +1,8 @@
+[
+    {
+        "name": "get_local_profile",
+        "durable": true,
+        "reloadable": true,
+        "steerable": false
+    }
+]

@@ -15,6 +15,13 @@ and quoted boolean values. Native parsing uses YAML syntax and the original Type
 schemas. Its mapping visitor retains the shipped rule that the last string or boolean scalar
 wins when top-level keys repeat; only an actual boolean `true` reserves model invocation.
 
+Runners own agent computes after a filesystem reader returns. A bounded strong catalog holds
+them until confirmed disposal, while computes keep a weak reference to their owning module to
+avoid a cycle. An unconfirmed disposal remains in Closing and cannot execute new work. Report
+deduplication follows the runner epoch across reconnects; lease expiry finishes owned sessions
+even without another connection. Command requests check their generation after obtaining a
+bounded channel slot and again on reply, so a lost handle cannot act on a reused remote ID.
+
 Directory aliases have separate installation identities and enablement preferences. Discovery
 excludes a canonical skill document only when no present, enabled, ready alias still exposes it.
 Disabling one alias must not hide a second enabled installation of the same directory.
