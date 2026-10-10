@@ -135,7 +135,7 @@ pub async fn run() -> Result<()> {
     let connections = connections::ConnectionsModule::new(config.clone(), bots.clone(), cloud.clone(), tailcat.clone(), durable.clone(), runtime.clone(), events.clone(), agent_runtime.clone())?;
     let presence = presence::PresenceModule::new(config.clone(), runtime.clone(), durable.clone(), lifecycle.clone(), agent_runtime.clone())?;
     let user_input = user_input::UserInputModule::new(presence.clone(), runtime.clone(), durable.clone(), agent_runtime.clone(), lifecycle.clone())?;
-    let mcp = mcp::McpModule::new(config.clone(), runtime.clone(), durable.clone(), lifecycle.clone(), user_input.clone(), workspaces.clone(), agent_runtime.clone())?;
+    let mcp = mcp::McpModule::new(config.clone(), runtime.clone(), durable.clone(), lifecycle.clone(), user_input.clone(), workspaces.clone(), runners.clone(), agent_runtime.clone())?;
     let agents = Arc::new(agents::AgentSystemModule::new(
         config.clone(),
         runtime.clone(),

@@ -38,14 +38,20 @@ const INFERENCE: &str = "inferencerecoveredtool";
 const CALL: &str = "callrecoveredtool";
 const WORKSPACE: &str = "workspacerecovered";
 
+// Standalone native test binaries can run the same scenarios inside the Docker gym.
+fn native_executable() -> PathBuf {
+    std::env::var_os("HAPPY_NATIVE_TEST_EXECUTABLE").map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_BIN_EXE_happy-agent")))
+}
+
 struct Installation {
     _directory: tempfile::TempDir,
     home: PathBuf,
 }
 impl Installation {
     fn new() -> Self {
-        let scratch = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../.g");
+        let scratch = std::env::var_os("HAPPY_NATIVE_TEST_ROOT").map(PathBuf::from)
+            .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.g"));
         std::fs::create_dir_all(&scratch).expect("short socket fixture directory");
         let scratch = scratch
             .canonicalize()
@@ -63,7 +69,7 @@ impl Installation {
         }
     }
     fn command(&self, command: &str) {
-        let output = Command::new(env!("CARGO_BIN_EXE_happy-agent"))
+        let output = Command::new(native_executable())
             .arg(command)
             .env("HAPPY_HOME_DIR", &self.home)
             .output()
@@ -231,7 +237,7 @@ impl Installation {
 }
 impl Drop for Installation {
     fn drop(&mut self) {
-        let _ = Command::new(env!("CARGO_BIN_EXE_happy-agent"))
+        let _ = Command::new(native_executable())
             .arg("kill")
             .env("HAPPY_HOME_DIR", &self.home)
             .output();

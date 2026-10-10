@@ -92,9 +92,31 @@ unchanged and the intents table is the new `002-mcp-workspace-intents`.
 ## Stdio servers never inherit the daemon's credentials
 
 When a server's configuration set any environment variable, the original passed the daemon's whole
-environment to it, provider credentials included. A stdio server now inherits only the SDK's small
+environment to it, provider credentials included. A local stdio server now inherits only the SDK's small
 safe set (`HOME`, `LOGNAME`, `PATH`, `SHELL`, `TERM`, `USER`) plus what its configuration sets,
 whether or not it sets anything.
+
+## Runner disconnects end MCP calls immediately
+
+Starting every stdio server on the daemon ignored the selected runner, and retaining a server's
+connection while its runner was away left pending calls waiting for the runner's lease. Global
+stdio servers now use the configured default runner; workspace catalogs are read from their own
+runner, and their stdio servers run there. HTTP servers remain daemon connections. A missing
+catalog file or parent is empty; malformed text and other read failures remain visible errors.
+Runner stdio programs inherit their runner's environment plus their configured variables, with
+the runner's dedicated connection token and endpoint removed by the program owner.
+
+An absent runner removes its live pooled connections and records its human-readable failure
+before process cleanup. The transport closes pending requests immediately, with cleanup bounded
+by the runner program owner's three-second close. A returning runner retries failed connections
+through normal serialized reconciliation; an old close callback cannot replace a newer client.
+Connection completion checks the latest runner snapshot so a handshake that finishes after a
+disconnect cannot leave an apparently live server behind.
+
+Runner stdout applies backpressure through eight queued messages and permits at most 16 MiB per
+JSON-RPC line. Explicit closure takes priority over queued messages so output cannot delay
+failure or shutdown; natural server exit delivers its queued replies before ending the
+connection. These bounds keep a noisy or malformed server from growing an unbounded buffer.
 
 ## A server's question can be answered
 

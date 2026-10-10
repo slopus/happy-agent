@@ -12,7 +12,10 @@ use std::sync::{Arc, Mutex};
 
 /// Set in a server's configured environment, it makes this binary serve MCP on stdio.
 const FIXTURE: &str = "HAPPY_MCP_FIXTURE";
+const READY: &str = "HAPPY_MCP_FIXTURE_READY";
 const MCP_AGENT: &str = "agentmcpfixture";
+#[path = "mcp_runner.rs"]
+mod runner_acceptance;
 
 #[test]
 fn fixture_server_process() {
@@ -110,9 +113,33 @@ fn serve_stdio() {
         let Ok(message) = serde_json::from_str::<Value>(&line) else {
             continue;
         };
+        if message["method"] == "notifications/initialized" {
+            if let Ok(ready) = std::env::var(READY) {
+                std::fs::write(&ready, std::process::id().to_string()).unwrap();
+                let mut started = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(format!("{ready}.started"))
+                    .unwrap();
+                writeln!(started, "{}", std::process::id()).unwrap();
+            }
+        }
         let (Some(id), Some(method)) = (message.get("id"), message["method"].as_str()) else {
             continue;
         };
+        if std::env::var(FIXTURE).as_deref() == Ok("runner") && method == "tools/call" {
+            let ready = std::env::var(READY).unwrap();
+            if message["params"]["arguments"]["text"] == "wait-for-disconnect" {
+                std::fs::write(format!("{ready}.waiting"), id.to_string()).unwrap();
+                loop {
+                    std::thread::park();
+                }
+            }
+            if message["params"]["arguments"]["text"] == "protocol-error" {
+                write(reply(id, Err((-32042, "Fixture RPC failure."))));
+                continue;
+            }
+        }
         if method == "tools/call" && message["params"]["name"] == "ask" {
             write(
                 json!({"jsonrpc": "2.0", "id": "question-1", "method": "elicitation/create", "params": {
@@ -255,6 +282,11 @@ fn workspace_folder(installation: &Installation) -> PathBuf {
 
 /// A seeded installation without the recovered agent, started with extra daemon environment.
 fn start(installation: &Installation, endpoint: &str, environment: &[(&str, &str)]) {
+    prepare(installation, endpoint);
+    launch(installation, environment);
+}
+
+fn prepare(installation: &Installation, endpoint: &str) {
     installation.seed(endpoint);
     let database = Connection::open(installation.home.join("agent/agent.sqlite")).unwrap();
     database
@@ -270,7 +302,10 @@ fn start(installation: &Installation, endpoint: &str, environment: &[(&str, &str
         )
         .unwrap();
     drop(database);
-    let output = Command::new(env!("CARGO_BIN_EXE_happy-agent"))
+}
+
+fn launch(installation: &Installation, environment: &[(&str, &str)]) {
+    let output = Command::new(native_executable())
         .arg("start")
         .env("HAPPY_HOME_DIR", &installation.home)
         .envs(environment.iter().copied())
@@ -293,7 +328,8 @@ async fn create_agent(installation: &Installation) {
         .send()
         .await
         .unwrap();
-    assert_eq!(created.status(), 201);
+    let status = created.status();
+    assert_eq!(status, 201, "{}", created.text().await.unwrap());
 }
 
 async fn send(installation: &Installation, message: &str, text: &str, permission_mode: &str) {

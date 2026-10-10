@@ -8,12 +8,17 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use super::super::owners::RunnersModule;
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
 use super::http::HttpTransport;
 use super::lock;
-use super::protocol::{ElicitationHandler, INVALID_PARAMS, INVALID_REQUEST, McpError, Protocol, Transport};
+use super::protocol::{
+    ElicitationHandler, INVALID_PARAMS, INVALID_REQUEST, McpError, Protocol, Transport,
+    TransportEvents,
+};
+use super::runner_stdio::RunnerStdioTransport;
 use super::sdk::{self, Shape};
 use super::stdio::StdioTransport;
 
@@ -38,23 +43,38 @@ pub(super) struct McpConnection {
     tools: Mutex<ToolMetadata>,
 }
 
+pub(super) struct OnRunner<'a> {
+    pub runners: &'a Arc<RunnersModule>,
+    pub id: &'a str,
+    pub lifetime: &'a CancellationToken,
+}
+
 fn timeout_of(config: &Value, key: &str, default: u64) -> Duration {
     Duration::from_millis(config.get(key).and_then(Value::as_u64).unwrap_or(default))
 }
 
 impl McpConnection {
     /// Start the server or reach it, and initialize the session.
-    pub async fn connect(name: &str, config: &Value) -> Result<Arc<McpConnection>, String> {
+    pub async fn connect(
+        name: &str,
+        config: &Value,
+        runner: Option<OnRunner<'_>>,
+    ) -> Result<Arc<McpConnection>, String> {
         let http = config["transport"] == "http";
         if http && ["oauthClientIdEnvVar", "oauthClientSecretEnvVar", "oauthScopes"].iter().any(|key| config.get(*key).is_some()) {
             return Err("Interactive MCP OAuth is not configured; use HTTP headers or bearer_token_env_var.".into());
         }
-        let (transport, events): (Arc<dyn Transport>, _) = if http {
+        let (transport, events): (Arc<dyn Transport>, TransportEvents) = if http {
             let (transport, events) = HttpTransport::new(config)?;
+            (transport, events.into())
+        } else if let Some(runner) = runner {
+            let (transport, events) =
+                RunnerStdioTransport::start(runner.runners, runner.id, config, runner.lifetime)
+                    .await?;
             (transport, events)
         } else {
             let (transport, events) = StdioTransport::spawn(config)?;
-            (transport, events)
+            (transport, events.into())
         };
         let protocol = Protocol::start(transport, events);
         let initialized = async {

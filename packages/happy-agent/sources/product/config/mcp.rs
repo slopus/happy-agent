@@ -51,6 +51,11 @@ impl ConfigModule {
         read_mcp_file(&root.join("mcp.toml"))
     }
 
+    /// Parse a runner's MCP catalog with the same rules as one read on this machine.
+    pub fn parse_mcp_servers(&self, text: &str) -> Result<Map<String, Value>> {
+        parse_mcp_file(text)
+    }
+
     /// Canonically add, replace, or remove one server without exposing the other server values.
     pub async fn update_mcp_server(&self, name: &str, server: Option<Value>) -> Result<Map<String, Value>> {
         let length = name.encode_utf16().count();

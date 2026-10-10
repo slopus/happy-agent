@@ -2,6 +2,9 @@ use super::tools::{self, Called};
 use super::*;
 use sha2::{Digest, Sha256};
 
+#[path = "tests_runner.rs"]
+mod runner;
+
 fn golden(text: &str) -> Value {
     serde_json::from_str(text).unwrap()
 }
@@ -81,8 +84,10 @@ fn workspaces_are_keyed_by_resolved_path_and_runner() {
     assert_eq!(workspace_key(Some("box"), "/w").unwrap(), "runner:box:/w");
     assert_eq!(parse_workspace_key("runner:box:/w"), ("/w".to_string(), Some("box".to_string())));
     assert_eq!(parse_workspace_key("/plain"), ("/plain".to_string(), None));
-    assert_eq!(catalog_runner("workspace:runner:box:/w").as_deref(), Some("box"));
-    assert_eq!(catalog_runner(GLOBAL_CATALOG), None);
+    assert_eq!(catalog_runner("workspace:runner:box:/w", None).as_deref(), Some("box"));
+    assert_eq!(catalog_runner("workspace:/w", Some("box".into())), None);
+    assert_eq!(catalog_runner(GLOBAL_CATALOG, None), None);
+    assert_eq!(catalog_runner(GLOBAL_CATALOG, Some("box".into())).as_deref(), Some("box"));
     assert_eq!(workspace_key(None, "").unwrap_err().to_string(), "Workspace path is invalid.");
 }
 

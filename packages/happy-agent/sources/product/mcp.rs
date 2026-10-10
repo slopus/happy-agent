@@ -15,6 +15,7 @@ mod names;
 mod output;
 mod persistence;
 mod protocol;
+mod runner_stdio;
 mod schemas;
 mod sdk;
 mod stdio;
@@ -43,11 +44,12 @@ use super::config::ConfigModule;
 use super::durable::{CallKv, DurableFunction, DurableFunctionsModule, Registration};
 use super::identity::now;
 use super::lifecycle::LifecycleModule;
+use super::owners::{RunnerUnavailableError, RunnersModule};
 use super::runtime::{Context, RuntimeModule};
 use super::text::{js_is_whitespace, js_length, js_slice, locale_compare};
 use super::user_input::UserInputModule;
 use super::workspaces::{WorkspaceSubscription, WorkspacesModule};
-use connection::McpConnection;
+use connection::{McpConnection, OnRunner};
 use protocol::{ElicitationHandler, McpError};
 use schemas::{MAX_MCP_CURSOR_LENGTH, MAX_MCP_ERROR_MESSAGE_LENGTH, MAX_MCP_PAGE_SIZE, MAX_MCP_TOTAL_TOOLS};
 
@@ -66,6 +68,7 @@ const WORKSPACES_FUNCTION: &str = "mcp.workspaces";
 /// Every durable call MCP owes holds this key, so they run one at a time in the order they were
 /// owed.
 const DURABLE_LOCK: &str = "mcp";
+const MAX_WORKSPACE_CATALOG_BYTES: usize = 1_048_576;
 
 pub(super) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -140,6 +143,7 @@ pub struct McpModule {
     runtime: Arc<RuntimeModule>,
     durable: Arc<DurableFunctionsModule>,
     user_input: Arc<UserInputModule>,
+    runners: Arc<RunnersModule>,
     max_page_size: usize,
     max_output_characters: usize,
     /// Serializes every change to catalogs and connections.
@@ -162,8 +166,8 @@ impl McpModule {
     /// MCP takes configuration, for the servers it runs and the user's catalog it edits; runtime,
     /// for its durable server index; Durable Functions, which run its discovery; lifecycle, whose
     /// shutdown ends its requests; user input, for the questions a server asks; workspaces,
-    /// because an archived workspace's servers stop with it; and the agent runtime it installs
-    /// its hooks into.
+    /// because an archived workspace's servers stop with it; runners, which own remote catalogs
+    /// and stdio programs; and the agent runtime it installs its hooks into.
     pub fn new(
         config: Arc<ConfigModule>,
         runtime: Arc<RuntimeModule>,
@@ -171,9 +175,10 @@ impl McpModule {
         lifecycle: Arc<LifecycleModule>,
         user_input: Arc<UserInputModule>,
         workspaces: Arc<WorkspacesModule>,
+        runners: Arc<RunnersModule>,
         agents: Arc<AgentRuntimeModule>,
     ) -> Result<Arc<Self>> {
-        let module = Self::with_limits(config, runtime, durable.clone(), &lifecycle, user_input, DEFAULT_PAGE_SIZE, DEFAULT_OUTPUT_CHARACTERS);
+        let module = Self::with_limits(config, runtime, durable.clone(), &lifecycle, user_input, runners, DEFAULT_PAGE_SIZE, DEFAULT_OUTPUT_CHARACTERS);
         durable.register(Registration {
             name: DISCOVER_FUNCTION.into(),
             arguments_schema: "ownerReconcileArgs",
@@ -204,6 +209,7 @@ impl McpModule {
         durable: Arc<DurableFunctionsModule>,
         lifecycle: &LifecycleModule,
         user_input: Arc<UserInputModule>,
+        runners: Arc<RunnersModule>,
         max_page_size: usize,
         max_output_characters: usize,
     ) -> Arc<Self> {
@@ -212,6 +218,7 @@ impl McpModule {
             runtime,
             durable,
             user_input,
+            runners,
             max_page_size,
             max_output_characters,
             reload_lock: tokio::sync::Mutex::new(()),
@@ -246,6 +253,7 @@ impl McpModule {
         if !owed {
             return Ok(());
         }
+        self.watch_runners();
         let module = self.clone();
         self.runtime
             .transact(move |ctx| {
@@ -261,6 +269,46 @@ impl McpModule {
 
     fn record_workspace_event(&self, ctx: &Context<'_>, event: &Value) -> Result<()> {
         owe_workspace_event(&self.durable, ctx, event)
+    }
+
+    fn watch_runners(self: &Arc<Self>) {
+        let mut updates = self.runners.on_updated();
+        let (module, lifetime, stopping) = (Arc::downgrade(self), self.lifetime.clone(), self.stopping.clone());
+        tokio::spawn(async move {
+            let mut connected = connected_runners(&updates.borrow_and_update());
+            loop {
+                tokio::select! {
+                    _ = lifetime.cancelled() => return,
+                    _ = stopping.cancelled() => return,
+                    changed = updates.changed() => if changed.is_err() { return },
+                }
+                let current = connected_runners(&updates.borrow_and_update());
+                let returned = current.iter().any(|id| !connected.contains(id));
+                let Some(module) = module.upgrade() else { return };
+                let closing = module.take_absent_runner_connections(&current);
+                connected = current;
+                // Pool failures are visible before bounded process cleanup begins, and the
+                // transport reports closed before waiting for the absent runner's exit report.
+                join_all(closing.iter().map(|connection| connection.close())).await;
+                if !returned || module.is_closed() || *module.discovery.borrow() == Discovery::NotOwed { continue; }
+                module.initial_reload().await;
+                let failed = lock(&module.state).pool.values().any(|pooled| pooled.failure.is_some());
+                if failed && let Err(error) = module.reload().await {
+                    tracing::warn!(error = %error_message(&error), "MCP servers could not start on a runner.");
+                }
+            }
+        });
+    }
+
+    fn take_absent_runner_connections(&self, connected: &HashSet<String>) -> Vec<Arc<McpConnection>> {
+        let mut state = lock(&self.state);
+        state.pool.iter_mut().filter_map(|(id, pooled)| {
+            let runner = id.strip_prefix("runner:")?.split_once(':')?.0;
+            if connected.contains(runner) { return None; }
+            let connection = pooled.connection.take()?;
+            pooled.failure = Some(format!("The runner {} is not connected.", self.runners.display_name(runner)));
+            Some(connection)
+        }).collect()
     }
 
     /// Apply every owed workspace change, oldest first. A change is settled only after it applies,
@@ -347,7 +395,7 @@ impl McpModule {
         let workspaces: Vec<String> = lock(&self.state).workspace_agents.keys().cloned().collect();
         let mut catalogs = IndexMap::from([(GLOBAL_CATALOG.to_string(), servers)]);
         for workspace in workspaces {
-            match self.read_workspace_servers(&workspace) {
+            match self.read_workspace_servers(&workspace).await {
                 Ok(found) => {
                     lock(&self.state).workspace_failures.remove(&workspace);
                     catalogs.insert(workspace_catalog(&workspace), without_server_names(found, &global_names));
@@ -792,7 +840,7 @@ impl McpModule {
                 bail!("The workspace no longer requires an MCP catalog.");
             }
         }
-        let servers = self.read_workspace_servers(workspace)?;
+        let servers = self.read_workspace_servers(workspace).await?;
         let global_names: HashSet<String> = lock(&self.state).catalogs.get(GLOBAL_CATALOG).map(|catalog| catalog.keys().cloned().collect()).unwrap_or_default();
         self.reconcile_catalogs(IndexMap::from([(workspace_catalog(workspace), without_server_names(servers, &global_names))])).await;
         lock(&self.state).workspace_failures.remove(workspace);
@@ -813,7 +861,7 @@ impl McpModule {
                 }
                 // A stdio server is a process on one machine, so the same configuration on two
                 // machines is two servers. An HTTP server is reached from here either way.
-                let runner_id = if config["transport"] == "stdio" { catalog_runner(&catalog_id) } else { None };
+                let runner_id = if config["transport"] == "stdio" { catalog_runner(&catalog_id, self.global_runner()) } else { None };
                 let fingerprint = names::connection_fingerprint(&config);
                 let connection_id = match &runner_id {
                     None => fingerprint,
@@ -830,11 +878,8 @@ impl McpModule {
             inputs.into_iter().filter(|(id, _)| state.pool.get(id).is_none_or(|pooled| pooled.connection.is_none())).collect()
         };
         let attempts = join_all(needed.into_iter().map(|(connection_id, (config, name, runner_id))| async move {
-            let outcome = match runner_id {
-                None => McpConnection::connect(&name, &config).await,
-                Some(runner) => Err(format!("MCP servers cannot start on the runner {runner} yet.")),
-            };
-            (connection_id, outcome)
+            let runner = runner_id.as_deref().map(|id| OnRunner { runners: &self.runners, id, lifetime: &self.lifetime });
+            (connection_id, McpConnection::connect(&name, &config, runner).await)
         }))
         .await;
         let mut started = Vec::new();
@@ -860,7 +905,7 @@ impl McpModule {
         // Every connection the batch needs is ready or has a bounded failure before any visible
         // catalog changes, and the swap below happens under one lock, so readers see the whole
         // old batch or the whole new one rather than a global/workspace half-state.
-        let closing = {
+        let mut closing = {
             let mut state = lock(&self.state);
             for (catalog_id, desired) in &desired_catalogs {
                 for connection_id in catalog_connection_ids(state.catalogs.get(catalog_id)) {
@@ -879,6 +924,10 @@ impl McpModule {
             }
             take_unreferenced(&mut state)
         };
+        // A disconnect can precede the completion of an in-flight handshake. Check the
+        // published runner snapshot again after installing it so that completion cannot
+        // leave a live-looking connection on a runner that is already absent.
+        closing.extend(self.take_absent_runner_connections(&connected_runners(&self.runners.on_updated().borrow())));
         join_all(closing.iter().map(|connection| connection.close())).await;
     }
 
@@ -896,13 +945,17 @@ impl McpModule {
         join_all(closing.iter().map(|connection| connection.close())).await;
     }
 
-    /// A workspace's own catalog, read from the machine the workspace is on.
-    fn read_workspace_servers(&self, workspace: &str) -> Result<Map<String, Value>> {
+    fn global_runner(&self) -> Option<String> {
+        if self.runners.enabled() { self.runners.default_runner_id() } else { None }
+    }
+
+    /// Read a workspace's catalog on the machine that owns its folder.
+    async fn read_workspace_servers(&self, workspace: &str) -> Result<Map<String, Value>> {
         let (path, runner_id) = parse_workspace_key(workspace);
-        if let Some(runner) = runner_id {
-            bail!("Workspace MCP servers cannot be read from the runner {runner} yet.");
+        match runner_id {
+            None => self.config.read_workspace_mcp_servers(Path::new(&path)),
+            Some(runner) => read_runner_catalog(&self.config, &self.runners, &runner, &path, &self.lifetime.child_token()).await,
         }
-        self.config.read_workspace_mcp_servers(Path::new(&path))
     }
 
     fn record_workspace_failure(&self, workspace: &str, error: &anyhow::Error) {
@@ -1555,15 +1608,31 @@ fn workspace_catalog(workspace: &str) -> String {
 }
 
 /// The runner a catalog's stdio servers start on, or none for this machine.
-fn catalog_runner(catalog_id: &str) -> Option<String> {
+fn catalog_runner(catalog_id: &str, global_runner: Option<String>) -> Option<String> {
     if catalog_id == GLOBAL_CATALOG {
-        return None;
+        return global_runner;
     }
     parse_workspace_key(&catalog_id[WORKSPACE_CATALOG_PREFIX.len()..]).1
 }
 
 fn catalog_connection_ids(catalog: Option<&Catalog>) -> HashSet<String> {
     catalog.into_iter().flat_map(|catalog| catalog.values()).filter_map(|server| server.connection_id.clone()).collect()
+}
+
+async fn read_runner_catalog(config: &ConfigModule, runners: &RunnersModule, runner: &str, workspace: &str, cancel: &CancellationToken) -> Result<Map<String, Value>> {
+    let file = Path::new(workspace).join("mcp.toml");
+    match runners.read(Some(runner), &file, MAX_WORKSPACE_CATALOG_BYTES, cancel).await {
+        Ok(bytes) => config.parse_mcp_servers(&String::from_utf8_lossy(&bytes)),
+        Err(error) if error.downcast_ref::<RunnerUnavailableError>().is_some() => Err(error),
+        Err(error) if matches!(runners.error_code(&error), Some("ENOENT" | "ENOTDIR")) => Ok(Map::new()),
+        Err(error) => bail!("Could not read Happy Agent configuration '{}'. {}", file.display(), error_message(&error)),
+    }
+}
+
+fn connected_runners(snapshot: &Value) -> HashSet<String> {
+    snapshot["runners"].as_array().into_iter().flatten()
+        .filter(|runner| runner["status"] == "connected")
+        .filter_map(|runner| runner["id"].as_str().map(str::to_owned)).collect()
 }
 
 fn without_server_names(servers: Map<String, Value>, omitted: &HashSet<String>) -> Map<String, Value> {

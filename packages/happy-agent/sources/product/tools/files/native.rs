@@ -300,12 +300,11 @@ fn parent(path: &Path, create: bool) -> Result<(File, std::ffi::CString)> {
             }
             descriptor = unsafe { libc::openat(directory.as_raw_fd(), name.as_ptr(), flags) };
         }
-        ensure!(
-            descriptor >= 0,
-            "The parent directory changed or cannot be opened safely: {}: {}.",
-            path.display(),
-            std::io::Error::last_os_error()
-        );
+        if descriptor < 0 {
+            let error = std::io::Error::last_os_error();
+            let message = format!("The parent directory changed or cannot be opened safely: {}: {error}.", path.display());
+            return Err(anyhow::Error::new(error).context(message));
+        }
         directory = unsafe { File::from_raw_fd(descriptor) };
     }
     Ok((directory, std::ffi::CString::new(name.as_bytes())?))
@@ -322,12 +321,11 @@ pub(super) fn open(path: &Path) -> Result<File> {
             libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC,
         )
     };
-    ensure!(
-        descriptor >= 0,
-        "The file cannot be opened safely: {}: {}.",
-        path.display(),
-        std::io::Error::last_os_error()
-    );
+    if descriptor < 0 {
+        let error = std::io::Error::last_os_error();
+        let message = format!("The file cannot be opened safely: {}: {error}.", path.display());
+        return Err(anyhow::Error::new(error).context(message));
+    }
     Ok(unsafe { File::from_raw_fd(descriptor) })
 }
 

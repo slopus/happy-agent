@@ -58,6 +58,32 @@ pub(super) enum TransportEvent {
     Closed,
 }
 
+/// Runner input applies backpressure; closing takes priority over queued messages.
+pub(super) enum TransportEvents {
+    Unbounded(mpsc::UnboundedReceiver<TransportEvent>),
+    Bounded {
+        messages: mpsc::Receiver<TransportEvent>,
+        closed: CancellationToken,
+    },
+}
+impl From<mpsc::UnboundedReceiver<TransportEvent>> for TransportEvents {
+    fn from(events: mpsc::UnboundedReceiver<TransportEvent>) -> Self {
+        Self::Unbounded(events)
+    }
+}
+impl TransportEvents {
+    async fn recv(&mut self) -> Option<TransportEvent> {
+        match self {
+            Self::Unbounded(events) => events.recv().await,
+            Self::Bounded { messages, closed } => tokio::select! {
+                biased;
+                _ = closed.cancelled() => Some(TransportEvent::Closed),
+                message = messages.recv() => message,
+            },
+        }
+    }
+}
+
 /// One way to reach a server. Incoming messages arrive on the channel the transport was
 /// created with; `Closed` arrives once, when the server or the transport ends.
 #[async_trait]
@@ -87,7 +113,11 @@ pub(super) struct Protocol {
 
 impl Protocol {
     /// Start reading the transport's events.
-    pub fn start(transport: Arc<dyn Transport>, mut events: mpsc::UnboundedReceiver<TransportEvent>) -> Arc<Protocol> {
+    pub fn start(
+        transport: Arc<dyn Transport>,
+        events: impl Into<TransportEvents>,
+    ) -> Arc<Protocol> {
+        let mut events = events.into();
         let protocol = Arc::new(Protocol {
             transport,
             state: Mutex::new(State { next_id: 0, pending: HashMap::new(), handling: HashMap::new(), closed: false, on_close: Vec::new() }),
@@ -96,7 +126,9 @@ impl Protocol {
         let weak = Arc::downgrade(&protocol);
         tokio::spawn(async move {
             while let Some(event) = events.recv().await {
-                let Some(protocol) = weak.upgrade() else { return };
+                let Some(protocol) = weak.upgrade() else {
+                    return;
+                };
                 match event {
                     TransportEvent::Message(message) => protocol.receive(message),
                     TransportEvent::Closed => {
@@ -156,7 +188,9 @@ impl Protocol {
     }
 
     fn receive(self: &Arc<Self>, message: Value) {
-        let Some(incoming) = sdk::classify(&message) else { return };
+        let Some(incoming) = sdk::classify(&message) else {
+            return;
+        };
         match incoming {
             Incoming::Result { id, result } => self.respond(&id, Ok(result)),
             Incoming::Error { id: Some(id), code, message, .. } => self.respond(&id, Err(McpError::coded(code, message))),
@@ -164,7 +198,10 @@ impl Protocol {
             Incoming::Request { id, method, params } => self.handle_request(id, method, params),
             Incoming::Notification { method, params } => {
                 if method == "notifications/cancelled" {
-                    let Some(request) = params.as_ref().and_then(|params| params.get("requestId")) else { return };
+                    let Some(request) = params.as_ref().and_then(|params| params.get("requestId"))
+                    else {
+                        return;
+                    };
                     if let Some(token) = lock(&self.state).handling.remove(&request.to_string()) {
                         token.cancel();
                     }
@@ -203,7 +240,9 @@ impl Protocol {
             }
             let response = match outcome {
                 Ok(result) => json!({"result": result, "jsonrpc": "2.0", "id": id}),
-                Err((code, message)) => json!({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": message}}),
+                Err((code, message)) => {
+                    json!({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": message}})
+                }
             };
             let _ = protocol.transport.send(response).await;
         });
@@ -216,8 +255,12 @@ impl Protocol {
         if let Some(params) = params {
             request["params"] = params;
         }
-        let parsed = sdk::parse(&sdk::ELICIT_REQUEST, &request)
-            .map_err(|error| McpError::coded(INVALID_PARAMS, format!("Invalid elicitation request: {error}")))?;
+        let parsed = sdk::parse(&sdk::ELICIT_REQUEST, &request).map_err(|error| {
+            McpError::coded(
+                INVALID_PARAMS,
+                format!("Invalid elicitation request: {error}"),
+            )
+        })?;
         if parsed["params"]["mode"] == "url" {
             return Err(McpError::coded(INVALID_PARAMS, "Client does not support URL-mode elicitation requests"));
         }
@@ -293,7 +336,11 @@ impl Protocol {
             }
         };
         lock(&self.state).pending.remove(&id);
-        sdk::parse(shape, &outcome?).map_err(|error| McpError::plain(format!("The MCP server sent an invalid {method} result: {error}")))
+        sdk::parse(shape, &outcome?).map_err(|error| {
+            McpError::plain(format!(
+                "The MCP server sent an invalid {method} result: {error}"
+            ))
+        })
     }
 
     async fn cancel(&self, id: i64, reason: &str) {

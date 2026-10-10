@@ -98,6 +98,14 @@ Running the default local gym requires:
 
 Docker is required only for `mode: "docker"` scenarios and the Docker lane. No Codex, Claude, OpenAI, or Anthropic credentials are required.
 
+The native MCP runner scenario also needs the Happy Agent executable and the compiled
+`original_agent_restart` test executable. Build them with
+`cargo test -p happy-agent --test original_agent_restart --no-run`, then set
+`HAPPY_NATIVE_GYM_BINARY` and `HAPPY_NATIVE_GYM_API_TEST_BINARY` to their paths. With the local
+`.context/target` build, the scenario finds both automatically. It runs the same daemon, runner,
+MCP process, and scripted inference regression inside the Docker PTY; the test-only fixture
+overrides keep its executable and scratch paths inside that isolated container.
+
 The Docker image uses Node 24 on Debian Trixie in both stages. Monty's Linux ARM64 addon
 requires glibc 2.39 or newer, so Bookworm cannot load the daemon. The final image imports the
 deployed daemon during its build to catch incompatible native libraries and missing runtime assets.
