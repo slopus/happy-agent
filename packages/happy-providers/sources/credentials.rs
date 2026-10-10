@@ -6,6 +6,7 @@ use std::{collections::BTreeMap, path::PathBuf, sync::Arc, time::Duration};
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 mod aws;
+mod codex;
 mod discovery;
 mod grok;
 mod local_file;
@@ -309,106 +310,50 @@ impl Credential {
         auth.original = Some(store);
         true
     }
-    /// Refresh is provider-owned; outer code never replays inference on its own.
+    /// Re-reads a Codex login the provider rejected, adopting whatever token the file now holds
+    /// for the same account; `false` when it no longer holds one.
+    pub(crate) async fn reload_codex(&self) -> bool {
+        let Some((file, _, account)) = self.codex_login().await else {
+            return false;
+        };
+        match codex::reload(&file, account.as_deref()).await {
+            Ok(Some(login)) => {
+                self.adopt_codex(login).await;
+                true
+            }
+            _ => false,
+        }
+    }
+    /// Rotates a Codex login under the lock its CLI shares, or adopts a rotation already on disk.
+    /// `Ok(false)` when the file no longer holds this account's login. Refresh is provider-owned;
+    /// outer code never replays inference on its own.
     pub async fn refresh_codex(&self, client: &reqwest::Client) -> Result<bool, ProviderError> {
+        let Some((file, token, account)) = self.codex_login().await else {
+            return Ok(false);
+        };
+        match codex::refresh(client, &file, &token, account.as_deref()).await {
+            Ok(Some(login)) => {
+                self.adopt_codex(login).await;
+                Ok(true)
+            }
+            Ok(None) => Ok(false),
+            Err(message) => Err(ProviderError::new(ErrorKind::Authentication, message)),
+        }
+    }
+    async fn codex_login(&self) -> Option<(PathBuf, String, Option<String>)> {
+        let auth = self.state.lock().await;
+        match (&auth.file, auth.codex_session) {
+            (Some(file), true) => Some((file.clone(), auth.token.clone(), auth.account.clone())),
+            _ => None,
+        }
+    }
+    async fn adopt_codex(&self, login: codex::Login) {
         let mut auth = self.state.lock().await;
-        if !auth.codex_session {
-            return Ok(false);
+        auth.token = login.token;
+        if login.account.is_some() {
+            auth.account = login.account;
         }
-        let Some(original) = &auth.original else {
-            return Ok(false);
-        };
-        let Some(refresh) = original
-            .pointer("/tokens/refresh_token")
-            .and_then(Value::as_str)
-        else {
-            return Ok(false);
-        };
-        let response = client.post("https://auth.openai.com/oauth/token").timeout(Duration::from_secs(30)).json(&serde_json::json!({"grant_type":"refresh_token","refresh_token":refresh,"client_id":"app_EMoamEEZ73f0CkXaXp7hrann"})).send().await.map_err(|_| ProviderError::new(ErrorKind::Authentication, "Codex login could not be refreshed. Sign in again through Codex."))?;
-        if !response.status().is_success() {
-            return Ok(false);
-        }
-        let bytes = bounded_body(response, 256 * 1024).await?;
-        #[derive(Deserialize)]
-        struct Exchange {
-            access_token: String,
-            #[serde(default)]
-            refresh_token: Option<String>,
-            #[serde(default)]
-            id_token: Option<String>,
-        }
-        let exchange: Exchange = serde_json::from_slice(&bytes).map_err(|_| {
-            ProviderError::new(
-                ErrorKind::Authentication,
-                "The Codex refresh response was invalid.",
-            )
-        })?;
-        let Some(file) = &auth.file else {
-            return Ok(false);
-        };
-        let current = tokio::fs::read(file)
-            .await
-            .ok()
-            .and_then(|b| serde_json::from_slice::<Value>(&b).ok());
-        if current.as_ref() != auth.original.as_ref() {
-            return Ok(false);
-        }
-        let mut changed = original.clone();
-        changed["tokens"]["access_token"] = Value::String(exchange.access_token.clone());
-        if let Some(token) = exchange.refresh_token {
-            changed["tokens"]["refresh_token"] = Value::String(token);
-        }
-        if let Some(token) = exchange.id_token {
-            changed["tokens"]["id_token"] = Value::String(token);
-        }
-        let temporary = file.with_extension(format!("{}.tmp", uuid::Uuid::new_v4()));
-        let mut options = tokio::fs::OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        options.mode(0o600);
-        let mut output = options.open(&temporary).await.map_err(|_| {
-            ProviderError::new(
-                ErrorKind::Authentication,
-                "The refreshed Codex login could not be saved.",
-            )
-        })?;
-        use tokio::io::AsyncWriteExt;
-        let bytes = serde_json::to_vec_pretty(&changed).map_err(|_| {
-            ProviderError::new(
-                ErrorKind::Authentication,
-                "The refreshed Codex login could not be encoded.",
-            )
-        })?;
-        output.write_all(&bytes).await.map_err(|_| {
-            ProviderError::new(
-                ErrorKind::Authentication,
-                "The refreshed Codex login could not be saved.",
-            )
-        })?;
-        output.sync_all().await.map_err(|_| {
-            ProviderError::new(
-                ErrorKind::Authentication,
-                "The refreshed Codex login could not be saved.",
-            )
-        })?;
-        // Check once more after the network/write boundary; never recreate a removed login.
-        let current = tokio::fs::read(file)
-            .await
-            .ok()
-            .and_then(|b| serde_json::from_slice::<Value>(&b).ok());
-        if current.as_ref() != auth.original.as_ref() {
-            let _ = tokio::fs::remove_file(&temporary).await;
-            return Ok(false);
-        }
-        tokio::fs::rename(&temporary, file).await.map_err(|_| {
-            ProviderError::new(
-                ErrorKind::Authentication,
-                "The refreshed Codex login could not be saved.",
-            )
-        })?;
-        auth.token = exchange.access_token;
-        auth.original = Some(changed);
-        Ok(true)
+        auth.original = Some(login.store);
     }
 }
 

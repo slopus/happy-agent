@@ -23,13 +23,20 @@ pub(super) async fn codex(path:Option<&Path>,ambient:bool)->Result<Auth> {
     if !ambient&&path.is_none(){return Err(CredentialUnavailable.into());}
     let file=match path{Some(path)=>path.to_owned(),None=>native_auth_path("CODEX_HOME",".codex")?};
     let auth=match read(&file).await? {Some(bytes)=>{let value:Value=serde_json::from_slice(&bytes)?;valid("codexAuth",&value)?.then_some(value)},None=>None};
-    if let Some(auth)=&auth {if auth["auth_mode"]!="apikey"&&let Some(token)=auth["tokens"]["access_token"].as_str().filter(|token|!token.is_empty()) {
-        let account=auth["tokens"]["account_id"].as_str().filter(|value|!value.is_empty()).map(str::to_owned).or_else(||[auth["tokens"]["id_token"].as_str(),Some(token)].into_iter().flatten().find_map(account_claim));
-        return Ok(Auth{token:token.to_owned(),account,file:Some(file),original:Some(auth.clone()),codex_session:true,..Auth::default()});
-    }}
+    if let Some(auth)=&auth&&let Some((token,account))=codex_session(auth) {
+        return Ok(Auth{token,account,file:Some(file),original:Some(auth.clone()),codex_session:true,..Auth::default()});
+    }
     if let Some(token)=environment("OPENAI_API_KEY",ambient){return Ok(Auth{token,..Auth::default()});}
     if ambient&&let Some(token)=auth.as_ref().filter(|auth|auth["auth_mode"]=="apikey").and_then(|auth|auth["OPENAI_API_KEY"].as_str()).and_then(|token|explicit(Some(token))){return Ok(Auth{token,..Auth::default()});}
     Err(CredentialUnavailable.into())
+}
+/// The ChatGPT login a `codexAuth`-valid file selects: its access token and the account it belongs
+/// to, from the stored account or else either token's claims. API-key mode selects no login.
+pub(super) fn codex_session(auth:&Value)->Option<(String,Option<String>)> {
+    if auth["auth_mode"]=="apikey"{return None;}
+    let token=auth["tokens"]["access_token"].as_str().filter(|token|!token.is_empty())?;
+    let account=auth["tokens"]["account_id"].as_str().filter(|value|!value.is_empty()).map(str::to_owned).or_else(||[auth["tokens"]["id_token"].as_str(),Some(token)].into_iter().flatten().find_map(account_claim));
+    Some((token.to_owned(),account))
 }
 fn account_claim(token:&str)->Option<String> {
     let decoded=URL_SAFE_NO_PAD.decode(token.split('.').nth(1)?.trim_end_matches('=')).ok()?;let value:Value=serde_json::from_slice(&decoded).ok()?;

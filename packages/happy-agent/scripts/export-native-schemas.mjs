@@ -256,6 +256,13 @@ const { discoverySchema: grokDiscovery, tokensSchema: grokTokens } = await sourc
     ),
     ["discoverySchema", "tokensSchema"],
 );
+const { authSchema: codexRefreshable, responseSchema: codexRefreshResponse } = await sourcePrivateSchema(
+    new URL(
+        "./vendors/codex/impl/refreshCodexAuthFile.js",
+        new URL(require.resolve("@slopus/happy-providers"), "file:"),
+    ),
+    ["authSchema", "responseSchema"],
+);
 // The Grok CLI session fields an OIDC refresh needs; the original reads each as a non-empty string.
 const grokRefreshable = Type.Object(
     {
@@ -267,7 +274,7 @@ const grokRefreshable = Type.Object(
 );
 writeFileSync(
     new URL("../../happy-providers/sources/credentials/schemas.json", import.meta.url),
-    `${JSON.stringify({ codexAuth: codexAuthFileSchema, claudeAuth: Type.Object({ claudeAiOauth: Type.Optional(Type.Object({ accessToken: Type.Optional(Type.String()) }, { additionalProperties: true })) }, { additionalProperties: true }), grokAuth: Type.Object({}, { additionalProperties: true }), grokRecord: Type.Object({ key: Type.Optional(Type.String()) }, { additionalProperties: true }), grokRefreshable, grokDiscovery, grokTokens, codexClaims: Type.Object({ "https://api.openai.com/auth": Type.Optional(Type.Object({ chatgpt_account_id: Type.Optional(Type.String()) }, { additionalProperties: true })) }, { additionalProperties: true }) }, null, 2)}\n`,
+    `${JSON.stringify({ codexAuth: codexAuthFileSchema, claudeAuth: Type.Object({ claudeAiOauth: Type.Optional(Type.Object({ accessToken: Type.Optional(Type.String()) }, { additionalProperties: true })) }, { additionalProperties: true }), grokAuth: Type.Object({}, { additionalProperties: true }), grokRecord: Type.Object({ key: Type.Optional(Type.String()) }, { additionalProperties: true }), grokRefreshable, grokDiscovery, grokTokens, codexClaims: Type.Object({ "https://api.openai.com/auth": Type.Optional(Type.Object({ chatgpt_account_id: Type.Optional(Type.String()) }, { additionalProperties: true })) }, { additionalProperties: true }), codexRefreshable, codexRefreshResponse }, null, 2)}\n`,
 );
 const {
     nodeNameSchema,

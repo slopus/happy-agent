@@ -45,7 +45,7 @@ pub(super) fn expired(record: &Value, early_ms: i128, now: i128) -> bool {
 }
 
 /// `Date.prototype.toISOString`.
-fn iso(ms: i128) -> Option<String> {
+pub(super) fn iso(ms: i128) -> Option<String> {
     let at = time::OffsetDateTime::from_unix_timestamp_nanos(ms * 1_000_000).ok()?;
     Some(format!(
         "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",

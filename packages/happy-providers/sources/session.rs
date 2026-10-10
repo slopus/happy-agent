@@ -726,6 +726,9 @@ impl HttpSession {
     ) -> Result<Mapper, ProviderError> {
         let mut attempt = 0;
         let mut refreshed_grok = false;
+        // A rejected Codex login is re-read once, then refreshed once, each replayed outside the
+        // retry budget, as Codex itself recovers.
+        let mut codex_recovery = 0u8;
         while attempt <= self.config.inference_max_retries {
             if cancel.is_cancelled() {
                 return Err(cancelled());
@@ -785,22 +788,28 @@ impl HttpSession {
                             continue;
                         }
                     }
+                    if error.status == Some(401)
+                        && self.config.kind == ProviderKind::Codex
+                        && codex_recovery < 2
+                    {
+                        codex_recovery += 1;
+                        let recovered = if codex_recovery == 1 {
+                            self.credential.reload_codex().await
+                        } else {
+                            self.credential
+                                .refresh_codex(&self.client)
+                                .await
+                                .unwrap_or(false)
+                        };
+                        if recovered {
+                            continue;
+                        }
+                    }
                     let fallback = use_socket
                         && self.config.transport == Transport::Auto
                         && (error.retryable || matches!(error.status, Some(404 | 405 | 426)));
                     if fallback {
                         self.sse_only = true;
-                        error.retryable = true;
-                    }
-                    if error.kind == ErrorKind::Authentication
-                        && self.config.kind == ProviderKind::Codex
-                        && attempt < self.config.inference_max_retries
-                        && self
-                            .credential
-                            .refresh_codex(&self.client)
-                            .await
-                            .unwrap_or(false)
-                    {
                         error.retryable = true;
                     }
                     if !error.retryable || attempt == self.config.inference_max_retries {
