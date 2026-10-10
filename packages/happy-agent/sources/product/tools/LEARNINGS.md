@@ -121,6 +121,11 @@ mode bits and avoid following a substituted symlink. Patch deletes remove a
 symlink's directory entry; patch moves preserve the original file and refuse
 occupied targets. The compute filesystem's raw move uses checked native rename
 and can replace a destination, as its Source RPC contract requires.
+A patch move commits with the kernel's no-replace rename, so a destination that
+appears after planning still stops it. Linux calls `SYS_renameat2` directly:
+the release links a static musl whose libc wrapper may not exist, and the
+missing `renameat2` symbol failed both Linux release links. An older kernel's
+error refuses the move; nothing falls back to a replacing rename.
 
 Directory pages compare UTF-8 bytes and retain only the requested page plus one
 sentinel while scanning. Sorting UTF-16 changed both the page and its cursor for

@@ -36,14 +36,14 @@ try {
     assert.deepEqual(
         run("tar", ["-tzf", rootArchive])
             .trim()
-            .split("\n")
+            .split(/\r?\n/)
             .filter((path) => path.startsWith("package/bin/")),
         ["package/bin/happy-agent.cjs"],
     );
     assert.deepEqual(
         run("tar", ["-tzf", platformArchive])
             .trim()
-            .split("\n")
+            .split(/\r?\n/)
             .filter((path) => path.startsWith("package/bin/")),
         [`package/bin/happy-agent${process.platform === "win32" ? ".exe" : ""}`],
     );

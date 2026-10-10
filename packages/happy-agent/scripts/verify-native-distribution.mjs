@@ -32,7 +32,7 @@ const digest = (path) => createHash("sha256").update(readFileSync(path)).digest(
 const binPaths = (archive) =>
     run("tar", ["-tzf", archive])
         .trim()
-        .split("\n")
+        .split(/\r?\n/)
         .filter((path) => path.startsWith("package/bin/"));
 
 const files = readdirSync(directory);
@@ -75,7 +75,7 @@ try {
         assert.deepEqual(
             run("tar", ["-tzf", join(directory, archive)])
                 .trim()
-                .split("\n"),
+                .split(/\r?\n/),
             [`happy-agent-${target}${os === "win32" ? ".exe" : ""}`],
         );
 

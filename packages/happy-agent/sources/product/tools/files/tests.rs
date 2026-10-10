@@ -353,6 +353,32 @@ async fn patch_moves_keep_executable_permissions_and_refuse_an_occupied_destinat
     fixture.close().await;
 }
 
+/// The planner refuses an occupied destination first, so this drives the commit directly: a
+/// destination that appears after planning must stop the move inside the kernel, not replace it.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn native_moves_refuse_a_destination_that_appears_after_planning() {
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("source.txt");
+    let destination = directory.path().join("destination.txt");
+    std::fs::write(&source, "moved\n").unwrap();
+    let expected = std::fs::symlink_metadata(&source).unwrap();
+    std::fs::write(&destination, "keep\n").unwrap();
+    let error = native::move_file(&source, &destination, &expected).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .starts_with("The move could not commit without overwriting another file: "),
+        "{error}"
+    );
+    assert_eq!(std::fs::read_to_string(&source).unwrap(), "moved\n");
+    assert_eq!(std::fs::read_to_string(&destination).unwrap(), "keep\n");
+    std::fs::remove_file(&destination).unwrap();
+    native::move_file(&source, &destination, &expected).unwrap();
+    assert!(!source.exists());
+    assert_eq!(std::fs::read_to_string(&destination).unwrap(), "moved\n");
+}
+
 struct Fixture {
     directory: tempfile::TempDir,
     root: PathBuf,

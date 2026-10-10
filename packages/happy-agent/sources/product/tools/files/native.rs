@@ -386,7 +386,9 @@ pub(super) fn write(path: &Path, bytes: &[u8], expected: Option<&std::fs::Metada
         let mut file = unsafe { File::from_raw_fd(descriptor) };
         if let Some(metadata) = expected {
             ensure!(
-                unsafe { libc::fchmod(file.as_raw_fd(), metadata.mode() & 0o7777) } == 0,
+                unsafe {
+                    libc::fchmod(file.as_raw_fd(), (metadata.mode() & 0o7777) as libc::mode_t)
+                } == 0,
                 "The existing file permissions cannot be preserved."
             );
         }
@@ -528,14 +530,17 @@ pub(super) fn move_file(
             && current.st_mtime_nsec == expected.mtime_nsec(),
         "The file changed before the move. Read it again."
     );
+    // The system call rather than libc's wrapper: the static musl a release links against may
+    // predate renameat2 even though every supported kernel provides it.
     #[cfg(target_os = "linux")]
     let moved = unsafe {
-        libc::renameat2(
-            from.as_raw_fd(),
+        libc::syscall(
+            libc::SYS_renameat2,
+            from.as_raw_fd() as libc::c_long,
             name.as_ptr(),
-            to.as_raw_fd(),
+            to.as_raw_fd() as libc::c_long,
             destination_name.as_ptr(),
-            libc::RENAME_NOREPLACE,
+            libc::RENAME_NOREPLACE as libc::c_long,
         )
     };
     #[cfg(target_os = "macos")]
