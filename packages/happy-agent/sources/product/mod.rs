@@ -47,7 +47,7 @@ mod workspaces;
 pub(crate) mod workflows;
 
 pub use config::ConfigModule;
-pub use lifecycle::{LifecycleModule, command};
+pub use lifecycle::{LifecycleModule, command, reload_argument};
 pub use runner::run as run_runner;
 
 pub(crate) fn compute_regex_worker()->std::process::ExitCode { tools::compute_regex_worker() }

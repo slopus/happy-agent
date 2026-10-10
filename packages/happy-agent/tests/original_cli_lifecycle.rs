@@ -16,10 +16,9 @@ fn command(home: &Path, args: &[&str]) -> Output {
 }
 
 fn installation() -> tempfile::TempDir {
-    let scratch = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../.context")
-        .canonicalize()
-        .expect("scratch directory");
+    let scratch = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.g");
+    std::fs::create_dir_all(&scratch).expect("short socket fixture directory");
+    let scratch = scratch.canonicalize().expect("scratch directory");
     tempfile::Builder::new()
         .prefix("")
         .rand_bytes(2)
@@ -383,6 +382,276 @@ fn original_help_version_and_argument_validation_remain_public() {
                 .success()
         );
     }
+}
+
+#[test]
+fn detached_reload_returns_a_private_log_and_replaces_the_same_installation() {
+    let temporary = installation();
+    let home = temporary.path().join(".happy");
+    let _guard = DaemonGuard(&home);
+    assert!(command(&home, &["start"]).status.success());
+    let original = std::fs::read_to_string(home.join("agent/daemon.pid")).expect("original PID");
+    let token = std::fs::read_to_string(home.join("agent/token")).expect("original token");
+    let mut caller = Command::new(env!("CARGO_BIN_EXE_happy-agent"))
+        .args(["reload", "--detach"])
+        .env("HAPPY_HOME_DIR", &home)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("detached reload caller");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while caller.try_wait().expect("caller status").is_none() {
+        let state = std::fs::read_to_string(home.join("agent/drain.json"))
+            .ok()
+            .and_then(|value| serde_json::from_str::<serde_json::Value>(&value).ok());
+        if state.as_ref().is_none_or(|state| state["phase"] != "ready") {
+            assert!(
+                caller
+                    .try_wait()
+                    .expect("caller status before drain")
+                    .is_some(),
+                "the caller must exit before the target daemon starts draining"
+            );
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the detached caller returns promptly"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    let scheduled = caller.wait_with_output().expect("detached caller output");
+    assert!(
+        scheduled.status.success(),
+        "{}",
+        String::from_utf8_lossy(&scheduled.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&scheduled.stdout)
+            .contains("Happy Agent will reload once this command exits.")
+    );
+    let log = home.join("agent/reload.log");
+    assert_eq!(
+        std::fs::metadata(&log)
+            .expect("reload log")
+            .permissions()
+            .mode()
+            & 0o777,
+        0o600
+    );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    loop {
+        if std::fs::read_to_string(&log)
+            .unwrap_or_default()
+            .contains("Daemon is running at")
+        {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "replacement readiness: {}",
+            std::fs::read_to_string(&log).unwrap_or_default()
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert_ne!(
+        std::fs::read_to_string(home.join("agent/daemon.pid")).expect("replacement PID"),
+        original
+    );
+    assert_eq!(
+        std::fs::read_to_string(home.join("agent/token")).expect("retained token"),
+        token
+    );
+    assert_eq!(
+        request(&home, Some(token.trim()), "GET", "/v0/health").1["ready"],
+        true
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn detached_daemon_starts_in_the_operating_system_home() {
+    let temporary = installation();
+    let home = temporary.path().join(".happy");
+    let _guard = DaemonGuard(&home);
+    let output = Command::new(env!("CARGO_BIN_EXE_happy-agent"))
+        .arg("start")
+        .env("HAPPY_HOME_DIR", &home)
+        .current_dir("/")
+        .output()
+        .expect("launch from desktop working directory");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let pid = std::fs::read_to_string(home.join("agent/daemon.pid")).expect("daemon PID");
+    assert_eq!(
+        std::fs::read_link(format!("/proc/{}/cwd", pid.trim())).expect("daemon working directory"),
+        std::fs::canonicalize(std::env::var_os("HOME").expect("OS home")).expect("OS home path")
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn foreground_daemon_keeps_its_callers_working_directory() {
+    let temporary = installation();
+    let home = temporary.path().join(".happy");
+    let cwd = temporary.path().join("foreground-folder");
+    std::fs::create_dir(&cwd).unwrap();
+    let mut foreground = Foreground(
+        Command::new(env!("CARGO_BIN_EXE_happy-agent"))
+            .arg("run")
+            .env("HAPPY_HOME_DIR", &home)
+            .current_dir(&cwd)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    while !home.join("agent/daemon.pid").exists() {
+        assert!(
+            foreground.0.try_wait().unwrap().is_none(),
+            "foreground daemon stays alive"
+        );
+        assert!(
+            std::time::Instant::now() < deadline,
+            "foreground daemon becomes ready"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert_eq!(
+        std::fs::read_link(format!("/proc/{}/cwd", foreground.0.id())).unwrap(),
+        cwd.canonicalize().unwrap()
+    );
+}
+
+#[test]
+fn forged_detached_workers_cannot_drain_a_running_daemon() {
+    let temporary = installation();
+    let home = temporary.path().join(".happy");
+    let _guard = DaemonGuard(&home);
+    assert!(command(&home, &["start"]).status.success());
+    let original = std::fs::read_to_string(home.join("agent/daemon.pid")).expect("original PID");
+    let token = std::fs::read_to_string(home.join("agent/token")).expect("token");
+    for caller in ["2147483647".to_owned(), std::process::id().to_string()] {
+        let mut worker = Command::new(env!("CARGO_BIN_EXE_happy-agent"))
+            .args(["reload", &format!("--detached-after={caller}")])
+            .env("HAPPY_HOME_DIR", &home)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("forged detached worker");
+        let forged = serde_json::json!({"nonce":"00000000-0000-0000-0000-000000000000","caller":{"pid":caller.parse::<u32>().unwrap(),"identity":"forged"},"workerPid":worker.id(),"target":{"pid":original.trim().parse::<u32>().unwrap(),"identity":"forged","instance":"forged"}});
+        worker
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(forged.to_string().as_bytes())
+            .expect("forged private handoff");
+        assert!(
+            !worker
+                .wait_with_output()
+                .expect("worker rejected")
+                .status
+                .success()
+        );
+        let health = request(&home, Some(token.trim()), "GET", "/v0/health").1;
+        assert_eq!(health["ready"], true);
+        assert_eq!(health["draining"], false);
+        assert_eq!(
+            std::fs::read_to_string(home.join("agent/daemon.pid")).unwrap(),
+            original
+        );
+    }
+}
+
+#[test]
+fn detached_reload_refuses_a_symlinked_log_without_changing_its_target_or_daemon() {
+    let temporary = installation();
+    let home = temporary.path().join(".happy");
+    let _guard = DaemonGuard(&home);
+    assert!(command(&home, &["start"]).status.success());
+    let original = std::fs::read_to_string(home.join("agent/daemon.pid")).unwrap();
+    let target = temporary.path().join("ordinary-file");
+    std::fs::write(&target, "leave this file alone").unwrap();
+    std::os::unix::fs::symlink(&target, home.join("agent/reload.log")).unwrap();
+    let refused = command(&home, &["reload", "--detach"]);
+    assert!(!refused.status.success());
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("not an ordinary file"));
+    assert_eq!(
+        std::fs::read_to_string(&target).unwrap(),
+        "leave this file alone"
+    );
+    assert_eq!(
+        std::fs::read_to_string(home.join("agent/daemon.pid")).unwrap(),
+        original
+    );
+}
+
+#[test]
+fn detached_worker_rejects_unknown_handoff_fields_before_using_process_identities() {
+    let mut worker = Command::new(env!("CARGO_BIN_EXE_happy-agent"))
+        .args([
+            "reload",
+            &format!("--detached-after={}", std::process::id()),
+        ])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let forged = serde_json::json!({"nonce":"00000000-0000-0000-0000-000000000000","caller":{"pid":std::process::id(),"identity":"forged"},"workerPid":worker.id(),"target":null,"unknown":true});
+    worker
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(forged.to_string().as_bytes())
+        .unwrap();
+    let refused = worker.wait_with_output().unwrap();
+    assert!(!refused.status.success());
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("handoff is invalid"));
+}
+
+#[test]
+fn detached_reload_refuses_mismatched_daemon_pid_and_local_identity() {
+    struct RestorePid(std::path::PathBuf, String);
+    impl Drop for RestorePid {
+        fn drop(&mut self) {
+            let _ = std::fs::write(&self.0, &self.1);
+        }
+    }
+    let temporary = installation();
+    let home = temporary.path().join(".happy");
+    let _guard = DaemonGuard(&home);
+    assert!(command(&home, &["start"]).status.success());
+    let pid = home.join("agent/daemon.pid");
+    let original = std::fs::read_to_string(&pid).unwrap();
+    let restore = RestorePid(pid.clone(), original.clone());
+    let mut unrelated = Foreground(
+        Command::new("/bin/sh")
+            .args(["-c", "read value"])
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
+    std::fs::write(&pid, format!("{}\n", unrelated.0.id())).unwrap();
+    let refused = command(&home, &["reload", "--detach"]);
+    drop(restore);
+    assert!(!refused.status.success());
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("PID and local identity disagree"));
+    assert!(
+        unrelated.0.try_wait().unwrap().is_none(),
+        "no arbitrary PID is terminated"
+    );
+    let token = std::fs::read_to_string(home.join("agent/token")).unwrap();
+    let health = request(&home, Some(token.trim()), "GET", "/v0/health").1;
+    assert_eq!(health["ready"], true);
+    assert_eq!(health["draining"], false);
+    assert_eq!(std::fs::read_to_string(&pid).unwrap(), original);
 }
 
 #[test]

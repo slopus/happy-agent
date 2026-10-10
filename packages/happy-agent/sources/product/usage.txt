@@ -10,6 +10,8 @@ Commands:
   kill     Immediately kill the daemon process recorded in its PID file.
   status   Report whether the daemon is running.
   reload   Stop the running daemon, then start a fresh one.
+           --detach  Return at once and reload after this command exits, logging to
+                     reload.log. An agent reloads its own daemon only this way.
   run      Run the daemon in the foreground of this process.
   runner   Run this machine as a runner for a daemon on another machine.
            --endpoint <address>  The daemon: https://host, http://host:port, unix:/socket, or

@@ -33,6 +33,7 @@ happy-agent stop     # ask the running daemon to shut down
 happy-agent kill     # immediately kill the daemon recorded in daemon.pid
 happy-agent status   # report whether the daemon is running
 happy-agent reload   # stop the running daemon, then start a fresh one
+happy-agent reload --detach # return at once; reload after this command exits
 happy-agent run      # run the daemon in the foreground of this process
 happy-agent --version
 # Windows only:
@@ -41,11 +42,13 @@ happy-agent sandbox setup           # explicitly initialize the sandbox
 happy-agent sandbox setup --retry   # retry a failed setup deliberately
 ```
 
-Run `reload` from an independent terminal or supervisor. A caller owned by the target daemon
-would be killed during shutdown before it could start the replacement, so the CLI rejects that
-reload before draining. If process ancestry cannot be checked, it leaves the daemon running.
+Run `reload --detach` when reloading from an agent's own shell. It starts the same executable
+in its own Unix session, returns immediately, and logs the graceful reload to `agent/reload.log`
+after the calling command exits. Windows requires `reload` from an independent terminal.
+Foreground `reload` rejects a caller owned by the target daemon before draining; unavailable
+process ancestry leaves the daemon running.
 
-`start` spawns a detached runtime process, redirects its output to the rotated daemon log, and
+`start` spawns a detached runtime process in the operating system home, redirects its output to the rotated daemon log, and
 waits until health reports ready. The Node-compatible package runs `node <cli> run`; a standalone
 binary relaunches itself. A running daemon whose reported version does not match the CLI is
 replaced. `stop` waits for both the socket and the exact daemon PID to disappear. All state lives

@@ -1,0 +1,64 @@
+{
+    "handoff": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": ["nonce", "caller", "workerPid", "target"],
+        "properties": {
+            "nonce": {
+                "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$",
+                "type": "string"
+            },
+            "caller": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": ["pid", "identity"],
+                "properties": {
+                    "pid": {
+                        "minimum": 1,
+                        "maximum": 2147483647,
+                        "type": "integer"
+                    },
+                    "identity": {
+                        "minLength": 1,
+                        "maxLength": 16384,
+                        "type": "string"
+                    }
+                }
+            },
+            "workerPid": {
+                "minimum": 1,
+                "maximum": 2147483647,
+                "type": "integer"
+            },
+            "target": {
+                "anyOf": [
+                    {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["pid", "identity", "instance"],
+                        "properties": {
+                            "pid": {
+                                "minimum": 1,
+                                "maximum": 2147483647,
+                                "type": "integer"
+                            },
+                            "identity": {
+                                "minLength": 1,
+                                "maxLength": 16384,
+                                "type": "string"
+                            },
+                            "instance": {
+                                "minLength": 1,
+                                "maxLength": 128,
+                                "type": "string"
+                            }
+                        }
+                    },
+                    {
+                        "type": "null"
+                    }
+                ]
+            }
+        }
+    }
+}

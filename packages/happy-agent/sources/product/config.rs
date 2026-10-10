@@ -2156,6 +2156,10 @@ impl ConfigModule {
         Self::from_home(normalize_path(&home))
     }
 
+    pub fn daemon_working_directory(&self) -> &Path {
+        &self.os_home
+    }
+
     #[cfg(test)]
     pub(super) fn isolated(home: &Path) -> Result<Self> {
         let mut config = Self::from_home(home.to_owned())?;

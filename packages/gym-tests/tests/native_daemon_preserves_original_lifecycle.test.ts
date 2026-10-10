@@ -36,6 +36,7 @@ describe("native Happy Agent lifecycle", () => {
             ["health", "Authenticated native health verified"],
             ["drain", "The daemon is drained and still running."],
             ["reload", "Reloaded native daemon retained its token"],
+            ["detach", "Detached native reload replaced the daemon and retained its token"],
             ["stop", "Daemon stopped."],
             ["status", "Daemon is not running."],
         ]) {
@@ -60,6 +61,11 @@ while IFS= read -r action; do
             /workspace/happy-agent reload
             test "$previous_token" = "$(cat /home/happy-terminal/.happy/agent/token)"
             echo 'Reloaded native daemon retained its token'
+            ;;
+        detach)
+            previous_pid=$(cat /home/happy-terminal/.happy/agent/daemon.pid)
+            /workspace/happy-agent reload --detach
+            node /workspace/client.mjs detached "$previous_pid"
             ;;
         *) echo 'Choose start, health, drain, reload, stop, or status.' ;;
     esac
@@ -87,6 +93,16 @@ const socketFetch = (input, init = {}) => new Promise((resolve,reject) => {
     req.end(init.body);
 });
 const client = new HappyAgentClient({endpoint:'http://happy',token,fetch:socketFetch});
+if (process.argv[2] === 'detached') {
+    const deadline = Date.now() + 30_000;
+    while (!readFileSync('/home/happy-terminal/.happy/agent/reload.log', 'utf8').includes('Daemon is running at')) {
+        assert.ok(Date.now() < deadline, 'detached replacement became ready');
+        await new Promise(resolve => setTimeout(resolve, 20));
+    }
+    assert.equal(readFileSync('/home/happy-terminal/.happy/agent/token','utf8').trim(), token);
+    assert.notEqual(readFileSync('/home/happy-terminal/.happy/agent/daemon.pid','utf8').trim(), process.argv[3]);
+    console.log('Detached native reload replaced the daemon and retained its token');
+}
 const health = await client.getHealth();
 assert.equal(health.ready,true);
 assert.equal(health.version.protocol,26);

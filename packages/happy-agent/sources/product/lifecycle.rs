@@ -15,6 +15,8 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio_util::sync::CancellationToken;
+mod detached;
+pub use detached::reload_argument;
 
 pub struct LifecycleModule {
     config: Arc<ConfigModule>,
@@ -256,6 +258,14 @@ pub fn version() -> &'static str {
 
 pub async fn command(name: &str) -> Result<()> {
     let config = Arc::new(ConfigModule::load()?);
+    command_with_config(name, config, None).await
+}
+
+async fn command_with_config(
+    name: &str,
+    config: Arc<ConfigModule>,
+    detached: Option<detached::VerifiedReload>,
+) -> Result<()> {
     let paths = &config.paths;
     if name == "kill" {
         if let Some(pid) = read_pid(&paths.pid)? {
@@ -313,13 +323,15 @@ pub async fn command(name: &str) -> Result<()> {
     if name == "stop" || name == "reload" {
         if observed.is_some() {
             if name == "reload" {
-                assert_external_reload(
-                    read_pid(&paths.pid)?.context("The daemon PID is unavailable.")?,
-                )
-                .await?;
+                let pid = read_pid(&paths.pid)?.context("The daemon PID is unavailable.")?;
+                if let Some(detached) = detached.as_ref() {
+                    detached.assert_target(pid)?;
+                } else {
+                    assert_external_reload(pid).await?;
+                }
             }
             println!("Daemon is stopping.");
-            stop(&config).await?;
+            stop(&config, detached.as_ref()).await?;
             println!("Daemon stopped.");
         } else {
             assert_no_unresponsive(&config)?;
@@ -396,7 +408,7 @@ async fn start(config: Arc<ConfigModule>, observed: Option<Value>) -> Result<()>
             read_pid(&config.paths.pid)?.context("The daemon PID is unavailable.")?,
         )
         .await?;
-        stop(&config).await?;
+        stop(&config, None).await?;
     } else {
         assert_no_unresponsive(&config)?;
     }
@@ -421,7 +433,7 @@ async fn start(config: Arc<ConfigModule>, observed: Option<Value>) -> Result<()>
     let mut process = std::process::Command::new(std::env::current_exe()?);
     process
         .arg("run")
-        .current_dir(&config.paths.directory)
+        .current_dir(config.daemon_working_directory())
         .stdin(std::process::Stdio::null())
         .stdout(log.try_clone()?)
         .stderr(log);
@@ -525,9 +537,15 @@ async fn drain_http(config: &ConfigModule) -> Result<()> {
     }
 }
 
-async fn stop(config: &ConfigModule) -> Result<()> {
+async fn stop(config: &ConfigModule, detached: Option<&detached::VerifiedReload>) -> Result<()> {
+    if let Some(detached) = detached {
+        detached.assert_current(config)?;
+    }
     drain_http(config).await?;
     let token = std::fs::read_to_string(&config.paths.token)?;
+    if let Some(detached) = detached {
+        detached.assert_current(config)?;
+    }
     let (status, response) =
         super::transport::request(config, token.trim(), "POST", "/v0/shutdown").await?;
     if status != 202 {
@@ -537,6 +555,9 @@ async fn stop(config: &ConfigModule) -> Result<()> {
         .as_u64()
         .and_then(|pid| u32::try_from(pid).ok())
         .context("The daemon did not return its process identity.")?;
+    if let Some(detached) = detached {
+        detached.assert_shutdown_pid(pid)?;
+    }
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
         if !process_running(pid) && observe(config).await.is_none() {
@@ -747,7 +768,7 @@ async fn drain_signal(config: Arc<ConfigModule>) -> Result<()> {
 async fn assert_external_reload(daemon: u32) -> Result<()> {
     if daemon == std::process::id() {
         bail!(
-            "Cannot reload Happy Agent from a process owned by that daemon. Run happy-agent reload from an independent terminal or supervisor."
+            "Cannot reload Happy Agent from a process owned by that daemon. Run happy-agent reload --detach, which reloads after the calling command exits."
         );
     }
     #[cfg(unix)]
@@ -780,7 +801,7 @@ async fn assert_external_reload(daemon: u32) -> Result<()> {
     while pid > 1 {
         if pid == daemon {
             bail!(
-                "Cannot reload Happy Agent from a process owned by that daemon. Run happy-agent reload from an independent terminal or supervisor."
+                "Cannot reload Happy Agent from a process owned by that daemon. Run happy-agent reload --detach, which reloads after the calling command exits."
             );
         }
         if !visited.insert(pid) {

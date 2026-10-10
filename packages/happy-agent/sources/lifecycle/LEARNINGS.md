@@ -1,5 +1,21 @@
 # Daemon lifecycle learnings
 
+## Native detached reload must account for subreaper adoption
+
+Linux's native daemon adopts orphaned descendants so it can reap its background processes.
+Waiting for a detached reload caller to exit therefore leaves the worker inside the target
+daemon's ancestry. The worker now verifies a private pipe handoff while its caller is alive:
+actual parent, same executable, process start identities, worker PID, its own Unix session,
+and the target daemon's PID, start identity and local instance record. The worker rechecks
+that record immediately before drain and shutdown. Only that verified daemon instance may skip the foreground
+ancestry guard after the caller exits. Forged workers, changed identities, unavailable proof,
+and a caller that remains alive leave the daemon running. Ordinary foreground reload still
+rejects a daemon-owned caller. Windows requires an independent terminal.
+
+Automatically spawned daemons and reload workers start in the operating system home rather
+than the state directory or a desktop launcher's `/`. Foreground `run` keeps its caller's
+working directory.
+
 ## Runtime restarts must hide their Windows console
 
 The safe Bun runtime restart inherited its caller's standard streams but omitted

@@ -2,6 +2,8 @@
 
 #[path = "compute/pty_and_processes.rs"]
 mod compute_acceptance;
+#[path = "compute/detached_reload.rs"]
+mod detached_reload_acceptance;
 #[path = "api/questions.rs"]
 mod question_acceptance;
 #[path = "compute/vendor_file_tools.rs"]
@@ -43,7 +45,9 @@ struct Installation {
 impl Installation {
     fn new() -> Self {
         let scratch = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../.context")
+            .join("../../.g");
+        std::fs::create_dir_all(&scratch).expect("short socket fixture directory");
+        let scratch = scratch
             .canonicalize()
             .expect("scratch");
         let directory = tempfile::Builder::new()
