@@ -106,6 +106,13 @@ The native MCP runner scenario also needs the Happy Agent executable and the com
 MCP process, and scripted inference regression inside the Docker PTY; the test-only fixture
 overrides keep its executable and scratch paths inside that isolated container.
 
+On hosted Ubuntu runners with restricted user namespaces, set
+`HAPPY_TERMINAL_GYM_DOCKER_APPARMOR_PROFILE` to the explicitly installed test profile. The profile
+is part of the shared-runner identity, so a runner created with another profile is never reused.
+The `mcp_gym_only` input of `Verify happy-agent-supervisor` builds both native executables and runs this
+single scenario with the Source `happy-compute-container-tests` profile while keeping the host's
+AppArmor user-namespace restriction enabled.
+
 The Docker image uses Node 24 on Debian Trixie in both stages. Monty's Linux ARM64 addon
 requires glibc 2.39 or newer, so Bookworm cannot load the daemon. The final image imports the
 deployed daemon during its build to catch incompatible native libraries and missing runtime assets.

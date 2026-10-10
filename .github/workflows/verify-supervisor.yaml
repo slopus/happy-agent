@@ -38,17 +38,21 @@ on:
                 description: Verify native Docker compute through the single executable on a real Linux engine
                 type: boolean
                 default: false
+            mcp_gym_only:
+                description: Verify native MCP runner disconnect recovery through the Docker PTY gym
+                type: boolean
+                default: false
 
 permissions:
     contents: read
 
 concurrency:
-    group: verify-supervisor-${{ github.ref }}-${{ inputs.services_only }}-${{ inputs.windows_only }}-${{ inputs.distribution_only }}-${{ inputs.windows_native_only }}-${{ inputs.docker_only }}
+    group: verify-supervisor-${{ github.ref }}-${{ inputs.services_only }}-${{ inputs.windows_only }}-${{ inputs.distribution_only }}-${{ inputs.windows_native_only }}-${{ inputs.docker_only }}-${{ inputs.mcp_gym_only }}
     cancel-in-progress: true
 
 jobs:
     compute-services:
-        if: ${{ !inputs.docker_only && !inputs.windows_native_only && !inputs.distribution_only && (inputs.services_only || !inputs.windows_only) }}
+        if: ${{ !inputs.mcp_gym_only && !inputs.docker_only && !inputs.windows_native_only && !inputs.distribution_only && (inputs.services_only || !inputs.windows_only) }}
         name: Published service runtime on ${{ matrix.runner }}
         runs-on: ${{ matrix.runner }}
         timeout-minutes: 20
@@ -85,13 +89,13 @@ jobs:
         name: Native Windows runtime
         permissions:
             contents: read
-        if: ${{ inputs.windows_native_only || (!inputs.docker_only && !inputs.services_only && !inputs.distribution_only) }}
+        if: ${{ !inputs.mcp_gym_only && (inputs.windows_native_only || (!inputs.docker_only && !inputs.services_only && !inputs.distribution_only)) }}
         uses: ./.github/workflows/verify-native-windows.yml
         with:
             native_only: ${{ inputs.windows_native_only }}
 
     native-linux:
-        if: ${{ !inputs.docker_only && !inputs.windows_native_only && !inputs.windows_only && !inputs.distribution_only }}
+        if: ${{ !inputs.mcp_gym_only && !inputs.docker_only && !inputs.windows_native_only && !inputs.windows_only && !inputs.distribution_only }}
         name: Native boundary on ${{ matrix.runner }}
         runs-on: ${{ matrix.runner }}
         timeout-minutes: 90
@@ -240,7 +244,7 @@ jobs:
                   if-no-files-found: warn
 
     native-macos:
-        if: ${{ !inputs.docker_only && !inputs.windows_native_only && !inputs.windows_only && !inputs.services_only && !inputs.distribution_only }}
+        if: ${{ !inputs.mcp_gym_only && !inputs.docker_only && !inputs.windows_native_only && !inputs.windows_only && !inputs.services_only && !inputs.distribution_only }}
         name: Native boundary on ${{ matrix.runner }}
         runs-on: ${{ matrix.runner }}
         timeout-minutes: 60
@@ -286,7 +290,7 @@ jobs:
                   if-no-files-found: warn
 
     package:
-        if: ${{ !inputs.docker_only && !inputs.windows_native_only && !inputs.windows_only && !inputs.services_only && !inputs.distribution_only }}
+        if: ${{ !inputs.mcp_gym_only && !inputs.docker_only && !inputs.windows_native_only && !inputs.windows_only && !inputs.services_only && !inputs.distribution_only }}
         name: TypeScript package
         runs-on: ubuntu-24.04
         timeout-minutes: 20
@@ -317,7 +321,7 @@ jobs:
               run: pnpm --filter @slopus/happy-agent-supervisor build
 
     distribution:
-        if: ${{ inputs.distribution_only && !inputs.windows_native_only && !inputs.docker_only }}
+        if: ${{ !inputs.mcp_gym_only && inputs.distribution_only && !inputs.windows_native_only && !inputs.docker_only }}
         name: Distribution for ${{ matrix.target }}
         runs-on: ${{ matrix.runner }}
         timeout-minutes: 60
@@ -435,7 +439,7 @@ jobs:
                   retention-days: 7
 
     distribution-set:
-        if: ${{ inputs.distribution_only && !inputs.windows_native_only && !inputs.docker_only }}
+        if: ${{ !inputs.mcp_gym_only && inputs.distribution_only && !inputs.windows_native_only && !inputs.docker_only }}
         needs: distribution
         name: Five-target distribution
         runs-on: ubuntu-24.04
@@ -468,7 +472,7 @@ jobs:
               run: node packages/happy-agent/scripts/verify-native-distribution.mjs distribution "$DISTRIBUTION_VERSION" | tee -a "$GITHUB_STEP_SUMMARY"
 
     native-docker:
-        if: ${{ inputs.docker_only && !inputs.windows_native_only && !inputs.distribution_only && !inputs.services_only && !inputs.windows_only }}
+        if: ${{ !inputs.mcp_gym_only && inputs.docker_only && !inputs.windows_native_only && !inputs.distribution_only && !inputs.services_only && !inputs.windows_only }}
         name: Native Docker compute on a real Linux engine
         runs-on: ubuntu-24.04
         timeout-minutes: 30
@@ -541,6 +545,72 @@ jobs:
               with:
                   name: native-docker-proof
                   path: .native-docker-proof
+                  include-hidden-files: true
+                  if-no-files-found: error
+                  retention-days: 7
+
+    native-mcp-gym:
+        if: ${{ inputs.mcp_gym_only }}
+        name: Native MCP runner recovery through the Docker PTY
+        runs-on: ubuntu-24.04
+        timeout-minutes: 30
+        env:
+            CARGO_TERM_COLOR: never
+            HAPPY_NATIVE_GYM_BINARY: ${{ github.workspace }}/target/debug/happy-agent
+            HAPPY_TERMINAL_GYM_DOCKER_APPARMOR_PROFILE: happy-compute-container-tests
+            PROOF_LOGS: ${{ github.workspace }}/.native-mcp-gym-proof
+        steps:
+            - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+            - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+            - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+              with:
+                  node-version: "24"
+                  package-manager-cache: false
+
+            - name: Install the pinned toolchain and fixture dependencies
+              run: |
+                  rustup show active-toolchain || rustup toolchain install
+                  pnpm install --frozen-lockfile
+
+            - name: Build the whole executable and the unchanged native API regression
+              run: |
+                  cargo build --locked -p happy-agent --bin happy-agent
+                  cargo test --locked -p happy-agent --test original_agent_restart --no-run
+                  api_test_binary="$(rg --files target/debug/deps | rg '/original_agent_restart-[a-f0-9]+$')"
+                  test -n "$api_test_binary"
+                  test "$(printf '%s\n' "$api_test_binary" | wc -l)" -eq 1
+                  printf 'HAPPY_NATIVE_GYM_API_TEST_BINARY=%s/%s\n' "$GITHUB_WORKSPACE" "$api_test_binary" >> "$GITHUB_ENV"
+
+            - name: Prove default refusal and install the Source named test profile
+              run: |
+                  test "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns)" = 1
+                  docker version
+                  docker pull ubuntu:24.04
+                  bash packages/happy-agent/scripts/test-native-docker-namespaces.sh "$HAPPY_NATIVE_GYM_BINARY"
+
+            - name: Prepare the isolated Docker gym image
+              run: pnpm --filter @slopus/happy-terminal-gym-tests run prepare:image
+
+            - name: Run the actual MCP runner disconnect regression through a PTY
+              env:
+                  HAPPY_TERMINAL_GYM_SKIP_BUILD: "1"
+              run: |
+                  mkdir -p "$PROOF_LOGS"
+                  git rev-parse HEAD | tee "$PROOF_LOGS/commit.txt"
+                  pnpm --filter @slopus/happy-terminal-gym-tests exec vitest run \
+                    tests/native_mcp_runner_disconnect_releases_pending_calls.test.ts \
+                    --maxWorkers=1 --fileParallelism=false 2>&1 | tee "$PROOF_LOGS/gym.log"
+
+            - name: Confirm the host restriction remains enabled
+              if: ${{ always() }}
+              run: test "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns)" = 1
+
+            - name: Upload the exact native MCP gym proof
+              if: ${{ always() }}
+              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+              with:
+                  name: native-mcp-gym-proof
+                  path: .native-mcp-gym-proof
                   include-hidden-files: true
                   if-no-files-found: error
                   retention-days: 7

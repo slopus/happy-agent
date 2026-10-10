@@ -20,13 +20,16 @@ export function acquireSharedDockerRunner(options: {
     imageId: string;
     repositoryRoot: string;
 }): Promise<SharedDockerRunner> {
-    const key = `${SHARED_DOCKER_RUNNER_VERSION}\0${options.imageId}\0${String(options.dockerSocket)}\0${options.repositoryRoot}`;
+    const apparmorProfile = process.env.HAPPY_TERMINAL_GYM_DOCKER_APPARMOR_PROFILE ?? "unconfined";
+    const key = `${SHARED_DOCKER_RUNNER_VERSION}\0${options.imageId}\0${String(options.dockerSocket)}\0${options.repositoryRoot}\0${apparmorProfile}`;
     let runner = runners.get(key);
     if (runner === undefined) {
-        runner = startSharedDockerRunner(options).catch((error: unknown) => {
-            runners.delete(key);
-            throw error;
-        });
+        runner = startSharedDockerRunner({ ...options, apparmorProfile }).catch(
+            (error: unknown) => {
+                runners.delete(key);
+                throw error;
+            },
+        );
         runners.set(key, runner);
     }
     return runner;
@@ -96,6 +99,7 @@ export function dockerSandboxArguments(
 }
 
 async function startSharedDockerRunner(options: {
+    apparmorProfile: string;
     dockerSocket: boolean;
     imageId: string;
     repositoryRoot: string;
@@ -107,6 +111,7 @@ async function startSharedDockerRunner(options: {
         .update(options.imageId)
         .update(String(options.dockerSocket))
         .update(options.repositoryRoot)
+        .update(options.apparmorProfile)
         .digest("hex")
         .slice(0, 12);
     const containerName = `happy-terminal-gym-pool-${safeRunId}-${keyHash}`;
@@ -128,9 +133,10 @@ async function startSharedDockerRunner(options: {
             "--security-opt",
             "seccomp=unconfined",
             // Docker's default AppArmor profile on Ubuntu hosts denies the mount changes bwrap
-            // makes for each scenario; hosts without AppArmor ignore this option.
+            // makes for each scenario. Hosted CI can select its explicitly installed userns
+            // profile while keeping the host's global restriction enabled.
             "--security-opt",
-            "apparmor=unconfined",
+            `apparmor=${options.apparmorProfile}`,
             // Docker's masked /proc entries prevent the real supervisor from mounting its own
             // private procfs. The supervisor still installs and enforces the scenario's sandbox.
             "--security-opt",
