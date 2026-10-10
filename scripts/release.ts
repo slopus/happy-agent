@@ -28,10 +28,7 @@ Examples:
   pnpm release happy-agent-client patch
   pnpm release happy-agent-compute patch
   pnpm release happy-plugins patch
-  pnpm release happy-providers patch
-
-Happy Terminal releases use the Release Happy Terminal GitHub Actions workflow, which requires
-an explicit version and Markdown release notes.`;
+  pnpm release happy-providers patch`;
 
 async function release(): Promise<void> {
     const arguments_ = process.argv.slice(2);
@@ -40,18 +37,12 @@ async function release(): Promise<void> {
         return;
     }
     const explicitPackage =
-        arguments_[0] === "happy-terminal" ||
         arguments_[0] === "happy-agent-base" ||
         arguments_[0] === "happy-agent-client" ||
         arguments_[0] === "happy-agent-compute" ||
         arguments_[0] === "happy-plugins" ||
         arguments_[0] === "happy-providers";
     const releasePackage = resolveReleasePackage(explicitPackage ? arguments_.shift() : undefined);
-    if (releasePackage.key === "happy-terminal") {
-        throw new Error(
-            "Happy Terminal releases must use the Release Happy Terminal GitHub Actions workflow.",
-        );
-    }
     const releaseInput = arguments_[0];
     if (
         releaseInput === undefined ||
@@ -66,7 +57,7 @@ async function release(): Promise<void> {
     const initialManifest = readPackageManifest(releasePackage);
     const versionArguments = resolveReleaseVersionArguments(initialManifest.version, releaseInput);
     if (versionArguments.beta) {
-        throw new Error("Beta releases are only available for @slopus/happy-terminal.");
+        throw new Error("Beta releases are not available for libraries.");
     }
     assertReleaseBumpAllowed({ currentVersion: initialManifest.version, requested: releaseInput });
 

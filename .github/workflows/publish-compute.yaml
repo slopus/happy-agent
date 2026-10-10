@@ -134,7 +134,7 @@ jobs:
               if: matrix.docker
               run: >-
                   docker build
-                  --tag happy-terminal-gym:local
+                  --tag happy-agent-compute-test:local
                   packages/happy-agent-compute/tests/fixtures
 
             - name: Prove the container boundary

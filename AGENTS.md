@@ -100,7 +100,7 @@ Auto review must use the durable, role-aware conversation transcript rather than
 
 MCP tools declare their boundary on the tool definition. Treat server-supplied annotations such as `readOnlyHint` as untrusted metadata, never as authorization evidence or a reason to skip Auto review. Every direct and dynamic MCP tool invocation must be reviewed. Rig-owned protocol operations whose behavior is intrinsically read-only, such as listing or reading MCP resources, may explicitly skip review. MCP operations require Auto or Full access because the server can act outside Rig's local filesystem sandbox, and approval text must disclose that external boundary.
 
-When adding or changing permission-sensitive behavior, test the real tool definitions rather than a duplicate policy table. Cover default sandboxing, explicit escalation, temporary Full access and restoration, outside-workspace and symlink paths, protected Git files, authorization retention after large tool output or compaction, denial, refusal loops that must end a turn, and human-readable boundary disclosure. Use gym coverage whenever behavior spans inference, tools, processes, filesystem effects, permission decisions, or terminal rendering.
+When adding or changing permission-sensitive behavior, test the real tool definitions rather than a duplicate policy table. Cover default sandboxing, explicit escalation, temporary Full access and restoration, outside-workspace and symlink paths, protected Git files, authorization retention after large tool output or compaction, denial, refusal loops that must end a turn, and human-readable boundary disclosure. Use gym coverage whenever behavior spans inference, tools, processes, filesystem effects, or permission decisions.
 
 ## Retry policy
 
@@ -165,7 +165,7 @@ available, ask the user to configure one; never place WorkOS credentials in the 
 
 When the user asks to "release" without naming a product or version, release a Happy Agent
 preview. "Release production" or "release stable" requests the next stable patch directly;
-no prior preview is required. Do not treat an unqualified release as a Terminal or library release.
+no prior preview is required. Do not treat an unqualified release as a library release.
 
 Agent previews use the next stable patch followed by `-preview.N`; choose the next unused N
 from existing releases and tags. Never publish previews automatically on push or to npm.
@@ -179,26 +179,14 @@ from every included commit since the previous release of that channel. Write a p
 user-facing Markdown summary rather than pasting commit subjects or a raw changelog. Monitor to
 completion and verify the resulting GitHub Release and its assets before reporting success.
 
-Happy Terminal releases are always stable patch releases. Never release Happy Terminal as a beta
-or any other prerelease. When the user asks to "release terminal", release the next patch version
-of `@slopus/happy-terminal`. Release Happy Terminal only by manually dispatching
-[`.github/workflows/release-happy-terminal.yml`](.github/workflows/release-happy-terminal.yml) from
-`main`; do not create or push its release tag locally. Supply the workflow's required `version` and
-`release_notes` inputs. The workflow must publish and verify npm before creating the release tag or
-GitHub Release; a failed npm publication must leave both absent. Build a polished, user-facing
-Markdown changelist from every commit included
-since the previous Happy Terminal release, monitor the workflow to completion, and verify both the
-npm package and GitHub Release before reporting success.
-
 When the user explicitly names another product or library but does not name a version:
 
 - Release libraries as the next patch version.
 
-Use an explicitly requested version or release channel instead whenever the user provides one,
-except that Happy Terminal always releases as its next stable patch version.
+Use an explicitly requested version or release channel instead whenever the user provides one.
 
-Libraries release through trusted publishing by pushing their release Git tags; Agent and
-Terminal tags are created only by their workflows. Never publish from local npm credentials.
+Libraries release through trusted publishing by pushing their release Git tags; Agent tags are
+created only by their workflow. Never publish from local npm credentials.
 If a tagged library patch fails before publication, advance to the next patch and push a new
 release tag instead of reusing or moving the failed tag.
 
@@ -273,7 +261,7 @@ A background process started by a tool call is the canonical example: the tool's
 
 ## Change discipline
 
-Treat behavior that crosses the TUI, protocol, daemon, persistence, and provider layers as one end-to-end contract. Trace the full path before editing, keep stable run, message, tool-call, and event identities across asynchronous boundaries, and test delayed, duplicated, reordered, rejected, and already-applied outcomes. Model multi-step asynchronous behavior with explicit states and terminal transitions instead of accumulating loosely related booleans and best-effort callbacks.
+Treat behavior that crosses the client, protocol, daemon, persistence, and provider layers as one end-to-end contract. Trace the full path before editing, keep stable run, message, tool-call, and event identities across asynchronous boundaries, and test delayed, duplicated, reordered, rejected, and already-applied outcomes. Model multi-step asynchronous behavior with explicit states and terminal transitions instead of accumulating loosely related booleans and best-effort callbacks.
 
 Compatibility migrations and startup repair must be atomic, idempotent, and selective at the storage boundary. Filter to the required rows in SQL before deserializing payloads, do not materialize unrelated or potentially large historical events, and derive ordering or cursor provenance independently when filtering would otherwise hide the true latest event. Publish external or in-memory notifications only after the durable transaction commits.
 
@@ -285,11 +273,11 @@ For bug fixes, first add the smallest deterministic test that reproduces the fai
 
 ## Gym end-to-end tests
 
-The gym exercises the built Rig agent through a real PTY in a fresh Docker container. Only model inference is mocked; the filesystem, shell, processes, daemon, tools, and terminal behavior remain real, with `libghostty-vt` providing user-visible screen and scroll state.
+The gym starts the real Happy Agent daemon on a throwaway installation and drives it over its own socket with `@slopus/happy-agent-client`. Only model inference is scripted and the machine is emulated; the daemon, routes, agent loop, tools, permissions, persistence, and event journal remain real.
 
-Use gym tests for behavior spanning terminal input or rendering, inference, tools, processes, filesystem effects, interruption, or concurrency. Put them in `packages/gym-tests/tests` with descriptive behavior-based file names. Always use `createGym`, interact at the terminal boundary, wait for observable state instead of sleeping, dispose every instance, and keep scenarios isolated. When fixing a bug, reproduce it in the gym before changing production code, then make the same test pass unchanged.
+Use gym tests for behavior spanning the API, inference, tools, processes, filesystem effects, interruption, or concurrency. Put them in `packages/happy-agent-gym-tests/tests` with descriptive behavior-based file names. Always use `createAgentGym`, interact at the API boundary, wait for observable state instead of sleeping, dispose every instance, and keep scenarios isolated. When fixing a bug, reproduce it in the gym before changing production code, then make the same test pass unchanged.
 
-Run the suite with `pnpm test:gym`. Read [`packages/gym-tests/README.md`](packages/gym-tests/README.md) before writing or debugging a gym test; it is the source of truth for architecture, APIs, inference scripts, fixtures, terminal snapshots, scroll tracking, examples, and targeted test commands.
+Run the suite with `pnpm test:gym`. Read [`packages/happy-agent-gym/README.md`](packages/happy-agent-gym/README.md) and [`packages/happy-agent-gym-tests/README.md`](packages/happy-agent-gym-tests/README.md) before writing or debugging a gym test; they are the source of truth for the harness API, inference scripts, fixtures, examples, and targeted test commands.
 
 The complete Happy Agent API gym, `pnpm test:gym:api`, is an exhaustive gate with
 663 scenarios, 120 deterministic chaos seeds, and 9,640 chaos actions. It takes
@@ -303,16 +291,6 @@ Actions, dispatch `Verify Happy Agent API` manually and enable
 ## User-facing text
 
 All strings displayed to users must be human-readable English. Prefer natural, human-like labels and messages over raw identifiers, internal enum values, file names, protocol names, or placeholder text. Convert technical values into clear display text before rendering them in the UI or CLI.
-
-## Terminal layout stability
-
-Treat the logical transcript as append-only. Once a timeline row has rendered, do not remove it, replace it, or mutate it after later stable content appears. Ephemeral background-terminal polling belongs only in the live tail and must not create waiting or waited history rows. Keep actual terminal input and terminal completion as durable history.
-
-Use Pi TUI's authoritative full-frame redraw behavior for terminal resizes. Clearing and rebuilding native terminal scrollback from the logical transcript during a resize is acceptable. Do not maintain a parallel partial-resize renderer, infer emulator reflow, or reach into Pi TUI's private render state.
-
-Keep above-composer live UI compact and predictable, with at most one truncated summary row per active-work category. Live components may grow downward, but shrinking or completing work must not pull transcript content downward or make the composer jump upward. Pair the removal of a final live status row with its corresponding history event in the same render so the occupied height moves into history instead of collapsing.
-
-When an agent turn completes, move its live working timer into an immutable history row. Measure elapsed time from the most recent composer-submitted user message; permission decisions and other interactive answers must not reset that clock.
 
 ## Remote pushes
 

@@ -5,7 +5,7 @@ import { Readable } from "node:stream";
  * Adapts the daemon's Unix socket to the standard Fetch API consumed by HappyAgentClient.
  *
  * Platform transport stays outside the client package, so the client itself remains
- * browser-safe while the local TUI can use exactly the same state implementation.
+ * browser-safe while local callers use exactly the same state implementation.
  */
 export function createUnixSocketFetch(socketPath: string): typeof globalThis.fetch {
     // A replacement daemon reuses the same path. Its replacement client needs a fresh pool so it

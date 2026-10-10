@@ -1,10 +1,10 @@
 import { createServer, type Server, Socket } from "node:net";
 
-import { GhosttyTerminal } from "@slopus/happy-terminal-gym";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { RemoteTerminalProtocolClient } from "./RemoteTerminalProtocolClient.js";
 import { RemoteTerminalProtocolServer } from "./RemoteTerminalProtocolServer.js";
+import { GhosttyTestTerminal } from "./testing/GhosttyTestTerminal.js";
 import type { RemoteTerminalGridState, RemoteTerminalReplica } from "./types.js";
 
 const cleanups: (() => void | Promise<void>)[] = [];
@@ -15,8 +15,8 @@ afterEach(async () => {
 
 describe("remote terminal client/server protocol", () => {
     it("replays arbitrary VT byte boundaries into a real client Ghostty and resumes after reconnect", async () => {
-        const canonical = await GhosttyTerminal.create(40, 6);
-        const replica = await GhosttyTerminal.create(40, 6);
+        const canonical = await GhosttyTestTerminal.create(40, 6);
+        const replica = await GhosttyTestTerminal.create(40, 6);
         cleanups.push(
             () => canonical.close(),
             () => replica.close(),
@@ -247,7 +247,7 @@ describe("remote terminal client/server protocol", () => {
     });
 });
 
-function ghosttyReplica(terminal: GhosttyTerminal): RemoteTerminalReplica {
+function ghosttyReplica(terminal: GhosttyTestTerminal): RemoteTerminalReplica {
     return {
         applyGrid() {
             throw new Error("The raw replay test must not fall back to a grid.");

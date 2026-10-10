@@ -59,22 +59,11 @@ const PACKAGES: Record<ReleasePackageKey, ReleasePackage> = {
             ["--filter", "happy-plugins", "test"],
         ],
     },
-    "happy-terminal": {
-        buildArguments: ["run", "build"],
-        checkArguments: ["run", "check"],
-        commitPrefix: "Release Happy Terminal v",
-        directory: fileURLToPath(new URL("../../packages/happy-terminal/", import.meta.url)),
-        key: "happy-terminal",
-        manifestPath: "packages/happy-terminal/package.json",
-        tagPrefix: "happy-terminal-v",
-        testArguments: [["run", "test:release"]],
-    },
 };
 
 export function resolveReleasePackage(value: string | undefined): ReleasePackage {
-    const key = value ?? "happy-terminal";
+    const key = value ?? "";
     if (
-        key !== "happy-terminal" &&
         key !== "happy-agent-base" &&
         key !== "happy-agent-client" &&
         key !== "happy-agent-compute" &&
@@ -82,7 +71,7 @@ export function resolveReleasePackage(value: string | undefined): ReleasePackage
         key !== "happy-providers"
     ) {
         throw new Error(
-            `Unknown release package ${key}. Expected happy-terminal, happy-agent-base, happy-agent-client, happy-agent-compute, happy-plugins, or happy-providers.`,
+            `Unknown release package ${key}. Expected happy-agent-base, happy-agent-client, happy-agent-compute, happy-plugins, or happy-providers.`,
         );
     }
     return PACKAGES[key];

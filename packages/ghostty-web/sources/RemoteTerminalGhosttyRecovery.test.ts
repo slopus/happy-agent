@@ -1,6 +1,5 @@
 import { createServer, type Server, Socket } from "node:net";
 
-import { GhosttyTerminal } from "@slopus/happy-terminal-gym";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -13,6 +12,7 @@ import { applyGridPatch } from "./applyGridPatch.js";
 import { diffGridState } from "./diffGridState.js";
 import { RemoteTerminalProtocolClient } from "./RemoteTerminalProtocolClient.js";
 import { RemoteTerminalProtocolServer } from "./RemoteTerminalProtocolServer.js";
+import { GhosttyTestTerminal } from "./testing/GhosttyTestTerminal.js";
 import type { RemoteTerminalGridState } from "./types.js";
 
 const cleanups: (() => void | Promise<void>)[] = [];
@@ -130,7 +130,7 @@ describe("concrete Ghostty recovery", () => {
     });
 
     it("uses a render-faithful semantic keyframe for wide, combining, styled, and wrapped content", async () => {
-        const canonical = await GhosttyTerminal.create(10, 4);
+        const canonical = await GhosttyTestTerminal.create(10, 4);
         cleanups.push(() => canonical.close());
         const { driver, protocol } = createGhosttyRemoteTerminalServer(canonical, {
             initialCols: 10,
@@ -187,8 +187,8 @@ describe("concrete Ghostty recovery", () => {
     });
 
     it("forwards canonical terminal replies once and never forwards replica replies", async () => {
-        const canonical = await GhosttyTerminal.create(20, 4);
-        const replica = await GhosttyTerminal.create(20, 4);
+        const canonical = await GhosttyTestTerminal.create(20, 4);
+        const replica = await GhosttyTestTerminal.create(20, 4);
         cleanups.push(
             () => canonical.close(),
             () => replica.close(),
@@ -221,7 +221,7 @@ describe("concrete Ghostty recovery", () => {
     });
 
     it("forces a fresh attachment to a keyframe after resize, including resize at offset zero", async () => {
-        const canonical = await GhosttyTerminal.create(20, 4);
+        const canonical = await GhosttyTestTerminal.create(20, 4);
         cleanups.push(() => canonical.close());
         const { driver, protocol } = createGhosttyRemoteTerminalServer(canonical, {
             initialCols: 20,
@@ -268,7 +268,7 @@ describe("concrete Ghostty recovery", () => {
     });
 
     it("drains canonical parsing before durable exit and fails closed on partial resize", async () => {
-        const canonical = await GhosttyTerminal.create(20, 4);
+        const canonical = await GhosttyTestTerminal.create(20, 4);
         cleanups.push(() => canonical.close());
         const { driver, protocol } = createGhosttyRemoteTerminalServer(canonical, {
             initialCols: 20,
@@ -302,7 +302,7 @@ describe("concrete Ghostty recovery", () => {
         await vi.waitFor(() => expect(exits).toEqual([0]));
         expect(Buffer.concat(output).toString()).toBe("final-output");
 
-        const failedCanonical = await GhosttyTerminal.create(20, 4);
+        const failedCanonical = await GhosttyTestTerminal.create(20, 4);
         cleanups.push(() => failedCanonical.close());
         const failedCreated = createGhosttyRemoteTerminalServer(failedCanonical, {
             initialCols: 20,
@@ -327,7 +327,7 @@ describe("concrete Ghostty recovery", () => {
     });
 
     it("bounds output held behind a concrete hung resize", async () => {
-        const canonical = await GhosttyTerminal.create(20, 4);
+        const canonical = await GhosttyTestTerminal.create(20, 4);
         cleanups.push(() => canonical.close());
         let resizeStarted = false;
         let releaseResize!: () => void;

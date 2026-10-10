@@ -85,8 +85,7 @@ enabled = true
 ## Effort
 
 Set `effort` under `[defaults]`, such as `effort = "medium"`. Use a level the model allows; the
-allowed levels are listed per model in `GET /v0/config`. `HAPPY_TERMINAL_EFFORT` overrides it for a
-new terminal session.
+allowed levels are listed per model in `GET /v0/config`.
 
 ## Service tier
 

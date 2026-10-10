@@ -1,13 +1,12 @@
 #!/usr/bin/env node
 
-import { assertGymRuntimeSupported } from "./lifecycle/assertGymRuntimeSupported.js";
 import { AgentDaemonError } from "./lifecycle/AgentDaemonError.js";
 import { getDaemonIdentity } from "./lifecycle/getDaemonIdentity.js";
 import { isAgentDaemonCommand, runAgentDaemonCommand } from "./lifecycle/runAgentDaemonCommand.js";
 
 /**
  * The `happy-agent` command line: the Happy agent is its own daemon and owns its whole boot
- * sequence. Products such as Happy Terminal only invoke these commands instead of managing the process.
+ * sequence. Products such as Happy only invoke these commands instead of managing the process.
  */
 
 const USAGE = `Usage: happy-agent <command>
@@ -83,7 +82,6 @@ async function main(): Promise<void> {
         });
     }
     if (command === "run") {
-        assertGymRuntimeSupported();
         // The runtime import is deferred so lifecycle commands never load the whole agent.
         const { runAgentDaemon } = await import("./lifecycle/runAgentDaemon.js");
         // The daemon keeps this process alive through its socket server until it closes.

@@ -17,7 +17,7 @@ import {
 } from "@slopus/happy-providers";
 import { withLifetime, type Context } from "@steve.kite/stdlib";
 
-/** The model every terminal gym session runs on unless a scenario names another. */
+/** The model every gym session runs on unless a scenario names another. */
 const GYM_MODEL: AgentModel = {
     defaultEffort: "off",
     effortLevels: ["off", "low", "medium", "high"],
@@ -53,7 +53,7 @@ export function createGymInferenceFromEnvironment(
     const endpoint = env.HAPPY_GYM_INFERENCE_URL?.trim();
     if (endpoint === undefined || endpoint.length === 0) return undefined;
     const token = env.HAPPY_GYM_TOKEN?.trim();
-    const liveInference = env.HAPPY_TERMINAL_GYM_LIVE_INFERENCE === "1";
+    const liveInference = env.HAPPY_GYM_LIVE_INFERENCE === "1";
 
     // The configuration decides which providers exist and which models they serve, exactly as
     // in production; the gym only replaces how each of those accounts serves inference. A
@@ -159,7 +159,7 @@ function gymProviderType(
         : "codex";
 }
 
-// --- Wire protocol (mirrors packages/gym/sources/inferenceTypes.ts) ------------------------
+// --- Wire protocol ---------------------------------------------------------------------------
 
 interface GymWireBlock {
     readonly type: string;

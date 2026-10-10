@@ -21,8 +21,7 @@ take effect after restarting the daemon.
 The daemon imports the newest valid Happy credentials from `~/.happy/access.key`
 into `~/.happy/agent/happy/access.key` at startup. `HAPPY_HOME_DIR` changes the source
 directory. `HAPPY_AGENT_HAPPY_SERVER_URL`, then `HAPPY_SERVER_URL`, can override the
-server URL. `happy-terminal happy auth` performs Happy's QR authentication directly and
-hot-reloads a running daemon without interrupting its sessions.
+server URL.
 
 Every accessed primary session synchronizes automatically. Happy Agent persists the
 Happy session tag, encryption key, remote cursor, and a bounded outbound queue
@@ -242,8 +241,8 @@ their controlled execution environment when the host bundle is not visible
 inside that environment.
 These run through the session's real Happy Agent `AgentContext`; they therefore use the
 same local-or-Docker filesystem, current permission mode, shell sandbox,
-network boundary, process accounting, output limits, and abort lifecycle as the
-TUI agent. File writes retain Happy's SHA-256 optimistic-concurrency contract.
+network boundary, process accounting, output limits, and abort lifecycle as
+every other agent. File writes retain Happy's SHA-256 optimistic-concurrency contract.
 
 ## Happy2 local plugins and MCP Apps
 

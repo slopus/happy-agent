@@ -22,8 +22,8 @@ installation before using them. For configuration and transport details, read
 Reuse known information and ask only for missing choices:
 
 - Which installation should be upgraded, and to which released version? If none is specified,
-  resolve and use the latest stable **Happy Agent** release. Do not confuse it with Happy Terminal or
-  another library, create a release, or switch to a prerelease or source build.
+  resolve and use the latest stable **Happy Agent** release. Do not confuse it with a library
+  release, create a release, or switch to a prerelease or source build.
 - When may the service be unavailable? Explain that clients will disconnect and terminal or
   background processes may stop. Confirm how to handle active work; do not cancel it silently.
 - Where should the private backup live, how much space is available, and how long should it be

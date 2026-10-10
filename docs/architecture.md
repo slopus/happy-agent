@@ -31,20 +31,17 @@ Two consequences shape the whole system:
   second persistence path. Every provider is routed through the same
   `AgentContext`, `PermissionContext`, filesystem boundary, and shell sandbox.
 
-Happy Terminal uses `@earendil-works/pi-tui` for terminal rendering. Happy Agent's
-inference is implemented by the separately published, Node-only
+Happy Agent's inference is implemented by the separately published, Node-only
 `@slopus/happy-providers` library.
 
 ## 2. Process architecture
 
 Happy Agent is the long-lived headless daemon. Clients connect to it through the public API.
-Happy Terminal is the official TUI client, available through its own `happy-terminal` command
-or an embedded Node.js host. The Happy desktop app is a separate client of the same API. A standalone
-Happy Terminal installation also locates and starts a compatible Happy Agent release.
+The Happy desktop app is one such client.
 
 ```text
    standalone client                         team client
-   Happy Terminal / embedded host            web or service client
+   desktop or local client                   web or service client
           |                                         |
           | HTTP + SSE + WebSocket                  | HTTP + SSE + WebSocket
           | Unix socket + local token               | TCP + WorkOS access token
@@ -67,7 +64,7 @@ In standalone mode, the daemon:
   the SQLite stores, and `observation/agent.log`;
 - listens on the Unix socket only, with the socket `chmod`ed to `0600`, and
   authorizes every request against the token file;
-- can be located, started, and stopped by Happy Terminal's local daemon lifecycle.
+- can be located, started, and stopped through the `happy-agent` lifecycle commands.
 
 In team mode, the daemon instead:
 
@@ -90,33 +87,16 @@ fixed-region Tailcat key, supervises the bundled v0.4.0 process for its whole li
 the tunnel before its underlying API transport. Tailcat supplies connectivity and WireGuard
 encryption only; the API's bearer or WorkOS authentication remains the authority boundary.
 
-The daemon holds the agent loop, tool execution, and the sandbox. The terminal UI
-holds no agent logic; if it dies, the session keeps running.
+The daemon holds the agent loop, tool execution, and the sandbox. Clients hold no agent logic;
+if one disconnects, the session keeps running.
 
-### The terminal UI
+### The lifecycle CLI
 
-The standalone Happy Terminal CLI parses the command line and picks a mode: interactive app, headless
-`exec`, monitor, daemon control (`happy-terminal daemon start|stop|kill|status|reload`), or offline
-installation inspection (`happy-terminal inspect [--json]`). The daemon itself is the
-standalone `happy-agent` CLI. Development builds use this checkout, while published Happy Terminal
-installations select and verify a compatible Happy Agent release. Graceful stop waits for
-the daemon PID to exit; `kill` uses the persisted PID when a daemon cannot shut down cleanly.
-
-Inspection is the exception to the daemon-starting path below. It reads installation, CLI version,
-and protocol compatibility facts without starting or contacting the daemon. A clean or
-upgradeable inspection exits 0; incompatible, damaged, busy, or unreadable data exits 2 after
-printing the same complete human or JSON result.
-
-Before doing anything else, a standalone interactive or headless run finds a running daemon,
-checks that its identity matches the current build, and spawns one when it does not. When the
-running daemon is older than the current build, the CLI asks before restarting it. The client
-talks HTTP over the Unix socket. These local discovery and lifecycle commands are disabled in team
-mode, whose clients connect to the deployment's HTTP endpoint directly.
-
-The interactive interface is built on Pi TUI. Its layout rules are strict: the
-logical transcript is append-only, live above-composer status is compact and
-never pulls history downward, and a resize is a full-frame redraw rather than a
-partial reflow.
+The daemon is the standalone `happy-agent` CLI: `start`, `stop`, `kill`, `status`, `reload`, and
+`run`. Graceful stop waits for the daemon PID to exit; `kill` uses the persisted PID when a daemon
+cannot shut down cleanly. A local client talks HTTP over the Unix socket. These local lifecycle
+commands are not used in team mode, whose clients connect to the deployment's HTTP endpoint
+directly.
 
 ### The protocol between them
 
@@ -158,15 +138,13 @@ The essentials:
 - Two stores implement the same `SessionStore` interface:
   `PersistentSessionStore` (the daemon's durable store, which also implements
   `InMemorySessionPersistence`) and `InMemorySessionStore` (a private in-memory
-  SQLite database used by tests and the gym, so they exercise the real
+  SQLite database used by tests, so they exercise the real
   persistence contract without leaving state behind).
 - **Database first, memory second.** Every change writes through persistence and
   only then updates in-memory state. This is not optional.
 
 Because sessions live in the daemon and are persisted as they go, they survive a
-closed terminal and a daemon restart. `happy-terminal resume`, `happy-terminal fork`,
-`happy-terminal exec --resume`, and `--last` all reopen a stored session; headless runs are
-ordinary persisted sessions.
+disconnected client and a daemon restart.
 
 Subagents are sessions too, with their transcripts saved and readable from the
 parent.
@@ -413,9 +391,7 @@ may persist in SQLite pages and the WAL.
 Non-database daemon state under `~/.happy/agent` includes runtime settings, Happy credentials, and
 logs. Standalone mode also stores its socket and authentication token there; team mode keeps both
 absent. When enabled, Tailcat keeps its durable identity key and live endpoint files in the private
-`tailcat/` subdirectory. Happy Terminal keeps its client-specific runtime settings under
-`~/.happy/happy-terminal`. User
-configuration is separate, in `~/Happy/Config/happy.toml` (macOS) or
+`tailcat/` subdirectory. User configuration is separate, in `~/Happy/Config/happy.toml` (macOS) or
 `~/happy/config/happy.toml` (Linux), with repository settings in `happy.toml`.
 
 ### Migrations
@@ -440,19 +416,18 @@ transaction, advancing `PRAGMA user_version` after each one and stamping
 `packages/` in a pnpm TypeScript workspace. Source lives in `sources/`, with
 `sources/main.ts` for an executable and `sources/index.ts` for a library.
 
-| Package                        | What it is                                                                                                                                                                 |
-| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `packages/happy-agent`         | `@slopus/happy-agent` — the headless daemon executable and lifecycle used by every client.                                                                                 |
-| `packages/happy-terminal`      | `@slopus/happy-terminal` — the reusable TUI, standalone `happy-terminal` command, Happy Agent launcher, and Node.js embedding API.                                         |
-| `packages/happy-agent-base`    | `@slopus/happy-agent-base` — the minimal durable agent loop, provider routing, persistence, and feature hooks.                                                             |
-| `packages/happy-agent-modules` | `@slopus/happy-agent-modules` — reusable agent tools, hooks, and product capabilities composed by Happy Agent.                                                             |
-| `packages/happy-providers`     | `@slopus/happy-providers` — the separately published, Node-only vendor library: stateful sessions, transports, retries, error parsing, credentials, and native compaction. |
-| `packages/happy-agent-client`  | `@slopus/happy-agent-client` — the typed request and SSE client for the public Happy Agent API.                                                                            |
-| `packages/ghostty-wasm`        | `@slopus/ghostty-wasm` — the Ghostty terminal emulator compiled to WebAssembly, usable from Node and the browser.                                                          |
-| `packages/ghostty-web`         | `@slopus/ghostty-web` — the client/server protocol for remoting a Ghostty-backed terminal: snapshot, VT replay, semantic-grid recovery, flow control, paged scrollback.    |
-| `packages/happy-plugins`       | The typed API available to TypeScript plugins running inside Happy, plus the development runner.                                                                           |
-| `packages/gym`                 | Private host-side end-to-end harness: PTY integration, fixtures, and the Docker image definition.                                                                          |
-| `packages/gym-tests`           | Private black-box terminal scenarios exercising Happy Terminal and Happy Agent together in fresh containers.                                                               |
+| Package                          | What it is                                                                                                                                                                 |
+| -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/happy-agent`           | `@slopus/happy-agent` — the headless daemon executable and lifecycle used by every client.                                                                                 |
+| `packages/happy-agent-base`      | `@slopus/happy-agent-base` — the minimal durable agent loop, provider routing, persistence, and feature hooks.                                                             |
+| `packages/happy-agent-modules`   | `@slopus/happy-agent-modules` — reusable agent tools, hooks, and product capabilities composed by Happy Agent.                                                             |
+| `packages/happy-providers`       | `@slopus/happy-providers` — the separately published, Node-only vendor library: stateful sessions, transports, retries, error parsing, credentials, and native compaction. |
+| `packages/happy-agent-client`    | `@slopus/happy-agent-client` — the typed request and SSE client for the public Happy Agent API.                                                                            |
+| `packages/ghostty-wasm`          | `@slopus/ghostty-wasm` — the Ghostty terminal emulator compiled to WebAssembly, usable from Node and the browser.                                                          |
+| `packages/ghostty-web`           | `@slopus/ghostty-web` — the client/server protocol for remoting a Ghostty-backed terminal: snapshot, VT replay, semantic-grid recovery, flow control, paged scrollback.    |
+| `packages/happy-plugins`         | The typed API available to TypeScript plugins running inside Happy, plus the development runner.                                                                           |
+| `packages/happy-agent-gym`       | Private end-to-end harness that starts the real daemon with scripted inference on an emulated machine.                                                                     |
+| `packages/happy-agent-gym-tests` | Private black-box scenarios that drive the daemon through its API.                                                                                                         |
 
 Inside a package, code is organized by domain module (`git`, `fs`, `sandbox`,
 `docker`, `secrets`, `session`, `server`, `persistence`, …). A module's top level
@@ -468,13 +443,11 @@ stays readable in one place.
 - Golden-trace tests in `happy-providers` compare reconstructed requests against
   real captured vendor traffic; recorded-response tests replay real HTTP failures
   through the real transport. Both are deterministic and need no credentials.
-- Live tests are named `*.live.test.ts` and gated behind `HAPPY_TERMINAL_LIVE_TEST=1`.
-- The **gym** (`pnpm test:gym`) runs the built CLI and daemon through a real PTY
-  in a fresh Docker container. Only inference is mocked; the filesystem, shell,
-  processes, daemon, tools, and terminal rendering are real, with `libghostty-vt`
-  providing user-visible screen and scroll state. Use it for anything spanning
-  terminal input or rendering, inference, tools, processes, filesystem effects,
-  interruption, or concurrency.
+- Live tests are named `*.live.test.ts` and gated behind an explicit opt-in environment variable.
+- The **gym** (`pnpm test:gym`) starts the real daemon and drives it through its API. Only
+  inference is scripted and the machine is emulated; the daemon, routes, tools, permissions, and
+  persistence are real. Use it for anything spanning the API, inference, tools, processes,
+  filesystem effects, interruption, or concurrency.
 
 For a bug fix, add the smallest deterministic test that reproduces the failure at
 the layer where the broken contract is observable, keep that test unchanged while
@@ -487,8 +460,7 @@ matters in practice, it is worth naming:
 
 - **Pi as a tool surface.** A Pi `bash` tool is sometimes described alongside the
   Codex, Claude, and Grok surfaces. The implemented vendor tool surfaces are
-  Claude, Codex, and Grok; Pi appears as the TUI library
-  (`@earendil-works/pi-tui`), not as a provider or toolset.
+  Claude, Codex, and Grok; Pi is not a provider or toolset.
 - **Account routing** ships as round-robin smart providers. Weights, usage-aware
   or priority routing, time windows, and a UI or API for pools do not exist yet.
 - **`fork` on `BaseSession`** is part of the provider contract but is not yet

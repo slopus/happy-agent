@@ -86,7 +86,7 @@ sudo install -d -m 0700 -o happy-agent -g happy-agent \
 ```
 
 Unless the user pinned a version, resolve the latest stable Happy Agent release from GitHub at
-deployment time. Filter for Happy Agent's `v<version>` tags, not Happy Terminal/library releases;
+deployment time. Filter for Happy Agent's `v<version>` tags, not library releases;
 do not reuse a version remembered from a previous deployment. Match `uname -m` to `linux-x64` or
 `linux-arm64`. Download in a fresh temporary directory, verify the published checksum, and install:
 

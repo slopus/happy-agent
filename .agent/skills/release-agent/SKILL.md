@@ -1,6 +1,6 @@
 ---
 name: release-agent
-description: Release Happy Agent or Happy Terminal from this repository. Use when asked to "release", "release the agent", "release terminal", "cut a release", or to publish a new version. Covers version selection, building the release notes, dispatching the workflow correctly, and verifying the published result.
+description: Release Happy Agent from this repository. Use when asked to "release", "release the agent", "cut a release", or to publish a new version. Covers version selection, building the release notes, dispatching the workflow correctly, and verifying the published result.
 ---
 
 # Releasing Happy Agent
@@ -22,25 +22,22 @@ product before reporting completion.
 ## Which product, which version
 
 An unqualified "release" means **a Happy Agent preview**. Production must be explicit.
-Neither means Terminal or a library unless that product is named.
+Neither means a library unless that library is named.
 
-| Request              | Product        | Version                               |
-| -------------------- | -------------- | ------------------------------------- |
-| "release"            | Happy Agent    | next patch followed by `-preview.N`   |
-| "release production" | Happy Agent    | next stable patch; no preview needed  |
-| "release stable"     | Happy Agent    | same as production                    |
-| "release terminal"   | Happy Terminal | next stable patch, never a prerelease |
-| a named library      | that library   | next patch                            |
+| Request              | Product      | Version                              |
+| -------------------- | ------------ | ------------------------------------ |
+| "release"            | Happy Agent  | next patch followed by `-preview.N`  |
+| "release production" | Happy Agent  | next stable patch; no preview needed |
+| "release stable"     | Happy Agent  | same as production                   |
+| a named library      | that library | next patch                           |
 
 Read Agent versions from GitHub releases/tags, not its npm package or source manifest.
-Use npm for Terminal and libraries. Fetch tags before choosing an unused version:
+Use npm for libraries. Fetch tags before choosing an unused version:
 
 ```bash
 gh release list --limit 30
 gh api repos/slopus/happy-agent/releases/latest --jq .tag_name
-git tag --list 'v[0-9]*' --sort=-v:refname | head -10         # Happy Agent
-git tag --list 'happy-terminal-v*' --sort=-v:refname | head -3 # Happy Terminal
-pnpm view @slopus/happy-terminal version
+git tag --list 'v[0-9]*' --sort=-v:refname | head -10 # Happy Agent
 ```
 
 For stable `X.Y.Z`, use the next patch after the latest stable Agent release. For previews,
@@ -75,13 +72,12 @@ any kind. For the first preview of a stable target, start from the latest stable
 production notes include everything since the previous stable, including previewed changes:
 
 ```bash
-git log --format='%h %s' v0.3.17..origin/main               # Happy Agent
-git log --format='%h %s' happy-terminal-v0.3.3..origin/main # Happy Terminal
+git log --format='%h %s' v0.3.17..origin/main
 ```
 
-Do not scope this count to the product's package directory. Happy Terminal ships the modules
+Do not scope this count to the product's package directory. Happy Agent ships the modules
 and providers packages, so a change in `packages/happy-agent-modules` is in the release even
-though it never touches `packages/happy-terminal`. Reporting the directory-scoped count as
+though it never touches `packages/happy-agent`. Reporting the directory-scoped count as
 the total understates the release — verify the number you quote by running the unscoped
 command above.
 
@@ -128,8 +124,7 @@ gh workflow run release-happy-agent.yml --ref main \
 `-f` is a literal string; `-F` reads a file only when the value begins with `@`. For short
 single-line values `-f` is fine.
 
-For production, supply the stable version and `-F prerelease=false`. Happy Terminal uses
-`release-happy-terminal.yml` with a stable version and notes, without a prerelease input.
+For production, supply the stable version and `-F prerelease=false`.
 CI builds, tests, signs, and publishes the same artifacts within one workflow run.
 Do not introduce a separate prepare/publish dispatch or bump commit between those jobs.
 Source verification and platform builds overlap after release-input validation;
@@ -160,9 +155,6 @@ Then confirm the rest:
 # Happy Agent: four platform archives plus a .sha256 for each; never a draft
 gh release view v0.4.67-preview.1 --json tagName,isDraft,isPrerelease,assets \
     -q '"tag=\(.tagName) draft=\(.isDraft) pre=\(.isPrerelease)", (.assets[] | .name)'
-
-# Happy Terminal: npm must show the new version on the latest tag
-pnpm view @slopus/happy-terminal version dist-tags --json
 ```
 
 Use your actual tag in each command. Verify preview releases have `isPrerelease=true` and
@@ -173,18 +165,7 @@ archive and check the binary's `--version`; do not start the daemon. Nightly acc
 Agent previews; standard Desktop must not offer them. No app or daemon restart is implied
 by a release request.
 
-For Happy Terminal, npm publication happens before the tag and GitHub Release are created, so
-a failed publish must leave both absent. If a tag exists without an npm version, something is
-wrong — investigate rather than retrying.
-
 ## After the release
-
-The Happy Terminal workflow pushes a version bump commit to `main`. Fast-forward so the local
-branch is not left behind:
-
-```bash
-git pull --ff-only
-```
 
 Report the version, where it was published, and anything you knowingly left unfixed. If tests
 failed or a suite was skipped, say so with the output rather than reporting a clean release.

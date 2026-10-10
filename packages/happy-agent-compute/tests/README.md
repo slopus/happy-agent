@@ -13,7 +13,7 @@ HAPPY_AGENT_COMPUTE_LIVE_TEST=1 pnpm --filter @slopus/happy-agent-compute \
   exec vitest run tests/live
 ```
 
-The Docker image defaults to `happy-terminal-gym:local`. Override it with
+The Docker image defaults to `happy-agent-compute-test:local`. Override it with
 `HAPPY_AGENT_COMPUTE_DOCKER_IMAGE`. The image must contain a POSIX shell and the commands used by
 the live cases. Managed containers receive the static Linux supervisor from the package; attached
 containers must already mount the matching installed NPM artifact read-only at
@@ -133,30 +133,6 @@ automatic reviewer, transcript construction, tool policy, terminal disclosure, o
 | `shouldReviewPatchInAutoMode.test.ts`                                      | none                                                    | Out of scope                                                                                       |
 | `summarizeEscalatedShellAction.test.ts`                                    | none                                                    | Out of scope                                                                                       |
 | `toolAutoPermissionPolicies.test.ts`                                       | none                                                    | Out of scope                                                                                       |
-
-### Relevant gym coverage
-
-Gym proves the assembled Happy Agent product through a real PTY. Compute tests cannot replace its agent,
-session, and terminal assertions, but the backend contracts should have a lower-level equivalent.
-
-| Gym test                                                            | Compute equivalent                                          | Status                                                                                                              |
-| ------------------------------------------------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `background_child_survives_the_command_that_started_it.test.ts`     | host shell process ownership tests                          | Weaker; no compute live orphan-child case                                                                           |
-| `background_shell_output_continues_after_retention_cap.test.ts`     | host/Docker delta and cap tests                             | Present at backend boundary                                                                                         |
-| `aborting_active_session_stops_background_processes.test.ts`        | compute disposal and kill tests                             | Weaker; abort/session ownership is above compute                                                                    |
-| `aborting_idle_session_stops_background_processes.test.ts`          | compute disposal tests                                      | Weaker; archive/session ownership is above compute                                                                  |
-| `reducing_permissions_stops_existing_full_access_processes.test.ts` | none                                                        | Out of scope under per-operation compute permissions; the owning session must decide which existing process to stop |
-| `docker_session_routes_files_and_commands_to_container.test.ts`     | Docker filesystem/shell tests and live lane                 | Present at backend boundary                                                                                         |
-| `docker_shell_respects_permission_mode.test.ts`                     | Docker containment live case                                | Present                                                                                                             |
-| `docker_managed_network_reaches_allowed_http_service.test.ts`       | Docker managed-network live case                            | Present in the native-Linux live lane                                                                               |
-| `managed_network_request_runs_through_linux_proxy_bridge.test.ts`   | supervisor proxy unit tests and Docker live case            | Present at the native supervisor and package-wiring boundaries                                                      |
-| `sandbox_policy_files_cannot_be_poisoned_by_model_commands.test.ts` | protected-path and sandbox-command tests                    | Weaker; no compute live concurrent policy-poisoning case                                                            |
-| `workspace_write_uses_codex_linux_sandbox.test.ts`                  | Linux command construction and host/Docker live containment | Present at backend boundary                                                                                         |
-| `workspace_write_custom_shell_cannot_bypass_sandbox.test.ts`        | host/Docker custom-shell validation and live containment    | Weaker; no hostile custom-shell live case                                                                           |
-| `workspace_write_cannot_install_hidden_git_hooks.test.ts`           | Git protected-path unit tests                               | Weaker; no compute live Git-hook attempt                                                                            |
-| `restricted_shell_wrapper_does_not_run_host_profiles.test.ts`       | shell environment unit tests                                | Missing as a live compute scenario                                                                                  |
-| `permissions_menu_enforces_read_only_then_full_access.test.ts`      | per-operation read-only/full-access tests                   | Present at backend boundary; menu behavior is out of scope                                                          |
-| Auto-review and permission-disclosure gym files                     | none                                                        | Out of scope; they test reviewer authorization, tool policy, and TUI disclosure                                     |
 
 ## Live cases and what they prove
 

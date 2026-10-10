@@ -1,12 +1,6 @@
 {
     "$schema": "./node_modules/oxfmt/configuration_schema.json",
-    "ignorePatterns": [
-        "packages/happy-terminal/sources/profiles/claude/claude-*",
-        "packages/happy-terminal/sources/profiles/claude-*.md",
-        "packages/happy-terminal/sources/profiles/codex/codex-*",
-        "packages/happy-terminal/sources/profiles/codex-*.md",
-        "packages/rig-codemode-codex/native/**"
-    ],
+    "ignorePatterns": ["packages/rig-codemode-codex/native/**"],
     "tabWidth": 4,
     "useTabs": false
 }

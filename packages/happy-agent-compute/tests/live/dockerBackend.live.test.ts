@@ -14,7 +14,7 @@ import { createDockerCompute } from "../../sources/docker/createDockerCompute.js
 const LIVE = process.env.HAPPY_AGENT_COMPUTE_LIVE_TEST === "1";
 const describeLive = LIVE ? describe : describe.skip;
 const itOnNativeLinux = process.platform === "linux" ? it : it.skip;
-const image = process.env.HAPPY_AGENT_COMPUTE_DOCKER_IMAGE ?? "happy-terminal-gym:local";
+const image = process.env.HAPPY_AGENT_COMPUTE_DOCKER_IMAGE ?? "happy-agent-compute-test:local";
 const apparmorProfile = process.env.HAPPY_AGENT_COMPUTE_DOCKER_APPARMOR_PROFILE;
 const docker = new Dockerode();
 const ctx: Context = createRootContext().named("happy-agent-compute-docker-live-test");

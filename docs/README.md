@@ -17,9 +17,8 @@ one terminal interface, one way to spawn and talk to agents.
 Provider access requires no Happy Agent account. Happy Agent uses the credentials already managed
 by the coding agents installed on the machine, and it never pools or resells provider access. An
 optional team deployment authenticates members of one WorkOS organization separately from those
-provider credentials. The headless daemon holds durable sessions. Happy Terminal is the reusable
-Pi TUI client, used by its standalone `happy-terminal` command and embedded Node.js applications.
-The Happy desktop app and other clients attach through `@slopus/happy-agent-client`.
+provider credentials. The headless daemon holds durable sessions. The Happy desktop app and other
+clients attach through `@slopus/happy-agent-client`.
 
 The deeper idea: **agents never die**. Every conversation, every subagent, is a
 durable session that can always receive another message and resume with its
@@ -42,7 +41,7 @@ and running on it ([happy.engineering](https://happy.engineering/),
   nothing. The apps send product analytics, never your content, unless you turn it off
   ([details](happy.md#what-the-relay-sees-only-ciphertext-actually-means)).
 - **The original Happy CLI** ([source](https://github.com/slopus/happy)) is in maintenance mode.
-  Its `happy` command wraps Claude Code and Codex for the mobile app; it is not Happy Terminal.
+  Its `happy` command wraps Claude Code and Codex for the mobile app; it is not Happy Agent.
 
 When you are driven through either of them rather than a terminal,
 [happy.md](happy.md) explains what changes for you.
@@ -71,20 +70,20 @@ settings and asking only for missing material choices, access, or interactive lo
 
 Read these in whatever order your task demands; each page stands alone.
 
-| Page                                                       | What it tells you                                                                                                                                                                                                                 |
-| ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [architecture.md](architecture.md)                         | How Happy Agent is put together: daemon and TUI, the protocol between them, sessions and durability, providers and model catalogs, inference and compaction, persistence, and how the codebase is organized into packages.        |
-| [workspaces.md](workspaces.md)                             | What a workspace is (a Git worktree on its own branch), how to create, delegate into, and archive one, where they live on disk, and when making one is actually the right call.                                                   |
-| [agents-and-collaboration.md](agents-and-collaboration.md) | Subagents, follow-up messages, the `agent_me` / `agent_info` / `agent_send` handshake, scheduling, durable waits, presence, and the concurrency model.                                                                            |
-| [permissions-and-sandbox.md](permissions-and-sandbox.md)   | The four permission modes, the single cross-provider sandbox, how Auto review works, escalation syntax per provider, and why a denied action must never be retried by another route.                                              |
-| [configuration.md](configuration.md)                       | The complete `happy.toml` reference: file locations, protected paths, workspace setup commands, managed network access, provider instances, Docker-backed sessions, theme, diagnostics, and feature toggles.                      |
-| [team-mode.md](team-mode.md)                               | How to install the release binary, bootstrap and register a Tailcat endpoint, run the multi-user service under systemd, authenticate one WorkOS organization, and onboard its users.                                              |
-| [happy-teams.md](happy-teams.md)                           | Happy Social prerequisites, team administration, the setup sequence, local connections, and email invitations.                                                                                                                    |
-| [tailcat.md](tailcat.md)                                   | How to open the bundled account-free Tailcat transport, control it through an admin bot, obtain its stable endpoint, connect standalone or team clients, and preserve Happy Agent authentication.                                 |
-| [MCP.md](MCP.md)                                           | How to configure user-wide and workspace local stdio or remote HTTP MCP servers, reconcile them online, filter tools, and troubleshoot failed connections.                                                                        |
-| [extending.md](extending.md)                               | How to extend Happy Agent from inside: plugins (TypeScript processes with MCP tools and UI), skills, MCP servers, Happy Agent Connect integrations, and subagents as a runtime extension mechanism.                               |
-| [DESIGN.md](DESIGN.md)                                     | The Happy design system for web pages and interfaces: variables, surfaces, layout grid, typography, controls, states, and a copyable baseline. Read it for temporary pages or whenever the user asks for Happy's visual language. |
-| [happy.md](happy.md)                                       | The Happy family: encrypted remote access to agents with Happy, the collaborative desktop workspace of Happy 2, how each connects to Happy Agent, and what an agent should know when driven through them.                         |
+| Page                                                       | What it tells you                                                                                                                                                                                                                      |
+| ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [architecture.md](architecture.md)                         | How Happy Agent is put together: the daemon and its clients, the protocol between them, sessions and durability, providers and model catalogs, inference and compaction, persistence, and how the codebase is organized into packages. |
+| [workspaces.md](workspaces.md)                             | What a workspace is (a Git worktree on its own branch), how to create, delegate into, and archive one, where they live on disk, and when making one is actually the right call.                                                        |
+| [agents-and-collaboration.md](agents-and-collaboration.md) | Subagents, follow-up messages, the `agent_me` / `agent_info` / `agent_send` handshake, scheduling, durable waits, presence, and the concurrency model.                                                                                 |
+| [permissions-and-sandbox.md](permissions-and-sandbox.md)   | The four permission modes, the single cross-provider sandbox, how Auto review works, escalation syntax per provider, and why a denied action must never be retried by another route.                                                   |
+| [configuration.md](configuration.md)                       | The complete `happy.toml` reference: file locations, protected paths, workspace setup commands, managed network access, provider instances, Docker-backed sessions, theme, diagnostics, and feature toggles.                           |
+| [team-mode.md](team-mode.md)                               | How to install the release binary, bootstrap and register a Tailcat endpoint, run the multi-user service under systemd, authenticate one WorkOS organization, and onboard its users.                                                   |
+| [happy-teams.md](happy-teams.md)                           | Happy Social prerequisites, team administration, the setup sequence, local connections, and email invitations.                                                                                                                         |
+| [tailcat.md](tailcat.md)                                   | How to open the bundled account-free Tailcat transport, control it through an admin bot, obtain its stable endpoint, connect standalone or team clients, and preserve Happy Agent authentication.                                      |
+| [MCP.md](MCP.md)                                           | How to configure user-wide and workspace local stdio or remote HTTP MCP servers, reconcile them online, filter tools, and troubleshoot failed connections.                                                                             |
+| [extending.md](extending.md)                               | How to extend Happy Agent from inside: plugins (TypeScript processes with MCP tools and UI), skills, MCP servers, Happy Agent Connect integrations, and subagents as a runtime extension mechanism.                                    |
+| [DESIGN.md](DESIGN.md)                                     | The Happy design system for web pages and interfaces: variables, surfaces, layout grid, typography, controls, states, and a copyable baseline. Read it for temporary pages or whenever the user asks for Happy's visual language.      |
+| [happy.md](happy.md)                                       | The Happy family: encrypted remote access to agents with Happy, the collaborative desktop workspace of Happy 2, how each connects to Happy Agent, and what an agent should know when driven through them.                              |
 
 Installed releases also include `API.md` beside these pages. It is the authoritative Happy Agent
 HTTP, event-stream, WebSocket, and tunnel contract; in this source checkout it lives at

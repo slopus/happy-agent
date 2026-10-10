@@ -1,5 +1,4 @@
 export type ReleasePackageKey =
-    | "happy-terminal"
     | "happy-agent-base"
     | "happy-agent-client"
     | "happy-agent-compute"

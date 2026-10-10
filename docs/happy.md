@@ -117,10 +117,7 @@ configuration file. Repository-level configuration cannot enable or disable it.
 
 **Credentials.** When the integration is enabled, the Happy Agent daemon imports newer
 credentials from `~/.happy` at startup, so a machine already paired with the
-Happy CLI needs no extra step. To pair from Happy Terminal directly, `happy-terminal happy auth`
-prints a QR code — a real PNG in terminals that support Kitty or iTerm2 image
-protocols, and a compact text QR everywhere else — which you scan with the
-Happy app. Happy Agent keeps its copy of the access key, machine identity, and settings
+Happy CLI needs no extra step. Happy Agent keeps its copy of the access key, machine identity, and settings
 under its own home directory, separate from the CLI's `~/.happy`.
 
 **What Happy Agent publishes.** Every primary Happy Agent session you open is synchronized live.
@@ -192,7 +189,7 @@ on that machine.
 | UI      | Reusable design system and component workbench                                        |
 | App     | The React product, shared by web and desktop                                          |
 | Web     | Browser entry point and production web build                                          |
-| Desktop | Electron app that supervises child processes and can host the Happy Terminal surface  |
+| Desktop | Electron app that supervises child processes and can attach to a local Happy Agent    |
 
 The all-in-one executable starts the API on an ephemeral loopback port, serves
 the packaged single-page app on the configured public port, and proxies the API
@@ -210,8 +207,8 @@ them apart:
    private, bundled Happy Agent daemon and creates one Happy Agent session per agent
    conversation. This is how an agent that is a member of a channel actually
    thinks and works.
-2. **The desktop Happy Terminal surface.** The Electron app hosts Happy Terminal against a Happy
-   Agent daemon _you_ already run yourself and shows its projects, sessions, transcripts, files,
+2. **The desktop Happy Agent surface.** The Electron app attaches to a Happy Agent daemon _you_
+   already run yourself and shows its projects, sessions, transcripts, files,
    and terminals inside Happy Desktop.
 
 ### 1. The private Happy Agent runtime that executes agent turns
@@ -224,7 +221,7 @@ agent workspaces. Its defaults point at a private Happy Agent runtime under
 What follows from the implementation:
 
 - Happy 2 starts the Happy Agent executable **installed with its own server package**, never a
-  global `happy-terminal` binary, with `HAPPY_HOME_DIR` pointing at its private `.happy2` state.
+  globally installed binary, with `HAPPY_HOME_DIR` pointing at its private `.happy2` state.
   That home holds the daemon's configuration, session state, socket, and token.
 - Its generated machine configuration disables Happy synchronization, so this private runtime
   never appears as a machine in Happy's encrypted mobile sync.
@@ -273,12 +270,12 @@ agent's container and attach them to the app over WebSocket. Optional
 port-sharing configuration publishes a range of container ports through a
 wildcard preview domain with per-share audiences.
 
-### 2. The desktop Happy Terminal surface
+### 2. The desktop Happy Agent surface
 
-Happy Desktop can host `@slopus/happy-terminal` against the Happy Agent you installed yourself:
+Happy Desktop can attach to the Happy Agent you installed yourself:
 
-- The main process can use the embedded package or the standalone `happy-terminal` command,
-  resolves the daemon socket and token, and refuses to connect when the protocol is incompatible.
+- The main process resolves the daemon socket and token, and refuses to connect when the
+  protocol is incompatible.
 - It proxies that daemon connection to the renderer, which uses Happy Agent's client
   library to keep the transcript, session list, model catalog, inbox, provider
   usage, changed files, and terminals live.

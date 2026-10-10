@@ -256,33 +256,24 @@ The adapter must:
 
 1. Upload a `pnpm pack` artifact built from the pinned clean Happy Agent worktree and
    install it during Harbor's trusted setup phase.
-2. Create empty, trial-local `HAPPY_TERMINAL_HOME`, `HAPPY_TERMINAL_CONFIGURATION_DIRECTORY`, and
-   `CODEX_HOME` directories. Set `happy_integration = false` and
+2. Create empty, trial-local `HAPPY_HOME_DIR` and `CODEX_HOME` directories. Set `happy_integration = false` and
    `providers.default_enable = false` in the trial-local Happy Agent config, enabling
    only Codex and the selected model. Construct an explicit
    process-environment allowlist containing only ordinary runtime variables and
    the trial's OpenAI proxy values; do not inherit Anthropic, xAI, Moonshot,
    Gemini, AWS, or other provider credentials. Do not copy host sessions,
    credentials, config, skills, or MCP state.
-3. Run Happy Terminal against Happy Agent inside the Harbor task container with the exact instruction:
-
-    ```sh
-    happy-terminal exec --stream-json \
-      --provider codex \
-      --model "$MODEL" \
-      --effort medium \
-      --permission-mode full_access \
-      -- "$INSTRUCTION"
-    ```
-
-4. Supply only the disposable `OPENAI_API_KEY` and the proxy as
-   `HAPPY_TERMINAL_CODEX_BASE_URL`. Full access is acceptable only inside the disposable,
-   externally restricted task container and matches stock Codex's benchmark
-   posture.
-5. Save the complete JSONL stream, stderr, final response, tool calls, wall
-   time, exit status, and package identity under Harbor's agent logs. For each
-   line where `.type === "event"` and `.event.type === "agent_message"`,
-   aggregate `.event.data.message.usage`. Happy Agent currently reports token counts
+3. Start Happy Agent inside the Harbor task container and drive it through
+   `@slopus/happy-agent-client`: create one agent on the `codex` provider with
+   the selected model, `medium` effort, and the `full_access` permission mode,
+   then send it the exact instruction.
+4. Supply only the disposable `OPENAI_API_KEY`, and point the trial-local Codex
+   provider's base URL at the proxy. Full access is acceptable only inside the
+   disposable, externally restricted task container and matches stock Codex's
+   benchmark posture.
+5. Save the agent's complete event stream, daemon log, final response, tool
+   calls, wall time, exit status, and package identity under Harbor's agent
+   logs. Aggregate the usage reported on each assistant message. Happy Agent currently reports token counts
    there but leaves monetary cost at zero, and `run_finished` has no usage
    rollup.
 6. Convert the run to Harbor's trajectory format, or retain enough stable raw

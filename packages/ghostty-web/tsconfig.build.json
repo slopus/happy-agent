@@ -5,5 +5,5 @@
         "noEmit": false,
         "rootDir": "sources"
     },
-    "exclude": ["sources/**/*.test.ts"]
+    "exclude": ["sources/**/*.test.ts", "sources/testing/GhosttyTestTerminal.ts"]
 }

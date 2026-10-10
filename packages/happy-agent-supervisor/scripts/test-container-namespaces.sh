@@ -17,7 +17,7 @@ probe_container() {
         --security-opt seccomp=unconfined --security-opt "apparmor=${1:-unconfined}" \
         --security-opt systempaths=unconfined \
         --mount "type=bind,source=$container_test_binary,target=/tools/happy-agent-sandbox,readonly" \
-        --entrypoint /tools/happy-agent-sandbox happy-terminal-gym:local \
+        --entrypoint /tools/happy-agent-sandbox happy-agent-compute-test:local \
         --policy '{"mode":"full_access","network":{"egress":true,"localBinding":true}}' \
         -- /bin/sh -c 'printf ready'
 }

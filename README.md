@@ -39,13 +39,11 @@ parts of [Codex](https://github.com/openai/codex),
 [Claude Code](https://code.claude.com/docs/en/overview), and
 [Grok Build](https://github.com/xai-org/grok-build) in one consistent local
 runtime: the right prompts and tools for each model, useful defaults, safe
-execution, durable sessions, subagents, MCP, and a friendly terminal interface.
+execution, durable sessions, subagents, MCP, and one stable API for every client.
 
 Happy Agent is the headless daemon: it owns agents, tools, permissions, durable
 state, and the public API. The [Happy desktop app](https://happy.engineering/)
-runs on it and connects through `@slopus/happy-agent-client`. Happy Terminal is
-its official TUI: the standalone `happy-terminal` command, which any Node.js
-application can also embed through the `@slopus/happy-terminal` package.
+runs on it and connects through `@slopus/happy-agent-client`.
 
 **Most people should install the desktop app** from
 [happy.engineering](https://happy.engineering/). Open it and setup runs itself:
@@ -55,15 +53,19 @@ want to run Happy Agent directly or build on it.
 
 ## Quick start
 
-### Step 1: Install Happy Terminal
+### Step 1: Install Happy Agent
+
+Download the Happy Agent release for your platform from
+[GitHub Releases](https://github.com/slopus/happy-agent/releases), verify its checksum, and start
+the daemon:
 
 ```sh
-npm install -g @slopus/happy-terminal
-happy-terminal
+happy-agent start
+happy-agent status
 ```
 
 The `happy` command in your terminal belongs to the original Happy CLI, not to
-Happy Terminal or the desktop app.
+Happy Agent or the desktop app.
 
 ### Step 2: Sign in to the agents you want to use
 
@@ -82,16 +84,11 @@ servers. Restart the daemon after a new login so the provider enters the model
 catalog. Once enabled, Grok credential rotations are hot-reloaded from its
 local auth store without copying tokens into Happy Agent.
 
-### Step 3: Start building
+### Step 3: Connect a client
 
-```sh
-cd your-project
-happy-terminal
-```
-
-Ask for what you want in plain English. Happy Agent can inspect the repository, edit
-files, run commands, delegate work, and verify the result. Use `/model` at any
-time to choose an available model.
+Open the Happy desktop app, or build your own client on `@slopus/happy-agent-client`. Every
+client speaks the same [Happy Agent API](packages/happy-agent/API.md) over the daemon's private
+socket.
 
 ### Optional: Connect the Happy mobile app
 
@@ -112,21 +109,12 @@ through the daemon API; the start response includes opaque `happy://` data to
 render as a QR code. Clients can also cancel pairing, unlink this daemon, or
 deliberately re-pair it. Happy is available alongside onboarding in desktop
 bootstrap, but remains optional and never blocks onboarding completion. In the
-desktop app, pair from Settings → Mobile Access. To authenticate from the
-standalone terminal client, run:
-
-```sh
-happy-terminal happy auth
-```
-
-Scan the QR code with Happy for
+desktop app, pair from Settings → Mobile Access, then scan the QR code with Happy for
 [iOS](https://apps.apple.com/us/app/happy-claude-code-client/id6748571505) or
 [Android](https://play.google.com/store/apps/details?id=com.ex3ndr.happy).
-Terminals with Kitty or iTerm2 image support show a PNG QR code; other
-terminals get Happy's compact text QR. Every primary Happy Agent session you
-open is then synchronized live with the mobile app. Mobile messages enter
-the same session and permission boundary as terminal messages; there is no
-separate local/remote control mode.
+Every primary Happy Agent session you open is then synchronized live with the mobile app.
+Mobile messages enter the same session and permission boundary as every other client's
+messages; there is no separate local/remote control mode.
 The mobile app can also send encrypted image attachments, stop the active turn, and
 select any provider-qualified Happy Agent model and supported reasoning level.
 
@@ -145,35 +133,12 @@ without making you rebuild the setup for every model, machine, or repository.
 - **Thoughtful defaults.** A fresh install is useful immediately, while global
   and project-local configuration remain available when you need them.
 - **Ready for other clients.** A local daemon, persisted sessions, and a durable
-  event stream let terminal, mobile, and web clients build on the same runtime.
+  event stream let desktop, mobile, and web clients build on the same runtime.
   The [remote terminal API](REMOTE_TERMINALS.md) adds Ghostty-backed PTYs with
   WebSocket VT replay, semantic-grid recovery, credit-based flow control, and paged scrollback
   through the [hybrid client/server protocol](packages/ghostty-web/README.md).
 - **Open and local.** Happy Agent is MIT licensed, runs beside your code, and keeps its
   execution boundaries visible.
-
-The official terminal client, package, and canonical standalone command share one name:
-**Happy Terminal**.
-
-## Embed in another Node.js project
-
-Install Happy Terminal as an application dependency:
-
-```sh
-pnpm add @slopus/happy-terminal
-```
-
-Then run it inline on the host process's terminal:
-
-```ts
-import { runHappyTerminal } from "@slopus/happy-terminal";
-
-await runHappyTerminal({ cwd: process.cwd() });
-```
-
-The promise resolves when the person exits Happy Terminal. The terminal is restored and the host
-Node.js process keeps running. Startup failures reject the promise, while `onError` can receive
-non-fatal background failures.
 
 ## How it works
 
@@ -182,12 +147,12 @@ runtime without flattening the important differences between models.
 
 | Path              | What Happy Agent uses                                                                                            | What Happy Agent controls                                                                                               |
 | ----------------- | ---------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| Pi foundation     | Pi's inference adapters and terminal UI library                                                                  | The shared terminal, permissions, sessions, processes, persistence, and client protocol                                 |
+| Pi foundation     | Pi's inference adapters                                                                                          | The shared permissions, sessions, processes, persistence, and client protocol                                           |
 | Codex             | Pi's Codex transport, with [OpenAI's source](https://github.com/openai/codex) as the behavioral reference        | Reimplemented Codex prompts, tool contracts, reasoning controls, collaboration, approvals, review, and transcript rules |
 | Claude Code       | Anthropic's official [Claude Agent SDK](https://code.claude.com/docs/en/agent-sdk/overview) for direct inference | Reimplemented Claude-facing prompts, tools, tasks, subagents, permissions, and session behavior                         |
 | Grok Build        | xAI's OpenAI-compatible Responses API and the credentials managed by the Grok CLI                                | Adapted [Grok Build](https://github.com/xai-org/grok-build) prompt, tools, token refresh, and request metadata          |
 | Other model paths | Pi inference adapters and selected generic Pi tool definitions                                                   | A useful fallback experience without pretending those models are Codex or Claude Code                                   |
-| External clients  | Happy Agent's local daemon, durable event stream, and protocol                                                   | One stable API for terminal, headless, mobile, web, or other interfaces                                                 |
+| External clients  | Happy Agent's local daemon, durable event stream, and protocol                                                   | One stable API for desktop, headless, mobile, web, or other interfaces                                                  |
 
 The Codex integration is implemented inside Happy Agent rather than wrapping the Codex
 CLI. Happy Agent follows the open-source client closely so prompts, tools, permissions,
@@ -233,7 +198,7 @@ Codex, or Claude Code. This table focuses on the local coding-agent experience.
 | Permissions            | Unified Auto, Workspace write, Read only, and Full access modes       | Intentionally extension- or container-driven                 | Native approvals and sandboxing           | Native permission modes                                 |
 | MCP                    | Built-in stdio and streamable HTTP                                    | Available through extensions                                 | Built in                                  | Built in                                                |
 | Long-running work      | Managed shells, workflows, persistent goals, and background subagents | Intentionally uses external tools such as tmux or extensions | Background commands and multi-agent work  | Background commands, tasks, and agents                  |
-| Headless and embedding | Text, JSON, streaming JSON, daemon protocol, and durable events       | Print, JSON, RPC, and a TypeScript SDK                       | Non-interactive mode, SDK, and app server | Print mode and Agent SDK                                |
+| Headless and embedding | Daemon protocol, typed client, and durable events                     | Print, JSON, RPC, and a TypeScript SDK                       | Non-interactive mode, SDK, and app server | Print mode and Agent SDK                                |
 | Best fit               | One local harness across model families and client apps               | Building a deeply customized agent                           | The first-party OpenAI experience         | The first-party Anthropic experience                    |
 
 Happy Agent deliberately keeps Pi's strong foundations and extensibility, then chooses a
@@ -241,81 +206,12 @@ cohesive built-in experience where Pi prefers a minimal core. From Codex and
 Claude Code it adopts widely useful workflows, not every product-specific edge
 case.
 
-## Everyday commands
-
-Type `/` in the terminal to see the commands available in the current session.
-
-| Command        | What it does                                           |
-| -------------- | ------------------------------------------------------ |
-| `/model`       | Choose the model and reasoning level                   |
-| `/permissions` | Choose filesystem, shell, and network access           |
-| `/agents`      | See delegated work and open a child transcript         |
-| `/tasks`       | See the current Claude-style task list                 |
-| `/goal`        | Start or manage a persistent long-running goal         |
-| `/review`      | Review staged, unstaged, and untracked changes         |
-| `/mcp`         | Check MCP servers, capabilities, and connection errors |
-| `/workflows`   | Open the live workflow monitor                         |
-| `/ps`          | List managed background terminals                      |
-| `/compact`     | Summarize older messages and free context space        |
-| `/usage`       | Show provider-reported token usage                     |
-| `/configure`   | Change app settings                                    |
-
-Press Escape while the session is idle to rewind to an earlier message. Happy Agent puts
-that prompt back in the composer without changing files in the working directory.
-
 ## Sessions and automation
-
-### Headless execution
-
-Use `happy-terminal exec` when you want an agent result without opening the terminal UI:
-
-```sh
-happy-terminal exec "Review the current changes"
-printf 'Run the tests and fix failures' | happy-terminal exec
-```
-
-Use `--json` for one machine-readable result or `--stream-json` for newline-
-delimited session events followed by the final result:
-
-```sh
-happy-terminal exec --json "Summarize this repository"
-happy-terminal exec --stream-json "Run the test suite"
-```
-
-Add `--debug` to an interactive or headless invocation to capture every request
-as ordered JSON files under `.happy/happy-terminal/debug` in the project. Each request gets
-a time-sortable directory containing normalized inference inputs, every
-streamed provider event and final response, agent events and messages, tool
-arguments and results, and run completion or failure details:
-
-```sh
-happy-terminal --debug
-happy-terminal exec --debug "Diagnose the failing test"
-```
-
-The debug directory contains its own Git ignore rule. Its files use private
-permissions, but can still contain complete prompts, source excerpts, command
-output, and model reasoning; treat them as sensitive when sharing.
-
-Daemon logs are separate from request debug traces. `happy-terminal daemon status` prints both paths. The raw
-process log is `~/.happy/agent/daemon.log`; it captures stdout, stderr, dependency failures, and
-fatal Node errors, and rotates to `daemon.previous.log` at 10 MiB. Structured runtime records are
-written to `~/.happy/agent/observation/agent.log`, including every named shutdown step, its
-duration, failures, and a warning when a step is still running after one second. `HAPPY_HOME_DIR`
-moves the whole `.happy` root, including both logs and `daemon.pid`.
-
-Headless runs are normal persisted sessions. Continue or branch from them later:
-
-```sh
-happy-terminal exec --last "Continue with the next issue"
-happy-terminal exec --resume SESSION_ID "Try the alternative approach"
-happy-terminal exec --last --fork "Explore a separate solution"
-```
 
 ### Secrets
 
-Use `/secrets` to register named bundles of environment variables and attach
-them to the current session or project. Session attachments apply only to that
+Register named bundles of environment variables and attach them to the current session or
+project. Session attachments apply only to that
 session. Project attachments apply to current and future sessions opened in the
 same project. When both sources attach a bundle, detaching one source leaves the
 other attachment intact.
@@ -333,8 +229,7 @@ deletion: SQLite pages and WAL files may retain replaced or removed values.
 Happy Agent-generated prompts, list responses, attachment events, command metadata, and
 permission summaries contain bundle IDs and environment-variable names, never
 values. Command output is not redacted: a command that prints a value can send
-it to the model and place it in the transcript, saved session, events, or debug
-records. Commands can also save values to files.
+it to the model and place it in the transcript, saved session, or events. Commands can also save values to files.
 
 Per-command injection is not a process-isolation boundary. Processes running as
 the same operating-system user or inside the same container must be mutually
@@ -342,20 +237,18 @@ trusted because they may be able to inspect one another's environments.
 
 ### Saved sessions
 
-Use the picker to resume or fork work in the current directory. Add `--all` to
-include sessions from other directories.
+Sessions live in the daemon and are persisted as they go, so they survive a disconnected
+client and a daemon restart. The model and provider can be changed between responses.
+Automatic compaction keeps long conversations useful, and `/compact` is available whenever you
+want to compact immediately.
 
-```sh
-happy-terminal resume
-happy-terminal resume --last
-happy-terminal resume --all
-happy-terminal fork --last
-happy-terminal fork SESSION_ID
-```
+### Daemon logs
 
-The model and provider can be changed between responses. Automatic compaction
-keeps long conversations useful, and `/compact` is available whenever you want
-to compact immediately.
+The raw process log is `~/.happy/agent/daemon.log`; it captures stdout, stderr, dependency
+failures, and fatal Node errors, and rotates to `daemon.previous.log` at 10 MiB. Structured runtime
+records are written to `~/.happy/agent/observation/agent.log`, including every named shutdown step,
+its duration, failures, and a warning when a step is still running after one second.
+`HAPPY_HOME_DIR` moves the whole `.happy` root, including both logs and `daemon.pid`.
 
 ### Persistent goals and code review
 
@@ -369,8 +262,8 @@ Add a focus when useful, for example `/review focus on concurrency`.
 
 ## Permissions
 
-New sessions start in **Workspace write** mode. Change the current session with
-`/permissions`:
+New sessions start in **Workspace write** mode. A client can change the current session's
+mode:
 
 | Mode                | Behavior                                                                                                       |
 | ------------------- | -------------------------------------------------------------------------------------------------------------- |
@@ -405,9 +298,6 @@ Set the default globally or for a repository:
 permission_mode = "workspace_write"
 ```
 
-`HAPPY_TERMINAL_PERMISSION_MODE` can override the default for a new terminal session with
-`auto`, `workspace_write`, `read_only`, or `full_access`.
-
 ## Configuration
 
 Happy Agent reads user-wide settings from `~/Happy/Config/happy.toml` on macOS
@@ -433,23 +323,19 @@ The complete reference lives in
 [docs/configuration.md](docs/configuration.md). It covers file locations and
 environment variables, protected paths, managed workspace setup, managed
 network access, providers — Codex, Claude Code, Grok Build, and Amazon
-Bedrock — Docker-backed sessions, MCP servers, theme and display, daemon
-crash diagnostics, and workflows. The same reference ships inside Happy
+Bedrock — Docker-backed sessions, MCP servers, theme and display, heap
+snapshots, and workflows. The same reference ships inside Happy
 Agent's bundled documentation, so agents can read it at runtime.
 
 ## Scope
 
 Happy Agent aims for the best common coding-agent workflows, not exhaustive parity with
 every upstream option. It intentionally keeps planning in the normal agent flow,
-uses standard terminal editing instead of modal editing, follows Codex skill
-semantics, and relies on the existing Codex, Claude Code, and Grok login
+follows Codex skill semantics, and relies on the existing Codex, Claude Code, and Grok login
 flows.
 
-Happy Agent also draws a clear boundary around the terminal UI. The terminal is for a
-focused, linear agent workflow. Features that need a richer interaction model—
-such as drag-and-drop, multiple independently scrolling panes, or complex visual
-workspaces—belong in a dedicated UI built on Happy Agent's durable API. Happy Agent provides the
-harness; it does not squeeze desktop-app interactions into a terminal.
+Happy Agent provides the harness and its durable API; interfaces belong to the clients built on
+it.
 
 It does not add a separate Plan mode, Vim mode, notebook editor, durable command
 allow/deny history, dedicated IDE integration, or a separate Happy Agent account. These

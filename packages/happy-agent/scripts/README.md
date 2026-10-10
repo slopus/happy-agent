@@ -207,18 +207,14 @@ pnpm --filter @slopus/happy-agent test:native:transport
 # Provision once using sandbox setup before running native checks.
 $env:HAPPY_WINDOWS_SANDBOX_NO_PROVISION = "1"
 pnpm --filter @slopus/happy-agent-supervisor test:native:windows
-pnpm --filter @slopus/happy-terminal-gym-tests test:gym:windows
 ```
 
 The canonical sandbox state is reused even with a different Happy home. If local
 development already uses an explicit provisioned state, retain that same absolute
 `HAPPY_WINDOWS_SANDBOX_HOME` for setup, runtime and verification. Native checks
 fail early when provisioning is incomplete. This shares provisioning only; gyms
-still own isolated workspaces, databases and IPC endpoints. The native lane scripts
-inference while running the real terminal, daemon, PowerShell and filesystem.
-Live-provider gyms require the separate explicit live opt-ins documented in
-[the gym README](../../gym-tests/README.md#native-windows-lane). Passing this lane
-does not claim the Docker/Linux exhaustive API suite passed on Windows.
+still own isolated workspaces, databases and IPC endpoints. Passing these checks
+does not claim the exhaustive API suite passed on Windows.
 
 The current public release workflow still publishes the four macOS/Linux targets.
 Windows CI build integration, Authenticode signing and public publishing are

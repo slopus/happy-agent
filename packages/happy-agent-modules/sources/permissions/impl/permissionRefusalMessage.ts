@@ -112,7 +112,7 @@ export function unprovenRefusal(
  * What the model is told when refusal after refusal has ended its turn. The window is the real
  * number of decisions the recent-refusal count was measured over, which early in a turn may be far
  * smaller than the maximum window — telling the model "of the last 50" when only three decisions
- * have happened is simply false, and the TUI projection already reports the true window.
+ * have happened is simply false.
  */
 export function turnStoppedNotice(
     consecutive: number,

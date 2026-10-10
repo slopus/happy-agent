@@ -5,8 +5,7 @@ Happy Agent reads user-wide settings from `~/Happy/Config/happy.toml` on macOS a
 it. On startup, Happy Agent creates the platform-specific folder, a comprehensive
 commented `happy.toml` template, and an empty `AGENTS.md` whenever they are
 missing. Existing files are never replaced. The daemon derives this public configuration folder
-beside its private Happy root. `HAPPY_HOME_DIR` relocates that root and the adjacent public folder;
-`HAPPY_TERMINAL_CONFIGURATION_DIRECTORY` is a terminal setting, not a daemon config-path override.
+beside its private Happy root. `HAPPY_HOME_DIR` relocates that root and the adjacent public folder.
 
 If an older Linux build created `~/Happy/Config`, copy its configuration files to
 `~/happy/config` before upgrading and restarting. The uppercase directory is no longer read;
@@ -19,9 +18,7 @@ workspace can add servers in its root `mcp.toml`. Provider configuration files a
 
 Happy Agent keeps daemon state in `~/.happy/agent`, including its databases, logs, and runtime
 configuration. A standalone deployment also keeps its private API token and socket there; team
-mode deliberately creates neither. `HAPPY_HOME_DIR` moves the `.happy` root. Happy Terminal keeps
-only client-specific runtime settings beneath `~/.happy/happy-terminal`; set
-`HAPPY_TERMINAL_HOME` to an absolute path to move that client state.
+mode deliberately creates neither. `HAPPY_HOME_DIR` moves the `.happy` root.
 
 Managed workspaces are user-facing folders rather than internal Happy Agent state. New
 workspaces default to `~/Happy/Workspaces` on macOS and
@@ -54,7 +51,7 @@ their accounts, `hidden`, smart providers, the `[gemini]` key, Ethan mode, heap 
 the Tailcat port. Reload the daemon after changing any of these:
 
 ```sh
-happy-terminal daemon reload    # or: happy-agent reload
+happy-agent reload
 ```
 
 Reload is graceful. It drains the daemon first: new mutations are rejected and running turns are
@@ -63,7 +60,7 @@ finishes and commits, but no further inference starts. Tool calls that have not 
 queued messages stay durable for the new daemon. The old daemon then shuts down. That stops
 terminal processes, background shell commands, and workspace services, and disconnects clients.
 Reload then starts a fresh daemon, which inherits the environment of the shell that ran the
-command. `happy-terminal daemon status` reports drain progress and the new process ID. A team or
+command. `happy-agent status` reports whether the new daemon is running. A team or
 other supervised deployment restarts through its supervisor instead, such as
 `systemctl restart`.
 
@@ -73,9 +70,8 @@ selected executable `~/.happy/dist/version/<selectedVersion>/happy-agent` (`sele
 command exits and logs to `~/.happy/agent/reload.log`. First validate `happy.toml`, because a daemon
 cannot start with a file it cannot parse, and tell the user which running work will be interrupted.
 Make it the turn's final tool call and never poll or wait on it. A foreground reload from a session
-dies with its daemon: `happy-agent reload` refuses it, and `happy-terminal daemon reload` has no
-such check, so never run that from a session. Switch Agent versions with Happy Desktop's version
-picker, which restarts the daemon itself.
+dies with its daemon, so `happy-agent reload` without `--detach` refuses it. Switch Agent versions
+with Happy Desktop's version picker, which restarts the daemon itself.
 
 ## Standalone profile bootstrap
 
@@ -457,7 +453,7 @@ that ignores them still cannot connect directly:
 - On Linux, Bubblewrap removes the command's network namespace. `socat` bridges
   only the configured endpoints through temporary Unix sockets.
 - Inside a Docker-backed session, the nested Bubblewrap sandbox uses the same
-  Unix-socket bridge. Happy Agent keeps the sockets under an empty `.happy-terminal-network`
+  Unix-socket bridge. Happy Agent keeps the sockets under an empty network
   runtime directory and remounts that directory read-only over the writable
   workspace in every restricted command. A neighboring command therefore
   cannot rename or replace a live socket to intercept authentication. Every
@@ -508,7 +504,7 @@ discovery reads local state and does not ping provider servers.
 
 Add any number of named instances when you need separate accounts. For custom
 instances, the section suffix is the provider ID shown in the model picker and
-accepted by `defaults.provider` and `HAPPY_TERMINAL_PROVIDER`. Custom instances must set
+accepted by `defaults.provider`. Custom instances must set
 `type`; all parameters stay flat in the same section. The built-in Claude Code
 provider ID is `claude`:
 
@@ -571,9 +567,8 @@ inference-profile IDs and request metadata. [Reload the daemon](#applying-config
 changing providers. Repository `happy.toml` files cannot change these
 machine-level choices or credential paths.
 
-Use `/configure` for common settings. Environment variables such as `HAPPY_TERMINAL_MODEL`,
-`HAPPY_TERMINAL_PROVIDER`, `HAPPY_TERMINAL_EFFORT`, and `HAPPY_TERMINAL_PERMISSION_MODE` override the corresponding
-default for a newly created session.
+A client may choose a different provider, model, effort, or permission mode when it creates a
+session; the `[defaults]` values apply otherwise.
 
 A Gemini API key adds the universal `gemini_search`, `gemini_generate_image`,
 `gemini_generate_music`, and `gemini_analyze_media` tools to every model. Set
@@ -665,26 +660,8 @@ pooling accounts behind a smart provider, and covers model filters, defaults, an
 
 ## Docker-backed sessions
 
-Connect Happy Agent to a running container:
-
-```sh
-happy-terminal --docker-container my-development-container --docker-workdir /workspace
-```
-
-Or create a session container from an image already present in Docker:
-
-```sh
-happy-terminal --docker-image my-project-dev:local \
-  --docker-workdir /workspace \
-  --docker-env NODE_ENV=development \
-  --docker-mount .:/workspace
-```
-
-The same options work with `happy-terminal exec`. `--docker-socket`, `--docker-name`, and
-repeated `--docker-env` or `--docker-mount` options provide additional control.
-Use `--local` to ignore a configured Docker default for one new session.
-
-Machine-wide Docker defaults belong in the user `happy.toml`:
+A session can run against a running container or a session container created from an image
+already present in Docker. Machine-wide Docker defaults belong in the user `happy.toml`:
 
 ```toml
 [docker]
@@ -751,9 +728,14 @@ Install and sign in through the first-party Grok CLI, then choose Grok Build:
 
 ```sh
 grok login
-export HAPPY_TERMINAL_PROVIDER="grok"
-export HAPPY_TERMINAL_MODEL="xai/grok-build"
-happy-terminal
+```
+
+Then select `xai/grok-build` in the model picker, or make it the default:
+
+```toml
+[defaults]
+provider = "grok"
+model = "xai/grok-build"
 ```
 
 By default Happy Agent reads `$GROK_HOME/auth.json`, or `~/.grok/auth.json` when
@@ -798,8 +780,6 @@ token instead:
 ```sh
 export AWS_BEARER_TOKEN_BEDROCK="your Bedrock API key"
 export AWS_REGION="us-east-1"
-export HAPPY_TERMINAL_PROVIDER="bedrock"
-happy-terminal
 ```
 
 To use Bedrock exclusively, disable the native authentication paths in the
@@ -855,16 +835,7 @@ such as `ansi:202`, or true-color values such as `#D97706`. `/fast` toggles the
 Codex fast service tier when the selected provider supports it; fast inference
 uses twice the plan usage.
 
-## Daemon crash diagnostics
-
-On Node.js runtimes that support environment redaction, Happy Agent starts its daemon
-with private diagnostic reports for fatal runtime errors and uncaught
-exceptions. Run `happy-terminal daemon status` to see the diagnostics directory. Happy Agent
-also records the original stack in `server.log`. The diagnostics directory is
-private (`0700`), uncaught-exception reports are additionally forced to `0600`,
-and Happy Agent retains at most three crash reports. On older Node.js releases, Happy Agent
-fails closed instead of writing credentials into a report and leaves an
-explanatory `crash-reports-unavailable.txt` file in that directory.
+## Heap snapshots
 
 Full heap snapshots near the memory limit are opt-in because they are large and
 can contain prompts, tool results, credentials held in memory, and other

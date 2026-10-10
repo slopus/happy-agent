@@ -55,7 +55,7 @@ jobs:
                   bash packages/happy-agent-supervisor/scripts/test-services.sh --command
                   pnpm --filter @slopus/happy-agent-compute test:live:services
             - name: Build the container test image
-              run: docker build --tag happy-terminal-gym:local packages/happy-agent-compute/tests/fixtures
+              run: docker build --tag happy-agent-compute-test:local packages/happy-agent-compute/tests/fixtures
             - name: Prove the explicit container namespace allowance
               run: bash packages/happy-agent-supervisor/scripts/test-container-namespaces.sh
             - name: Prove the container boundary

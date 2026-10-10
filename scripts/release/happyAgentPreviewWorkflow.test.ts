@@ -134,7 +134,6 @@ test("npm publishing retains library tag triggers but has no on-main canary trig
         assert.ok(triggers.includes(`"${tag}"`));
     }
     assert.doesNotMatch(workflow, /\n    canary:|detectCanaryPackageChanges|setCanaryVersion/);
-    assert.doesNotMatch(workflow, /\|\| 'happy-terminal'/);
     assert.doesNotMatch(workflow, /if: startsWith\(github.ref, 'refs\/tags\/'\)/);
     assert.match(workflow, /run: pnpm exec tsx scripts\/publishPackage\.ts/);
 });

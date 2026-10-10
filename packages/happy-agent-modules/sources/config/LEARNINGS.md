@@ -85,9 +85,9 @@ creation share these paths for settings, MCP, global instructions, and security.
 the target platform's directory; private `.happy/agent` state remains unchanged. Existing uppercase
 Linux configuration is not automatically moved or used as a fallback.
 
-The daemon derives its public folder beside `HAPPY_HOME_DIR`; it does not honor the terminal-only
-`HAPPY_TERMINAL_CONFIGURATION_DIRECTORY` override. Deployment recipes and daemon tests must write
-the actual derived config path instead of setting an environment variable the daemon ignores.
+The daemon derives its public folder beside `HAPPY_HOME_DIR`; no environment variable overrides
+the configuration directory. Deployment recipes and daemon tests must write the actual derived
+config path.
 
 ## Standalone profile bootstrap is machine configuration
 

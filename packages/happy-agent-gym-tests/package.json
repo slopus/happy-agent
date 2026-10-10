@@ -1,0 +1,19 @@
+{
+    "name": "@slopus/happy-agent-gym-tests",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "check": "tsc --noEmit",
+        "test:gym": "node runGym.ts",
+        "test:gym:api": "node --experimental-strip-types scripts/runHappyApiSuite.ts"
+    },
+    "devDependencies": {
+        "@slopus/happy-agent-gym": "workspace:*",
+        "@types/node": "^24.0.10",
+        "@types/ws": "8.18.1",
+        "tweetnacl": "0.14.5",
+        "typescript": "^5.8.3",
+        "vitest": "^3.2.4",
+        "ws": "^8.21.1"
+    }
+}

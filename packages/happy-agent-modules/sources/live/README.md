@@ -56,5 +56,5 @@ The Live module, controller, configuration and provider transport tests are targ
 `tests/runtime/liveDesktopTransport.test.ts` uses the complete runtime and real HTTP/WebSockets with
 scripted provider inference. It can export its sanitized actual controller request through the
 test-only `HAPPY_LIVE_CAPTURE_FILE` environment variable. Bun transport smoke coverage lives in
-the Agent package; targeted API gym scenarios live in `packages/gym-tests/tests/happy_api_live.test.ts`.
+the Agent package; targeted API gym scenarios live in `packages/happy-agent-gym-tests/tests/happy_api_live.test.ts`.
 These fixtures do not prove microphone/media negotiation or account entitlement against OpenAI.

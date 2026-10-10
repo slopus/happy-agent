@@ -1,7 +1,6 @@
 import { createServer, Socket } from "node:net";
 import { performance } from "node:perf_hooks";
 
-import { GhosttyTerminal } from "@slopus/happy-terminal-gym";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -10,6 +9,7 @@ import {
 } from "./GhosttyRemoteTerminal.js";
 import { RemoteTerminalProtocolClient } from "./RemoteTerminalProtocolClient.js";
 import { ThrottledTcpProxy } from "./testing/ThrottledTcpProxy.js";
+import { GhosttyTestTerminal } from "./testing/GhosttyTestTerminal.js";
 
 const cleanups: (() => void | Promise<void>)[] = [];
 const networkConditionTimeoutMs = 10_000;
@@ -20,8 +20,8 @@ afterEach(async () => {
 
 describe("remote terminal client/server over a constrained network", () => {
     it("measures real Ghostty convergence, typing, CPU, memory, and wire use at 1 Mbps / 150 ms RTT", async () => {
-        const canonical = await GhosttyTerminal.create(120, 40);
-        const replica = await GhosttyTerminal.create(120, 40);
+        const canonical = await GhosttyTestTerminal.create(120, 40);
+        const replica = await GhosttyTestTerminal.create(120, 40);
         cleanups.push(
             () => canonical.close(),
             () => replica.close(),

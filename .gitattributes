@@ -1,3 +1,1 @@
-packages/happy-terminal/sources/profiles/claude/claude-* whitespace=-blank-at-eol
-packages/happy-terminal/sources/profiles/codex/codex-* whitespace=-blank-at-eol,-blank-at-eof
 *.patch text eol=lf

@@ -80,7 +80,7 @@ jobs:
               if: ${{ !contains(github.ref_name, '-beta.') }}
               env:
                   # Keep Sandbox Runtime's home-directory mask away from the checkout.
-                  HOME: ${{ runner.temp }}/happy-terminal-test-home
+                  HOME: ${{ runner.temp }}/happy-agent-test-home
               run: |
                   mkdir -p "$HOME"
                   pnpm exec tsx scripts/runReleasePackageValidation.ts test

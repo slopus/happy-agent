@@ -4,7 +4,7 @@ import { describe, it } from "node:test";
 import { assertReleaseTagMatchesPackageVersion } from "./assertReleaseTagMatchesPackageVersion.js";
 
 const MANIFEST = {
-    name: "@slopus/happy-terminal",
+    name: "@slopus/happy-agent-client",
     version: "1.2.3",
 };
 
