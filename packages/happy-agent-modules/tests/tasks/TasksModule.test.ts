@@ -4,9 +4,13 @@ import { dirname, join } from "node:path";
 import {
     agentDatabaseRows,
     agentDatabaseRun,
+    AgentProviders,
+    withAgentContext,
     type AgentBaseAcceptedMessage,
+    type AgentBaseMessageOptions,
     type AgentConfig,
     type AgentKV,
+    type AgentModel,
     type AgentModuleScope,
     type AgentQueuedMessage,
     type AgentSystemRef,
@@ -46,6 +50,24 @@ import { moduleDatabase } from "../support/moduleDatabase.js";
 import { projectsCatalogFor } from "../support/projectsModule.js";
 
 const OWNER = "ownerusera1b2c3d4e5f6g7h8";
+/** The installation's models; the first is its default. */
+const MODELS: readonly AgentModel[] = [
+    {
+        providerId: "scripted",
+        id: "scripted/default",
+        name: "Default",
+        effortLevels: ["low", "medium"],
+        defaultEffort: "medium",
+    },
+    {
+        providerId: "scripted",
+        id: "scripted/deep",
+        name: "Deep",
+        effortLevels: ["medium", "high"],
+        defaultEffort: "medium",
+        serviceTiers: ["priority"],
+    },
+];
 const OTHER_OWNER = "ownerusero9p8q7r6s5t4u3v2";
 
 class TaskAgents {
@@ -57,6 +79,8 @@ class TaskAgents {
         readonly message: AgentQueuedMessage;
         readonly id: string | undefined;
     }[] = [];
+    /** The options each message was sent with, by message ID. */
+    readonly options = new Map<string, AgentBaseMessageOptions>();
 
     async create(
         _ctx: Context,
@@ -91,10 +115,11 @@ class TaskAgents {
         _ctx: Context,
         agentId: string,
         message: AgentQueuedMessage,
-        options: { readonly id?: string } = {},
+        options: AgentBaseMessageOptions = {},
     ) {
         if (!this.configs.has(agentId)) throw new Error("Agent missing.");
         this.sent.push({ agentId, message: structuredClone(message), id: options.id });
+        if (options.id !== undefined) this.options.set(options.id, structuredClone(options));
         return { id: options.id ?? "generatedmessage" };
     }
 
@@ -453,6 +478,159 @@ describe("TasksModule", () => {
             expect(fixture.durable.cancel).toHaveBeenCalledWith(
                 expect.anything(),
                 `task-archive:${task.agentId}`,
+            );
+        } finally {
+            await fixture.close();
+        }
+    });
+
+    it("runs a task an agent opens on that agent's model, or on the installation default", async () => {
+        const fixture = await started("tasks-opening-mode");
+        try {
+            const ctx = fixture.database.context;
+            const bot = await fixture.bots.create(ctx, { name: "Planner" });
+            const running = (selection: {
+                readonly model: string;
+                readonly effort: "low" | "medium" | "high";
+                readonly serviceTier?: string;
+            }) =>
+                withAgentContext(ctx, {
+                    id: bot.agentId,
+                    provider: "scripted",
+                    permissionMode: "full_access",
+                    ...selection,
+                });
+
+            // The creator's own selection, tier included, opens the task.
+            const inherited = await fixture.executeCreate(
+                bot.agentId,
+                { name: "Deep work", text: "Profile the export job." },
+                new Map(),
+                running({ model: "scripted/deep", effort: "high", serviceTier: "priority" }),
+            );
+            const mode = {
+                providerId: "scripted",
+                modelId: "scripted/deep",
+                effort: "high",
+                serviceTier: "priority",
+                permissionMode: "auto",
+            };
+            expect(fixture.agents.options.get(inherited.agentId)).toMatchObject({
+                provider: "scripted",
+                model: "scripted/deep",
+                effort: "high",
+                serviceTier: "priority",
+                permissionMode: "auto",
+                metadata: { mode },
+            });
+            expect(fixture.agents.configs.get(inherited.agentId)?.metadata?.["lastMode"]).toEqual(
+                mode,
+            );
+
+            // A task that has a mode keeps it: a later message carries no selection.
+            await fixture.tasks.sendMessage(
+                running({ model: "scripted/default", effort: "low" }),
+                bot.agentId,
+                inherited.id,
+                "Any progress?",
+                "followupmessage1",
+            );
+            const followUp = fixture.agents.options.get("followupmessage1");
+            expect(followUp?.model).toBeUndefined();
+            expect(followUp?.provider).toBeUndefined();
+            expect(followUp?.metadata?.["mode"]).toBeUndefined();
+            expect(fixture.agents.configs.get(inherited.agentId)?.metadata?.["lastMode"]).toEqual(
+                mode,
+            );
+
+            // A model this installation no longer offers falls back to its default model, at
+            // that model's default effort and ordinary tier.
+            const retired = await fixture.executeCreate(
+                bot.agentId,
+                { name: "Retired", text: "Keep going." },
+                new Map(),
+                running({ model: "scripted/retired", effort: "high", serviceTier: "priority" }),
+            );
+            expect(fixture.agents.options.get(retired.agentId)).toMatchObject({
+                provider: "scripted",
+                model: "scripted/default",
+                effort: "medium",
+                serviceTier: null,
+                permissionMode: "auto",
+            });
+
+            // So does an effort or tier the inherited model does not accept.
+            const narrowed = await fixture.executeCreate(
+                bot.agentId,
+                { name: "Narrowed", text: "Keep going." },
+                new Map(),
+                running({ model: "scripted/default", effort: "high", serviceTier: "priority" }),
+            );
+            expect(fixture.agents.options.get(narrowed.agentId)).toMatchObject({
+                model: "scripted/default",
+                effort: "medium",
+                serviceTier: null,
+            });
+        } finally {
+            await fixture.close();
+        }
+    });
+
+    it("gives a task that never had a mode one with its next message, and never overrides a person's", async () => {
+        const fixture = await started("tasks-modeless-repair");
+        try {
+            const ctx = fixture.database.context;
+            const bot = await fixture.bots.create(ctx, { name: "Planner" });
+            const botCtx = withAgentContext(ctx, {
+                id: bot.agentId,
+                provider: "scripted",
+                model: "scripted/deep",
+                effort: "high",
+                permissionMode: "auto",
+            });
+            // A task created before tasks chose a model: it has no mode at all.
+            const modeless = await fixture.tasks.create(ctx, { name: "Modeless" });
+            expect(fixture.agents.configs.get(modeless.agentId)?.metadata?.["lastMode"]).toBe(
+                undefined,
+            );
+            await fixture.tasks.sendMessage(botCtx, bot.agentId, modeless.id, "Hello?", "repair1");
+            expect(fixture.agents.options.get("repair1")).toMatchObject({
+                provider: "scripted",
+                model: "scripted/deep",
+                effort: "high",
+                serviceTier: null,
+                permissionMode: "auto",
+            });
+            expect(fixture.agents.configs.get(modeless.agentId)?.metadata?.["lastMode"]).toEqual({
+                providerId: "scripted",
+                modelId: "scripted/deep",
+                effort: "high",
+                serviceTier: null,
+                permissionMode: "auto",
+            });
+
+            // Without a sender selection at all, the installation default is used.
+            const unattended = await fixture.tasks.create(ctx, { name: "Unattended" });
+            await fixture.tasks.sendMessage(ctx, bot.agentId, unattended.id, "Hi.", "repair2");
+            expect(fixture.agents.options.get("repair2")).toMatchObject({
+                model: "scripted/default",
+                effort: "medium",
+            });
+
+            // A person who already chose a mode keeps it.
+            const chosen = await fixture.tasks.create(ctx, { name: "Chosen" });
+            const personal = {
+                providerId: "scripted",
+                modelId: "scripted/default",
+                effort: "low",
+                serviceTier: null,
+                permissionMode: "read_only",
+            };
+            await fixture.agents.updateMetadata(ctx, chosen.agentId, { lastMode: personal });
+            await fixture.tasks.sendMessage(botCtx, bot.agentId, chosen.id, "Status?", "kept1");
+            expect(fixture.agents.options.get("kept1")?.model).toBeUndefined();
+            expect(fixture.agents.configs.get(chosen.agentId)?.metadata?.["lastMode"]).toEqual(
+                personal,
             );
         } finally {
             await fixture.close();
@@ -830,6 +1008,7 @@ async function started(name: string, options: { readonly team?: boolean } = {}) 
                 : []),
             "",
         ].join("\n"),
+        { inference: { models: MODELS, providers: new AgentProviders() } },
     );
     const database = moduleDatabase(
         [...projectMigrations, ...workspaceMigrations, ...botMigrations, ...taskMigrations],
@@ -945,10 +1124,11 @@ async function started(name: string, options: { readonly team?: boolean } = {}) 
             agentId: string,
             input: { readonly name: string; readonly text?: string },
             remembered = new Map<string, unknown>(),
+            ctx: Context = database.context,
         ): Promise<TaskRecord> =>
             (await (
                 await tool(agentId, "create_task")
-            ).execute(database.context, input, {
+            ).execute(ctx, input, {
                 id: `create-${input.name}`,
                 kv: {
                     getOrCreate: async (

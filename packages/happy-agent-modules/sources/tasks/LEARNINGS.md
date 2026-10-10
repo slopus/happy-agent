@@ -25,6 +25,19 @@ its sender line removed. A rename, even to the same name, ends automatic naming,
 naming request that is still running. Tasks created before naming existed keep their names as
 chosen.
 
+## A conversation an agent opens runs on that agent's model
+
+A bot's `create_task` with opening text failed on its first turn with "A model is required for
+Codex inference." Agent Base gives a new agent no model; the first message names one, and a
+person's message always does. The opening text and `send_task_message` carried none, so a task
+an agent spoke to first had nothing to run on. Now any delivery to a task that has never been
+given a mode carries the sender's provider, model, effort, and service tier — or the
+installation's default model when the sender's is no longer offered — with Agent Base's default
+permission mode, stamps it on the message, and records it as the task's last mode, as the API does
+for a person's message. A task that already has a mode keeps it, so an agent's later message never
+overrides a person's choice. Tasks created before the fix have no mode and are repaired by their
+next agent message; a person's message repairs them as always. Nothing is migrated.
+
 ## Task order belongs to each person, not to the catalog
 
 Steve asked for tasks to be reorderable per user, for anyone to join a task and see it in their

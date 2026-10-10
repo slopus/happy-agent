@@ -36,6 +36,15 @@ status. A non-admin bot could have created bots through a task it made, so task 
 `list_bots` and `send_bot_message`. When a bot created the task, the task's instructions name that
 bot and tell it to report back with `send_bot_message`.
 
+## A bot nobody has spoken to takes its first sender's model
+
+Agent Base gives a new agent no model; the first message names one. A person's message always
+does, but `send_bot_message` did not, so a bot whose first message came from another agent had no
+model to run on — the same failure that broke tasks opened by bots. A delivery to a bot that has
+never been given a mode now carries the sender's selection, or the installation's default model
+when the sender's is no longer offered, and records it as the bot's last mode. A bot that already
+has a mode keeps it.
+
 ## Windows bots coordinate WSL as a separate remote installation
 
 WSL projects use the existing remote Happy Agent connection rather than switching a Windows

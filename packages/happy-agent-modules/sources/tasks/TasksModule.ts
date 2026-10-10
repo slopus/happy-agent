@@ -27,6 +27,7 @@ import { ProjectsModule } from "../projects/index.js";
 import type { RunnersModule } from "../runners/index.js";
 import { MAX_NAMING_MESSAGE_CHARS, TitlesModule } from "../titles/index.js";
 import { WorkspacesModule } from "../workspaces/index.js";
+import { agentDeliveryMode } from "../impl/agentDeliveryMode.js";
 import { isUserOriginMetadata, senderAgentIdMetadata } from "../impl/messageOrigin.js";
 
 import {
@@ -719,6 +720,11 @@ export class TasksModule implements AgentModule {
         }
     }
 
+    /**
+     * Put one agent's message in the task's conversation. A task that has never been given a mode,
+     * including one created before this rule, takes the sender's selection with the message and
+     * records it as its last mode, so its first turn has a model to run on.
+     */
     async #deliver(
         ctx: Context,
         fromAgentId: string,
@@ -726,25 +732,41 @@ export class TasksModule implements AgentModule {
         text: string,
         messageId: string,
     ): Promise<void> {
-        const accepted = await this.#requireAgents().send(
-            ctx,
-            task.agentId,
-            {
-                role: "agent",
-                author: { id: fromAgentId, description: `Agent ${fromAgentId}` },
-                content: [{ type: "text", text: `Message from agent ${fromAgentId}:\n\n${text}` }],
-            },
-            {
-                id: messageId,
-                metadata: {
-                    tasks: { fromAgentId, taskId: task.id },
-                    ...senderAgentIdMetadata(fromAgentId),
+        const agents = this.#requireAgents();
+        await ctx.inTx(async (txCtx) => {
+            const delivery = await agentDeliveryMode(
+                txCtx,
+                agents,
+                this.#config.models,
+                task.agentId,
+            );
+            const accepted = await agents.send(
+                txCtx,
+                task.agentId,
+                {
+                    role: "agent",
+                    author: { id: fromAgentId, description: `Agent ${fromAgentId}` },
+                    content: [
+                        { type: "text", text: `Message from agent ${fromAgentId}:\n\n${text}` },
+                    ],
                 },
-            },
-        );
-        if (accepted.id !== messageId) {
-            throw new Error("Agent Base did not preserve the requested message ID.");
-        }
+                {
+                    id: messageId,
+                    metadata: {
+                        tasks: { fromAgentId, taskId: task.id },
+                        ...senderAgentIdMetadata(fromAgentId),
+                        ...(delivery === undefined ? {} : { mode: delivery.mode }),
+                    },
+                    ...delivery?.options,
+                },
+            );
+            if (accepted.id !== messageId) {
+                throw new Error("Agent Base did not preserve the requested message ID.");
+            }
+            if (delivery !== undefined) {
+                await this.#updateAgentMetadata(txCtx, task.agentId, { lastMode: delivery.mode });
+            }
+        });
     }
 
     /** A task's folder on the machine it goes to. */

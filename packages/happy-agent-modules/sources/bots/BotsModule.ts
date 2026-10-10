@@ -22,6 +22,7 @@ import { ProjectsModule } from "../projects/index.js";
 import type { RunnersModule } from "../runners/index.js";
 import { TasksModule } from "../tasks/index.js";
 import { WorkspacesModule } from "../workspaces/index.js";
+import { agentDeliveryMode } from "../impl/agentDeliveryMode.js";
 import { senderAgentIdMetadata } from "../impl/messageOrigin.js";
 import { MAX_NAMING_MESSAGE_CHARS, TitlesModule } from "../titles/index.js";
 
@@ -429,25 +430,41 @@ export class BotsModule implements AgentModule {
             throw new BotConflictError("A bot cannot send a message to itself.");
         }
         const agents = this.#requireAgents();
-        const accepted = await agents.send(
-            ctx,
-            bot.agentId,
-            {
-                role: "agent",
-                author: { id: fromAgentId, description: `Agent ${fromAgentId}` },
-                content: [{ type: "text", text: `Message from agent ${fromAgentId}:\n\n${text}` }],
-            },
-            {
-                id: messageId,
-                metadata: {
-                    bots: { fromAgentId, botId },
-                    ...senderAgentIdMetadata(fromAgentId),
+        // A bot nobody has spoken to has no model yet; the first message gives it the sender's.
+        await ctx.inTx(async (txCtx) => {
+            const delivery = await agentDeliveryMode(
+                txCtx,
+                agents,
+                this.#config.models,
+                bot.agentId,
+            );
+            const accepted = await agents.send(
+                txCtx,
+                bot.agentId,
+                {
+                    role: "agent",
+                    author: { id: fromAgentId, description: `Agent ${fromAgentId}` },
+                    content: [
+                        { type: "text", text: `Message from agent ${fromAgentId}:\n\n${text}` },
+                    ],
                 },
-            },
-        );
-        if (accepted.id !== messageId) {
-            throw new Error("Agent Base did not preserve the requested message ID.");
-        }
+                {
+                    id: messageId,
+                    metadata: {
+                        bots: { fromAgentId, botId },
+                        ...senderAgentIdMetadata(fromAgentId),
+                        ...(delivery === undefined ? {} : { mode: delivery.mode }),
+                    },
+                    ...delivery?.options,
+                },
+            );
+            if (accepted.id !== messageId) {
+                throw new Error("Agent Base did not preserve the requested message ID.");
+            }
+            if (delivery !== undefined) {
+                await this.#updateAgentMetadata(txCtx, bot.agentId, { lastMode: delivery.mode });
+            }
+        });
         return structuredClone(bot);
     }
 
