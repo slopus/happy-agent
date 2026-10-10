@@ -925,18 +925,25 @@ impl ConfigModule {
         } else {
             anyhow::ensure!(
                 field("credential_isolation").and_then(toml::Value::as_bool) != Some(true)
-                    || (matches!(configured_kind,"codex"|"grok")&&field("auth_file").and_then(toml::Value::as_str).is_some()),
+                    || (matches!(configured_kind,"codex"|"grok")&&field("auth_file").and_then(toml::Value::as_str).is_some())
+                    || configured_kind=="bedrock",
                 "The selected isolated provider has no credential."
             );
             let auth_file = field("auth_file")
                 .and_then(toml::Value::as_str)
                 .map(PathBuf::from);
             match (configured_kind, kind) {
-                ("bedrock", _) => CredentialSource::Aws {
-                    profile: field("profile")
-                        .and_then(toml::Value::as_str)
-                        .map(str::to_owned),
-                },
+                ("bedrock", _) => {
+                    let text = |name: &str| field(name).and_then(toml::Value::as_str).map(str::to_owned);
+                    CredentialSource::Aws {
+                        profile: text("profile"),
+                        config_file: text("config_file").map(PathBuf::from),
+                        credentials_file: text("credentials_file").map(PathBuf::from),
+                        bearer_token: text("bearer_token"),
+                        bearer_token_env_var: text("bearer_token_env_var"),
+                        ambient: field("credential_isolation").and_then(toml::Value::as_bool) != Some(true),
+                    }
+                }
                 (_, ProviderKind::Codex) => CredentialSource::Codex { auth_file,ambient:field("credential_isolation").and_then(toml::Value::as_bool)!=Some(true) },
                 (_, ProviderKind::Grok) => CredentialSource::Grok { auth_file,ambient:field("credential_isolation").and_then(toml::Value::as_bool)!=Some(true) },
                 (_, ProviderKind::Claude) => CredentialSource::Claude {oauth_token:field("oauth_token").and_then(toml::Value::as_str).map(str::to_owned),api_key:None,auth_token:field("auth_token").and_then(toml::Value::as_str).map(str::to_owned),config_dir:field("config_dir").and_then(toml::Value::as_str).map(PathBuf::from),ambient:field("credential_isolation").and_then(toml::Value::as_bool)!=Some(true)},

@@ -54,6 +54,16 @@ pub enum CredentialSource {
     Aws {
         #[serde(default)]
         profile: Option<String>,
+        #[serde(default)]
+        config_file: Option<PathBuf>,
+        #[serde(default)]
+        credentials_file: Option<PathBuf>,
+        #[serde(default)]
+        bearer_token: Option<String>,
+        #[serde(default)]
+        bearer_token_env_var: Option<String>,
+        #[serde(default = "ambient_default")]
+        ambient: bool,
     },
 }
 fn ambient_default()->bool {true}
@@ -76,7 +86,7 @@ impl std::fmt::Debug for CredentialSource {
                 .field("ambient",ambient)
                 .finish(),
             Self::Claude {config_dir,ambient,..}=>f.debug_struct("Claude").field("config_dir",config_dir).field("ambient",ambient).finish_non_exhaustive(),
-            Self::Aws { profile } => f.debug_struct("Aws").field("profile", profile).finish(),
+            Self::Aws {profile,config_file,credentials_file,bearer_token_env_var,ambient,..}=>f.debug_struct("Aws").field("profile",profile).field("config_file",config_file).field("credentials_file",credentials_file).field("bearer_token_env_var",bearer_token_env_var).field("ambient",ambient).finish_non_exhaustive(),
         }
     }
 }
@@ -131,8 +141,9 @@ impl Credential {
             CredentialSource::Codex {auth_file,ambient}=>state=discovery::codex(auth_file.as_deref(),*ambient).await?,
             CredentialSource::Grok {auth_file,ambient}=>state=discovery::grok(auth_file.as_deref(),*ambient).await?,
             CredentialSource::Claude {oauth_token,api_key,auth_token,config_dir,ambient}=>state=discovery::claude(oauth_token.as_deref(),api_key.as_deref(),auth_token.as_deref(),config_dir.as_deref(),*ambient).await?,
-            CredentialSource::Aws { profile } => {
-                aws = Some(aws::provider(profile.as_deref(), region).await?);
+            CredentialSource::Aws {profile,config_file,credentials_file,bearer_token,bearer_token_env_var,ambient}=>{
+                let selection=aws::Selection{profile:profile.as_deref(),config_file:config_file.as_deref(),credentials_file:credentials_file.as_deref(),bearer_token:bearer_token.as_deref(),bearer_token_env_var:bearer_token_env_var.as_deref(),ambient:*ambient};
+                match aws::resolve(&selection,region).await? {aws::Resolved::Bearer(token)=>state.token=token,aws::Resolved::Signed(provider)=>aws=Some(provider)}
             }
         }
         anyhow::ensure!(

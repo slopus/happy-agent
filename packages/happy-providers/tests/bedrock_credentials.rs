@@ -1,6 +1,7 @@
 //! Amazon Bedrock resolves AWS credentials like the AWS SDK for JavaScript: named profiles from
 //! the shared config and credentials files, `credential_process` reused for its lifetime, and
-//! environment keys only when no profile is selected.
+//! environment keys only when no profile is selected. A Bedrock API key wins unless AWS
+//! credentials were named.
 //!
 //! The AWS chain reads the process environment, so every test isolates it under one lock and
 //! points it at temporary files; no host credentials or instance metadata are ever consulted.
@@ -11,6 +12,8 @@ use std::path::Path;
 static ENVIRONMENT: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 const CLEARED: &[&str] = &[
+    "AWS_BEARER_TOKEN_BEDROCK",
+    "TEAM_BEDROCK_KEY",
     "AWS_ACCESS_KEY_ID",
     "AWS_SECRET_ACCESS_KEY",
     "AWS_SESSION_TOKEN",
@@ -43,9 +46,34 @@ fn isolate(directory: &Path, config: &str, credentials: &str, environment: &[(&s
 }
 
 async fn load(profile: Option<&str>) -> anyhow::Result<Credential> {
-    let source: CredentialSource =
-        serde_json::from_value(json!({ "type": "aws", "profile": profile })).unwrap();
+    configured(json!({ "profile": profile })).await
+}
+
+async fn configured(mut fields: serde_json::Value) -> anyhow::Result<Credential> {
+    fields["type"] = json!("aws");
+    let source: CredentialSource = serde_json::from_value(fields).unwrap();
     Credential::load(source, "us-east-1").await
+}
+
+/// The Authorization header a request carries: a bearer API key or a SigV4 signature.
+async fn authorization(credential: &Credential) -> String {
+    let headers = credential
+        .headers(
+            "POST",
+            "https://bedrock-runtime.us-east-1.amazonaws.com/model/test/invoke",
+            b"{}",
+            "us-east-1",
+            "bedrock",
+        )
+        .await
+        .unwrap();
+    headers["authorization"].to_str().unwrap().to_owned()
+}
+
+fn unavailable(result: anyhow::Result<Credential>) -> bool {
+    result
+        .err()
+        .is_some_and(|error| error.downcast_ref::<CredentialUnavailable>().is_some())
 }
 
 /// The access key ID a request was signed with, read from its SigV4 authorization header.
@@ -252,4 +280,114 @@ async fn credential_process_profiles_run_once_per_credential_lifetime() {
     );
     assert!(!error.contains("process-secret") && !error.contains("AKIDFAILING"));
     assert_eq!(runs(directory.path(), "failing"), 1);
+}
+
+#[tokio::test]
+async fn a_bedrock_api_key_wins_unless_aws_credentials_are_named() {
+    let _environment = ENVIRONMENT.lock().await;
+    let directory = tempfile::tempdir().unwrap();
+    let keys = [
+        ("AWS_ACCESS_KEY_ID", "AKIDENVIRONMENT"),
+        ("AWS_SECRET_ACCESS_KEY", "environment-secret"),
+    ];
+    let environment = [
+        keys[0],
+        keys[1],
+        ("AWS_BEARER_TOKEN_BEDROCK", "ambient-api-key"),
+    ];
+    isolate(directory.path(), "", PROFILES, &environment);
+
+    let configured_key = configured(json!({ "bearer_token": " configured-api-key " }));
+    assert_eq!(
+        authorization(&configured_key.await.unwrap()).await,
+        "Bearer configured-api-key"
+    );
+    assert_eq!(
+        authorization(&configured(json!({})).await.unwrap()).await,
+        "Bearer ambient-api-key"
+    );
+    let named = configured(json!({ "profile": "work", "bearer_token": "configured-api-key" }));
+    assert_eq!(signer(&named.await.unwrap()).await, "AKIDWORK");
+    let debug = format!(
+        "{:?}",
+        serde_json::from_value::<CredentialSource>(
+            json!({ "type": "aws", "bearer_token": "configured-api-key" })
+        )
+        .unwrap()
+    );
+    assert!(!debug.contains("configured-api-key"));
+
+    // An isolated account reads only the variable it names, and never the default chain.
+    let isolated = json!({ "ambient": false, "bearer_token_env_var": "TEAM_BEDROCK_KEY" });
+    assert!(unavailable(configured(isolated.clone()).await));
+    isolate(
+        directory.path(),
+        "",
+        PROFILES,
+        &[
+            environment[0],
+            environment[1],
+            environment[2],
+            ("TEAM_BEDROCK_KEY", "team-api-key"),
+        ],
+    );
+    assert_eq!(
+        authorization(&configured(isolated).await.unwrap()).await,
+        "Bearer team-api-key"
+    );
+    assert!(unavailable(configured(json!({ "ambient": false })).await));
+
+    // A configured API key that is missing does not fall back to ambient AWS keys.
+    isolate(directory.path(), "", PROFILES, &keys);
+    assert!(unavailable(
+        configured(json!({ "bearer_token_env_var": "TEAM_BEDROCK_KEY" })).await
+    ));
+    assert_eq!(
+        signer(&configured(json!({})).await.unwrap()).await,
+        "AKIDENVIRONMENT"
+    );
+}
+
+#[tokio::test]
+async fn configured_shared_files_select_their_default_profile_over_ambient_keys() {
+    let _environment = ENVIRONMENT.lock().await;
+    let directory = tempfile::tempdir().unwrap();
+    let keys = [
+        ("AWS_ACCESS_KEY_ID", "AKIDENVIRONMENT"),
+        ("AWS_SECRET_ACCESS_KEY", "environment-secret"),
+        ("AWS_BEARER_TOKEN_BEDROCK", "ambient-api-key"),
+    ];
+    // The default locations hold an identity that a configured file must never borrow.
+    isolate(
+        directory.path(),
+        "",
+        "[default]\naws_access_key_id = AKIDAMBIENTFILE\naws_secret_access_key = ambient-secret\n",
+        &keys,
+    );
+    let team = directory.path().join("team");
+    std::fs::create_dir(&team).unwrap();
+    std::fs::write(team.join("credentials"), PROFILES).unwrap();
+    std::fs::write(team.join("config"), "[profile staging]\naws_access_key_id = AKIDSTAGING\naws_secret_access_key = staging-secret\n").unwrap();
+
+    let credentials_file = configured(json!({ "credentials_file": team.join("credentials") }));
+    assert_eq!(
+        signer(&credentials_file.await.unwrap()).await,
+        "AKIDDEFAULT"
+    );
+    let named =
+        configured(json!({ "credentials_file": team.join("credentials"), "profile": "work" }));
+    assert_eq!(signer(&named.await.unwrap()).await, "AKIDWORK");
+    let config_file = configured(
+        json!({ "config_file": team.join("config"), "profile": "staging", "ambient": false }),
+    );
+    assert_eq!(signer(&config_file.await.unwrap()).await, "AKIDSTAGING");
+    // A configured config file still reads the default credentials file, as the AWS SDK does.
+    let fallback = configured(json!({ "config_file": team.join("config") }));
+    assert_eq!(signer(&fallback.await.unwrap()).await, "AKIDAMBIENTFILE");
+
+    let missing = configured(json!({ "credentials_file": team.join("absent") })).await;
+    assert_eq!(
+        missing.err().unwrap().to_string(),
+        "Could not load AWS credentials for Amazon Bedrock profile \"default\"."
+    );
 }
