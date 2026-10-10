@@ -237,7 +237,9 @@ Tasks are additive without a protocol bump. Detect support through `listTasks()`
 daemon has no tasks. `listTasks()` returns every task, oldest first, and `listTasks({ scope:
 "joined" })` only the caller's joined tasks in the caller's order; both carry the caller's
 `memberships` in that order. `joinTask()`, `leaveTask()`, and `reorderTask()` change only the
-caller's own list. Follow `task.created` and `task.updated` for the tasks, and `task.joined`,
+caller's own list. Leaving never archives. `archiveTask()` and `unarchiveTask()` take the task's
+`version` as `ifMatch` and succeed only when the task reports `canArchive`; resolve the owner
+through `getUsers()` and `getUserPhoto()`. Follow `task.created` and `task.updated` for the tasks, and `task.joined`,
 `task.reordered`, and `task.left` for the caller's memberships.
 
 Global skill management is additive without a protocol bump. Detect support through

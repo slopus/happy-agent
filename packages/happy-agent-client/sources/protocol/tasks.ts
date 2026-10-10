@@ -34,6 +34,11 @@ export const taskSchema = Type.Object({
     /** The task's one agent, embedded in full for list rendering. */
     agent: agentSchema,
     archivedAt: Nullable(timestampSchema),
+    /**
+     * Whether the caller may archive and unarchive the task. Caller-relative: absent from
+     * `task.created` events and from daemons older than task archival routes.
+     */
+    canArchive: Type.Optional(Type.Boolean()),
     /** Mirrors the dedicated workspace's compute. */
     compute: computeSchema,
     createdAt: timestampSchema,
@@ -101,3 +106,15 @@ export const reorderTaskRequestSchema = Type.Object({
     mutationId: Type.Optional(mutationIdSchema),
 });
 export type ReorderTaskRequest = Static<typeof reorderTaskRequestSchema>;
+
+/** `POST /v0/tasks/:taskId/archive` — requires `If-Match`; the owner or team owner only. */
+export const archiveTaskRequestSchema = Type.Object({
+    mutationId: Type.Optional(mutationIdSchema),
+});
+export type ArchiveTaskRequest = Static<typeof archiveTaskRequestSchema>;
+
+/** `POST /v0/tasks/:taskId/unarchive` — requires `If-Match`; the owner or team owner only. */
+export const unarchiveTaskRequestSchema = Type.Object({
+    mutationId: Type.Optional(mutationIdSchema),
+});
+export type UnarchiveTaskRequest = Static<typeof unarchiveTaskRequestSchema>;

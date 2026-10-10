@@ -44,12 +44,14 @@ import type {
     UnarchiveBotRequest,
 } from "./protocol/bots.js";
 import type {
+    ArchiveTaskRequest,
     JoinTaskRequest,
     LeaveTaskRequest,
     ReorderTaskRequest,
     TaskListResponse,
     TaskListScope,
     TaskResponse,
+    UnarchiveTaskRequest,
 } from "./protocol/tasks.js";
 import type {
     CloudAccessTokenResponse,
@@ -829,6 +831,19 @@ export class HappyAgentClient {
         });
     }
 
+    /** `GET /v0/users/:userId/photo` — a team member's photo bytes; `null` when unchanged. */
+    async getUserPhoto(
+        userId: Cuid2,
+        options: ConditionalRequestOptions = {},
+    ): Promise<BinaryContent | null> {
+        return await this.#binary({
+            method: "GET",
+            path: `v0/users/${encodeURIComponent(userId)}/photo`,
+            ifNoneMatch: options.ifNoneMatch,
+            signal: options.signal,
+        });
+    }
+
     /** `GET /v0/profile/photo` — the photo bytes; `null` when unchanged. */
     async getProfilePhoto(options: ConditionalRequestOptions = {}): Promise<BinaryContent | null> {
         return await this.#binary({
@@ -1300,6 +1315,37 @@ export class HappyAgentClient {
             method: "POST",
             path: `v0/tasks/${encodeURIComponent(taskId)}/reorder`,
             json: request,
+            signal: options.signal,
+        });
+    }
+
+    /**
+     * `POST /v0/tasks/:taskId/archive` — stops the task's work and keeps its folder and
+     * memberships. Only callers whose task reports `canArchive` may do this.
+     */
+    async archiveTask(
+        taskId: Cuid2,
+        options: VersionedRequestOptions & ArchiveTaskRequest,
+    ): Promise<TaskResponse> {
+        return await this.#json({
+            method: "POST",
+            path: `v0/tasks/${encodeURIComponent(taskId)}/archive`,
+            json: bodyOf(options),
+            ifMatch: options.ifMatch,
+            signal: options.signal,
+        });
+    }
+
+    /** `POST /v0/tasks/:taskId/unarchive` — the same callers as archive. */
+    async unarchiveTask(
+        taskId: Cuid2,
+        options: VersionedRequestOptions & UnarchiveTaskRequest,
+    ): Promise<TaskResponse> {
+        return await this.#json({
+            method: "POST",
+            path: `v0/tasks/${encodeURIComponent(taskId)}/unarchive`,
+            json: bodyOf(options),
+            ifMatch: options.ifMatch,
             signal: options.signal,
         });
     }

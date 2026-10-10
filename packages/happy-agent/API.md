@@ -1648,6 +1648,16 @@ This read has no side effects and emits no events. It never returns email addres
 JWT user IDs, or owner flags. Clients may resolve IDs again after a `profile.updated` invalidation. Older
 compatible daemons may return `404` for this additive endpoint.
 
+### `GET /v0/users/:userId/photo`
+
+Serves one team member's photo bytes, for example a task owner's, with their content type and the
+same content-derived `ETag`, conditional-request, and image-caching behavior as
+`GET /v0/profile/photo`. Available in team mode to the same callers as `GET /v0/users`; standalone
+mode returns `404` with code `not_found`. An invalid user ID is `400 invalid_request`; an unknown
+user or a user without a photo is `404`, including when a conditional request names a removed
+photo. The `thumbhash` from `GET /v0/users` is the placeholder for these bytes. Additive: older
+compatible daemons return `404`.
+
 ## Profile
 
 In standalone mode, one installation is one person. In team mode, the profile routes address the
@@ -5273,7 +5283,8 @@ to its creation. A task is the root of its own subtasks.
 
 Tasks are created by agents, not by this API: an active bot's agent, or another user-controlled
 root, calls the `create_task` tool on behalf of the person it is working for. The agent that
-created a task may message and archive it through its task tools. Each task's folder lives under
+created a task may message and archive it through its task tools; people archive and unarchive
+tasks through the routes below. Each task's folder lives under
 the daemon's tasks root beside the bots root, `~/Happy/Tasks/<folderName>`, or on the default
 runner while runners are configured.
 
@@ -5289,6 +5300,19 @@ caller's list and never changes another person's list or the task itself. The ow
 the task is created, at the top of their list; a newly joined task also goes to the top. The owner
 may leave like anyone else and remains the owner. In standalone mode the installation's one
 person is the only member; in team mode a membership belongs to the authenticated team member.
+Leaving and archiving are separate: leaving never archives a task, even when its owner or its last
+member leaves, and archiving never removes a membership, so an archived task stays in every list
+that holds it.
+
+**Archival permission.** In standalone mode the installation's one person may archive and
+unarchive every task. In team mode the task's owner and the team owner may; any other member
+receives `403` with `code: "forbidden"`. A task without an owner can be archived only by the team
+owner. Each task object tells the caller whether they may, through `canArchive`.
+
+**Showing the owner.** Resolve `ownerUserId` through `GET /v0/users` for the owner's name and
+photo placeholder, and fetch the photo itself from `GET /v0/users/:userId/photo`. In standalone
+mode `ownerUserId` is `null`; the installation's one person is the profile, whose photo is
+`GET /v0/profile/photo`.
 
 **Mapping to workspaces and agents.** A task is one dedicated workspace plus one agent in it, all
 with distinct IDs. The task's workspace is unlisted, like a bot's: it appears in no project list,
@@ -5318,6 +5342,7 @@ the task.
     "workspaceId": "w5v4u3t2s1r0q9p8o7n6m5l4",
     "compute": { "type": "host", "path": "/Users/steve/Happy/Tasks/fix_login_redirect" },
     "status": "active",
+    "canArchive": true,
     "agent": {
         /* the task's one agent, the full agent object */
     },
@@ -5341,6 +5366,12 @@ Fields:
 - `workspaceId` — the task's dedicated workspace, its own distinct ID.
 - `compute` — where the task's folder lives, same shape as on projects, workspaces, and bots.
 - `status` — `"active"` or `"archived"`.
+- `canArchive` — whether the caller may archive and unarchive the task, under the archival
+  permission above. It depends on the caller, so it appears in route responses and the bootstrap
+  but not in `task.created` events, which reach every member alike, nor in `task.updated`
+  `changes`. It never changes for a given caller and task, so a client keeps the value it read; a
+  client that learns of a task only from `task.created` reads `GET /v0/tasks/:taskId` before
+  offering archival. Older compatible daemons omit it.
 - `agent` — the task's one agent, embedded in full. It merges by its own `version` through
   `agent.updated` events.
 - `version` — the UUIDv7 concurrency version; see the basics.
@@ -5398,7 +5429,8 @@ Response — `200`: `{ "task": { ... }, "membership": { ... } }`. A new membersh
 
 Takes the task out of the caller's list. The body is `{}` or `{ "mutationId": "..." }`.
 Idempotent: leaving a task the caller has not joined changes nothing and emits no event. Leaving
-does not change the task, its owner, or anyone else's membership.
+does not change the task, its owner, or anyone else's membership, and it never archives the task,
+even when the owner or the last member leaves.
 
 Response — `200`: `{ "task": { ... }, "membership": null }`. A removed membership emits
 `task.left` after commit, echoing `mutationId`. `404` when no such task exists.
@@ -5418,6 +5450,32 @@ to the place it already holds changes nothing and emits no event; otherwise the 
 
 `404` when no such task exists. `409 conflict` when the caller has not joined the task, when
 `afterId` names the task itself, or when `afterId` names a task that is not in the caller's list.
+
+### `POST /v0/tasks/:taskId/archive`
+
+Archives the task. Requires `If-Match` with the task's `version`; the body is `{}` or
+`{ "mutationId": "..." }`. Idempotent — an already archived task answers the same way and stops
+nothing.
+
+Archiving has the same effect as the creating agent's `archive_task` tool and the same durability
+contract as bot archival: the task agent's run is aborted and its background processes are
+stopped, the agent is archived and its `canSendMessages` becomes `false`, and its history remains
+readable. The folder is kept on disk — archival is logical, never a deletion. Memberships are
+unchanged.
+
+Response — `200`: `{ "task": { ... }, "membership": { ... } }` with `status` `"archived"`; the
+membership is the caller's, or `null`. Archival emits `task.updated` after commit, echoing
+`mutationId`. `403 forbidden` when the caller may not archive the task, `404` when no such task
+exists, and the usual `409` when `If-Match` names an older version.
+
+### `POST /v0/tasks/:taskId/unarchive`
+
+Brings an archived task back: its agent accepts messages again, with its history, folder, owner,
+and memberships intact. Requires `If-Match`; the body is `{}` or `{ "mutationId": "..." }`.
+Idempotent. The same callers may unarchive as may archive.
+
+Response — `200`: `{ "task": { ... }, "membership": { ... } }` with `archivedAt` `null`, and a
+`task.updated` event after commit, echoing `mutationId`. `403`, `404`, and `409` as for archive.
 
 ## Live voice sessions
 

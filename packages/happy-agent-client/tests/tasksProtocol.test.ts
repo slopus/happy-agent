@@ -86,6 +86,9 @@ describe("tasks protocol", () => {
         expect(Value.Check(reorderTaskRequestSchema, { afterId: "task2" })).toBe(true);
         expect(Value.Check(taskListScopeSchema, "joined")).toBe(true);
         expect(Value.Check(taskListScopeSchema, "mine")).toBe(false);
+        // The caller-relative archival flag is optional so events and older daemons may omit it.
+        expect(Value.Check(taskSchema, { ...task, canArchive: true })).toBe(true);
+        expect(Value.Check(taskSchema, { ...task, canArchive: "yes" })).toBe(false);
     });
 
     it("keeps tasks and memberships optional and additive in desktop bootstrap", () => {
@@ -174,6 +177,50 @@ describe("tasks protocol", () => {
                 method: "POST",
                 url: "http://agent.local/v0/tasks/task1/reorder",
             },
+        ]);
+    });
+
+    it("archives and unarchives with If-Match and reads a member's photo", async () => {
+        const requests: { method: string; url: string; ifMatch: string | null }[] = [];
+        const fetch: typeof globalThis.fetch = async (input, init) => {
+            requests.push({
+                ifMatch: new Headers(init?.headers).get("if-match"),
+                method: init?.method ?? "GET",
+                url: input.toString(),
+            });
+            if (input.toString().endsWith("/photo")) {
+                return new Response(new Uint8Array([1, 2, 3]), {
+                    headers: { "content-type": "image/png", etag: '"photo"' },
+                    status: 200,
+                });
+            }
+            return new Response(
+                JSON.stringify({ task: { ...task, canArchive: true }, membership }),
+                {
+                    headers: { "content-type": "application/json" },
+                    status: 200,
+                },
+            );
+        };
+        const client = new HappyAgentClient({ endpoint: "http://agent.local", token: "t", fetch });
+
+        await client.archiveTask("task1", { ifMatch: version, mutationId: "archive-1" });
+        await client.unarchiveTask("task1", { ifMatch: nextVersion });
+        const photo = await client.getUserPhoto("owner1");
+
+        expect(photo?.contentType).toBe("image/png");
+        expect(requests).toEqual([
+            {
+                ifMatch: version,
+                method: "POST",
+                url: "http://agent.local/v0/tasks/task1/archive",
+            },
+            {
+                ifMatch: nextVersion,
+                method: "POST",
+                url: "http://agent.local/v0/tasks/task1/unarchive",
+            },
+            { ifMatch: null, method: "GET", url: "http://agent.local/v0/users/owner1/photo" },
         ]);
     });
 });
