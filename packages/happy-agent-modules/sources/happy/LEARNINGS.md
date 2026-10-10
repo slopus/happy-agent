@@ -115,7 +115,21 @@ one message it cannot carry.
   busy one could evict a bot. On one phone, 32 of 38 visible sessions were subtasks. A subtask is
   never attached at reconcile, on an event, or on spawn. One an older daemon published is no longer
   user-visible, so startup reaping archives it like any archived session.
-- The 64-session budget limits live mobile subscriptions, not bot creation or agent execution.
+- Sessions travel over the machine socket. A session-scoped socket per session capped the phone at
+  64 sessions and cost a connection each. Happy now joins the machine socket to a session's room
+  on `session-subscribe`, so one connection carries every session and there is no cap; writes
+  and `rpc-register` already worked on any authenticated socket. Support is learned from the
+  first subscription of each machine connection: an older server never answers, and after five
+  seconds sessions fall back to their own sockets with the 64-session budget below. Any answer in
+  the contract means support, including `invalid` for an empty first request; `internal` means
+  that request did not apply and is asked again. Nothing is written for a session on the machine
+  socket before that answer, so a session that falls back never registers its RPCs on both
+  sockets. Rooms die with the connection, so a reconnect resubscribes everything and each session
+  forces its metadata compare-and-swap again. `delete-session` and ephemerals never reach a
+  room, so nothing depends on them. There is no separate keepalive timer: `session-alive` stays
+  on each sync pass because it carries the session's working state, and a blind timer would tell
+  the phone a working session had stopped thinking.
+- The 64-session budget (dedicated sockets only) limits live mobile subscriptions, not bot creation or agent execution.
   Silently refusing attachment after saving a bot left the spawn RPC permanently pending.
   A requested conversation or a new agent event now replaces the subscription with the oldest
   durable agent update, with agent ID breaking ties. A project session is replaced before any

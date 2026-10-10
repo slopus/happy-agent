@@ -21,6 +21,7 @@ import {
 import type { HappyConnectionConfiguration, HappyEncryptionVariant } from "./HappyCredentials.js";
 import type { HappyModel } from "./HappySession.js";
 import type { HappySocket } from "./HappySessionClient.js";
+import { HappySessionSockets } from "./HappySessionSockets.js";
 
 const HTTP_TIMEOUT_MS = 15_000;
 const RETRY_INTERVAL_MS = 5_000;
@@ -144,6 +145,8 @@ export class HappyMachineClient {
     readonly #options: HappyMachineClientOptions;
     readonly #closeController = new AbortController();
     readonly #machineId: string;
+    /** Every published session travels over this machine's connection. */
+    readonly sessions: HappySessionSockets;
     #closed = false;
     #keepAliveTimer: NodeJS.Timeout | undefined;
     #metadataBase: Record<string, unknown> = {};
@@ -177,6 +180,14 @@ export class HappyMachineClient {
         }
         this.#machineId = machineId;
         this.#options = options;
+        this.sessions = new HappySessionSockets({
+            configuration: options.configuration,
+            context: options.context,
+            ...(options.socketFactory === undefined
+                ? {}
+                : { socketFactory: options.socketFactory }),
+            version: options.version,
+        });
     }
 
     /** Registers this computer with Happy and keeps it reachable. */
@@ -247,6 +258,7 @@ export class HappyMachineClient {
         if (this.#retryTimer !== undefined) clearTimeout(this.#retryTimer);
         this.#retryTimer = undefined;
         this.#teardownSocket();
+        this.sessions.close();
     }
 
     /** Refreshes a CLI linked after the desktop QR, without restarting any Agent work. */
@@ -367,9 +379,11 @@ export class HappyMachineClient {
             this.#syncMetadata(socket, generation, metadataVersion, 0);
             this.#syncDaemonState(socket, generation, daemonStateVersion, 0);
             this.#sendAlive(socket);
+            this.sessions.connected(socket);
         });
         socket.on("update", (update: unknown) => {
             if (!this.#isCurrent(generation)) return;
+            if (this.sessions.route(update)) return;
             if (
                 Value.Check(deleteMachineUpdateSchema, update) &&
                 update.body.machineId === this.#machineId
@@ -386,10 +400,12 @@ export class HappyMachineClient {
         });
         socket.on("rpc-request", (request: unknown, callback: (response: string) => void) => {
             if (!this.#isCurrent(generation)) return;
+            if (this.sessions.rpc(request, callback)) return;
             void this.#handleRpcRequest(request, callback);
         });
         socket.on("disconnect", () => {
             if (!this.#isCurrent(generation)) return;
+            this.sessions.disconnected();
             // Socket.IO reconnects a dropped connection itself, and the machine
             // registration it was built on is still good, so this only reports.
             this.#announce({
@@ -424,6 +440,7 @@ export class HappyMachineClient {
         this.#generation += 1;
         const socket = this.#socket;
         this.#socket = undefined;
+        if (socket !== undefined) this.sessions.disconnected();
         socket?.disconnect();
     }
 

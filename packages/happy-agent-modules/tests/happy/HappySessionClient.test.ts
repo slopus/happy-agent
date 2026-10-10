@@ -365,7 +365,7 @@ function client(options: {
         operations: options.operations,
         ...(options.projectId === undefined ? {} : { projectId: options.projectId }),
         sessionId: SESSION_ID,
-        socketFactory: () => options.socket,
+        socket: () => options.socket,
         sync,
         version: "1.2.3",
     });
@@ -1842,7 +1842,7 @@ describe("a session Happy holds under another data key", () => {
             fetch: server.fetch,
             operations,
             sessionId: DATA_KEY_SESSION,
-            socketFactory: () => new FakeSocket(),
+            socket: () => new FakeSocket(),
             sync,
             version: "1.2.3",
         });

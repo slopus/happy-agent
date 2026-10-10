@@ -111,8 +111,13 @@ import {
     type HappyReadFileAtRevisionResponse,
 } from "./HappyWorkspaceRead.js";
 
-/** How many session subscriptions one Happy connection keeps live at once. */
-const MAX_CONNECTED_AGENTS = 64;
+/**
+ * How many sessions keep a session-scoped socket of their own against a Happy server that cannot
+ * carry sessions on the machine connection. On the machine connection there is no limit.
+ */
+const MAX_DEDICATED_SESSIONS = 64;
+/** How many sessions restored at startup synchronize at once, on the daemon's only thread. */
+const RECONCILE_BATCH = 16;
 // Subtasks nest at most two below a bot; anything deeper than this is not a chain worth trusting.
 const MAX_SESSION_DEPTH = 8;
 
@@ -939,6 +944,9 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
             // One Happy refused is about to be unlinked or re-registered under a new identity.
             const registration = await machine.firstRegistration();
             if (registration !== "registered" && registration !== "happy_unavailable") return;
+            // How many sessions may attach depends on whether Happy carries them on this machine's
+            // connection, which its first answer says.
+            if ((await machine.sessions.firstTransport()) === undefined) return;
             await this.#reconcileProjects(ctx);
             await this.#reapArchived(ctx);
             await this.#reconcile(ctx);
@@ -1123,19 +1131,26 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
         this.#gitRenewalTimer = undefined;
         for (const unwatch of this.#unwatchCatalog.splice(0)) unwatch();
         this.#projectClient = undefined;
-        this.#machine?.close();
+        // Nothing attaches once the machine is gone. Sessions close while its connection is still
+        // open, because that is what carries each one's goodbye to the phone.
+        const machine = this.#machine;
         this.#machine = undefined;
+        const closeSessions = async () => {
+            const connected = [...this.#agents.values()];
+            this.#agents.clear();
+            await Promise.all(connected.map(async (agent) => await agent.client.close()));
+        };
+        await closeSessions();
+        machine?.close();
         await this.#reconcilePromise?.catch(() => undefined);
         await this.#settleTasks();
-        const connected = [...this.#agents.values()];
-        this.#agents.clear();
+        await closeSessions();
         this.#unsubscribedMappers.clear();
         this.#served.clear();
         this.#archivingAgents.clear();
         this.#retiredAgents.clear();
         this.#gitEntityByAgent.clear();
         this.#gitAgentsByEntity.clear();
-        await Promise.all(connected.map(async (agent) => await agent.client.close()));
     }
 
     async #withIntegrationUpdate<Value>(operation: () => Promise<Value>): Promise<Value> {
@@ -1990,8 +2005,11 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
         if (existing !== undefined) return existing;
         const configuration = this.#configuration;
         const context = this.#context;
-        if (configuration === undefined || context === undefined) return undefined;
-        if (agents.size >= MAX_CONNECTED_AGENTS && !replaceOldest) return undefined;
+        const machine = this.#machine;
+        if (configuration === undefined || context === undefined || machine === undefined) {
+            return undefined;
+        }
+        if (agents.size >= this.#capacity() && !replaceOldest) return undefined;
         if (!(await this.#userVisible(ctx, agentId))) return undefined;
         const state = pending ?? this.#attachmentState(ctx);
         const session = await this.session(ctx, agentId);
@@ -2000,10 +2018,10 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
         // A newly publishing conversation must finish its first relay request before another
         // creation can replace it. If every slot is publishing, a retry remains truly pending.
         const oldest =
-            state.agents.size >= MAX_CONNECTED_AGENTS
+            state.agents.size >= this.#capacity()
                 ? await this.#oldestSubscription(ctx, state.agents, session.bot !== undefined)
                 : undefined;
-        if (state.agents.size >= MAX_CONNECTED_AGENTS && oldest === undefined) return undefined;
+        if (state.agents.size >= this.#capacity() && oldest === undefined) return undefined;
         await this.#sync.ensureSession(
             ctx,
             {
@@ -2032,6 +2050,7 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
                               await this.#remoteProjectId(context, localProjectId),
                       }),
                 sessionId: session.sessionId,
+                socket: (remoteSessionId) => machine.sessions.open(remoteSessionId),
                 sync: this.#sync,
                 version: this.#config.configuration.version,
             }),
@@ -2048,7 +2067,7 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
             state.agents.delete(oldest.agentId);
             state.unsubscribedMappers.delete(oldest.agentId);
             state.unsubscribedMappers.set(oldest.agentId, oldest.attached.mapper);
-            while (state.unsubscribedMappers.size > MAX_CONNECTED_AGENTS) {
+            while (state.unsubscribedMappers.size > MAX_DEDICATED_SESSIONS) {
                 const first = state.unsubscribedMappers.keys().next().value;
                 if (first === undefined) break;
                 state.unsubscribedMappers.delete(first);
@@ -2222,23 +2241,34 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
      * Archived projects and workspaces are left out by the listings themselves, which is the
      * same answer a person gets when they go looking for their work. The durable attachment lists
      * may still name locally archived agents, so `#attach` checks Agent Base metadata before
-     * spending one of the bounded session connections on them.
+     * spending a session connection on them.
+     *
+     * With no cap on the machine connection, every visible session attaches, and each one's first
+     * pass creates its remote session and backfills its history. Those passes share the daemon's
+     * only thread with every API request, so a few at a time finish before more begin.
      */
     async #reconcile(ctx: Context): Promise<void> {
+        const restoring: HappySessionClient[] = [];
         const attach = async (agentId: string): Promise<boolean> => {
             // A connection that is closing, such as one Happy said was deleted, restores nothing:
             // each session attached now would reappear on the phone only to be removed again.
             if (
                 this.#stopping ||
                 this.#machine === undefined ||
-                this.#agents.size >= MAX_CONNECTED_AGENTS
+                this.#agents.size >= this.#capacity()
             ) {
                 return false;
             }
             try {
-                await ctx.inTx(async (txCtx) => await this.#attach(txCtx, agentId));
+                const attached = await ctx.inTx(
+                    async (txCtx) => await this.#attach(txCtx, agentId),
+                );
+                if (attached !== undefined) restoring.push(attached.client);
             } catch (error) {
                 ctx.log.debug("Happy could not restore a session.", { agentId }, error);
+            }
+            if (restoring.length >= RECONCILE_BATCH) {
+                await Promise.all(restoring.splice(0).map(async (client) => await client.settle()));
             }
             return true;
         };
@@ -2301,7 +2331,8 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
         if (attached === undefined && existing?.remoteSessionId === undefined) return;
         const configuration = this.#configuration;
         const context = this.#context;
-        if (configuration === undefined || context === undefined) return;
+        const machine = this.#machine;
+        if (configuration === undefined || context === undefined || machine === undefined) return;
         const client =
             attached?.client ??
             new HappySessionClient({
@@ -2310,6 +2341,7 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
                 context,
                 operations: this,
                 sessionId: existing?.sessionId ?? agentId,
+                socket: (remoteSessionId) => machine.sessions.open(remoteSessionId),
                 sync: this.#sync,
                 version: this.#config.configuration.version,
             });
@@ -2570,6 +2602,13 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
             permissionMode: this.#config.configuration.values.defaults.permissionMode,
             providerId: model.providerId,
         };
+    }
+
+    /** Sessions travel on the machine connection without limit, or on capped sockets of their own. */
+    #capacity(): number {
+        return this.#machine?.sessions.multiplexed === true
+            ? Number.POSITIVE_INFINITY
+            : MAX_DEDICATED_SESSIONS;
     }
 
     #system(): AgentSystemRef<LibSQLDatabase> {

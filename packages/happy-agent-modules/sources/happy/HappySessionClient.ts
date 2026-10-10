@@ -25,7 +25,6 @@ import {
     encryptHappyPayload,
     wrapHappyDataKey,
 } from "./crypto/happyEncryption.js";
-import { connectHappySocket } from "./connectHappySocket.js";
 import {
     HAPPY_SESSION_RPC_METHODS,
     handleHappySessionRpc,
@@ -171,8 +170,11 @@ export interface HappySessionClientOptions {
     /** Account-scoped Happy project identity, when project reconciliation succeeded. */
     readonly projectId?: () => Promise<string | undefined>;
     readonly sessionId: string;
-    /** Only a test supplies this; left out, the client opens its own connection to Happy. */
-    readonly socketFactory?: (url: string, options: Record<string, unknown>) => HappySocket;
+    /**
+     * Opens this session's socket once Happy has given it an id. In the daemon that is a view of
+     * the machine connection, which carries every session (see `HappySessionSockets`).
+     */
+    readonly socket: (remoteSessionId: string) => HappySocket;
     readonly sync: HappySyncDatabase;
     readonly version: string;
 }
@@ -769,22 +771,7 @@ export class HappySessionClient {
 
     #ensureSocket(remoteSessionId: string): void {
         if (this.#socket !== undefined) return;
-        const socket = (this.#options.socketFactory ?? connectHappySocket)(
-            this.#options.configuration.serverUrl,
-            {
-                auth: {
-                    clientType: "session-scoped",
-                    happyClient: `rig/${this.#options.version}`,
-                    sessionId: remoteSessionId,
-                    token: this.#options.configuration.credentials.token,
-                },
-                autoConnect: false,
-                path: "/v1/updates",
-                reconnection: true,
-                transports: ["websocket"],
-                withCredentials: true,
-            },
-        );
+        const socket = this.#options.socket(remoteSessionId);
         socket.on("connect", () => {
             // Happy does not replay missed updates, including edits between HTTP hydration and
             // the first connection. A forced CAS retrieves them through a version conflict.

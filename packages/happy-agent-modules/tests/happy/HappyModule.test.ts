@@ -1252,6 +1252,16 @@ describe("archiving a Happy session", () => {
                     },
                 ],
                 providerType: () => "codex",
+                visibleModels: [
+                    {
+                        defaultEffort: "medium",
+                        effortLevels: ["medium"],
+                        id: "gpt-5.6-sol",
+                        name: "GPT-5.6 Sol",
+                        providerId: "codex",
+                        serviceTiers: [],
+                    },
+                ],
             } as never,
             { archiveAgent: async () => undefined } as never,
             { latestAgentEvent: async () => undefined, observe: () => undefined } as never,
@@ -1467,7 +1477,16 @@ describe("archiving a Happy session", () => {
                     },
                 ],
                 providerType: () => "codex",
-                visibleModels: [],
+                visibleModels: [
+                    {
+                        defaultEffort: "medium",
+                        effortLevels: ["medium"],
+                        id: "gpt-5.6-sol",
+                        name: "GPT-5.6 Sol",
+                        providerId: "codex",
+                        serviceTiers: [],
+                    },
+                ],
             } as never,
             { archiveAgent: async () => undefined } as never,
             {

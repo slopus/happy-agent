@@ -187,8 +187,9 @@ durable agent has been restored there is no honest answer to give — a phone
 would be shown a row of sessions that all look idle and then watch them correct
 themselves. Catalog reconciliation then runs on the module's background
 lifetime, so reading a large archive cannot hold daemon startup open. It follows
-complete catalog pages, rejects archived agents and owners, and opens at most 64
-session connections. Only top-level agents, bots and the sessions a person started, are
+complete catalog pages and rejects archived agents and owners. It restores sessions a few at a
+time, waiting for each group's first pass, because those passes share the daemon's only thread.
+Only top-level agents, bots and the sessions a person started, are
 published; a subtask never attaches, and one an older daemon published is archived on the phone.
 Bots attach first and are never replaced to make room for a project session. After startup, the API may ask the same module to begin
 pairing or resume a configured connection.
@@ -222,6 +223,26 @@ is waiting on — because that is what makes it safe to interrupt anywhere and
 pick up where it stopped. Nothing is republished unless it changed, and a
 version conflict is resolved by taking the server's version, putting Happy Agent's own
 facts back on top, and trying again.
+
+## One connection for every session
+
+Every session travels over the machine's own socket. `HappySessionSockets` hands each session
+client a socket-shaped view of it: writes (`update-metadata`, `update-state`, `session-alive`,
+`session-end`, `rpc-register`) go out on the machine socket, and Happy's `update` events and
+session RPCs are routed back to the session they name. Happy puts the machine socket in a
+session's room when asked with `session-subscribe { sids }`, in batches of up to 500, and takes
+it out with `session-unsubscribe` when the session is archived, replaced or the computer is
+unlinked. Rooms belong to one connection, so every reconnect subscribes everything again; each
+session hears `connect` once it is back in its room and forces the metadata compare-and-swap
+that recovers edits Happy did not replay. With one connection there is no limit on how many
+sessions reach the phone.
+
+The first subscription on each machine connection is also the question whether Happy can do this.
+A Happy server older than `session-subscribe` never answers it, so after five seconds every
+session falls back to a session-scoped socket of its own, the way all of them used to connect,
+and at most 64 stay subscribed, oldest replaced first. Only one of the two ever carries a session:
+nothing is written on the machine socket for a session until Happy has answered, so no session
+registers its requests twice.
 
 An attachment arrives as its own message just before the words that go with it,
 so it is held rather than delivered, and the read position does not move until
@@ -377,5 +398,5 @@ start/end events, but never private reasoning or tool output content.
 Archiving is one decision in both products. A phone archive aborts the run,
 disposes the local compute and writes Agent Base's durable `archivedAt` metadata
 before the remote projection closes. Project and workspace archives enumerate
-their own durable agent associations, so a session does not have to be one of the
-currently connected 64 to be retired remotely.
+their own durable agent associations, so a session does not have to be connected to be
+retired remotely.
