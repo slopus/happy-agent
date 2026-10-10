@@ -574,7 +574,7 @@ async fn maintenance_rotates_an_idle_login_and_keeps_a_rotation_its_caller_stopp
     assert!(waiting.await.unwrap().is_err());
     // The exchange that was already in flight still lands in the store and in this credential.
     for _ in 0..100 {
-        if stored(&file)[SCOPE]["key"] == "fresh-access" {
+        if bearer(&credential).await == "Bearer fresh-access" {
             break;
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
