@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { spawn } from "node:child_process";
-import { mkdtemp, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile, stat, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve, join } from "node:path";
 
@@ -118,6 +118,11 @@ try {
     // Its installation is private to this check, and its socket path stays well under the
     // Unix socket limit.
     if (process.platform === "win32") {
+        await assert.rejects(
+            run(["reload", "--detach"], ""),
+            /Detached reload is not available on Windows/,
+        );
+        console.log("Verified the Windows detached reload refusal.");
         console.log("Skipped the daemon lifecycle check: it is POSIX-only for now.");
     } else {
         const installation = await mkdtemp(join(tmpdir(), "ha-"));
@@ -126,6 +131,29 @@ try {
         try {
             await run(["start"], "", env);
             started = true;
+            assert.match(await run(["status"], "", env), /^Daemon is running at /);
+            const directory = join(installation, ".happy", "agent");
+            const originalPid = (await readFile(join(directory, "daemon.pid"), "utf8")).trim();
+            const originalToken = await readFile(join(directory, "token"), "utf8");
+            assert.match(
+                await run(["reload", "--detach"], "", env),
+                /Happy Agent will reload once this command exits\./,
+            );
+            const reloadLog = join(directory, "reload.log");
+            const deadline = Date.now() + 60_000;
+            while (!(await readFile(reloadLog, "utf8")).includes("Daemon is running at")) {
+                assert.ok(
+                    Date.now() < deadline,
+                    `Detached reload did not become ready: ${await readFile(reloadLog, "utf8")}`,
+                );
+                await new Promise((resolve) => setTimeout(resolve, 20));
+            }
+            assert.notEqual(
+                (await readFile(join(directory, "daemon.pid"), "utf8")).trim(),
+                originalPid,
+            );
+            assert.equal(await readFile(join(directory, "token"), "utf8"), originalToken);
+            assert.equal((await stat(reloadLog)).mode & 0o077, 0);
             assert.match(await run(["status"], "", env), /^Daemon is running at /);
             assert.match(await run(["stop"], "", env), /^Daemon stopped\.$/m);
             let status = "";
@@ -140,7 +168,9 @@ try {
             if (started) await run(["stop"], "", env).catch(() => undefined);
             await rm(installation, { recursive: true, force: true });
         }
-        console.log("Verified the daemon's start, status, stop, and stopped status.");
+        console.log(
+            "Verified daemon start, detached reload, retained authentication, replacement readiness, stop, and stopped status.",
+        );
     }
 } finally {
     await new Promise((resolve) => server.close(resolve));
