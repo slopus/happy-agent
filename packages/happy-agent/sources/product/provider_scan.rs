@@ -1,23 +1,30 @@
 //! Local discovery and explicit verification own the shared provider gate.
-use super::{config::ConfigModule,durable::DurableFunctionsModule,identity::now,lifecycle::LifecycleModule,schemas::Schemas};
+use super::{config::ConfigModule,durable::{CallKv,DurableFunction,DurableFunctionsModule,Registration},identity::now,lifecycle::LifecycleModule,runtime::RuntimeModule,schemas::Schemas};
 use anyhow::{Context as _,Result};
 use futures_util::StreamExt;
 use happy_providers::{Message,RunRequest,SessionContext,Event,Outcome,Effort};
 use serde_json::{Value,json};
-use std::{collections::{BTreeMap,BTreeSet},sync::{Arc,Mutex},time::Duration};
+use std::{collections::{BTreeMap,BTreeSet},sync::{Arc,Mutex,Weak},time::Duration};
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 mod tests;
 pub struct ProviderScanModule {
-    config:Arc<ConfigModule>,_durable:Arc<DurableFunctionsModule>,lifecycle:Arc<LifecycleModule>,schemas:Schemas,
+    config:Arc<ConfigModule>,runtime:Arc<RuntimeModule>,durable:Arc<DurableFunctionsModule>,lifecycle:Arc<LifecycleModule>,schemas:Schemas,
     state:tokio::sync::Mutex<State>,running:Mutex<Option<watch::Receiver<Option<std::result::Result<Value,String>>>>>,
     verifications:Mutex<BTreeMap<String,BTreeMap<String,CancellationToken>>>,
 }
 #[derive(Default)]
 struct State{loaded:bool,remembered:BTreeSet<String>}
 impl ProviderScanModule {
-    pub fn new(config:Arc<ConfigModule>,durable:Arc<DurableFunctionsModule>,lifecycle:Arc<LifecycleModule>)->Result<Arc<Self>> {
-        Ok(Arc::new(Self{config,_durable:durable,lifecycle,schemas:Schemas::new()?,state:tokio::sync::Mutex::new(State::default()),running:Mutex::new(None),verifications:Mutex::new(BTreeMap::new())}))
+    pub fn new(config:Arc<ConfigModule>,runtime:Arc<RuntimeModule>,durable:Arc<DurableFunctionsModule>,lifecycle:Arc<LifecycleModule>)->Result<Arc<Self>> {
+        let owner=Arc::new(Self{config,runtime,durable:durable.clone(),lifecycle,schemas:Schemas::new()?,state:tokio::sync::Mutex::new(State::default()),running:Mutex::new(None),verifications:Mutex::new(BTreeMap::new())});
+        durable.register(Registration{name:"provider-credential-maintenance".into(),arguments_schema:"ownerOpenEmpty",result_schema:"ownerNull",function:Arc::new(CredentialMaintenance{owner:Arc::downgrade(&owner)})})?;
+        Ok(owner)
+    }
+    pub async fn start(self:&Arc<Self>)->Result<()> {
+        let owner=self.clone();
+        tokio::time::timeout(Duration::from_secs(2),self.runtime.transact(move|ctx|owner.durable.invoke(ctx,&json!({"function":"provider-credential-maintenance","arguments":{},"operationId":"provider-credential-maintenance","lockKeys":["provider-credential-maintenance"]})))).await.context("Provider credential maintenance could not start within its time bound.")??;
+        Ok(())
     }
     async fn load(&self)->Result<()> {
         let mut state=self.state.lock().await;if state.loaded{return Ok(());}
@@ -78,5 +85,21 @@ impl ProviderScanModule {
         let (sender,mut events)=tokio::sync::mpsc::channel(64);let consume=async{while let Some(event)=events.recv().await{if let Event::Done{outcome}=event{return matches!(outcome,Outcome::Normal{..});}}false};
         let (_,passed)=tokio::join!(session.run(request,token.clone(),sender),consume);
         session.destroy().await;(selected,passed)
+    }
+}
+
+struct CredentialMaintenance { owner:Weak<ProviderScanModule> }
+impl DurableFunction for CredentialMaintenance {
+    fn execute(self:Arc<Self>,_call:Value,_kv:CallKv,cancel:CancellationToken)->futures_util::future::BoxFuture<'static,Result<Value>> {
+        Box::pin(async move {
+            let owner=self.owner.upgrade().context("The provider maintenance owner is unavailable.")?;
+            loop {
+                if cancel.is_cancelled(){return Ok(Value::Null);}
+                owner.config.refresh_provider_credentials(&cancel).await;
+                // Source schedules the next pass after this one finishes, so
+                // slow exchanges cannot overlap or accumulate waiting work.
+                tokio::select!{_ = cancel.cancelled()=>return Ok(Value::Null),_ = tokio::time::sleep(Duration::from_secs(3*60*60))=>{}}
+            }
+        })
     }
 }

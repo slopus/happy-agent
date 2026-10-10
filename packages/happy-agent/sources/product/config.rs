@@ -7,9 +7,14 @@ mod routing;
 mod presence;
 mod provider_state;
 mod provider_probe;
+mod provider_maintenance;
 mod provider_usage;
 mod public;
 mod skill_directories;
+mod policy;
+mod system_prompt;
+mod runner;
+mod onboarding;
 use std::{
     collections::BTreeMap,
     fs,
@@ -76,7 +81,7 @@ impl happy_agent_base::AgentModule for ConfigModule {
         Some(self.models_compatible(previous, next))
     }
     async fn instructions(&self, _scope: &happy_agent_base::AgentScope<'_>) -> Result<String> {
-        self.read_document(Document::Instructions).await
+        Ok(self.values.get("defaults").and_then(|defaults| defaults.get("instructions")).and_then(toml::Value::as_str).unwrap_or_default().to_owned())
     }
     async fn session(
         &self,
@@ -483,13 +488,12 @@ impl ConfigModule {
         let effort = settings["effort"].as_str().or_else(|| self.values.get("defaults").and_then(|defaults| defaults.get("effort")).and_then(toml::Value::as_str)).or_else(|| models.iter().find(|entry| entry["id"] == model).and_then(|model| model["defaultEffort"].as_str())).context("No active model effort is known for automatic review.")?;
         Ok(serde_json::json!({"providerId":provider,"modelId":model,"effort":effort}))
     }
-    pub async fn review_documents(&self, configuration: &serde_json::Value) -> Result<(String, String)> {
-        let security = self.read_document(Document::Security).await?;
+    pub async fn review_documents(&self, _configuration: &serde_json::Value) -> Result<(String, String)> {
+        let (global, project) = tokio::try_join!(self.read_global_security(32 * 1024), self.read_project_security(32 * 1024))?;
+        let security = [("## Global SECURITY.md", global), ("## Project AGENTS_SECURITY.md", project)]
+            .into_iter().filter_map(|(heading, text)| (!text.trim().is_empty()).then(|| format!("{heading}\n\n{text}"))).collect::<Vec<_>>().join("\n\n");
         let instructions = self.read_document(Document::Instructions).await?;
-        let root = configuration["modules"]["compute"]["cwd"].as_str().or_else(|| configuration["environment"]["workingDirectory"].as_str()).context("The reviewed agent has no working directory.")?;
-        let local_security = read_optional_document(&PathBuf::from(root).join("AGENTS_SECURITY.md"), Document::Security.limit()).await?;
-        let local_instructions = read_optional_document(&PathBuf::from(root).join("AGENTS.md"), Document::Instructions.limit()).await?;
-        Ok(([security, local_security].into_iter().filter(|text| !text.trim().is_empty()).collect::<Vec<_>>().join("\n\n"), [instructions, local_instructions].into_iter().filter(|text| !text.trim().is_empty()).collect::<Vec<_>>().join("\n\n")))
+        Ok((security, instructions))
     }
     pub fn global_skills_root(&self) -> PathBuf {
         self.skills_root.clone()
@@ -1533,6 +1537,12 @@ mod tests {
         config.update_runtime_provider_states(&BTreeMap::from([("fixture".to_owned(),json!({"autoEnable":true}))])).await.unwrap();config.set_provider_enabled("fixture",true).unwrap();
         assert!(!config.provider_signal("fixture").is_cancelled(),"A positive scan must reopen the signal used by inference.");
         assert!(disabled.is_cancelled(),"An old disabled lifetime is never revived in place.");
+    }
+    #[tokio::test]
+    async fn remote_review_never_loads_policy_from_the_daemons_matching_path() {
+        let directory=tempfile::tempdir().unwrap();let config=ConfigModule::isolated(&directory.path().join(".happy")).unwrap();config.prepare().unwrap();let path=directory.path().join("remote-path-collision");std::fs::create_dir(&path).unwrap();std::fs::write(path.join("AGENTS_SECURITY.md"),"daemon-local-policy-sentinel").unwrap();std::fs::write(path.join("AGENTS.md"),"daemon-local-instructions-sentinel").unwrap();
+        let configuration=json!({"modules":{"compute":{"cwd":path,"runnerId":"remote-fixture"}},"environment":{"workingDirectory":path}});
+        let(security,instructions)=config.review_documents(&configuration).await.unwrap();assert!(!security.contains("daemon-local-policy-sentinel"));assert!(!instructions.contains("daemon-local-instructions-sentinel"));
     }
     #[test]
     fn smart_catalog_keeps_exact_models_and_the_first_concrete_family() {

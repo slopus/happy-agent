@@ -8,6 +8,10 @@ mod question_acceptance;
 mod vendor_file_tools;
 #[path = "api/profile.rs"]
 mod profile_acceptance;
+#[path = "api/provider_maintenance.rs"]
+mod provider_maintenance_acceptance;
+#[path = "api/onboarding.rs"]
+mod onboarding_acceptance;
 
 use rusqlite::{Connection, params};
 use serde_json::{Value, json};

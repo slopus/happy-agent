@@ -119,6 +119,7 @@ impl TransportModule {
             }
         }
         while connections.join_next().await.is_some() {}
+        self.api.close_runner_connections().await;
         Ok(())
     }
 }

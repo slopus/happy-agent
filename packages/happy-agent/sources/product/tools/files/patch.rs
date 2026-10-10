@@ -69,6 +69,9 @@ impl Files {
             mode: mode.into(),
             private_paths: boundary.private_paths.clone(),
             protected_paths: boundary.protected_paths.clone(),
+            allowed_write_paths: boundary.allowed_write_paths.clone(),
+            denied_read_paths: boundary.denied_read_paths.clone(),
+            denied_write_paths: boundary.denied_write_paths.clone(),
         };
         let mut simulated = BTreeMap::new();
         let mut expected = BTreeMap::new();

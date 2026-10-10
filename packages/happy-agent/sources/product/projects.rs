@@ -26,6 +26,11 @@ pub use avatars::AvatarAsset;
 mod names;
 #[path = "owners/projects_persistence.rs"]
 mod persistence;
+#[path = "owners/project_catalog.rs"]
+mod catalog;
+#[cfg(test)]
+#[path = "owners/project_catalog_tests.rs"]
+mod catalog_tests;
 
 pub struct ProjectsModule {
     runtime: Arc<RuntimeModule>,
@@ -129,6 +134,13 @@ impl ProjectsModule {
             "ownerProjectProvision",
             "ownerNull",
             "ownerProjectAvatarAssetMetadata",
+            "ownerProjectPageQuery",
+            "ownerProjectPage",
+            "ownerProjectAgentOrders",
+            "ownerProjectId",
+            "ownerProjectRepositoryRef",
+            "ownerProjectRunnerId",
+            "ownerCatalogCompute",
         ] {
             let _ = schemas.valid(name, &Value::Null)?;
         }
@@ -210,6 +222,13 @@ impl ProjectsModule {
             return Ok(None);
         }
         persistence::read(ctx, &self.schemas, id)
+    }
+    pub fn has_active_project(&self, ctx: &Context<'_>) -> Result<bool> {
+        self.runtime.assert_context(ctx)?;
+        if !persistence::available(ctx)? {
+            return Ok(false);
+        }
+        persistence::has_active_project(ctx)
     }
     pub fn attach_agent(&self, ctx: &Context<'_>, project: &str, agent: &str) -> Result<Value> {
         let before = self
@@ -770,12 +789,14 @@ mod tests {
                 )
                 .unwrap(),
             );
+            let system_prompt = crate::product::system_prompt::SystemPromptModule::new(fixture.config.clone(), tools.clone(), fixture.runtime.clone(), fixture.durable.clone()).unwrap();
             let auto = AutoModule::new(
                 fixture.config.clone(),
                 fixture.runtime.clone(),
                 fixture.durable.clone(),
                 tools.clone(),
                 fixture.lifecycle.clone(),
+                system_prompt.clone(),
             )
             .unwrap();
             auto.load().await.unwrap();
@@ -793,6 +814,7 @@ mod tests {
                 auto,
                 permissions,
                 fixture.events.clone(),
+                system_prompt,
             ));
             agents.prepare().unwrap();
             agents.load().await.unwrap();

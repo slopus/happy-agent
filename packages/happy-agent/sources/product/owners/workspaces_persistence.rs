@@ -49,7 +49,7 @@ pub const MIGRATIONS: &[(&str, &str)] = &[
     ),
 ];
 
-const COLUMNS: &str = "id,project_ref,parent_id,name,name_configured,branch,storage_key,kind,path,runner_id,docker_image,base_ref,base_commit,git_common_dir,presence,status,order_key,version,creator_session_id,subtask_agent_id,git_ahead,git_behind,git_detached,git_head,git_upstream,initialization_attempt,initialization_error,created_at,updated_at,archived_at,service_cleanup";
+pub(super) const COLUMNS: &str = "id,project_ref,parent_id,name,name_configured,branch,storage_key,kind,path,runner_id,docker_image,base_ref,base_commit,git_common_dir,presence,status,order_key,version,creator_session_id,subtask_agent_id,git_ahead,git_behind,git_detached,git_head,git_upstream,initialization_attempt,initialization_error,created_at,updated_at,archived_at,service_cleanup";
 const FIELDS: &[&str] = &[
     "id",
     "projectRef",
@@ -84,7 +84,7 @@ const FIELDS: &[&str] = &[
     "serviceCleanup",
 ];
 
-fn from_row(row: &Row<'_>) -> rusqlite::Result<Value> {
+pub(super) fn from_row(row: &Row<'_>) -> rusqlite::Result<Value> {
     let mut value = json!({});
     for (index, field) in FIELDS.iter().enumerate() {
         if [4, 22].contains(&index) {

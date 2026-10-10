@@ -3,18 +3,47 @@ use super::*;
 use crate::product::owners::RunnerCompute;
 
 #[derive(Clone)]
-enum Backend {
+pub(super) enum Backend {
     Local(Boundary),
     Runner(Arc<RunnerCompute>),
 }
 #[derive(Clone)]
 pub struct ComputeFilesystem {
-    backend: Backend,
+    pub(super) backend: Backend,
     identity: String,
     permissions: Value,
-    schemas: Arc<Schemas>,
+    pub(super) schemas: Arc<Schemas>,
 }
 impl ComputeFilesystem {
+    pub fn with_permissions(&self, permissions: &Value) -> Result<Self> {
+        ensure!(
+            self.schemas.valid(
+                "ownerRunnerParams_fs_exists",
+                &json!({"computeId":"validation","path":".","permissions":permissions})
+            )?,
+            "The filesystem permissions are invalid."
+        );
+        let mut result = self.clone();
+        if let Backend::Local(boundary) = &mut result.backend {
+            boundary.mode = permissions["mode"].as_str().unwrap().to_owned();
+            let paths = |field: &str| {
+                permissions[field]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|path| boundary.resolve(path.as_str().unwrap()))
+                    .collect::<Result<Vec<_>>>()
+            };
+            let allowed = paths("allowedWritePaths")?;
+            let denied_read = paths("deniedReadPaths")?;
+            let denied_write = paths("deniedWritePaths")?;
+            boundary.allowed_write_paths = allowed;
+            boundary.denied_read_paths = denied_read;
+            boundary.denied_write_paths = denied_write;
+        }
+        result.permissions = permissions.clone();
+        Ok(result)
+    }
     pub(super) fn local(boundary: Boundary, identity: String) -> Result<Self> {
         let full = boundary.mode == "full_access";
         let permissions =
@@ -85,10 +114,18 @@ impl ComputeFilesystem {
         match &self.backend {
             Backend::Runner(compute) => compute.exists(&self.permissions, path, cancel).await,
             Backend::Local(boundary) => {
-                let path = boundary.target(self.path(path)?, false)?;
-                match tokio::fs::metadata(path).await {
+                boundary.target(self.path(path)?, false)?;
+                let path = boundary.resolve(self.path(path)?)?;
+                match tokio::fs::symlink_metadata(path).await {
                     Ok(_) => Ok(true),
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+                    Err(error)
+                        if matches!(
+                            error.kind(),
+                            std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                        ) =>
+                    {
+                        Ok(false)
+                    }
                     Err(error) => Err(error.into()),
                 }
             }
@@ -102,11 +139,15 @@ impl ComputeFilesystem {
     ) -> Result<Value> {
         Self::check(cancel)?;
         match &self.backend {
-            Backend::Runner(compute) => {
-                compute
-                    .stat(&self.permissions, path, no_follow, cancel)
-                    .await
-            }
+            Backend::Runner(compute) => match compute
+                .stat(&self.permissions, path, no_follow, cancel)
+                .await
+            {
+                Err(error) if matches!(compute.error_code(&error), Some("ENOENT" | "ENOTDIR")) => {
+                    Ok(Value::Null)
+                }
+                result => result,
+            },
             Backend::Local(boundary) => {
                 let target = boundary.target(self.path(path)?, false)?;
                 let path = if no_follow {
@@ -128,9 +169,22 @@ impl ComputeFilesystem {
                                 |error| -(error.duration().as_secs_f64() * 1000.0),
                                 |duration| duration.as_secs_f64() * 1000.0,
                             );
-                        json!({"isFile":metadata.is_file(),"isDirectory":metadata.is_dir(),"isSymbolicLink":metadata.is_symlink(),"size":metadata.len(),"mtimeMs":modified})
+                        let mut value = json!({"isFile":metadata.is_file(),"isDirectory":metadata.is_dir(),"isSymbolicLink":metadata.is_symlink(),"size":metadata.len(),"mtimeMs":modified});
+                        #[cfg(unix)]
+                        {
+                            use std::os::unix::fs::MetadataExt;
+                            value["mode"] = json!(metadata.mode());
+                        }
+                        value
                     }
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => Value::Null,
+                    Err(error)
+                        if matches!(
+                            error.kind(),
+                            std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                        ) =>
+                    {
+                        return Ok(Value::Null);
+                    }
                     Err(error) => return Err(error.into()),
                 };
                 ensure!(
@@ -183,23 +237,24 @@ impl ComputeFilesystem {
             Backend::Local(boundary) => {
                 let path = boundary.target(self.path(path)?, false)?;
                 let mut directory = tokio::fs::read_dir(path).await?;
-                let mut names = Vec::new();
-                while let Some(entry) = directory.next_entry().await? {
-                    Self::check(cancel)?;
-                    ensure!(
-                        names.len() < 100000,
-                        "The directory exceeds its entry bound."
-                    );
+                let mut selected = std::collections::BinaryHeap::with_capacity(limit + 1);
+                loop {
+                    let entry = tokio::select! {
+                        entry = directory.next_entry() => entry?,
+                        _ = cancel.cancelled() => anyhow::bail!("The filesystem operation was interrupted."),
+                    };
+                    let Some(entry) = entry else { break };
                     let name = entry.file_name().into_string().map_err(|_| {
                         anyhow::anyhow!("The directory contains an invalid UTF-8 name.")
                     })?;
-                    if after
-                        .is_none_or(|after| name.encode_utf16().cmp(after.encode_utf16()).is_gt())
-                    {
-                        names.push(name);
+                    if after.is_none_or(|after| name.as_str() > after) {
+                        selected.push(name);
+                        if selected.len() > limit + 1 {
+                            selected.pop();
+                        }
                     }
                 }
-                names.sort_by(|left, right| left.encode_utf16().cmp(right.encode_utf16()));
+                let mut names = selected.into_sorted_vec();
                 let more = names.len() > limit;
                 names.truncate(limit);
                 let result = json!({"entries":names,"hasMore":more});

@@ -7,7 +7,7 @@ import { profileResource } from "../../../../happy-agent-modules/sources/api/Api
 import { profilePatchBodySchema } from "../../../../happy-agent-modules/sources/api/ApiSchemas.ts";
 import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
-import { writeFileSync } from "node:fs";
+import { writeNativeCapture as writeFileSync } from "../../../scripts/write-native-capture.mjs";
 export const profileTools = [getLocalProfileTool(undefined, "source-agent")];
 export const profileSchemas = {
     ownerProfile: original.profileSchema,

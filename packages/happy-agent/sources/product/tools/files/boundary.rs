@@ -10,6 +10,9 @@ pub(super) struct Boundary {
     pub mode: String,
     pub private_paths: Vec<PathBuf>,
     pub protected_paths: Vec<PathBuf>,
+    pub allowed_write_paths: Vec<PathBuf>,
+    pub denied_read_paths: Vec<PathBuf>,
+    pub denied_write_paths: Vec<PathBuf>,
 }
 
 impl Boundary {
@@ -54,6 +57,18 @@ impl Boundary {
             !self.private(&path) && !self.private(&target),
             "The private Happy installation directory cannot be accessed through file tools."
         );
+        let denied = if write {
+            &self.denied_write_paths
+        } else {
+            &self.denied_read_paths
+        };
+        ensure!(
+            !denied.iter().any(|denied| path.starts_with(denied)
+                || target.starts_with(denied)
+                || canonical(denied).is_ok_and(|denied| target.starts_with(denied))),
+            "The permission boundary blocks access to this path: {}.",
+            path.display()
+        );
         if !write || self.mode == "full_access" {
             return Ok(target);
         }
@@ -61,7 +76,12 @@ impl Boundary {
             bail!("File changes are disabled in Read only mode.");
         }
         ensure!(
-            path.starts_with(&self.root) && target.starts_with(&self.root),
+            (path.starts_with(&self.root) && target.starts_with(&self.root))
+                || self
+                    .allowed_write_paths
+                    .iter()
+                    .any(|allowed| path.starts_with(allowed)
+                        || canonical(allowed).is_ok_and(|allowed| target.starts_with(allowed))),
             "Workspace write mode cannot modify files outside the working directory: {}.",
             self.root.display()
         );
@@ -115,13 +135,17 @@ fn canonical(path: &Path) -> Result<PathBuf> {
                 return Ok(resolved);
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                // A dangling link is an existing object whose destination is
-                // unknown, rather than an ordinary missing path component.
-                if std::fs::symlink_metadata(&current).is_ok() {
-                    bail!(
-                        "The symbolic link destination cannot be resolved: {}.",
-                        current.display()
-                    );
+                if std::fs::symlink_metadata(&current).is_ok_and(|metadata| metadata.is_symlink()) {
+                    let destination = std::fs::read_link(&current)?;
+                    current = normalize(&if destination.is_absolute() {
+                        destination
+                    } else {
+                        current
+                            .parent()
+                            .context("The symbolic link has no parent directory.")?
+                            .join(destination)
+                    });
+                    continue;
                 }
                 missing.push(
                     current
@@ -182,6 +206,9 @@ mod tests {
             protected_paths: ["AGENTS.md", "happy.toml", "mcp.toml", "AGENTS_SECURITY.md"]
                 .map(|name| workspace.path().join(name))
                 .to_vec(),
+            allowed_write_paths: Vec::new(),
+            denied_read_paths: Vec::new(),
+            denied_write_paths: Vec::new(),
         };
         assert!(
             boundary

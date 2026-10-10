@@ -41,7 +41,116 @@ struct Graph {
     cancel: CancellationToken,
     server: Option<JoinHandle<()>>,
 }
+
+#[tokio::test]
+async fn runner_websocket_uses_its_own_credential_and_releases_replaced_and_text_connections() {
+    use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::{Message, client::IntoClientRequest};
+    const RUNNER_TOKEN: &str = "0123456789012345678901234567890123456789012";
+    let mut fixture = Fixture::new().await;
+    std::fs::create_dir_all(&fixture.config.paths.configuration).unwrap();
+    std::fs::write(fixture.config.paths.configuration.join("happy.toml"), format!("[runners.fixture]\nname = \"Fixture runner\"\ntoken = \"{RUNNER_TOKEN}\"\n")).unwrap();
+    fixture.restart().await;
+    let mut graph = Graph::install(fixture).await;
+    let endpoint = format!("{}/v0/runners/connect", graph.url.replacen("http", "ws", 1));
+    let request = |token: &str| {
+        let mut request = endpoint.clone().into_client_request().unwrap();
+        request.headers_mut().insert("authorization", format!("Bearer {token}").parse().unwrap());
+        request
+    };
+    let rejection = tokio_tungstenite::connect_async(request(&graph.token)).await.unwrap_err();
+    assert!(matches!(rejection, tokio_tungstenite::tungstenite::Error::Http(response) if response.status()==401));
+    let denied = graph.client.get(format!("{}/v0/runners", graph.url)).bearer_auth(RUNNER_TOKEN).send().await.unwrap();
+    assert_eq!(denied.status(), 401);
+    let encode = |header: Value| {
+        let header = serde_json::to_vec(&header).unwrap();
+        let mut frame = (header.len() as u32).to_be_bytes().to_vec();
+        frame.extend(header);
+        Message::Binary(frame.into())
+    };
+    let hello = json!({"type":"hello","protocol":{"min":1,"max":1},"runner":{"version":"fixture","platform":"linux","arch":"x64","hostname":"fixture","home":"/runner-home"}});
+    let ready = json!({"type":"ready","epoch":"fixture-epoch","computes":[],"streams":[]});
+    let mut changes = graph.runners.on_updated();
+    let (mut first, _) = tokio_tungstenite::connect_async(request(RUNNER_TOKEN)).await.unwrap();
+    first.send(encode(hello.clone())).await.unwrap();
+    let Message::Binary(frame) = first.next().await.unwrap().unwrap() else {panic!("the runner welcome must be binary")};
+    let length = u32::from_be_bytes(frame[..4].try_into().unwrap()) as usize;
+    let welcome: Value = serde_json::from_slice(&frame[4..4+length]).unwrap();
+    assert_eq!(welcome["type"], "welcome");
+    first.send(encode(ready.clone())).await.unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(5), changes.changed()).await.unwrap().unwrap();
+    let (status, connected) = graph.request("GET", "/v0/runners", None, None).await;
+    assert_eq!(status, 200);
+    assert_eq!(connected["runners"][0]["status"], "connected");
+    let (status, events) = graph.request("GET", "/v0/events?limit=10000", None, None).await;
+    assert_eq!(status, 200);
+    assert!(events["events"].as_array().unwrap().iter().any(|event| event["type"]=="runners.updated" && event["payload"]==connected));
+    assert!(!connected.to_string().contains(RUNNER_TOKEN));
+    let (mut replacement, _) = tokio_tungstenite::connect_async(request(RUNNER_TOKEN)).await.unwrap();
+    replacement.send(encode(hello)).await.unwrap();
+    assert!(matches!(replacement.next().await.unwrap().unwrap(), Message::Binary(_)));
+    replacement.send(encode(ready)).await.unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while let Some(message) = first.next().await {
+            if matches!(message, Ok(Message::Close(_)) | Err(_)) {break;}
+        }
+    }).await.expect("a replacement must close the previous connection");
+    assert!(graph.runners.is_connected("fixture"));
+    replacement.send(Message::Text("invalid runner message".into())).await.unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            changes.changed().await.unwrap();
+            if changes.borrow()["runners"][0]["status"]=="disconnected" {break;}
+        }
+    }).await.expect("text messages must release the connected slot");
+    let (_, disconnected) = graph.request("GET", "/v0/runners", None, None).await;
+    assert_eq!(disconnected["runners"][0]["machine"], connected["runners"][0]["machine"]);
+    assert!(disconnected["version"].as_str().unwrap() > connected["version"].as_str().unwrap());
+    let (_, events) = graph.request("GET", "/v0/events?limit=10000", None, None).await;
+    assert!(events["events"].as_array().unwrap().iter().any(|event| event["type"]=="runners.updated" && event["payload"]==disconnected));
+    graph.close().await;
+}
+
+#[tokio::test]
+async fn runner_shutdown_flushes_one_goodbye_before_the_websocket_closes() {
+    use futures_util::{SinkExt,StreamExt};
+    use tokio_tungstenite::tungstenite::{Message,client::IntoClientRequest};
+    let mut graph=Graph::with_runner().await;
+    let mut request=format!("{}/v0/runners/connect",graph.url.replacen("http","ws",1)).into_client_request().unwrap();
+    request.headers_mut().insert("authorization","Bearer 0123456789012345678901234567890123456789012".parse().unwrap());
+    let(mut socket,_)=tokio_tungstenite::connect_async(request).await.unwrap();
+    let encode=|header:Value|{let header=serde_json::to_vec(&header).unwrap();let mut frame=(header.len() as u32).to_be_bytes().to_vec();frame.extend(header);Message::Binary(frame.into())};
+    socket.send(encode(json!({"type":"hello","protocol":{"min":1,"max":1},"runner":{"version":"fixture","platform":"linux","arch":"x64","hostname":"fixture","home":"/runner-home"}}))).await.unwrap();
+    assert!(matches!(socket.next().await.unwrap().unwrap(),Message::Binary(_)));
+    let mut changes=graph.runners.on_updated();
+    socket.send(encode(json!({"type":"ready","epoch":"fixture-epoch","computes":[],"streams":[]}))).await.unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(5),changes.changed()).await.unwrap().unwrap();
+    assert!(graph.runners.is_connected("fixture"));
+    graph.fixture.lifecycle.begin_shutdown();
+    let goodbye=tokio::time::timeout(std::time::Duration::from_secs(5),async {
+        let mut goodbye=0;
+        while let Some(message)=socket.next().await {
+            match message.unwrap() {
+                Message::Binary(frame)=>{let length=u32::from_be_bytes(frame[..4].try_into().unwrap()) as usize;let header:Value=serde_json::from_slice(&frame[4..4+length]).unwrap();if header["type"]=="goodbye" {goodbye+=1;}},
+                Message::Close(_)=>break,
+                _=>{},
+            }
+        }
+        goodbye
+    }).await.expect("shutdown must flush its protocol goodbye before closing");
+    assert_eq!(goodbye,1);
+    graph.api.close_runner_connections().await;
+    assert!(!graph.runners.is_connected("fixture"));
+    graph.close().await;
+}
 impl Graph {
+    async fn with_runner() -> Self {
+        let mut fixture=Fixture::new().await;
+        std::fs::create_dir_all(&fixture.config.paths.configuration).unwrap();
+        std::fs::write(fixture.config.paths.configuration.join("happy.toml"),"[runners.fixture]\nname = \"Fixture runner\"\ntoken = \"0123456789012345678901234567890123456789012\"\n").unwrap();
+        fixture.restart().await;
+        Self::install(fixture).await
+    }
     async fn new() -> Self {
         Self::install(Fixture::new().await).await
     }
@@ -96,12 +205,14 @@ impl Graph {
             )
             .unwrap(),
         );
+        let system_prompt = crate::product::system_prompt::SystemPromptModule::new(fixture.config.clone(), tools.clone(), fixture.runtime.clone(), fixture.durable.clone()).unwrap();
         let auto = AutoModule::new(
             fixture.config.clone(),
             fixture.runtime.clone(),
             fixture.durable.clone(),
             tools.clone(),
             fixture.lifecycle.clone(),
+            system_prompt.clone(),
         )
         .unwrap();
         auto.load().await.unwrap();
@@ -118,6 +229,7 @@ impl Graph {
             auto.clone(),
             permissions,
             fixture.events.clone(),
+            system_prompt,
         ));
         agents.install(secrets.clone()).unwrap();
         let git = GitModule::new(fixture.config.clone(), runners.clone()).unwrap();
@@ -249,9 +361,10 @@ impl Graph {
             tools,
             user_input,
             auto,
-            crate::product::provider_scan::ProviderScanModule::new(fixture.config.clone(),fixture.durable.clone(),fixture.lifecycle.clone()).unwrap(),
+            crate::product::provider_scan::ProviderScanModule::new(fixture.config.clone(),fixture.runtime.clone(),fixture.durable.clone(),fixture.lifecycle.clone()).unwrap(),
             fixture.node.clone(),
             profile,
+            runners.clone(),
         )
         .unwrap();
         agents.prepare().unwrap();
@@ -269,7 +382,7 @@ impl Graph {
         let server = tokio::spawn(async move {
             let mut connections = JoinSet::new();
             loop {
-                tokio::select! {_=stop.cancelled()=>break,result=listener.accept()=>{let Ok((socket,_))=result else{break;};if connections.len()>=128{continue;}let owner=owner.clone();connections.spawn(async move{let service=service_fn(move|request|owner.clone().handle(request));let _=hyper::server::conn::http1::Builder::new().serve_connection(TokioIo::new(socket),service).await;});},_=connections.join_next(),if !connections.is_empty()=>{}}
+                tokio::select! {_=stop.cancelled()=>break,result=listener.accept()=>{let Ok((socket,_))=result else{break;};if connections.len()>=128{continue;}let owner=owner.clone();connections.spawn(async move{let service=service_fn(move|request|owner.clone().handle(request));let _=hyper::server::conn::http1::Builder::new().serve_connection(TokioIo::new(socket),service).with_upgrades().await;});},_=connections.join_next(),if !connections.is_empty()=>{}}
             }
             connections.abort_all();
             while connections.join_next().await.is_some() {}
@@ -370,6 +483,7 @@ impl Graph {
                 .unwrap();
         }
         self.fixture.lifecycle.begin_shutdown();
+        self.api.close_runner_connections().await;
         self.fixture.durable.stop().await;
         self.agents.close().await;
         self.connections.close().await.unwrap();

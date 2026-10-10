@@ -243,7 +243,7 @@ impl SkillsModule {
         scope: &AgentScope<'_>,
         cancel: &CancellationToken,
     ) -> Result<Vec<Value>> {
-        match self.compute.skill_compute(scope, cancel).await? {
+        match self.compute.compute_filesystem(scope, cancel).await? {
             Some(compute) => self.entries(compute, cancel).await,
             None => Ok(Vec::new()),
         }
@@ -318,7 +318,7 @@ impl SkillsModule {
         );
         let compute = self
             .compute
-            .skill_compute(scope, cancel)
+            .compute_filesystem(scope, cancel)
             .await?
             .context("This agent has no compute.")?;
         let entries = self.entries(compute.clone(), cancel).await?;
@@ -516,7 +516,7 @@ impl AgentModule for SkillsModule {
         Ok(
             if self
                 .compute
-                .skill_compute(scope, &CancellationToken::new())
+                .compute_filesystem(scope, &CancellationToken::new())
                 .await?
                 .is_some()
             {

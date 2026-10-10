@@ -23,6 +23,8 @@ use tokio_util::sync::CancellationToken;
 
 #[path = "owners/workspaces_persistence.rs"]
 mod persistence;
+#[path = "owners/workspace_catalog.rs"]
+mod catalog;
 #[path = "owners/workspaces_reservation.rs"]
 mod reservation;
 #[path = "owners/workspace_identity.rs"]
@@ -77,6 +79,10 @@ impl WorkspacesModule {
             "ownerWorkspaceProvision",
             "ownerNull",
             "ownerFolderSettings",
+            "ownerWorkspacePageQuery",
+            "ownerWorkspacePage",
+            "ownerWorkspaceAgentOrders",
+            "ownerWorkspaceId",
         ] {
             let _ = schemas.valid(name, &Value::Null)?;
         }

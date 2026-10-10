@@ -4,7 +4,7 @@ use anyhow::{Result, bail};
 use rusqlite::{OptionalExtension, Row, params};
 use serde_json::{Value, json};
 
-const PROJECT_COLUMNS: &str = "id,repository_ref,runner_id,kind,storage_key,name,name_source,status,presence,initialization_status,initialization_attempt,initialization_error,default_branch,worktree_support,worktree_unsupported_reason,remote_source_json,required_secret_kind,git_ahead,git_behind,git_detached,git_branch,git_head,git_upstream,workspace_setup_commands_json,order_key,version,avatar_json,description,created_at,updated_at,archived_at";
+pub(super) const PROJECT_COLUMNS: &str = "id,repository_ref,runner_id,kind,storage_key,name,name_source,status,presence,initialization_status,initialization_attempt,initialization_error,default_branch,worktree_support,worktree_unsupported_reason,remote_source_json,required_secret_kind,git_ahead,git_behind,git_detached,git_branch,git_head,git_upstream,workspace_setup_commands_json,order_key,version,avatar_json,description,created_at,updated_at,archived_at";
 
 // Versions and their effects are the shipped module migrations. In particular,
 // 004 and 005 intentionally reset their old generations; 010 preserves rows.
@@ -51,7 +51,7 @@ pub const MIGRATIONS: &[(&str, &str)] = &[
     ),
 ];
 
-fn from_row(row: &Row<'_>) -> rusqlite::Result<Value> {
+pub(super) fn from_row(row: &Row<'_>) -> rusqlite::Result<Value> {
     let mut value = json!({});
     for (index, field) in [
         (0, "id"),
@@ -163,6 +163,10 @@ pub fn settings(ctx: &Context<'_>, schemas: &Schemas, id: &str) -> Result<Value>
 
 pub fn available(ctx: &Context<'_>) -> Result<bool> {
     Ok(ctx.database().query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='happy_agent_module_projects')",[],|row|row.get(0))?)
+}
+
+pub fn has_active_project(ctx: &Context<'_>) -> Result<bool> {
+    Ok(ctx.database().query_row("SELECT EXISTS(SELECT 1 FROM happy_agent_module_projects WHERE status<>'archived')", [], |row| row.get(0))?)
 }
 
 pub fn validate(schemas: &Schemas, value: &Value) -> Result<()> {

@@ -17,7 +17,7 @@ use super::{
     user_input::{UserInputModule,UserInputSubscription},
     auto::AutoModule,
     provider_scan::ProviderScanModule,
-    owners::NodeModule,
+    owners::{NodeModule,RunnersModule},
     profile::{ProfileModule,ProfileSubscription},
 };
 use bytes::Bytes;
@@ -45,6 +45,8 @@ mod questions;
 mod mutation;
 mod configuration;
 mod profile;
+mod runners;
+mod onboarding;
 
 pub struct ApiModule {
     config: Arc<ConfigModule>,
@@ -71,6 +73,10 @@ pub struct ApiModule {
     node:Arc<NodeModule>,
     profile:Arc<ProfileModule>,
     _profile_events:ProfileSubscription,
+    runners:Arc<RunnersModule>,
+    _runner_events:super::owners::RunnerSnapshotSubscription,
+    runner_connections:std::sync::Mutex<tokio::task::JoinSet<()>>,
+    runner_connection_slots:Arc<tokio::sync::Semaphore>,
 }
 
 impl ApiModule {
@@ -93,6 +99,7 @@ impl ApiModule {
         provider_scan:Arc<ProviderScanModule>,
         node:Arc<NodeModule>,
         profile:Arc<ProfileModule>,
+        runners:Arc<RunnersModule>,
     ) -> anyhow::Result<Arc<Self>> {
         let journal = events.clone();
         let live_events = live.on_event(Arc::new(move |event| {
@@ -102,7 +109,13 @@ impl ApiModule {
         }))?;
         let journal=events.clone();let projector=Arc::downgrade(&profile);
         let profile_events=profile.on_event_transactional(Arc::new(move|ctx,event,snapshot|{let Some(profile)=projector.upgrade()else{return Ok(());};let mut payload=json!({"previousVersion":event["data"]["previousVersion"],"version":event["data"]["version"],"profile":profile.resource(snapshot)});mutation::apply(&mut payload);journal.publish(ctx,"profile.updated",payload,event["createdAt"].as_u64().unwrap())}))?;
+        let journal=events.clone();
+        let runner_events=runners.on_snapshot_transactional(Arc::new(move|ctx,snapshot|journal.publish(ctx,"runners.updated",snapshot.clone(),super::identity::now())))?;
         let module=Arc::new(Self {
+            runners,
+            _runner_events:runner_events,
+            runner_connections:std::sync::Mutex::new(tokio::task::JoinSet::new()),
+            runner_connection_slots:Arc::new(tokio::sync::Semaphore::new(256)),
             config,
             lifecycle,
             token: OnceLock::new(),
@@ -180,6 +193,7 @@ impl ApiModule {
     ) -> Result<Response<Body>, Infallible> {
         let method = request.method().as_str().to_owned();
         let path = request.uri().path().to_owned();
+        if method=="GET"&&path=="/v0/runners/connect" {return Ok(self.runner_connect(request).await);}
         let authorized = self.authorized(&request);
         if method == "GET" && path == "/v0/authentication" {
             return Ok(response(
@@ -217,6 +231,9 @@ impl ApiModule {
             None
         };
         let result = match (method.as_str(), path.as_str()) {
+            ("GET", "/v0/onboarding") => match self.onboarding_state().await {Ok(state)=>response(200,state),Err(failure)=>internal(failure)},
+            ("POST", "/v0/onboarding/complete") => match self.complete_onboarding().await {Ok(state)=>response(200,state),Err(failure)=>internal(failure)},
+            ("GET", "/v0/runners") => match self.runners.snapshot().await {Ok(snapshot)=>response(200,snapshot),Err(failure)=>internal(failure)},
             _ if path=="/v0/profile"||path=="/v0/profile/photo"=>self.profile_route(request).await,
             _ if path=="/v0/config"||path=="/v0/providers/scan"||path.starts_with("/v0/providers/")=>self.configuration_route(request).await,
             ("GET", "/v0/connections") => {

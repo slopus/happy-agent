@@ -10,6 +10,37 @@ use std::{
 const REQUEST_BYTES: usize = 8 * 1024 * 1024;
 const RESPONSE_BYTES: usize = 256 * 1024;
 
+#[cfg(test)]
+#[test]
+fn dropping_a_rejected_regex_worker_releases_its_blocked_output_reader() {
+    let child = std::process::Command::new("/bin/sh")
+        .args(["-c", "exit 0"])
+        .spawn()
+        .unwrap();
+    let (sender, output) = mpsc::sync_channel(1);
+    sender.send(Ok(b"invalid response\n".to_vec())).unwrap();
+    let reader = std::thread::spawn(move || {
+        let _ = sender.send(Ok(b"extra response\n".to_vec()));
+    });
+    let worker = Worker {
+        child,
+        input: None,
+        output,
+        reader: Some(reader),
+        began: Instant::now(),
+        cancel: CancellationToken::new(),
+        schemas: Schemas::new().unwrap(),
+    };
+    let (done, completed) = mpsc::channel();
+    std::thread::spawn(move || {
+        drop(worker);
+        done.send(()).unwrap();
+    });
+    completed
+        .recv_timeout(Duration::from_secs(2))
+        .expect("a rejected worker must release its bounded output reader before joining it");
+}
+
 pub(super) struct Worker {
     child: Child,
     input: Option<ChildStdin>,
@@ -171,6 +202,10 @@ impl Drop for Worker {
         self.input.take();
         let _ = self.child.kill();
         let _ = self.child.wait();
+        // A malformed worker can fill the response slot before the caller
+        // rejects it. Release that slot before joining its blocked producer.
+        let (_, closed) = mpsc::sync_channel(0);
+        drop(std::mem::replace(&mut self.output, closed));
         if let Some(reader) = self.reader.take() {
             let _ = reader.join();
         }

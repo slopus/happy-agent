@@ -1,5 +1,5 @@
 import { createRequire } from "node:module";
-import { writeFileSync } from "node:fs";
+import { writeNativeCapture as writeFileSync } from "./write-native-capture.mjs";
 import { sourcePrivateSchema } from "./source-private-schema.mjs";
 import {
     documentBodySchema,
@@ -126,9 +126,11 @@ import {
     skillFoldersTools,
 } from "../sources/product/skill_folders/schema-export.mjs";
 import { skillsSchemas, skillsTools } from "../sources/product/skills/schema-export.mjs";
+import { systemPromptSchemas } from "../sources/product/system_prompt/schema-export.mjs";
 import { titleSchemas } from "../sources/product/titles/schema-export.mjs";
 import { profileSchemas, profileTools } from "../sources/product/profile/schema-export.mjs";
 import { workspaceNamingSchemas } from "../sources/product/owners/workspace-schema-export.mjs";
+import { ownerCatalogSchemas } from "../sources/product/owners/catalog-schema-export.mjs";
 import { LIVE_CONTROLLER_TOOLS } from "../../happy-agent-modules/sources/live/impl/runLiveController.ts";
 import {
     tailcatAddressSchema,
@@ -272,6 +274,8 @@ const {
     skillPageCursorSchema,
     skillsUpdatedPayloadSchema,
     runnerListResponseSchema,
+    onboardingStateSchema,
+    onboardingCompletedResponseSchema,
 } = await import(require.resolve("@slopus/happy-agent-client"));
 const {
     connectionIdSchema,
@@ -566,9 +570,11 @@ const schemas = {
     ...workflowsSchemas,
     ...skillFoldersSchemas,
     ...skillsSchemas,
+    ...systemPromptSchemas,
     ...profileSchemas,
     ...titleSchemas,
     ...workspaceNamingSchemas,
+    ...ownerCatalogSchemas,
     ownerLiveSession: liveSessionSchema,
     ownerLiveClientMessage: liveControlClientMessageSchema,
     ownerLiveServerMessage: liveControlServerMessageSchema,
@@ -667,6 +673,8 @@ const schemas = {
         { additionalProperties: false },
     ),
     ownerRunnerSnapshot: runnerListResponseSchema,
+    ownerOnboardingState: onboardingStateSchema,
+    ownerOnboardingCompleted: onboardingCompletedResponseSchema,
     ownerRunnerFrame: runnerFrameHeaderSchema,
     ownerRunnerAcceptedConnection: runnerAcceptedConnectionSchema,
     ownerGithubToken: githubTokenSchema,

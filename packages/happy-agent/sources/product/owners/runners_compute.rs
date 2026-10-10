@@ -153,6 +153,9 @@ impl RunnersModule {
     }
 }
 impl RunnerCompute {
+    pub fn error_code<'a>(&self,error:&'a anyhow::Error)->Option<&'a str> {
+        error.downcast_ref::<RemoteError>().and_then(|error|error.code.as_deref())
+    }
     fn owner(&self) -> Result<Arc<RunnersModule>> {
         self.owner
             .upgrade()

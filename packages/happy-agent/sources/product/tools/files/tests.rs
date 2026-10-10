@@ -2,12 +2,263 @@ use super::*;
 
 #[cfg(unix)]
 #[tokio::test]
+async fn native_runner_filesystem_matches_source_rpc_shapes_and_per_call_boundaries() {
+    use std::os::unix::fs::PermissionsExt;
+    let fixture = Fixture::new().await;
+    let request = json!({"computeId":"peer-files","cwd":fixture.root,"policy":{"protectedProjectFiles":["owner-rule"]}});
+    let filesystem = fixture.files.runner_filesystem(&request).unwrap();
+    let cancel = CancellationToken::new();
+    let permissions =
+        json!({"mode":"workspace_write","network":{"egress":false,"localBinding":false}});
+    let call = |path: &str| json!({"computeId":"peer-files","permissions":permissions,"path":path});
+    let mut mkdir = call("nested");
+    mkdir["recursive"] = json!(true);
+    assert_eq!(
+        filesystem
+            .native_runner_request("fs.mkdir", &mkdir, &[], &cancel)
+            .await
+            .unwrap()
+            .0,
+        json!({})
+    );
+    let mut write = call("nested/data");
+    write["encoding"] = json!("bytes");
+    let body = b"\x00raw\xff\n";
+    filesystem
+        .native_runner_request("fs.writeFile", &write, body, &cancel)
+        .await
+        .unwrap();
+    let mut read = call("nested/data");
+    read["maxBytes"] = json!(body.len());
+    assert_eq!(
+        filesystem
+            .native_runner_request("fs.readFileBuffer", &read, &[], &cancel)
+            .await
+            .unwrap(),
+        (json!({}), body.to_vec())
+    );
+    assert_eq!(
+        filesystem
+            .native_runner_request("fs.readFile", &read_without_options(&read), &[], &cancel)
+            .await
+            .unwrap()
+            .0,
+        json!({"text":"\u{0}raw�\n"})
+    );
+    let stat = filesystem
+        .native_runner_request("fs.stat", &call("nested/data"), &[], &cancel)
+        .await
+        .unwrap()
+        .0;
+    assert_eq!(stat["stat"]["size"], body.len());
+    assert_eq!(stat["stat"]["isFile"], true);
+    let mut chmod = call("nested/data");
+    chmod["mode"] = json!(0o751);
+    filesystem
+        .native_runner_request("fs.chmod", &chmod, &[], &cancel)
+        .await
+        .unwrap();
+    assert_eq!(
+        std::fs::metadata(fixture.root.join("nested/data"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o751
+    );
+    let mut modified = call("nested/data");
+    modified["mtimeMs"] = json!(123456789000.0);
+    filesystem
+        .native_runner_request("fs.setModificationTime", &modified, &[], &cancel)
+        .await
+        .unwrap();
+    let stat = filesystem
+        .native_runner_request("fs.lstat", &call("nested/data"), &[], &cancel)
+        .await
+        .unwrap()
+        .0;
+    assert_eq!(stat["stat"]["mtimeMs"], 123456789000.0);
+    std::fs::write(fixture.root.join("occupied"), "replace").unwrap();
+    let move_request = json!({"computeId":"peer-files","permissions":permissions,"source":"nested/data","destination":"occupied"});
+    filesystem
+        .native_runner_request("fs.move", &move_request, &[], &cancel)
+        .await
+        .unwrap();
+    assert_eq!(std::fs::read(fixture.root.join("occupied")).unwrap(), body);
+    std::os::unix::fs::symlink("missing", fixture.root.join("dangling")).unwrap();
+    assert_eq!(
+        filesystem
+            .native_runner_request("fs.exists", &call("dangling"), &[], &cancel)
+            .await
+            .unwrap()
+            .0,
+        json!({"exists":true})
+    );
+    assert!(
+        filesystem
+            .native_runner_request("fs.stat", &call("dangling"), &[], &cancel)
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        filesystem
+            .native_runner_request("fs.lstat", &call("dangling"), &[], &cancel)
+            .await
+            .unwrap()
+            .0["stat"]["isSymbolicLink"],
+        true
+    );
+    let batch =
+        json!({"computeId":"peer-files","permissions":permissions,"paths":["occupied","missing"]});
+    let stats = filesystem
+        .native_runner_request("fs.lstatMany", &batch, &[], &cancel)
+        .await
+        .unwrap()
+        .0;
+    assert_eq!(stats["stats"][1], Value::Null);
+    let page = json!({"computeId":"peer-files","permissions":permissions,"path":".","limit":1});
+    assert_eq!(
+        filesystem
+            .native_runner_request("fs.readdirPage", &page, &[], &cancel)
+            .await
+            .unwrap()
+            .0,
+        json!({"entries":["dangling"],"hasMore":true})
+    );
+    assert_eq!(
+        filesystem
+            .native_runner_request("fs.readdir", &call("nested"), &[], &cancel)
+            .await
+            .unwrap()
+            .0,
+        json!({"entries":[]})
+    );
+    assert_eq!(
+        filesystem
+            .native_runner_request("fs.realpath", &call("occupied"), &[], &cancel)
+            .await
+            .unwrap()
+            .0["path"],
+        fixture.root.join("occupied").to_str().unwrap()
+    );
+    for protected in ["happy.toml", "owner-rule", ".git/config"] {
+        let mut blocked = call(protected);
+        blocked["encoding"] = json!("bytes");
+        assert!(
+            filesystem
+                .native_runner_request("fs.writeFile", &blocked, b"forbidden", &cancel)
+                .await
+                .is_err()
+        );
+        assert!(!fixture.root.join(protected).exists());
+    }
+    let mut read_only = write.clone();
+    read_only["permissions"]["mode"] = json!("read_only");
+    assert!(
+        filesystem
+            .native_runner_request("fs.writeFile", &read_only, b"forbidden", &cancel)
+            .await
+            .is_err()
+    );
+    let mut denied = call("occupied");
+    denied["permissions"]["mode"] = json!("full_access");
+    denied["permissions"]["deniedReadPaths"] = json!(["occupied"]);
+    assert!(
+        filesystem
+            .native_runner_request("fs.readFile", &denied, &[], &cancel)
+            .await
+            .is_err()
+    );
+    let mut remove = call("nested");
+    remove["recursive"] = json!(true);
+    remove["force"] = json!(true);
+    filesystem
+        .native_runner_request("fs.rm", &remove, &[], &cancel)
+        .await
+        .unwrap();
+    filesystem
+        .native_runner_request("fs.rm", &remove, &[], &cancel)
+        .await
+        .unwrap();
+    fixture.close().await;
+}
+
+fn read_without_options(read: &Value) -> Value {
+    let mut read = read.clone();
+    read.as_object_mut().unwrap().remove("maxBytes");
+    read
+}
+
+#[tokio::test]
+async fn compute_directory_pages_preserve_source_byte_order_and_cursor() {
+    let fixture = Fixture::new().await;
+    for name in ["\u{e000}", "\u{10000}", "plain"] {
+        std::fs::write(fixture.root.join(name), "data").unwrap();
+    }
+    let filesystem = fixture
+        .files
+        .filesystem(&fixture.configuration, "read_only")
+        .unwrap();
+    let cancel = CancellationToken::new();
+    let first = filesystem
+        .entries(&fixture.root, None, 2, &cancel)
+        .await
+        .unwrap();
+    assert_eq!(
+        first,
+        json!({"entries":["plain","\u{e000}"],"hasMore":true})
+    );
+    assert_eq!(
+        filesystem
+            .entries(&fixture.root, Some("\u{e000}"), 2, &cancel)
+            .await
+            .unwrap(),
+        json!({"entries":["\u{10000}"],"hasMore":false})
+    );
+    fixture.close().await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn patches_remember_the_written_alias_for_later_staleness_checks() {
-    let fixture=Fixture::new().await;let target=fixture.root.join("kept.txt");std::fs::write(&target,"before\n").unwrap();let alias=fixture.root.join("alias.txt");std::os::unix::fs::symlink(&target,&alias).unwrap();let cancel=CancellationToken::new();
+    let fixture = Fixture::new().await;
+    let target = fixture.root.join("kept.txt");
+    std::fs::write(&target, "before\n").unwrap();
+    let alias = fixture.root.join("alias.txt");
+    std::os::unix::fs::symlink(&target, &alias).unwrap();
+    let cancel = CancellationToken::new();
     let result=fixture.files.patch("sourcefiles",&fixture.configuration,"workspace_write",&json!({"patch":"*** Begin Patch\n*** Update File: alias.txt\n@@\n-before\n+after\n*** End Patch"}),&cancel).await.unwrap();
-    let stamp=result.read.as_ref().unwrap()[0].clone();let files=fixture.files.clone();fixture.runtime.transact(move|ctx|files.record(ctx,"sourcefiles",&stamp)).await.unwrap();
-    let old=std::fs::metadata(&target).unwrap().modified().unwrap();std::fs::write(&target,"external\n").unwrap();std::fs::File::options().write(true).open(&target).unwrap().set_modified(old+std::time::Duration::from_secs(2)).unwrap();
-    assert!(fixture.files.edit("sourcefiles",&fixture.configuration,"workspace_write","claude",&json!({"file_path":alias,"old_string":"external","new_string":"discarded"}),&cancel).await.is_err());assert_eq!(std::fs::read_to_string(target).unwrap(),"external\n");fixture.close().await;
+    let stamp = result.read.as_ref().unwrap()[0].clone();
+    let files = fixture.files.clone();
+    fixture
+        .runtime
+        .transact(move |ctx| files.record(ctx, "sourcefiles", &stamp))
+        .await
+        .unwrap();
+    let old = std::fs::metadata(&target).unwrap().modified().unwrap();
+    std::fs::write(&target, "external\n").unwrap();
+    std::fs::File::options()
+        .write(true)
+        .open(&target)
+        .unwrap()
+        .set_modified(old + std::time::Duration::from_secs(2))
+        .unwrap();
+    assert!(
+        fixture
+            .files
+            .edit(
+                "sourcefiles",
+                &fixture.configuration,
+                "workspace_write",
+                "claude",
+                &json!({"file_path":alias,"old_string":"external","new_string":"discarded"}),
+                &cancel
+            )
+            .await
+            .is_err()
+    );
+    assert_eq!(std::fs::read_to_string(target).unwrap(), "external\n");
+    fixture.close().await;
 }
 
 #[tokio::test]

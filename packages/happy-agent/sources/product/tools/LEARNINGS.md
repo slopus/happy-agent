@@ -77,8 +77,17 @@ File operations check written and canonical paths, including aliases, and deny
 private directories before Full access is considered. Discovery applies that
 same rule to every descendant. Restricted writes preserve absent protected
 names without creating placeholders. Anchored descriptor operations preserve
-mode bits and avoid following a substituted symlink. Deletes remove a symlink's
-directory entry; moves preserve the original file and refuse occupied targets.
+mode bits and avoid following a substituted symlink. Patch deletes remove a
+symlink's directory entry; patch moves preserve the original file and refuse
+occupied targets. The compute filesystem's raw move uses checked native rename
+and can replace a destination, as its Source RPC contract requires.
+
+Directory pages compare UTF-8 bytes and retain only the requested page plus one
+sentinel while scanning. Sorting UTF-16 changed both the page and its cursor for
+non-BMP names. Optional metadata lookups return an internal missing value;
+runner stat replies retain their required object and report missing paths as
+errors. Per-call filesystem permissions preserve explicit denied paths even in
+Full access, and protected absent names remain absent.
 
 ## Output and search preserve Source text semantics
 
@@ -87,7 +96,9 @@ incomplete UTF-8 suffix into the next poll. Search uses ECMAScript expressions
 and UCS-2 indexing, including lookaround and backreferences, in a native worker
 with no inherited environment. The worker has bounded frames, memory, CPU,
 elapsed time and caller cancellation, and is killed and reaped on every exit.
-Source's search budgets and truncation disclosures remain in the result.
+Source's search budgets and truncation disclosures remain in the result. A
+rejected regex worker releases its bounded response receiver before joining the
+producer, so malformed extra output cannot deadlock cleanup.
 
 ## Agent runners carry each operation's actual permissions
 

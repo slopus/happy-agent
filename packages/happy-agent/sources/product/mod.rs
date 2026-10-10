@@ -29,6 +29,7 @@ mod services;
 mod secrets;
 mod skill_folders;
 mod skills;
+mod system_prompt;
 mod subtasks;
 mod schemas;
 mod tools;
@@ -80,7 +81,7 @@ pub async fn run() -> Result<()> {
         usage.clone(),
     )?);
     let durable = Arc::new(durable::DurableFunctionsModule::new(runtime.clone(), lifecycle.clone())?);
-    let provider_scan=provider_scan::ProviderScanModule::new(config.clone(),durable.clone(),lifecycle.clone())?;
+    let provider_scan=provider_scan::ProviderScanModule::new(config.clone(),runtime.clone(),durable.clone(),lifecycle.clone())?;
     let secrets = secrets::SecretsModule::new(config.clone(), runtime.clone(), durable.clone(), events.clone())?;
     let services = services::ServicesModule::new(config.clone(), runtime.clone(), durable.clone(), lifecycle.clone(), events.clone())?;
     let runners = owners::RunnersModule::new(config.clone(), runtime.clone(), lifecycle.clone())?;
@@ -96,9 +97,10 @@ pub async fn run() -> Result<()> {
     )?);
     let node = owners::NodeModule::new(config.clone(), runtime.clone(), durable.clone(), events.clone())?;
     let skills = owners::GlobalSkillsModule::new(config.clone(), runtime.clone(), durable.clone(), events.clone())?;
-    let auto = auto::AutoModule::new(config.clone(), runtime.clone(), durable.clone(), tools.clone(), lifecycle.clone())?;
+    let system_prompt = system_prompt::SystemPromptModule::new(config.clone(), tools.clone(), runtime.clone(), durable.clone())?;
+    let auto = auto::AutoModule::new(config.clone(), runtime.clone(), durable.clone(), tools.clone(), lifecycle.clone(), system_prompt.clone())?;
     let permissions = Arc::new(permissions::PermissionsModule::new(auto.clone(), runtime.clone(), history.clone())?);
-    let agent_runtime = Arc::new(agent_runtime::AgentRuntimeModule::new(config.clone(), runtime.clone(), history.clone(), tools.clone(), usage.clone(), lifecycle.clone(), auto.clone(), permissions, events.clone()));
+    let agent_runtime = Arc::new(agent_runtime::AgentRuntimeModule::new(config.clone(), runtime.clone(), history.clone(), tools.clone(), usage.clone(), lifecycle.clone(), auto.clone(), permissions, events.clone(), system_prompt));
     let _agent_skills=skills::SkillsModule::new(config.clone(),tools.clone(),skills.clone(),runtime.clone(),agent_runtime.clone())?;
     let cloud = cloud::CloudModule::new(config.clone(), runtime.clone(), durable.clone(), lifecycle.clone(), events.clone())?;
     let git = owners::GitModule::new(config.clone(), runners.clone())?;
@@ -152,6 +154,7 @@ pub async fn run() -> Result<()> {
         provider_scan.clone(),
         node.clone(),
         profile.clone(),
+        runners.clone(),
     )?;
     agent_runtime.prepare()?;
     // Health is available before storage restoration, on the same authenticated listener.
@@ -189,6 +192,7 @@ pub async fn run() -> Result<()> {
         #[cfg(unix)]
         tailcat.attach_transport(serde_json::json!({"socketPath":config.paths.socket})).await?;
         skills.start().await?;
+        if provider_scan.start().await.is_err() { eprintln!("Background provider credential maintenance could not start."); }
         durable.start().await?;
         agents.load().await?;
         lifecycle.publish_pid()?;

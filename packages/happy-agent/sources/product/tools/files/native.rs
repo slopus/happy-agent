@@ -7,6 +7,263 @@ use std::{
 
 pub(super) const MAX_TEXT_BYTES: usize = 44 * 1024 * 1024;
 
+#[cfg(unix)]
+pub(super) fn write_direct(path: &Path, bytes: &[u8]) -> Result<()> {
+    use std::os::fd::{AsRawFd, FromRawFd};
+    let (directory, name) = parent(path, false)?;
+    let descriptor = unsafe {
+        libc::openat(
+            directory.as_raw_fd(),
+            name.as_ptr(),
+            libc::O_WRONLY | libc::O_CREAT | libc::O_TRUNC | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+            0o666,
+        )
+    };
+    if descriptor < 0 {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    let mut file = unsafe { File::from_raw_fd(descriptor) };
+    file.write_all(bytes)?;
+    Ok(())
+}
+#[cfg(unix)]
+pub(super) fn mkdir(path: &Path, recursive: bool) -> Result<()> {
+    use std::os::fd::AsRawFd;
+    if recursive && path.is_dir() {
+        return Ok(());
+    }
+    let (directory, name) = parent(path, recursive)?;
+    if unsafe { libc::mkdirat(directory.as_raw_fd(), name.as_ptr(), 0o777) } < 0 {
+        let error = std::io::Error::last_os_error();
+        if recursive && error.kind() == std::io::ErrorKind::AlreadyExists {
+            let mut metadata = std::mem::MaybeUninit::<libc::stat>::uninit();
+            if unsafe {
+                libc::fstatat(
+                    directory.as_raw_fd(),
+                    name.as_ptr(),
+                    metadata.as_mut_ptr(),
+                    libc::AT_SYMLINK_NOFOLLOW,
+                )
+            } == 0
+                && unsafe { metadata.assume_init() }.st_mode & libc::S_IFMT == libc::S_IFDIR
+            {
+                return Ok(());
+            }
+        }
+        return Err(error.into());
+    }
+    Ok(())
+}
+#[cfg(unix)]
+pub(super) fn chmod(path: &Path, mode: u32) -> Result<()> {
+    use std::os::fd::AsRawFd;
+    let (directory, name) = parent(path, false)?;
+    if unsafe {
+        libc::fchmodat(
+            directory.as_raw_fd(),
+            name.as_ptr(),
+            mode as libc::mode_t,
+            libc::AT_SYMLINK_NOFOLLOW,
+        )
+    } < 0
+    {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    Ok(())
+}
+#[cfg(unix)]
+pub(super) fn rename(source: &Path, destination: &Path) -> Result<()> {
+    use std::os::fd::AsRawFd;
+    let (from, name) = parent(source, false)?;
+    let (to, target) = parent(destination, false)?;
+    if unsafe {
+        libc::renameat(
+            from.as_raw_fd(),
+            name.as_ptr(),
+            to.as_raw_fd(),
+            target.as_ptr(),
+        )
+    } < 0
+    {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    Ok(())
+}
+#[cfg(unix)]
+pub(super) fn set_modified(path: &Path, milliseconds: f64) -> Result<()> {
+    use std::os::fd::AsRawFd;
+    ensure!(
+        milliseconds.is_finite(),
+        "The file modification time is invalid."
+    );
+    let (directory, name) = parent(path, false)?;
+    let seconds = (milliseconds / 1000.0).floor();
+    ensure!(
+        seconds >= libc::time_t::MIN as f64 && seconds <= libc::time_t::MAX as f64,
+        "The file modification time is out of range."
+    );
+    let times = [
+        libc::timespec {
+            tv_sec: 0,
+            tv_nsec: libc::UTIME_OMIT,
+        },
+        libc::timespec {
+            tv_sec: seconds as libc::time_t,
+            tv_nsec: ((milliseconds / 1000.0 - seconds) * 1e9).floor() as libc::c_long,
+        },
+    ];
+    if unsafe {
+        libc::utimensat(
+            directory.as_raw_fd(),
+            name.as_ptr(),
+            times.as_ptr(),
+            libc::AT_SYMLINK_NOFOLLOW,
+        )
+    } < 0
+    {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    Ok(())
+}
+#[cfg(unix)]
+pub(super) fn remove_tree(
+    path: &Path,
+    recursive: bool,
+    force: bool,
+    boundary: &super::Boundary,
+    cancel: &tokio_util::sync::CancellationToken,
+) -> Result<()> {
+    use std::os::fd::AsRawFd;
+    ensure!(
+        !cancel.is_cancelled(),
+        "The filesystem operation was interrupted."
+    );
+    boundary.target(
+        path.to_str().context("The removed path is not UTF-8.")?,
+        true,
+    )?;
+    let (directory, name) = match parent(path, false) {
+        Ok(value) => value,
+        Err(error)
+            if force
+                && error
+                    .downcast_ref::<std::io::Error>()
+                    .is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound) =>
+        {
+            return Ok(());
+        }
+        Err(error) => return Err(error),
+    };
+    let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
+    if unsafe {
+        libc::fstatat(
+            directory.as_raw_fd(),
+            name.as_ptr(),
+            stat.as_mut_ptr(),
+            libc::AT_SYMLINK_NOFOLLOW,
+        )
+    } < 0
+    {
+        let error = std::io::Error::last_os_error();
+        if force && error.kind() == std::io::ErrorKind::NotFound {
+            return Ok(());
+        }
+        return Err(error.into());
+    }
+    let is_directory = unsafe { stat.assume_init() }.st_mode & libc::S_IFMT == libc::S_IFDIR;
+    if is_directory && !recursive {
+        return Err(std::io::Error::from(std::io::ErrorKind::IsADirectory).into());
+    }
+    if is_directory {
+        let descriptor = unsafe {
+            libc::openat(
+                directory.as_raw_fd(),
+                name.as_ptr(),
+                libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+            )
+        };
+        if descriptor < 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        let stream = unsafe { libc::fdopendir(descriptor) };
+        if stream.is_null() {
+            unsafe {
+                libc::close(descriptor);
+            };
+            return Err(std::io::Error::last_os_error().into());
+        }
+        struct Directory(*mut libc::DIR);
+        impl Drop for Directory {
+            fn drop(&mut self) {
+                unsafe {
+                    libc::closedir(self.0);
+                }
+            }
+        }
+        let stream = Directory(stream);
+        loop {
+            let entry = unsafe { libc::readdir(stream.0) };
+            if entry.is_null() {
+                break;
+            }
+            let name = unsafe { std::ffi::CStr::from_ptr((*entry).d_name.as_ptr()) };
+            if name.to_bytes() == b"." || name.to_bytes() == b".." {
+                continue;
+            }
+            use std::os::unix::ffi::OsStrExt;
+            remove_tree(
+                &path.join(std::ffi::OsStr::from_bytes(name.to_bytes())),
+                true,
+                force,
+                boundary,
+                cancel,
+            )?;
+        }
+    }
+    if unsafe {
+        libc::unlinkat(
+            directory.as_raw_fd(),
+            name.as_ptr(),
+            if is_directory { libc::AT_REMOVEDIR } else { 0 },
+        )
+    } < 0
+    {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+pub(super) fn write_direct(_path: &Path, _bytes: &[u8]) -> Result<()> {
+    anyhow::bail!("Native runner file changes require a supported filesystem boundary.")
+}
+#[cfg(not(unix))]
+pub(super) fn mkdir(_path: &Path, _recursive: bool) -> Result<()> {
+    anyhow::bail!("Native runner file changes require a supported filesystem boundary.")
+}
+#[cfg(not(unix))]
+pub(super) fn chmod(_path: &Path, _mode: u32) -> Result<()> {
+    anyhow::bail!("Native runner file changes require a supported filesystem boundary.")
+}
+#[cfg(not(unix))]
+pub(super) fn rename(_source: &Path, _destination: &Path) -> Result<()> {
+    anyhow::bail!("Native runner file changes require a supported filesystem boundary.")
+}
+#[cfg(not(unix))]
+pub(super) fn set_modified(_path: &Path, _milliseconds: f64) -> Result<()> {
+    anyhow::bail!("Native runner file changes require a supported filesystem boundary.")
+}
+#[cfg(not(unix))]
+pub(super) fn remove_tree(
+    _path: &Path,
+    _recursive: bool,
+    _force: bool,
+    _boundary: &super::Boundary,
+    _cancel: &tokio_util::sync::CancellationToken,
+) -> Result<()> {
+    anyhow::bail!("Native runner file changes require a supported filesystem boundary.")
+}
+
 /// Open every resolved component through an owned directory descriptor. A
 /// substituted symlink cannot redirect an operation after boundary review.
 #[cfg(unix)]

@@ -98,12 +98,14 @@ credential_isolation = true
             )
             .unwrap(),
         );
+        let system_prompt = crate::product::system_prompt::SystemPromptModule::new(fixture.config.clone(), tools.clone(), fixture.runtime.clone(), fixture.durable.clone()).unwrap();
         let auto = AutoModule::new(
             fixture.config.clone(),
             fixture.runtime.clone(),
             fixture.durable.clone(),
             tools.clone(),
             fixture.lifecycle.clone(),
+            system_prompt.clone(),
         )
         .unwrap();
         auto.load().await.unwrap();
@@ -120,6 +122,7 @@ credential_isolation = true
             auto,
             permissions,
             fixture.events.clone(),
+            system_prompt,
         ));
         let live = LiveModule::new(
             fixture.config.clone(),

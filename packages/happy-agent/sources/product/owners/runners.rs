@@ -213,6 +213,25 @@ pub struct RunnersModule {
     closed: AtomicBool,
     updates: watch::Sender<Value>,
     computes: Mutex<BTreeMap<(String, String), Arc<RunnerCompute>>>,
+    snapshot_listeners: Mutex<BTreeMap<u64, SnapshotListener>>,
+    next_listener: AtomicU64,
+}
+type SnapshotListener =
+    Arc<dyn for<'a> Fn(&crate::product::runtime::Context<'a>, &Value) -> Result<()> + Send + Sync>;
+pub struct RunnerSnapshotSubscription {
+    owner: std::sync::Weak<RunnersModule>,
+    id: u64,
+}
+impl Drop for RunnerSnapshotSubscription {
+    fn drop(&mut self) {
+        if let Some(owner) = self.owner.upgrade() {
+            owner
+                .snapshot_listeners
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .remove(&self.id);
+        }
+    }
 }
 struct Link {
     session: Mutex<Option<Arc<Session>>>,
@@ -236,6 +255,70 @@ struct Session {
     identity: Value,
     product: tokio::sync::Mutex<bool>,
     tunnel: tokio::sync::Mutex<Option<tunnel::Tunnel>>,
+}
+struct ConnectionGuard {
+    owner: Arc<RunnersModule>,
+    runner: String,
+    link: Arc<Link>,
+    session: Arc<Session>,
+}
+impl ConnectionGuard {
+    fn disconnect(&self, reason: Option<String>) -> bool {
+        self.session.cancel.cancel();
+        self.session
+            .requests
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
+        self.session
+            .streams
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
+        let removed = {
+            let mut current = self
+                .link
+                .session
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if current
+                .as_ref()
+                .is_some_and(|current| Arc::ptr_eq(current, &self.session))
+            {
+                current.take();
+                true
+            } else {
+                false
+            }
+        };
+        if removed {
+            self.link.since.store(now(), Ordering::Release);
+            *self
+                .link
+                .reason
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = reason;
+            self.link.changed.notify_waiters();
+            self.owner
+                .start_lease(self.runner.clone(), self.link.clone());
+        }
+        removed
+    }
+}
+impl Drop for ConnectionGuard {
+    fn drop(&mut self) {
+        if self.disconnect(Some("The runner connection ended.".into())) {
+            let owner = self.owner.clone();
+            // The connection owns cleanup even when its caller stops waiting.
+            // This projection belongs to the application's independent lifetime.
+            tokio::spawn(async move {
+                let result = tokio::time::timeout(Duration::from_secs(10), owner.snapshot()).await;
+                if !matches!(result, Ok(Ok(_))) {
+                    eprintln!("The disconnected runner status could not be saved.");
+                }
+            });
+        }
+    }
 }
 /// A transport authenticated at the HTTP boundary. The feature owns its framing,
 /// handshake, request routing, liveness and lifetime after acceptance.
@@ -292,6 +375,8 @@ impl RunnersModule {
             closed: AtomicBool::new(false),
             updates: watch::channel(Value::Null).0,
             computes: Mutex::new(BTreeMap::new()),
+            snapshot_listeners: Mutex::new(BTreeMap::new()),
+            next_listener: AtomicU64::new(1),
         }))
     }
     pub async fn load(self: &Arc<Self>) -> Result<()> {
@@ -333,6 +418,25 @@ impl RunnersModule {
     /// Observe committed runner snapshots, retaining only the most recent one.
     pub fn on_updated(&self) -> watch::Receiver<Value> {
         self.updates.subscribe()
+    }
+    pub fn on_snapshot_transactional(
+        self: &Arc<Self>,
+        listener: SnapshotListener,
+    ) -> Result<RunnerSnapshotSubscription> {
+        let mut listeners = self
+            .snapshot_listeners
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        anyhow::ensure!(
+            listeners.len() < 64,
+            "The runner status listener limit was reached."
+        );
+        let id = self.next_listener.fetch_add(1, Ordering::Relaxed);
+        listeners.insert(id, listener);
+        Ok(RunnerSnapshotSubscription {
+            owner: Arc::downgrade(self),
+            id,
+        })
     }
     pub fn is_connected(&self, id: &str) -> bool {
         self.links
@@ -442,7 +546,7 @@ impl RunnersModule {
         let lifetime = self.lifecycle.shutdown.child_token();
         let (hello, _) = tokio::time::timeout(
             Duration::from_secs(10),
-            self.receive(&mut transport.incoming),
+            async {tokio::select!{result=self.receive(&mut transport.incoming)=>result,_=lifetime.cancelled()=>bail!("The daemon is shutting down.")}},
         )
         .await??;
         anyhow::ensure!(
@@ -463,7 +567,7 @@ impl RunnersModule {
         .await?;
         let (ready, _) = tokio::time::timeout(
             Duration::from_secs(10),
-            self.receive(&mut transport.incoming),
+            async {tokio::select!{result=self.receive(&mut transport.incoming)=>result,_=lifetime.cancelled()=>bail!("The daemon is shutting down.")}},
         )
         .await??;
         anyhow::ensure!(
@@ -489,6 +593,12 @@ impl RunnersModule {
         {
             old.cancel.cancel();
         }
+        let connection = ConnectionGuard {
+            owner: self.clone(),
+            runner: id.clone(),
+            link: link.clone(),
+            session: session.clone(),
+        };
         if let Some(lease) = link
             .lease
             .lock()
@@ -548,17 +658,6 @@ impl RunnersModule {
             }
         }
         if let Err(error) = self.snapshot().await {
-            session.cancel.cancel();
-            let mut current = link
-                .session
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if current
-                .as_ref()
-                .is_some_and(|current| Arc::ptr_eq(current, &session))
-            {
-                current.take();
-            }
             return Err(error);
         }
         let mut liveness = tokio::time::interval(Duration::from_secs(15));
@@ -567,7 +666,7 @@ impl RunnersModule {
             loop {
                 tokio::select! {
                     biased;
-                    _=lifetime.cancelled()=>{if self.lifecycle.shutdown.is_cancelled() {self.send(&session.sender,json!({"type":"goodbye","reason":"The daemon is shutting down."}),&[]).await?;}break;},
+                    _=lifetime.cancelled()=>{if self.closed.load(Ordering::Acquire) || self.lifecycle.shutdown.is_cancelled() {self.send(&session.sender,json!({"type":"goodbye","reason":"The daemon is shutting down."}),&[]).await?;}break;},
                     _=liveness.tick()=>{anyhow::ensure!(last.elapsed()<Duration::from_secs(45),"The runner stopped responding.");self.send(&session.sender,json!({"type":"ping","nonce":session.next.fetch_add(1,Ordering::Relaxed)}),&[]).await?;},
                     frame=self.receive(&mut transport.incoming)=>{
                         let(header,body)=frame?;last=tokio::time::Instant::now();
@@ -585,43 +684,11 @@ impl RunnersModule {
             }
             Ok(())
         }.await;
-        session.cancel.cancel();
-        session
-            .requests
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clear();
-        session
-            .streams
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clear();
-        let removed = {
-            let mut current = link
-                .session
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if current
-                .as_ref()
-                .is_some_and(|current| Arc::ptr_eq(current, &session))
-            {
-                current.take();
-                true
-            } else {
-                false
-            }
-        };
-        if removed {
-            link.since.store(now(), Ordering::Release);
-            *link
-                .reason
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner) = outcome
-                .as_ref()
-                .err()
-                .map(|error| error.to_string().chars().take(4096).collect());
-            link.changed.notify_waiters();
-            self.start_lease(id.clone(), link.clone());
+        let reason = outcome
+            .as_ref()
+            .err()
+            .map(|error| error.to_string().chars().take(4096).collect());
+        if connection.disconnect(reason) {
             self.snapshot().await?;
         }
         outcome
@@ -1410,7 +1477,10 @@ impl RunnersModule {
                 runners.push(json!({"id":id,"name":entry["name"],"default":configuration["defaultId"]==*id,"status":if connected{"connected"}else{"disconnected"},"machine":session.as_ref().map(|session|session.identity.clone()).or_else(||known.map(|known|known["machine"].clone())).unwrap_or(Value::Null),"protocol":if connected{json!(1)}else{Value::Null},"since":links.get(id).map(|link|link.since.load(Ordering::Acquire)).or_else(||known.and_then(|known|known["since"].as_u64())).unwrap_or_else(now),"reason":reason}));
             }
             if previous.as_ref().is_some_and(|previous|previous["runners"]==json!(runners)) {return Ok(previous.unwrap());}
-            let value=json!({"runners":runners,"version":next_snapshot_version(previous.as_ref().and_then(|snapshot|snapshot["version"].as_str()))?});persistence::save(ctx,&module.schemas,&value)?;let published=value.clone();let owner=module.clone();ctx.after_commit(move||{owner.updates.send_replace(published);})?;Ok(value)
+            let value=json!({"runners":runners,"version":next_snapshot_version(previous.as_ref().and_then(|snapshot|snapshot["version"].as_str()))?});persistence::save(ctx,&module.schemas,&value)?;
+            let listeners=module.snapshot_listeners.lock().unwrap_or_else(std::sync::PoisonError::into_inner).values().cloned().collect::<Vec<_>>();
+            for listener in listeners {listener(ctx,&value)?;}
+            let published=value.clone();let owner=module.clone();ctx.after_commit(move||{owner.updates.send_replace(published);})?;Ok(value)
         }).await
     }
     pub async fn close(&self) {
@@ -1427,13 +1497,6 @@ impl RunnersModule {
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .clone();
             if let Some(session) = session {
-                let _ = self
-                    .send(
-                        &session.sender,
-                        json!({"type":"goodbye","reason":"The daemon is shutting down."}),
-                        &[],
-                    )
-                    .await;
                 session.cancel.cancel();
             }
         }

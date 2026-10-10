@@ -4,7 +4,7 @@ import { addSkillFolderTool } from "../../../../happy-agent-modules/sources/skil
 import { removeSkillFolderTool } from "../../../../happy-agent-modules/sources/skills/tools/remove_skill_folder.ts";
 import { formatSkillFolders } from "../../../../happy-agent-modules/sources/skills/tools/skillFolderToolOutput.ts";
 import { Type } from "@sinclair/typebox";
-import { writeFileSync } from "node:fs";
+import { writeNativeCapture as writeFileSync } from "../../../scripts/write-native-capture.mjs";
 export const skillFoldersTools = [
     listSkillFoldersTool(undefined, "source-agent"),
     addSkillFolderTool(undefined, "source-agent"),

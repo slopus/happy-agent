@@ -10,6 +10,7 @@ use crate::product::{
     presence::PresenceModule,
     scheduling::SchedulingModule,
     skills::SkillsModule,
+    system_prompt::SystemPromptModule,
     skill_folders::SkillFoldersModule,
     secrets::SecretsModule,
     services::ServicesModule,
@@ -42,6 +43,7 @@ struct Graph {
     workflows: Arc<WorkflowsModule>,
     skills: Arc<SkillsModule>,
     skill_folders: Arc<SkillFoldersModule>,
+    system_prompt: Arc<SystemPromptModule>,
 }
 impl Graph {
     fn task_input(&self, title: &str) -> Value {
@@ -176,12 +178,14 @@ transport = "sse"
             )
             .unwrap(),
         );
+        let system_prompt = SystemPromptModule::new(fixture.config.clone(), tools.clone(), fixture.runtime.clone(), fixture.durable.clone()).unwrap();
         let auto = AutoModule::new(
             fixture.config.clone(),
             fixture.runtime.clone(),
             fixture.durable.clone(),
             tools.clone(),
             fixture.lifecycle.clone(),
+            system_prompt.clone(),
         )
         .unwrap();
         auto.load().await.unwrap();
@@ -198,6 +202,7 @@ transport = "sse"
             auto,
             permissions,
             fixture.events.clone(),
+            system_prompt.clone(),
         ));
         let git = GitModule::new(fixture.config.clone(), runners.clone()).unwrap();
         let abort = AbortModule::new(
@@ -356,6 +361,7 @@ transport = "sse"
             workflows,
             skills,
             skill_folders,
+            system_prompt,
         }
     }
     async fn close(&self) {
@@ -3178,6 +3184,74 @@ async fn skills_explicit_command_invocation_is_transactional_and_injects_complet
     graph.agents.wait_for_idle(&id,&cancel).await.unwrap();assert_eq!(graph.agent_config(&id).await["metadata"]["lastMode"],input["mode"]);
     let history=graph.history.messages(id.clone(),None,None,20,false).await.unwrap();let messages=history["runs"].as_array().unwrap().iter().flat_map(|run|run["messages"].as_array().unwrap()).filter(|message|message["id"]==prepared["messageId"]).collect::<Vec<_>>();assert_eq!(messages.len(),1);assert_eq!(messages[0]["role"],"user");assert_eq!(messages[0]["mode"],input["mode"]);
     server.await.unwrap();graph.close().await;
+}
+
+#[tokio::test]
+async fn system_prompt_real_inference_refreshes_current_model_and_live_instruction_documents() {
+    system_prompt_inference_fixture(false).await;
+}
+
+#[tokio::test]
+#[ignore = "Requires the pending Source beforeTurn hook in the native agent core."]
+async fn system_prompt_real_inference_refreshes_model_and_documents_and_accepts_hidden_change_notices() {
+    system_prompt_inference_fixture(true).await;
+}
+
+async fn system_prompt_inference_fixture(require_notices: bool) {
+    let (endpoint, mut requests, server) = naming_provider(vec!["Read the first instructions.", "Read the replacement instructions.", "Read the removal notice."]).await;
+    let graph = Graph::new_with_provider(&endpoint).await;
+    let root = graph.fixture.directory.path().join("prompt-project");
+    let cwd = root.join("child");
+    std::fs::create_dir_all(&cwd).unwrap();
+    std::fs::write(root.join(".git"), "fixture marker").unwrap();
+    std::fs::write(root.join("AGENTS.md"), "Original root instruction sentinel").unwrap();
+    std::fs::write(cwd.join("AGENTS.md"), "Child instruction sentinel").unwrap();
+    std::fs::write(root.join("AGENTS_SECURITY.md"), "Project security sentinel").unwrap();
+    std::fs::write(&graph.fixture.config.paths.instructions, "Global instruction sentinel").unwrap();
+    let (id, _) = skill_agent(&graph, &cwd).await;
+    let models = graph.fixture.config.naming_models().unwrap();
+    let first = models.iter().find(|model| model["providerId"] == "fixture" && model["id"] == "openai/gpt-6.1-sol").unwrap();
+    let second = models.iter().find(|model| model["providerId"] == "fixture" && model["id"] == "openai/gpt-6-sol").unwrap();
+    for (round, model) in [first, second, first].into_iter().enumerate() {
+        if round == 1 { std::fs::write(root.join("AGENTS.md"), "Replacement root instruction sentinel").unwrap(); }
+        if round == 2 {
+            for path in [root.join("AGENTS.md"), root.join("AGENTS_SECURITY.md"), cwd.join("AGENTS.md"), graph.fixture.config.paths.instructions.clone()] { std::fs::remove_file(path).unwrap(); }
+        }
+        let agents = graph.agents.clone(); let acting = id.clone(); let model = model.clone();
+        graph.fixture.runtime.transact(move |ctx| agents.enqueue(ctx, &acting, &json!({"id":cuid2::create_id(),"message":{"role":"user","content":[{"type":"text","text":"Follow the current instructions."}]},"options":{"provider":"fixture","model":model["id"],"effort":model["defaultEffort"],"permissionMode":"workspace_write"},"metadata":{"messageOrigin":"user"}}), false)).await.unwrap();
+        let request = tokio::time::timeout(Duration::from_secs(12), requests.recv()).await.unwrap().unwrap();
+        let instructions = request["instructions"].as_str().unwrap();
+        let expected = graph.system_prompt.prompt_for(&json!({"model":if round == 1 {"openai/gpt-6-sol"} else {"openai/gpt-6.1-sol"},"providerKind":"codex"})).unwrap();
+        assert!(instructions.contains(&expected));
+        assert!(instructions.contains("## Available models"));
+        if round < 2 {
+            assert!(instructions.contains("Global instruction sentinel"));
+            assert!(instructions.contains("Child instruction sentinel"));
+            assert!(instructions.contains("Project security sentinel"));
+            assert!(instructions.contains(if round == 0 {"Original root instruction sentinel"} else {"Replacement root instruction sentinel"}));
+        } else {
+            assert!(!instructions.contains("Global instruction sentinel"));
+            assert!(!instructions.contains("Replacement root instruction sentinel"));
+        }
+        if require_notices && round > 0 {
+            assert!(provider_input_texts(&request).iter().any(|text| text.starts_with(if round == 1 {"These AGENTS.md instructions replace all previously provided AGENTS.md instructions."} else {"The previously provided AGENTS.md instructions no longer apply."})));
+        }
+        graph.agents.wait_for_idle(&id, &CancellationToken::new()).await.unwrap();
+    }
+    let history = graph.history.messages(id.clone(), None, None, 50, false).await.unwrap();
+    assert!(!history.to_string().contains("These AGENTS.md instructions replace"));
+    assert!(!history.to_string().contains("The previously provided AGENTS.md instructions no longer apply"));
+    if require_notices {
+        let acting = id.clone();
+        graph.fixture.runtime.transact(move |ctx| {
+        assert!(ctx.value(&acting, &format!("kv.{acting}.module.system-prompt.last-delivered-fingerprint"))?.unwrap().is_null());
+        assert!(ctx.value(&acting, &format!("kv.{acting}.module.system-prompt.pending-notice"))?.is_none());
+        assert!(ctx.value(&acting, &format!("kv.{acting}.run.module.system-prompt.turn-instructions-snapshot"))?.is_none());
+        Ok(())
+        }).await.unwrap();
+    }
+    server.await.unwrap();
+    graph.close().await;
 }
 #[cfg(unix)]
 #[tokio::test]

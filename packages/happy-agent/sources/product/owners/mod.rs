@@ -7,7 +7,7 @@ mod abort;
 
 pub use global_skills::{GlobalSkillsError, GlobalSkillsModule};
 pub use node::NodeModule;
-pub use runners::{RunnersModule, RunnerCompute, RunnerProcess, RunnerTransport, RunOptions, RunResult};
+pub use runners::{RunnersModule, RunnerCompute, RunnerProcess, RunnerTransport, RunnerSnapshotSubscription, RunOptions, RunResult};
 pub use git::GitModule;
 pub use abort::AbortModule;
 #[cfg(test)]

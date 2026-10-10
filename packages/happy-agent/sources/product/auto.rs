@@ -8,7 +8,7 @@ mod routes;
 mod transcript;
 mod verdict;
 
-use crate::product::{config::ConfigModule, durable::{CallKv, DurableFunction, DurableFunctionsModule, Registration}, lifecycle::LifecycleModule, runtime::{Context, RuntimeModule}, schemas::Schemas, tools::ToolsModule};
+use crate::product::{config::ConfigModule, durable::{CallKv, DurableFunction, DurableFunctionsModule, Registration}, lifecycle::LifecycleModule, runtime::{Context, RuntimeModule}, schemas::Schemas, system_prompt::SystemPromptModule, tools::ToolsModule};
 use anyhow::{Context as _, Result};
 use futures_util::future::BoxFuture;
 use happy_agent_base::{AcceptedInput, AgentModule, AgentScope, AgentSystem, Inference, SqliteDatabase};
@@ -20,6 +20,7 @@ use tokio_util::sync::CancellationToken;
 
 pub struct AutoModule {
     config: Arc<ConfigModule>,
+    system_prompt: Arc<SystemPromptModule>,
     runtime: Arc<RuntimeModule>,
     durable: Arc<DurableFunctionsModule>,
     evidence: Arc<evidence::EvidenceStore>,
@@ -31,11 +32,11 @@ pub struct AutoModule {
     completed: Arc<Notify>,
 }
 impl AutoModule {
-    pub fn new(config: Arc<ConfigModule>, runtime: Arc<RuntimeModule>, durable: Arc<DurableFunctionsModule>, tools: Arc<ToolsModule>, lifecycle: Arc<LifecycleModule>) -> Result<Arc<Self>> {
+    pub fn new(config: Arc<ConfigModule>, runtime: Arc<RuntimeModule>, durable: Arc<DurableFunctionsModule>, tools: Arc<ToolsModule>, lifecycle: Arc<LifecycleModule>, system_prompt: Arc<SystemPromptModule>) -> Result<Arc<Self>> {
         let private_database = Arc::new(SqliteDatabase::new());
         let private_runtime = Arc::new(reviewer::ReviewerRuntimeModule::new(config.clone(), lifecycle));
         let private_system = Arc::new(AgentSystem::new(private_database.clone(), vec![private_runtime.clone(), tools.reviewer()?])?);
-        let module = Arc::new(Self { config, evidence: Arc::new(evidence::EvidenceStore::new(runtime.clone())?), runtime, durable: durable.clone(), private_database, private_system, private_runtime, schemas: Schemas::new()?, routes: Mutex::new(BTreeMap::new()), completed: Arc::new(Notify::new()) });
+        let module = Arc::new(Self { config, system_prompt, evidence: Arc::new(evidence::EvidenceStore::new(runtime.clone())?), runtime, durable: durable.clone(), private_database, private_system, private_runtime, schemas: Schemas::new()?, routes: Mutex::new(BTreeMap::new()), completed: Arc::new(Notify::new()) });
         durable.register(Registration { name: "auto.review".into(), arguments_schema: "nativeAutoArguments", result_schema: "nativeAutoOutcome", function: module.clone() })?;
         Ok(module)
     }
@@ -117,7 +118,10 @@ impl AutoModule {
         let position = if first { 0 } else { cursor.as_ref().unwrap()["reviewedPosition"].as_u64().unwrap() as usize };
         let messages: Vec<_> = entries[position..].iter().map(|entry| entry["entry"].clone()).collect();
         let delta = if first { whole.clone() } else { transcript::create(&messages)? };
-        let (security, instructions) = self.config.review_documents(&arguments["configuration"]).await?;
+        let (security, _) = self.config.review_documents(&arguments["configuration"]).await?;
+        let settings = json!({"permissionMode":"auto"});
+        let scope = AgentScope { id: &agent, configuration: &arguments["configuration"], settings: &settings };
+        let instructions = self.system_prompt.read_agents_md_instructions(&scope, cancel).await?.unwrap_or_default();
         let policy = prompt::policy(Some(&security));
         let instructions = if instructions.trim().is_empty() { policy } else { format!("{policy}\n\n{}", instructions.trim()) };
         if first { self.private_system.abort(&reviewer).await?; self.private_system.retire_session(&reviewer).await; }

@@ -279,7 +279,10 @@ impl happy_agent_base::AgentModule for ToolsModule {
     }
 }
 impl ToolsModule {
-    pub async fn skill_compute(
+    pub fn native_runner_filesystem(&self, request: &Value) -> Result<ComputeFilesystem> {
+        self.files.runner_filesystem(request)
+    }
+    pub async fn compute_filesystem(
         &self,
         scope: &happy_agent_base::AgentScope<'_>,
         cancel: &CancellationToken,

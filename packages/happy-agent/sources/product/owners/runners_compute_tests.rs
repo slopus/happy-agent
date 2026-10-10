@@ -53,6 +53,21 @@ struct Peer {
     outgoing: mpsc::Receiver<Vec<u8>>,
     accepted: tokio::task::JoinHandle<Result<()>>,
 }
+
+#[tokio::test]
+async fn dropping_a_runner_connection_releases_its_connected_slot() {
+    let fixture = Fixture::new().await;
+    let mut peer = Peer::connect(fixture.runners.clone(), "epoch-a", &[]).await;
+    let _compute = fixture.compute(&mut peer).await;
+    assert!(fixture.runners.is_connected("fixture"));
+    peer.accepted.abort();
+    assert!(peer.accepted.await.unwrap_err().is_cancelled());
+    assert!(
+        !fixture.runners.is_connected("fixture"),
+        "a dropped transport must not remain connected"
+    );
+    fixture.close().await;
+}
 impl Peer {
     async fn connect(owner: Arc<RunnersModule>, epoch: &str, retained: &[&str]) -> Self {
         let (incoming, receiver) = mpsc::channel(16);
@@ -304,5 +319,72 @@ async fn expired_runner_lease_finishes_owned_sessions_without_reconnection() {
             .is_none()
     );
     tokio::time::resume();
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn queued_session_input_is_not_sent_after_its_compute_is_lost() {
+    let fixture = Fixture::new().await;
+    let mut peer = Peer::connect(fixture.runners.clone(), "epoch-a", &[]).await;
+    let compute = fixture.compute(&mut peer).await;
+    let process = start(&compute, &mut peer).await;
+    let session = fixture
+        .runners
+        .session("fixture", &CancellationToken::new())
+        .await
+        .unwrap();
+    for nonce in 100..116 {
+        match session.sender.try_send(
+            fixture
+                .runners
+                .frame(json!({"type":"ping","nonce":nonce}), &[])
+                .unwrap(),
+        ) {
+            Ok(()) => {}
+            Err(mpsc::error::TrySendError::Full(_)) => break,
+            Err(error) => panic!("the established runner transport closed: {error}"),
+        }
+    }
+    let permissions = compute.permissions("workspace_write").unwrap();
+    let call = tokio::spawn(async move {
+        process
+            .write(
+                &permissions,
+                b"must not reach a later command",
+                &CancellationToken::new(),
+            )
+            .await
+    });
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if session.requests.lock().unwrap().len() == 1 {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    // This is the same owning transition exercised through a real lease in the
+    // preceding test; now hold the transport at its bounded enqueue boundary.
+    compute.lost();
+    for _ in 0..session.sender.max_capacity() {
+        let (header, body) = fixture.runners.receive(&mut peer.outgoing).await.unwrap();
+        assert!(body.is_empty());
+        assert_eq!(
+            header["type"], "ping",
+            "queued input must not leave a lost compute"
+        );
+        peer.send(json!({"type":"pong","nonce":header["nonce"]}))
+            .await;
+    }
+    assert!(!call.await.unwrap().unwrap());
+    assert!(session.requests.lock().unwrap().is_empty());
+    let remaining = peer.next().await;
+    assert_eq!(
+        remaining["type"], "cancel",
+        "no queued input may cross the lost compute generation"
+    );
+    peer.disconnect().await;
     fixture.close().await;
 }

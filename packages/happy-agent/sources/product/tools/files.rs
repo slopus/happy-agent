@@ -19,6 +19,7 @@ mod kimi;
 mod native;
 mod patch;
 mod regex_worker;
+mod runner;
 use boundary::Boundary;
 pub use filesystem::ComputeFilesystem;
 
@@ -41,6 +42,16 @@ pub(super) struct Files {
     identity: String,
 }
 impl Files {
+    pub(super) fn runner_filesystem(&self, request: &Value) -> Result<ComputeFilesystem> {
+        ensure!(self.schemas.valid("ownerRunnerParams_compute_create", request)?, "The runner compute request is invalid.");
+        ensure!(request.get("docker").is_none(), "Native Docker compute has not been migrated; this runner cannot execute container work on the host.");
+        let environment = self.config.runner_file_environment(request)?;
+        ComputeFilesystem::local(Boundary {
+            root: environment.root, home: environment.home, mode: "full_access".into(),
+            private_paths: environment.private_paths, protected_paths: environment.protected_paths,
+            allowed_write_paths: Vec::new(), denied_read_paths: Vec::new(), denied_write_paths: Vec::new(),
+        }, format!("runner:{}", request["computeId"].as_str().unwrap()))
+    }
     pub(super) async fn read_workflow_script(
         &self,
         configuration: &Value,
@@ -73,6 +84,9 @@ impl Files {
             mode: mode.into(),
             private_paths: environment.private_paths,
             protected_paths: environment.protected_paths,
+            allowed_write_paths: Vec::new(),
+            denied_read_paths: Vec::new(),
+            denied_write_paths: Vec::new(),
         })
     }
     pub(super) fn filesystem(

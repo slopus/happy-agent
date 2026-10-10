@@ -1,4 +1,4 @@
-use super::{auto::AutoModule, config::ConfigModule, events::EventsModule, history::HistoryModule, lifecycle::LifecycleModule, permissions::PermissionsModule, runtime::{Context, RuntimeModule}, tools::ToolsModule, usage::UsageModule};
+use super::{auto::AutoModule, config::ConfigModule, events::EventsModule, history::HistoryModule, lifecycle::LifecycleModule, permissions::PermissionsModule, runtime::{Context, RuntimeModule}, system_prompt::SystemPromptModule, tools::ToolsModule, usage::UsageModule};
 use anyhow::{Context as _, Result};
 use happy_agent_base::{AgentModule, AgentSystem};
 use serde_json::Value;
@@ -13,8 +13,8 @@ pub struct AgentRuntimeModule {
 }
 impl AgentRuntimeModule {
     #[expect(clippy::too_many_arguments)]
-    pub fn new(config: Arc<ConfigModule>, runtime: Arc<RuntimeModule>, history: Arc<HistoryModule>, tools: Arc<ToolsModule>, usage: Arc<UsageModule>, lifecycle: Arc<LifecycleModule>, auto: Arc<AutoModule>, permissions: Arc<PermissionsModule>, events: Arc<EventsModule>) -> Self {
-        Self { runtime, installation: Mutex::new(Some(vec![config, lifecycle, history, auto, permissions, tools, usage, events])), system: Mutex::new(None) }
+    pub fn new(config: Arc<ConfigModule>, runtime: Arc<RuntimeModule>, history: Arc<HistoryModule>, tools: Arc<ToolsModule>, usage: Arc<UsageModule>, lifecycle: Arc<LifecycleModule>, auto: Arc<AutoModule>, permissions: Arc<PermissionsModule>, events: Arc<EventsModule>, system_prompt: Arc<SystemPromptModule>) -> Self {
+        Self { runtime, installation: Mutex::new(Some(vec![config, lifecycle, history, auto, permissions, tools, usage, events, system_prompt])), system: Mutex::new(None) }
     }
     /// An owning feature installs its whole hook surface during construction.
     /// Startup freezes the resulting fixed module array before any agent runs.

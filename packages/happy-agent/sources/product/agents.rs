@@ -234,7 +234,7 @@ impl AgentSystemModule {
             Ok(Some(json!({"context":agents.usage.current_context(ctx,&id)?,"usage":agents.usage.model_totals(ctx,&id)?})))
         }).await
     }
-    fn resource(&self, ctx: &Context<'_>, id: &str) -> Result<Option<Value>> {
+    pub fn resource(&self, ctx: &Context<'_>, id: &str) -> Result<Option<Value>> {
         let Some(configuration) = self.configuration(ctx, id)? else {
             return Ok(None);
         };
