@@ -177,9 +177,55 @@ The policy names match `ComputePermissions`:
 `mode` is one of `read_only`, `workspace_write`, `auto`, or `full_access`. For
 `workspace_write` and `auto`, the process working directory is the workspace
 write root — the cwd is the single source of truth, so it is not repeated in the
-document. Denials win over grants. Linux write-denied paths and writable roots
-must already exist so the supervisor never creates a user-visible mount point
-while privileged.
+document. Denials win over grants. Linux writable roots must already exist.
+Protected filenames may be absent when their parent directories exist: the
+supervisor rejects their creation without making a placeholder or temporarily
+publishing the name. A missing protected parent or a dangling protected symlink
+fails closed before the workload starts.
+
+Protecting Linux filenames inside writable directory views requires working
+user, mount, PID, and network namespace isolation, an accessible `/dev/fuse`, and
+permission to mount FUSE in the new user namespace. The supervisor mounts its own
+filesystem directly; it needs neither
+libfuse nor a `fusermount` executable. These requirements were verified on Linux
+6.12. Missing device access, namespace support, or mount permission stops startup
+with an error; the supervisor never substitutes a weaker boundary.
+
+The filesystem server is forked from the supervisor library inside the single
+Happy Agent executable. Kernel requests carry a directory identity and one
+filename; the server rejects protected creation, rename, link, symlink, FIFO,
+and socket names before issuing a backing operation. Backing directory handles
+stay private, writable mount aliases receive the same filter, and inherited
+caller descriptors above standard error do not survive restricted workload exec.
+Directory or path handles supplied as standard streams are refused.
+
+Existing denied subtrees retain their read-only mounts. Startup also records
+their inode identities so existing hard-link and directory-mount aliases cannot
+provide a writable view. This bounded scan adds work proportional to the denied
+subtrees; more than 1,048,576 protected entries fails closed. The immutable
+identity set is shared across the forked servers. A command supports at most 64
+disjoint writable directory views. Each filesystem server holds at most 65,536
+live inode records and 16,384 file/directory handles,
+releasing them on kernel forget and release requests. Symlink extended attributes
+and unsupported filesystem ioctls return an unsupported-operation error. Normal
+file data, mmap, links, renames, permissions, timestamps, and extended attributes
+use the backing filesystem. FIFO and Unix socket names can be created and used
+inside one overlay. Pre-existing backend IPC endpoints, or IPC endpoints reached
+through another overlay, are not transparently forwarded. Workflows needing that
+IPC behavior remain an integration limitation; this boundary does not establish
+complete filesystem parity.
+
+Absent protected names additionally require literal filename semantics. Supported
+backing directories are ext-family, XFS, Btrfs, tmpfs, and ramfs; parent directories
+with case folding enabled are refused. The kernel flags of ext-family, XFS, and
+Btrfs parents must be readable. Other filesystems, including host-sharing and
+network filesystems with unproven name collation, fail closed. The implementation
+does not assume that a differently spelled name denotes a different backing
+entry.
+
+Namespace init owns and reaps the filesystem servers. A server failure terminates
+the entire command tree, including detached process groups. Namespace teardown
+removes the private mounts; no host mount or protected file is created.
 
 ## Outgoing proxy
 

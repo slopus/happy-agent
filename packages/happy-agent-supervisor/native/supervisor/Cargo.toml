@@ -20,5 +20,8 @@ regex-lite.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
+[target.'cfg(target_os = "linux")'.dependencies]
+fuser = { version = "=0.16.0", default-features = false, features = ["abi-7-31"] }
+
 [dev-dependencies]
 tempfile.workspace = true

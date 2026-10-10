@@ -9,6 +9,8 @@ mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(target_os = "linux")]
+mod protected_names;
+#[cfg(target_os = "linux")]
 mod service_bridge;
 #[cfg(target_os = "linux")]
 mod service_cgroup;

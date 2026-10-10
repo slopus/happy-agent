@@ -63,6 +63,9 @@ struct ServiceStartup {
 }
 
 pub(crate) fn run(policy: SupervisorPolicy, command: Vec<OsString>) -> SupervisorResult<()> {
+    if policy.mode != PermissionMode::FullAccess {
+        restrict_inherited_descriptors()?;
+    }
     let owner = unsafe { libc::getppid() };
     if let Some(service) = &policy.service {
         if owner != service.controller_pid {
@@ -223,6 +226,44 @@ pub(crate) fn run(policy: SupervisorPolicy, command: Vec<OsString>) -> Superviso
     reproduce_status(workload_status)
 }
 
+fn restrict_inherited_descriptors() -> SupervisorResult<()> {
+    // A caller-owned directory descriptor can retain a writable mount hidden
+    // beneath the namespace overlays. Only standard streams cross exec; a
+    // directory or O_PATH handle is not a standard stream.
+    for descriptor in 0..=2 {
+        let mut metadata = unsafe { std::mem::zeroed::<libc::stat>() };
+        let result = unsafe { libc::fstat(descriptor, &mut metadata) };
+        if result != 0 && std::io::Error::last_os_error().raw_os_error() == Some(libc::EBADF) {
+            continue;
+        }
+        syscall_zero("inspect a standard command stream", result)?;
+        let flags = unsafe { libc::fcntl(descriptor, libc::F_GETFL) };
+        if flags < 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        if metadata.st_mode & libc::S_IFMT == libc::S_IFDIR || flags & libc::O_PATH != 0 {
+            return Err(invalid_input("restricted commands require standard streams, not inherited directory or path handles; no command was started").into());
+        }
+    }
+    for entry in fs::read_dir("/proc/self/fd")? {
+        let entry = entry?;
+        let Some(descriptor) = entry
+            .file_name()
+            .to_str()
+            .and_then(|name| name.parse::<RawFd>().ok())
+        else {
+            continue;
+        };
+        if descriptor >= 3 {
+            syscall_zero(
+                "prevent caller filesystem handles from reaching the command",
+                unsafe { libc::fcntl(descriptor, libc::F_SETFD, libc::FD_CLOEXEC) },
+            )?;
+        }
+    }
+    Ok(())
+}
+
 fn run_namespace_init(
     policy: SupervisorPolicy,
     command: Vec<OsString>,
@@ -232,7 +273,7 @@ fn run_namespace_init(
     bridge: Option<ServiceBridge>,
     startup: Option<ServiceStartup>,
 ) -> ! {
-    let setup = (|| -> SupervisorResult<OutgoingProxySetup> {
+    let setup = (|| -> SupervisorResult<(OutgoingProxySetup, Vec<libc::pid_t>)> {
         syscall_zero("terminate namespace init if its supervisor exits", unsafe {
             libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL, 0, 0, 0)
         })?;
@@ -256,13 +297,14 @@ fn run_namespace_init(
                 );
             }
         }
-        if let Some(service) = &policy.service {
+        let name_servers = if let Some(service) = &policy.service {
             super::service_filesystem::establish(service)?;
             mount_private_procfs()?;
+            Vec::new()
         } else {
             mount_private_procfs()?;
-            apply_filesystem_policy(&policy)?;
-        }
+            apply_filesystem_policy(&policy)?
+        };
         // The front-end listeners are bound here, before the filter below denies `bind` and
         // `listen` for everything that runs afterwards, so serving them re-opens nothing.
         let proxy = match &policy.network.outgoing_proxy {
@@ -281,10 +323,10 @@ fn run_namespace_init(
         if policy.service.is_some() {
             install_service_socket_filter()?;
         }
-        Ok(proxy)
+        Ok((proxy, name_servers))
     })();
-    let proxy = match setup {
-        Ok(proxy) => proxy,
+    let (proxy, name_servers) = match setup {
+        Ok(setup) => setup,
         Err(error) => {
             eprintln!("happy-agent-supervisor: Linux sandbox setup failed: {error}");
             write_status(
@@ -374,7 +416,7 @@ fn run_namespace_init(
             }
         }
     }
-    let status = match wait_for_pid(workload) {
+    let status = match wait_for_workload(workload, &name_servers) {
         Ok(status) => wait_status_to_workload_status(status).unwrap_or(WorkloadStatus {
             kind: STATUS_EXIT,
             value: 125,
@@ -390,6 +432,35 @@ fn run_namespace_init(
     set_forward_target(0);
     write_status(status_write, status);
     unsafe { libc::_exit(0) };
+}
+
+fn wait_for_workload(workload: libc::pid_t, name_servers: &[libc::pid_t]) -> SupervisorResult<i32> {
+    if name_servers.is_empty() {
+        return wait_for_pid(workload);
+    }
+    loop {
+        let mut status = 0;
+        let child = unsafe { libc::waitpid(-1, &mut status, 0) };
+        if child == workload {
+            return Ok(status);
+        }
+        if child < 0 {
+            let error = std::io::Error::last_os_error();
+            if error.raw_os_error() == Some(libc::EINTR) {
+                continue;
+            }
+            return Err(error.into());
+        }
+        if name_servers.contains(&child) {
+            // Exiting namespace PID 1 kills every workload descendant, including
+            // detached process groups. A failed filesystem never leaves work
+            // running under a partly disconnected boundary.
+            return Err(std::io::Error::other(
+                "the protected-name filesystem exited; terminating the complete command tree",
+            )
+            .into());
+        }
+    }
 }
 
 fn enter_user_namespace() -> SupervisorResult<()> {
@@ -485,13 +556,14 @@ fn mount_private_procfs() -> SupervisorResult<()> {
     Ok(())
 }
 
-fn apply_filesystem_policy(policy: &SupervisorPolicy) -> SupervisorResult<()> {
+fn apply_filesystem_policy(policy: &SupervisorPolicy) -> SupervisorResult<Vec<libc::pid_t>> {
     if policy.mode == PermissionMode::FullAccess {
-        return Ok(());
+        return Ok(Vec::new());
     }
     let cwd = std::env::current_dir()?.canonicalize()?;
     let writable_roots = canonical_existing_paths(&policy.writable_roots(&cwd), "writable")?;
-    let denied_writes = canonical_existing_paths(&policy.denied_write_paths, "write-denied")?;
+    let (denied_writes, protected_names) =
+        super::protected_names::ProtectedNames::resolve(&policy.denied_write_paths)?;
     let denied_reads = canonical_optional_paths(&policy.denied_read_paths)?;
 
     // Bind mounts are used instead of Landlock because a Landlock grant on a writable workspace
@@ -502,7 +574,7 @@ fn apply_filesystem_policy(policy: &SupervisorPolicy) -> SupervisorResult<()> {
     for path in &writable_roots {
         let recursive = path.is_dir();
         bind_mount(path, recursive)?;
-        change_mount_read_only(path, recursive, false)?;
+        change_mount_read_only(path, recursive, protected_names.denies_object(path)?)?;
     }
     for path in &denied_writes {
         let recursive = path.is_dir();
@@ -512,6 +584,10 @@ fn apply_filesystem_policy(policy: &SupervisorPolicy) -> SupervisorResult<()> {
     for path in &denied_reads {
         mask_read_path(path)?;
     }
+    // A missing name has no inode for a deny mount. The kernel routes every
+    // namespace mutation in writable directory views through our FUSE server,
+    // which rejects protected inode/name pairs before touching the backing view.
+    let name_servers = protected_names.mount(&writable_roots)?;
     // Binding a mount over a directory does not move a process that is already standing in it: the
     // inherited working directory still refers to the shadowed directory underneath, which is part
     // of the read-only root. Without this the workload can write `/work/file` but not `./file`,
@@ -522,7 +598,7 @@ fn apply_filesystem_policy(policy: &SupervisorPolicy) -> SupervisorResult<()> {
             cwd.display()
         ))
     })?;
-    Ok(())
+    Ok(name_servers)
 }
 
 fn canonical_existing_paths(
@@ -1063,7 +1139,7 @@ const fn bpf(code: u16, jump_true: u8, jump_false: u8, value: u32) -> libc::sock
     }
 }
 
-fn drop_all_capabilities_and_lock_privileges() -> SupervisorResult<()> {
+pub(super) fn drop_all_capabilities_and_lock_privileges() -> SupervisorResult<()> {
     let cap_last = fs::read_to_string("/proc/sys/kernel/cap_last_cap")
         .ok()
         .and_then(|value| value.trim().parse::<u32>().ok())

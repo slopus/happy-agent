@@ -4,6 +4,32 @@
 exit propagation, filesystem enforcement, seccomp with retained egress, private
 procfs visibility, `ps`, zero effective capabilities, and signals.
 
+The protected-name cases start with plain workspaces containing no Git metadata
+or instruction/configuration files. They prove ordinary Read only, Workspace
+write, and Auto commands start without creating those names. Real Python
+workloads exercise creation, mkdir, mknod/FIFO, Unix sockets, symlinks, hard links,
+rename, directory FDs, symlink aliases, nested parent replacement, existing Git
+files and their inode aliases. Positive operations include data/mmap, metadata,
+extended attributes, links, renames, and Unix sockets.
+
+A separate fixture creates two writable bind-mount views inside a disposable
+user/mount namespace and intentionally inherits a directory descriptor. Neither
+view nor the inherited descriptor can create a protected name, and the original
+host mount point stays empty after exit. An inotify observer records backing
+events during 6,400 concurrent denied operations: ordinary file creations must
+appear, while a protected name must never appear. This observer is test evidence,
+not an enforcement mechanism. Killing the FUSE server must return supervisor
+status 125 and close a pipe held by a detached workload child, proving complete
+namespace teardown.
+
+A pipe-coordinated host edit updates an ordinary file after the workload has
+already opened and read it. The same descriptor must read the new contents,
+proving that kernel data-cache invalidation preserves the shared live workspace.
+
+These cases require accessible `/dev/fuse` and user-namespace FUSE mounts in
+addition to the ordinary Linux namespace requirements. The pure Rust FUSE
+library runs inside the same executable; no system `fusermount` is needed.
+
 Its filesystem cases write through a _relative_ path on purpose. Binding a mount
 over the working directory leaves an already-standing process pointing at the
 shadowed directory underneath, so `/workspace/file` can succeed while `./file`
@@ -76,6 +102,7 @@ to appear inside the container at the same path it has on the host:
 ```sh
 cargo +1.96.0 test --locked --target aarch64-unknown-linux-musl --no-run
 docker run --rm --platform linux/arm64 \
+  --device /dev/fuse \
   --security-opt seccomp=unconfined \
   --security-opt apparmor=unconfined \
   --security-opt systempaths=unconfined \
@@ -83,7 +110,7 @@ docker run --rm --platform linux/arm64 \
   alpine:3.20 "$REPO/.../deps/outgoing_proxy-<hash>" --test-threads=1
 ```
 
-All three relaxations are needed and none of them weaken what is under test.
+The FUSE device and all three relaxations are needed; none weaken what is under test.
 Docker's default seccomp profile refuses `unshare(CLONE_NEWUSER)`, its AppArmor
 profile refuses the mount work, and its masked `/proc` entries leave procfs
 partially covered, which makes mounting a private procfs inside a user
