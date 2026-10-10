@@ -29,6 +29,9 @@ export * from "./bots/index.js";
 // Tasks: persistent owned conversations with dedicated folders, roots of their own subtasks.
 export * from "./tasks/index.js";
 
+// Artifacts: one global, versioned catalog of published Markdown, HTML, images, video, and documents.
+export * from "./artifacts/index.js";
+
 // Tailcat: stable account-free internet exposure, controlled only by active admin bots.
 export * from "./tailcat/index.js";
 export * from "./connections/index.js";

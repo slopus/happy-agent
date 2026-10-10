@@ -153,15 +153,16 @@ its public methods, and its storage and event contracts.
 
 ### Work
 
-| Module                                            | What it adds                                                                                               |
-| ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| [Goal](sources/goal/README.md)                    | One durable long-running objective per agent, kept moving until complete, blocked, paused, or cleared.     |
-| [Tasks](sources/tasks/README.md)                  | Persistent owned conversations with dedicated folders, created by bots and rooting their own subtasks.     |
-| [Scheduling](sources/scheduling/README.md)        | Durable waits an agent can take, and messages it asks to be delivered to itself later.                     |
-| [Workflows](sources/workflows/README.md)          | Run a sandboxed Python script that orchestrates agents, and inspect, wait for, resume or cancel it.        |
-| [Usage](sources/usage/README.md)                  | Advisory token and timing accounting for one agent and its tree, which never fails a turn.                 |
-| [Provider usage](sources/providerUsage/README.md) | Memory-only vendor quota readings for every configured provider, refreshed independently every 15 minutes. |
-| [Compactions](sources/compactions/README.md)      | Durable manual and automatic context-compaction lifecycle, run association, recovery, and measurements.    |
+| Module                                            | What it adds                                                                                                     |
+| ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| [Goal](sources/goal/README.md)                    | One durable long-running objective per agent, kept moving until complete, blocked, paused, or cleared.           |
+| [Tasks](sources/tasks/README.md)                  | Persistent owned conversations with dedicated folders, created by bots and rooting their own subtasks.           |
+| [Artifacts](sources/artifacts/README.md)          | A global, versioned catalog of published Markdown and HTML bundles, images, image series, videos, and documents. |
+| [Scheduling](sources/scheduling/README.md)        | Durable waits an agent can take, and messages it asks to be delivered to itself later.                           |
+| [Workflows](sources/workflows/README.md)          | Run a sandboxed Python script that orchestrates agents, and inspect, wait for, resume or cancel it.              |
+| [Usage](sources/usage/README.md)                  | Advisory token and timing accounting for one agent and its tree, which never fails a turn.                       |
+| [Provider usage](sources/providerUsage/README.md) | Memory-only vendor quota readings for every configured provider, refreshed independently every 15 minutes.       |
+| [Compactions](sources/compactions/README.md)      | Durable manual and automatic context-compaction lifecycle, run association, recovery, and measurements.          |
 
 ### People and other agents
 
@@ -186,9 +187,9 @@ its public methods, and its storage and event contracts.
 
 ### Storage ownership
 
-Modules owning tables through their own migrations: auto, collaboration, compactions, events, goal,
-history, mcp, presence, profile, projects, scheduling, secrets, tasks, usage, user input,
-workflows, and workspaces. The rest own none: abort, compute, config, files, gemini, git, image
+Modules owning tables through their own migrations: artifacts, auto, collaboration, compactions,
+events, goal, history, mcp, presence, profile, projects, scheduling, secrets, tasks, usage, user
+input, workflows, and workspaces. The rest own none: abort, compute, config, files, gemini, git, image
 generation, model switch, observation, permissions, search, skills, system prompt, titles, and code mode.
 Compute uses per-agent and shared Agent KV, while system prompt and titles use Agent KV only;
 terminals stores nothing anywhere because a terminal ends with the process behind it, and

@@ -11,6 +11,9 @@
 .rig-dev/
 .worktrees/
 artifacts/
+# The artifacts module's own sources and tests are code, not build output.
+!packages/happy-agent-modules/sources/artifacts/
+!packages/happy-agent-modules/tests/artifacts/
 coverage/
 dist/
 node_modules/

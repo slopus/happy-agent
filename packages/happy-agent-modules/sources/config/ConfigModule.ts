@@ -1506,6 +1506,27 @@ export class ConfigModule implements AgentModule {
         return join(this.configuration.paths.agentHome, "state", agentId, "snapshot.bin");
     }
 
+    /** The private root holding every artifact's stored content, beside the database. */
+    get artifactsHome(): string {
+        return join(this.configuration.paths.agentHome, "artifacts");
+    }
+
+    /** One stored artifact file, named by the SHA-256 of its bytes and never rewritten. */
+    artifactContentPath(sha256: string): string {
+        if (!/^[0-9a-f]{64}$/.test(sha256)) {
+            throw new Error("The artifact content digest cannot name a file.");
+        }
+        return join(this.artifactsHome, "content", sha256.slice(0, 2), sha256);
+    }
+
+    /** Where one artifact upload's bytes arrive before they are stored by their digest. */
+    artifactUploadPath(uploadId: string): string {
+        if (!Value.Check(cuid2Schema, uploadId)) {
+            throw new Error("The artifact upload ID cannot name a file.");
+        }
+        return join(this.artifactsHome, "uploads", uploadId);
+    }
+
     /** A strict service's private native controls never live in the workspace it serves. */
     serviceExecution(serviceId: string): ComputeServiceExecution {
         if (process.platform !== "linux")
