@@ -26,6 +26,8 @@ const AGENT_ID = "agent-1";
 const SESSION_ID = "session-1";
 const SERVER = "https://api.happy.example";
 const KEY = Buffer.alloc(32, 7).toString("base64");
+/** The key a replaced session is given. */
+const REPLACEMENT_KEY = Buffer.alloc(32, 8).toString("base64");
 
 const CONFIGURATION: HappyConnectionConfiguration = {
     credentialFingerprint: "credential-fingerprint",
@@ -207,6 +209,23 @@ function fakeOperations(overrides: Partial<HappySessionOperations> = {}): {
         models: () => MODELS,
         pendingQuestions: async () => pending,
         providerUsage: () => null,
+        replaceRemoteSession: async (ctx, agentId) => {
+            calls.push({ detail: agentId, kind: "replaceRemoteSession" });
+            const existing = await sync.readSession(ctx, agentId);
+            if (existing === undefined) return;
+            await sync.removeSession(ctx, agentId);
+            await sync.ensureSession(
+                ctx,
+                {
+                    agentId,
+                    credentialFingerprint: existing.credentialFingerprint,
+                    encryptionKeyBase64: REPLACEMENT_KEY,
+                    encryptionVariant: existing.encryptionVariant,
+                    sessionId: existing.sessionId,
+                },
+                Date.now(),
+            );
+        },
         saveDraft: async (_ctx, _agentId, draft) => {
             calls.push({ detail: draft, kind: "saveDraft" });
             if (draft.updatedAt !== null && draft.updatedAt >= (snapshot.draft.updatedAt ?? -1)) {
@@ -608,7 +627,10 @@ describe("keeping one session in step with Happy", () => {
         await session.settle();
 
         const created = server.posted("/v1/sessions")[0];
-        expect(created?.body).toMatchObject({ agentState: null, tag: happySessionTag(SESSION_ID) });
+        expect(created?.body).toMatchObject({
+            agentState: null,
+            tag: happySessionTag(SESSION_ID, KEY),
+        });
         expect(await sync.readSession(store.context, AGENT_ID)).toMatchObject({
             remoteSessionId: "remote-1",
         });
@@ -1673,5 +1695,269 @@ describe("ending a session", () => {
         await archiving;
         expect(answer).toEqual({ error: "This session has ended." });
         expect(calls.filter((call) => call.kind === "abort")).toEqual([]);
+    });
+});
+
+describe("publishing account quota without churn", () => {
+    it("does not republish agent state when only the quota capture time moved", async () => {
+        const socket = new FakeSocket();
+        let usage = {
+            capturedAt: 2_000,
+            credits: null,
+            exhausted: false,
+            planName: "Max",
+            providerId: "codex",
+            vendor: "claude",
+            windows: {
+                fableWeekly: null,
+                fiveHour: {
+                    durationMs: 18_000_000,
+                    resetsAt: 3_000,
+                    startsAt: 1_000,
+                    usedPercent: 40,
+                },
+                monthly: null,
+                weekly: null,
+            },
+        };
+        const session = client({
+            operations: fakeOperations({ providerUsage: () => usage as never }).operations,
+            server: fakeServer(),
+            socket,
+        });
+        await session.settle();
+        expect(socket.emittedValues("update-state")).toHaveLength(1);
+
+        // Every provider usage snapshot is captured anew, usually with nothing else changed.
+        usage = { ...usage, capturedAt: 152_000 };
+        await session.settle();
+        expect(socket.emittedValues("update-state")).toHaveLength(1);
+
+        usage = {
+            ...usage,
+            capturedAt: 302_000,
+            windows: { ...usage.windows, fiveHour: { ...usage.windows.fiveHour, usedPercent: 41 } },
+        };
+        await session.settle();
+        const published = socket.emittedValues("update-state") as { agentState: string }[];
+        expect(published).toHaveLength(2);
+        expect(decode(published[1]!.agentState)).toMatchObject({
+            usageLimits: { capturedAt: 302_000, windows: [{ id: "five_hour", utilization: 41 }] },
+        });
+        await session.close();
+    });
+});
+
+describe("a session Happy holds under another data key", () => {
+    const DATA_KEY_AGENT = "agent-data-key";
+    const DATA_KEY_SESSION = "session-data-key";
+    const DATA_KEY_CONFIGURATION: HappyConnectionConfiguration = {
+        ...CONFIGURATION,
+        credentials: {
+            encryption: {
+                machineKey: new Uint8Array(32).fill(3),
+                publicKey: new Uint8Array(32).fill(9),
+                type: "dataKey",
+            },
+            token: "token",
+        },
+    };
+    /** A data key some earlier daemon wrapped for this account; this daemon does not hold it. */
+    const FOREIGN_DATA_KEY = Buffer.alloc(105, 4).toString("base64");
+
+    interface RemoteSession {
+        createdAt: number;
+        dataEncryptionKey: string | null;
+        id: string;
+        metadata: string;
+    }
+
+    /** Happy's create-by-tag: a known tag answers with the session and data key it already has. */
+    function taggedServer(existing: Record<string, RemoteSession>) {
+        const sessions = new Map(Object.entries(existing));
+        const created: { dataEncryptionKey: string; metadata: string; tag: string }[] = [];
+        const deleted: string[] = [];
+        let next = 0;
+        const handler = async (input: string | URL, init: RequestInit = {}) => {
+            const url = typeof input === "string" ? input : input.toString();
+            const method = init.method ?? "GET";
+            const body = typeof init.body === "string" ? JSON.parse(init.body) : undefined;
+            if (url.endsWith("/v1/sessions") && method === "POST") {
+                const known = sessions.get(body.tag);
+                if (known !== undefined) {
+                    return Response.json({ session: { ...known, metadataVersion: 3 } });
+                }
+                created.push(body);
+                const session = {
+                    createdAt: Date.now(),
+                    dataEncryptionKey: body.dataEncryptionKey,
+                    id: `remote-new-${String(++next)}`,
+                    metadata: body.metadata,
+                };
+                sessions.set(body.tag, session);
+                return Response.json({ session: { ...session, metadataVersion: 0 } });
+            }
+            if (method === "DELETE") {
+                deleted.push(decodeURIComponent(url.slice(url.lastIndexOf("/") + 1)));
+                return Response.json({ success: true });
+            }
+            if (url.includes("/messages") && method === "GET") {
+                return Response.json({ hasMore: false, messages: [] });
+            }
+            return Response.json({ ok: true });
+        };
+        return { created, deleted, fetch: handler as unknown as typeof fetch };
+    }
+
+    function encodeWith(key: string, value: unknown): string {
+        return Buffer.from(
+            encryptHappyPayload(new Uint8Array(Buffer.from(key, "base64")), "dataKey", value),
+        ).toString("base64");
+    }
+
+    async function attach(remoteSessionId?: string) {
+        const now = Date.now();
+        const row = await sync.ensureSession(
+            store.context,
+            {
+                agentId: DATA_KEY_AGENT,
+                credentialFingerprint: "fingerprint",
+                encryptionKeyBase64: KEY,
+                encryptionVariant: "dataKey",
+                sessionId: DATA_KEY_SESSION,
+            },
+            now,
+        );
+        if (remoteSessionId !== undefined) {
+            await sync.setRemoteSession(store.context, DATA_KEY_AGENT, remoteSessionId, now);
+        }
+        return row;
+    }
+
+    function dataKeyClient(server: { fetch: typeof fetch }, operations: HappySessionOperations) {
+        return new HappySessionClient({
+            agentId: DATA_KEY_AGENT,
+            configuration: DATA_KEY_CONFIGURATION,
+            context: store.context,
+            fetch: server.fetch,
+            operations,
+            sessionId: DATA_KEY_SESSION,
+            socketFactory: () => new FakeSocket(),
+            sync,
+            version: "1.2.3",
+        });
+    }
+
+    it("binds every new session's tag to its key", async () => {
+        const row = await attach();
+        expect(row.tag).toBe(happySessionTag(DATA_KEY_SESSION, KEY));
+        expect(happySessionTag(DATA_KEY_SESSION, REPLACEMENT_KEY)).not.toBe(row.tag);
+    });
+
+    it("publishes afresh under a new tag when its tag answers with another key", async () => {
+        const row = await attach();
+        const server = taggedServer({
+            [row.tag]: {
+                // Created after the local record, so only the recorded key can tell it apart.
+                createdAt: Date.now() + 60_000,
+                dataEncryptionKey: FOREIGN_DATA_KEY,
+                id: "remote-old",
+                // The daemon kept writing metadata with its own key, so this alone looks healthy.
+                metadata: encodeWith(KEY, { path: "/home/steve/projects/rig" }),
+            },
+        });
+        const { calls, operations } = fakeOperations();
+        const session = dataKeyClient(server, operations);
+        await session.settle();
+
+        expect(server.deleted).toEqual(["remote-old"]);
+        expect(calls.filter((call) => call.kind === "replaceRemoteSession")).toHaveLength(1);
+        const current = await sync.readSession(store.context, DATA_KEY_AGENT);
+        expect(current).toMatchObject({
+            encryptionKeyBase64: REPLACEMENT_KEY,
+            remoteSessionId: "remote-new-1",
+            tag: happySessionTag(DATA_KEY_SESSION, REPLACEMENT_KEY),
+        });
+        expect(server.created).toHaveLength(1);
+        expect(server.created[0]).toMatchObject({
+            dataEncryptionKey: current?.dataEncryptionKeyBase64,
+            tag: current?.tag,
+        });
+        expect(
+            decryptHappyPayload(
+                new Uint8Array(Buffer.from(REPLACEMENT_KEY, "base64")),
+                "dataKey",
+                new Uint8Array(Buffer.from(server.created[0]!.metadata, "base64")),
+            ),
+        ).toMatchObject({ path: "/home/steve/projects/rig" });
+
+        // A later connection recognizes the session it made by the key it recorded.
+        await session.close();
+        const again = dataKeyClient(server, fakeOperations().operations);
+        await again.settle();
+        expect(server.deleted).toEqual(["remote-old"]);
+        expect(server.created).toHaveLength(1);
+        await again.close();
+    });
+
+    it("repairs a session bound before its key was recorded when Happy made it earlier", async () => {
+        const row = await attach("remote-old");
+        const server = taggedServer({
+            [row.tag]: {
+                createdAt: row.createdAt - 86_400_000,
+                dataEncryptionKey: FOREIGN_DATA_KEY,
+                id: "remote-old",
+                metadata: encodeWith(KEY, { path: "/home/steve/projects/rig" }),
+            },
+        });
+        const session = dataKeyClient(server, fakeOperations().operations);
+        await session.settle();
+        expect(server.deleted).toEqual(["remote-old"]);
+        expect(await sync.readSession(store.context, DATA_KEY_AGENT)).toMatchObject({
+            remoteSessionId: "remote-new-1",
+            tag: happySessionTag(DATA_KEY_SESSION, REPLACEMENT_KEY),
+        });
+        await session.close();
+    });
+
+    it("keeps a healthy bound session and records the key Happy holds for it", async () => {
+        const row = await attach("remote-own");
+        const ownKey = Buffer.alloc(105, 5).toString("base64");
+        const server = taggedServer({
+            [row.tag]: {
+                createdAt: row.createdAt + 50,
+                dataEncryptionKey: ownKey,
+                id: "remote-own",
+                metadata: encodeWith(KEY, { path: "/home/steve/projects/rig" }),
+            },
+        });
+        const { calls, operations } = fakeOperations();
+        const session = dataKeyClient(server, operations);
+        await session.settle();
+        expect(server.deleted).toEqual([]);
+        expect(calls.some((call) => call.kind === "replaceRemoteSession")).toBe(false);
+        expect(await sync.readSession(store.context, DATA_KEY_AGENT)).toMatchObject({
+            dataEncryptionKeyBase64: ownKey,
+            encryptionKeyBase64: KEY,
+            remoteSessionId: "remote-own",
+            tag: row.tag,
+        });
+        await session.close();
+    });
+
+    it("replaces a session whose metadata does not decrypt", async () => {
+        const row = await attach("remote-old");
+        const server = taggedServer({
+            [row.tag]: {
+                createdAt: row.createdAt + 50,
+                dataEncryptionKey: FOREIGN_DATA_KEY,
+                id: "remote-old",
+                metadata: encodeWith(Buffer.alloc(32, 1).toString("base64"), { path: "/" }),
+            },
+        });
+        const session = dataKeyClient(server, fakeOperations().operations);
+        await session.settle();
+        expect(server.deleted).toEqual(["remote-old"]);
+        await session.close();
     });
 });

@@ -493,6 +493,7 @@ describe("Happy mobile messages", () => {
             "004-personal-session-sync",
             "005-personal-integration-state",
             "006-personal-project-sync",
+            "007-happy-session-data-key",
         ]);
     });
 
@@ -1347,5 +1348,215 @@ describe("archiving a Happy session", () => {
         expect(
             requests.filter((request) => request === "POST /v1/sessions/remote-unattached/archive"),
         ).toEqual(["POST /v1/sessions/remote-unattached/archive"]);
+    });
+
+    it("publishes only top-level agents and retires a subtask already on the phone", async () => {
+        const database = moduleDatabase(
+            [...happySyncMigrations, ...happyIntegrationMigrations],
+            "happy-top-level-only-test",
+        );
+        databases.push(database);
+        await database.ready;
+
+        class AutomaticSocket {
+            connected = true;
+            readonly #listeners = new Map<string, (...values: any[]) => void>();
+
+            connect(): void {
+                this.#listeners.get("connect")?.();
+            }
+
+            disconnect(): void {
+                this.connected = false;
+            }
+
+            emit(_event: string, ...values: unknown[]): void {
+                const callback = values[1];
+                if (typeof callback === "function") {
+                    (callback as (answer: unknown) => void)({ result: "success", version: 1 });
+                }
+            }
+
+            on(event: string, listener: (...values: any[]) => void): void {
+                this.#listeners.set(event, listener);
+            }
+        }
+
+        happyConnection.socketFactory = () => new AutomaticSocket();
+        const requests: string[] = [];
+        const createdTags: string[] = [];
+        vi.stubGlobal("fetch", (async (input: string | URL, init: RequestInit = {}) => {
+            const url = new URL(typeof input === "string" ? input : input.toString());
+            requests.push(`${init.method ?? "GET"} ${url.pathname}`);
+            if (url.pathname === "/v1/machines") {
+                return Response.json({
+                    machine: { daemonStateVersion: 1, id: "machine-1", metadataVersion: 1 },
+                });
+            }
+            if (url.pathname === "/v1/sessions") {
+                const tag = (JSON.parse(String(init.body)) as { tag: string }).tag;
+                createdTags.push(tag);
+                return Response.json({
+                    session: {
+                        agentState: null,
+                        agentStateVersion: 0,
+                        id: tag.includes("agent-child") ? "remote-child" : "remote-parent",
+                        metadataVersion: 1,
+                    },
+                });
+            }
+            if (url.pathname.endsWith("/messages")) {
+                return Response.json({ hasMore: false, messages: [] });
+            }
+            if (url.pathname.endsWith("/archive")) return Response.json({ ok: true });
+            throw new Error(`Unexpected Happy request: ${url.pathname}`);
+        }) as typeof fetch);
+
+        const workspace = {
+            id: "workspace-1",
+            name: "Workspace",
+            path: "/projects/rig/workspace",
+            projectRef: "project-1",
+            status: "ready" as const,
+        };
+        const project = {
+            id: "project-1",
+            kind: "regular" as const,
+            name: "Rig",
+            repositoryRef: "/projects/rig",
+            status: "active" as const,
+        };
+        const config: AgentConfig = {
+            environment: {
+                osVersion: "test",
+                platform: "darwin",
+                shell: "/bin/zsh",
+                workingDirectory: workspace.path,
+            },
+            metadata: { version: 1 },
+        };
+        /** A session, the subtask it delegated to, and that subtask's own subtask. */
+        const parents = new Map([
+            ["agent-child", "agent-parent"],
+            ["agent-grandchild", "agent-child"],
+        ]);
+        const agents = {
+            abort: async () => undefined,
+            config: async () => config,
+            parentOf: async (_ctx: unknown, agentId: string) => parents.get(agentId) ?? null,
+            updateMetadata: async () => undefined,
+        };
+        const module = new HappyModule(
+            {
+                configuration: {
+                    paths: { agentHome: "/tmp/happy-agent-test" },
+                    values: {
+                        defaults: { permissionMode: "auto" },
+                        settings: { happyIntegration: true },
+                    },
+                    version: "test",
+                },
+                models: [
+                    {
+                        defaultEffort: "medium",
+                        effortLevels: ["medium"],
+                        id: "gpt-5.6-sol",
+                        name: "GPT-5.6 Sol",
+                        providerId: "codex",
+                        serviceTiers: [],
+                    },
+                ],
+                providerType: () => "codex",
+                visibleModels: [],
+            } as never,
+            { archiveAgent: async () => undefined } as never,
+            {
+                activeRunId: () => undefined,
+                latestAgentEvent: async () => undefined,
+                observe: () => undefined,
+            } as never,
+            {
+                onSnapshot: () => () => undefined,
+                track: () => undefined,
+                trackedSnapshot: () => undefined,
+            } as never,
+            { latestUserOrFinalAssistantTextMessageAt: async () => undefined } as never,
+            {
+                get: async () => project,
+                listAgentIds: async () => [],
+                listCatalogPage: async () => ({ projects: [] }),
+                onEvent: () => () => undefined,
+                projectForAgent: async () => project,
+            } as never,
+            { list: () => [], onChanged: () => () => undefined } as never,
+            { interruptWaits: () => undefined } as never,
+            {
+                latestQuestionAt: async () => undefined,
+                list: async () => [],
+                onEvent: () => () => undefined,
+            } as never,
+            {
+                get: async () => workspace,
+                listAgentIds: async () => ["agent-child", "agent-parent", "agent-grandchild"],
+                listCatalogPage: async () => ({ workspaces: [workspace] }),
+                onEvent: () => () => undefined,
+                workspaceForAgent: async () => workspace.id,
+            } as never,
+            {
+                forAgent: async () => undefined,
+                list: async () => [],
+                onEvent: () => () => undefined,
+            } as never,
+            { enabled: false } as never,
+            {} as never,
+        );
+        modules.push(module);
+
+        // An older daemon published the subtask before subtasks stopped being published.
+        const sync = createHappySyncDatabase();
+        await sync.ensureSession(
+            database.context,
+            {
+                agentId: "agent-child",
+                credentialFingerprint: createHappyAccountFingerprint(
+                    happyConnection.configuration.credentials,
+                    happyConnection.configuration.serverUrl,
+                ),
+                encryptionKeyBase64: Buffer.alloc(32).toString("base64"),
+                encryptionVariant: "legacy",
+                sessionId: "agent-child",
+            },
+            1,
+        );
+        await sync.setRemoteSession(database.context, "agent-child", "remote-child", 2);
+
+        const hooks = module.beforeStart(database.context, agents as never);
+        await hooks.afterStart?.(database.context, agents as never);
+        await module.settle();
+
+        expect(requests).toContain("POST /v1/sessions/remote-child/archive");
+        expect(await sync.readSession(database.context, "agent-parent")).toMatchObject({
+            remoteSessionId: "remote-parent",
+        });
+        expect(await sync.readSession(database.context, "agent-grandchild")).toBeUndefined();
+
+        // A busy subtask records events all the time; none of them attaches it.
+        const published = createdTags.length;
+        for (const agentId of ["agent-child", "agent-grandchild"]) {
+            await database.context.inTx(async (txCtx) => {
+                await module.eventsListener.onEventTransactional?.(txCtx, {
+                    agentId,
+                    id: `event-${agentId}`,
+                    payload: {},
+                    type: "run.started",
+                } as never);
+            });
+        }
+        await module.settle();
+        expect(await sync.readSession(database.context, "agent-grandchild")).toBeUndefined();
+        expect(createdTags).toHaveLength(published);
+        expect(
+            requests.filter((request) => request === "POST /v1/sessions/remote-child/archive"),
+        ).toHaveLength(1);
     });
 });

@@ -101,6 +101,13 @@ far the agent's history has been projected. `happy_agent_happy_outbox` holds
 the messages that are written but not yet accepted, in the order they were
 produced.
 
+The tag carries a digest of the session key, and the row records the exact
+wrapped data key sent for that tag. Happy answers an existing tag with the
+session and data key it already holds, so every connection checks that answer:
+a session Happy holds under another key, or whose metadata does not decrypt, is
+unreadable on the phone. It is deleted and published afresh under a new key and
+tag, with its recent history queued again.
+
 Both are keyed by connection owner as well as agent, and belong to the account that produced them. Signing in to a different
 account discards the remote identity, the cursor and the queue, because none of
 it belongs to the new account.
@@ -181,7 +188,9 @@ would be shown a row of sessions that all look idle and then watch them correct
 themselves. Catalog reconciliation then runs on the module's background
 lifetime, so reading a large archive cannot hold daemon startup open. It follows
 complete catalog pages, rejects archived agents and owners, and opens at most 64
-session connections. After startup, the API may ask the same module to begin
+session connections. Only top-level agents, bots and the sessions a person started, are
+published; a subtask never attaches, and one an older daemon published is archived on the phone.
+Bots attach first and are never replaced to make room for a project session. After startup, the API may ask the same module to begin
 pairing or resume a configured connection.
 
 The public integration state is a complete, versioned snapshot. Pairing,

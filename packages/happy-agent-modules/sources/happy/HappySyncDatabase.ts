@@ -75,12 +75,22 @@ export const happySyncMigrations: readonly AgentModuleMigration[] = [
         },
     ],
     personalSessionMigration,
+    [
+        "007-happy-session-data-key",
+        async (_ctx, database) => {
+            await agentDatabaseRun(
+                database,
+                sql`ALTER TABLE ${sql.raw(SESSIONS_TABLE)} ADD COLUMN data_encryption_key_base64 TEXT`,
+            );
+        },
+    ],
 ];
 
 interface SessionRow {
     agent_id: string;
     session_id: string;
     credential_fingerprint: string;
+    data_encryption_key_base64: string | null;
     tag: string;
     remote_session_id: string | null;
     encryption_variant: string;
@@ -236,7 +246,10 @@ export function createHappySyncDatabase(ownerId = "") {
                      history_backfilled, projected_event_id, projection_status,
                      projection_stall_cause, projection_error, created_at_ms, updated_at_ms)
                     VALUES (${ownerId}, ${input.agentId}, ${input.sessionId}, ${input.credentialFingerprint},
-                            ${happySessionTag(ownerId === "" ? input.sessionId : `${ownerId}:${input.sessionId}`)}, NULL, ${input.encryptionVariant},
+                            ${happySessionTag(
+                                ownerId === "" ? input.sessionId : `${ownerId}:${input.sessionId}`,
+                                input.encryptionKeyBase64,
+                            )}, NULL, ${input.encryptionVariant},
                             ${input.encryptionKeyBase64}, 0, 0, NULL, 'active', NULL, NULL,
                             ${now}, ${now})`,
             );
@@ -299,6 +312,21 @@ export function createHappySyncDatabase(ownerId = "") {
                 ctx.db,
                 sql`UPDATE ${sql.raw(SESSIONS_TABLE)}
                     SET remote_session_id = ${remoteSessionId}, updated_at_ms = ${now}
+                    WHERE owner_id = ${ownerId} AND agent_id = ${agentId}`,
+            );
+        },
+
+        /** Records the wrapped data key this daemon sends Happy for the session's current tag. */
+        async setDataEncryptionKey(
+            ctx: Context,
+            agentId: string,
+            dataEncryptionKeyBase64: string,
+            now: number,
+        ): Promise<void> {
+            await agentDatabaseRun(
+                ctx.db,
+                sql`UPDATE ${sql.raw(SESSIONS_TABLE)}
+                    SET data_encryption_key_base64 = ${dataEncryptionKeyBase64}, updated_at_ms = ${now}
                     WHERE owner_id = ${ownerId} AND agent_id = ${agentId}`,
             );
         },
@@ -535,6 +563,9 @@ function parseSession(row: SessionRow): HappySyncSession {
         agentId: row.agent_id,
         createdAt: Number(row.created_at_ms),
         credentialFingerprint: row.credential_fingerprint,
+        ...(row.data_encryption_key_base64 === null
+            ? {}
+            : { dataEncryptionKeyBase64: row.data_encryption_key_base64 }),
         encryptionKeyBase64: row.encryption_key_base64,
         encryptionVariant: row.encryption_variant,
         historyBackfilled: Number(row.history_backfilled) === 1,

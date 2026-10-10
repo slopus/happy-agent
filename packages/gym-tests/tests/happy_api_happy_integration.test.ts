@@ -12,6 +12,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { WebSocketServer, type WebSocket } from "ws";
 
 const gyms = new Set<AgentGym>();
+/** The agent a published session mirrors; its tag is `rig:<agent id>#<key digest>`. */
+const agentOf = (tag: string) => tag.slice("rig:".length).split("#")[0]!;
 const execFile = promisify(execFileCallback);
 const servers = new Set<Server>();
 const webSocketServers = new Set<WebSocketServer>();
@@ -42,7 +44,7 @@ afterEach(async () => {
 });
 
 describe("Happy integration API", () => {
-    it("creates a mobile bot at the session limit by replacing only the oldest subscription", async () => {
+    it("creates a mobile bot at the session limit by replacing a conversation before any bot", async () => {
         const happy = await startProtocolHappyServer({ authorizePairing: true });
         const gym = await createAgentGym({
             environment: { HAPPY_AGENT_HAPPY_SERVER_URL: happy.url },
@@ -73,17 +75,18 @@ describe("Happy integration API", () => {
         const oldest = happy.sessions.find(
             (session) => session.metadata.bot?.id === before.bots.at(-1)!.id,
         )!;
+        const conversation = happy.sessions.find((session) => session.metadata.bot === undefined)!;
         await gym.send("Save this conversation before replacing its subscription.", {
-            sessionId: oldest.tag.slice(4),
+            sessionId: agentOf(oldest.tag),
         });
         for (const session of happy.sessions) {
             if (session.id === oldest.id) continue;
-            await gym.client.saveAgentDraft(session.tag.slice(4), {
+            await gym.client.saveAgentDraft(agentOf(session.tag), {
                 draft: { ...gym.selection, permissionMode: "auto", text: "Refreshed on desktop." },
                 updatedAt: Date.now(),
             });
         }
-        const oldHistory = await gym.history(oldest.tag.slice(4));
+        const oldHistory = await gym.history(agentOf(oldest.tag));
         expect(JSON.stringify(oldHistory)).toContain("Saved earlier answer.");
         const request = {
             type: "happy-agent-spawn",
@@ -102,8 +105,9 @@ describe("Happy integration API", () => {
             "the mobile subscription count to remain at 64",
         );
         expect(happy.endedSessions).toEqual([]);
-        expect(happy.connectedSessions).not.toContain(oldest.id);
-        expect((await gym.history(oldest.tag.slice(4))).runs).toEqual(oldHistory.runs);
+        // A bot is never pushed out while a conversation can make room, however old the bot.
+        expect(happy.connectedSessions).not.toContain(conversation.id);
+        expect(happy.connectedSessions).toContain(oldest.id);
         for (const bot of before.bots) {
             expect(await gym.client.getBot(bot.id)).toMatchObject({ bot: { status: "active" } });
         }
@@ -124,13 +128,16 @@ describe("Happy integration API", () => {
             () => happy.connectedSessions.length === 64 || undefined,
             "64 subscriptions after concurrent creation",
         );
+        // Every slot now holds a bot, so a new bot replaces the least recently updated one.
+        expect(happy.connectedSessions).not.toContain(oldest.id);
+        expect((await gym.history(agentOf(oldest.tag))).runs).toEqual(oldHistory.runs);
         // A new local event reactivates the same relay identity and resumes its durable history.
-        await gym.send("Reactivate this conversation.", { sessionId: oldest.tag.slice(4) });
+        await gym.send("Reactivate this conversation.", { sessionId: agentOf(oldest.tag) });
         await gym.waitUntil(
             () => happy.hasRpc(`${oldest.id}:abort`) || undefined,
             "the evicted conversation to reconnect",
         );
-        expect(JSON.stringify(await gym.history(oldest.tag.slice(4)))).toContain(
+        expect(JSON.stringify(await gym.history(agentOf(oldest.tag)))).toContain(
             "Reactivated conversation.",
         );
         expect(new Set(happy.sessions.map((session) => session.id)).size).toBe(67);

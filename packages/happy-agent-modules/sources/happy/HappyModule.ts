@@ -33,15 +33,12 @@ export { HappyIntegrationRequestError, type HappyIntegrationListener } from "./H
 /** One feature owns the standalone connection or all personal team connections. */
 export class HappyModule extends HappyConnection implements AgentModule<AnyAgentTool> {
     readonly name = "happy";
-    // Released module-wide order is 001, 002, 003. Per-store extensions come after that prefix.
+    // Every store numbers its migrations from one module-wide sequence, applied in that order.
     readonly migrations = [
-        happySyncMigrations[0]!,
-        happyIntegrationMigrations[0]!,
-        happyProjectSyncMigrations[0]!,
-        ...happySyncMigrations.slice(1),
-        ...happyIntegrationMigrations.slice(1),
-        ...happyProjectSyncMigrations.slice(1),
-    ];
+        ...happySyncMigrations,
+        ...happyIntegrationMigrations,
+        ...happyProjectSyncMigrations,
+    ].sort(([left], [right]) => left.localeCompare(right));
     readonly #team: TeamModule;
     readonly #createConnection: (user: TeamUser) => HappyConnection;
     readonly #connections = new Map<

@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { Type, type Static } from "@sinclair/typebox";
 
 import { happyEncryptionVariantSchema } from "./HappyCredentials.js";
@@ -62,6 +64,13 @@ export const happySyncSessionSchema = Type.Object(
     {
         agentId: happyAgentIdSchema,
         createdAt: happyTimestampSchema,
+        /**
+         * The wrapped data key this daemon sends for the current tag, recorded before the first
+         * request so every retry sends the same bytes. Happy stores it verbatim, so the key it
+         * returns for this tag is this daemon's exactly when the bytes match. Absent for legacy
+         * accounts and for sessions published before keys were recorded.
+         */
+        dataEncryptionKeyBase64: Type.Optional(Type.String({ maxLength: 256, minLength: 1 })),
         /** Identifies the account and server these rows belong to; a change resets them. */
         credentialFingerprint: Type.String({ maxLength: 128, minLength: 1 }),
         encryptionKeyBase64: Type.String({ maxLength: 128, minLength: 1 }),
@@ -107,7 +116,18 @@ export const happyProjectionOutcomeSchema = Type.Union([
 ]);
 export type HappyProjectionOutcome = Static<typeof happyProjectionOutcomeSchema>;
 
-/** Builds the tag that makes remote session creation idempotent. */
-export function happySessionTag(sessionId: string): string {
-    return `rig:${sessionId}`;
+/**
+ * Builds the tag that makes remote session creation idempotent.
+ *
+ * Happy answers a creation with an existing tag with the session it already holds, keeping that
+ * session's data key and ignoring the one sent. A tag reused with a new key therefore leaves the
+ * daemon encrypting with a key the phone does not have, so the tag carries a digest of the key.
+ */
+export function happySessionTag(sessionId: string, encryptionKeyBase64: string): string {
+    const digest = createHash("sha256")
+        .update("happy-session-tag\0")
+        .update(encryptionKeyBase64)
+        .digest("hex")
+        .slice(0, 16);
+    return `rig:${sessionId}#${digest}`;
 }

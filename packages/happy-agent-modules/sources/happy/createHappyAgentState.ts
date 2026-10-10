@@ -118,6 +118,20 @@ export function createHappyAgentState(options: {
     };
 }
 
+/**
+ * The content that decides whether agent state must be published again.
+ *
+ * Every provider usage snapshot carries a new `capturedAt` even when no window moved, and each
+ * write bumps the session's `updatedAt` on Happy, which orders the phone's session list. Comparing
+ * whole states republished every attached session together every few minutes, so the list kept
+ * re-sorting and older bots fell out of it. The capture time is published with real changes only.
+ */
+export function happyAgentStateContent(state: HappyAgentState | null): string {
+    if (state?.usageLimits === undefined) return JSON.stringify(state);
+    const { capturedAt: _capturedAt, ...usageLimits } = state.usageLimits;
+    return JSON.stringify({ ...state, usageLimits });
+}
+
 /** Converts provider-neutral quota windows to the open window ids understood by Happy. */
 function toHappyUsageLimits(usage: ProviderUsage | null | undefined): HappyUsageLimits | undefined {
     if (usage === null || usage === undefined) return undefined;

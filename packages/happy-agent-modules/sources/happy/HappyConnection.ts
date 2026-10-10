@@ -1634,6 +1634,40 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
         await this.#bots.setAvatar(ctx, bot.id, bytes, contentType, bot.version);
     }
 
+    /**
+     * Starts a session afresh under a new key and tag, because Happy holds its tag under a data
+     * key the phone reads and this daemon does not have.
+     *
+     * The record is replaced exactly as an attachment for a new account would be, and the recent
+     * history is queued again in the same transaction, so the new remote session opens with the
+     * conversation rather than empty.
+     */
+    async replaceRemoteSession(ctx: Context, agentId: string): Promise<void> {
+        if (this.#configuration === undefined) throw new Error("Happy is not connected.");
+        await ctx.inTx(async (txCtx) => {
+            const existing = await this.#sync.readSession(txCtx, agentId);
+            if (existing === undefined) return;
+            await this.#sync.removeSession(txCtx, agentId);
+            await this.#sync.ensureSession(
+                txCtx,
+                {
+                    agentId,
+                    credentialFingerprint: existing.credentialFingerprint,
+                    encryptionKeyBase64: this.#sessionKey(),
+                    encryptionVariant: existing.encryptionVariant,
+                    sessionId: existing.sessionId,
+                },
+                Date.now(),
+            );
+            await this.#backfill(
+                txCtx,
+                agentId,
+                this.#agents.get(agentId)?.mapper ??
+                    new HappyMessageMapper(this.#connectionOwner?.id),
+            );
+        });
+    }
+
     async #resolveSpawnOwner(
         ctx: Context,
         request: HappySpawnRequest,
@@ -1791,10 +1825,16 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
      * Archiving keeps the association, so belonging to a workspace is not the same as being
      * reachable through one: an archived owner is asked about here rather than assumed live, or a
      * session put away on the desktop would come back the moment its agent said anything.
+     *
+     * Only top-level agents, bots and the sessions a person started, are published. Subtasks were
+     * attached through their workspace and on every event they recorded, and a busy one evicted a
+     * bot from the bounded connection budget: on one phone, 32 of 38 sessions were subtasks. One
+     * already published is no longer visible, so it is retired like an archived session.
      */
     async #userVisible(ctx: Context, agentId: string): Promise<boolean> {
         const config = await this.#system().config(ctx, agentId);
         if (config === undefined || typeof config.metadata?.archivedAt === "number") return false;
+        if ((await this.#system().parentOf(ctx, agentId)) !== null) return false;
         const bot = await this.#bots.forAgent(ctx, agentId);
         if (bot !== undefined) return bot.status === "active";
         const workspaceId = await this.#workspaces.workspaceForAgent(ctx, agentId);
@@ -1961,7 +2001,7 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
         // creation can replace it. If every slot is publishing, a retry remains truly pending.
         const oldest =
             state.agents.size >= MAX_CONNECTED_AGENTS
-                ? await this.#oldestSubscription(ctx, state.agents)
+                ? await this.#oldestSubscription(ctx, state.agents, session.bot !== undefined)
                 : undefined;
         if (state.agents.size >= MAX_CONNECTED_AGENTS && oldest === undefined) return undefined;
         await this.#sync.ensureSession(
@@ -2069,12 +2109,33 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
         return state;
     }
 
-    /** Durable agent update time, independent of reconnect order and relay keep-alives. */
-    async #oldestSubscription(ctx: Context, agents: ReadonlyMap<string, ConnectedAgent>) {
+    /**
+     * Durable agent update time, independent of reconnect order and relay keep-alives.
+     *
+     * A bot is a person's standing conversation and the reason most of them open the phone, so
+     * a project session is always replaced before any bot, and never replaces one itself. Only
+     * another bot replaces a bot, once every slot already holds one.
+     */
+    async #oldestSubscription(
+        ctx: Context,
+        agents: ReadonlyMap<string, ConnectedAgent>,
+        forBot: boolean,
+    ) {
+        const sessions = await this.#oldestSubscriptionWhere(ctx, agents, false);
+        if (sessions !== undefined || !forBot) return sessions;
+        return await this.#oldestSubscriptionWhere(ctx, agents, true);
+    }
+
+    async #oldestSubscriptionWhere(
+        ctx: Context,
+        agents: ReadonlyMap<string, ConnectedAgent>,
+        bots: boolean,
+    ) {
         let oldest: { agentId: string; attached: ConnectedAgent; updatedAt: number } | undefined;
         for (const [agentId, attached] of agents) {
             if ((await this.#sync.readSession(ctx, agentId))?.remoteSessionId === undefined)
                 continue;
+            if (((await this.#bots.forAgent(ctx, agentId)) !== undefined) !== bots) continue;
             const latest = await this.#events.latestAgentEvent(ctx, agentId);
             const config =
                 latest === undefined ? await this.#system().config(ctx, agentId) : undefined;

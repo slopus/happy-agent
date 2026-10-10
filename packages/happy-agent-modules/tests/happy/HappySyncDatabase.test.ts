@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
     createHappySyncDatabase,
+    happySessionTag,
     happySyncMigrations,
     MAX_HAPPY_MESSAGES_PER_EVENT,
     MAX_HAPPY_OUTBOX_MESSAGE_CHARACTERS,
@@ -114,7 +115,7 @@ describe("Happy sync storage", () => {
     it("attaches an agent once and reports the same session again", async () => {
         await withDatabase("happy-attach", async (sync, database) => {
             const first = await sync.ensureSession(database.context, ATTACH, NOW);
-            expect(first.tag).toBe("rig:session-1");
+            expect(first.tag).toBe(happySessionTag("session-1", first.encryptionKeyBase64));
             expect(first.historyBackfilled).toBe(false);
             expect(first.projectedEventId).toBeUndefined();
             expect(first.projectionStatus).toBe("active");

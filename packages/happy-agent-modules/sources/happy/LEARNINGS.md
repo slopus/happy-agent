@@ -85,13 +85,39 @@ one message it cannot carry.
 - Explicit retry must reload credentials and retry machine-identity creation instead of reusing a cached configuration that already lacks an identity.
 - A machine identity belongs to the account that first registered it. Unlinking and pairing a different phone account kept the old `machine.json`, Happy answered `409 machine_id_taken`, and the daemon treated it as an outage and retried forever: sessions synced, but the computer never appeared on the phone and the phone's pairing spinner timed out. That answer now replaces only the refused identity and activates again with the same credentials.
 - The sync store keys sessions by the account, not the token. Keying by `sha256(token + serverUrl)` made every re-pairing look like a new account, so the daemon dropped its session records and minted new session keys the phone could not read. The identity is now `sha256(encryption.publicKey + normalized serverUrl)`, the same one `readHappyCliMachineId` uses to recognize Happy CLI's account; a legacy account is keyed by its secret. Do not work around a mismatched fingerprint by reusing the previous session key: a different account must get a fresh key.
+- A session tag must never be reused with a different key. Changing the fingerprint (above) made
+  every existing row look like another account, so each was replaced with a new random key under
+  the same tag `rig:<session>`. Happy answers a creation with an existing tag with the session it
+  already holds, under the data key it was created with, and ignores the one sent: the daemon kept
+  encrypting with a key the phone did not have, and the phone silently dropped dozens of bots.
+  Metadata gave no warning, because the daemon had overwritten it with its own key. Now:
+    - New tags carry a digest of the session key (`rig:<session>#<digest>`), so a new key is a new
+      remote session.
+    - The wrapped data key sent for a tag is recorded before the first request, and every retry
+      sends those bytes. Happy stores them verbatim, so a different key in its answer is a session
+      this daemon cannot write for. This compares the stored key bytes, not ciphertext that is
+      encrypted again on each write.
+    - A session bound before keys were recorded is checked on every connection: Happy creating it
+      earlier than the local record (with five minutes for clock skew) means an earlier key, because
+      a record is only replaced together with its key. Once it passes, its key is recorded.
+    - Metadata that does not decrypt is also unreadable.
+    - An unreadable remote session is deleted, best effort, and the record is replaced with a fresh
+      key and tag. The last 50 messages are queued again, so the new session opens with the
+      conversation. This happens at most once per client lifetime, so a misbehaving server cannot
+      loop it. Legacy accounts encrypt with the account secret and are exempt from the key checks.
 
 ## Session state
 
+- Only top-level agents are published: bots and the sessions a person started (`parentOf` is
+  null). Subtasks used to attach through their workspace and on every event they recorded, and a
+  busy one could evict a bot. On one phone, 32 of 38 visible sessions were subtasks. A subtask is
+  never attached at reconcile, on an event, or on spawn. One an older daemon published is no longer
+  user-visible, so startup reaping archives it like any archived session.
 - The 64-session budget limits live mobile subscriptions, not bot creation or agent execution.
   Silently refusing attachment after saving a bot left the spawn RPC permanently pending.
   A requested conversation or a new agent event now replaces the subscription with the oldest
-  durable agent update, with agent ID breaking ties. Startup and catalog reconciliation cannot
+  durable agent update, with agent ID breaking ties. A project session is replaced before any
+  bot and never replaces one; only a bot replaces a bot, once every slot holds one. Startup and catalog reconciliation cannot
   displace current subscriptions merely by rediscovering older conversations. Replacement
   commits with its caller's transaction and disconnects only the old mobile client: it preserves
   the bot, running work, relay identity, sync cursor, queued messages, and history, and sends no
@@ -129,11 +155,9 @@ one message it cannot carry.
   `providers[]` and `models[].provider`, and machine `models[].provider`. A missing or null kind
   fails the parse and the phone discards the whole session metadata (title, path, models, bot) or
   the machine's whole model list. Never omit `kind` or send null; publish `"unknown"` instead.
-- Session metadata carries `depth`, the number of Agent Base `parentOf` hops: 0 top-level, 1 a
-  subtask, 2 a subtask of a subtask. The phone had no way to tell task level otherwise. Only the
-  number is published, never parent ids or titles. A failed lookup, a cycle, or a chain deeper than
-  eight omits `depth` entirely: the phone reads a missing depth as unknown, while a guessed 0 would
-  label a subtask as top-level.
+- Session metadata carries `depth`, the number of Agent Base `parentOf` hops. Only top-level
+  agents are published now, so it is always 0; the field stays because phones read it, and a
+  missing depth still means unknown. Only the number is published, never parent ids or titles.
 - Session metadata `bot` always carries `systemKey`: the built-in bot's key, such as
   `chief_of_staff`, or `null` for a bot a person made. The phone could not recognise the Chief of
   Staff without it. Writing `null` rather than omitting the key matters: the phone reads a bot with
@@ -173,7 +197,7 @@ one message it cannot carry.
   that tier explicitly, including `null` when unset. Omitting the option tells Agent Base to keep
   the previously persisted tier, contradicting the stamped mode and potentially retaining a
   retired tier such as the `"default"` sentinel Codex rejects.
-- Account quota and per-turn token usage are different projections. The native Happy app reads plan limits from each session's encrypted `agentState.usageLimits`, so Happy Agent maps the selected provider's latest account snapshot into the legacy open-window shape and republishes attached sessions whenever that snapshot changes. Fable's separate allowance uses Claude's native `seven_day_fable` id so current and older apps can render it without a new machine-metadata contract.
+- Account quota and per-turn token usage are different projections. The native Happy app reads plan limits from each session's encrypted `agentState.usageLimits`, so Happy Agent maps the selected provider's latest account snapshot into the legacy open-window shape and republishes attached sessions whenever that snapshot's windows change. A change in `capturedAt` alone is not a change: every snapshot is captured anew, each write bumps the session's `updatedAt` that orders the phone's list, and comparing whole states rewrote about twenty sessions every few minutes, so the list kept re-sorting and older bots fell out of it. Fable's separate allowance uses Claude's native `seven_day_fable` id so current and older apps can render it without a new machine-metadata contract.
 - A message received from the phone is steering, not an ordinary queued send. Store its pending History row and offer the same ID through `AgentSystemRef.steer` in one transaction. History's committed-pending notification is what makes the message visible to an already-open desktop transcript before Agent Base accepts it at the next run boundary.
 - Acceptance of a phone-originated message must not stay silent on the session stream. Suppressing the text echo also withheld the acceptance position, so the phone could not align its transcript with run order or tell "daemon offline" from "steering queued". The mapper now emits a content-free `user-message-accepted` receipt — server message ID, durable message ID, run ID — after the same steering turn close every other accepted user message causes. The phone's vocabulary silently drops unknown event kinds, so the receipt is additive and needs no server change: the server relays opaque encrypted payloads.
 - Permanent refusal is a terminal send outcome too. A turn-less service notice was discarded by mobile, leaving receipt-enabled messages pending forever. Emit `user-message-rejected` with the original relay `ref` and readable `reason`; mobile marks the original bubble failed without inventing acceptance, a turn boundary, or a timeout.

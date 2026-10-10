@@ -10,6 +10,7 @@ import type { ProviderUsage } from "@slopus/happy-providers";
 import type { UserInputRequest } from "../userInput/index.js";
 import {
     createHappyAgentState,
+    happyAgentStateContent,
     rememberHappyResolvedCommunication,
     toHappyCommunication,
     type HappyResolvedCommunication,
@@ -60,6 +61,11 @@ import { happyComposerDraftSnapshotSchema } from "./HappyComposerDraft.js";
 
 const HTTP_TIMEOUT_MS = 15_000;
 const RETRY_DELAY_MS = 2_000;
+/**
+ * How much earlier than its local record a remote session may claim to be created and still be
+ * trusted as this daemon's, allowing for clock skew between this computer and Happy.
+ */
+const REMOTE_SESSION_CLOCK_SKEW_MS = 5 * 60_000;
 const OUTBOX_BATCH = 50;
 const INCOMING_PAGE = 100;
 /** A session kicked continuously starts a full pass at most this often. */
@@ -113,6 +119,14 @@ export interface HappySessionOperations {
 
     /** The session workspace's changes against its Git comparison base. */
     gitState: (ctx: Context, agentId: string) => Promise<HappyGitStateResponse>;
+
+    /**
+     * Gives this session a fresh key and tag and queues its recent history again.
+     *
+     * Called when Happy holds this session's tag under a data key the phone can read and this
+     * daemon cannot match, so everything published there is unreadable on the phone.
+     */
+    replaceRemoteSession: (ctx: Context, agentId: string) => Promise<void>;
 
     /** Every model the phone may offer, across providers. */
     models: () => readonly HappyModel[];
@@ -170,6 +184,8 @@ const remoteSessionSchema = Type.Object(
                 agentState: Type.Optional(Type.Union([Type.String(), Type.Null()])),
                 agentStateVersion: Type.Optional(Type.Number()),
                 avatar: Type.Optional(Type.Unknown()),
+                createdAt: Type.Optional(Type.Number()),
+                dataEncryptionKey: Type.Optional(Type.Union([Type.String(), Type.Null()])),
                 id: Type.String({ minLength: 1 }),
                 metadata: Type.Optional(Type.String()),
                 metadataVersion: Type.Number(),
@@ -262,6 +278,8 @@ export class HappySessionClient {
     #archiveStartedAt: number | undefined;
     #archiving = false;
     #closed = false;
+    /** An unreadable remote session is replaced at most once per client lifetime. */
+    #replacedRemoteSession = false;
     // A new session is created with no agent state, so nothing is owed until a question arrives.
     #lastAgentState: string | undefined = "null";
     /**
@@ -546,16 +564,12 @@ export class HappySessionClient {
         }
         const metadata = await this.#metadata();
         const encoded = this.#encode(current, metadata);
-        const credentials = this.#options.configuration.credentials;
-        const wrappedKey =
-            credentials.encryption.type === "dataKey"
-                ? Buffer.from(
-                      wrapHappyDataKey(
-                          decodeKey(current.encryptionKeyBase64),
-                          credentials.encryption.publicKey,
-                      ),
-                  ).toString("base64")
-                : null;
+        const wrappedKey = await this.#dataEncryptionKey(current);
+        // A key recorded just now for a first creation is compared exactly, like any recorded one.
+        const sent =
+            wrappedKey !== null && current.remoteSessionId === undefined
+                ? { ...current, dataEncryptionKeyBase64: wrappedKey }
+                : current;
         const response = await this.#request(
             `${this.#options.configuration.serverUrl}/v1/sessions`,
             {
@@ -578,6 +592,29 @@ export class HappySessionClient {
             throw new Error("Happy returned a session Happy Agent could not read.");
         }
         const remote = body.session;
+        if (!this.#readableRemoteSession(sent, remote)) {
+            if (this.#replacedRemoteSession) {
+                throw new Error("Happy holds this session under a key Happy Agent does not have.");
+            }
+            this.#replacedRemoteSession = true;
+            await this.#replaceRemoteSession(remote.id);
+            return await this.#ensureRemoteSession();
+        }
+        if (
+            sent.dataEncryptionKeyBase64 === undefined &&
+            typeof remote.dataEncryptionKey === "string" &&
+            current.encryptionVariant === "dataKey"
+        ) {
+            // Bound before keys were recorded and judged this daemon's, so later checks are exact.
+            await ctx.inTx(async (txCtx) => {
+                await this.#options.sync.setDataEncryptionKey(
+                    txCtx,
+                    this.#options.agentId,
+                    remote.dataEncryptionKey as string,
+                    Date.now(),
+                );
+            });
+        }
         // Old relays omit avatar entirely. Missing/invalid optional artwork must not break chat.
         if (remote.avatar === null || Value.Check(happySessionAvatarSchema, remote.avatar)) {
             this.#avatarClient = new HappySessionAvatarClient({
@@ -617,6 +654,99 @@ export class HappySessionClient {
             );
         });
         return await this.#options.sync.readSession(ctx, this.#options.agentId);
+    }
+
+    /**
+     * The wrapped data key sent when creating this session, or null for a legacy account.
+     *
+     * Wrapping is randomized, so the bytes are recorded before the first request and every retry
+     * sends the same ones: that is what lets the key Happy returns be recognized as this daemon's.
+     * A session bound before keys were recorded is not given one here; its remote key is judged
+     * by {@link #readableRemoteSession} instead.
+     */
+    async #dataEncryptionKey(current: HappySyncSession): Promise<string | null> {
+        const encryption = this.#options.configuration.credentials.encryption;
+        if (encryption.type !== "dataKey") return null;
+        if (current.dataEncryptionKeyBase64 !== undefined) return current.dataEncryptionKeyBase64;
+        const wrapped = Buffer.from(
+            wrapHappyDataKey(decodeKey(current.encryptionKeyBase64), encryption.publicKey),
+        ).toString("base64");
+        if (current.remoteSessionId !== undefined) return wrapped;
+        await this.#options.context.inTx(async (txCtx) => {
+            await this.#options.sync.setDataEncryptionKey(
+                txCtx,
+                this.#options.agentId,
+                wrapped,
+                Date.now(),
+            );
+        });
+        return wrapped;
+    }
+
+    /**
+     * Whether the phone reads this remote session with the key this daemon encrypts with.
+     *
+     * Creating by tag answers with whatever session already holds that tag, under the data key it
+     * was created with; the key sent with the request is ignored. Happy stores the wrapped key
+     * verbatim, so a recorded key must come back byte for byte. A session bound before keys were
+     * recorded cannot be compared that way: one Happy created before this daemon's own record of
+     * it was created under an earlier key, because a record is only ever replaced together with
+     * its key. Metadata that does not decrypt is unreadable whatever the key says. Legacy
+     * accounts encrypt with the account secret, which cannot differ for the same account.
+     */
+    #readableRemoteSession(
+        current: HappySyncSession,
+        remote: { createdAt?: number; dataEncryptionKey?: string | null; metadata?: string },
+    ): boolean {
+        if (remote.metadata !== undefined) {
+            if (!Value.Check(recordSchema, this.#decode(current, remote.metadata))) return false;
+        }
+        if (current.encryptionVariant !== "dataKey") return true;
+        if (remote.dataEncryptionKey === undefined) return true;
+        if (remote.dataEncryptionKey === null) return false;
+        if (current.dataEncryptionKeyBase64 !== undefined) {
+            return Buffer.from(remote.dataEncryptionKey, "base64").equals(
+                Buffer.from(current.dataEncryptionKeyBase64, "base64"),
+            );
+        }
+        return (
+            remote.createdAt === undefined ||
+            remote.createdAt >= current.createdAt - REMOTE_SESSION_CLOCK_SKEW_MS
+        );
+    }
+
+    /**
+     * Retires a remote session the phone cannot read and starts this one afresh.
+     *
+     * The orphan is deleted first, as best effort: it is unreadable on the phone either way, and
+     * the new tag means it can never be answered for this session again.
+     */
+    async #replaceRemoteSession(remoteSessionId: string): Promise<void> {
+        const { agentId, context } = this.#options;
+        context.log.warn("Happy holds this session under another key; publishing it afresh.", {
+            agentId,
+            remoteSessionId,
+        });
+        try {
+            const response = await (this.#options.fetch ?? fetch)(
+                `${this.#options.configuration.serverUrl}/v1/sessions/${encodeURIComponent(remoteSessionId)}`,
+                {
+                    headers: {
+                        Authorization: `Bearer ${this.#options.configuration.credentials.token}`,
+                        "X-Happy-Client": `rig/${this.#options.version}`,
+                    },
+                    method: "DELETE",
+                    signal: this.#signal(),
+                },
+            );
+            await response.body?.cancel().catch(() => undefined);
+            if (!response.ok && response.status !== 404) {
+                throw new Error(`Happy answered with HTTP ${String(response.status)}.`);
+            }
+        } catch (error) {
+            context.log.debug("Happy kept an unreadable session.", { remoteSessionId }, error);
+        }
+        await this.#options.operations.replaceRemoteSession(context, agentId);
     }
 
     #ensureSocket(remoteSessionId: string): void {
@@ -1130,7 +1260,7 @@ export class HappySessionClient {
             pending,
             usage: this.#options.operations.providerUsage(snapshot.providerId),
         });
-        const serialized = JSON.stringify(agentState);
+        const serialized = happyAgentStateContent(agentState);
         if (serialized === this.#lastAgentState) return;
         for (let attempt = 0; attempt < 3; attempt += 1) {
             const answer = await this.#emitWithAck("update-state", {
