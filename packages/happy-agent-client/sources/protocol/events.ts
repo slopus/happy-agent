@@ -19,6 +19,13 @@ import {
     timestampSchema,
 } from "./common.js";
 import type { Agent, AgentDraftSnapshot, AgentProfile } from "./agents.js";
+import {
+    artifactAuthorSchema,
+    artifactFileSchema,
+    artifactSchema,
+    artifactSourceSchema,
+    artifactTitleSchema,
+} from "./artifacts.js";
 import { botSchema } from "./bots.js";
 import type { Cloud } from "./cloud.js";
 import type { GitState } from "./git.js";
@@ -171,6 +178,58 @@ export const taskMembershipPayloadSchema = Type.Object({
     mutationId: Type.Optional(mutationIdSchema),
 });
 export type TaskMembershipPayload = Static<typeof taskMembershipPayloadSchema>;
+
+/** An artifact was created with its first version. */
+export const artifactCreatedPayloadSchema = Type.Object({
+    artifact: artifactSchema,
+    mutationId: Type.Optional(mutationIdSchema),
+});
+export type ArtifactCreatedPayload = Static<typeof artifactCreatedPayloadSchema>;
+
+/** The artifact's fields mirroring its new latest version, and who made it, where, and when. */
+export const artifactUpdatedChangesSchema = Type.Object({
+    entry: artifactFileSchema,
+    fileCount: Type.Integer({ minimum: 1 }),
+    latestVersion: Type.Integer({ minimum: 1 }),
+    size: Type.Integer({ minimum: 1 }),
+    title: artifactTitleSchema,
+    updatedAt: timestampSchema,
+    updatedBy: artifactAuthorSchema,
+    updatedSource: Type.Union([artifactSourceSchema, Type.Null()]),
+});
+export type ArtifactUpdatedChanges = Static<typeof artifactUpdatedChangesSchema>;
+
+/** A version-chained new version of an artifact. */
+export const artifactUpdatedPayloadSchema = Type.Object({
+    artifactId: cuid2Schema,
+    changes: artifactUpdatedChangesSchema,
+    mutationId: Type.Optional(mutationIdSchema),
+    previousVersion: resourceVersionSchema,
+    version: resourceVersionSchema,
+});
+export type ArtifactUpdatedPayload = Static<typeof artifactUpdatedPayloadSchema>;
+
+/** The fields a deletion changes; the artifact is a tombstone from here on. */
+export const artifactDeletedChangesSchema = Type.Object({
+    deletedAt: timestampSchema,
+    deletedBy: artifactAuthorSchema,
+    deletedSource: Type.Union([artifactSourceSchema, Type.Null()]),
+    status: Type.Literal("deleted"),
+    updatedAt: timestampSchema,
+    updatedBy: artifactAuthorSchema,
+    updatedSource: Type.Union([artifactSourceSchema, Type.Null()]),
+});
+export type ArtifactDeletedChanges = Static<typeof artifactDeletedChangesSchema>;
+
+/** A version-chained deletion; the client drops the artifact from lists and cached files. */
+export const artifactDeletedPayloadSchema = Type.Object({
+    artifactId: cuid2Schema,
+    changes: artifactDeletedChangesSchema,
+    mutationId: Type.Optional(mutationIdSchema),
+    previousVersion: resourceVersionSchema,
+    version: resourceVersionSchema,
+});
+export type ArtifactDeletedPayload = Static<typeof artifactDeletedPayloadSchema>;
 
 export type TerminalCreatedPayload = MutationEcho & { terminal: Terminal };
 export type TerminalUpdatedPayload = ResourceUpdate<Terminal> & { terminalId: Cuid2 };
@@ -345,6 +404,9 @@ export type HappyAgentEvent =
     | EventEnvelope<"task.joined", TaskMembershipPayload>
     | EventEnvelope<"task.reordered", TaskMembershipPayload>
     | EventEnvelope<"task.left", TaskMembershipPayload>
+    | EventEnvelope<"artifact.created", ArtifactCreatedPayload>
+    | EventEnvelope<"artifact.updated", ArtifactUpdatedPayload>
+    | EventEnvelope<"artifact.deleted", ArtifactDeletedPayload>
     | EventEnvelope<"terminal.created", TerminalCreatedPayload>
     | EventEnvelope<"terminal.updated", TerminalUpdatedPayload>
     | EventEnvelope<"service.created", WorkspaceServiceCreatedPayload>

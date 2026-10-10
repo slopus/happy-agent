@@ -49,3 +49,28 @@ export interface BinaryContent {
     /** The entity tag, when the endpoint serves conditional requests. */
     etag: string | null;
 }
+
+/** One artifact file's bytes; its name and media type come from the path it is placed at. */
+export interface ArtifactFileUpload {
+    data: BinaryData;
+}
+
+/**
+ * One byte range of a file: from `start` through `end` inclusive, from `start` to the end of the
+ * file when `end` is omitted, or the last `suffix` bytes.
+ */
+export type ByteRange =
+    | { start: number; end?: number | undefined; suffix?: never }
+    | { suffix: number; start?: never; end?: never };
+
+/** Options for reading one artifact file. */
+export interface ArtifactFileRequestOptions extends ConditionalRequestOptions {
+    /** Read only these bytes, as a video player does to seek. */
+    range?: ByteRange | undefined;
+}
+
+/** An artifact file's bytes, whole or one range of them. */
+export interface ArtifactFileContent extends BinaryContent {
+    /** The served `Content-Range` when a range was requested and answered, otherwise `null`. */
+    contentRange: string | null;
+}

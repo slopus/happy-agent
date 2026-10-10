@@ -35,6 +35,7 @@ export type { MessageDeltaApplication } from "./applyMessageDelta.js";
 export * from "./requestOptions.js";
 
 export * from "./protocol/agents.js";
+export * from "./protocol/artifacts.js";
 export * from "./protocol/authentication.js";
 export * from "./protocol/bootstrap.js";
 export * from "./protocol/bots.js";

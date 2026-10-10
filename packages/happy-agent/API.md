@@ -266,6 +266,11 @@ daemons. Task agents and their workspaces appear in no project or workspace list
 workspace `kind` value `"task"` and the workspace `taskId` field appear only on a task's
 workspace, which a client reaches only through a task.
 
+Artifacts are additive and do not increment the protocol version. Clients detect them through
+`GET /v0/artifacts`: `404` means the daemon has no artifacts, not that the catalog is empty. The
+`artifact.*` events are absent on older compatible daemons, which also serve none of the artifact
+routes.
+
 Subtasks are additive and do not increment the protocol version. The agent's optional `subtask`
 boolean defaults to `false` when absent; the workspace's optional `subtaskAgentId` defaults to
 `null`. Clients use the explicit capability flags for interaction, not ancestry alone.
@@ -336,7 +341,8 @@ Failed requests return an appropriate 4xx/5xx status with a JSON body:
   admits mutations), `runner_unavailable` (503, the folder's runner is not connected or no longer
   configured), `local_execution_disabled` (409, runners are configured, so nothing runs on the
   daemon's own machine),
-  `too_large` (413), `unsupported` (501), `internal` (500).
+  `too_large` (413), `range_not_satisfiable` (416, an artifact file `Range` outside the file),
+  `unsupported` (501), `internal` (500).
 
 An error body may carry additional fields alongside `error` and `code` when the endpoint
 documents them. A `401` may carry `authentication`, described under Authentication. Unexpected
@@ -358,14 +364,14 @@ event cursors (defined in the events chapter) and resource versions (next sectio
 ### Resource versions and `If-Match`
 
 Every resource that appears in version-chained `*.updated` events — projects, workspaces,
-terminals, services, agents, bots, secrets, questions, processes, and the profile — carries a `version`
+terminals, services, agents, bots, artifacts, secrets, questions, processes, and the profile — carries a `version`
 field: a **UUIDv7** minted at the moment of the change. Because versions are time-ordered, a
 client holding two copies of the same resource compares their versions and keeps the greater
 one; this is how a REST snapshot and the event stream reconcile without bookkeeping. Versions
 also chain updates together: every `*.updated` event names the version it replaced, so a client
 can tell whether its cached copy is current or dirty (see the events chapter).
 
-Mutations of projects, workspaces, bots, secrets, and the profile additionally require an
+Mutations of projects, workspaces, bots, artifacts, secrets, and the profile additionally require an
 `If-Match` header carrying the version the client last saw (creation excepted):
 
 ```
@@ -420,7 +426,9 @@ their history and can be inspected. Only agents and bots can be unarchived for n
 is revived by registering its path again, and an archived workspace or subtask stays archived. There are
 no hard-delete endpoints. The only things that end are runtime state — a terminal, a background process — and
 the transcript resets described under `message.deleted`, none of which is a client deleting a
-durable resource.
+durable resource. Artifacts are the one resource that is deleted rather than archived, and their
+deletion is a tombstone: the artifact leaves the lists and stops serving its content, but its record
+stays readable and its stored content stays on the daemon's disk.
 
 ## Endpoints
 
@@ -5565,6 +5573,478 @@ Idempotent. The same callers may unarchive as may archive.
 Response — `200`: `{ "task": { ... }, "membership": { ... } }` with `archivedAt` `null`, and a
 `task.updated` event after commit, echoing `mutationId`. `403`, `404`, and `409` as for archive.
 
+## Artifacts
+
+An artifact is finished work published for people to see: a Markdown document or an HTML page with
+the pictures and other files it uses, an image, an ordered series of images, a video, or a document
+such as a PDF. Artifacts are global. One catalog holds every artifact on the installation, and in
+team mode every member sees all of it, wherever each artifact was made. Each artifact remembers
+where it was created — its `source` — and who created it and who last changed it.
+
+Almost any agent publishes artifacts through its artifact tools: `create_artifact`,
+`update_artifact`, `list_artifacts`, `read_artifact`, `read_artifact_file`, and `delete_artifact`.
+The daemon records the acting agent as the author and the place the agent works in as the source.
+People publish through the routes below. Either way, creating an artifact and every later update
+each make a new immutable version; nothing is overwritten. Deleting an artifact leaves a tombstone.
+
+Artifact content lives on the daemon's machine, in its private data directory
+(`.happy/agent/artifacts`), never in a project or workspace folder. It is stored once per distinct
+content, so a file that several versions or artifacts share is kept once. An artifact made by an
+agent on a runner or in a container is served by the daemon like any other.
+
+**Bundles.** Every version is a small tree of files, each named by its `path` inside the artifact,
+such as `index.md`, `images/chart.png`, or `assets/css/site.css`. One file is the version's
+`entry`, the file a client opens to show the artifact; the others are what the entry refers to.
+Relative references inside a Markdown or HTML entry resolve against the entry's own URL, exactly as
+a browser resolves them, so `![](images/chart.png)` in `index.md` and `<img src="img/hero.jpg">` in
+`index.html` reach their files without any rewriting through the file route below.
+
+**Types.** The type decides the entry and which files a version may hold:
+
+| `type`         | Entry               | Files                                       | Size limits                    |
+| -------------- | ------------------- | ------------------------------------------- | ------------------------------ |
+| `markdown`     | `index.md`, UTF-8   | the entry plus any other files; 1–256 files | entry 4 MiB; 256 MiB together  |
+| `html`         | `index.html`, UTF-8 | the entry plus any other files; 1–256 files | entry 16 MiB; 256 MiB together |
+| `image`        | its one file        | exactly one image                           | 32 MiB                         |
+| `image_series` | the first file      | 1–64 images, shown in `path` order          | 32 MiB each, 256 MiB together  |
+| `video`        | its one file        | exactly one video                           | 256 MiB                        |
+| `document`     | its one file        | exactly one document                        | 64 MiB                         |
+
+- Images: `image/png`, `image/jpeg`, `image/gif`, `image/webp`, `image/avif`, and `image/svg+xml`.
+- Videos: `video/mp4`, `video/webm`, `video/quicktime`, and `video/ogg`.
+- Documents: `application/pdf`, `application/msword`,
+  `application/vnd.openxmlformats-officedocument.wordprocessingml.document`,
+  `application/vnd.ms-excel`, `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`,
+  `application/vnd.ms-powerpoint`,
+  `application/vnd.openxmlformats-officedocument.presentationml.presentation`,
+  `application/vnd.oasis.opendocument.text`, `application/vnd.oasis.opendocument.spreadsheet`,
+  `application/vnd.oasis.opendocument.presentation`, `application/rtf`, `text/plain`, `text/csv`,
+  and `application/epub+zip`.
+
+Every file holds at least one byte. A file's media type is decided by the daemon from its path's
+extension, case-insensitively, and is `application/octet-stream` for an extension it does not know;
+the file object below lists the extensions. An `html` artifact is rendered as it is,
+scripts included, in a sandboxed frame that has no access to the daemon's or the client's origin,
+storage, or credentials. An artifact's type never changes. The set of types grows with the product;
+a client that meets a `type` it does not recognize shows the title and offers the entry for
+download.
+
+**Sources.** `source` says where an artifact was created, as an object discriminated by `kind`:
+
+- `{ "kind": "bot", "botId": "...", "agentId": "..." }` — a bot's conversation, or work under it.
+- `{ "kind": "task", "taskId": "...", "agentId": "..." }` — a task's conversation, or work under it.
+- `{ "kind": "project", "projectId": "...", "agentId": "..." }` — a project's root folder.
+- `{ "kind": "workspace", "workspaceId": "...", "projectId": "...", "agentId": "..." }` — a
+  workspace below a project; `projectId` names that project.
+- `{ "kind": "agent", "agentId": "..." }` — a conversation that belongs to none of those.
+
+`agentId` names the conversation the artifact came from. It is `null` when a person created the
+artifact outside a conversation, and never `null` on an `agent` source. For an agent's artifact the
+daemon fills the source itself: starting at the acting agent and following its parents, the first
+agent that is a bot's or a task's agent, or that belongs to a workspace or a project root, decides
+the kind, and `agentId` stays the acting agent. A person creating or changing an artifact may name
+a source; without one it is `null`. Sources are extensible: new kinds may be added, and a client
+treats a `kind` it does not recognize as "made elsewhere", still reading `agentId` when present.
+
+**Authors.** `createdBy`, `updatedBy`, `deletedBy`, and every version's `createdBy` are authors,
+also discriminated by `kind`:
+
+- `{ "kind": "agent", "agentId": "...", "botId": "..." }` — an agent; `botId` names the bot it works
+  for, the bot's own agent or an agent under it, and is `null` otherwise.
+- `{ "kind": "user", "userId": "..." }` — a person, by installation-local Happy user ID, resolvable
+  through `GET /v0/users`; `null` for the one person of a standalone installation.
+
+Authors are extensible in the same way; a client shows an unrecognized `kind` as "someone else".
+
+**Versions.** Versions are numbered from 1 and never change once made. Each records its title, its
+files, its author, its source, and when it was made. A new version starts from the files of the
+latest one and adds, replaces, or removes individual files, so files that did not change carry over
+without being sent again; it may also replace every file at once. An update that changes only the
+title makes a new version holding the same files. The artifact object mirrors its latest version in
+`latestVersion`, `title`, `entry`, `fileCount`, and `size`, records its creation in `source`,
+`createdBy`, and `createdAt`, and its latest change in `updatedBy`, `updatedSource`, and
+`updatedAt`.
+
+**Deletion.** Deleting leaves a tombstone. `status` becomes `"deleted"`, `deletedBy`,
+`deletedSource`, and `deletedAt` record the deletion, which is also the artifact's latest change,
+and the artifact leaves every list unless `includeDeleted` asks for it. The tombstone stays readable
+by ID so that every client learns of the deletion. A deleted artifact no longer serves its versions
+or files and cannot be updated or restored. Its stored content stays on the daemon's disk:
+deletion, like archival, never erases durable data.
+
+**Permissions.** In standalone mode the installation's one person may do everything. In team mode
+every authenticated member may create, update, and delete every artifact; the versions keep what
+each change replaced.
+
+Artifacts are a versioned resource. `version` covers every field of the artifact object, and
+updating or deleting an artifact requires `If-Match` with it.
+
+### The artifact object
+
+```json
+{
+    "id": "r7k2m9q4w1e5t8y3u6i0o2p5",
+    "type": "markdown",
+    "title": "Q3 revenue report",
+    "status": "active",
+    "latestVersion": 2,
+    "entry": {
+        "path": "index.md",
+        "mimeType": "text/markdown",
+        "size": 18234,
+        "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+    },
+    "fileCount": 3,
+    "size": 412870,
+    "source": {
+        "kind": "workspace",
+        "workspaceId": "w5v4u3t2s1r0q9p8o7n6m5l4",
+        "projectId": "p1o2i3u4y5t6r7e8w9q0a1s2",
+        "agentId": "a9b8c7d6e5f4g3h2i1j0k9l8"
+    },
+    "createdBy": { "kind": "agent", "agentId": "a9b8c7d6e5f4g3h2i1j0k9l8", "botId": null },
+    "createdAt": 1755300000000,
+    "updatedBy": { "kind": "user", "userId": "u1x2y3z4a5b6c7d8e9f0g1h2" },
+    "updatedSource": null,
+    "updatedAt": 1755400000000,
+    "deletedBy": null,
+    "deletedSource": null,
+    "deletedAt": null,
+    "version": "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e"
+}
+```
+
+Fields:
+
+- `id` — stable artifact identifier.
+- `type` — one of the types above; it never changes.
+- `title` — the latest version's title: 1–256 nonblank characters without ASCII control
+  characters.
+- `status` — `"active"` or `"deleted"`.
+- `latestVersion` — the number of the latest version.
+- `entry` — the latest version's entry, as a file object.
+- `fileCount`, `size` — how many files the latest version holds, and their bytes together. The
+  files themselves are listed by the version.
+- `source` — where the artifact was created, or `null`.
+- `createdBy`, `createdAt` — who created the artifact, and when.
+- `updatedBy`, `updatedSource`, `updatedAt` — who made the latest change, where, and when. After
+  creation they repeat `createdBy`, `source`, and `createdAt`; after deletion they describe the
+  deletion.
+- `deletedBy`, `deletedSource`, `deletedAt` — who deleted the artifact, where, and when; `null`
+  while it is active.
+- `version` — the UUIDv7 concurrency version; see the basics.
+
+### The version object
+
+```json
+{
+    "artifactId": "r7k2m9q4w1e5t8y3u6i0o2p5",
+    "number": 2,
+    "title": "Q3 revenue report",
+    "entry": {
+        /* the entry's file object */
+    },
+    "files": [
+        /* file objects, in path order */
+    ],
+    "createdBy": { "kind": "user", "userId": "u1x2y3z4a5b6c7d8e9f0g1h2" },
+    "source": null,
+    "createdAt": 1755400000000
+}
+```
+
+- `artifactId`, `number` — the artifact and the version's number within it, from 1.
+- `title`, `entry`, `files` — the artifact as this version left it. `files` is the version's whole
+  manifest, ordered by `path` in Unicode code point order; `entry` is one of them.
+- `createdBy`, `source`, `createdAt` — who made this version, where, and when.
+
+### The file object
+
+```json
+{
+    "path": "images/chart.png",
+    "mimeType": "image/png",
+    "size": 48213,
+    "sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae"
+}
+```
+
+- `path` — the file's place in the artifact: segments joined by `/`, 1–1,024 characters in all and
+  1–255 per segment. A segment is never empty, `.`, or `..` and holds no `\` or control
+  character, so a path never starts or ends with `/`. Paths are case-sensitive. One version never
+  holds a file at a path that another of its files uses as a folder, such as `a` beside `a/b`.
+- `mimeType` — the media type the daemon decided from the path's extension.
+- `size` — the length in bytes, at least 1.
+- `sha256` — the lowercase hexadecimal SHA-256 of the bytes. Equal digests mean equal content.
+
+The extensions the daemon knows, case-insensitively:
+
+| Extensions           | Media type                                                                  |
+| -------------------- | --------------------------------------------------------------------------- |
+| `md`, `markdown`     | `text/markdown`                                                             |
+| `html`, `htm`        | `text/html`                                                                 |
+| `css`                | `text/css`                                                                  |
+| `js`, `mjs`, `cjs`   | `text/javascript`                                                           |
+| `json`, `map`        | `application/json`                                                          |
+| `webmanifest`        | `application/manifest+json`                                                 |
+| `txt`                | `text/plain`                                                                |
+| `csv`                | `text/csv`                                                                  |
+| `tsv`                | `text/tab-separated-values`                                                 |
+| `xml`                | `application/xml`                                                           |
+| `yaml`, `yml`        | `application/yaml`                                                          |
+| `wasm`               | `application/wasm`                                                          |
+| `png`                | `image/png`                                                                 |
+| `jpg`, `jpeg`        | `image/jpeg`                                                                |
+| `gif`                | `image/gif`                                                                 |
+| `webp`               | `image/webp`                                                                |
+| `avif`               | `image/avif`                                                                |
+| `svg`                | `image/svg+xml`                                                             |
+| `ico`                | `image/x-icon`                                                              |
+| `bmp`                | `image/bmp`                                                                 |
+| `mp4`, `m4v`         | `video/mp4`                                                                 |
+| `webm`               | `video/webm`                                                                |
+| `mov`                | `video/quicktime`                                                           |
+| `ogv`                | `video/ogg`                                                                 |
+| `mp3`                | `audio/mpeg`                                                                |
+| `m4a`                | `audio/mp4`                                                                 |
+| `wav`                | `audio/wav`                                                                 |
+| `ogg`, `oga`, `opus` | `audio/ogg`                                                                 |
+| `flac`               | `audio/flac`                                                                |
+| `aac`                | `audio/aac`                                                                 |
+| `woff`               | `font/woff`                                                                 |
+| `woff2`              | `font/woff2`                                                                |
+| `ttf`                | `font/ttf`                                                                  |
+| `otf`                | `font/otf`                                                                  |
+| `pdf`                | `application/pdf`                                                           |
+| `doc`                | `application/msword`                                                        |
+| `docx`               | `application/vnd.openxmlformats-officedocument.wordprocessingml.document`   |
+| `xls`                | `application/vnd.ms-excel`                                                  |
+| `xlsx`               | `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`         |
+| `ppt`                | `application/vnd.ms-powerpoint`                                             |
+| `pptx`               | `application/vnd.openxmlformats-officedocument.presentationml.presentation` |
+| `odt`                | `application/vnd.oasis.opendocument.text`                                   |
+| `ods`                | `application/vnd.oasis.opendocument.spreadsheet`                            |
+| `odp`                | `application/vnd.oasis.opendocument.presentation`                           |
+| `rtf`                | `application/rtf`                                                           |
+| `epub`               | `application/epub+zip`                                                      |
+| `zip`                | `application/zip`                                                           |
+
+### `GET /v0/artifacts`
+
+Lists the catalog, newest `createdAt` first with the artifact ID as the tie-breaker.
+
+Query parameters, all optional:
+
+- `type` — only artifacts of this type.
+- `sourceKind` — only artifacts whose `source.kind` is this. `sourceId` additionally narrows to one
+  place: the source's `botId`, `taskId`, `projectId`, `workspaceId`, or, for an `agent` source,
+  `agentId`. `sourceId` without `sourceKind` is `400`.
+- `agentId` — only artifacts whose `source.agentId` is this conversation, whatever the kind.
+- `authorKind` — only artifacts whose `createdBy.kind` is this. `authorId` additionally narrows to
+  one author: the `agentId` or the `userId`. `authorId` without `authorKind` is `400`.
+- `includeDeleted` — `true` also lists tombstones; default `false`.
+- `limit` — `1`–`100`, default `50`.
+- `pageCursor` — the `nextPageCursor` of the previous page. An unrecognized cursor is `400`.
+
+Unknown values of `type`, `sourceKind`, and `authorKind` match nothing rather than failing.
+
+Response — `200`:
+
+```json
+{
+    "artifacts": [
+        /* artifact objects */
+    ],
+    "nextPageCursor": null,
+    "cursor": "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e"
+}
+```
+
+`nextPageCursor` is `null` on the last page. Page positions follow creation, which never changes,
+so paging is stable while artifacts are created, updated, or deleted. `cursor` is the event cursor
+captured before the first read: a client that follows `GET /v0/events/stream` from the first page's
+`cursor` misses no change made while it loads the rest.
+
+### `GET /v0/artifacts/:artifactId`
+
+Response — `200`: `{ "artifact": { ... } }`, a tombstone included. `404` when no such artifact
+exists.
+
+### `GET /v0/artifacts/:artifactId/versions`
+
+Lists an artifact's versions, newest first, each with its whole manifest. Query: optional `limit`
+(`1`–`100`, default `50`) and `pageCursor` (the previous page's `nextPageCursor`; an unrecognized
+one is `400`).
+
+Response — `200`: `{ "versions": [ /* version objects */ ], "nextPageCursor": null }`. `404` when
+no such artifact exists or when it is deleted.
+
+### `GET /v0/artifacts/:artifactId/versions/:number`
+
+`number` is a version number, or `latest` for the version that is latest when the request is
+answered.
+
+Response — `200`: `{ "version": { ... } }`. `404` when the artifact or the version does not exist,
+or when the artifact is deleted.
+
+### `GET /v0/artifacts/:artifactId/versions/:number/files/*path`
+
+The bytes of one file of one version. `number` is a version number or `latest`, as above, and
+`path` is the file's `path` with each segment percent-encoded, so the entry of version 2 is
+`/v0/artifacts/r7k2…/versions/2/files/index.md` and its chart
+`/v0/artifacts/r7k2…/versions/2/files/images/chart.png`. Because every file of a version lives
+under the same prefix, a relative reference in an entry resolves to its file. The daemon decodes
+each segment and serves a file only when the decoded path is exactly a `path` in that version's
+manifest. Nothing outside the manifest is ever reached, so a path with an empty, `.`, or `..`
+segment, an encoded `/`, or any other name the version does not hold is `404`, as is a folder.
+
+The response is the file itself, not JSON: `Content-Type` is the file's `mimeType`, with
+`; charset=utf-8` added for `text/*` types, and `Content-Length` its size. `ETag` is the quoted
+`sha256`, and a matching `If-None-Match` answers `304`. A numbered version never changes, so its
+files carry `Cache-Control: private, max-age=31536000, immutable`; files reached through `latest`
+carry `Cache-Control: private, no-cache` and are revalidated. Both carry `Vary: Authorization`.
+`Content-Disposition: inline` carries the last segment of the path as the file name.
+
+Every file response carries `X-Content-Type-Options: nosniff` and
+`Content-Security-Policy: sandbox allow-scripts allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox allow-downloads`.
+A page opened from the daemon therefore runs its scripts in an opaque origin: it cannot read the
+daemon's other responses, storage, or credentials, and it cannot navigate the window it is shown
+in.
+
+`Accept-Ranges: bytes` advertises ranges, which a video player needs to seek. A single
+`Range: bytes=start-end`, `bytes=start-`, or `bytes=-suffix` answers `206` with `Content-Range`; a
+range outside the file answers `416` with `code: "range_not_satisfiable"` and
+`Content-Range: bytes */size`. Multiple ranges are ignored and answer the whole file with `200`.
+
+`404` when the artifact, the version, or the file does not exist, or when the artifact is deleted.
+Errors are JSON and `Cache-Control: no-store` as everywhere else.
+
+File routes take the bearer token like every route. A client showing an `html` artifact points a
+sandboxed frame at the entry's URL through a transport that adds the token — for example a
+desktop protocol handler that forwards `artifact://<artifactId>/<number>/<path>` to this route —
+so the page and the files it refers to load through the same prefix. Use a numbered version rather
+than `latest` for a page, so the entry and its files always come from the same version. A client
+rendering a `markdown` entry itself resolves each relative link or image against the entry's URL
+the same way and loads it through this route.
+
+### `POST /v0/artifact-uploads`
+
+Uploads one file's bytes for a later creation or update. The body is the raw bytes, not JSON; its
+`Content-Type` is ignored, and `application/octet-stream` is a fine choice. An upload has no name
+or media type of its own: those come from the `path` it is placed at. An empty body is `400`; a
+body over 256 MiB is `413 too_large`. Whether the file fits its place and its type's limits is
+checked when the upload is used.
+
+Response — `201`:
+
+```json
+{
+    "upload": {
+        "id": "u8p2l4o6a1d3e5f7g9h0j2k4",
+        "size": 48213,
+        "sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+        "createdAt": 1755300000000,
+        "expiresAt": 1755386400000
+    }
+}
+```
+
+An upload is used once: the creation or update that places it removes it in the same change. An
+upload nobody uses expires 24 hours after it was made, and then neither it nor its bytes remain,
+unless an artifact holds the same content. Uploads emit no events and are not listed; whoever holds
+an upload's ID may use it.
+
+### Version files
+
+Creation and update both describe files with entries, each placing content at one `path`:
+
+- `{ "path": "index.md", "text": "# Report\n..." }` — the file's whole text, stored as UTF-8. Best
+  for Markdown, HTML, CSS, scripts, and other text.
+- `{ "path": "images/chart.png", "uploadId": "u8p2l4o6a1d3e5f7g9h0j2k4" }` — an upload's bytes.
+
+Entries may come in any order; a version's files are always kept in `path` order. Two entries for
+the same path are `400`.
+
+### `POST /v0/artifacts`
+
+Creates an artifact with its first version.
+
+Request:
+
+```json
+{
+    "mutationId": "...",
+    "id": "r7k2m9q4w1e5t8y3u6i0o2p5",
+    "type": "markdown",
+    "title": "Q3 revenue report",
+    "source": { "kind": "project", "projectId": "p1o2i3u4y5t6r7e8w9q0a1s2" },
+    "files": [
+        { "path": "index.md", "text": "# Q3 revenue\n\n![Revenue](images/chart.png)\n" },
+        { "path": "images/chart.png", "uploadId": "u8p2l4o6a1d3e5f7g9h0j2k4" }
+    ]
+}
+```
+
+- `id` — optional client-supplied artifact ID; the retry key.
+- `type`, `title` — required, under the rules above.
+- `source` — optional; where the artifact is being created. Its `agentId` may be omitted, except on
+  an `agent` source, and a `workspace` source's `projectId` may be omitted; the daemon fills it from
+  the workspace. A source naming a bot, task, project, workspace, or agent that does not exist is
+  `400`.
+- `files` — required, 1–256 version files, as described above: every file of the first version.
+
+Files that break the type's rules — a missing entry, too many or too few files, a media type the
+type does not accept, a file or total over its limit, an entry that is not valid UTF-8, an invalid
+path, or a path that is also a folder — are `400 invalid_request`. An upload that does not exist,
+has expired, or was already used is `404`, and nothing is created.
+
+Repeating `id` returns the current artifact unchanged with `201`, including after updates or
+deletion; the other fields are ignored, no upload is consumed, and no event is emitted.
+
+Response — `201`: `{ "artifact": { ... } }`, created by the authenticated person, and an
+`artifact.created` event after commit, echoing `mutationId`.
+
+### `PATCH /v0/artifacts/:artifactId`
+
+Makes a new version. Requires `If-Match` with the artifact's `version`.
+
+Request:
+
+```json
+{
+    "mutationId": "...",
+    "title": "Q3 revenue report, revised",
+    "source": { "kind": "project", "projectId": "p1o2i3u4y5t6r7e8w9q0a1s2" },
+    "files": [{ "path": "images/chart.png", "uploadId": "u9q3m5p7b2e4f6g8h1j3k5l7" }],
+    "remove": ["images/old-chart.png"],
+    "replaceAll": false
+}
+```
+
+Every field is optional, but at least one of `title`, `files`, `remove`, and `replaceAll` is
+required. The new version starts from the latest version's files, or from none when `replaceAll`
+is `true`. `files`, up to 256 version files, then adds each path or replaces the
+file already there, and `remove`, up to 256 paths, takes files out. A path both written and
+removed, or removed but not present, is `400`, and the result must satisfy the type's rules just
+as a creation does. An omitted `title` keeps the current title. `source` says where this change is
+being made; it becomes the new version's `source` and the artifact's `updatedSource`.
+
+Response — `200`: `{ "artifact": { ... } }` with the new `latestVersion`, and an `artifact.updated`
+event after commit, echoing `mutationId`. File errors are `400` and upload errors `404`, as in
+creation. `404` when no such artifact exists; `409 conflict` with `currentVersion` and `artifact`
+when `If-Match` names an older version or the artifact is deleted.
+
+### `POST /v0/artifacts/:artifactId/delete`
+
+Deletes the artifact, leaving its tombstone. Requires `If-Match`; the body is `{}`, or carries an
+optional `mutationId` and an optional `source` saying where the deletion is being made.
+
+Response — `200`: `{ "artifact": { ... } }` with `status` `"deleted"`, and an `artifact.deleted`
+event after commit, echoing `mutationId`. Deleting an artifact that is already deleted answers
+`200` with the tombstone and emits nothing, so a retried deletion succeeds even with the version it
+was first sent with. `404` when no such artifact exists, and the usual `409` when `If-Match` names
+an older version of an active artifact.
+
 ## Live voice sessions
 
 GPT-Live controls the initiating desktop window through a fixed set of UI-equivalent actions.
@@ -5969,7 +6449,7 @@ may replace a potentially large full resource.
 ```
 
 - the resource ID (`projectId`, `workspaceId`, `terminalId`, `agentId`, `botId`, `secretId`,
-  `compactionId`, `processId`, `questionId`) — an ID string naming what changed, since the full
+  `artifactId`, `compactionId`, `processId`, `questionId`) — an ID string naming what changed, since the full
   object is not here;
 - `previousVersion` — the resource's version **before** this change;
 - `version` — its version after;
@@ -6068,6 +6548,24 @@ event is idempotent by attachment ID.
     - `membership` (full membership object with its new `orderKey`).
 - `task.left` — the member left a task. In team mode it reaches only that member's connections.
     - `membership` (the removed membership object).
+
+**Artifacts**
+
+Artifact events reach every connection, in team mode every member's. They are emitted for changes
+made through the API and through agent tools; an API mutation's `mutationId` is echoed, and an
+agent's change carries none.
+
+- `artifact.created` — an artifact was created with its first version.
+    - `artifact` (full artifact object).
+- `artifact.updated` — a new version was made.
+    - `artifactId` (ID string), `previousVersion`, `version`, `changes`.
+    - `changes` always holds `latestVersion`, `title`, `entry`, `fileCount`, `size`, `updatedBy`,
+      `updatedSource`, and `updatedAt`. Read the new version's files through the version routes.
+- `artifact.deleted` — the artifact was deleted and is now a tombstone.
+    - `artifactId` (ID string), `previousVersion`, `version`, `changes`.
+    - `changes` holds `status`, `deletedBy`, `deletedSource`, `deletedAt`, `updatedBy`,
+      `updatedSource`, and `updatedAt`. A client drops the artifact from its lists and from any
+      cached files.
 
 **Terminals**
 

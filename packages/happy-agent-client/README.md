@@ -244,6 +244,22 @@ left to name itself from its first message, and `renameTask()` renames it. A tas
 `workspaceId` works with every workspace route, files, terminals, and Git included. Follow `task.created` and `task.updated` for the tasks, and `task.joined`,
 `task.reordered`, and `task.left` for the caller's memberships.
 
+Artifacts are additive without a protocol bump. Detect support through `listArtifacts()`: `404`
+means the daemon has no artifacts. The catalog is global and pages newest-created first; filter it by
+`type`, `sourceKind`/`sourceId`, `agentId`, or `authorKind`/`authorId`, and follow
+`nextPageCursor`. Every artifact names its extensible `source` and its `createdBy`, `updatedBy`, and
+`deletedBy` authors. Each version is a small tree of files: `getArtifactVersion(artifactId, number
+or "latest")` returns its manifest and its `entry`, the file to open. Read a file by its path with
+`getArtifactFile(artifactId, version, path)`, ranges included, or hand
+`artifactFileUrl(artifactId, version, path)` to a frame or media element; every file of a version
+shares one URL prefix, so relative references in a Markdown or HTML entry resolve. People publish
+binary files with `uploadArtifactFile()` and place them at paths in `createArtifact()` or
+`updateArtifact()`, next to text files given inline as `{ path, text }`. `updateArtifact()` makes a
+new version from the latest one's files, adding, replacing, or removing paths, and
+`deleteArtifact()` leaves a tombstone; both take the artifact's `version` as `ifMatch`.
+`listArtifactVersions()` reads the history. Follow `artifact.created`, `artifact.updated`, and
+`artifact.deleted`.
+
 Global skill management is additive without a protocol bump. Detect support through
 `listGlobalSkills()`: `404` or `501` means unavailable; protocol 25 alone does not guarantee support.
 `listGlobalSkills()` includes disabled and broken

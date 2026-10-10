@@ -8,7 +8,12 @@ import {
 } from "./protocol/connections.js";
 import type { RunnerListResponse } from "./protocol/runners.js";
 import type {
+    ArtifactFileContent,
+    ArtifactFileRequestOptions,
+    ArtifactFileUpload,
     BinaryContent,
+    BinaryData,
+    ByteRange,
     ConditionalRequestOptions,
     ImageUpload,
     OptionallyVersionedRequestOptions,
@@ -33,6 +38,20 @@ import {
     authenticationMethodSchema,
     type AuthenticationResponse,
 } from "./protocol/authentication.js";
+import type {
+    ArtifactListQuery,
+    ArtifactListResponse,
+    ArtifactPath,
+    ArtifactResponse,
+    ArtifactUploadResponse,
+    ArtifactVersionListQuery,
+    ArtifactVersionListResponse,
+    ArtifactVersionResponse,
+    ArtifactVersionSelector,
+    CreateArtifactRequest,
+    DeleteArtifactRequest,
+    UpdateArtifactRequest,
+} from "./protocol/artifacts.js";
 import type { AgentBootstrapResponse, DesktopBootstrapResponse } from "./protocol/bootstrap.js";
 import type {
     ArchiveBotRequest,
@@ -232,9 +251,11 @@ interface HttpRequest {
     query?: QueryParameters;
     /** A JSON body. */
     json?: unknown;
-    /** A binary body, for the picture routes. */
-    binary?: ImageUpload;
+    /** A binary body, for the picture and artifact upload routes. */
+    binary?: { contentType: string; data: BinaryData };
     accept?: string;
+    /** A `Range` header, for artifact files. */
+    range?: string | undefined;
     ifMatch?: string | undefined;
     ifNoneMatch?: string | undefined;
     lastEventId?: string | undefined;
@@ -1383,6 +1404,169 @@ export class HappyAgentClient {
         });
     }
 
+    // Artifacts
+
+    /**
+     * `GET /v0/artifacts` — one page of the global catalog, newest created first, tombstones only
+     * with `includeDeleted`. Follow `nextPageCursor` as `pageCursor`; `cursor` is where to follow
+     * events from so no change made while paging is missed.
+     */
+    async listArtifacts(
+        query: ArtifactListQuery = {},
+        options: RequestOptions = {},
+    ): Promise<ArtifactListResponse> {
+        return await this.#json({
+            method: "GET",
+            path: "v0/artifacts",
+            query: { ...query },
+            signal: options.signal,
+        });
+    }
+
+    /** `GET /v0/artifacts/:artifactId` — a deleted artifact answers as its tombstone. */
+    async getArtifact(artifactId: Cuid2, options: RequestOptions = {}): Promise<ArtifactResponse> {
+        return await this.#json({
+            method: "GET",
+            path: `v0/artifacts/${encodeURIComponent(artifactId)}`,
+            signal: options.signal,
+        });
+    }
+
+    /** `GET /v0/artifacts/:artifactId/versions` — newest first. */
+    async listArtifactVersions(
+        artifactId: Cuid2,
+        query: ArtifactVersionListQuery = {},
+        options: RequestOptions = {},
+    ): Promise<ArtifactVersionListResponse> {
+        return await this.#json({
+            method: "GET",
+            path: `v0/artifacts/${encodeURIComponent(artifactId)}/versions`,
+            query: { ...query },
+            signal: options.signal,
+        });
+    }
+
+    /**
+     * `GET /v0/artifacts/:artifactId/versions/:number` — one version with its whole manifest;
+     * `"latest"` names whichever version is latest when the daemon answers.
+     */
+    async getArtifactVersion(
+        artifactId: Cuid2,
+        version: ArtifactVersionSelector,
+        options: RequestOptions = {},
+    ): Promise<ArtifactVersionResponse> {
+        return await this.#json({
+            method: "GET",
+            path: artifactVersionPath(artifactId, version),
+            signal: options.signal,
+        });
+    }
+
+    /**
+     * `GET /v0/artifacts/:artifactId/versions/:number/files/*path` — one file's bytes, or one
+     * range of them, by its path in the version; `null` when `ifNoneMatch` still matches.
+     */
+    async getArtifactFile(
+        artifactId: Cuid2,
+        version: ArtifactVersionSelector,
+        path: ArtifactPath,
+        options: ArtifactFileRequestOptions = {},
+    ): Promise<ArtifactFileContent | null> {
+        const response = await this.#send({
+            method: "GET",
+            path: artifactFilePath(artifactId, version, path),
+            accept: "*/*",
+            ifNoneMatch: options.ifNoneMatch,
+            range: options.range === undefined ? undefined : rangeHeader(options.range),
+            signal: options.signal,
+            allowNotModified: true,
+        });
+        if (response.status === 304) return null;
+        return {
+            contentRange: response.status === 206 ? response.headers.get("content-range") : null,
+            contentType: response.headers.get("content-type") ?? "application/octet-stream",
+            data: await response.arrayBuffer(),
+            etag: response.headers.get("etag"),
+        };
+    }
+
+    /**
+     * The URL of `GET /v0/artifacts/:artifactId/versions/:number/files/*path`.
+     *
+     * Every file of a version shares one prefix, so a relative reference in a Markdown or HTML
+     * entry resolves against the entry's URL to its file. A frame, a media element, or a streaming
+     * download reads files through this URL rather than through `getArtifactFile`, with the bearer
+     * token added by whatever transport carries the request.
+     */
+    artifactFileUrl(
+        artifactId: Cuid2,
+        version: ArtifactVersionSelector,
+        path: ArtifactPath,
+    ): string {
+        return endpointUrl(this.#endpoint, artifactFilePath(artifactId, version, path));
+    }
+
+    /**
+     * `POST /v0/artifact-uploads` — one file's bytes for a later creation or update, up to
+     * 256 MiB. The file's name and media type come from the path it is placed at.
+     */
+    async uploadArtifactFile(
+        file: ArtifactFileUpload,
+        options: RequestOptions = {},
+    ): Promise<ArtifactUploadResponse> {
+        return await this.#json({
+            method: "POST",
+            path: "v0/artifact-uploads",
+            binary: { contentType: "application/octet-stream", data: file.data },
+            signal: options.signal,
+        });
+    }
+
+    /** `POST /v0/artifacts` — the artifact and its first version, by the authenticated person. */
+    async createArtifact(
+        request: CreateArtifactRequest,
+        options: RequestOptions = {},
+    ): Promise<ArtifactResponse> {
+        return await this.#json({
+            method: "POST",
+            path: "v0/artifacts",
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /** `PATCH /v0/artifacts/:artifactId` — a new version; the previous ones are kept. */
+    async updateArtifact(
+        artifactId: Cuid2,
+        request: UpdateArtifactRequest,
+        options: VersionedRequestOptions,
+    ): Promise<ArtifactResponse> {
+        return await this.#json({
+            method: "PATCH",
+            path: `v0/artifacts/${encodeURIComponent(artifactId)}`,
+            json: request,
+            ifMatch: options.ifMatch,
+            signal: options.signal,
+        });
+    }
+
+    /** `POST /v0/artifacts/:artifactId/delete` — leaves a tombstone; repeating it is harmless. */
+    async deleteArtifact(
+        artifactId: Cuid2,
+        options: VersionedRequestOptions & DeleteArtifactRequest,
+    ): Promise<ArtifactResponse> {
+        return await this.#json({
+            method: "POST",
+            path: `v0/artifacts/${encodeURIComponent(artifactId)}/delete`,
+            json: {
+                ...(options.mutationId === undefined ? {} : { mutationId: options.mutationId }),
+                ...(options.source === undefined ? {} : { source: options.source }),
+            },
+            ifMatch: options.ifMatch,
+            signal: options.signal,
+        });
+    }
+
     // Terminals
 
     /** `GET /v0/workspaces/:workspaceId/terminals` */
@@ -2124,6 +2308,7 @@ export class HappyAgentClient {
         if (request.ifMatch !== undefined) headers["if-match"] = request.ifMatch;
         if (request.ifNoneMatch !== undefined) headers["if-none-match"] = request.ifNoneMatch;
         if (request.lastEventId !== undefined) headers["last-event-id"] = request.lastEventId;
+        if (request.range !== undefined) headers.range = request.range;
 
         let body: BodyInit | null = null;
         if (request.binary !== undefined) {
@@ -2158,6 +2343,26 @@ export class HappyAgentClient {
  */
 function bodyOf(options: { mutationId?: string }): { mutationId?: string } {
     return options.mutationId === undefined ? {} : { mutationId: options.mutationId };
+}
+
+function artifactVersionPath(artifactId: Cuid2, version: ArtifactVersionSelector): string {
+    return `v0/artifacts/${encodeURIComponent(artifactId)}/versions/${String(version)}`;
+}
+
+/** A file's route, with each segment of its path percent-encoded and the slashes kept. */
+function artifactFilePath(
+    artifactId: Cuid2,
+    version: ArtifactVersionSelector,
+    path: ArtifactPath,
+): string {
+    const encoded = path.split("/").map(encodeURIComponent).join("/");
+    return `${artifactVersionPath(artifactId, version)}/files/${encoded}`;
+}
+
+/** The `Range` header for one byte range. */
+function rangeHeader(range: ByteRange): string {
+    if (range.suffix !== undefined) return `bytes=-${String(range.suffix)}`;
+    return `bytes=${String(range.start)}-${range.end === undefined ? "" : String(range.end)}`;
 }
 
 function secretAttachmentPath(secretId: Cuid2, target: SecretAttachmentTarget): string {
