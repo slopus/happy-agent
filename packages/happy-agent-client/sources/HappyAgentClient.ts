@@ -44,6 +44,14 @@ import type {
     UnarchiveBotRequest,
 } from "./protocol/bots.js";
 import type {
+    JoinTaskRequest,
+    LeaveTaskRequest,
+    ReorderTaskRequest,
+    TaskListResponse,
+    TaskListScope,
+    TaskResponse,
+} from "./protocol/tasks.js";
+import type {
     CloudAccessTokenResponse,
     CloudAuthorizingResponse,
     CloudConnectedResponse,
@@ -1226,6 +1234,72 @@ export class HappyAgentClient {
             method: "DELETE",
             path: `v0/bots/${encodeURIComponent(botId)}/avatar`,
             ifMatch: options.ifMatch,
+            signal: options.signal,
+        });
+    }
+
+    // Tasks
+
+    /**
+     * `GET /v0/tasks` — every task oldest first, or with `scope: "joined"` only the caller's joined
+     * tasks in the caller's order. `memberships` is always the caller's whole ordered list.
+     */
+    async listTasks(
+        options: RequestOptions & { readonly scope?: TaskListScope } = {},
+    ): Promise<TaskListResponse> {
+        return await this.#json({
+            method: "GET",
+            path: "v0/tasks",
+            query: { scope: options.scope },
+            signal: options.signal,
+        });
+    }
+
+    /** `GET /v0/tasks/:taskId` — the task and the caller's membership, or `null`. */
+    async getTask(taskId: Cuid2, options: RequestOptions = {}): Promise<TaskResponse> {
+        return await this.#json({
+            method: "GET",
+            path: `v0/tasks/${encodeURIComponent(taskId)}`,
+            signal: options.signal,
+        });
+    }
+
+    /** `POST /v0/tasks/:taskId/join` — idempotent; a new membership goes to the top of the list. */
+    async joinTask(
+        taskId: Cuid2,
+        options: RequestOptions & JoinTaskRequest = {},
+    ): Promise<TaskResponse> {
+        return await this.#json({
+            method: "POST",
+            path: `v0/tasks/${encodeURIComponent(taskId)}/join`,
+            json: bodyOf(options),
+            signal: options.signal,
+        });
+    }
+
+    /** `POST /v0/tasks/:taskId/leave` — idempotent; the task and its owner are unchanged. */
+    async leaveTask(
+        taskId: Cuid2,
+        options: RequestOptions & LeaveTaskRequest = {},
+    ): Promise<TaskResponse> {
+        return await this.#json({
+            method: "POST",
+            path: `v0/tasks/${encodeURIComponent(taskId)}/leave`,
+            json: bodyOf(options),
+            signal: options.signal,
+        });
+    }
+
+    /** `POST /v0/tasks/:taskId/reorder` — moves it within the caller's own list only. */
+    async reorderTask(
+        taskId: Cuid2,
+        request: ReorderTaskRequest,
+        options: RequestOptions = {},
+    ): Promise<TaskResponse> {
+        return await this.#json({
+            method: "POST",
+            path: `v0/tasks/${encodeURIComponent(taskId)}/reorder`,
+            json: request,
             signal: options.signal,
         });
     }

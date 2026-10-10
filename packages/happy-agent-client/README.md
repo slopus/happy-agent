@@ -233,6 +233,13 @@ An application that requires unnamed creation may require protocol 24 throughout
 checks the daemon's protocol and may open the conversation locally, queuing sends until creation
 succeeds. Keep `id` for retries; conflicting child IDs return `409`. Omitted IDs are daemon-generated.
 
+Tasks are additive without a protocol bump. Detect support through `listTasks()`: `404` means the
+daemon has no tasks. `listTasks()` returns every task, oldest first, and `listTasks({ scope:
+"joined" })` only the caller's joined tasks in the caller's order; both carry the caller's
+`memberships` in that order. `joinTask()`, `leaveTask()`, and `reorderTask()` change only the
+caller's own list. Follow `task.created` and `task.updated` for the tasks, and `task.joined`,
+`task.reordered`, and `task.left` for the caller's memberships.
+
 Global skill management is additive without a protocol bump. Detect support through
 `listGlobalSkills()`: `404` or `501` means unavailable; protocol 25 alone does not guarantee support.
 `listGlobalSkills()` includes disabled and broken

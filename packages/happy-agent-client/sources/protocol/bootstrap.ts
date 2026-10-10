@@ -18,6 +18,7 @@ import type { UserMessage } from "./messages.js";
 import type { BackgroundProcess } from "./processes.js";
 import { profileSchema } from "./profile.js";
 import { projectSchema } from "./projects.js";
+import { taskMembershipSchema, taskSchema } from "./tasks.js";
 import type { AgentUsageResponse } from "./usage.js";
 import { workspaceSchema } from "./workspaces.js";
 
@@ -71,6 +72,13 @@ export const desktopBootstrapResponseSchema = Type.Object({
     profile: profileSchema,
     /** Every active project, in catalog order. */
     projects: Type.Array(projectSchema),
+    /**
+     * The caller's task memberships, in the caller's own order. Absent together with `tasks` on
+     * older compatible daemons.
+     */
+    taskMemberships: Type.Optional(Type.Array(taskMembershipSchema)),
+    /** Every task, archived ones included, oldest first. Absent on older compatible daemons. */
+    tasks: Type.Optional(Type.Array(taskSchema)),
     /** Each project's root workspace and the workspaces directly under it. */
     workspaces: Type.Array(workspaceSchema),
 });

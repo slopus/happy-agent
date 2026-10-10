@@ -34,6 +34,7 @@ import {
     secretEnvironmentVariableNameSchema,
     secretSchema,
 } from "./secrets.js";
+import { taskMembershipSchema, taskSchema } from "./tasks.js";
 import type { Terminal } from "./terminals.js";
 import type { AgentContextUsage } from "./usage.js";
 import type { Workspace } from "./workspaces.js";
@@ -143,6 +144,33 @@ export const botUpdatedPayloadSchema = Type.Object({
     version: resourceVersionSchema,
 });
 export type BotUpdatedPayload = Static<typeof botUpdatedPayloadSchema>;
+
+/** A task was created together with its dedicated workspace and one agent. */
+export const taskCreatedPayloadSchema = Type.Object({
+    mutationId: Type.Optional(mutationIdSchema),
+    task: taskSchema,
+});
+export type TaskCreatedPayload = Static<typeof taskCreatedPayloadSchema>;
+
+/** A version-chained change to a task's own fields. */
+export const taskUpdatedPayloadSchema = Type.Object({
+    changes: Type.Partial(taskSchema),
+    mutationId: Type.Optional(mutationIdSchema),
+    previousVersion: resourceVersionSchema,
+    taskId: cuid2Schema,
+    version: resourceVersionSchema,
+});
+export type TaskUpdatedPayload = Static<typeof taskUpdatedPayloadSchema>;
+
+/**
+ * The caller joined, moved, or left a task in their own list. In team mode these reach only that
+ * member's connections. `task.left` carries the removed membership.
+ */
+export const taskMembershipPayloadSchema = Type.Object({
+    membership: taskMembershipSchema,
+    mutationId: Type.Optional(mutationIdSchema),
+});
+export type TaskMembershipPayload = Static<typeof taskMembershipPayloadSchema>;
 
 export type TerminalCreatedPayload = MutationEcho & { terminal: Terminal };
 export type TerminalUpdatedPayload = ResourceUpdate<Terminal> & { terminalId: Cuid2 };
@@ -312,6 +340,11 @@ export type HappyAgentEvent =
     | EventEnvelope<"secret.removed", SecretRemovedPayload>
     | EventEnvelope<"bot.created", BotCreatedPayload>
     | EventEnvelope<"bot.updated", BotUpdatedPayload>
+    | EventEnvelope<"task.created", TaskCreatedPayload>
+    | EventEnvelope<"task.updated", TaskUpdatedPayload>
+    | EventEnvelope<"task.joined", TaskMembershipPayload>
+    | EventEnvelope<"task.reordered", TaskMembershipPayload>
+    | EventEnvelope<"task.left", TaskMembershipPayload>
     | EventEnvelope<"terminal.created", TerminalCreatedPayload>
     | EventEnvelope<"terminal.updated", TerminalUpdatedPayload>
     | EventEnvelope<"service.created", WorkspaceServiceCreatedPayload>

@@ -38,6 +38,7 @@ export * from "./protocol/agents.js";
 export * from "./protocol/authentication.js";
 export * from "./protocol/bootstrap.js";
 export * from "./protocol/bots.js";
+export * from "./protocol/tasks.js";
 export * from "./protocol/cloud.js";
 export * from "./protocol/common.js";
 export * from "./protocol/connections.js";

@@ -258,6 +258,12 @@ The model definition's `autoCompactWindow` is additive and does not increment th
 version. Older daemons omit it; a client that shows remaining context counts down to
 `contextWindow` when the field is absent.
 
+Tasks are additive and do not increment the protocol version. Clients detect them through
+`GET /v0/tasks`: `404` means the daemon has no tasks, not that the list is empty. The bootstrap
+`tasks` and `taskMemberships` fields and the `task.*` events are absent on older compatible
+daemons. Task agents and their workspaces appear in no project or workspace listing, so a client
+that does not know about tasks never encounters one.
+
 Subtasks are additive and do not increment the protocol version. The agent's optional `subtask`
 boolean defaults to `false` when absent; the workspace's optional `subtaskAgentId` defaults to
 `null`. Clients use the explicit capability flags for interaction, not ancestry alone.
@@ -3474,17 +3480,18 @@ The ordinary agent creation API creates only parentless, user-controlled roots. 
 delegation is created by the agent tools: ordinary hidden subagents or user-interactive subtasks.
 
 A **subtask** is a distinct user-visible, parent-managed agent, identified by `subtask: true`.
-Only an active bot's own agent or an active subtask can create one, through the `create_subtask`
-tool. An ordinary root or hidden subagent cannot create subtasks.
-There may be at most two subtask levels below the bot; this is a depth limit, not a sibling limit.
+Only an active bot's own agent, an active task's own agent, or an active subtask can create one,
+through the `create_subtask` tool. An ordinary root or hidden subagent cannot create subtasks.
+Every subtask chain is rooted at a bot or a task. There may be at most two subtask levels below
+that root; this is a depth limit, not a sibling limit.
 The ordinary `parentAgentId` links each subtask to its coordinator.
 
 A shared-filesystem subtask runs in its parent's workspace. It appears in its parent's `subtasks`
 tree, parent activity, and focused agent reads, but not in the workspace's ordered agent series;
 its `orderKey` is `null`.
 A workspace-bound subtask runs in a newly created ordinary project workspace, appears in that
-workspace's ordered agent series, and is identified by the workspace's `subtaskAgentId`. A bot
-may create either form directly; a subtask may create either form within the depth limit. Several
+workspace's ordered agent series, and is identified by the workspace's `subtaskAgentId`. A bot or
+a task may create either form directly; a subtask may create either form within the depth limit. Several
 workspace-bound siblings may target different projects. Workspace hierarchy still describes only
 files and checkouts, independently of agent ancestry.
 
@@ -3578,8 +3585,8 @@ Fields:
   `orderKey`, which places a workspace-bound subtask in its workspace's agent series; moving one
   never moves the other. Archival keeps the key, so a restored subtask returns to its place.
 - `userVisible` — optional additive flag, always emitted by current daemons. `true` when the agent
-  is a subtask, a bot's own agent, or explicitly attached to a project or workspace root-agent
-  series. Ordinary subagents are `false`; subtasks are `true`.
+  is a subtask, a bot's own agent, a task's own agent, or explicitly attached to a project or
+  workspace root-agent series. Ordinary subagents are `false`; subtasks are `true`.
 - `managedByAnotherAgent` — optional additive flag, always emitted by current daemons. `true` when
   `parentAgentId` is non-null.
 - `canSendMessages` — optional additive flag, always emitted by current daemons. `true` exactly
@@ -5257,6 +5264,161 @@ Removes the bot picture. Requires `If-Match`.
 
 Response — `200`: `{ "bot": { ... } }` with `avatar` `null`.
 
+## Tasks
+
+A task is a bot-like continuous chat for one piece of work. Like a bot it is created with exactly
+one agent, keeps that agent for its whole life, and owns one dedicated folder. Unlike a bot it has
+no avatar and no administration, and it records who it belongs to: the person whose message led
+to its creation. A task is the root of its own subtasks.
+
+Tasks are created by agents, not by this API: an active bot's agent, or another user-controlled
+root, calls the `create_task` tool on behalf of the person it is working for. The agent that
+created a task may message and archive it through its task tools. Each task's folder lives under
+the daemon's tasks root beside the bots root, `~/Happy/Tasks/<folderName>`, or on the default
+runner while runners are configured.
+
+**Owner.** `ownerUserId` is the installation-local Happy user ID of the team member whose message
+the creating agent was working on, resolvable through `GET /v0/users` like message
+`metadata.userId`. It is `null` in standalone mode and when no person is identified, for example
+when another agent's message led to the task. It never changes after creation.
+
+**Memberships and per-person order.** Any authenticated person may join any task, archived ones
+included. Joining puts the task in that person's own task list; leaving takes it out. Each
+person's list has its own order, held by their membership, so reordering moves a task only in the
+caller's list and never changes another person's list or the task itself. The owner joins when
+the task is created, at the top of their list; a newly joined task also goes to the top. The owner
+may leave like anyone else and remains the owner. In standalone mode the installation's one
+person is the only member; in team mode a membership belongs to the authenticated team member.
+
+**Mapping to workspaces and agents.** A task is one dedicated workspace plus one agent in it, all
+with distinct IDs. The task's workspace is unlisted, like a bot's: it appears in no project list,
+workspace listing, or bootstrap `workspaces` array, and in this protocol revision it is not
+addressable through the workspace routes, which answer `404` for it. The agent is an ordinary
+agent and every agent endpoint works on it unchanged. Its `workspaceId` names the task's
+workspace. It reports `userVisible: true`, `managedByAnotherAgent: false`, and
+`canSendMessages: true` while the task is active, and its `orderKey` is `null`. Its lifecycle
+belongs to the task: agent `archive`, `unarchive`, and `reorder` on a task's agent answer `409`.
+Shared-filesystem subtasks run in the task's workspace and appear in the task agent's `subtasks`
+tree.
+
+Tasks are a versioned resource. The task's `version` covers its own fields — name and archival.
+Memberships are not versioned: a person's own list has one writer, and the latest reorder wins. The
+embedded agent is independently versioned and changes through `agent.updated` without advancing
+the task.
+
+### The task object
+
+```json
+{
+    "id": "t4k8m2q9w1e5r7y3u6i0o2p4",
+    "name": "Fix login redirect",
+    "folderName": "fix_login_redirect",
+    "ownerUserId": "u1x2y3z4a5b6c7d8e9f0g1h2",
+    "creatorAgentId": "a9b8c7d6e5f4g3h2i1j0k9l8",
+    "workspaceId": "w5v4u3t2s1r0q9p8o7n6m5l4",
+    "compute": { "type": "host", "path": "/Users/steve/Happy/Tasks/fix_login_redirect" },
+    "status": "active",
+    "agent": {
+        /* the task's one agent, the full agent object */
+    },
+    "version": "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e",
+    "createdAt": 1755300000000,
+    "updatedAt": 1755400000000,
+    "archivedAt": null
+}
+```
+
+Fields:
+
+- `id` — stable task identifier.
+- `name` — the human display name, 1–256 nonblank characters without ASCII control characters.
+  The task's agent title follows it.
+- `folderName` — the immutable snake_case folder name, unique across all tasks, archived ones
+  included: lowercase ASCII letters, digits, and underscores, starting with a letter, 1–64
+  characters.
+- `ownerUserId` — the owner's Happy user ID, or `null`, as described above.
+- `creatorAgentId` — the agent whose `create_task` call created the task, or `null`.
+- `workspaceId` — the task's dedicated workspace, its own distinct ID.
+- `compute` — where the task's folder lives, same shape as on projects, workspaces, and bots.
+- `status` — `"active"` or `"archived"`.
+- `agent` — the task's one agent, embedded in full. It merges by its own `version` through
+  `agent.updated` events.
+- `version` — the UUIDv7 concurrency version; see the basics.
+- `createdAt`, `updatedAt`, `archivedAt` — lifecycle timestamps; `archivedAt` is `null` while
+  active.
+
+### The membership object
+
+```json
+{
+    "taskId": "t4k8m2q9w1e5r7y3u6i0o2p4",
+    "userId": "u1x2y3z4a5b6c7d8e9f0g1h2",
+    "orderKey": "5",
+    "joinedAt": 1755300000000
+}
+```
+
+- `taskId` — the joined task.
+- `userId` — the member's Happy user ID, or `null` for the standalone installation's one person.
+- `orderKey` — an opaque sort key within this member's list; clients order the member's tasks by
+  comparing these strings.
+- `joinedAt` — when the member joined.
+
+Every task route answers only with the caller's own memberships. In team mode one member never
+sees another member's memberships.
+
+### `GET /v0/tasks`
+
+Lists tasks with the caller's memberships.
+
+Query `scope` is optional: `all`, the default, lists every task, archived ones included, oldest
+`createdAt` first with the ID as the tie-breaker. `joined` lists only the tasks the caller joined,
+in the caller's own order. Any other value is `400 invalid_request`.
+
+Response — `200`: `{ "tasks": [ /* task objects */ ], "memberships": [ /* membership objects */ ] }`.
+`memberships` is always every membership of the caller, in the caller's order, whichever scope was
+requested, so a global list also shows which tasks the caller joined.
+
+### `GET /v0/tasks/:taskId`
+
+Response — `200`: `{ "task": { ... }, "membership": { ... } }`. `membership` is the caller's
+membership in the task, or `null` when the caller has not joined it. `404` when no such task
+exists.
+
+### `POST /v0/tasks/:taskId/join`
+
+Joins the task, placing it at the top of the caller's list. The body is `{}` or
+`{ "mutationId": "..." }`. Idempotent: joining a task the caller already joined changes nothing,
+keeps its place, and emits no event.
+
+Response — `200`: `{ "task": { ... }, "membership": { ... } }`. A new membership emits
+`task.joined` after commit, echoing `mutationId`. `404` when no such task exists.
+
+### `POST /v0/tasks/:taskId/leave`
+
+Takes the task out of the caller's list. The body is `{}` or `{ "mutationId": "..." }`.
+Idempotent: leaving a task the caller has not joined changes nothing and emits no event. Leaving
+does not change the task, its owner, or anyone else's membership.
+
+Response — `200`: `{ "task": { ... }, "membership": null }`. A removed membership emits
+`task.left` after commit, echoing `mutationId`. `404` when no such task exists.
+
+### `POST /v0/tasks/:taskId/reorder`
+
+Moves the task within the caller's own list.
+
+Request: `{ "afterId": "c3d4e5f6...", "mutationId": "..." }` — the joined task to place this one
+after, or `null` to move it first.
+
+Response — `200`: `{ "task": { ... }, "membership": { ... } }`. The moved membership receives a
+fractional `orderKey` between its destination neighbours in the caller's list; every other
+membership, the caller's neighbours and other members' lists included, is unchanged. Moving a task
+to the place it already holds changes nothing and emits no event; otherwise the move emits
+`task.reordered` after commit, echoing `mutationId`.
+
+`404` when no such task exists. `409 conflict` when the caller has not joined the task, when
+`afterId` names the task itself, or when `afterId` names a task that is not in the caller's list.
+
 ## Live voice sessions
 
 GPT-Live controls the initiating desktop window through a fixed set of UI-equivalent actions.
@@ -5743,6 +5905,23 @@ event is idempotent by attachment ID.
   own changes travel as `workspace.updated`.
     - `botId` (ID string), `previousVersion`, `version`, `changes`.
 
+**Tasks**
+
+- `task.created` — a task was created, with its dedicated workspace, folder, and one agent; the
+  agent also emits its own `agent.created`.
+    - `task` (full task object).
+- `task.updated` — rename, archive, or unarchive. The embedded agent's own state changes travel
+  as `agent.updated` and do not advance the task.
+    - `taskId` (ID string), `previousVersion`, `version`, `changes`.
+- `task.joined` — the caller joined a task, including the owner's automatic membership at
+  creation. In team mode it reaches only that member's connections.
+    - `membership` (full membership object).
+- `task.reordered` — the member moved a task within their own list. In team mode it reaches only
+  that member's connections.
+    - `membership` (full membership object with its new `orderKey`).
+- `task.left` — the member left a task. In team mode it reaches only that member's connections.
+    - `membership` (the removed membership object).
+
 **Terminals**
 
 - `terminal.created` — a terminal was opened; the terminal object names its workspace itself.
@@ -6191,6 +6370,12 @@ Response — `200`:
     "bots": [
         /* all bot objects, catalog order */
     ],
+    "tasks": [
+        /* all task objects, oldest first */
+    ],
+    "taskMemberships": [
+        /* the caller's memberships, in the caller's order */
+    ],
     "archivedAgents": [
         /* the most recently archived agents of those projects and workspaces, newest first */
     ],
@@ -6218,6 +6403,12 @@ Response — `200`:
 - `bots` — every bot, archived ones included, in catalog order, exactly as `GET /v0/bots`
   returns them, each embedding its one agent. This additive field may be absent on an older
   compatible daemon, which does not serve the bot endpoints either.
+- `tasks` — every task, archived ones included, oldest first, exactly as `GET /v0/tasks` returns
+  them, each embedding its one agent and naming its `ownerUserId`. Additive; absent on an older
+  compatible daemon, which does not serve the task endpoints either.
+- `taskMemberships` — the caller's memberships, in the caller's own order, exactly as
+  `GET /v0/tasks` returns them. A client renders the caller's task list by following this order
+  into `tasks`. Additive; absent together with `tasks`.
 - `archivedAgents` — the archived agents that would otherwise belong to the included projects'
   and workspaces' `agents` series, as full agent objects, newest `archivedAt` first with the
   agent ID as the tie-breaker. Each carries the `workspaceId` of its owner, which is the
@@ -6226,8 +6417,8 @@ Response — `200`:
   per-owner fan-out; older archived agents remain readable by ID. Agents owned by archived
   projects or workspaces and ordinary hidden subagents are not included. This additive field
   may be absent on an older compatible daemon, which carries no archived agents in bootstrap.
-- Every included full agent embeds its recursive `subtasks` tree. This includes each bot's agent
-  and every agent in a project or workspace series, so shared-filesystem and workspace-bound
+- Every included full agent embeds its recursive `subtasks` tree. This includes each bot's and
+  each task's agent and every agent in a project or workspace series, so shared-filesystem and workspace-bound
   subtasks are available on initial load without fetching activity for every agent. Workspace
   listings remain shallow and owner-series membership is unchanged. A workspace-bound subtask
   may appear both in its parent's tree and in its own workspace's series; both occurrences name
@@ -6238,7 +6429,8 @@ Response — `200`:
 
 There is no global agent-list endpoint and no standalone collection of active agents in
 bootstrap. Active agents are discovered through the ordered `agents` arrays embedded in projects
-and workspaces — and, for bots, through the single agent embedded in each bot object. Active
+and workspaces — and, for bots and tasks, through the single agent embedded in each bot or task
+object. Active
 subtask descendants are included recursively on those same agent objects, not in a new top-level
 collection. `archivedAgents` is the one flat collection, and it holds only archived agents. An
 individual agent's history is loaded by ID.
