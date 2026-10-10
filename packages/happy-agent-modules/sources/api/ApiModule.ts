@@ -26,6 +26,7 @@ import {
     updateSecretRequestSchema,
     archiveBotRequestSchema,
     archiveTaskRequestSchema,
+    createArtifactRequestSchema,
     createBotRequestSchema,
     createTaskRequestSchema,
     renameTaskRequestSchema,
@@ -39,7 +40,9 @@ import {
     reorderConnectionRequestSchema,
     unarchiveBotRequestSchema,
     configPatchSchema,
+    deleteArtifactRequestSchema,
     nodeConfigPatchSchema,
+    updateArtifactRequestSchema,
     providerVerificationRequestSchema,
     userIdsSchema,
     skillPageQuerySchema,
@@ -47,6 +50,8 @@ import {
     workspaceServiceListQuerySchema,
     workspaceServiceInputRequestSchema,
     stopWorkspaceServiceRequestSchema,
+    type ArtifactFileInput as ArtifactRequestFile,
+    type ArtifactSourceInput as ArtifactRequestSource,
     type AuthenticationChallenge,
     type AuthenticationResponse,
     type DrainWaitingFor,
@@ -69,6 +74,21 @@ import { MAX_RUNNER_FRAME_BYTES, RunnerUnavailableError } from "@slopus/happy-ag
 import { WebSocketServer } from "ws";
 
 import { AbortModule } from "../abort/index.js";
+import {
+    ArtifactConflictError,
+    ArtifactInputError,
+    ArtifactNotFoundError,
+    ArtifactsModule,
+    ArtifactTooLargeError,
+    DEFAULT_ARTIFACT_PAGE_SIZE,
+    MAX_ARTIFACT_PAGE_SIZE,
+    type ArtifactAuthor,
+    type ArtifactEvent,
+    type ArtifactFileInput,
+    type ArtifactListQuery,
+    type ArtifactSource,
+    type ArtifactSourceInput,
+} from "../artifacts/index.js";
 import { ServicesModule, ServiceError, ServiceAccessError } from "../services/index.js";
 import { ServiceHttpTunnel } from "./ServiceHttpTunnel.js";
 import {
@@ -194,6 +214,7 @@ import {
     type Workspace,
     type WorkspaceEvent,
 } from "../workspaces/index.js";
+import { ARTIFACT_FILE_ROUTE, artifactFileRequest, sendArtifactFile } from "./ApiArtifactFiles.js";
 import { ApiError, invalidRequest, notFound, unsupported, type ApiErrorCode } from "./ApiError.js";
 import { ApiEventJournal, type ApiEvent } from "./ApiEventJournal.js";
 import {
@@ -209,6 +230,9 @@ import {
     agentResource,
     agentModeFromConfig,
     apiResourceVersion,
+    artifactResource,
+    artifactUploadResource,
+    artifactVersionResource,
     botResource,
     botWorkspaceResource,
     profileResource,
@@ -276,6 +300,26 @@ const MAX_ANNOUNCED_PENDING_MESSAGES = 10_000;
 const MAX_ANNOUNCED_AGENT_CREATIONS = 10_000;
 const MAX_ANNOUNCED_TERMINAL_RUNS = 10_000;
 const DRAIN_MUTATION_LOG_INTERVAL_MS = 5_000;
+/** What `artifact.updated` and `artifact.deleted` always carry in `changes`. */
+const ARTIFACT_UPDATED_FIELDS = [
+    "latestVersion",
+    "title",
+    "entry",
+    "fileCount",
+    "size",
+    "updatedBy",
+    "updatedSource",
+    "updatedAt",
+] as const;
+const ARTIFACT_DELETED_FIELDS = [
+    "status",
+    "deletedBy",
+    "deletedSource",
+    "deletedAt",
+    "updatedBy",
+    "updatedSource",
+    "updatedAt",
+] as const;
 
 interface AcceptedMessageBatch {
     readonly kind: "send" | "steering";
@@ -387,6 +431,7 @@ export class ApiModule implements AgentModule {
     readonly #bots: BotsModule;
     readonly #subtasks: SubtasksModule | undefined;
     readonly #tasks: TasksModule | undefined;
+    readonly #artifacts: ArtifactsModule | undefined;
     readonly #live: LiveModule | undefined;
     readonly #runners: RunnersModule | undefined;
     readonly #projects: ProjectsModule;
@@ -510,6 +555,7 @@ export class ApiModule implements AgentModule {
         live?: LiveModule,
         runners?: RunnersModule,
         tasks?: TasksModule,
+        artifacts?: ArtifactsModule,
     ) {
         this.#abort = abort;
         this.#config = config;
@@ -542,6 +588,7 @@ export class ApiModule implements AgentModule {
         this.#live = live;
         this.#runners = runners;
         this.#tasks = tasks;
+        this.#artifacts = artifacts;
     }
 
     readonly beforeStart = async (
@@ -1396,6 +1443,7 @@ export class ApiModule implements AgentModule {
             }
             if (await this.#handleBotRoute(ctx, request, response, url)) return;
             if (await this.#handleTaskRoute(ctx, request, response, url)) return;
+            if (await this.#handleArtifactRoute(ctx, request, response, url)) return;
             if (request.method === "GET" && url.pathname === "/v0/projects") {
                 const projects = await this.#allProjects(ctx, true);
                 sendJson(response, 200, {
@@ -1957,6 +2005,13 @@ export class ApiModule implements AgentModule {
                           await this.#convertTaskEvent(ctx, event);
                       }),
                   ]),
+            ...(this.#artifacts === undefined
+                ? []
+                : [
+                      this.#artifacts.onEvent((_eventCtx, event) => {
+                          this.#convertArtifactEvent(event);
+                      }),
+                  ]),
             this.#terminals.onEvent(async (event) => {
                 this.#convertTerminalEvent(event);
             }),
@@ -2375,6 +2430,30 @@ export class ApiModule implements AgentModule {
                 previousVersion: previous["version"],
                 version: resource["version"],
                 changes,
+            },
+            event.at,
+        );
+    }
+
+    /**
+     * Artifact events reach everyone. A new version and a deletion each carry their fixed set of
+     * changed fields, even when a value is the same as before.
+     */
+    #convertArtifactEvent(event: ArtifactEvent): void {
+        const artifact = artifactResource(event.artifact);
+        if (event.type === "artifact_created") {
+            this.#journal.append("artifact.created", { artifact }, event.at);
+            return;
+        }
+        const fields =
+            event.type === "artifact_updated" ? ARTIFACT_UPDATED_FIELDS : ARTIFACT_DELETED_FIELDS;
+        this.#journal.append(
+            event.type === "artifact_updated" ? "artifact.updated" : "artifact.deleted",
+            {
+                artifactId: event.artifact.id,
+                previousVersion: artifactResource(event.previousArtifact)["version"],
+                version: artifact["version"],
+                changes: Object.fromEntries(fields.map((field) => [field, artifact[field]])),
             },
             event.at,
         );
@@ -5001,6 +5080,230 @@ export class ApiModule implements AgentModule {
         return true;
     }
 
+    async #handleArtifactRoute(
+        ctx: Context,
+        request: IncomingMessage,
+        response: ServerResponse,
+        url: URL,
+    ): Promise<boolean> {
+        const artifacts = this.#artifacts;
+        if (artifacts === undefined) return false;
+        try {
+            if (url.pathname === "/v0/artifact-uploads") {
+                if (request.method !== "POST") return false;
+                const upload = await artifacts.stageUpload(ctx, request);
+                sendJson(response, 201, { upload: artifactUploadResource(upload) });
+                return true;
+            }
+            if (url.pathname === "/v0/artifacts") {
+                if (request.method === "GET") {
+                    const query = artifactListQuery(url);
+                    const cursor = this.#journal.cursor();
+                    const page = await artifacts.list(ctx, query);
+                    sendJson(response, 200, {
+                        artifacts: page.artifacts.map(artifactResource),
+                        nextPageCursor: page.nextAfter ?? null,
+                        cursor,
+                    });
+                    return true;
+                }
+                if (request.method !== "POST") return false;
+                const body = await bodyAs(
+                    request,
+                    createArtifactRequestSchema,
+                    "artifact creation",
+                );
+                // A repeated ID answers before anything is staged, so a retry uses up nothing.
+                const existing =
+                    body.id === undefined ? undefined : await artifacts.get(ctx, body.id);
+                if (existing !== undefined) {
+                    sendJson(response, 201, { artifact: artifactResource(existing) });
+                    return true;
+                }
+                const source = await this.#artifactSource(ctx, body.source);
+                const files = await artifacts.stageFiles(ctx, body.files.map(artifactFileInput));
+                const { artifact } = await this.#withMutationId(
+                    body.mutationId,
+                    async () =>
+                        await artifacts.create(ctx, {
+                            ...(body.id === undefined ? {} : { id: body.id }),
+                            type: body.type,
+                            title: body.title,
+                            files,
+                            author: this.#artifactUser(ctx),
+                            ...(source === undefined ? {} : { source }),
+                        }),
+                );
+                sendJson(response, 201, { artifact: artifactResource(artifact) });
+                return true;
+            }
+            if (ARTIFACT_FILE_ROUTE.test(url.pathname)) {
+                if (request.method !== "GET") return false;
+                const target = artifactFileRequest(request.url);
+                if (target === undefined) throw notFound("The artifact version has no such file.");
+                const stored = await artifacts.storedFile(
+                    ctx,
+                    target.artifactId,
+                    target.selector,
+                    target.path,
+                );
+                await sendArtifactFile(request, response, stored, target.selector === "latest");
+                return true;
+            }
+            const route =
+                /^\/v0\/artifacts\/([a-z][a-z0-9]*)(?:\/(delete|versions)(?:\/([^/]+))?)?$/.exec(
+                    url.pathname,
+                );
+            if (route === null) return false;
+            const artifactId = route[1] as string;
+            const action = route[2];
+            const selector = route[3];
+            if (action === "versions" && request.method === "GET") {
+                if (selector !== undefined) {
+                    const number = /^[1-9][0-9]*$/.test(selector) ? Number(selector) : undefined;
+                    if (selector !== "latest" && !Number.isSafeInteger(number)) {
+                        throw notFound("The version was not found.");
+                    }
+                    const version = await artifacts.getVersion(
+                        ctx,
+                        artifactId,
+                        selector === "latest" ? "latest" : (number as number),
+                    );
+                    sendJson(response, 200, { version: artifactVersionResource(version) });
+                    return true;
+                }
+                const page = await artifacts.listVersions(ctx, artifactId, {
+                    limit: integerParameter(
+                        url.searchParams.get("limit"),
+                        DEFAULT_ARTIFACT_PAGE_SIZE,
+                        1,
+                        MAX_ARTIFACT_PAGE_SIZE,
+                    ),
+                    ...versionPageCursor(url.searchParams.get("pageCursor")),
+                });
+                sendJson(response, 200, {
+                    versions: page.versions.map(artifactVersionResource),
+                    nextPageCursor: page.nextBefore === undefined ? null : String(page.nextBefore),
+                });
+                return true;
+            }
+            if (selector !== undefined) return false;
+            if (action === undefined && request.method === "GET") {
+                const artifact = await artifacts.get(ctx, artifactId);
+                if (artifact === undefined) throw notFound("The artifact was not found.");
+                sendJson(response, 200, { artifact: artifactResource(artifact) });
+                return true;
+            }
+            if (action === undefined && request.method === "PATCH") {
+                const body = await bodyAs(request, updateArtifactRequestSchema, "artifact update");
+                const current = await artifacts.get(ctx, artifactId);
+                if (current === undefined) throw notFound("The artifact was not found.");
+                const resource = artifactResource(current);
+                const conflict = { currentVersion: resource["version"], artifact: resource };
+                requireIfMatch(request, resource["version"], conflict);
+                if (current.status === "deleted") {
+                    throw new ApiError(
+                        409,
+                        "conflict",
+                        "The artifact was deleted, so it cannot change.",
+                        conflict,
+                    );
+                }
+                const source = await this.#artifactSource(ctx, body.source);
+                const files =
+                    body.files === undefined
+                        ? undefined
+                        : await artifacts.stageFiles(ctx, body.files.map(artifactFileInput));
+                const artifact = await this.#withMutationId(
+                    body.mutationId,
+                    async () =>
+                        await artifacts.update(ctx, {
+                            artifactId,
+                            expectedRevision: current.revision,
+                            ...(body.title === undefined ? {} : { title: body.title }),
+                            ...(files === undefined ? {} : { files }),
+                            ...(body.remove === undefined ? {} : { remove: body.remove }),
+                            ...(body.replaceAll === undefined
+                                ? {}
+                                : { replaceAll: body.replaceAll }),
+                            author: this.#artifactUser(ctx),
+                            ...(source === undefined ? {} : { source }),
+                        }),
+                );
+                sendJson(response, 200, { artifact: artifactResource(artifact) });
+                return true;
+            }
+            if (action === "delete" && request.method === "POST") {
+                const body = await bodyAs(
+                    request,
+                    deleteArtifactRequestSchema,
+                    "artifact deletion",
+                );
+                const current = await artifacts.get(ctx, artifactId);
+                if (current === undefined) throw notFound("The artifact was not found.");
+                const resource = artifactResource(current);
+                // A retried deletion succeeds with whatever version it was first sent with.
+                if (current.status === "deleted") {
+                    if (!Value.Check(eventIdSchema, request.headers["if-match"])) {
+                        throw invalidRequest("A valid If-Match resource version is required.");
+                    }
+                    sendJson(response, 200, { artifact: resource });
+                    return true;
+                }
+                requireIfMatch(request, resource["version"], {
+                    currentVersion: resource["version"],
+                    artifact: resource,
+                });
+                const source = await this.#artifactSource(ctx, body.source);
+                const artifact = await this.#withMutationId(
+                    body.mutationId,
+                    async () =>
+                        await artifacts.delete(ctx, {
+                            artifactId,
+                            expectedRevision: current.revision,
+                            author: this.#artifactUser(ctx),
+                            ...(source === undefined ? {} : { source }),
+                        }),
+                );
+                sendJson(response, 200, { artifact: artifactResource(artifact) });
+                return true;
+            }
+            return false;
+        } catch (error: unknown) {
+            if (error instanceof ArtifactInputError) throw invalidRequest(error.message);
+            if (error instanceof ArtifactNotFoundError) throw notFound(error.message);
+            if (error instanceof ArtifactTooLargeError) {
+                throw new ApiError(413, "too_large", error.message);
+            }
+            if (error instanceof ArtifactConflictError) {
+                const artifact =
+                    error.artifact === undefined ? undefined : artifactResource(error.artifact);
+                throw new ApiError(
+                    409,
+                    "conflict",
+                    error.message,
+                    artifact === undefined ? {} : { currentVersion: artifact["version"], artifact },
+                );
+            }
+            throw error;
+        }
+    }
+
+    /** The person making an artifact change: a team member, or the standalone installation's one. */
+    #artifactUser(ctx: Context): ArtifactAuthor {
+        const userId = this.#team.enabled ? teamUser(ctx)?.id : undefined;
+        return userId === undefined ? { kind: "user" } : { kind: "user", userId };
+    }
+
+    /** A source a person names, checked against what exists; `null` agents are left out. */
+    async #artifactSource(
+        ctx: Context,
+        source: ArtifactRequestSource | undefined,
+    ): Promise<ArtifactSource | undefined> {
+        if (source === undefined) return undefined;
+        return await this.#artifacts?.resolveSource(ctx, artifactSourceInput(source));
+    }
+
     /** The caller as a task member: the standalone person, or the authenticated team member. */
     #taskMember(ctx: Context): TaskMemberId {
         const member = this.#tasks?.memberFor(teamUser(ctx)?.id);
@@ -7396,6 +7699,77 @@ function booleanParameter(value: string | null, fallback: boolean): boolean {
     if (value === "true") return true;
     if (value === "false") return false;
     throw invalidRequest("A boolean query parameter must be true or false.");
+}
+
+/** `GET /v0/artifacts` filters; a page cursor is the last listed artifact's ID. */
+function artifactListQuery(url: URL): ArtifactListQuery {
+    const text = (name: string): string | undefined => {
+        const value = url.searchParams.get(name);
+        return value === null || value === "" ? undefined : value;
+    };
+    const pageCursor = text("pageCursor");
+    if (pageCursor !== undefined && !Value.Check(cuid2Schema, pageCursor)) {
+        throw invalidRequest("The page cursor is not recognized.");
+    }
+    const filters = {
+        type: text("type"),
+        sourceKind: text("sourceKind"),
+        sourceId: text("sourceId"),
+        agentId: text("agentId"),
+        authorKind: text("authorKind"),
+        authorId: text("authorId"),
+        after: pageCursor,
+    };
+    return {
+        ...Object.fromEntries(Object.entries(filters).filter(([, value]) => value !== undefined)),
+        includeDeleted: booleanParameter(url.searchParams.get("includeDeleted"), false),
+        limit: integerParameter(
+            url.searchParams.get("limit"),
+            DEFAULT_ARTIFACT_PAGE_SIZE,
+            1,
+            MAX_ARTIFACT_PAGE_SIZE,
+        ),
+    };
+}
+
+/** A version page cursor is the number of the last listed version. */
+function versionPageCursor(value: string | null): { before?: number } {
+    if (value === null || value === "") return {};
+    const before = /^[1-9][0-9]*$/.test(value) ? Number(value) : undefined;
+    if (before === undefined || !Number.isSafeInteger(before)) {
+        throw invalidRequest("The page cursor is not recognized.");
+    }
+    return { before };
+}
+
+function artifactFileInput(file: ArtifactRequestFile): ArtifactFileInput {
+    if ("uploadId" in file && "text" in file) {
+        throw invalidRequest(`Give "${file.path}" either its text or an upload, not both.`);
+    }
+    return "uploadId" in file
+        ? { path: file.path, uploadId: file.uploadId }
+        : { path: file.path, text: file.text };
+}
+
+function artifactSourceInput(source: ArtifactRequestSource): ArtifactSourceInput {
+    const agent = source.agentId == null ? {} : { agentId: source.agentId };
+    switch (source.kind) {
+        case "bot":
+            return { kind: "bot", botId: source.botId, ...agent };
+        case "task":
+            return { kind: "task", taskId: source.taskId, ...agent };
+        case "project":
+            return { kind: "project", projectId: source.projectId, ...agent };
+        case "workspace":
+            return {
+                kind: "workspace",
+                workspaceId: source.workspaceId,
+                ...(source.projectId === undefined ? {} : { projectId: source.projectId }),
+                ...agent,
+            };
+        case "agent":
+            return { kind: "agent", agentId: source.agentId };
+    }
 }
 
 function boundedAdd(set: Set<string>, value: string, maximum: number): void {

@@ -387,13 +387,19 @@ export class ArtifactsModule implements AgentModule {
                 `A version holds at most ${String(MAX_ARTIFACT_FILES)} files.`,
             );
         }
-        const placements: ArtifactPlacement[] = [];
         for (const file of files) {
             if (!Value.Check(artifactFileInputSchema, file)) {
                 throw new ArtifactInputError(
                     "Each artifact file names its path and either its text or an upload.",
                 );
             }
+        }
+        // Checked before any text is staged, so a refused request leaves no uploads behind.
+        if (new Set(files.map((file) => file.path)).size !== files.length) {
+            throw new ArtifactInputError("Each path can be written only once per version.");
+        }
+        const placements: ArtifactPlacement[] = [];
+        for (const file of files) {
             placements.push(
                 "uploadId" in file
                     ? { path: file.path, uploadId: file.uploadId }

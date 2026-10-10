@@ -222,3 +222,12 @@ listener too, instead of connecting them natively. The header is removed before 
 forwarded, a replayed key is not a route, and this machine's folders keep the native fast path.
 Plain requests use `createConnection` over a stream that waits for the runner connection, which
 Bun and Node both honor.
+
+## Artifact files are matched on the request target as sent
+
+`new URL` resolves `..` and `%2e%2e` segments before routing, so matching artifact file paths on
+the parsed pathname would answer `files/css/../index.html` with `index.html` instead of the
+specified `404`. The file route recognizes itself on the parsed pathname but takes the artifact,
+version, and path from the raw target, decoding each segment separately. Sandbox, caching, and
+range headers are written only with a served file, so `404`, `416`, and every other error keep the
+ordinary `no-store` JSON response.

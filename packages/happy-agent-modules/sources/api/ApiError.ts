@@ -15,6 +15,7 @@ export const apiErrorCodeSchema = Type.Union([
     Type.Literal("invalid_request"),
     Type.Literal("not_found"),
     Type.Literal("not_initialized"),
+    Type.Literal("range_not_satisfiable"),
     Type.Literal("remote_unavailable"),
     Type.Literal("remote_timeout"),
     Type.Literal("invalid_invitation"),

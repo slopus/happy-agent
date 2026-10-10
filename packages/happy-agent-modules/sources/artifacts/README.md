@@ -113,6 +113,8 @@ once. Deleting an artifact keeps its content on disk.
 
 ## HTTP
 
-`packages/happy-agent/API.md` specifies the artifact routes and `artifact.*` events, and
-`@slopus/happy-agent-client` implements them. The daemon routes in the API module wait for that
-client to be published, following the API release flow.
+The API module serves the routes `packages/happy-agent/API.md` specifies: `/v0/artifacts` and
+`/v0/artifact-uploads`, with file bytes under
+`/v0/artifacts/:artifactId/versions/:number|latest/files/*path`. A person's change is authored as
+the authenticated user and names its source only when the request does; the API turns
+`onEvent` into `artifact.created`, `artifact.updated`, and `artifact.deleted` for every connection.

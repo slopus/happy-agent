@@ -5,6 +5,14 @@ import type { Context } from "@steve.kite/stdlib";
 import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 
+import type {
+    ArtifactAuthor,
+    ArtifactFile,
+    ArtifactRecord,
+    ArtifactSource,
+    ArtifactUpload,
+    ArtifactVersion,
+} from "../artifacts/index.js";
 import type { BotRecord } from "../bots/index.js";
 import type { Profile } from "../profile/index.js";
 import { STANDALONE_TASK_MEMBER, type TaskMembership, type TaskRecord } from "../tasks/index.js";
@@ -299,6 +307,94 @@ export function taskMembershipResource(membership: TaskMembership): Record<strin
         orderKey: membership.orderKey,
         joinedAt: membership.joinedAt,
     };
+}
+
+/** One artifact as the API shows it: its latest version, creation, latest change, and deletion. */
+export function artifactResource(artifact: ArtifactRecord): Record<string, unknown> {
+    return {
+        id: artifact.id,
+        type: artifact.type,
+        title: artifact.title,
+        status: artifact.status,
+        latestVersion: artifact.latestVersion,
+        entry: artifactFileResource(artifact.entry),
+        fileCount: artifact.fileCount,
+        size: artifact.size,
+        source: artifactSourceResource(artifact.source),
+        createdBy: artifactAuthorResource(artifact.createdBy),
+        createdAt: artifact.createdAt,
+        updatedBy: artifactAuthorResource(artifact.updatedBy),
+        updatedSource: artifactSourceResource(artifact.updatedSource),
+        updatedAt: artifact.updatedAt,
+        deletedBy:
+            artifact.deletedBy === undefined ? null : artifactAuthorResource(artifact.deletedBy),
+        deletedSource: artifactSourceResource(artifact.deletedSource),
+        deletedAt: artifact.deletedAt ?? null,
+        version: apiResourceVersion(artifact.updatedAt, artifact.revision, artifact.id),
+    };
+}
+
+/** One immutable version of an artifact with its whole manifest. */
+export function artifactVersionResource(version: ArtifactVersion): Record<string, unknown> {
+    return {
+        artifactId: version.artifactId,
+        number: version.number,
+        title: version.title,
+        entry: artifactFileResource(version.entry),
+        files: version.files.map(artifactFileResource),
+        createdBy: artifactAuthorResource(version.createdBy),
+        source: artifactSourceResource(version.source),
+        createdAt: version.createdAt,
+    };
+}
+
+/** A staged upload; whether its bytes are UTF-8 stays the daemon's business. */
+export function artifactUploadResource(upload: ArtifactUpload): Record<string, unknown> {
+    return {
+        id: upload.id,
+        size: upload.size,
+        sha256: upload.sha256,
+        createdAt: upload.createdAt,
+        expiresAt: upload.expiresAt,
+    };
+}
+
+function artifactFileResource(file: ArtifactFile): Record<string, unknown> {
+    return { path: file.path, mimeType: file.mimeType, size: file.size, sha256: file.sha256 };
+}
+
+/** Every kind but `agent` names its conversation as `agentId`, `null` when a person acted. */
+function artifactSourceResource(
+    source: ArtifactSource | undefined,
+): Record<string, unknown> | null {
+    if (source === undefined) return null;
+    switch (source.kind) {
+        case "bot":
+            return { kind: "bot", botId: source.botId, agentId: source.agentId ?? null };
+        case "task":
+            return { kind: "task", taskId: source.taskId, agentId: source.agentId ?? null };
+        case "project":
+            return {
+                kind: "project",
+                projectId: source.projectId,
+                agentId: source.agentId ?? null,
+            };
+        case "workspace":
+            return {
+                kind: "workspace",
+                workspaceId: source.workspaceId,
+                projectId: source.projectId,
+                agentId: source.agentId ?? null,
+            };
+        case "agent":
+            return { kind: "agent", agentId: source.agentId };
+    }
+}
+
+function artifactAuthorResource(author: ArtifactAuthor): Record<string, unknown> {
+    return author.kind === "agent"
+        ? { kind: "agent", agentId: author.agentId, botId: author.botId ?? null }
+        : { kind: "user", userId: author.userId ?? null };
 }
 
 /** The unlisted workspace owned by one bot. */
