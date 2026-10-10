@@ -58,6 +58,8 @@ jobs:
               run: pnpm --filter @slopus/happy-agent build:native --target win32-x64
             - name: Execute the product smoke check against that executable
               run: node packages/happy-agent/scripts/smoke-rust-runtime.mjs packages/happy-agent/dist/bin/happy-agent-win32-x64.exe
+            - name: Execute the public Windows sandbox status and setup contract
+              run: node packages/happy-agent/tests/runner/windows-sandbox-cli.mjs packages/happy-agent/dist/bin/happy-agent-win32-x64.exe
             - name: Install the existing fixture daemon dependency
               run: pnpm install --frozen-lockfile
             - name: Execute real Windows command sessions and cleanup through the production runner
