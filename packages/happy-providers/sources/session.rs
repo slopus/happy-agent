@@ -214,6 +214,14 @@ impl HttpSession {
             }
             ProviderKind::Claude if model.starts_with("anthropic/") => {
                 let name = model.trim_start_matches("anthropic/");
+                if !matches!(
+                    name,
+                    "fable-5-1" | "fable-5" | "opus-5-5" | "opus-5" | "opus-4-8" | "sonnet-5-5" | "sonnet-5"
+                ) {
+                    return Err(invalid(&format!(
+                        "Anthropic model \"{model}\" is not available through Rig's Bedrock catalog. Pass a Bedrock model or inference-profile ID directly to use an unlisted model."
+                    )));
+                }
                 let base = format!("anthropic.claude-{name}");
                 if self.config.bedrock == Some(BedrockTransport::Mantle) {
                     return Ok(base);
@@ -227,8 +235,9 @@ impl HttpSession {
                     )
                 {
                     "jp"
-                } else if self.config.region == "ap-southeast-2"
-                    && (name.starts_with("opus-") || name == "sonnet-5")
+                } else if (self.config.region == "ap-southeast-2" && name.starts_with("opus-"))
+                    || (name == "sonnet-5"
+                        && matches!(self.config.region.as_str(), "ap-southeast-2" | "ap-southeast-4"))
                 {
                     "au"
                 } else if self.config.region.starts_with("eu-") && name != "fable-5-1" {
