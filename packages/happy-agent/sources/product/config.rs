@@ -15,6 +15,8 @@ mod skill_directories;
 mod policy;
 mod system_prompt;
 mod runner;
+pub use runner::{RunnerEndpoint,RunnerSettings};
+mod project_paths;
 mod onboarding;
 use std::{
     collections::BTreeMap,
@@ -55,6 +57,7 @@ pub struct ConfigModule {
     projects_root: PathBuf,
     workspaces_root: PathBuf,
     runners: serde_json::Value,
+    runner_settings: Option<runner::RunnerSettings>,
     provider_lifetime: tokio_util::sync::CancellationToken,
     default_provider: OnceLock<String>,
     provider_enablement: Arc<Mutex<BTreeMap<String, bool>>>,
@@ -290,7 +293,7 @@ impl ConfigModule {
         Ok(models)
     }
     pub async fn naming_session(&self, id: &str, settings: &serde_json::Value) -> Result<Box<dyn happy_providers::Session>> {
-        self.session_internal(id,settings,Vec::new(),Some(0),false).await
+        self.session_internal(id,settings,Vec::new(),Some(0),false,false).await
     }
     pub fn bots_home(&self) -> PathBuf { self.paths.public.join("Bots") }
     pub fn bots_home_on(&self, home: &Path, platform: &str) -> PathBuf { home.join(if platform == "darwin" { "Happy" } else { "happy" }).join("Bots") }
@@ -1028,11 +1031,15 @@ impl ConfigModule {
         settings: &serde_json::Value,
         tools: Vec<happy_providers::ToolDefinition>,
     ) -> Result<Box<dyn happy_providers::Session>> {
-        self.session_internal(agent,settings,tools,None,true).await
+        self.session_internal(agent,settings,tools,None,true,false).await
     }
-    async fn session_internal(&self,agent:&str,settings:&serde_json::Value,tools:Vec<happy_providers::ToolDefinition>,retry_limit:Option<u32>,retain_route:bool)->Result<Box<dyn happy_providers::Session>> {
+    pub async fn reviewer_session(&self,agent:&str,settings:&serde_json::Value,tools:Vec<happy_providers::ToolDefinition>)->Result<Box<dyn happy_providers::Session>> {
+        self.session_internal(agent,settings,tools,None,true,true).await
+    }
+    async fn session_internal(&self,agent:&str,settings:&serde_json::Value,tools:Vec<happy_providers::ToolDefinition>,retry_limit:Option<u32>,retain_route:bool,reviewer:bool)->Result<Box<dyn happy_providers::Session>> {
         let (provider,model)=self.selected_route(settings)?;
         anyhow::ensure!(self.provider_enabled(&provider),"The selected inference provider is disabled.");
+        if reviewer {anyhow::ensure!(self.reviewer_models(&provider)?.iter().any(|entry|entry["id"]==model),"The selected model is unavailable in the private reviewer catalog.");}
         let enablement=self.route_enablement();
         let inner:Box<dyn happy_providers::Session>=if self.provider_type(&provider)==Some("smart") {
             let route=self.smart_route(&provider)?.context("The selected account pool has no compatible route.")?;
@@ -1044,7 +1051,7 @@ impl ConfigModule {
         } else {
             let (_,mut config)=self.session_configuration(settings)?;
             if let Some(limit)=retry_limit {config.inference_max_retries=limit;}
-            anyhow::ensure!(self.model_allowed(&provider,&model)&&self.model_available_on_account(&provider,&model),"The selected model is unavailable on this provider account.");
+            anyhow::ensure!(reviewer||(self.model_allowed(&provider,&model)&&self.model_available_on_account(&provider,&model)),"The selected model is unavailable on this provider account.");
             Box::new(happy_providers::HttpSession::new(agent.into(),config,tools).await?)
         };
         Ok(Box::new(routing::BoundSession {inner,provider,enablement}))
@@ -1085,6 +1092,9 @@ impl ConfigModule {
     }
 
     fn from_home(home: PathBuf) -> Result<Self> {
+        Self::from_home_configuration(home,false)
+    }
+    fn from_home_configuration(home: PathBuf, standalone_runner:bool) -> Result<Self> {
         let directory = home.join("agent");
         let public = home
             .parent()
@@ -1123,15 +1133,15 @@ impl ConfigModule {
             directory,
         };
         // A malformed MCP catalog fails startup, as the original's configuration load did.
-        let mcp = mcp::McpCatalogFile::load(&paths.configuration.join("mcp.toml"))?;
+        let mcp = if standalone_runner {mcp::McpCatalogFile::empty()} else {mcp::McpCatalogFile::load(&paths.configuration.join("mcp.toml"))?};
         let defaults:serde_json::Value=serde_json::from_str(include_str!("config/default_values.json"))?;
         let mut values:toml::Value=toml::Value::try_from(default_input(&defaults))?;
         let mut global_values=toml::Value::Table(toml::map::Map::new());
         let mut runtime_values = toml::Value::Table(toml::map::Map::new());
-        for path in [
+        for path in if standalone_runner {Vec::new()} else {vec![
             paths.configuration.join("happy.toml"),
             paths.directory.join("runtime.toml"),
-        ] {
+        ]} {
             match read_text_limited(&path,1_048_576) {
                 Ok(text) => merge(&mut values, {
                     let parsed: toml::Value = toml::from_str(&text).with_context(|| {
@@ -1186,6 +1196,7 @@ impl ConfigModule {
             projects_root,
             workspaces_root,
             runners,
+            runner_settings: None,
             provider_lifetime: tokio_util::sync::CancellationToken::new(),
             default_provider: OnceLock::new(),
             provider_enablement: Arc::new(Mutex::new(BTreeMap::new())),

@@ -15,6 +15,11 @@ impl std::fmt::Display for RemoteError {
     }
 }
 impl std::error::Error for RemoteError {}
+pub(super) fn error_code(error: &anyhow::Error) -> Option<&str> {
+    error
+        .downcast_ref::<RemoteError>()
+        .and_then(|error| error.code.as_deref())
+}
 pub(super) fn remote_error(error: &Value) -> anyhow::Error {
     RemoteError {
         message: error["message"].as_str().unwrap().to_owned(),
@@ -153,8 +158,8 @@ impl RunnersModule {
     }
 }
 impl RunnerCompute {
-    pub fn error_code<'a>(&self,error:&'a anyhow::Error)->Option<&'a str> {
-        error.downcast_ref::<RemoteError>().and_then(|error|error.code.as_deref())
+    pub fn error_code<'a>(&self, error: &'a anyhow::Error) -> Option<&'a str> {
+        error_code(error)
     }
     fn owner(&self) -> Result<Arc<RunnersModule>> {
         self.owner

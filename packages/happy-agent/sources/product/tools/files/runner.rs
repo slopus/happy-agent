@@ -42,7 +42,7 @@ impl ComputeFilesystem {
                     .stat(path.unwrap(), method == "fs.lstat", cancel)
                     .await?;
                 if stat.is_null() {
-                    return Err(std::io::Error::from(std::io::ErrorKind::NotFound).into());
+                    return Err(std::io::Error::from_raw_os_error(libc::ENOENT).into());
                 }
                 json!({"stat":stat})
             }

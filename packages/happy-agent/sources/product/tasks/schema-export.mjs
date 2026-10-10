@@ -15,7 +15,7 @@ import { updateTaskTool } from "../../../../happy-agent-modules/sources/tasks/to
 import { completeTaskTool } from "../../../../happy-agent-modules/sources/tasks/tools/complete_task.ts";
 import { removeTaskTool } from "../../../../happy-agent-modules/sources/tasks/tools/remove_task.ts";
 import { sourcePrivateSchema } from "../../../scripts/source-private-schema.mjs";
-import { writeFileSync } from "node:fs";
+import { writeNativeCapture as writeFileSync } from "../../../scripts/write-native-capture.mjs";
 const privates = await sourcePrivateSchema(
     new URL("../../../../happy-agent-modules/sources/tasks/TasksModule.ts", import.meta.url),
     [

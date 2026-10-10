@@ -131,6 +131,9 @@ import { titleSchemas } from "../sources/product/titles/schema-export.mjs";
 import { profileSchemas, profileTools } from "../sources/product/profile/schema-export.mjs";
 import { workspaceNamingSchemas } from "../sources/product/owners/workspace-schema-export.mjs";
 import { ownerCatalogSchemas } from "../sources/product/owners/catalog-schema-export.mjs";
+import { projectEditSchemas } from "../sources/product/owners/project-edit-schema-export.mjs";
+import { agentViewSchemas } from "../sources/product/agents/schema-export.mjs";
+import { workspaceEditSchemas } from "../sources/product/owners/workspace-edit-schema-export.mjs";
 import { LIVE_CONTROLLER_TOOLS } from "../../happy-agent-modules/sources/live/impl/runLiveController.ts";
 import {
     tailcatAddressSchema,
@@ -575,6 +578,9 @@ const schemas = {
     ...titleSchemas,
     ...workspaceNamingSchemas,
     ...ownerCatalogSchemas,
+    ...projectEditSchemas,
+    ...agentViewSchemas,
+    ...workspaceEditSchemas,
     ownerLiveSession: liveSessionSchema,
     ownerLiveClientMessage: liveControlClientMessageSchema,
     ownerLiveServerMessage: liveControlServerMessageSchema,

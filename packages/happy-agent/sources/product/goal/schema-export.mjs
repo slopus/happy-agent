@@ -14,7 +14,7 @@ import { updateGoalTool } from "../../../../happy-agent-modules/sources/goal/too
 import { clearGoalTool } from "../../../../happy-agent-modules/sources/goal/tools/clear_goal.ts";
 import { sourcePrivateSchema } from "../../../scripts/source-private-schema.mjs";
 import { Type } from "@sinclair/typebox";
-import { writeFileSync } from "node:fs";
+import { writeNativeCapture as writeFileSync } from "../../../scripts/write-native-capture.mjs";
 const privates = await sourcePrivateSchema(
     new URL("../../../../happy-agent-modules/sources/goal/GoalModule.ts", import.meta.url),
     ["goalInferenceSchema", "continuationMessageId", "hashMessageId"],

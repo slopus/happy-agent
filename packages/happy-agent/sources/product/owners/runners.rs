@@ -29,6 +29,9 @@ mod compute;
 mod persistence;
 #[path = "runners_tunnel.rs"]
 mod tunnel;
+#[path = "runners_server.rs"]
+mod server;
+pub use server::RunnerServer;
 pub use compute::{RunnerCompute, RunnerProcess};
 
 #[cfg(test)]
@@ -341,8 +344,53 @@ pub struct RunResult {
     pub truncated: bool,
     pub timed_out: bool,
 }
+#[derive(Debug, thiserror::Error)]
+#[error("The runner {name} is unavailable.")]
+pub struct RunnerUnavailableError {
+    pub runner: String,
+    pub name: String,
+}
+#[derive(Debug, thiserror::Error)]
+#[error(
+    "Runners are configured, so nothing runs on the daemon’s own machine. Use a project on a runner."
+)]
+pub struct LocalExecutionDisabledError;
 
 impl RunnersModule {
+    fn unavailable(&self, runner: &str) -> anyhow::Error {
+        let configuration = self.config.runners_configuration();
+        RunnerUnavailableError {
+            runner: runner.to_owned(),
+            name: configuration["entries"][runner]["name"]
+                .as_str()
+                .unwrap_or(runner)
+                .to_owned(),
+        }
+        .into()
+    }
+    pub fn error_code<'a>(&self, error: &'a anyhow::Error) -> Option<&'a str> {
+        if let Some(code) = compute::error_code(error) {
+            return Some(code);
+        }
+        if error.downcast_ref::<RunnerUnavailableError>().is_some() {
+            return Some("ERUNNERUNAVAILABLE");
+        }
+        if error
+            .downcast_ref::<LocalExecutionDisabledError>()
+            .is_some()
+        {
+            return Some("local_execution_disabled");
+        }
+        let error = error.downcast_ref::<std::io::Error>()?;
+        match error.raw_os_error() {
+            Some(libc::ENOENT) => Some("ENOENT"),
+            Some(libc::ENOTDIR) => Some("ENOTDIR"),
+            Some(libc::EACCES) => Some("EACCES"),
+            Some(libc::EPERM) => Some("EPERM"),
+            Some(libc::EEXIST) => Some("EEXIST"),
+            _ => None,
+        }
+    }
     pub fn new(
         config: Arc<ConfigModule>,
         runtime: Arc<RuntimeModule>,
@@ -390,6 +438,28 @@ impl RunnersModule {
             .as_object()
             .is_some_and(|entries| !entries.is_empty())
     }
+    pub fn default_runner_id(&self) -> Option<String> {
+        self.config.runners_configuration()["defaultId"]
+            .as_str()
+            .map(str::to_owned)
+    }
+    pub fn has(&self, runner: &str) -> bool {
+        self.config.runners_configuration()["entries"]
+            .get(runner)
+            .is_some()
+    }
+    pub fn display_name(&self, runner: &str) -> String {
+        self.config.runners_configuration()["entries"][runner]["name"]
+            .as_str()
+            .unwrap_or(runner)
+            .to_owned()
+    }
+    pub fn assert_local_execution(&self) -> Result<()> {
+        if self.enabled() {
+            return Err(LocalExecutionDisabledError.into());
+        }
+        Ok(())
+    }
     pub fn place(&self, runner: Option<&str>) -> Result<Option<String>> {
         let configuration = self.config.runners_configuration();
         if let Some(runner) = runner {
@@ -399,7 +469,7 @@ impl RunnersModule {
             );
             return Ok(Some(runner.to_owned()));
         }
-        Ok(configuration["defaultId"].as_str().map(str::to_owned))
+        Ok(self.default_runner_id())
     }
     pub fn authenticate(&self, authorization: &str) -> Option<String> {
         let token = authorization.strip_prefix("Bearer ")?;
@@ -491,10 +561,7 @@ impl RunnersModule {
             );
             Ok(false)
         } else {
-            anyhow::ensure!(
-                !self.enabled(),
-                "Local execution is disabled while runners are configured."
-            );
+            self.assert_local_execution()?;
             Ok(true)
         }
     }
@@ -533,8 +600,10 @@ impl RunnersModule {
                 return Ok(session);
             }
             let elapsed = now().saturating_sub(link.since.load(Ordering::Acquire));
-            anyhow::ensure!(elapsed < 10000, "The runner {id} is unavailable.");
-            tokio::select! { _=cancel.cancelled()=>bail!("Runner work was cancelled."), _=tokio::time::sleep(Duration::from_millis(10000-elapsed))=>bail!("The runner {id} is unavailable."),_=changed=>{} }
+            if elapsed >= 10000 {
+                return Err(self.unavailable(id));
+            }
+            tokio::select! { _=cancel.cancelled()=>bail!("Runner work was cancelled."), _=tokio::time::sleep(Duration::from_millis(10000-elapsed))=>return Err(self.unavailable(id)),_=changed=>{} }
         }
     }
     pub async fn accept(
@@ -944,6 +1013,96 @@ impl RunnersModule {
                 .0["stat"]
                 .clone())
         }
+    }
+    pub async fn stat(
+        &self,
+        runner: Option<&str>,
+        path: &Path,
+        cancel: &CancellationToken,
+    ) -> Result<Value> {
+        anyhow::ensure!(
+            !cancel.is_cancelled(),
+            "The file inspection was interrupted."
+        );
+        if !self.local(runner)? {
+            return Ok(self
+                .rpc_path(runner.unwrap(), "fs.stat", path, json!({}), cancel)
+                .await?
+                .0["stat"]
+                .clone());
+        }
+        let metadata = tokio::fs::metadata(path).await?;
+        let modified = metadata
+            .modified()?
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or_else(
+                |error| -(error.duration().as_secs_f64() * 1000.0),
+                |duration| duration.as_secs_f64() * 1000.0,
+            );
+        let mut stat = json!({"isFile":metadata.is_file(),"isDirectory":metadata.is_dir(),"isSymbolicLink":metadata.is_symlink(),"size":metadata.len(),"mtimeMs":modified});
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            stat["mode"] = json!(metadata.mode());
+        }
+        anyhow::ensure!(
+            self.schemas
+                .valid("ownerRunnerResult_fs_stat", &json!({"stat":stat}))?,
+            "The file metadata is invalid."
+        );
+        Ok(stat)
+    }
+    pub async fn directory_page(
+        &self,
+        runner: Option<&str>,
+        path: &Path,
+        limit: usize,
+        cancel: &CancellationToken,
+    ) -> Result<Value> {
+        anyhow::ensure!(
+            limit > 0 && limit <= 100000,
+            "The directory page size is invalid."
+        );
+        anyhow::ensure!(
+            !cancel.is_cancelled(),
+            "The directory inspection was interrupted."
+        );
+        if !self.local(runner)? {
+            return Ok(self
+                .rpc_path(
+                    runner.unwrap(),
+                    "fs.readdirPage",
+                    path,
+                    json!({"limit":limit}),
+                    cancel,
+                )
+                .await?
+                .0);
+        }
+        let mut directory = tokio::fs::read_dir(path).await?;
+        let mut selected = std::collections::BinaryHeap::with_capacity(limit + 1);
+        loop {
+            let entry = tokio::select! {entry=directory.next_entry()=>entry?,_=cancel.cancelled()=>bail!("The directory inspection was interrupted.")};
+            let Some(entry) = entry else { break };
+            let name = entry
+                .file_name()
+                .into_string()
+                .map_err(|_| anyhow::anyhow!("The directory contains an invalid UTF-8 name."))?;
+            selected.push(name);
+            if selected.len() > limit + 1 {
+                selected.pop();
+            }
+        }
+        let mut entries = selected.into_sorted_vec();
+        let more = entries.len() > limit;
+        entries.truncate(limit);
+        let page = json!({"entries":entries,"hasMore":more});
+        anyhow::ensure!(
+            self.schemas
+                .valid("ownerRunnerResult_fs_readdirPage", &page)?,
+            "The directory page is invalid."
+        );
+        Ok(page)
     }
     pub async fn canonical_path(
         &self,
@@ -1541,6 +1700,51 @@ fn next_snapshot_version(previous: Option<&str>) -> Result<String> {
 mod tests {
     use super::*;
     use crate::product::owners::tests::Fixture;
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn product_machine_stat_follows_directory_links_and_pages_preserve_source_byte_order() {
+        let fixture = Fixture::new().await;
+        let runners = RunnersModule::new(
+            fixture.config.clone(),
+            fixture.runtime.clone(),
+            fixture.lifecycle.clone(),
+        )
+        .unwrap();
+        let directory = fixture.directory.path().join("catalog");
+        std::fs::create_dir(&directory).unwrap();
+        for name in ["\u{e000}", "\u{10000}"] {
+            std::fs::write(directory.join(name), "data").unwrap();
+        }
+        let alias = fixture.directory.path().join("alias");
+        std::os::unix::fs::symlink(&directory, &alias).unwrap();
+        let cancel = CancellationToken::new();
+        assert_eq!(
+            runners.inspect(None, &alias, &cancel).await.unwrap()["isSymbolicLink"],
+            true
+        );
+        let stat = runners.stat(None, &alias, &cancel).await.unwrap();
+        assert_eq!(stat["isDirectory"], true);
+        assert_eq!(stat["isSymbolicLink"], false);
+        assert_eq!(
+            runners
+                .directory_page(None, &alias, 1, &cancel)
+                .await
+                .unwrap(),
+            json!({"entries":["\u{e000}"],"hasMore":true})
+        );
+        let missing = runners
+            .stat(None, &directory.join("missing"), &cancel)
+            .await
+            .unwrap_err();
+        assert_eq!(runners.error_code(&missing), Some("ENOENT"));
+        let inaccessible = runners
+            .stat(None, &directory.join("\u{e000}/child"), &cancel)
+            .await
+            .unwrap_err();
+        assert_eq!(runners.error_code(&inaccessible), Some("ENOTDIR"));
+        runners.close().await;
+        fixture.close().await;
+    }
     #[tokio::test]
     #[cfg(unix)]
     async fn no_follow_reads_refuse_symlinks_special_files_and_oversized_contents() {

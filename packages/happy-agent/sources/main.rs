@@ -41,6 +41,18 @@ fn main() -> std::process::ExitCode {
         print!("{}", include_str!("product/usage.txt"));
         return std::process::ExitCode::SUCCESS;
     }
+    if command=="runner" {
+        let arguments=arguments.collect::<Vec<_>>();
+        if arguments.iter().any(|argument|argument=="--help"||argument=="-h") {print!("{}",include_str!("product/usage.txt"));return std::process::ExitCode::SUCCESS;}
+        // The process is still single-threaded: secrets are captured and removed before Tokio starts.
+        let result=(|| {
+            let config=unsafe {product::ConfigModule::load_runner(&arguments)}?;
+            let runtime=tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
+            runtime.block_on(product::run_runner(config))
+        })();
+        if let Err(error)=result {eprintln!("Happy Agent runner: {error:#}");return std::process::ExitCode::FAILURE;}
+        return std::process::ExitCode::SUCCESS;
+    }
     let result = (|| {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()

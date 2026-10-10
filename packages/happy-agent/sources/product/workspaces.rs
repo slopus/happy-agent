@@ -2,7 +2,7 @@ use super::{
     config::ConfigModule,
     durable::{CallKv, DurableFunction, DurableFunctionsModule, Registration},
     events::EventsModule,
-    identity::{now, resource_version},
+    identity::now,
     owners::{AbortModule, GitModule, RunOptions, RunnersModule},
     projects::ProjectsModule,
     runtime::{Context, RuntimeModule},
@@ -21,16 +21,25 @@ use std::{
 };
 use tokio_util::sync::CancellationToken;
 
-#[path = "owners/workspaces_persistence.rs"]
-mod persistence;
 #[path = "owners/workspace_catalog.rs"]
 mod catalog;
-#[path = "owners/workspaces_reservation.rs"]
-mod reservation;
-#[path = "owners/workspace_identity.rs"]
-mod workspace_identity;
+#[path = "owners/workspace_edits.rs"]
+mod edits;
 #[path = "owners/workspace_naming.rs"]
 mod naming;
+#[path = "owners/workspaces_persistence.rs"]
+mod persistence;
+#[path = "owners/workspaces_reservation.rs"]
+mod reservation;
+#[path = "owners/workspace_events.rs"]
+mod workspace_events;
+#[path = "owners/workspace_identity.rs"]
+mod workspace_identity;
+pub use edits::WorkspaceError;
+pub use workspace_events::{WorkspaceSubscription, WorkspaceTransactionalListener};
+#[cfg(test)]
+#[path = "owners/workspace_edit_tests.rs"]
+mod edit_tests;
 
 /// Told about a workspace after the transaction that reserved it or changed its status commits.
 pub type WorkspaceTransitionListener = Arc<dyn Fn(&Value) + Send + Sync>;
@@ -40,6 +49,8 @@ pub struct WorkspacesModule {
     owners: Option<Owners>,
     subtask_listener: Mutex<Weak<SubtasksModule>>,
     transition_listeners: Mutex<Vec<WorkspaceTransitionListener>>,
+    event_listeners: Mutex<BTreeMap<u64, WorkspaceTransactionalListener>>,
+    next_event_listener: std::sync::atomic::AtomicU64,
 }
 struct Owners {
     config: Arc<ConfigModule>,
@@ -63,6 +74,8 @@ impl WorkspacesModule {
             owners: None,
             subtask_listener: Mutex::new(Weak::new()),
             transition_listeners: Mutex::new(Vec::new()),
+            event_listeners: Mutex::new(BTreeMap::new()),
+            next_event_listener: std::sync::atomic::AtomicU64::new(1),
         }
     }
     #[expect(clippy::too_many_arguments)]
@@ -88,6 +101,10 @@ impl WorkspacesModule {
             "ownerWorkspacePage",
             "ownerWorkspaceAgentOrders",
             "ownerWorkspaceId",
+            "ownerWorkspaceEvent",
+            "ownerWorkspaceRename",
+            "ownerWorkspaceReorder",
+            "ownerWorkspaceArchiveOptions",
         ] {
             let _ = schemas.valid(name, &Value::Null)?;
         }
@@ -95,6 +112,8 @@ impl WorkspacesModule {
             runtime,
             subtask_listener: Mutex::new(Weak::new()),
             transition_listeners: Mutex::new(Vec::new()),
+            event_listeners: Mutex::new(BTreeMap::new()),
+            next_event_listener: std::sync::atomic::AtomicU64::new(1),
             owners: Some(Owners {
                 config,
                 projects,
@@ -129,7 +148,9 @@ impl WorkspacesModule {
             name: "workspaces.rename".to_owned(),
             arguments_schema: "ownerWorkspaceRenameIntent",
             result_schema: "ownerNull",
-            function: Arc::new(naming::Rename { owner: Arc::downgrade(&module) }),
+            function: Arc::new(naming::Rename {
+                owner: Arc::downgrade(&module),
+            }),
         })?;
         Ok(module)
     }
@@ -157,7 +178,10 @@ impl WorkspacesModule {
             .transition_listeners
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        anyhow::ensure!(listeners.len() < 64, "The workspace transition listener bound was reached.");
+        anyhow::ensure!(
+            listeners.len() < 64,
+            "The workspace transition listener bound was reached."
+        );
         listeners.push(listener);
         Ok(())
     }
@@ -227,6 +251,10 @@ impl WorkspacesModule {
         );
         persistence::insert(ctx, &owners.schemas, workspace)?;
         self.publish_transition(ctx, workspace)?;
+        self.observe(
+            ctx,
+            json!({"type":"workspace_created","workspace":workspace}),
+        )?;
         owners.durable.invoke(ctx,&json!({"function":"workspaces.provision","arguments":{"id":workspace["id"]},"operationId":format!("workspace-create.{}",workspace["id"].as_str().unwrap_or_default()),"lockKeys":[format!("workspace.{}",workspace["id"].as_str().unwrap_or_default())]}))?;
         Ok(workspace.clone())
     }
@@ -287,11 +315,11 @@ impl WorkspacesModule {
         let mut after = before.clone();
         if before["status"] != "archiving" {
             after["status"] = json!("archiving");
-            after["archivedAt"] = json!(now());
+            after["archivedAt"] = json!(now().max(before["updatedAt"].as_u64().unwrap() + 1));
             if let Some(cleanup) = owners.services.close_workspace_admission(ctx, &before)? {
                 after["serviceCleanup"] = cleanup;
             }
-            self.write(ctx, &before, &mut after)?;
+            self.write(ctx, &before, &mut after, "begin_archive")?;
             let subtasks = self
                 .subtask_listener
                 .lock()
@@ -305,49 +333,6 @@ impl WorkspacesModule {
             .durable
             .cancel(ctx, &format!("workspace-create.{id}"))?;
         owners.durable.invoke(ctx,&json!({"function":"workspaces.archive","arguments":{"id":id},"operationId":format!("workspace-archive.{id}"),"lockKeys":[format!("workspace.{id}")]}))?;
-        Ok(())
-    }
-    fn write(&self, ctx: &Context<'_>, before: &Value, after: &mut Value) -> Result<()> {
-        let owners = self.owners()?;
-        if before == after {
-            return Ok(());
-        }
-        after["version"] = json!(before["version"].as_u64().unwrap_or_default() + 1);
-        after["updatedAt"] = json!(now());
-        *after = persistence::write(ctx, &owners.schemas, before, after)?;
-        let mut changes = json!({"updatedAt":after["updatedAt"]});
-        for field in ["name", "nameConfigured", "branch"] {
-            if before.get(field)!=after.get(field) {changes[field]=after[field].clone();}
-        }
-        if before["status"] != after["status"] {
-            self.publish_transition(ctx, after)?;
-            changes["status"] = json!(if after["status"] == "archiving"
-                || after["status"] == "archived"
-            {
-                after["status"].as_str().unwrap_or_default()
-            } else {
-                "active"
-            });
-        }
-        if before["status"] != after["status"]
-            || before["initializationAttempt"] != after["initializationAttempt"]
-            || before["initializationError"] != after["initializationError"]
-        {
-            changes["initialization"] = json!({"status":if after["status"]=="initializing"{"initializing"}else if after["status"]=="failed"{"failed"}else{"ready"},"attempt":after["initializationAttempt"],"error":after.get("initializationError").cloned().unwrap_or(Value::Null)});
-        }
-        if before.get("serviceCleanup") != after.get("serviceCleanup") {
-            changes["serviceCleanup"] = after.get("serviceCleanup").cloned().unwrap_or(Value::Null);
-        }
-        if before.get("baseCommit") != after.get("baseCommit")
-            || before.get("baseRef") != after.get("baseRef")
-        {
-            changes["base"] = json!({"ref":after.get("baseRef").cloned().unwrap_or(Value::Null),"commit":after.get("baseCommit").cloned().unwrap_or(Value::Null)});
-        }
-        if before.get("archivedAt") != after.get("archivedAt") {
-            changes["archivedAt"] = after.get("archivedAt").cloned().unwrap_or(Value::Null);
-        }
-        let id = after["id"].as_str().unwrap_or_default();
-        owners.events.record(ctx,None,"workspace.updated",json!({"workspaceId":id,"previousVersion":resource_version(before["updatedAt"].as_u64().unwrap_or_default(),before["version"].as_u64().unwrap_or_default(),id),"version":resource_version(after["updatedAt"].as_u64().unwrap_or_default(),after["version"].as_u64().unwrap_or_default(),id),"changes":changes}))?;
         Ok(())
     }
     async fn current(self: &Arc<Self>, id: &str) -> Result<Option<Value>> {
@@ -542,7 +527,7 @@ impl WorkspacesModule {
                         after["baseCommit"] = base["commit"].clone();
                         after["baseRef"] = base["ref"].clone();
                     }
-                    module.write(ctx, &before, &mut after)?;
+                    module.write(ctx, &before, &mut after, "record_initialization")?;
                     Ok(after)
                 })
                 .await?;
@@ -863,7 +848,7 @@ impl WorkspacesModule {
                 let mut after = before.clone();
                 after["serviceCleanup"]["phase"] = json!(phase);
                 after["serviceCleanup"]["error"] = error.unwrap_or(Value::Null);
-                module.write(ctx, &before, &mut after)
+                module.write(ctx, &before, &mut after, "set_service_cleanup")
             })
             .await
     }
@@ -1039,7 +1024,12 @@ impl DurableFunction for Procedure {
                     after["serviceCleanup"] = Value::Null;
                 }
                 after.as_object_mut().unwrap().remove("initializationError");
-                module.write(ctx, &before, &mut after)?;
+                module.write_event(
+                    ctx,
+                    &before,
+                    &mut after,
+                    json!({"type":"workspace_archived"}),
+                )?;
             }
             if !persistence::has_unarchived(ctx, before["projectRef"].as_str().unwrap_or_default())?
             {
@@ -1068,7 +1058,16 @@ impl DurableFunction for Procedure {
                     .min(1000000)
             );
         }
-        module.write(ctx, &before, &mut after)
+        module.write(
+            ctx,
+            &before,
+            &mut after,
+            if result["outcome"] == "ready" {
+                "mark_ready"
+            } else {
+                "mark_initialization_failed"
+            },
+        )
     }
 }
 async fn checkpoint(kv: &CallKv, key: &str, marker: &Value) -> Result<bool> {

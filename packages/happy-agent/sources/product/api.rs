@@ -19,6 +19,7 @@ use super::{
     provider_scan::ProviderScanModule,
     owners::{NodeModule,RunnersModule},
     profile::{ProfileModule,ProfileSubscription},
+    presence::PresenceModule,
 };
 use bytes::Bytes;
 use futures_util::stream;
@@ -73,6 +74,7 @@ pub struct ApiModule {
     provider_scan:Arc<ProviderScanModule>,
     node:Arc<NodeModule>,
     profile:Arc<ProfileModule>,
+    presence:Arc<PresenceModule>,
     _profile_events:ProfileSubscription,
     runners:Arc<RunnersModule>,
     _runner_events:super::owners::RunnerSnapshotSubscription,
@@ -101,6 +103,7 @@ impl ApiModule {
         node:Arc<NodeModule>,
         profile:Arc<ProfileModule>,
         runners:Arc<RunnersModule>,
+        presence:Arc<PresenceModule>,
     ) -> anyhow::Result<Arc<Self>> {
         let journal = events.clone();
         let live_events = live.on_event(Arc::new(move |event| {
@@ -140,6 +143,7 @@ impl ApiModule {
             provider_scan,
             node,
             profile,
+            presence,
             _profile_events:profile_events,
         });
         module.agents.install(module.clone())?;

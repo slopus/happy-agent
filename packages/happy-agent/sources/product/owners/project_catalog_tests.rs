@@ -2,6 +2,70 @@ use super::*;
 use crate::product::{owners::Fixture, workspaces::WorkspacesModule};
 
 #[tokio::test]
+async fn source_project_mutation_refuses_a_backwards_update_time_and_rolls_back() {
+    let fixture = Fixture::new().await;
+    let owner = Arc::new(ProjectsModule::new(fixture.runtime.clone()).unwrap());
+    owner.load().await.unwrap();
+    let source: Value =
+        serde_json::from_str(include_str!("catalog_invariant_goldens.json")).unwrap();
+    let initial = source["clock"]["projectBefore"].clone();
+    let module = owner.clone();
+    fixture
+        .runtime
+        .transact(move |ctx| persistence::insert(ctx, &module.schemas, &initial))
+        .await
+        .unwrap();
+    let module = owner.clone();
+    let result = fixture
+        .runtime
+        .transact(move |ctx| module.rename(ctx, "clock-project", "Future project name", 2))
+        .await;
+    assert!(result.is_err());
+    fixture
+        .runtime
+        .transact(move |ctx| {
+            assert_eq!(
+                owner.get(ctx, "clock-project")?.unwrap(),
+                source["clock"]["projectAfter"]
+            );
+            Ok(())
+        })
+        .await
+        .unwrap();
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn source_catalog_get_rejects_schema_valid_records_with_impossible_domain_state() {
+    let fixture = Fixture::new().await;
+    let projects = Arc::new(ProjectsModule::new(fixture.runtime.clone()).unwrap());
+    let workspaces = Arc::new(WorkspacesModule::new(fixture.runtime.clone()));
+    projects.load().await.unwrap();
+    workspaces.load().await.unwrap();
+    let source: Value =
+        serde_json::from_str(include_str!("catalog_invariant_goldens.json")).unwrap();
+    fixture.runtime.transact(move |ctx| {
+        persistence::insert(ctx,&projects.schemas,&source["projectBase"])?;
+        for case in source["projects"].as_array().unwrap() {
+            let record=&case["record"];
+            assert!(projects.schemas.valid("ownerProject",record)?);
+            ctx.database().execute("UPDATE happy_agent_module_projects SET status=?1,kind=?2,initialization_status=?3,initialization_error=?4,worktree_support=?5,worktree_unsupported_reason=?6,updated_at=?7,archived_at=?8 WHERE id='invariant-project'",rusqlite::params![record["status"].as_str(),record["kind"].as_str(),record["initializationStatus"].as_str(),record["initializationError"].as_str(),record["worktreeSupport"].as_str(),record["worktreeUnsupportedReason"].as_str(),record["updatedAt"].as_i64(),record["archivedAt"].as_i64()])?;
+            assert_eq!(projects.get(ctx,"invariant-project").is_ok(),case["accepted"].as_bool().unwrap(),"project changes {}",case["changes"]);
+        }
+        let base=&source["workspaceBase"];
+        ctx.database().execute("INSERT INTO happy_agent_module_workspaces(id,project_ref,parent_id,name,name_key,name_configured,branch,storage_key,kind,path,presence,status,order_key,version,git_ahead,git_behind,git_detached,initialization_attempt,created_at,updated_at) VALUES(?1,?2,?3,?4,?4,1,?5,?6,'directory',?7,'present','ready','500',2,0,0,0,1,100,200)",rusqlite::params![base["id"].as_str(),base["projectRef"].as_str(),base["parentId"].as_str(),base["name"].as_str(),base["branch"].as_str(),base["storageKey"].as_str(),base["path"].as_str()])?;
+        for case in source["workspaces"].as_array().unwrap() {
+            let record=&case["record"];
+            assert!(projects.schemas.valid("ownerWorkspace",record)?);
+            ctx.database().execute("UPDATE happy_agent_module_workspaces SET status=?1,presence=?2,version=?3,updated_at=?4,archived_at=?5 WHERE id='invariant-workspace'",rusqlite::params![record["status"].as_str(),record["presence"].as_str(),record["version"].as_i64(),record["updatedAt"].as_i64(),record["archivedAt"].as_i64()])?;
+            assert_eq!(workspaces.get(ctx,"invariant-workspace").is_ok(),case["accepted"].as_bool().unwrap(),"workspace changes {}",case["changes"]);
+        }
+        Ok(())
+    }).await.unwrap();
+    fixture.close().await;
+}
+
+#[tokio::test]
 async fn source_catalog_pages_and_agent_orders_match_real_sqlite_queries() {
     let fixture = Fixture::new().await;
     let projects = Arc::new(ProjectsModule::new(fixture.runtime.clone()).unwrap());

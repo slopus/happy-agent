@@ -84,6 +84,29 @@ async fn full_access_commands_run_without_requiring_a_sandbox_namespace() {
 }
 
 #[tokio::test]
+async fn runner_shell_keeps_full_output_and_peek_does_not_consume_the_delta() {
+    let fixture=Fixture::new().await;
+    let request=json!({"computeId":"fixture","cwd":fixture.directory.path()});
+    let cancel=CancellationToken::new();
+    let options=json!({"command":"printf first; read value; printf second","permissions":{"mode":"full_access","network":{"egress":true,"localBinding":true}},"timeoutMs":0});
+    let id=fixture.commands.native_runner_start("runnerfixture",&request,&options,&cancel).await.unwrap();
+    // A completed start owns no output cursor; the later reader sees its first bytes.
+    let first=fixture.commands.native_runner_read("runnerfixture",id,100,true,&cancel).await.unwrap();
+    assert_eq!(first["stdout"],"first");
+    assert_eq!(first["stdoutDelta"],"first");
+    let consumed=fixture.commands.native_runner_read("runnerfixture",id,0,false,&cancel).await.unwrap();
+    assert_eq!(consumed["stdoutDelta"],"first");
+    assert!(fixture.commands.native_runner_write("runnerfixture",id,b"continue\n",&cancel).await.unwrap());
+    let final_read=fixture.commands.native_runner_read("runnerfixture",id,1000,false,&cancel).await.unwrap();
+    assert_eq!(final_read["stdout"],"firstsecond");
+    assert_eq!(final_read["stdoutDelta"],"second");
+    assert_eq!(final_read["status"],"completed");
+    assert_eq!(final_read["timedOut"],true);
+    assert_eq!(final_read["stdoutBytes"],11);
+    fixture.close().await;
+}
+
+#[tokio::test]
 async fn output_polling_keeps_incomplete_utf8_until_the_character_is_complete() {
     let fixture = Fixture::new().await;
     let started=fixture.start("exec python3 -u -c 'import sys; sys.stdout.buffer.write(bytes([226,130])); sys.stdout.buffer.flush(); sys.stdin.readline(); sys.stdout.buffer.write(bytes([172,10])); sys.stdout.buffer.flush()'",false,250).await;

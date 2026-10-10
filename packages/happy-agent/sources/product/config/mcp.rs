@@ -20,6 +20,7 @@ pub(super) struct McpCatalogFile {
 }
 
 impl McpCatalogFile {
+    pub(super) fn empty()->Self {Self{servers:Mutex::new(Map::new()),writer:tokio::sync::Mutex::new(())}}
     pub(super) fn load(path: &Path) -> Result<Self> {
         Ok(Self { servers: Mutex::new(read_mcp_file(path)?), writer: tokio::sync::Mutex::new(()) })
     }

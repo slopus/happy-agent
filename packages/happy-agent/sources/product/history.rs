@@ -15,6 +15,8 @@ mod excerpt;
 mod hooks;
 mod model_switch;
 mod read_tool;
+#[path = "history/persistence/query_running_run.rs"]
+mod query_running_run;
 
 const MIGRATIONS: &[(&str, &str)] = &[
     (
@@ -113,6 +115,11 @@ impl HistoryModule {
     pub fn begin_run(&self, ctx: &Context<'_>, agent: &str, id: &str, at: u64) -> Result<()> {
         ctx.database().execute("INSERT INTO happy_agent_module_history_runs(agent_id,sequence,run_id,status,reason,started_at,ended_at) SELECT ?1,coalesce(max(sequence),-1)+1,?2,'running',NULL,?3,NULL FROM happy_agent_module_history_runs WHERE agent_id=?1",params![agent,id,i64::try_from(at)?])?;
         Ok(())
+    }
+    pub fn running_run(&self, ctx: &Context<'_>, agent: &str) -> Result<Option<Value>> {
+        self.runtime.assert_context(ctx)?;
+        anyhow::ensure!(self.schemas.valid("historyAgentId", &json!(agent))?, "The running-run agent identity is invalid.");
+        query_running_run::query_running_run(ctx, &self.schemas, agent)
     }
     pub fn pending(&self, ctx: &Context<'_>, agent: &str, id: &str) -> Result<Option<Value>> {
         let value:Option<String>=ctx.database().query_row("SELECT message_json FROM happy_agent_module_history_pending WHERE agent_id=?1 AND message_id=?2",params![agent,id],|row|row.get(0)).optional()?;

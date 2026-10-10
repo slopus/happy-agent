@@ -184,7 +184,7 @@ impl ApiModule {
         let mut snapshot = self
             .runtime
             .transact(move |ctx| {
-                let config = api.config.public_snapshot(api.node.get(ctx)?)?;
+                let config = api.config.public_snapshot(api.node.get(ctx)?, api.presence.public_configuration(ctx)?)?;
                 let profile = api.profile.resource(&api.profile.ensure(ctx)?);
                 let mut archived = Vec::new();
                 let mut projects = Vec::new();

@@ -2,7 +2,7 @@
 use super::*;
 use serde_json::{Value,json};
 impl ConfigModule {
-    pub fn public_snapshot(&self,node:Value)->Result<Value> {
+    pub fn public_snapshot(&self,node:Value,presence:Value)->Result<Value> {
         let mut values=self.values.clone();merge(&mut values,self.runtime_values.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone());
         let section=|name:&str|camel(&toml_json(values.get(name).unwrap_or(&toml::Value::Table(toml::map::Map::new()))));
         let routes=self.configured_models()?;let mut models=serde_json::Map::new();let mut providers=serde_json::Map::new();
@@ -27,7 +27,7 @@ impl ConfigModule {
         let mcp:serde_json::Map<String,Value>=self.mcp_servers().into_iter().map(|(name,server)|(name,json!({"enabled":server.get("enabled").and_then(Value::as_bool).unwrap_or(true),"transport":server["transport"]}))).collect();
         let network=section("network");let network=json!({"allowedDomains":network.get("allowedDomains").cloned().unwrap_or(json!([])),"deniedDomains":network.get("deniedDomains").cloned().unwrap_or(json!([])),"allowedPorts":network.get("allowedPorts").cloned().unwrap_or(json!([])),"allowedLoopbackPorts":network.get("allowedLoopbackPorts").cloned().unwrap_or(json!([])),"allowLocalBinding":network["allowLocalBinding"].as_bool().unwrap_or(false)});
         let p2p=section("p2p");let p2p=select(&p2p,&["name","role","enableIroh","enableDirect","enableSsh","exposeApi"]);let settings=section("settings");let settings=select(&settings,&["compactCompletedTurns","completionChime","inferenceMaxRetries","showReasoning","showUsage","toolResultRetentionDays"]);
-        let snapshot=json!({"node":node,"defaults":defaults,"features":section("features"),"mcpServers":mcp,"network":network,"p2p":p2p,"permissions":section("permissions"),"presence":self.presence_configuration()?,"models":models,"providers":providers,"settings":settings,"theme":section("theme"),"workspace":section("workspace")});
+        let snapshot=json!({"node":node,"defaults":defaults,"features":section("features"),"mcpServers":mcp,"network":network,"p2p":p2p,"permissions":section("permissions"),"presence":presence,"models":models,"providers":providers,"settings":settings,"theme":section("theme"),"workspace":section("workspace")});
         anyhow::ensure!(super::super::schemas::Schemas::new()?.valid("ownerConfigResponse",&json!({"config":snapshot}))?,"The public configuration is invalid.");Ok(snapshot)
     }
 }

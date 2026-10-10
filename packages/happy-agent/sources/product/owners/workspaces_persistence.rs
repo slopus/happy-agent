@@ -3,6 +3,10 @@ use crate::product::{runtime::Context, schemas::Schemas};
 use anyhow::Result;
 use rusqlite::{OptionalExtension, Row, params};
 use serde_json::{Value, json};
+
+#[path = "workspaces_persistence/catalog.rs"]
+mod catalog;
+pub(super) use catalog::{query_agent_orders, query_catalog_page};
 use std::collections::BTreeSet;
 use unicode_normalization::UnicodeNormalization;
 

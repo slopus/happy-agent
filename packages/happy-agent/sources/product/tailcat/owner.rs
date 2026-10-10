@@ -15,6 +15,10 @@ pub struct TailcatModule {
 }
 struct Live { state: &'static str, error: Option<String>, target: Option<Value>, exposure: Option<Arc<TailcatExposure>> }
 impl TailcatModule {
+    pub fn open_runner_remote(config:&ConfigModule,address:&str)->Result<Arc<TailcatConnection>> {
+        anyhow::ensure!(Schemas::new()?.valid("ownerTailcatAddress",&json!(address))?,"The runner's Tailcat address is invalid.");
+        Ok(TailcatConnection::new(config.tailcat_executable(),address.to_owned()))
+    }
     pub fn new(config: Arc<ConfigModule>, bots: Arc<BotsModule>, runtime: Arc<RuntimeModule>, durable: Arc<DurableFunctionsModule>, agents: Arc<AgentRuntimeModule>) -> Result<Arc<Self>> {
         let tools = serde_json::from_str(include_str!("tool_definitions.json"))?; let schemas = Schemas::new()?;
         let module = Arc::new_cyclic(|weak| Self { live: Mutex::new(Live { state: if config.tailcat_enabled() { "starting" } else { "disabled" }, error: None, target: None, exposure: None }), config, bots, runtime, durable: durable.clone(), schemas, tools, execution: tokio::sync::Mutex::new(()), outbound: Mutex::new(Vec::new()), closed: AtomicBool::new(false), weak: weak.clone() });

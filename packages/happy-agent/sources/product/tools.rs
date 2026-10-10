@@ -13,8 +13,11 @@ mod commands;
 mod files;
 pub use files::ComputeFilesystem;
 mod surface;
+mod runner;
+pub use runner::{NativeRunnerCompute,NativeRunnerWatch};
 use commands::CommandSessions;
 pub use commands::{ProcessEventListener, ProcessSubscription};
+pub use commands::{NativeRunnerProcess,NativeRunnerProcessEvent};
 
 pub struct ToolsModule {
     config: Arc<ConfigModule>,

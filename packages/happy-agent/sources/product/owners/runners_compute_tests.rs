@@ -10,12 +10,15 @@ struct Fixture {
 }
 impl Fixture {
     async fn new() -> Self {
+        Self::with_runners("[runners.fixture]\nname = \"Fixture runner\"\ntoken = \"0123456789012345678901234567890123456789012\"\n").await
+    }
+    async fn with_runners(configuration: &str) -> Self {
         let directory = tempfile::tempdir().unwrap();
         let initial = ConfigModule::isolated(&directory.path().join(".happy")).unwrap();
         std::fs::create_dir_all(&initial.paths.configuration).unwrap();
         std::fs::write(
             initial.paths.configuration.join("happy.toml"),
-            "[runners.fixture]\nname = \"Fixture runner\"\ntoken = \"0123456789012345678901234567890123456789012\"\n",
+            configuration,
         )
         .unwrap();
         let config = Arc::new(ConfigModule::isolated(&directory.path().join(".happy")).unwrap());
@@ -52,6 +55,114 @@ struct Peer {
     incoming: mpsc::Sender<Vec<u8>>,
     outgoing: mpsc::Receiver<Vec<u8>>,
     accepted: tokio::task::JoinHandle<Result<()>>,
+}
+
+#[tokio::test]
+async fn product_machine_default_placement_is_metadata_and_local_execution_retains_its_typed_guard()
+{
+    let fixture = Fixture::with_runners("[runners.fixture]\nname = \"Fixture runner\"\ntoken = \"0123456789012345678901234567890123456789012\"\n[runners.second]\nname = \"Another runner\"\ntoken = \"2222222222222222222222222222222222222222222\"\n").await;
+    assert_eq!(fixture.runners.default_runner_id(), None);
+    assert_eq!(fixture.runners.place(None).unwrap(), None);
+    let error = fixture
+        .runners
+        .prepare_machine(None, &CancellationToken::new())
+        .await
+        .unwrap_err();
+    assert!(
+        error
+            .downcast_ref::<LocalExecutionDisabledError>()
+            .is_some()
+    );
+    assert_eq!(
+        fixture.runners.error_code(&error),
+        Some("local_execution_disabled")
+    );
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn product_machine_preflight_uses_full_stat_page_requests_and_preserves_remote_error_codes() {
+    let fixture = Fixture::new().await;
+    let mut peer = Peer::connect(fixture.runners.clone(), "epoch-a", &[]).await;
+    let owner = fixture.runners.clone();
+    let call = tokio::spawn(async move {
+        owner
+            .stat(
+                Some("fixture"),
+                Path::new("/peer-only/directory"),
+                &CancellationToken::new(),
+            )
+            .await
+    });
+    let create = peer.request().await;
+    assert_eq!(create["method"], "compute.create");
+    assert_eq!(create["params"]["computeId"], "happy-product");
+    peer.answer(&create,json!({"cwd":"/runner-home","home":"/runner-home","kind":"host","supportsSessionInput":true,"retained":false})).await;
+    let request = peer.request().await;
+    assert_eq!(request["method"], "fs.stat");
+    assert_eq!(request["params"]["permissions"]["mode"], "full_access");
+    let stat =
+        json!({"isFile":false,"isDirectory":true,"isSymbolicLink":false,"size":0,"mtimeMs":1});
+    peer.answer(&request, json!({"stat":stat})).await;
+    assert_eq!(call.await.unwrap().unwrap(), stat);
+    let owner = fixture.runners.clone();
+    let call = tokio::spawn(async move {
+        owner
+            .directory_page(
+                Some("fixture"),
+                Path::new("/peer-only/directory"),
+                1,
+                &CancellationToken::new(),
+            )
+            .await
+    });
+    let request = peer.request().await;
+    assert_eq!(request["method"], "fs.readdirPage");
+    assert_eq!(request["params"]["limit"], 1);
+    assert_eq!(request["params"]["permissions"]["mode"], "full_access");
+    peer.answer(&request, json!({"entries":["present"],"hasMore":false}))
+        .await;
+    assert_eq!(
+        call.await.unwrap().unwrap(),
+        json!({"entries":["present"],"hasMore":false})
+    );
+    let owner = fixture.runners.clone();
+    let call = tokio::spawn(async move {
+        owner
+            .stat(
+                Some("fixture"),
+                Path::new("/peer-only/missing"),
+                &CancellationToken::new(),
+            )
+            .await
+    });
+    let request = peer.request().await;
+    peer.reject(&request, "ENOTDIR").await;
+    let error = call.await.unwrap().unwrap_err();
+    assert_eq!(fixture.runners.error_code(&error), Some("ENOTDIR"));
+    peer.disconnect().await;
+    fixture.close().await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn product_machine_unavailability_keeps_the_configured_runner_identity() {
+    let fixture = Fixture::new().await;
+    let error = fixture
+        .runners
+        .prepare_machine(Some("fixture"), &CancellationToken::new())
+        .await
+        .unwrap_err();
+    let unavailable = error
+        .downcast_ref::<RunnerUnavailableError>()
+        .expect("unavailability must remain a typed public owner error");
+    assert_eq!(unavailable.runner, "fixture");
+    assert_eq!(unavailable.name, "Fixture runner");
+    assert!(error.to_string().contains("Fixture runner"));
+    assert_eq!(
+        fixture.runners.error_code(&error),
+        Some("ERUNNERUNAVAILABLE")
+    );
+    fixture.close().await;
 }
 
 #[tokio::test]

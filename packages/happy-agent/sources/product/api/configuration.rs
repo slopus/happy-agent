@@ -22,6 +22,6 @@ impl ApiModule {
         }
         error(404,"not_found","Not found.")
     }
-    async fn configuration_response(&self)->Response<Body>{let node=self.node.clone();let config=self.config.clone();match self.runtime.transact(move|ctx|Ok(json!({"config":config.public_snapshot(node.get(ctx)?)?}))).await{Ok(value)=>response(200,value),Err(failure)=>internal(failure)}}
+    async fn configuration_response(&self)->Response<Body>{let node=self.node.clone();let config=self.config.clone();let presence=self.presence.clone();match self.runtime.transact(move|ctx|Ok(json!({"config":config.public_snapshot(node.get(ctx)?,presence.public_configuration(ctx)?)?}))).await{Ok(value)=>response(200,value),Err(failure)=>internal(failure)}}
 }
 fn percent_decode(value:&str)->anyhow::Result<String>{let bytes=value.as_bytes();let mut result=Vec::with_capacity(bytes.len());let mut index=0;while index<bytes.len(){if bytes[index]==b'%'{anyhow::ensure!(index+2<bytes.len(),"The encoded provider ID is incomplete.");let first=(bytes[index+1]as char).to_digit(16).ok_or_else(||anyhow::anyhow!("The encoded provider ID is invalid."))?;let second=(bytes[index+2]as char).to_digit(16).ok_or_else(||anyhow::anyhow!("The encoded provider ID is invalid."))?;result.push((first*16+second)as u8);index+=3;}else{result.push(bytes[index]);index+=1;}}Ok(String::from_utf8(result)?)}

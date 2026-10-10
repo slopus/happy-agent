@@ -12,7 +12,7 @@ import { waitWorkflowTool } from "../../../../happy-agent-modules/sources/workfl
 import { workflowLogsTool } from "../../../../happy-agent-modules/sources/workflows/tools/workflow_logs.ts";
 import { sourcePrivateSchema } from "../../../scripts/source-private-schema.mjs";
 import { Type } from "@sinclair/typebox";
-import { writeFileSync } from "node:fs";
+import { writeNativeCapture as writeFileSync } from "../../../scripts/write-native-capture.mjs";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 const runner = await sourcePrivateSchema(

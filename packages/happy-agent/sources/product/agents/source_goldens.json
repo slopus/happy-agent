@@ -1,0 +1,61 @@
+{
+    "profiles": [],
+    "compactionCommands": [
+        {
+            "description": "Summarize older messages to free context space.",
+            "hasArguments": false,
+            "kind": "compaction",
+            "name": "compact"
+        }
+    ],
+    "numericMetadata": [
+        {
+            "value": null,
+            "expected": null
+        },
+        {
+            "value": false,
+            "expected": null
+        },
+        {
+            "value": true,
+            "expected": null
+        },
+        {
+            "value": "0",
+            "expected": null
+        },
+        {
+            "value": {},
+            "expected": null
+        },
+        {
+            "value": [],
+            "expected": null
+        },
+        {
+            "value": -1,
+            "expected": null
+        },
+        {
+            "value": 0,
+            "expected": 0
+        },
+        {
+            "value": 1,
+            "expected": 1
+        },
+        {
+            "value": 1.5,
+            "expected": null
+        },
+        {
+            "value": 9007199254740991,
+            "expected": 9007199254740991
+        },
+        {
+            "value": 9007199254740992,
+            "expected": null
+        }
+    ]
+}

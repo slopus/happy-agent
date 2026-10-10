@@ -1,5 +1,6 @@
 /// Native port of Source's BoundedOutputBuffer. Retention keeps a stable
 /// beginning and ending; an incomplete UTF-8 suffix belongs to the next poll.
+#[derive(Clone)]
 pub(super) struct BoundedOutput {
     maximum: usize,
     head: Vec<u8>,
@@ -84,6 +85,10 @@ impl BoundedOutput {
             bytes
         };
         (String::from_utf8_lossy(&bytes).into_owned(), omitted)
+    }
+    pub fn peek(&self) -> (String,usize,usize) {
+        let (text,omitted)=self.clone().drain();
+        (text,self.total.saturating_sub(self.pending.len()),omitted)
     }
 }
 fn continuation(byte: u8) -> bool {

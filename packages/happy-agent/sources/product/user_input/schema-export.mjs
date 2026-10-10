@@ -9,7 +9,7 @@ import {
     formatUserInputDetailPageForModel,
     formatUserInputPageForModel,
 } from "../../../../happy-agent-modules/sources/userInput/UserInputModule.ts";
-import { writeFileSync } from "node:fs";
+import { writeNativeCapture as writeFileSync } from "../../../scripts/write-native-capture.mjs";
 export const userInputTools = [
     requestUserInputTool(undefined, "source-agent"),
     readUserInputTool(undefined, "source-agent"),

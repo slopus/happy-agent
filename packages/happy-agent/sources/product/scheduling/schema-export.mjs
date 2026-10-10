@@ -17,7 +17,7 @@ import {
     schedulePageText,
 } from "../../../../happy-agent-modules/sources/scheduling/schedulingFormat.ts";
 import { createRequire } from "node:module";
-import { writeFileSync } from "node:fs";
+import { writeNativeCapture as writeFileSync } from "../../../scripts/write-native-capture.mjs";
 const require = createRequire(
     new URL("../../../../happy-agent-modules/package.json", import.meta.url),
 );

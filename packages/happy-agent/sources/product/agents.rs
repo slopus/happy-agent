@@ -1,20 +1,25 @@
 use super::{
-    config::ConfigModule,
     agent_runtime::AgentRuntimeModule,
+    bots::BotsModule,
+    config::ConfigModule,
     events::EventsModule,
     history::HistoryModule,
     identity::{now, resource_version},
     projects::ProjectsModule,
     runtime::{Context, RuntimeModule},
     schemas::Schemas,
-    usage::UsageModule,
-    workspaces::WorkspacesModule,
+    skills::SkillsModule,
+    subtasks::SubtasksModule,
     tools::ToolsModule,
+    usage::UsageModule,
     user_input::UserInputModule,
+    workspaces::WorkspacesModule,
 };
 use anyhow::{Context as _, Result};
 use serde_json::{Value, json};
 use std::sync::Arc;
+mod focused;
+mod projection;
 
 pub struct AgentSystemModule {
     config: Arc<ConfigModule>,
@@ -26,7 +31,10 @@ pub struct AgentSystemModule {
     workspaces: Arc<WorkspacesModule>,
     system: Arc<AgentRuntimeModule>,
     tools: Arc<ToolsModule>,
-    user_input:Arc<UserInputModule>,
+    user_input: Arc<UserInputModule>,
+    bots: Arc<BotsModule>,
+    subtasks: Arc<SubtasksModule>,
+    skills: Arc<SkillsModule>,
     schemas: Schemas,
 }
 #[derive(Debug)]
@@ -61,7 +69,10 @@ impl AgentSystemModule {
         workspaces: Arc<WorkspacesModule>,
         system: Arc<AgentRuntimeModule>,
         tools: Arc<ToolsModule>,
-        user_input:Arc<UserInputModule>,
+        user_input: Arc<UserInputModule>,
+        bots: Arc<BotsModule>,
+        subtasks: Arc<SubtasksModule>,
+        skills: Arc<SkillsModule>,
     ) -> Result<Self> {
         Ok(Self {
             config,
@@ -74,6 +85,9 @@ impl AgentSystemModule {
             system,
             tools,
             user_input,
+            bots,
+            subtasks,
+            skills,
             schemas: Schemas::new()?,
         })
     }
@@ -86,31 +100,71 @@ impl AgentSystemModule {
     pub fn configuration(&self, ctx: &Context<'_>, id: &str) -> Result<Option<Value>> {
         self.system.configuration(ctx, id)
     }
-    pub fn install(&self, module:Arc<dyn happy_agent_base::AgentModule>)->Result<()> {self.system.install(module)}
-    pub fn parent_of(&self,ctx:&Context<'_>,id:&str)->Result<Option<String>> {self.system.parent(ctx,id)}
-    pub fn update_question_metadata(&self,ctx:&Context<'_>,id:&str,question:Option<&str>)->Result<()> {self.system.update_metadata(ctx,id,&json!({"pendingQuestionId":question}))}
-    pub fn update_process_count(&self,ctx:&Context<'_>,id:&str,count:usize)->Result<()> {
-        let Some(configuration)=self.configuration(ctx,id)? else{return Ok(());};
-        if configuration["metadata"]["processes"]["running"].as_u64()==Some(count as u64){return Ok(());}
-        self.system.update_metadata(ctx,id,&json!({"processes":{"running":count}}))
+    pub fn install(&self, module: Arc<dyn happy_agent_base::AgentModule>) -> Result<()> {
+        self.system.install(module)
     }
-    pub fn reconcile_process_counts(&self,ctx:&Context<'_>)->Result<()> {
-        let mut ids=self.runtime.agents_with_running_process_metadata(ctx)?.into_iter().collect::<std::collections::BTreeSet<_>>();ids.extend(self.tools.process_agents());
-        for id in ids {self.update_process_count(ctx,&id,self.tools.running_processes(&id))?;}Ok(())
+    pub fn parent_of(&self, ctx: &Context<'_>, id: &str) -> Result<Option<String>> {
+        self.system.parent(ctx, id)
     }
-    pub async fn activity(self:&Arc<Self>,id:String)->Result<Option<Value>> {
-        let agents=self.clone();self.runtime.transact(move|ctx| {
-            if agents.resource(ctx,&id)?.is_none(){return Ok(None);}
-            let mut children=agents.system.children(ctx,&id)?.into_iter().map(|id|agents.resource(ctx,&id)?.ok_or_else(||anyhow::anyhow!("The child agent has no public resource."))).collect::<Result<Vec<_>>>()?;
-            children.sort_by(|left,right|right["createdAt"].as_u64().cmp(&left["createdAt"].as_u64()).then_with(||left["id"].as_str().cmp(&right["id"].as_str())));
-            Ok(Some(json!({"subagents":children,"processes":agents.tools.list_processes(&id)})))
-        }).await
+    pub fn update_question_metadata(
+        &self,
+        ctx: &Context<'_>,
+        id: &str,
+        question: Option<&str>,
+    ) -> Result<()> {
+        self.system
+            .update_metadata(ctx, id, &json!({"pendingQuestionId":question}))
     }
-    pub async fn focused(self: &Arc<Self>, id: String) -> Result<Option<Value>> {
+    pub fn update_process_count(&self, ctx: &Context<'_>, id: &str, count: usize) -> Result<()> {
+        let Some(configuration) = self.configuration(ctx, id)? else {
+            return Ok(());
+        };
+        if configuration["metadata"]["processes"]["running"].as_u64() == Some(count as u64) {
+            return Ok(());
+        }
+        self.system
+            .update_metadata(ctx, id, &json!({"processes":{"running":count}}))
+    }
+    pub fn reconcile_process_counts(&self, ctx: &Context<'_>) -> Result<()> {
+        let mut ids = self
+            .runtime
+            .agents_with_running_process_metadata(ctx)?
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>();
+        ids.extend(self.tools.process_agents());
+        for id in ids {
+            self.update_process_count(ctx, &id, self.tools.running_processes(&id))?;
+        }
+        Ok(())
+    }
+    pub async fn activity(self: &Arc<Self>, id: String) -> Result<Option<Value>> {
         let agents = self.clone();
-        self.runtime.transact(move |ctx| {
-            agents.resource(ctx, &id)?.map(|agent| Ok(json!({"agent":agent,"profiles":[],"slashCommands":[{"description":"Summarize older messages to free context space.","hasArguments":false,"kind":"compaction","name":"compact"}]}))).transpose()
-        }).await
+        self.runtime
+            .transact(move |ctx| {
+                if agents.resource(ctx, &id)?.is_none() {
+                    return Ok(None);
+                }
+                let mut children = agents
+                    .system
+                    .children(ctx, &id)?
+                    .into_iter()
+                    .map(|id| {
+                        agents.resource(ctx, &id)?.ok_or_else(|| {
+                            anyhow::anyhow!("The child agent has no public resource.")
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                children.sort_by(|left, right| {
+                    right["createdAt"]
+                        .as_u64()
+                        .cmp(&left["createdAt"].as_u64())
+                        .then_with(|| left["id"].as_str().cmp(&right["id"].as_str()))
+                });
+                Ok(Some(
+                    json!({"subagents":children,"processes":agents.tools.list_processes(&id)}),
+                ))
+            })
+            .await
     }
     pub async fn mode(self: &Arc<Self>, id: String) -> Result<Option<Value>> {
         let agents = self.clone();
@@ -235,39 +289,7 @@ impl AgentSystemModule {
         }).await
     }
     pub fn resource(&self, ctx: &Context<'_>, id: &str) -> Result<Option<Value>> {
-        let Some(configuration) = self.configuration(ctx, id)? else {
-            return Ok(None);
-        };
-        let association = self
-            .workspaces
-            .agent_association(ctx, id)?
-            .or(self.projects.agent_association(ctx, id)?);
-        let parent = ctx
-            .value("", &format!("agentSystem.parent.{id}"))?
-            .and_then(|value| value.as_str().map(str::to_owned));
-        let children: i64 = ctx.database().query_row("SELECT count(*) FROM happy_agent_values WHERE owner_id='' AND key GLOB 'agentSystem.parent.*' AND value_json=?1", [json!(id).to_string()], |row| row.get(0))?;
-        let metadata = &configuration["metadata"];
-        let created = configuration["provenance"]["createdAt"]
-            .as_u64()
-            .unwrap_or(0);
-        let latest = self.events.latest(ctx, id)?;
-        let updated = metadata["updatedAt"]
-            .as_u64()
-            .unwrap_or(created)
-            .max(latest.as_ref().map_or(0, |event| event.1 as u64));
-        let version = latest.as_ref().map_or_else(
-            || resource_version(updated, metadata["version"].as_u64().unwrap_or(1), id),
-            |event| event.0.clone(),
-        );
-        let owed = self.system.owed(ctx, id)?;
-        let status=if owed.is_some(){"working"}else{"idle"};
-        let pending=self.user_input.list_page(ctx,id,&json!({"askingAgentId":id,"status":"pending","limit":1}))?["requests"][0].get("id").cloned().unwrap_or(Value::Null);
-        let archived = metadata.get("archivedAt").cloned().unwrap_or(Value::Null);
-        let order = association
-            .as_ref()
-            .map(|association| association.1.clone());
-        Ok(Some(
-            json!({"id":id,"workspaceId":association.map(|association|association.0).unwrap_or_default(),"parentAgentId":parent,"subtask":false,"subtasks":[],"subtaskOrderKey":null,"userVisible":order.is_some(),"managedByAnotherAgent":parent.is_some(),"canSendMessages":parent.is_none()&&archived.is_null(),"title":metadata.get("title").cloned().unwrap_or(Value::Null),"titleStatus":if metadata["title"].is_string(){"ready"}else{"idle"},"status":status,"subagents":{"total":children,"running":0},"processes":{"running":self.tools.running_processes(id)},"pendingQuestionId":pending,"unread":metadata.get("unread").cloned().unwrap_or(Value::Null),"orderKey":order,"lastCursor":self.events.agent_cursor(id),"version":version,"createdAt":created,"updatedAt":updated,"archivedAt":archived}),
-        ))
+        self.runtime.assert_context(ctx)?;
+        self.project_resource(ctx, id, 0)
     }
 }

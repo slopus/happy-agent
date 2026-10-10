@@ -1,0 +1,761 @@
+{
+    "projectBase": {
+        "id": "invariant-project",
+        "repositoryRef": "/tmp/native-invariant/project",
+        "kind": "regular",
+        "storageKey": "invariant-project",
+        "name": "Project",
+        "nameSource": "folder",
+        "status": "active",
+        "presence": "present",
+        "initializationStatus": "ready",
+        "initializationAttempt": 0,
+        "worktreeSupport": "unknown",
+        "gitAhead": 0,
+        "gitBehind": 0,
+        "gitDetached": false,
+        "orderKey": "500",
+        "version": 2,
+        "createdAt": 100,
+        "updatedAt": 200
+    },
+    "workspaceBase": {
+        "id": "invariant-workspace",
+        "projectRef": "invariant-project",
+        "parentId": "invariant-project",
+        "name": "Workspace",
+        "nameConfigured": true,
+        "branch": "worktree/invariant",
+        "storageKey": "invariant-workspace",
+        "kind": "directory",
+        "path": "/tmp/native-invariant/workspace",
+        "presence": "present",
+        "status": "ready",
+        "orderKey": "500",
+        "version": 2,
+        "gitAhead": 0,
+        "gitBehind": 0,
+        "gitDetached": false,
+        "initializationAttempt": 1,
+        "createdAt": 100,
+        "updatedAt": 200
+    },
+    "projects": [
+        {
+            "changes": {},
+            "record": {
+                "id": "invariant-project-0",
+                "repositoryRef": "/tmp/native-invariant/project-0",
+                "kind": "regular",
+                "storageKey": "project-0",
+                "name": "Project",
+                "nameSource": "folder",
+                "status": "active",
+                "presence": "present",
+                "initializationStatus": "ready",
+                "initializationAttempt": 0,
+                "worktreeSupport": "unknown",
+                "gitAhead": 0,
+                "gitBehind": 0,
+                "gitDetached": false,
+                "orderKey": "500",
+                "version": 2,
+                "createdAt": 100,
+                "updatedAt": 200
+            },
+            "accepted": true
+        },
+        {
+            "changes": {
+                "updatedAt": 99
+            },
+            "record": {
+                "id": "invariant-project-1",
+                "repositoryRef": "/tmp/native-invariant/project-1",
+                "kind": "regular",
+                "storageKey": "project-1",
+                "name": "Project",
+                "nameSource": "folder",
+                "status": "active",
+                "presence": "present",
+                "initializationStatus": "ready",
+                "initializationAttempt": 0,
+                "worktreeSupport": "unknown",
+                "gitAhead": 0,
+                "gitBehind": 0,
+                "gitDetached": false,
+                "orderKey": "500",
+                "version": 2,
+                "createdAt": 100,
+                "updatedAt": 99
+            },
+            "accepted": false
+        },
+        {
+            "changes": {
+                "status": "archived"
+            },
+            "record": {
+                "id": "invariant-project-2",
+                "repositoryRef": "/tmp/native-invariant/project-2",
+                "kind": "regular",
+                "storageKey": "project-2",
+                "name": "Project",
+                "nameSource": "folder",
+                "status": "archived",
+                "presence": "present",
+                "initializationStatus": "ready",
+                "initializationAttempt": 0,
+                "worktreeSupport": "unknown",
+                "gitAhead": 0,
+                "gitBehind": 0,
+                "gitDetached": false,
+                "orderKey": "500",
+                "version": 2,
+                "createdAt": 100,
+                "updatedAt": 200
+            },
+            "accepted": false
+        },
+        {
+            "changes": {
+                "status": "archived",
+                "archivedAt": 99
+            },
+            "record": {
+                "id": "invariant-project-3",
+                "repositoryRef": "/tmp/native-invariant/project-3",
+                "kind": "regular",
+                "storageKey": "project-3",
+                "name": "Project",
+                "nameSource": "folder",
+                "status": "archived",
+                "presence": "present",
+                "initializationStatus": "ready",
+                "initializationAttempt": 0,
+                "worktreeSupport": "unknown",
+                "gitAhead": 0,
+                "gitBehind": 0,
+                "gitDetached": false,
+                "orderKey": "500",
+                "version": 2,
+                "createdAt": 100,
+                "updatedAt": 200,
+                "archivedAt": 99
+            },
+            "accepted": false
+        },
+        {
+            "changes": {
+                "status": "archived",
+                "archivedAt": 201
+            },
+            "record": {
+                "id": "invariant-project-4",
+                "repositoryRef": "/tmp/native-invariant/project-4",
+                "kind": "regular",
+                "storageKey": "project-4",
+                "name": "Project",
+                "nameSource": "folder",
+                "status": "archived",
+                "presence": "present",
+                "initializationStatus": "ready",
+                "initializationAttempt": 0,
+                "worktreeSupport": "unknown",
+                "gitAhead": 0,
+                "gitBehind": 0,
+                "gitDetached": false,
+                "orderKey": "500",
+                "version": 2,
+                "createdAt": 100,
+                "updatedAt": 200,
+                "archivedAt": 201
+            },
+            "accepted": false
+        },
+        {
+            "changes": {
+                "archivedAt": 100
+            },
+            "record": {
+                "id": "invariant-project-5",
+                "repositoryRef": "/tmp/native-invariant/project-5",
+                "kind": "regular",
+                "storageKey": "project-5",
+                "name": "Project",
+                "nameSource": "folder",
+                "status": "active",
+                "presence": "present",
+                "initializationStatus": "ready",
+                "initializationAttempt": 0,
+                "worktreeSupport": "unknown",
+                "gitAhead": 0,
+                "gitBehind": 0,
+                "gitDetached": false,
+                "orderKey": "500",
+                "version": 2,
+                "createdAt": 100,
+                "updatedAt": 200,
+                "archivedAt": 100
+            },
+            "accepted": false
+        },
+        {
+            "changes": {
+                "kind": "home",
+                "initializationStatus": "initializing"
+            },
+            "record": {
+                "id": "invariant-project-6",
+                "repositoryRef": "/tmp/native-invariant/project-6",
+                "kind": "home",
+                "storageKey": "project-6",
+                "name": "Project",
+                "nameSource": "folder",
+                "status": "active",
+                "presence": "present",
+                "initializationStatus": "initializing",
+                "initializationAttempt": 0,
+                "worktreeSupport": "unknown",
+                "gitAhead": 0,
+                "gitBehind": 0,
+                "gitDetached": false,
+                "orderKey": "500",
+                "version": 2,
+                "createdAt": 100,
+                "updatedAt": 200
+            },
+            "accepted": false
+        },
+        {
+            "changes": {
+                "initializationError": "Setup failed."
+            },
+            "record": {
+                "id": "invariant-project-7",
+                "repositoryRef": "/tmp/native-invariant/project-7",
+                "kind": "regular",
+                "storageKey": "project-7",
+                "name": "Project",
+                "nameSource": "folder",
+                "status": "active",
+                "presence": "present",
+                "initializationStatus": "ready",
+                "initializationAttempt": 0,
+                "worktreeSupport": "unknown",
+                "gitAhead": 0,
+                "gitBehind": 0,
+                "gitDetached": false,
+                "orderKey": "500",
+                "version": 2,
+                "createdAt": 100,
+                "updatedAt": 200,
+                "initializationError": "Setup failed."
+            },
+            "accepted": false
+        },
+        {
+            "changes": {
+                "worktreeUnsupportedReason": "No worktrees."
+            },
+            "record": {
+                "id": "invariant-project-8",
+                "repositoryRef": "/tmp/native-invariant/project-8",
+                "kind": "regular",
+                "storageKey": "project-8",
+                "name": "Project",
+                "nameSource": "folder",
+                "status": "active",
+                "presence": "present",
+                "initializationStatus": "ready",
+                "initializationAttempt": 0,
+                "worktreeSupport": "unknown",
+                "gitAhead": 0,
+                "gitBehind": 0,
+                "gitDetached": false,
+                "orderKey": "500",
+                "version": 2,
+                "createdAt": 100,
+                "updatedAt": 200,
+                "worktreeUnsupportedReason": "No worktrees."
+            },
+            "accepted": false
+        },
+        {
+            "changes": {
+                "status": "archived",
+                "archivedAt": 200
+            },
+            "record": {
+                "id": "invariant-project-9",
+                "repositoryRef": "/tmp/native-invariant/project-9",
+                "kind": "regular",
+                "storageKey": "project-9",
+                "name": "Project",
+                "nameSource": "folder",
+                "status": "archived",
+                "presence": "present",
+                "initializationStatus": "ready",
+                "initializationAttempt": 0,
+                "worktreeSupport": "unknown",
+                "gitAhead": 0,
+                "gitBehind": 0,
+                "gitDetached": false,
+                "orderKey": "500",
+                "version": 2,
+                "createdAt": 100,
+                "updatedAt": 200,
+                "archivedAt": 200
+            },
+            "accepted": true
+        },
+        {
+            "changes": {
+                "initializationStatus": "failed",
+                "initializationError": "Setup failed."
+            },
+            "record": {
+                "id": "invariant-project-10",
+                "repositoryRef": "/tmp/native-invariant/project-10",
+                "kind": "regular",
+                "storageKey": "project-10",
+                "name": "Project",
+                "nameSource": "folder",
+                "status": "active",
+                "presence": "present",
+                "initializationStatus": "failed",
+                "initializationAttempt": 0,
+                "worktreeSupport": "unknown",
+                "gitAhead": 0,
+                "gitBehind": 0,
+                "gitDetached": false,
+                "orderKey": "500",
+                "version": 2,
+                "createdAt": 100,
+                "updatedAt": 200,
+                "initializationError": "Setup failed."
+            },
+            "accepted": true
+        },
+        {
+            "changes": {
+                "worktreeSupport": "unsupported",
+                "worktreeUnsupportedReason": "No worktrees."
+            },
+            "record": {
+                "id": "invariant-project-11",
+                "repositoryRef": "/tmp/native-invariant/project-11",
+                "kind": "regular",
+                "storageKey": "project-11",
+                "name": "Project",
+                "nameSource": "folder",
+                "status": "active",
+                "presence": "present",
+                "initializationStatus": "ready",
+                "initializationAttempt": 0,
+                "worktreeSupport": "unsupported",
+                "gitAhead": 0,
+                "gitBehind": 0,
+                "gitDetached": false,
+                "orderKey": "500",
+                "version": 2,
+                "createdAt": 100,
+                "updatedAt": 200,
+                "worktreeUnsupportedReason": "No worktrees."
+            },
+            "accepted": true
+        }
+    ],
+    "workspaces": [
+        {
+            "changes": {},
+            "record": {
+                "id": "invariant-workspace-0",
+                "projectRef": "invariant-project",
+                "parentId": "invariant-project",
+                "name": "Workspace 0",
+                "nameConfigured": true,
+                "branch": "worktree/invariant-0",
+                "storageKey": "workspace-0",
+                "kind": "directory",
+                "path": "/tmp/native-invariant/workspace-0",
+                "presence": "present",
+                "status": "ready",
+                "orderKey": "500",
+                "version": 2,
+                "gitAhead": 0,
+                "gitBehind": 0,
+                "gitDetached": false,
+                "initializationAttempt": 1,
+                "createdAt": 100,
+                "updatedAt": 200
+            },
+            "accepted": true
+        },
+        {
+            "changes": {
+                "updatedAt": 99
+            },
+            "record": {
+                "id": "invariant-workspace-1",
+                "projectRef": "invariant-project",
+                "parentId": "invariant-project",
+                "name": "Workspace 1",
+                "nameConfigured": true,
+                "branch": "worktree/invariant-1",
+                "storageKey": "workspace-1",
+                "kind": "directory",
+                "path": "/tmp/native-invariant/workspace-1",
+                "presence": "present",
+                "status": "ready",
+                "orderKey": "500",
+                "version": 2,
+                "gitAhead": 0,
+                "gitBehind": 0,
+                "gitDetached": false,
+                "initializationAttempt": 1,
+                "createdAt": 100,
+                "updatedAt": 99
+            },
+            "accepted": false
+        },
+        {
+            "changes": {
+                "status": "archived"
+            },
+            "record": {
+                "id": "invariant-workspace-2",
+                "projectRef": "invariant-project",
+                "parentId": "invariant-project",
+                "name": "Workspace 2",
+                "nameConfigured": true,
+                "branch": "worktree/invariant-2",
+                "storageKey": "workspace-2",
+                "kind": "directory",
+                "path": "/tmp/native-invariant/workspace-2",
+                "presence": "present",
+                "status": "archived",
+                "orderKey": "500",
+                "version": 2,
+                "gitAhead": 0,
+                "gitBehind": 0,
+                "gitDetached": false,
+                "initializationAttempt": 1,
+                "createdAt": 100,
+                "updatedAt": 200
+            },
+            "accepted": false
+        },
+        {
+            "changes": {
+                "status": "archived",
+                "archivedAt": 99
+            },
+            "record": {
+                "id": "invariant-workspace-3",
+                "projectRef": "invariant-project",
+                "parentId": "invariant-project",
+                "name": "Workspace 3",
+                "nameConfigured": true,
+                "branch": "worktree/invariant-3",
+                "storageKey": "workspace-3",
+                "kind": "directory",
+                "path": "/tmp/native-invariant/workspace-3",
+                "presence": "present",
+                "status": "archived",
+                "orderKey": "500",
+                "version": 2,
+                "gitAhead": 0,
+                "gitBehind": 0,
+                "gitDetached": false,
+                "initializationAttempt": 1,
+                "createdAt": 100,
+                "updatedAt": 200,
+                "archivedAt": 99
+            },
+            "accepted": false
+        },
+        {
+            "changes": {
+                "status": "archived",
+                "archivedAt": 201
+            },
+            "record": {
+                "id": "invariant-workspace-4",
+                "projectRef": "invariant-project",
+                "parentId": "invariant-project",
+                "name": "Workspace 4",
+                "nameConfigured": true,
+                "branch": "worktree/invariant-4",
+                "storageKey": "workspace-4",
+                "kind": "directory",
+                "path": "/tmp/native-invariant/workspace-4",
+                "presence": "present",
+                "status": "archived",
+                "orderKey": "500",
+                "version": 2,
+                "gitAhead": 0,
+                "gitBehind": 0,
+                "gitDetached": false,
+                "initializationAttempt": 1,
+                "createdAt": 100,
+                "updatedAt": 200,
+                "archivedAt": 201
+            },
+            "accepted": false
+        },
+        {
+            "changes": {
+                "archivedAt": 100
+            },
+            "record": {
+                "id": "invariant-workspace-5",
+                "projectRef": "invariant-project",
+                "parentId": "invariant-project",
+                "name": "Workspace 5",
+                "nameConfigured": true,
+                "branch": "worktree/invariant-5",
+                "storageKey": "workspace-5",
+                "kind": "directory",
+                "path": "/tmp/native-invariant/workspace-5",
+                "presence": "present",
+                "status": "ready",
+                "orderKey": "500",
+                "version": 2,
+                "gitAhead": 0,
+                "gitBehind": 0,
+                "gitDetached": false,
+                "initializationAttempt": 1,
+                "createdAt": 100,
+                "updatedAt": 200,
+                "archivedAt": 100
+            },
+            "accepted": false
+        },
+        {
+            "changes": {
+                "version": 1
+            },
+            "record": {
+                "id": "invariant-workspace-6",
+                "projectRef": "invariant-project",
+                "parentId": "invariant-project",
+                "name": "Workspace 6",
+                "nameConfigured": true,
+                "branch": "worktree/invariant-6",
+                "storageKey": "workspace-6",
+                "kind": "directory",
+                "path": "/tmp/native-invariant/workspace-6",
+                "presence": "present",
+                "status": "ready",
+                "orderKey": "500",
+                "version": 1,
+                "gitAhead": 0,
+                "gitBehind": 0,
+                "gitDetached": false,
+                "initializationAttempt": 1,
+                "createdAt": 100,
+                "updatedAt": 200
+            },
+            "accepted": false
+        },
+        {
+            "changes": {
+                "version": 1,
+                "status": "initializing"
+            },
+            "record": {
+                "id": "invariant-workspace-7",
+                "projectRef": "invariant-project",
+                "parentId": "invariant-project",
+                "name": "Workspace 7",
+                "nameConfigured": true,
+                "branch": "worktree/invariant-7",
+                "storageKey": "workspace-7",
+                "kind": "directory",
+                "path": "/tmp/native-invariant/workspace-7",
+                "presence": "present",
+                "status": "initializing",
+                "orderKey": "500",
+                "version": 1,
+                "gitAhead": 0,
+                "gitBehind": 0,
+                "gitDetached": false,
+                "initializationAttempt": 1,
+                "createdAt": 100,
+                "updatedAt": 200
+            },
+            "accepted": false
+        },
+        {
+            "changes": {
+                "version": 1,
+                "status": "initializing",
+                "presence": "missing"
+            },
+            "record": {
+                "id": "invariant-workspace-8",
+                "projectRef": "invariant-project",
+                "parentId": "invariant-project",
+                "name": "Workspace 8",
+                "nameConfigured": true,
+                "branch": "worktree/invariant-8",
+                "storageKey": "workspace-8",
+                "kind": "directory",
+                "path": "/tmp/native-invariant/workspace-8",
+                "presence": "missing",
+                "status": "initializing",
+                "orderKey": "500",
+                "version": 1,
+                "gitAhead": 0,
+                "gitBehind": 0,
+                "gitDetached": false,
+                "initializationAttempt": 1,
+                "createdAt": 100,
+                "updatedAt": 200
+            },
+            "accepted": true
+        },
+        {
+            "changes": {
+                "status": "archiving"
+            },
+            "record": {
+                "id": "invariant-workspace-9",
+                "projectRef": "invariant-project",
+                "parentId": "invariant-project",
+                "name": "Workspace 9",
+                "nameConfigured": true,
+                "branch": "worktree/invariant-9",
+                "storageKey": "workspace-9",
+                "kind": "directory",
+                "path": "/tmp/native-invariant/workspace-9",
+                "presence": "present",
+                "status": "archiving",
+                "orderKey": "500",
+                "version": 2,
+                "gitAhead": 0,
+                "gitBehind": 0,
+                "gitDetached": false,
+                "initializationAttempt": 1,
+                "createdAt": 100,
+                "updatedAt": 200
+            },
+            "accepted": true
+        },
+        {
+            "changes": {
+                "status": "archived",
+                "archivedAt": 200
+            },
+            "record": {
+                "id": "invariant-workspace-10",
+                "projectRef": "invariant-project",
+                "parentId": "invariant-project",
+                "name": "Workspace 10",
+                "nameConfigured": true,
+                "branch": "worktree/invariant-10",
+                "storageKey": "workspace-10",
+                "kind": "directory",
+                "path": "/tmp/native-invariant/workspace-10",
+                "presence": "present",
+                "status": "archived",
+                "orderKey": "500",
+                "version": 2,
+                "gitAhead": 0,
+                "gitBehind": 0,
+                "gitDetached": false,
+                "initializationAttempt": 1,
+                "createdAt": 100,
+                "updatedAt": 200,
+                "archivedAt": 200
+            },
+            "accepted": true
+        }
+    ],
+    "clock": {
+        "projectBefore": {
+            "id": "clock-project",
+            "repositoryRef": "/tmp/native-invariant/clock-project",
+            "kind": "regular",
+            "storageKey": "clock-project",
+            "name": "Project",
+            "nameSource": "folder",
+            "status": "active",
+            "presence": "present",
+            "initializationStatus": "ready",
+            "initializationAttempt": 0,
+            "worktreeSupport": "unknown",
+            "gitAhead": 0,
+            "gitBehind": 0,
+            "gitDetached": false,
+            "orderKey": "500",
+            "version": 2,
+            "createdAt": 100,
+            "updatedAt": 4000000000000
+        },
+        "projectAfter": {
+            "id": "clock-project",
+            "repositoryRef": "/tmp/native-invariant/clock-project",
+            "kind": "regular",
+            "storageKey": "clock-project",
+            "name": "Project",
+            "nameSource": "folder",
+            "status": "active",
+            "presence": "present",
+            "initializationStatus": "ready",
+            "initializationAttempt": 0,
+            "worktreeSupport": "unknown",
+            "gitAhead": 0,
+            "gitBehind": 0,
+            "gitDetached": false,
+            "orderKey": "500",
+            "version": 2,
+            "createdAt": 100,
+            "updatedAt": 4000000000000
+        },
+        "projectMutationRejected": true,
+        "workspaceBefore": {
+            "id": "clock-workspace",
+            "projectRef": "invariant-project",
+            "parentId": "invariant-project",
+            "name": "Clock workspace",
+            "nameConfigured": true,
+            "branch": "worktree/clock-workspace",
+            "storageKey": "clock-workspace",
+            "kind": "directory",
+            "path": "/tmp/native-invariant/clock-workspace",
+            "presence": "present",
+            "status": "ready",
+            "orderKey": "500",
+            "version": 2,
+            "gitAhead": 0,
+            "gitBehind": 0,
+            "gitDetached": false,
+            "initializationAttempt": 1,
+            "createdAt": 100,
+            "updatedAt": 4000000000000
+        },
+        "workspaceAfter": {
+            "id": "clock-workspace",
+            "projectRef": "invariant-project",
+            "parentId": "invariant-project",
+            "name": "Future workspace name",
+            "nameConfigured": true,
+            "branch": "worktree/future-workspace-name",
+            "storageKey": "clock-workspace",
+            "kind": "directory",
+            "path": "/tmp/native-invariant/clock-workspace",
+            "presence": "present",
+            "status": "ready",
+            "orderKey": "500",
+            "version": 3,
+            "gitAhead": 0,
+            "gitBehind": 0,
+            "gitDetached": false,
+            "initializationAttempt": 1,
+            "createdAt": 100,
+            "updatedAt": 4000000000001
+        }
+    }
+}

@@ -28,9 +28,20 @@ impl WorkspacesModule {
             )?,
             "Workspace workspace name inheritance input is invalid."
         );
-        let before = self.get(ctx, id)?.context("The workspace was not found.")?;
+        self.rename_catalog(ctx, id, requested, None, true)
+    }
+    pub(super) fn rename_catalog(
+        self: &Arc<Self>,
+        ctx: &Context<'_>,
+        id: &str,
+        requested: &str,
+        expected: Option<u64>,
+        inherit: bool,
+    ) -> Result<Value> {
+        let owners = self.owners()?;
+        let before = self.required_version(ctx, id, expected)?;
         persistence::ancestor_ids(ctx, &owners.schemas, &before)?;
-        if before["nameConfigured"] == true
+        if (inherit && before["nameConfigured"] == true)
             || ["archiving", "archived"]
                 .iter()
                 .any(|status| before["status"] == *status)
@@ -85,7 +96,19 @@ impl WorkspacesModule {
         let mut after = before.clone();
         after["name"] = json!(name);
         after["branch"] = json!(branch);
-        self.write(ctx, &before, &mut after)?;
+        if !inherit {
+            after["nameConfigured"] = json!(true);
+        }
+        if before["name"] != after["name"] {
+            self.write_event(
+                ctx,
+                &before,
+                &mut after,
+                json!({"type":"workspace_renamed","previousName":before["name"]}),
+            )?;
+        } else {
+            self.store_row(ctx, &before, &mut after)?;
+        }
         if before["branch"] != after["branch"]
             && after["status"] == "ready"
             && after["gitCommonDir"].is_string()
@@ -177,7 +200,7 @@ impl DurableFunction for Rename {
                             if before["branch"] == args["to"] && before["status"] == "ready" {
                                 let mut after = before.clone();
                                 after["branch"] = args["from"].clone();
-                                module.write(ctx, &before, &mut after)?;
+                                module.write(ctx, &before, &mut after, "set_branch")?;
                             }
                         }
                         Ok(())

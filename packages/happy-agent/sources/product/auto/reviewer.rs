@@ -40,7 +40,7 @@ impl AgentModule for ReviewerRuntimeModule {
     }
     fn session_key(&self, scope: &AgentScope<'_>, tools: &[ToolDefinition]) -> Result<Option<String>> { Ok(Some(self.config.session_key(scope.settings, tools)?)) }
     async fn session(&self, scope: &AgentScope<'_>, tools: Vec<ToolDefinition>) -> Option<Result<Box<dyn Session>>> {
-        Some(self.config.session(scope.id, scope.settings, tools).await)
+        Some(self.config.reviewer_session(scope.id, scope.settings, tools).await)
     }
     fn block(&self, _ctx: &DatabaseContext<'_>, scope: &AgentScope<'_>, _inference: &str, block: &Block, _base_id: Option<&str>) -> Result<()> {
         if let Some(review) = self.reviews.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get_mut(scope.id) { review.capture.block(block); }

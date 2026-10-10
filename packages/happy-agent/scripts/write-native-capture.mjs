@@ -10,7 +10,12 @@ export function writeNativeCapture(path, contents) {
     }
     if (existing === contents) return;
     if (existing !== undefined && String(path).endsWith(".json")) {
-        if (JSON.stringify(JSON.parse(existing)) === JSON.stringify(JSON.parse(contents))) return;
+        const next = JSON.stringify(JSON.parse(contents));
+        try {
+            if (JSON.stringify(JSON.parse(existing)) === next) return;
+        } catch (error) {
+            if (!(error instanceof SyntaxError)) throw error;
+        }
     }
     writeFileSync(path, contents);
 }

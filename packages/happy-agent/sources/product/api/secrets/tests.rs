@@ -29,6 +29,9 @@ struct Graph {
     fixture: Fixture,
     api: Arc<ApiModule>,
     agents: Arc<AgentRuntimeModule>,
+    subtasks: Arc<crate::product::subtasks::SubtasksModule>,
+    collaboration: Arc<crate::product::collaboration::CollaborationModule>,
+    history: Arc<HistoryModule>,
     runners: Arc<RunnersModule>,
     git: Arc<GitModule>,
     services: Arc<ServicesModule>,
@@ -41,6 +44,9 @@ struct Graph {
     cancel: CancellationToken,
     server: Option<JoinHandle<()>>,
 }
+
+#[path = "../agent_projection_tests.rs"]
+mod agent_projection_tests;
 
 #[tokio::test]
 async fn runner_websocket_uses_its_own_credential_and_releases_replaced_and_text_connections() {
@@ -278,7 +284,7 @@ impl Graph {
             fixture.config.clone(),
             fixture.runtime.clone(),
             agents.clone(),
-            abort,
+            abort.clone(),
             titles,
             projects.clone(),
             workspaces.clone(),
@@ -289,6 +295,10 @@ impl Graph {
         )
         .unwrap();
         bots.load().await.unwrap();
+        let collaboration=crate::product::collaboration::CollaborationModule::new(fixture.config.clone(),fixture.runtime.clone(),agents.clone(),abort.clone(),history.clone(),fixture.durable.clone(),fixture.lifecycle.clone()).unwrap();
+        collaboration.load().await.unwrap();
+        let subtasks=crate::product::subtasks::SubtasksModule::new(fixture.config.clone(),fixture.runtime.clone(),agents.clone(),bots.clone(),collaboration.clone(),workspaces.clone(),fixture.durable.clone(),abort,tools.clone(),fixture.lifecycle.clone()).unwrap();
+        let skills=crate::product::skills::SkillsModule::new(fixture.config.clone(),tools.clone(),fixture.skills.clone(),fixture.runtime.clone(),agents.clone()).unwrap();
         let cloud = CloudModule::new(
             fixture.config.clone(),
             fixture.runtime.clone(),
@@ -328,19 +338,22 @@ impl Graph {
         .unwrap();
         live.load().await.unwrap();
         let presence=crate::product::presence::PresenceModule::new(fixture.config.clone(),fixture.runtime.clone(),fixture.durable.clone(),fixture.lifecycle.clone(),agents.clone()).unwrap();presence.load().await.unwrap();
-        let user_input=crate::product::user_input::UserInputModule::new(presence,fixture.runtime.clone(),fixture.durable.clone(),agents.clone(),fixture.lifecycle.clone()).unwrap();user_input.load().await.unwrap();
+        let user_input=crate::product::user_input::UserInputModule::new(presence.clone(),fixture.runtime.clone(),fixture.durable.clone(),agents.clone(),fixture.lifecycle.clone()).unwrap();user_input.load().await.unwrap();
         let public_agents = Arc::new(
             AgentSystemModule::new(
                 fixture.config.clone(),
                 fixture.runtime.clone(),
                 fixture.events.clone(),
-                history,
+                history.clone(),
                 usage,
                 projects.clone(),
                 workspaces.clone(),
                 agents.clone(),
                 tools.clone(),
                 user_input.clone(),
+                bots.clone(),
+                subtasks.clone(),
+                skills,
             )
             .unwrap(),
         );
@@ -365,6 +378,7 @@ impl Graph {
             fixture.node.clone(),
             profile,
             runners.clone(),
+            presence,
         )
         .unwrap();
         agents.prepare().unwrap();
@@ -391,6 +405,9 @@ impl Graph {
             fixture,
             api,
             agents,
+            subtasks,
+            collaboration,
+            history,
             runners,
             git,
             services,

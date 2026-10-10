@@ -11,12 +11,6 @@ async fn published_client_reads_the_catalog_and_one_composed_desktop_snapshot() 
     let (endpoint, mut requests, provider) = scripted_provider(1).await;
     let installation = Installation::new();
     installation.seed(&endpoint);
-    // GET /v0/config refuses a presence section without current and fallback states; the
-    // composed snapshot is exactly that object, so this installation names both.
-    let configuration_file = installation._directory.path().join(if cfg!(target_os = "macos") { "Happy/Config/happy.toml" } else { "happy/config/happy.toml" });
-    let mut text = std::fs::read_to_string(&configuration_file).unwrap();
-    text.push_str("[presence]\ncurrent = 'online'\nfallback = 'online'\n");
-    std::fs::write(&configuration_file, text).unwrap();
     // A second root agent of the same project, archived: it leaves the series for archivedAgents.
     let database = Connection::open(installation.home.join("agent/agent.sqlite")).unwrap();
     let folder = installation._directory.path().join("workspace");

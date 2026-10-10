@@ -1,0 +1,669 @@
+{
+    "initial": [
+        {
+            "id": "project-1",
+            "repositoryRef": "/tmp/native-project-edits/1",
+            "kind": "regular",
+            "storageKey": "project-1",
+            "name": "Project 1",
+            "nameSource": "folder",
+            "status": "active",
+            "presence": "present",
+            "initializationStatus": "ready",
+            "initializationAttempt": 0,
+            "worktreeSupport": "unsupported",
+            "gitAhead": 0,
+            "gitBehind": 0,
+            "gitDetached": false,
+            "orderKey": "2",
+            "version": 2,
+            "createdAt": 100,
+            "updatedAt": 200
+        },
+        {
+            "id": "project-2",
+            "repositoryRef": "/tmp/native-project-edits/2",
+            "kind": "regular",
+            "storageKey": "project-2",
+            "name": "Project 2",
+            "nameSource": "folder",
+            "status": "active",
+            "presence": "present",
+            "initializationStatus": "ready",
+            "initializationAttempt": 0,
+            "worktreeSupport": "unsupported",
+            "gitAhead": 0,
+            "gitBehind": 0,
+            "gitDetached": false,
+            "orderKey": "4",
+            "version": 2,
+            "createdAt": 100,
+            "updatedAt": 200
+        },
+        {
+            "id": "project-3",
+            "repositoryRef": "/tmp/native-project-edits/3",
+            "kind": "regular",
+            "storageKey": "project-3",
+            "name": "Project 3",
+            "nameSource": "folder",
+            "status": "archived",
+            "presence": "present",
+            "initializationStatus": "ready",
+            "initializationAttempt": 0,
+            "worktreeSupport": "unsupported",
+            "gitAhead": 0,
+            "gitBehind": 0,
+            "gitDetached": false,
+            "orderKey": "6",
+            "version": 2,
+            "createdAt": 100,
+            "updatedAt": 200,
+            "archivedAt": 200
+        }
+    ],
+    "cases": [
+        {
+            "kind": "rename",
+            "input": {
+                "projectId": "project-1",
+                "name": "Renamed project",
+                "expectedVersion": 2
+            },
+            "result": {
+                "id": "project-1",
+                "repositoryRef": "/tmp/native-project-edits/1",
+                "kind": "regular",
+                "storageKey": "project-1",
+                "name": "Renamed project",
+                "nameSource": "user",
+                "status": "active",
+                "presence": "present",
+                "initializationStatus": "ready",
+                "initializationAttempt": 0,
+                "worktreeSupport": "unsupported",
+                "gitAhead": 0,
+                "gitBehind": 0,
+                "gitDetached": false,
+                "orderKey": "2",
+                "version": 3,
+                "createdAt": 100
+            },
+            "events": [
+                {
+                    "type": "project_renamed",
+                    "previousName": "Project 1",
+                    "project": {
+                        "id": "project-1",
+                        "repositoryRef": "/tmp/native-project-edits/1",
+                        "kind": "regular",
+                        "storageKey": "project-1",
+                        "name": "Renamed project",
+                        "nameSource": "user",
+                        "status": "active",
+                        "presence": "present",
+                        "initializationStatus": "ready",
+                        "initializationAttempt": 0,
+                        "worktreeSupport": "unsupported",
+                        "gitAhead": 0,
+                        "gitBehind": 0,
+                        "gitDetached": false,
+                        "orderKey": "2",
+                        "version": 3,
+                        "createdAt": 100
+                    },
+                    "previousProject": {
+                        "id": "project-1",
+                        "repositoryRef": "/tmp/native-project-edits/1",
+                        "kind": "regular",
+                        "storageKey": "project-1",
+                        "name": "Project 1",
+                        "nameSource": "folder",
+                        "status": "active",
+                        "presence": "present",
+                        "initializationStatus": "ready",
+                        "initializationAttempt": 0,
+                        "worktreeSupport": "unsupported",
+                        "gitAhead": 0,
+                        "gitBehind": 0,
+                        "gitDetached": false,
+                        "orderKey": "2",
+                        "version": 2,
+                        "createdAt": 100
+                    }
+                }
+            ]
+        },
+        {
+            "kind": "rename",
+            "input": {
+                "projectId": "project-1",
+                "name": "Renamed project",
+                "expectedVersion": 3
+            },
+            "result": {
+                "id": "project-1",
+                "repositoryRef": "/tmp/native-project-edits/1",
+                "kind": "regular",
+                "storageKey": "project-1",
+                "name": "Renamed project",
+                "nameSource": "user",
+                "status": "active",
+                "presence": "present",
+                "initializationStatus": "ready",
+                "initializationAttempt": 0,
+                "worktreeSupport": "unsupported",
+                "gitAhead": 0,
+                "gitBehind": 0,
+                "gitDetached": false,
+                "orderKey": "2",
+                "version": 3,
+                "createdAt": 100
+            },
+            "events": []
+        },
+        {
+            "kind": "settings",
+            "input": {
+                "projectId": "project-1",
+                "settings": {
+                    "defaultWorkspaceCompute": {
+                        "type": "docker",
+                        "image": "fixture:latest"
+                    },
+                    "workspaceInitialPrompt": "Prepare this workspace.\nKeep the tests green."
+                },
+                "expectedVersion": 3
+            },
+            "result": {
+                "id": "project-1",
+                "repositoryRef": "/tmp/native-project-edits/1",
+                "kind": "regular",
+                "storageKey": "project-1",
+                "name": "Renamed project",
+                "nameSource": "user",
+                "status": "active",
+                "presence": "present",
+                "initializationStatus": "ready",
+                "initializationAttempt": 0,
+                "worktreeSupport": "unsupported",
+                "gitAhead": 0,
+                "gitBehind": 0,
+                "gitDetached": false,
+                "orderKey": "2",
+                "version": 4,
+                "createdAt": 100
+            },
+            "events": [
+                {
+                    "type": "project_settings_updated",
+                    "projectId": "project-1",
+                    "project": {
+                        "id": "project-1",
+                        "repositoryRef": "/tmp/native-project-edits/1",
+                        "kind": "regular",
+                        "storageKey": "project-1",
+                        "name": "Renamed project",
+                        "nameSource": "user",
+                        "status": "active",
+                        "presence": "present",
+                        "initializationStatus": "ready",
+                        "initializationAttempt": 0,
+                        "worktreeSupport": "unsupported",
+                        "gitAhead": 0,
+                        "gitBehind": 0,
+                        "gitDetached": false,
+                        "orderKey": "2",
+                        "version": 4,
+                        "createdAt": 100
+                    },
+                    "previousProject": {
+                        "id": "project-1",
+                        "repositoryRef": "/tmp/native-project-edits/1",
+                        "kind": "regular",
+                        "storageKey": "project-1",
+                        "name": "Renamed project",
+                        "nameSource": "user",
+                        "status": "active",
+                        "presence": "present",
+                        "initializationStatus": "ready",
+                        "initializationAttempt": 0,
+                        "worktreeSupport": "unsupported",
+                        "gitAhead": 0,
+                        "gitBehind": 0,
+                        "gitDetached": false,
+                        "orderKey": "2",
+                        "version": 3,
+                        "createdAt": 100
+                    },
+                    "settings": {
+                        "defaultWorkspaceCompute": {
+                            "type": "docker",
+                            "image": "fixture:latest"
+                        },
+                        "workspaceInitialPrompt": "Prepare this workspace.\nKeep the tests green."
+                    }
+                }
+            ]
+        },
+        {
+            "kind": "settings",
+            "input": {
+                "projectId": "project-1",
+                "settings": {
+                    "workspaceInitialPrompt": "Prepare this workspace.\nKeep the tests green.",
+                    "defaultWorkspaceCompute": {
+                        "image": "fixture:latest",
+                        "type": "docker"
+                    }
+                },
+                "expectedVersion": 4
+            },
+            "result": {
+                "id": "project-1",
+                "repositoryRef": "/tmp/native-project-edits/1",
+                "kind": "regular",
+                "storageKey": "project-1",
+                "name": "Renamed project",
+                "nameSource": "user",
+                "status": "active",
+                "presence": "present",
+                "initializationStatus": "ready",
+                "initializationAttempt": 0,
+                "worktreeSupport": "unsupported",
+                "gitAhead": 0,
+                "gitBehind": 0,
+                "gitDetached": false,
+                "orderKey": "2",
+                "version": 4,
+                "createdAt": 100
+            },
+            "events": []
+        },
+        {
+            "kind": "reorder",
+            "input": {
+                "projectId": "project-1",
+                "afterId": "project-3",
+                "expectedVersion": 4
+            },
+            "result": {
+                "id": "project-1",
+                "repositoryRef": "/tmp/native-project-edits/1",
+                "kind": "regular",
+                "storageKey": "project-1",
+                "name": "Renamed project",
+                "nameSource": "user",
+                "status": "active",
+                "presence": "present",
+                "initializationStatus": "ready",
+                "initializationAttempt": 0,
+                "worktreeSupport": "unsupported",
+                "gitAhead": 0,
+                "gitBehind": 0,
+                "gitDetached": false,
+                "orderKey": "8",
+                "version": 5,
+                "createdAt": 100
+            },
+            "events": [
+                {
+                    "type": "project_reordered",
+                    "previousOrderKey": "2",
+                    "project": {
+                        "id": "project-1",
+                        "repositoryRef": "/tmp/native-project-edits/1",
+                        "kind": "regular",
+                        "storageKey": "project-1",
+                        "name": "Renamed project",
+                        "nameSource": "user",
+                        "status": "active",
+                        "presence": "present",
+                        "initializationStatus": "ready",
+                        "initializationAttempt": 0,
+                        "worktreeSupport": "unsupported",
+                        "gitAhead": 0,
+                        "gitBehind": 0,
+                        "gitDetached": false,
+                        "orderKey": "8",
+                        "version": 5,
+                        "createdAt": 100
+                    },
+                    "previousProject": {
+                        "id": "project-1",
+                        "repositoryRef": "/tmp/native-project-edits/1",
+                        "kind": "regular",
+                        "storageKey": "project-1",
+                        "name": "Renamed project",
+                        "nameSource": "user",
+                        "status": "active",
+                        "presence": "present",
+                        "initializationStatus": "ready",
+                        "initializationAttempt": 0,
+                        "worktreeSupport": "unsupported",
+                        "gitAhead": 0,
+                        "gitBehind": 0,
+                        "gitDetached": false,
+                        "orderKey": "2",
+                        "version": 4,
+                        "createdAt": 100
+                    }
+                }
+            ]
+        },
+        {
+            "kind": "reorder",
+            "input": {
+                "projectId": "project-1",
+                "afterId": "project-3",
+                "expectedVersion": 5
+            },
+            "result": {
+                "id": "project-1",
+                "repositoryRef": "/tmp/native-project-edits/1",
+                "kind": "regular",
+                "storageKey": "project-1",
+                "name": "Renamed project",
+                "nameSource": "user",
+                "status": "active",
+                "presence": "present",
+                "initializationStatus": "ready",
+                "initializationAttempt": 0,
+                "worktreeSupport": "unsupported",
+                "gitAhead": 0,
+                "gitBehind": 0,
+                "gitDetached": false,
+                "orderKey": "8",
+                "version": 5,
+                "createdAt": 100
+            },
+            "events": []
+        },
+        {
+            "kind": "set_avatar",
+            "input": {
+                "projectId": "project-1",
+                "expectedVersion": 5,
+                "source": "user"
+            },
+            "result": {
+                "id": "project-1",
+                "repositoryRef": "/tmp/native-project-edits/1",
+                "kind": "regular",
+                "storageKey": "project-1",
+                "name": "Renamed project",
+                "nameSource": "user",
+                "status": "active",
+                "presence": "present",
+                "initializationStatus": "ready",
+                "initializationAttempt": 0,
+                "worktreeSupport": "unsupported",
+                "gitAhead": 0,
+                "gitBehind": 0,
+                "gitDetached": false,
+                "orderKey": "8",
+                "version": 6,
+                "avatar": {
+                    "kind": "image",
+                    "source": "user",
+                    "thumbhash": "Zm9v"
+                },
+                "createdAt": 100
+            },
+            "events": [
+                {
+                    "type": "project_avatar_updated",
+                    "project": {
+                        "id": "project-1",
+                        "repositoryRef": "/tmp/native-project-edits/1",
+                        "kind": "regular",
+                        "storageKey": "project-1",
+                        "name": "Renamed project",
+                        "nameSource": "user",
+                        "status": "active",
+                        "presence": "present",
+                        "initializationStatus": "ready",
+                        "initializationAttempt": 0,
+                        "worktreeSupport": "unsupported",
+                        "gitAhead": 0,
+                        "gitBehind": 0,
+                        "gitDetached": false,
+                        "orderKey": "8",
+                        "version": 6,
+                        "avatar": {
+                            "kind": "image",
+                            "source": "user",
+                            "thumbhash": "Zm9v"
+                        },
+                        "createdAt": 100
+                    },
+                    "previousProject": {
+                        "id": "project-1",
+                        "repositoryRef": "/tmp/native-project-edits/1",
+                        "kind": "regular",
+                        "storageKey": "project-1",
+                        "name": "Renamed project",
+                        "nameSource": "user",
+                        "status": "active",
+                        "presence": "present",
+                        "initializationStatus": "ready",
+                        "initializationAttempt": 0,
+                        "worktreeSupport": "unsupported",
+                        "gitAhead": 0,
+                        "gitBehind": 0,
+                        "gitDetached": false,
+                        "orderKey": "8",
+                        "version": 5,
+                        "createdAt": 100
+                    }
+                }
+            ]
+        },
+        {
+            "kind": "set_avatar",
+            "input": {
+                "projectId": "project-1",
+                "expectedVersion": 6,
+                "source": "user"
+            },
+            "result": {
+                "id": "project-1",
+                "repositoryRef": "/tmp/native-project-edits/1",
+                "kind": "regular",
+                "storageKey": "project-1",
+                "name": "Renamed project",
+                "nameSource": "user",
+                "status": "active",
+                "presence": "present",
+                "initializationStatus": "ready",
+                "initializationAttempt": 0,
+                "worktreeSupport": "unsupported",
+                "gitAhead": 0,
+                "gitBehind": 0,
+                "gitDetached": false,
+                "orderKey": "8",
+                "version": 6,
+                "avatar": {
+                    "kind": "image",
+                    "source": "user",
+                    "thumbhash": "Zm9v"
+                },
+                "createdAt": 100
+            },
+            "events": []
+        },
+        {
+            "kind": "clear_avatar",
+            "input": {
+                "projectId": "project-1",
+                "expectedVersion": 6
+            },
+            "result": {
+                "id": "project-1",
+                "repositoryRef": "/tmp/native-project-edits/1",
+                "kind": "regular",
+                "storageKey": "project-1",
+                "name": "Renamed project",
+                "nameSource": "user",
+                "status": "active",
+                "presence": "present",
+                "initializationStatus": "ready",
+                "initializationAttempt": 0,
+                "worktreeSupport": "unsupported",
+                "gitAhead": 0,
+                "gitBehind": 0,
+                "gitDetached": false,
+                "orderKey": "8",
+                "version": 7,
+                "createdAt": 100
+            },
+            "events": [
+                {
+                    "type": "project_avatar_cleared",
+                    "project": {
+                        "id": "project-1",
+                        "repositoryRef": "/tmp/native-project-edits/1",
+                        "kind": "regular",
+                        "storageKey": "project-1",
+                        "name": "Renamed project",
+                        "nameSource": "user",
+                        "status": "active",
+                        "presence": "present",
+                        "initializationStatus": "ready",
+                        "initializationAttempt": 0,
+                        "worktreeSupport": "unsupported",
+                        "gitAhead": 0,
+                        "gitBehind": 0,
+                        "gitDetached": false,
+                        "orderKey": "8",
+                        "version": 7,
+                        "createdAt": 100
+                    },
+                    "previousProject": {
+                        "id": "project-1",
+                        "repositoryRef": "/tmp/native-project-edits/1",
+                        "kind": "regular",
+                        "storageKey": "project-1",
+                        "name": "Renamed project",
+                        "nameSource": "user",
+                        "status": "active",
+                        "presence": "present",
+                        "initializationStatus": "ready",
+                        "initializationAttempt": 0,
+                        "worktreeSupport": "unsupported",
+                        "gitAhead": 0,
+                        "gitBehind": 0,
+                        "gitDetached": false,
+                        "orderKey": "8",
+                        "version": 6,
+                        "avatar": {
+                            "kind": "image",
+                            "source": "user",
+                            "thumbhash": "Zm9v"
+                        },
+                        "createdAt": 100
+                    }
+                }
+            ]
+        },
+        {
+            "kind": "clear_avatar",
+            "input": {
+                "projectId": "project-1",
+                "expectedVersion": 7
+            },
+            "result": {
+                "id": "project-1",
+                "repositoryRef": "/tmp/native-project-edits/1",
+                "kind": "regular",
+                "storageKey": "project-1",
+                "name": "Renamed project",
+                "nameSource": "user",
+                "status": "active",
+                "presence": "present",
+                "initializationStatus": "ready",
+                "initializationAttempt": 0,
+                "worktreeSupport": "unsupported",
+                "gitAhead": 0,
+                "gitBehind": 0,
+                "gitDetached": false,
+                "orderKey": "8",
+                "version": 7,
+                "createdAt": 100
+            },
+            "events": []
+        }
+    ],
+    "conflict": {
+        "id": "project-1",
+        "repositoryRef": "/tmp/native-project-edits/1",
+        "kind": "regular",
+        "storageKey": "project-1",
+        "name": "Renamed project",
+        "nameSource": "user",
+        "status": "active",
+        "presence": "present",
+        "initializationStatus": "ready",
+        "initializationAttempt": 0,
+        "worktreeSupport": "unsupported",
+        "gitAhead": 0,
+        "gitBehind": 0,
+        "gitDetached": false,
+        "orderKey": "8",
+        "version": 7,
+        "createdAt": 100
+    },
+    "orderCases": [
+        {
+            "before": null,
+            "after": null,
+            "result": "5"
+        },
+        {
+            "before": "4",
+            "after": null,
+            "result": "7"
+        },
+        {
+            "before": null,
+            "after": "4",
+            "result": "2"
+        },
+        {
+            "before": "4",
+            "after": "5",
+            "result": "45"
+        },
+        {
+            "before": "49",
+            "after": "5",
+            "result": "495"
+        },
+        {
+            "before": "4999",
+            "after": "5",
+            "result": "49995"
+        },
+        {
+            "before": "4999",
+            "after": "5001",
+            "result": "49995"
+        },
+        {
+            "before": "0",
+            "after": "0001",
+            "result": "00005"
+        }
+    ],
+    "asset": {
+        "bytes": "VGhlIHRydXN0ZWQgbm9ybWFsaXplZCBpbWFnZSBwcm9jZXNzb3Igb3ducyB0aGVzZSBmaXh0dXJlIGJ5dGVzLg==",
+        "metadata": {
+            "contentType": "image/webp",
+            "contentHash": "7bf760f5b8ed9d27b2289008dfa6e87af0735755247d65427774f13ce786555b",
+            "etag": "\"7bf760f5b8ed9d27b2289008dfa6e87af0735755247d65427774f13ce786555b\"",
+            "thumbhash": "Zm9v",
+            "width": 16,
+            "height": 16
+        }
+    }
+}

@@ -51,6 +51,7 @@ impl Drop for PresenceSubscription {
     }
 }
 pub struct PresenceModule {
+    config: Arc<ConfigModule>,
     runtime: Arc<RuntimeModule>,
     _durable: Arc<DurableFunctionsModule>,
     _lifecycle: Arc<LifecycleModule>,
@@ -135,6 +136,7 @@ impl PresenceModule {
         };
         let (changes, _) = watch::channel(None);
         let module = Arc::new_cyclic(|owner| Self {
+            config,
             runtime,
             _durable: durable,
             _lifecycle: lifecycle,
@@ -311,6 +313,18 @@ impl PresenceModule {
     }
     pub fn read(&self, ctx: &Context<'_>) -> Result<Option<Value>> {
         self.read_at(ctx, super::identity::now())
+    }
+    /// Configuration clients receive the effective state and the complete owner catalog.
+    pub fn public_configuration(&self, ctx: &Context<'_>) -> Result<Value> {
+        let configured = self.config.presence_configuration()?;
+        let effective = self.read(ctx)?;
+        let current = effective.as_ref().and_then(|state| state["presenceId"].as_str()).or_else(|| configured["current"].as_str()).unwrap_or("online");
+        let fallback = effective.as_ref().and_then(|state| state["fallbackPresenceId"].as_str()).or_else(|| configured["fallback"].as_str()).unwrap_or("online");
+        let states = self.list_presences(ctx)?.into_iter().map(|state| {
+            let id = state["id"].as_str().context("The presence identity is missing.")?.to_owned();
+            Ok((id, json!({"title":state["title"],"emoji":state["emoji"],"prompt":state["prompt"],"answerWaitMs":state["answerWaitMs"]})))
+        }).collect::<Result<serde_json::Map<String,Value>>>()?;
+        Ok(json!({"current":current,"fallback":fallback,"states":states}))
     }
     pub fn user_input_state(&self, ctx: &Context<'_>) -> Result<Option<Value>> {
         self.read(ctx)?.map(|state|{let mut projected=json!({"answerWaitMs":state["answerWaitMs"],"title":state["title"],"emoji":state["emoji"],"prompt":state["prompt"]});if let Some(expires)=state.get("expiresAt"){projected["changesAt"]=expires.clone();}anyhow::ensure!(self.schemas.valid("ownerPresenceUserInput",&projected)?,"Presence user-input state is invalid.");Ok(projected)}).transpose()

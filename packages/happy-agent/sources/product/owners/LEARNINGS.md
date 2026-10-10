@@ -43,3 +43,20 @@ cursor only when an extra row proves another page exists. SQL applies archive an
 before decoding rows, so unrelated corrupt history cannot break an active catalog. Public catalog
 and agent-series methods read the caller's transaction snapshot; API projections stay in the API
 module. Compute metadata uses the runner's last committed home without contacting its machine.
+
+Execution scopes follow the Source project location rather than a stored Home path. A Home project
+uses the configured default runner's cached home; an unknown home is unavailable, while catalog
+compute metadata still reports a null path. Regular local projects refuse execution once runners
+are configured. Folder registration validates client-chosen identities, resolves aliases before
+the catalog decision, and retains its path and project locks through the caller's atomic change.
+An active duplicate keeps its identity and version; an archived duplicate restores that same row.
+
+Catalog owners publish complete Source mutation events in the transaction instead of formatting
+API deltas themselves. Failing transactional observers roll back the record, association, image
+bytes and durable intents together. Source no-ops preserve versions; settling an unchanged workspace
+name can advance its version without a rename event. API projections belong to the API module.
+
+TypeBox validates record structure before the Source lifecycle assertions validate its meaning.
+Project archival times, Home readiness and failure reasons must remain consistent with the row.
+A project update that moves time backward is refused and rolled back; workspace updates advance
+to at least the previous update time plus one millisecond, including archival and attachment.

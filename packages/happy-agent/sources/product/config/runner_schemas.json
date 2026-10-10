@@ -1,0 +1,6 @@
+{
+    "tailcatEndpoint": {
+        "pattern": "^tailcat:(tc[A-Za-z0-9_-]+)(?::(\\d{1,5}))?$",
+        "type": "string"
+    }
+}

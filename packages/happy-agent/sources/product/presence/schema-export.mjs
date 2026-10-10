@@ -9,7 +9,7 @@ import { getPresenceTool } from "../../../../happy-agent-modules/sources/presenc
 import { listPresenceTool } from "../../../../happy-agent-modules/sources/presence/tools/list_presence.ts";
 import { setPresenceTool } from "../../../../happy-agent-modules/sources/presence/tools/set_presence.ts";
 import { sourcePrivateSchema } from "../../../scripts/source-private-schema.mjs";
-import { writeFileSync } from "node:fs";
+import { writeNativeCapture as writeFileSync } from "../../../scripts/write-native-capture.mjs";
 const privateCalendar = await sourcePrivateSchema(
     new URL(
         "../../../../happy-agent-modules/sources/presence/PresenceDatabase.ts",

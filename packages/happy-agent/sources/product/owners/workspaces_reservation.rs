@@ -58,7 +58,9 @@ impl WorkspacesModule {
             owners.schemas.valid("cuid2", &json!(id))? && id != project_id,
             "A workspace cannot use its project's implicit root ID."
         );
-        let name = owners.projects.validate_name(request["name"].as_str().unwrap())?;
+        let name = owners
+            .projects
+            .validate_name(request["name"].as_str().unwrap())?;
         let parent_id = request["parentId"].as_str().unwrap_or(project_id);
         anyhow::ensure!(parent_id != id, "A workspace cannot be its own parent.");
         let parent = if parent_id == project_id {
@@ -260,7 +262,20 @@ impl WorkspacesModule {
         workspace: &str,
         agent: &str,
     ) -> Result<Value> {
+        self.attach_agent_catalog(ctx, workspace, agent, true)
+    }
+    pub fn attach_agent(&self, ctx: &Context<'_>, workspace: &str, agent: &str) -> Result<Value> {
+        self.attach_agent_catalog(ctx, workspace, agent, false)
+    }
+    fn attach_agent_catalog(
+        &self,
+        ctx: &Context<'_>,
+        workspace: &str,
+        agent: &str,
+        subtask: bool,
+    ) -> Result<Value> {
         self.runtime.assert_context(ctx)?;
+        self.assert_catalog_enabled()?;
         let owners = self.owners()?;
         anyhow::ensure!(
             owners.schemas.valid(
@@ -269,18 +284,28 @@ impl WorkspacesModule {
             )?,
             "The workspace agent attachment is invalid."
         );
-        anyhow::ensure!(
-            self.runtime.parent_of(ctx, agent)?.is_some(),
-            "A workspace subtask must have a parent agent."
-        );
+        let parent = self.runtime.parent_of(ctx, agent)?;
+        if subtask {
+            anyhow::ensure!(
+                parent.is_some(),
+                "A workspace subtask must have a parent agent."
+            );
+        } else {
+            anyhow::ensure!(
+                parent.is_none(),
+                "Only a top-level agent can be attached to a workspace."
+            );
+        }
         let before = self
             .get(ctx, workspace)?
-            .context("The subtask workspace was not found.")?;
+            .context("The workspace was not found.")?;
         persistence::ancestor_ids(ctx, &owners.schemas, &before)?;
-        anyhow::ensure!(
-            before["subtaskAgentId"] == agent,
-            "This workspace is not reserved for that subtask."
-        );
+        if subtask {
+            anyhow::ensure!(
+                before["subtaskAgentId"] == agent,
+                "This workspace is not reserved for that subtask."
+            );
+        }
         anyhow::ensure!(
             before["status"] != "archiving" && before["status"] != "archived",
             "The workspace is being archived, so no agent can be attached."
@@ -306,9 +331,9 @@ impl WorkspacesModule {
         persistence::attach(ctx, workspace, agent, &key)?;
         let mut after = before.clone();
         after["version"] = json!(before["version"].as_u64().unwrap() + 1);
-        after["updatedAt"] = json!(now());
+        after["updatedAt"] = json!(now().max(before["updatedAt"].as_u64().unwrap() + 1));
         let after = persistence::write(ctx, &owners.schemas, &before, &after)?;
-        owners.events.record(ctx,None,"workspace.updated",json!({"workspaceId":workspace,"previousVersion":resource_version(before["updatedAt"].as_u64().unwrap(),before["version"].as_u64().unwrap(),workspace),"version":resource_version(after["updatedAt"].as_u64().unwrap(),after["version"].as_u64().unwrap(),workspace),"changes":{"updatedAt":after["updatedAt"]}}))?;
+        self.observe(ctx,json!({"type":"workspace_agent_attached","association":association,"workspace":after,"previousWorkspace":before}))?;
         Ok(association)
     }
 }

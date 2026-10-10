@@ -25,6 +25,7 @@ mod process;
 mod projects;
 mod provider_scan;
 mod runtime;
+mod runner;
 mod scheduling;
 mod services;
 mod secrets;
@@ -46,6 +47,7 @@ pub(crate) mod workflows;
 
 pub use config::ConfigModule;
 pub use lifecycle::{LifecycleModule, command};
+pub use runner::run as run_runner;
 
 pub(crate) fn compute_regex_worker()->std::process::ExitCode { tools::compute_regex_worker() }
 
@@ -103,7 +105,7 @@ pub async fn run() -> Result<()> {
     let auto = auto::AutoModule::new(config.clone(), runtime.clone(), durable.clone(), tools.clone(), lifecycle.clone(), system_prompt.clone())?;
     let permissions = Arc::new(permissions::PermissionsModule::new(auto.clone(), runtime.clone(), history.clone())?);
     let agent_runtime = Arc::new(agent_runtime::AgentRuntimeModule::new(config.clone(), runtime.clone(), history.clone(), tools.clone(), usage.clone(), lifecycle.clone(), auto.clone(), permissions, events.clone(), system_prompt));
-    let _agent_skills=skills::SkillsModule::new(config.clone(),tools.clone(),skills.clone(),runtime.clone(),agent_runtime.clone())?;
+    let agent_skills=skills::SkillsModule::new(config.clone(),tools.clone(),skills.clone(),runtime.clone(),agent_runtime.clone())?;
     let cloud = cloud::CloudModule::new(config.clone(), runtime.clone(), durable.clone(), lifecycle.clone(), events.clone())?;
     let git = owners::GitModule::new(config.clone(), runners.clone())?;
     let abort = owners::AbortModule::new(runtime.clone(), agent_runtime.clone(), tools.clone(), services.clone());
@@ -114,7 +116,7 @@ pub async fn run() -> Result<()> {
     let _skill_folders=skill_folders::SkillFoldersModule::new(config.clone(),bots.clone(),runtime.clone(),agent_runtime.clone())?;
     let profile=profile::ProfileModule::new(config.clone(),bots.clone(),runtime.clone(),durable.clone(),agent_runtime.clone())?;
     let collaboration = collaboration::CollaborationModule::new(config.clone(), runtime.clone(), agent_runtime.clone(), abort.clone(), history.clone(), durable.clone(), lifecycle.clone())?;
-    let _subtasks = subtasks::SubtasksModule::new(config.clone(), runtime.clone(), agent_runtime.clone(), bots.clone(), collaboration.clone(), workspaces.clone(), durable.clone(), abort, tools.clone(), lifecycle.clone())?;
+    let subtasks = subtasks::SubtasksModule::new(config.clone(), runtime.clone(), agent_runtime.clone(), bots.clone(), collaboration.clone(), workspaces.clone(), durable.clone(), abort, tools.clone(), lifecycle.clone())?;
     let live = live::LiveModule::new(config.clone(), runtime.clone(), durable.clone(), agent_runtime.clone(), lifecycle.clone())?;
     agent_runtime.install(secrets.clone())?;
     let tailcat = tailcat::TailcatModule::new(config.clone(), bots.clone(), runtime.clone(), durable.clone(), agent_runtime.clone())?;
@@ -133,6 +135,9 @@ pub async fn run() -> Result<()> {
         agent_runtime.clone(),
         tools.clone(),
         user_input.clone(),
+        bots.clone(),
+        subtasks.clone(),
+        agent_skills.clone(),
     )?);
     let scheduling = scheduling::SchedulingModule::new(runtime.clone(),durable.clone(),agent_runtime.clone(),lifecycle.clone())?;
     let tasks=tasks::TasksModule::new(runtime.clone(),durable.clone(),agent_runtime.clone())?;
@@ -158,6 +163,7 @@ pub async fn run() -> Result<()> {
         node.clone(),
         profile.clone(),
         runners.clone(),
+        presence.clone(),
     )?;
     agent_runtime.prepare()?;
     // Health is available before storage restoration, on the same authenticated listener.

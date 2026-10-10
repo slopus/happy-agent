@@ -22,21 +22,43 @@ use tokio_util::sync::CancellationToken;
 #[path = "owners/project_avatars.rs"]
 mod avatars;
 pub use avatars::AvatarAsset;
+#[path = "owners/project_catalog.rs"]
+mod catalog;
+#[path = "owners/project_edits.rs"]
+mod edits;
+#[path = "owners/project_location.rs"]
+mod location;
+#[path = "owners/project_registration.rs"]
+mod registration;
+pub use registration::PreparedProjectRegistration;
 #[path = "owners/project_names.rs"]
 mod names;
 #[path = "owners/projects_persistence.rs"]
 mod persistence;
-#[path = "owners/project_catalog.rs"]
-mod catalog;
+#[path = "owners/project_events.rs"]
+mod project_events;
+pub use edits::ProjectError;
+pub use project_events::{ProjectSubscription, ProjectTransactionalListener};
 #[cfg(test)]
 #[path = "owners/project_catalog_tests.rs"]
 mod catalog_tests;
+#[cfg(test)]
+#[path = "owners/project_edit_tests.rs"]
+mod edit_tests;
+#[cfg(test)]
+#[path = "owners/project_location_tests.rs"]
+mod location_tests;
+#[cfg(test)]
+#[path = "owners/project_registration_tests.rs"]
+mod registration_tests;
 
 pub struct ProjectsModule {
     runtime: Arc<RuntimeModule>,
     schemas: Schemas,
     owners: Option<Owners>,
     workspace_listeners: Mutex<Vec<Weak<WorkspacesModule>>>,
+    event_listeners: Mutex<std::collections::BTreeMap<u64, ProjectTransactionalListener>>,
+    next_event_listener: std::sync::atomic::AtomicU64,
 }
 struct Owners {
     config: Arc<ConfigModule>,
@@ -106,7 +128,7 @@ impl ProjectsModule {
                 }
             }
         }
-        self.write(ctx, &before, &mut after)
+        self.write_state(ctx, &before, &mut after, "probe")
     }
     pub fn new(runtime: Arc<RuntimeModule>) -> Result<Self> {
         Ok(Self {
@@ -114,6 +136,8 @@ impl ProjectsModule {
             schemas: Schemas::new()?,
             owners: None,
             workspace_listeners: Mutex::new(Vec::new()),
+            event_listeners: Mutex::new(std::collections::BTreeMap::new()),
+            next_event_listener: std::sync::atomic::AtomicU64::new(1),
         })
     }
     #[expect(clippy::too_many_arguments)]
@@ -141,6 +165,13 @@ impl ProjectsModule {
             "ownerProjectRepositoryRef",
             "ownerProjectRunnerId",
             "ownerCatalogCompute",
+            "ownerProjectEvent",
+            "ownerProjectRename",
+            "ownerProjectReorder",
+            "ownerProjectClearAvatar",
+            "ownerProjectPreparedAvatar",
+            "ownerProjectSettingsUpdate",
+            "ownerProjectRegistration",
         ] {
             let _ = schemas.valid(name, &Value::Null)?;
         }
@@ -157,6 +188,8 @@ impl ProjectsModule {
                 events,
             }),
             workspace_listeners: Mutex::new(Vec::new()),
+            event_listeners: Mutex::new(std::collections::BTreeMap::new()),
+            next_event_listener: std::sync::atomic::AtomicU64::new(1),
         });
         for (name, kind, result) in [
             (
@@ -209,7 +242,16 @@ impl ProjectsModule {
         if !persistence::available(ctx)? {
             return Ok(None);
         }
-        persistence::root_workspace(ctx, &self.schemas, id)
+        let Some(project) = self.get(ctx, id)? else {
+            return Ok(None);
+        };
+        let location = self.location(ctx, &project)?;
+        let scope = json!({"id":project["id"],"root":location["path"],"status":project["status"],"runnerId":location["runnerId"].as_str().unwrap_or(""),"updatedAt":project["updatedAt"],"version":project["version"]});
+        anyhow::ensure!(
+            self.schemas.valid("projectScope", &scope)?,
+            "The project workspace is invalid."
+        );
+        Ok(Some(scope))
     }
     pub async fn load(self: &Arc<Self>) -> Result<()> {
         self.runtime
@@ -285,7 +327,8 @@ impl ProjectsModule {
         after["updatedAt"] = json!(updated);
         after["version"] = json!(stored["version"].as_u64().unwrap_or_default() + 1);
         persistence::attach(ctx, project, agent, &key)?;
-        persistence::write(ctx, &self.schemas, &stored, &after)?;
+        let after = persistence::write(ctx, &self.schemas, &stored, &after)?;
+        self.observe(ctx, json!({"type":"project_agent_attached","association":{"projectId":project,"agentId":agent,"orderKey":key},"project":after,"previousProject":stored}))?;
         let ids = persistence::agent_ids(ctx, project)?;
         Ok(
             json!({"projectId":project,"agentIds":ids,"previousVersion":resource_version(before["updatedAt"].as_u64().unwrap_or(0),before["version"].as_u64().unwrap_or(1),project),"version":resource_version(updated as u64,before["version"].as_u64().unwrap_or(1)+1,project),"updatedAt":updated}),
@@ -313,6 +356,7 @@ impl ProjectsModule {
         {
             self.schedule_provision(ctx, project)?;
         }
+        self.observe(ctx, json!({"type":"project_created","project":project}))?;
         let _ = owners;
         Ok(project.clone())
     }
@@ -338,7 +382,7 @@ impl ProjectsModule {
         after["status"] = json!("archived");
         after["archivedAt"] = json!(now());
         owners.services.close_project_admission(ctx, &before)?;
-        self.write(ctx, &before, &mut after)?;
+        self.write_event(ctx, &before, &mut after, json!({"type":"project_archived"}))?;
         owners
             .durable
             .cancel(ctx, &format!("project-create.{id}"))?;
@@ -382,68 +426,28 @@ impl ProjectsModule {
         };
         let mut after = before.clone();
         after["workspaceSetupCommands"] = commands;
-        self.write(ctx, &before, &mut after)
+        self.write_state(ctx, &before, &mut after, "workspace_setup_commands")
     }
-    fn write(&self, ctx: &Context<'_>, before: &Value, after: &mut Value) -> Result<()> {
-        if before == after {
-            return Ok(());
-        }
-        let owners = self.owners()?;
-        after["version"] = json!(before["version"].as_u64().unwrap_or_default() + 1);
-        after["updatedAt"] = json!(now());
-        *after = persistence::write(ctx, &self.schemas, before, after)?;
-        let mut changes = json!({"updatedAt":after["updatedAt"]});
-        for field in [
-            "name",
-            "status",
-            "defaultBranch",
-            "worktreeSupport",
-            "worktreeUnsupportedReason",
-            "avatar",
-            "description",
-            "workspaceSetupCommands",
-            "archivedAt",
-        ] {
-            if before.get(field) != after.get(field) {
-                changes[field] = after.get(field).cloned().unwrap_or(Value::Null);
-            }
-        }
-        if before["nameSource"] != after["nameSource"] {
-            changes["nameSource"] = json!(if after["nameSource"] == "user" {
-                "user"
-            } else {
-                "folder"
-            });
-        }
-        if before["initializationStatus"] != after["initializationStatus"]
-            || before["initializationAttempt"] != after["initializationAttempt"]
-            || before.get("initializationError") != after.get("initializationError")
-        {
-            changes["initialization"] = json!({"status":after["initializationStatus"],"attempt":after["initializationAttempt"],"error":after.get("initializationError").cloned().unwrap_or(Value::Null)});
-        }
-        if [
-            "gitAhead",
-            "gitBehind",
-            "gitDetached",
-            "gitBranch",
-            "gitHead",
-            "gitUpstream",
-        ]
-        .iter()
-        .any(|field| before.get(*field) != after.get(*field))
-        {
-            changes["git"] = json!({"ahead":after["gitAhead"],"behind":after["gitBehind"],"detached":after["gitDetached"],"branch":after.get("gitBranch").cloned().unwrap_or(Value::Null),"head":after.get("gitHead").cloned().unwrap_or(Value::Null),"upstream":after.get("gitUpstream").cloned().unwrap_or(Value::Null)});
-        }
-        let id = after["id"].as_str().unwrap_or_default();
-        owners.events.record(ctx,None,"project.updated",json!({"projectId":id,"previousVersion":resource_version(before["updatedAt"].as_u64().unwrap_or_default(),before["version"].as_u64().unwrap_or_default(),id),"version":resource_version(after["updatedAt"].as_u64().unwrap_or_default(),after["version"].as_u64().unwrap_or_default(),id),"changes":changes}))?;
-        Ok(())
+    fn write_state(
+        &self,
+        ctx: &Context<'_>,
+        before: &Value,
+        after: &mut Value,
+        reason: &str,
+    ) -> Result<()> {
+        self.write_event(
+            ctx,
+            before,
+            after,
+            json!({"type":"project_state_changed","reason":reason}),
+        )
     }
     async fn current(self: &Arc<Self>, id: &str) -> Result<Option<Value>> {
         let module = self.clone();
         let id = id.to_owned();
         self.runtime.transact(move |ctx| module.get(ctx, &id)).await
     }
-    async fn state(self: &Arc<Self>, id: &str, changes: Value) -> Result<()> {
+    async fn state(self: &Arc<Self>, id: &str, changes: Value, reason: &'static str) -> Result<()> {
         let module = self.clone();
         let id = id.to_owned();
         self.runtime
@@ -466,7 +470,7 @@ impl ProjectsModule {
                         after[field] = value.clone();
                     }
                 }
-                module.write(ctx, &before, &mut after)
+                module.write_state(ctx, &before, &mut after, reason)
             })
             .await
     }
@@ -492,15 +496,15 @@ impl ProjectsModule {
             if let Some(source)=project.get("remoteSource") {if !checkpoint(kv,"clone").await? {
                 if owners.runners.exists(runner,path,cancel).await? {anyhow::ensure!(owners.git.top_level(runner,path,cancel).await?==path,"The managed project folder is not the expected repository root.");let origin=owners.git.run(runner,path,&["remote","get-url","origin"],cancel).await?;anyhow::ensure!(owners.git.source_matches(&origin,source)?,"The managed project folder has a different origin repository.");}
                 else {let runtime=self.runtime.clone();let creator=self.runtime.transact(move|ctx|Ok(json!({"instanceId":runtime.installation_epoch(ctx)?,"profileId":"local"}))).await?;owners.git.clone_project(id,&creator,runner,path,source,project["requiredSecretKind"].as_str(),cancel).await?;}
-                self.state(id,json!({"presence":"present"})).await?;complete(kv,"clone").await?;
+                self.state(id,json!({"presence":"present"}),"clone_ready").await?;complete(kv,"clone").await?;
             }}else {anyhow::ensure!(owners.runners.exists(runner,path,cancel).await?,"The project folder is not available.");}
-            if !checkpoint(kv,"probe").await? {let probe=owners.git.probe(runner,path,false,cancel).await?;let mut changes=json!({"presence":probe["presence"],"worktreeSupport":probe["worktreeSupport"],"worktreeUnsupportedReason":probe.get("worktreeSupportReason").cloned().unwrap_or(Value::Null)});if let Some(facts)=probe.get("facts") {for(source,target)in [("ahead","gitAhead"),("behind","gitBehind"),("detached","gitDetached"),("branch","gitBranch"),("head","gitHead"),("upstream","gitUpstream")] {changes[target]=facts.get(source).cloned().unwrap_or(Value::Null);}}self.state(id,changes).await?;complete(kv,"probe").await?;}
+            if !checkpoint(kv,"probe").await? {let probe=owners.git.probe(runner,path,false,cancel).await?;let mut changes=json!({"presence":probe["presence"],"worktreeSupport":probe["worktreeSupport"],"worktreeUnsupportedReason":probe.get("worktreeSupportReason").cloned().unwrap_or(Value::Null)});if let Some(facts)=probe.get("facts") {for(source,target)in [("ahead","gitAhead"),("behind","gitBehind"),("detached","gitDetached"),("branch","gitBranch"),("head","gitHead"),("upstream","gitUpstream")] {changes[target]=facts.get(source).cloned().unwrap_or(Value::Null);}}self.state(id,changes,"probe").await?;complete(kv,"probe").await?;}
             let root=owners.git.top_level(runner,path,cancel).await.ok().is_some_and(|root|root==path);anyhow::ensure!(!cancel.is_cancelled(),"Project setup was cancelled.");let remote=if root {owners.git.remote_url(runner,path,cancel).await?}else{None};
-            if root && !checkpoint(kv,"default-branch").await? {if self.current(id).await?.is_some_and(|project|project.get("defaultBranch").is_none()) && let Some(branch)=owners.git.default_branch(runner,path,cancel).await? {self.state(id,json!({"defaultBranch":branch})).await?;}complete(kv,"default-branch").await?;}
-            if let Some(remote)=&remote && let Some(name)=owners.git.remote_name(remote) && self.current(id).await?.is_some_and(|project|project["nameSource"]=="folder") && !checkpoint(kv,"remote-name").await? {self.state(id,json!({"name":name,"nameSource":"remote"})).await?;complete(kv,"remote-name").await?;}
+            if root && !checkpoint(kv,"default-branch").await? {if self.current(id).await?.is_some_and(|project|project.get("defaultBranch").is_none()) && let Some(branch)=owners.git.default_branch(runner,path,cancel).await? {self.state(id,json!({"defaultBranch":branch}),"default_branch").await?;}complete(kv,"default-branch").await?;}
+            if let Some(remote)=&remote && let Some(name)=owners.git.remote_name(remote) && self.current(id).await?.is_some_and(|project|project["nameSource"]=="folder") && !checkpoint(kv,"remote-name").await? {self.state(id,json!({"name":name,"nameSource":"remote"}),"remote_name").await?;complete(kv,"remote-name").await?;}
             if self.current(id).await?.is_some_and(|project|project.get("avatar").is_none()) && !checkpoint(kv,"avatar").await? {
                 let repository=if root {avatars::discover_repository(owners.runners.clone(),runner,path,cancel).await?}else{None};let candidate=if repository.is_some(){repository}else if let Some(remote)=&remote {avatars::discover_hosting(remote,cancel).await?}else{None};
-                if let Some(asset)=candidate {let module=self.clone();let id=id.to_owned();self.runtime.transact(move|ctx|{let Some(before)=module.get(ctx,&id)? else{return Ok(());};if before.get("avatar").is_some() || before["status"]!="active" {return Ok(());}anyhow::ensure!(module.schemas.valid("ownerProjectAvatarAssetMetadata",&asset.metadata)?,"The normalized project avatar metadata is invalid.");persistence::save_avatar(ctx,&id,&asset.bytes,&asset.metadata)?;let mut after=before.clone();after["avatar"]=json!({"kind":"image","source":"generated","thumbhash":asset.metadata["thumbhash"]});module.write(ctx,&before,&mut after)}).await?;}complete(kv,"avatar").await?;
+                if let Some(asset)=candidate {let module=self.clone();let id=id.to_owned();self.runtime.transact(move|ctx|{let Some(before)=module.get(ctx,&id)? else{return Ok(());};if before.get("avatar").is_some() || before["status"]!="active" {return Ok(());}anyhow::ensure!(module.schemas.valid("ownerProjectAvatarAssetMetadata",&asset.metadata)?,"The normalized project avatar metadata is invalid.");persistence::save_avatar(ctx,&id,&asset.bytes,&asset.metadata)?;let mut after=before.clone();after["avatar"]=json!({"kind":"image","source":"generated","thumbhash":asset.metadata["thumbhash"]});module.write_event(ctx,&before,&mut after,json!({"type":"project_avatar_updated"}))}).await?;}complete(kv,"avatar").await?;
             }
             Ok(json!({"outcome":"ready"}))
         }.await;
@@ -677,7 +681,16 @@ impl DurableFunction for Procedure {
             after["initializationStatus"] = json!("failed");
             after["initializationError"] = result["error"].clone();
         }
-        module.write(ctx, &before, &mut after)
+        module.write_state(
+            ctx,
+            &before,
+            &mut after,
+            if result["outcome"] == "ready" {
+                "initialization_ready"
+            } else {
+                "initialization_failed"
+            },
+        )
     }
 }
 async fn checkpoint(kv: &CallKv, key: &str) -> Result<bool> {
@@ -711,28 +724,28 @@ async fn backoff_wait(cancel: &CancellationToken, delay: Duration) -> Result<()>
 }
 
 #[cfg(test)]
-mod tests {
+pub(in crate::product) mod tests {
     use super::*;
     use crate::product::{
         agent_runtime::AgentRuntimeModule, auto::AutoModule, history::HistoryModule,
         owners::Fixture, permissions::PermissionsModule, secrets::SecretsModule,
         tools::ToolsModule, usage::UsageModule,
     };
-    struct Graph {
-        fixture: Fixture,
-        agents: Arc<AgentRuntimeModule>,
+    pub(in crate::product) struct Graph {
+        pub(in crate::product) fixture: Fixture,
+        pub(in crate::product) agents: Arc<AgentRuntimeModule>,
         abort: Arc<AbortModule>,
         runners: Arc<RunnersModule>,
         git: Arc<GitModule>,
         services: Arc<ServicesModule>,
-        projects: Arc<ProjectsModule>,
-        workspaces: Arc<WorkspacesModule>,
+        pub(in crate::product) projects: Arc<ProjectsModule>,
+        pub(in crate::product) workspaces: Arc<WorkspacesModule>,
     }
     impl Graph {
-        async fn new() -> Self {
+        pub(in crate::product) async fn new() -> Self {
             Self::install(Fixture::new().await).await
         }
-        async fn install(fixture: Fixture) -> Self {
+        pub(in crate::product) async fn install(fixture: Fixture) -> Self {
             let usage = Arc::new(
                 UsageModule::new(
                     fixture.runtime.clone(),
@@ -789,7 +802,13 @@ mod tests {
                 )
                 .unwrap(),
             );
-            let system_prompt = crate::product::system_prompt::SystemPromptModule::new(fixture.config.clone(), tools.clone(), fixture.runtime.clone(), fixture.durable.clone()).unwrap();
+            let system_prompt = crate::product::system_prompt::SystemPromptModule::new(
+                fixture.config.clone(),
+                tools.clone(),
+                fixture.runtime.clone(),
+                fixture.durable.clone(),
+            )
+            .unwrap();
             let auto = AutoModule::new(
                 fixture.config.clone(),
                 fixture.runtime.clone(),
@@ -861,7 +880,7 @@ mod tests {
                 workspaces,
             }
         }
-        async fn close(&self) {
+        pub(in crate::product) async fn close(&self) {
             self.fixture.lifecycle.begin_shutdown();
             self.fixture.durable.stop().await;
             self.agents.close().await;

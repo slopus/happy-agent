@@ -1,0 +1,352 @@
+{
+    "cases": [
+        {
+            "kind": "register",
+            "input": {
+                "path": "%ROOT%/plain-folder",
+                "projectId": "projectregisterfixtureone"
+            },
+            "result": {
+                "id": "projectregisterfixtureone",
+                "repositoryRef": "%ROOT%/plain-folder",
+                "kind": "regular",
+                "storageKey": "plain-folder",
+                "name": "plain-folder",
+                "nameSource": "folder",
+                "status": "active",
+                "presence": "present",
+                "initializationStatus": "initializing",
+                "initializationAttempt": 0,
+                "worktreeSupport": "unknown",
+                "gitAhead": 0,
+                "gitBehind": 0,
+                "gitDetached": false,
+                "orderKey": "00000000000000000001",
+                "version": 1
+            },
+            "events": [
+                {
+                    "type": "project_created",
+                    "project": {
+                        "id": "projectregisterfixtureone",
+                        "repositoryRef": "%ROOT%/plain-folder",
+                        "kind": "regular",
+                        "storageKey": "plain-folder",
+                        "name": "plain-folder",
+                        "nameSource": "folder",
+                        "status": "active",
+                        "presence": "present",
+                        "initializationStatus": "initializing",
+                        "initializationAttempt": 0,
+                        "worktreeSupport": "unknown",
+                        "gitAhead": 0,
+                        "gitBehind": 0,
+                        "gitDetached": false,
+                        "orderKey": "00000000000000000001",
+                        "version": 1
+                    }
+                }
+            ]
+        },
+        {
+            "kind": "register",
+            "input": {
+                "path": "%ROOT%/alias",
+                "projectId": "projectregisterfixturealias"
+            },
+            "result": {
+                "id": "projectregisterfixtureone",
+                "repositoryRef": "%ROOT%/plain-folder",
+                "kind": "regular",
+                "storageKey": "plain-folder",
+                "name": "plain-folder",
+                "nameSource": "folder",
+                "status": "active",
+                "presence": "present",
+                "initializationStatus": "initializing",
+                "initializationAttempt": 0,
+                "worktreeSupport": "unknown",
+                "gitAhead": 0,
+                "gitBehind": 0,
+                "gitDetached": false,
+                "orderKey": "00000000000000000001",
+                "version": 1
+            },
+            "events": []
+        },
+        {
+            "kind": "set_up_again",
+            "input": {
+                "projectId": "projectregisterfixtureone"
+            },
+            "result": {
+                "id": "projectregisterfixtureone",
+                "repositoryRef": "%ROOT%/plain-folder",
+                "kind": "regular",
+                "storageKey": "plain-folder",
+                "name": "plain-folder",
+                "nameSource": "folder",
+                "status": "active",
+                "presence": "present",
+                "initializationStatus": "initializing",
+                "initializationAttempt": 1,
+                "worktreeSupport": "unknown",
+                "gitAhead": 0,
+                "gitBehind": 0,
+                "gitDetached": false,
+                "orderKey": "00000000000000000001",
+                "version": 2
+            },
+            "events": [
+                {
+                    "type": "project_state_changed",
+                    "reason": "refresh",
+                    "project": {
+                        "id": "projectregisterfixtureone",
+                        "repositoryRef": "%ROOT%/plain-folder",
+                        "kind": "regular",
+                        "storageKey": "plain-folder",
+                        "name": "plain-folder",
+                        "nameSource": "folder",
+                        "status": "active",
+                        "presence": "present",
+                        "initializationStatus": "initializing",
+                        "initializationAttempt": 1,
+                        "worktreeSupport": "unknown",
+                        "gitAhead": 0,
+                        "gitBehind": 0,
+                        "gitDetached": false,
+                        "orderKey": "00000000000000000001",
+                        "version": 2
+                    },
+                    "previousProject": {
+                        "id": "projectregisterfixtureone",
+                        "repositoryRef": "%ROOT%/plain-folder",
+                        "kind": "regular",
+                        "storageKey": "plain-folder",
+                        "name": "plain-folder",
+                        "nameSource": "folder",
+                        "status": "active",
+                        "presence": "present",
+                        "initializationStatus": "initializing",
+                        "initializationAttempt": 0,
+                        "worktreeSupport": "unknown",
+                        "gitAhead": 0,
+                        "gitBehind": 0,
+                        "gitDetached": false,
+                        "orderKey": "00000000000000000001",
+                        "version": 1
+                    }
+                }
+            ]
+        },
+        {
+            "kind": "archive",
+            "input": {
+                "projectId": "projectregisterfixtureone"
+            },
+            "result": {
+                "id": "projectregisterfixtureone",
+                "repositoryRef": "%ROOT%/plain-folder",
+                "kind": "regular",
+                "storageKey": "plain-folder",
+                "name": "plain-folder",
+                "nameSource": "folder",
+                "status": "archived",
+                "presence": "present",
+                "initializationStatus": "initializing",
+                "initializationAttempt": 1,
+                "worktreeSupport": "unknown",
+                "gitAhead": 0,
+                "gitBehind": 0,
+                "gitDetached": false,
+                "orderKey": "00000000000000000001",
+                "version": 3
+            },
+            "events": [
+                {
+                    "type": "project_archived",
+                    "project": {
+                        "id": "projectregisterfixtureone",
+                        "repositoryRef": "%ROOT%/plain-folder",
+                        "kind": "regular",
+                        "storageKey": "plain-folder",
+                        "name": "plain-folder",
+                        "nameSource": "folder",
+                        "status": "archived",
+                        "presence": "present",
+                        "initializationStatus": "initializing",
+                        "initializationAttempt": 1,
+                        "worktreeSupport": "unknown",
+                        "gitAhead": 0,
+                        "gitBehind": 0,
+                        "gitDetached": false,
+                        "orderKey": "00000000000000000001",
+                        "version": 3
+                    },
+                    "previousProject": {
+                        "id": "projectregisterfixtureone",
+                        "repositoryRef": "%ROOT%/plain-folder",
+                        "kind": "regular",
+                        "storageKey": "plain-folder",
+                        "name": "plain-folder",
+                        "nameSource": "folder",
+                        "status": "active",
+                        "presence": "present",
+                        "initializationStatus": "initializing",
+                        "initializationAttempt": 1,
+                        "worktreeSupport": "unknown",
+                        "gitAhead": 0,
+                        "gitBehind": 0,
+                        "gitDetached": false,
+                        "orderKey": "00000000000000000001",
+                        "version": 2
+                    }
+                }
+            ]
+        },
+        {
+            "kind": "register",
+            "input": {
+                "path": "%ROOT%/alias"
+            },
+            "result": {
+                "id": "projectregisterfixtureone",
+                "repositoryRef": "%ROOT%/plain-folder",
+                "kind": "regular",
+                "storageKey": "plain-folder",
+                "name": "plain-folder",
+                "nameSource": "folder",
+                "status": "active",
+                "presence": "present",
+                "initializationStatus": "initializing",
+                "initializationAttempt": 1,
+                "worktreeSupport": "unknown",
+                "gitAhead": 0,
+                "gitBehind": 0,
+                "gitDetached": false,
+                "orderKey": "00000000000000000001",
+                "version": 4
+            },
+            "events": [
+                {
+                    "type": "project_restored",
+                    "project": {
+                        "id": "projectregisterfixtureone",
+                        "repositoryRef": "%ROOT%/plain-folder",
+                        "kind": "regular",
+                        "storageKey": "plain-folder",
+                        "name": "plain-folder",
+                        "nameSource": "folder",
+                        "status": "active",
+                        "presence": "present",
+                        "initializationStatus": "initializing",
+                        "initializationAttempt": 1,
+                        "worktreeSupport": "unknown",
+                        "gitAhead": 0,
+                        "gitBehind": 0,
+                        "gitDetached": false,
+                        "orderKey": "00000000000000000001",
+                        "version": 4
+                    },
+                    "previousProject": {
+                        "id": "projectregisterfixtureone",
+                        "repositoryRef": "%ROOT%/plain-folder",
+                        "kind": "regular",
+                        "storageKey": "plain-folder",
+                        "name": "plain-folder",
+                        "nameSource": "folder",
+                        "status": "archived",
+                        "presence": "present",
+                        "initializationStatus": "initializing",
+                        "initializationAttempt": 1,
+                        "worktreeSupport": "unknown",
+                        "gitAhead": 0,
+                        "gitBehind": 0,
+                        "gitDetached": false,
+                        "orderKey": "00000000000000000001",
+                        "version": 3
+                    }
+                }
+            ]
+        },
+        {
+            "kind": "registration_error",
+            "input": {
+                "path": "%ROOT%/missing"
+            },
+            "code": "path_missing"
+        },
+        {
+            "kind": "registration_error",
+            "input": {
+                "path": "%ROOT%/file"
+            },
+            "code": "not_directory"
+        },
+        {
+            "kind": "registration_error",
+            "input": {
+                "path": "%ROOT%/other-folder",
+                "projectId": "projectregisterfixtureone"
+            },
+            "code": "project_id_conflict"
+        },
+        {
+            "kind": "registration_error",
+            "input": {
+                "path": "%ROOT%/other-folder",
+                "projectId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            "code": "invalid_request"
+        },
+        {
+            "kind": "register",
+            "input": {
+                "path": "%ROOT%/  ",
+                "projectId": "projectregisterwhitespace"
+            },
+            "result": {
+                "id": "projectregisterwhitespace",
+                "repositoryRef": "%ROOT%/  ",
+                "kind": "regular",
+                "storageKey": "project",
+                "name": "Project",
+                "nameSource": "folder",
+                "status": "active",
+                "presence": "present",
+                "initializationStatus": "initializing",
+                "initializationAttempt": 0,
+                "worktreeSupport": "unknown",
+                "gitAhead": 0,
+                "gitBehind": 0,
+                "gitDetached": false,
+                "orderKey": "00000000000000000002",
+                "version": 1
+            },
+            "events": [
+                {
+                    "type": "project_created",
+                    "project": {
+                        "id": "projectregisterwhitespace",
+                        "repositoryRef": "%ROOT%/  ",
+                        "kind": "regular",
+                        "storageKey": "project",
+                        "name": "Project",
+                        "nameSource": "folder",
+                        "status": "active",
+                        "presence": "present",
+                        "initializationStatus": "initializing",
+                        "initializationAttempt": 0,
+                        "worktreeSupport": "unknown",
+                        "gitAhead": 0,
+                        "gitBehind": 0,
+                        "gitDetached": false,
+                        "orderKey": "00000000000000000002",
+                        "version": 1
+                    }
+                }
+            ]
+        }
+    ]
+}

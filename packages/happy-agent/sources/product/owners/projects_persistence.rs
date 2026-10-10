@@ -4,6 +4,16 @@ use anyhow::{Result, bail};
 use rusqlite::{OptionalExtension, Row, params};
 use serde_json::{Value, json};
 
+#[path = "projects_persistence/catalog.rs"]
+mod catalog;
+#[path = "projects_persistence/edits.rs"]
+mod edits;
+pub(super) use catalog::{
+    query_agent_orders, query_by_path, query_catalog_page, query_home_id, query_last_order,
+    query_storage_key_exists,
+};
+pub(super) use edits::{delete_avatar, query_avatar, save_settings};
+
 pub(super) const PROJECT_COLUMNS: &str = "id,repository_ref,runner_id,kind,storage_key,name,name_source,status,presence,initialization_status,initialization_attempt,initialization_error,default_branch,worktree_support,worktree_unsupported_reason,remote_source_json,required_secret_kind,git_ahead,git_behind,git_detached,git_branch,git_head,git_upstream,workspace_setup_commands_json,order_key,version,avatar_json,description,created_at,updated_at,archived_at";
 
 // Versions and their effects are the shipped module migrations. In particular,
@@ -166,13 +176,49 @@ pub fn available(ctx: &Context<'_>) -> Result<bool> {
 }
 
 pub fn has_active_project(ctx: &Context<'_>) -> Result<bool> {
-    Ok(ctx.database().query_row("SELECT EXISTS(SELECT 1 FROM happy_agent_module_projects WHERE status<>'archived')", [], |row| row.get(0))?)
+    Ok(ctx.database().query_row(
+        "SELECT EXISTS(SELECT 1 FROM happy_agent_module_projects WHERE status<>'archived')",
+        [],
+        |row| row.get(0),
+    )?)
 }
 
 pub fn validate(schemas: &Schemas, value: &Value) -> Result<()> {
     anyhow::ensure!(
         schemas.valid("ownerProject", value)?,
         "The stored project is invalid."
+    );
+    anyhow::ensure!(
+        value["updatedAt"].as_u64() >= value["createdAt"].as_u64(),
+        "Project timestamps are not ordered."
+    );
+    if value["status"] == "archived" {
+        let archived = value["archivedAt"]
+            .as_u64()
+            .ok_or_else(|| anyhow::anyhow!("Archived project is missing its archival time."))?;
+        anyhow::ensure!(
+            archived >= value["createdAt"].as_u64().unwrap()
+                && archived <= value["updatedAt"].as_u64().unwrap(),
+            "Project archival time is inconsistent with its timestamps."
+        );
+    } else {
+        anyhow::ensure!(
+            value.get("archivedAt").is_none(),
+            "Active project has an archival time."
+        );
+    }
+    anyhow::ensure!(
+        value["kind"] != "home" || value["initializationStatus"] == "ready",
+        "The home project is never initialized."
+    );
+    anyhow::ensure!(
+        value.get("initializationError").is_none() || value["initializationStatus"] == "failed",
+        "Only a failed project keeps an initialization error."
+    );
+    anyhow::ensure!(
+        value.get("worktreeUnsupportedReason").is_none()
+            || value["worktreeSupport"] == "unsupported",
+        "Only a project without worktree support keeps a reason."
     );
     Ok(())
 }
@@ -184,8 +230,12 @@ pub fn write(ctx: &Context<'_>, schemas: &Schemas, before: &Value, after: &Value
             && after["version"].as_u64() == before["version"].as_u64().map(|v| v + 1),
         "A project mutation must advance its version exactly once."
     );
+    anyhow::ensure!(
+        after["updatedAt"].as_u64() >= before["updatedAt"].as_u64(),
+        "A changed project moved its update time backwards."
+    );
     let json_field = |field: &str| after.get(field).map(Value::to_string);
-    let affected=ctx.database().execute("UPDATE happy_agent_module_projects SET name=?2,name_source=?3,status=?4,presence=?5,initialization_status=?6,initialization_attempt=?7,initialization_error=?8,default_branch=?9,worktree_support=?10,worktree_unsupported_reason=?11,git_ahead=?12,git_behind=?13,git_detached=?14,git_branch=?15,git_head=?16,git_upstream=?17,workspace_setup_commands_json=?18,version=?19,avatar_json=?20,description=?21,updated_at=?22,archived_at=?23 WHERE id=?1 AND version=?24",params![after["id"].as_str(),after["name"].as_str(),after["nameSource"].as_str(),after["status"].as_str(),after["presence"].as_str(),after["initializationStatus"].as_str(),after["initializationAttempt"].as_i64(),after["initializationError"].as_str(),after["defaultBranch"].as_str(),after["worktreeSupport"].as_str(),after["worktreeUnsupportedReason"].as_str(),after["gitAhead"].as_i64(),after["gitBehind"].as_i64(),i64::from(after["gitDetached"].as_bool().unwrap_or(false)),after["gitBranch"].as_str(),after["gitHead"].as_str(),after["gitUpstream"].as_str(),json_field("workspaceSetupCommands"),after["version"].as_i64(),json_field("avatar"),after["description"].as_str(),after["updatedAt"].as_i64(),after["archivedAt"].as_i64(),before["version"].as_i64()])?;
+    let affected=ctx.database().execute("UPDATE happy_agent_module_projects SET name=?2,name_source=?3,status=?4,presence=?5,initialization_status=?6,initialization_attempt=?7,initialization_error=?8,default_branch=?9,worktree_support=?10,worktree_unsupported_reason=?11,git_ahead=?12,git_behind=?13,git_detached=?14,git_branch=?15,git_head=?16,git_upstream=?17,workspace_setup_commands_json=?18,version=?19,avatar_json=?20,description=?21,updated_at=?22,archived_at=?23,order_key=?25 WHERE id=?1 AND version=?24",params![after["id"].as_str(),after["name"].as_str(),after["nameSource"].as_str(),after["status"].as_str(),after["presence"].as_str(),after["initializationStatus"].as_str(),after["initializationAttempt"].as_i64(),after["initializationError"].as_str(),after["defaultBranch"].as_str(),after["worktreeSupport"].as_str(),after["worktreeUnsupportedReason"].as_str(),after["gitAhead"].as_i64(),after["gitBehind"].as_i64(),i64::from(after["gitDetached"].as_bool().unwrap_or(false)),after["gitBranch"].as_str(),after["gitHead"].as_str(),after["gitUpstream"].as_str(),json_field("workspaceSetupCommands"),after["version"].as_i64(),json_field("avatar"),after["description"].as_str(),after["updatedAt"].as_i64(),after["archivedAt"].as_i64(),before["version"].as_i64(),after["orderKey"].as_str()])?;
     anyhow::ensure!(
         affected == 1,
         "The project changed before its state could be recorded."
@@ -197,18 +247,6 @@ pub fn write(ctx: &Context<'_>, schemas: &Schemas, before: &Value, after: &Value
         "The project did not store the intended state."
     );
     Ok(stored)
-}
-
-pub fn root_workspace(ctx: &Context<'_>, schemas: &Schemas, id: &str) -> Result<Option<Value>> {
-    let Some(project) = read(ctx, schemas, id)? else {
-        return Ok(None);
-    };
-    let value = json!({"id":project["id"],"root":project["repositoryRef"],"status":project["status"],"runnerId":project["runnerId"].as_str().unwrap_or(""),"updatedAt":project["updatedAt"],"version":project["version"]});
-    anyhow::ensure!(
-        schemas.valid("projectScope", &value)?,
-        "The stored project workspace is invalid."
-    );
-    Ok(Some(value))
 }
 
 pub fn agent_association(ctx: &Context<'_>, agent: &str) -> Result<Option<(String, String)>> {

@@ -31,6 +31,8 @@ mod output;
 #[path = "pty.rs"]
 mod pty;
 mod remote;
+mod runner;
+pub use runner::{NativeRunnerProcess, NativeRunnerProcessEvent};
 
 const CAPTURE_BYTES: usize = 1024 * 1024;
 const ACTIVE_PER_AGENT: usize = 64;
@@ -51,12 +53,19 @@ pub(super) struct CommandSessions {
     groups: Arc<groups::Groups>,
     abort_epochs: Mutex<BTreeMap<String, Weak<AtomicU64>>>,
     remote: remote::Commands,
+    runner_events: tokio::sync::broadcast::Sender<(String, Value)>,
 }
 struct CommandSession {
     owner: String,
     id: u64,
     command: String,
     started_at: u64,
+    cwd: String,
+    terminal: Option<pty::Control>,
+    stream: Option<tokio::sync::mpsc::Sender<NativeRunnerProcessEvent>>,
+    runner_events: Option<tokio::sync::broadcast::Sender<(String, Value)>>,
+    consuming_waiters: AtomicU64,
+    exit_observed: std::sync::atomic::AtomicBool,
     uses_secrets: bool,
     group: Arc<groups::Group>,
     _abort_epoch: Arc<AtomicU64>,
@@ -73,6 +82,9 @@ struct Output {
     finished: bool,
     exit: Option<i32>,
     cleanup_error: Option<String>,
+    retained: Option<(output::BoundedOutput, output::BoundedOutput)>,
+    timed_out: bool,
+    killed: bool,
 }
 impl Output {
     fn new(maximum: usize) -> Self {
@@ -82,6 +94,9 @@ impl Output {
             finished: false,
             exit: None,
             cleanup_error: None,
+            retained: None,
+            timed_out: false,
+            killed: false,
         }
     }
 }
@@ -170,6 +185,7 @@ impl CommandSessions {
             processes,
             groups: Arc::new(groups::Groups::default()),
             abort_epochs: Mutex::new(BTreeMap::new()),
+            runner_events: tokio::sync::broadcast::channel(1024).0,
         })
     }
     pub async fn start(
@@ -227,6 +243,32 @@ impl CommandSessions {
             configuration["modules"]["compute"].get("docker").is_none(),
             "Local Docker compute has not been migrated yet; this agent cannot execute on the host instead."
         );
+        self.start_local_snapshot(
+            agent,
+            configuration,
+            mode,
+            arguments,
+            wait,
+            capture_limit,
+            cancel,
+            None,
+            None,
+        )
+        .await
+    }
+    async fn start_local_snapshot(
+        &self,
+        agent: &str,
+        configuration: &Value,
+        mode: &str,
+        arguments: &Value,
+        wait: u64,
+        capture_limit: usize,
+        cancel: CancellationToken,
+        runner: Option<&Value>,
+        stream: Option<tokio::sync::mpsc::Sender<NativeRunnerProcessEvent>>,
+    ) -> Result<Snapshot> {
+        anyhow::ensure!(!cancel.is_cancelled(), "The command was interrupted.");
         let epoch = {
             let mut epochs = self
                 .abort_epochs
@@ -268,10 +310,13 @@ impl CommandSessions {
             .as_array()
             .is_some_and(|selected| !selected.is_empty());
         let secrets = self.secrets.clone();
-        let provisioned = self
-            .runtime
-            .transact(move |ctx| secrets.resolve_for_command_targets(ctx, &targets, &selected))
-            .await?;
+        let provisioned = if runner.is_some() {
+            json!({"hiddenEnvironmentVariables":["HAPPY_RUNNER_TOKEN","HAPPY_RUNNER_ENDPOINT"],"environment":{}})
+        } else {
+            self.runtime
+                .transact(move |ctx| secrets.resolve_for_command_targets(ctx, &targets, &selected))
+                .await?
+        };
         let hidden = provisioned["hiddenEnvironmentVariables"]
             .as_array()
             .context("The secret environment exclusions are missing.")?
@@ -285,15 +330,21 @@ impl CommandSessions {
         let additions = provisioned["environment"]
             .as_object()
             .context("The selected secret environment is missing.")?;
-        let policy = json!({"mode":mode,"allowedReadPaths":[],"allowedWritePaths":if mode=="workspace_write"||mode=="auto"{vec![root.clone()]}else{vec![]},"deniedReadPaths":[],"deniedWritePaths":if mode=="full_access"{vec![]}else{vec![root.join(".git"),root.join("AGENTS.md"),root.join("AGENTS_SECURITY.md"),root.join("happy.toml") ]},"network":{"egress":mode=="full_access","allowedHosts":[],"localBinding":mode=="full_access"}});
+        let policy = if let Some(request) = runner {
+            self.config
+                .runner_shell_policy(request, &arguments["permissions"])?
+        } else {
+            json!({"mode":mode,"allowedReadPaths":[],"allowedWritePaths":if mode=="workspace_write"||mode=="auto"{vec![root.clone()]}else{vec![]},"deniedReadPaths":[],"deniedWritePaths":if mode=="full_access"{vec![]}else{vec![root.join(".git"),root.join("AGENTS.md"),root.join("AGENTS_SECURITY.md"),root.join("happy.toml") ]},"network":{"egress":mode=="full_access","allowedHosts":[],"localBinding":mode=="full_access"}})
+        };
         #[cfg(windows)]
         anyhow::bail!("Native Windows command execution has not been migrated yet.");
         #[cfg(unix)]
         {
             // Source's unrestricted path has no supervisor or namespace setup.
             // The mode is supplied by the shared permission execution scope.
+            let program = arguments["_runnerProgram"].as_str();
             let mut command = if mode == "full_access" {
-                Command::new(&shell)
+                Command::new(program.unwrap_or(&shell))
             } else {
                 let mut supervisor = Command::from(happy_agent_supervisor::command()?);
                 supervisor
@@ -316,9 +367,38 @@ impl CommandSessions {
                         .context("A selected secret environment value is invalid.")?,
                 );
             }
+            if let Some(program) = program {
+                anyhow::ensure!(
+                    runner.is_some() && mode == "full_access",
+                    "Native product programs require their owned Full access compute."
+                );
+                let _ = program;
+                for argument in arguments["_runnerArgs"].as_array().into_iter().flatten() {
+                    command.arg(
+                        argument
+                            .as_str()
+                            .context("The native process argument is invalid.")?,
+                    );
+                }
+                for (name, value) in arguments["_runnerEnvironment"]
+                    .as_object()
+                    .into_iter()
+                    .flatten()
+                {
+                    if let Some(value) = value.as_str() {
+                        command.env(name, value);
+                    } else {
+                        command.env_remove(name);
+                    }
+                }
+                // Runner credentials never become a product program's environment.
+                command
+                    .env_remove("HAPPY_RUNNER_TOKEN")
+                    .env_remove("HAPPY_RUNNER_ENDPOINT");
+            } else {
+                command.arg("-lc").arg(cmd);
+            }
             command
-                .arg("-lc")
-                .arg(cmd)
                 .current_dir(&cwd)
                 .stdin(std::process::Stdio::piped())
                 .stdout(std::process::Stdio::piped())
@@ -378,12 +458,21 @@ impl CommandSessions {
                 // The parent's copy of the slave must not keep terminal EOF
                 // from arriving when the process closes its descriptors.
                 drop(command);
-                let (stdin, stdout, stderr): (
+                let (stdin, stdout, stderr, terminal): (
                     Box<dyn AsyncWrite + Unpin + Send>,
                     Box<dyn AsyncRead + Unpin + Send>,
                     Option<Box<dyn AsyncRead + Unpin + Send>>,
+                    Option<pty::Control>,
                 ) = match terminal {
-                    Some((reader, writer)) => (Box::new(writer), Box::new(reader), None),
+                    Some((reader, writer, control)) => {
+                        if let (Some(cols), Some(rows)) = (
+                            arguments["_runnerTerminal"]["cols"].as_u64(),
+                            arguments["_runnerTerminal"]["rows"].as_u64(),
+                        ) {
+                            control.resize(cols as u16, rows as u16)?;
+                        }
+                        (Box::new(writer), Box::new(reader), None, Some(control))
+                    }
                     None => (
                         Box::new(
                             child
@@ -403,6 +492,7 @@ impl CommandSessions {
                                 .take()
                                 .context("The command error pipe is unavailable.")?,
                         )),
+                        None,
                     ),
                 };
                 let id = self.next.fetch_add(1, Ordering::Relaxed);
@@ -415,11 +505,28 @@ impl CommandSessions {
                     id,
                     command: cmd.into(),
                     started_at: crate::product::identity::now(),
+                    cwd: cwd.to_string_lossy().into_owned(),
+                    terminal,
+                    stream: stream.clone(),
+                    runner_events: runner
+                        .filter(|_| stream.is_none() && arguments["_runnerQuiet"] != true)
+                        .map(|_| self.runner_events.clone()),
+                    consuming_waiters: AtomicU64::new(0),
+                    exit_observed: std::sync::atomic::AtomicBool::new(false),
                     uses_secrets,
                     group,
                     _abort_epoch: epoch.clone(),
                     stdin: tokio::sync::Mutex::new(Some(stdin)),
-                    state: Mutex::new(Output::new(capture_limit)),
+                    state: Mutex::new({
+                        let mut output = Output::new(capture_limit);
+                        if runner.is_some() {
+                            output.retained = Some((
+                                output::BoundedOutput::new(capture_limit),
+                                output::BoundedOutput::new(capture_limit),
+                            ));
+                        }
+                        output
+                    }),
                     read: tokio::sync::Mutex::new(()),
                     complete: Notify::new(),
                     stop: CancellationToken::new(),
@@ -429,6 +536,9 @@ impl CommandSessions {
                 let catalog = Arc::downgrade(&self.sessions);
                 let root = self.lifecycle.shutdown.child_token();
                 let processes = self.processes.clone();
+                let timeout = runner.filter(|_| stream.is_none()).map(|_| {
+                    Duration::from_millis(arguments["timeoutMs"].as_u64().unwrap_or(120_000))
+                });
                 let task = tokio::spawn(async move {
                     let out_session = owned.clone();
                     let err_session = owned.clone();
@@ -441,7 +551,10 @@ impl CommandSessions {
                             Ok(())
                         }
                     });
-                    supervise(child, owned, catalog, root, stdout, stderr, processes).await;
+                    supervise(
+                        child, owned, catalog, root, stdout, stderr, processes, timeout,
+                    )
+                    .await;
                 });
                 *session
                     .task
@@ -450,6 +563,23 @@ impl CommandSessions {
                 sessions.insert(id, session.clone());
                 session
             };
+            if runner.is_some() {
+                if session.runner_events.is_some() {
+                    let _ = self
+                        .runner_events
+                        .send((agent.to_owned(), json!({"event":"shell.sessions"})));
+                }
+                return Ok(Snapshot {
+                    command: session.command.clone(),
+                    session: session.id,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                    dropped: 0,
+                    finished: session.finished(),
+                    exit: None,
+                    wall_time: began.elapsed().as_secs_f64(),
+                });
+            }
             let result = session.collect_snapshot(wait, began, &cancel).await;
             if result.is_err() {
                 session.stop.cancel();
@@ -800,17 +930,33 @@ async fn capture(
         if count == 0 {
             return Ok(());
         }
-        let mut output = session
-            .state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let output = &mut *output;
-        let stream = if error {
-            &mut output.stderr
-        } else {
-            &mut output.stdout
-        };
-        stream.append(&buffer[..count]);
+        {
+            let mut output = session
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let output = &mut *output;
+            let stream = if error {
+                &mut output.stderr
+            } else {
+                &mut output.stdout
+            };
+            stream.append(&buffer[..count]);
+            if let Some((stdout, stderr)) = &mut output.retained {
+                if error {
+                    stderr.append(&buffer[..count]);
+                } else {
+                    stdout.append(&buffer[..count]);
+                }
+            }
+        }
+        if let Some(stream) = &session.stream {
+            let event = NativeRunnerProcessEvent::Data {
+                error,
+                bytes: buffer[..count].to_vec(),
+            };
+            tokio::select! {result=stream.send(event)=>{if result.is_err(){return Ok(());}},_=session.stop.cancelled()=>return Ok(())}
+        }
     }
 }
 async fn supervise(
@@ -821,8 +967,24 @@ async fn supervise(
     stdout: JoinHandle<Result<()>>,
     stderr: JoinHandle<Result<()>>,
     processes: Arc<processes::Processes>,
+    timeout: Option<Duration>,
 ) {
-    let (status, stopped) = tokio::select! {status=child.wait()=>(status,false),_=session.stop.cancelled()=>(terminate(&mut child,&session.group).await,true),_=root.cancelled()=>(terminate(&mut child,&session.group).await,true)};
+    let deadline = async {
+        if let Some(timeout) = timeout {
+            tokio::time::sleep(timeout).await;
+        } else {
+            std::future::pending::<()>().await;
+        }
+    };
+    let (status, stopped) = tokio::select! {
+        status=child.wait()=>(status,false),
+        _=session.stop.cancelled()=>(terminate(&mut child,&session.group).await,true),
+        _=root.cancelled()=>(terminate(&mut child,&session.group).await,true),
+        _=deadline=>{
+            session.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).timed_out=true;
+            tokio::select! {status=child.wait()=>(status,false),_=session.stop.cancelled()=>(terminate(&mut child,&session.group).await,true),_=root.cancelled()=>(terminate(&mut child,&session.group).await,true)}
+        }
+    };
     if status.is_ok() {
         session.group.leader_reaped();
     } else {
@@ -833,8 +995,14 @@ async fn supervise(
     let cancel_stdout = stdout.abort_handle();
     let cancel_stderr = stderr.abort_handle();
     let mut drain = tokio::spawn(async move { tokio::join!(stdout, stderr) });
-    let drained = tokio::time::timeout(Duration::from_millis(250), &mut drain).await;
-    if drained.is_err() {
+    let drained = if session.stream.is_some() && !stopped {
+        tokio::select! {_=&mut drain=>true,_=session.stop.cancelled()=>false,_=root.cancelled()=>false}
+    } else {
+        tokio::time::timeout(Duration::from_millis(250), &mut drain)
+            .await
+            .is_ok()
+    };
+    if !drained {
         cancel_stdout.abort();
         cancel_stderr.abort();
         let _ = drain.await;
@@ -864,6 +1032,7 @@ async fn supervise(
             output.exit = Some(1);
         }
         output.finished = true;
+        output.killed = stopped;
     }
     if let Err(error) = processes
         .exit(
@@ -874,7 +1043,37 @@ async fn supervise(
     {
         eprintln!("Could not publish native process completion: {error:#}");
     }
+    let awaited = session.consuming_waiters.load(Ordering::Acquire) > 0;
     session.complete.notify_waiters();
+    if let Some(events) = &session.runner_events {
+        let state = session
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _ = events.send((session.owner.clone(), json!({"event":"shell.sessions"})));
+        if !awaited && !session.exit_observed.load(Ordering::Acquire) {
+            let _=events.send((session.owner.clone(),json!({"event":"shell.exit","exit":{"command":session.command,"sessionId":session.id,"exitCode":state.exit,"status":if state.killed{"killed"}else{"completed"}}})));
+        }
+    }
+    if let Some(stream) = &session.stream {
+        #[cfg(unix)]
+        let signal = {
+            use std::os::unix::process::ExitStatusExt;
+            status
+                .as_ref()
+                .ok()
+                .and_then(|status| status.signal())
+                .and_then(runner::signal_name)
+                .map(str::to_owned)
+        };
+        #[cfg(not(unix))]
+        let signal = None;
+        let event = NativeRunnerProcessEvent::Exit {
+            code: status.as_ref().ok().and_then(|status| status.code()),
+            signal,
+        };
+        let _ = tokio::select! {result=stream.send(event)=>result,_=root.cancelled()=>Err(tokio::sync::mpsc::error::SendError(NativeRunnerProcessEvent::Exit{code:None,signal:None}))};
+    }
     if let Some(catalog) = catalog.upgrade() {
         trim(
             &mut catalog

@@ -41,7 +41,7 @@ impl ConfigModule {
         }).map(|mut model|{model.as_object_mut().expect("captured model").remove("enabled");model}).collect())
     }
     pub async fn verification_session(&self,id:&str,provider:&str,model:&str)->Result<Box<dyn happy_providers::Session>> {
-        if self.provider_type(provider)==Some("smart"){return self.session_internal(id,&json!({"provider":provider,"model":model}),Vec::new(),Some(0),false).await;}
+        if self.provider_type(provider)==Some("smart"){return self.session_internal(id,&json!({"provider":provider,"model":model}),Vec::new(),Some(0),false,false).await;}
         anyhow::ensure!(self.model_allowed(provider,model)&&self.model_available_on_account(provider,model),"The selected verification model is unavailable.");
         let (_,mut configuration)=self.concrete_configuration(&json!({"provider":provider,"model":model}),false)?;configuration.inference_max_retries=0;
         Ok(Box::new(happy_providers::HttpSession::new(id.to_owned(),configuration,Vec::new()).await?))

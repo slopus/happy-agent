@@ -9,8 +9,23 @@ use std::{
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf, unix::AsyncFd};
 
 pub(super) struct Pty(AsyncFd<OwnedFd>);
+pub(super) struct Control(OwnedFd);
+impl Control {
+    pub fn resize(&self, cols: u16, rows: u16) -> io::Result<()> {
+        let size = libc::winsize {
+            ws_row: rows,
+            ws_col: cols,
+            ws_xpixel: 0,
+            ws_ypixel: 0,
+        };
+        if unsafe { libc::ioctl(self.0.as_raw_fd(), libc::TIOCSWINSZ, &size) } < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
+}
 
-pub(super) fn attach(command: &mut tokio::process::Command) -> Result<(Pty, Pty)> {
+pub(super) fn attach(command: &mut tokio::process::Command) -> Result<(Pty, Pty, Control)> {
     let (master, slave) = open()?;
     command
         .stdin(std::process::Stdio::from(slave.try_clone()?))
@@ -39,7 +54,8 @@ pub(super) fn attach(command: &mut tokio::process::Command) -> Result<(Pty, Pty)
     }
     Ok((
         Pty(AsyncFd::new(master.try_clone()?)?),
-        Pty(AsyncFd::new(master)?),
+        Pty(AsyncFd::new(master.try_clone()?)?),
+        Control(master),
     ))
 }
 

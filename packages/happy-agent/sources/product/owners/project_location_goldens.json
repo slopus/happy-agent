@@ -1,0 +1,80 @@
+{
+    "project": {
+        "id": "home-project",
+        "repositoryRef": "/previous-local-home",
+        "kind": "home",
+        "storageKey": "home",
+        "name": "Home",
+        "nameSource": "folder",
+        "status": "active",
+        "presence": "present",
+        "initializationStatus": "ready",
+        "initializationAttempt": 0,
+        "worktreeSupport": "unknown",
+        "gitAhead": 0,
+        "gitBehind": 0,
+        "gitDetached": false,
+        "orderKey": "500",
+        "version": 1,
+        "createdAt": 100,
+        "updatedAt": 100
+    },
+    "cases": [
+        {
+            "snapshot": {
+                "runners": [
+                    {
+                        "id": "fixture",
+                        "name": "Fixture runner",
+                        "default": true,
+                        "status": "disconnected",
+                        "machine": {
+                            "version": "fixture",
+                            "platform": "linux",
+                            "arch": "x64",
+                            "hostname": "fixture",
+                            "home": "/cached-runner-home"
+                        },
+                        "protocol": null,
+                        "since": 100,
+                        "reason": null
+                    }
+                ],
+                "version": "fixture-version"
+            },
+            "compute": {
+                "type": "runner",
+                "runnerId": "fixture",
+                "path": "/cached-runner-home"
+            },
+            "location": {
+                "runnerId": "fixture",
+                "path": "/cached-runner-home"
+            },
+            "unavailable": false
+        },
+        {
+            "snapshot": {
+                "runners": [
+                    {
+                        "id": "fixture",
+                        "name": "Fixture runner",
+                        "default": true,
+                        "status": "disconnected",
+                        "machine": null,
+                        "protocol": null,
+                        "since": 100,
+                        "reason": null
+                    }
+                ],
+                "version": "fixture-version"
+            },
+            "compute": {
+                "type": "runner",
+                "runnerId": "fixture",
+                "path": null
+            },
+            "unavailable": true
+        }
+    ]
+}

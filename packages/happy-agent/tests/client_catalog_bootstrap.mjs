@@ -8,6 +8,7 @@ const require = createRequire(new URL("../../happy-terminal/package.json", impor
 const {
     HappyAgentClient,
     HappyAgentApiError,
+    configResponseSchema,
     desktopBootstrapResponseSchema,
     onboardingCompletedResponseSchema,
     onboardingStateSchema,
@@ -48,11 +49,17 @@ const client = new HappyAgentClient({
     fetch: socketFetch,
 });
 const checked = (schema, value) => {
-    assert(Value.Check(schema, value), JSON.stringify([...Value.Errors(schema, value)].slice(0, 5)));
+    assert(
+        Value.Check(schema, value),
+        JSON.stringify([...Value.Errors(schema, value)].slice(0, 5)),
+    );
     return value;
 };
 const rejected = async (promise, status) => {
-    await assert.rejects(promise, (error) => error instanceof HappyAgentApiError && error.status === status);
+    await assert.rejects(
+        promise,
+        (error) => error instanceof HappyAgentApiError && error.status === status,
+    );
 };
 
 // The catalog: one project, whose active root agent is embedded and whose archived one is not.
@@ -63,7 +70,10 @@ assert.equal(project.id, workspaceId);
 assert.equal(project.status, "active");
 assert.equal(project.nameSource, "user");
 assert.deepEqual(project.compute.type, "host");
-assert.deepEqual(project.settings, { defaultWorkspaceCompute: { type: "host" }, workspaceInitialPrompt: null });
+assert.deepEqual(project.settings, {
+    defaultWorkspaceCompute: { type: "host" },
+    workspaceInitialPrompt: null,
+});
 assert.deepEqual(
     project.agents.map((agent) => agent.id),
     [activeAgentId],
@@ -72,6 +82,12 @@ assert.equal(project.agents[0].workspaceId, workspaceId);
 const focused = checked(projectResponseSchema, await client.getProject(workspaceId));
 assert.deepEqual(focused.project, project);
 await rejected(client.getProject("projectmissing"), 404);
+const configuration = checked(configResponseSchema, await client.getConfig()).config;
+assert.equal(configuration.presence.current, "online");
+assert.equal(configuration.presence.fallback, "online");
+assert.equal(configuration.presence.states.online.title, "Online");
+assert.equal(configuration.presence.states.online.answerWaitMs, null);
+assert.equal(configuration.presence.states.away.answerWaitMs, 0);
 
 // The project is its own root workspace, with the same agent series and version clock; the
 // tree is flat, ordered, and leaves archived workspaces out unless asked.
@@ -89,20 +105,33 @@ assert.equal(root.projectId, workspaceId);
 assert.equal(root.kind, "root");
 assert.equal(root.version, project.version);
 assert.deepEqual(root.agents, project.agents);
-assert.deepEqual(checked(workspaceResponseSchema, await client.getWorkspace(workspaceId)).workspace, root);
+assert.deepEqual(
+    checked(workspaceResponseSchema, await client.getWorkspace(workspaceId)).workspace,
+    root,
+);
 assert.equal(child.projectId, workspaceId);
 assert.equal(child.kind, "worktree");
 assert.equal(child.status, "active");
 assert.equal(child.nameSource, "user");
 assert.deepEqual(child.initialization, { status: "ready", attempt: 1, error: null });
 assert.deepEqual(child.base, { ref: "main", commit: "4f2a1c9" });
-assert.deepEqual(child.git, { branch: "fix-login", head: "8b3d2e1", upstream: null, ahead: 3, behind: 0, detached: false });
+assert.deepEqual(child.git, {
+    branch: "fix-login",
+    head: "8b3d2e1",
+    upstream: null,
+    ahead: 3,
+    behind: 0,
+    detached: false,
+});
 assert.equal(child.compute.type, "host");
 assert.deepEqual(child.agents, []);
 assert.equal(grandchild.projectId, workspaceId);
 assert.equal(grandchild.kind, "copy");
 assert.equal(grandchild.base, null);
-assert.deepEqual(checked(workspaceResponseSchema, await client.getWorkspace(grandchildId)).workspace, grandchild);
+assert.deepEqual(
+    checked(workspaceResponseSchema, await client.getWorkspace(grandchildId)).workspace,
+    grandchild,
+);
 const history = checked(
     workspaceListResponseSchema,
     await client.listWorkspaces({ projectId: workspaceId, includeArchived: true }),
@@ -139,7 +168,9 @@ assert.equal(typeof before.cursor, "string");
 await client.getEvents({ after: before.cursor });
 
 // Completing onboarding is reflected by the next snapshot.
-assert.deepEqual(checked(onboardingCompletedResponseSchema, await client.completeOnboarding()), { completed: true });
+assert.deepEqual(checked(onboardingCompletedResponseSchema, await client.completeOnboarding()), {
+    completed: true,
+});
 const after = checked(desktopBootstrapResponseSchema, await client.getDesktopBootstrap());
 assert.equal(after.onboarding.completed, true);
 assert.deepEqual(after.onboarding, await client.getOnboarding());

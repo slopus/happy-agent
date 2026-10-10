@@ -44,6 +44,7 @@ monty-alloc.workspace = true
 monty-pool.workspace = true
 monty-proto.workspace = true
 monty-types.workspace = true
+notify = "=8.2.0"
 jsonschema.workspace = true
 rand.workspace = true
 reqwest.workspace = true
