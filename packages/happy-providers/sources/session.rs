@@ -715,7 +715,9 @@ impl HttpSession {
         events: &mpsc::Sender<Event>,
         compaction: bool,
     ) -> Result<Mapper, ProviderError> {
-        for attempt in 0..=self.config.inference_max_retries {
+        let mut attempt = 0;
+        let mut refreshed_grok = false;
+        while attempt <= self.config.inference_max_retries {
             if cancel.is_cancelled() {
                 return Err(cancelled());
             }
@@ -764,6 +766,16 @@ impl HttpSession {
                     if cancel.is_cancelled() {
                         return Err(cancelled());
                     }
+                    // A rejected Grok CLI session is rotated once and replayed outside the retry budget.
+                    if error.kind == ErrorKind::Authentication
+                        && self.config.kind == ProviderKind::Grok
+                        && !refreshed_grok
+                    {
+                        refreshed_grok = true;
+                        if self.credential.refresh_grok_after_unauthorized().await {
+                            continue;
+                        }
+                    }
                     let fallback = use_socket
                         && self.config.transport == Transport::Auto
                         && (error.retryable || matches!(error.status, Some(404 | 405 | 426)));
@@ -801,6 +813,7 @@ impl HttpSession {
                             .min(60_000)
                     };
                     tokio::select! { _ = cancel.cancelled() => return Err(cancelled()), _ = tokio::time::sleep(Duration::from_millis(wait)) => {} }
+                    attempt += 1;
                 }
             }
         }

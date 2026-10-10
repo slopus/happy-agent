@@ -274,6 +274,10 @@ impl Credential {
         }
     }
     /// Runs in its own task so a caller that stops waiting cannot interrupt the store write.
+    /// Rotates a Grok CLI session the provider rejected; `false` when nothing new can be sent.
+    pub(crate) async fn refresh_grok_after_unauthorized(&self) -> bool {
+        self.refresh_grok().await
+    }
     async fn refresh_grok(&self) -> bool {
         let this = self.clone();
         tokio::spawn(async move { this.refresh_grok_now().await })

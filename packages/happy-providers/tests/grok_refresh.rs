@@ -1,6 +1,9 @@
 //! Grok CLI OAuth sessions stay usable: OIDC refresh before expiry, adoption of a token another
-//! process rotated under the store lock, quiet failure, and maintenance without inference.
-use happy_providers::{Credential, CredentialSource};
+//! process rotated under the store lock, quiet failure, one refresh and replay after the proxy
+//! rejects a session, and maintenance without inference.
+use happy_providers::{
+    Credential, CredentialSource, ErrorKind, Event, HttpSession, Outcome, RunRequest, Session,
+};
 use serde_json::{Value, json};
 use std::{
     path::{Path, PathBuf},
@@ -10,6 +13,7 @@ use std::{
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpListener,
+    sync::mpsc,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -19,6 +23,7 @@ const SCOPE: &str = "https://auth.x.ai::b1a00492-073a-47ea-816f-4c329264a828";
 struct Request {
     method: String,
     path: String,
+    authorization: Option<String>,
     body: String,
 }
 
@@ -109,10 +114,16 @@ async fn read_request(socket: &mut tokio::net::TcpStream) -> Option<Request> {
         if bytes.len() < end + 4 + length {
             continue;
         }
+        let authorization = head.lines().find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            name.eq_ignore_ascii_case("authorization")
+                .then(|| value.trim().to_owned())
+        });
         let mut parts = head.split_whitespace();
         return Some(Request {
             method: parts.next()?.to_owned(),
             path: parts.next()?.to_owned(),
+            authorization,
             body: String::from_utf8_lossy(&bytes[end + 4..end + 4 + length]).to_string(),
         });
     }
@@ -327,6 +338,127 @@ async fn reports_refresh_failures_instead_of_throwing() {
             .unwrap()
     );
     assert!(!file.exists());
+    assert_eq!(issuer.token_requests().len(), 2);
+}
+
+/// A loopback inference proxy answering each request with the next scripted status.
+async fn proxy(statuses: Vec<u16>) -> (String, Arc<Mutex<Vec<Request>>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let requests: Arc<Mutex<Vec<Request>>> = Arc::default();
+    let recorded = requests.clone();
+    tokio::spawn(async move {
+        for status in statuses {
+            let Ok((mut socket, _)) = listener.accept().await else {
+                return;
+            };
+            let Some(request) = read_request(&mut socket).await else {
+                return;
+            };
+            recorded.lock().unwrap().push(request);
+            let (content_type, body) = if status == 200 {
+                let events = [
+                    json!({"type":"response.content_part.added","part":{"type":"output_text"}}),
+                    json!({"type":"response.output_text.delta","delta":"hello"}),
+                    json!({"type":"response.output_text.done"}),
+                    json!({"type":"response.completed","response":{"id":"response-1","output":[],"usage":{"input_tokens":5,"output_tokens":1}}}),
+                ];
+                let body = events.iter().map(|event| format!("data: {event}\r\n\r\n"));
+                ("text/event-stream", body.collect::<String>())
+            } else {
+                let error = json!({ "error": { "message": "The session token is not valid." } });
+                ("application/json", error.to_string())
+            };
+            let head = format!(
+                "HTTP/1.1 {status} X\r\nConnection: close\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\n\r\n",
+                body.len()
+            );
+            let _ = socket.write_all(head.as_bytes()).await;
+            let _ = socket.write_all(body.as_bytes()).await;
+        }
+    });
+    (url, requests)
+}
+
+/// Runs one inference with no retry budget, so only the refresh replay can send a second request.
+async fn infer(file: &Path, endpoint: String) -> Vec<Event> {
+    let config = serde_json::from_value(json!({
+        "kind": "grok",
+        "credential": { "type": "grok", "auth_file": file, "ambient": false },
+        "model": "grok-4.5",
+        "endpoint": endpoint,
+        "transport": "sse",
+        "inferenceMaxRetries": 0,
+        "streamIdleTimeoutMs": 2000,
+    }))
+    .unwrap();
+    let mut session = HttpSession::new("unauthorized".into(), config, vec![])
+        .await
+        .unwrap();
+    let (tx, mut rx) = mpsc::channel(128);
+    let run = session.run(RunRequest::default(), CancellationToken::new(), tx);
+    let collecting = async {
+        let mut events = Vec::new();
+        while let Some(event) = rx.recv().await {
+            events.push(event);
+        }
+        events
+    };
+    tokio::join!(run, collecting).1
+}
+
+#[tokio::test]
+async fn refreshes_once_and_replays_a_request_the_proxy_rejected() {
+    let issuer = Issuer::start(|_| fresh_tokens()).await;
+    let directory = tempfile::tempdir().unwrap();
+    // Valid by its stored expiry, yet revoked server-side.
+    let file = write_store(directory.path(), &issuer.url, 3600);
+    let (endpoint, requests) = proxy(vec![401, 200]).await;
+    let events = infer(&file, endpoint).await;
+    assert!(
+        matches!(
+            events.last(),
+            Some(Event::Done {
+                outcome: Outcome::Normal { .. }
+            })
+        ),
+        "the replay completes the turn: {events:?}"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, Event::Retrying { .. }))
+    );
+    let sent: Vec<_> = requests
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|request| request.authorization.clone())
+        .collect();
+    assert_eq!(
+        sent,
+        [
+            Some("Bearer stale-access".to_owned()),
+            Some("Bearer fresh-access".to_owned())
+        ]
+    );
+    assert_eq!(issuer.token_requests().len(), 1);
+    assert_eq!(stored(&file)[SCOPE]["key"], "fresh-access");
+
+    // A replay that is rejected again surfaces the error instead of refreshing a second time.
+    let directory = tempfile::tempdir().unwrap();
+    let file = write_store(directory.path(), &issuer.url, 3600);
+    let (endpoint, requests) = proxy(vec![401, 401, 200]).await;
+    let events = infer(&file, endpoint).await;
+    let Some(Event::Done {
+        outcome: Outcome::Error { error },
+    }) = events.last()
+    else {
+        panic!("a repeated rejection must fail the turn: {events:?}");
+    };
+    assert_eq!(error.kind, ErrorKind::Authentication);
+    assert!(!format!("{error:?}").contains("-access"));
+    assert_eq!(requests.lock().unwrap().len(), 2);
     assert_eq!(issuer.token_requests().len(), 2);
 }
 
