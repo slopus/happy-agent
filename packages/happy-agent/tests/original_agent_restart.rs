@@ -14,6 +14,8 @@ mod provider_maintenance_acceptance;
 mod onboarding_acceptance;
 #[path = "api/mcp.rs"]
 mod mcp_acceptance;
+#[path = "api/catalog.rs"]
+mod catalog_acceptance;
 
 use rusqlite::{Connection, params};
 use serde_json::{Value, json};

@@ -45,6 +45,7 @@ mod questions;
 mod mutation;
 mod configuration;
 mod profile;
+mod catalog;
 mod runners;
 mod onboarding;
 
@@ -233,6 +234,7 @@ impl ApiModule {
         let result = match (method.as_str(), path.as_str()) {
             ("GET", "/v0/onboarding") => match self.onboarding_state().await {Ok(state)=>response(200,state),Err(failure)=>internal(failure)},
             ("POST", "/v0/onboarding/complete") => match self.complete_onboarding().await {Ok(state)=>response(200,state),Err(failure)=>internal(failure)},
+            _ if path=="/v0/projects"||path.starts_with("/v0/projects/")||path=="/v0/workspaces"||path.starts_with("/v0/workspaces/")||path=="/v0/bootstrap/desktop"=>self.catalog_route(request).await,
             ("GET", "/v0/runners") => match self.runners.snapshot().await {Ok(snapshot)=>response(200,snapshot),Err(failure)=>internal(failure)},
             _ if path=="/v0/profile"||path=="/v0/profile/photo"=>self.profile_route(request).await,
             _ if path=="/v0/config"||path=="/v0/providers/scan"||path.starts_with("/v0/providers/")=>self.configuration_route(request).await,
