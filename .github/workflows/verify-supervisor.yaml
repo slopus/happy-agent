@@ -34,17 +34,21 @@ on:
                 description: Build, package, and verify the five release targets without signing or publishing
                 type: boolean
                 default: false
+            docker_only:
+                description: Verify native Docker compute through the single executable on a real Linux engine
+                type: boolean
+                default: false
 
 permissions:
     contents: read
 
 concurrency:
-    group: verify-supervisor-${{ github.ref }}-${{ inputs.services_only }}-${{ inputs.windows_only }}-${{ inputs.distribution_only }}-${{ inputs.windows_native_only }}
+    group: verify-supervisor-${{ github.ref }}-${{ inputs.services_only }}-${{ inputs.windows_only }}-${{ inputs.distribution_only }}-${{ inputs.windows_native_only }}-${{ inputs.docker_only }}
     cancel-in-progress: true
 
 jobs:
     compute-services:
-        if: ${{ !inputs.windows_native_only && !inputs.distribution_only && (inputs.services_only || !inputs.windows_only) }}
+        if: ${{ !inputs.docker_only && !inputs.windows_native_only && !inputs.distribution_only && (inputs.services_only || !inputs.windows_only) }}
         name: Published service runtime on ${{ matrix.runner }}
         runs-on: ${{ matrix.runner }}
         timeout-minutes: 20
@@ -81,13 +85,13 @@ jobs:
         name: Native Windows runtime
         permissions:
             contents: read
-        if: ${{ inputs.windows_native_only || (!inputs.services_only && !inputs.distribution_only) }}
+        if: ${{ inputs.windows_native_only || (!inputs.docker_only && !inputs.services_only && !inputs.distribution_only) }}
         uses: ./.github/workflows/verify-native-windows.yml
         with:
             native_only: ${{ inputs.windows_native_only }}
 
     native-linux:
-        if: ${{ !inputs.windows_native_only && !inputs.windows_only && !inputs.distribution_only }}
+        if: ${{ !inputs.docker_only && !inputs.windows_native_only && !inputs.windows_only && !inputs.distribution_only }}
         name: Native boundary on ${{ matrix.runner }}
         runs-on: ${{ matrix.runner }}
         timeout-minutes: 90
@@ -236,7 +240,7 @@ jobs:
                   if-no-files-found: warn
 
     native-macos:
-        if: ${{ !inputs.windows_native_only && !inputs.windows_only && !inputs.services_only && !inputs.distribution_only }}
+        if: ${{ !inputs.docker_only && !inputs.windows_native_only && !inputs.windows_only && !inputs.services_only && !inputs.distribution_only }}
         name: Native boundary on ${{ matrix.runner }}
         runs-on: ${{ matrix.runner }}
         timeout-minutes: 60
@@ -282,7 +286,7 @@ jobs:
                   if-no-files-found: warn
 
     package:
-        if: ${{ !inputs.windows_native_only && !inputs.windows_only && !inputs.services_only && !inputs.distribution_only }}
+        if: ${{ !inputs.docker_only && !inputs.windows_native_only && !inputs.windows_only && !inputs.services_only && !inputs.distribution_only }}
         name: TypeScript package
         runs-on: ubuntu-24.04
         timeout-minutes: 20
@@ -313,7 +317,7 @@ jobs:
               run: pnpm --filter @slopus/happy-agent-supervisor build
 
     distribution:
-        if: ${{ !inputs.windows_native_only && inputs.distribution_only }}
+        if: ${{ inputs.distribution_only && !inputs.windows_native_only && !inputs.docker_only }}
         name: Distribution for ${{ matrix.target }}
         runs-on: ${{ matrix.runner }}
         timeout-minutes: 60
@@ -431,7 +435,7 @@ jobs:
                   retention-days: 7
 
     distribution-set:
-        if: ${{ !inputs.windows_native_only && inputs.distribution_only }}
+        if: ${{ inputs.distribution_only && !inputs.windows_native_only && !inputs.docker_only }}
         needs: distribution
         name: Five-target distribution
         runs-on: ubuntu-24.04
@@ -462,3 +466,80 @@ jobs:
 
             - name: Verify the five targets together
               run: node packages/happy-agent/scripts/verify-native-distribution.mjs distribution "$DISTRIBUTION_VERSION" | tee -a "$GITHUB_STEP_SUMMARY"
+
+    native-docker:
+        if: ${{ inputs.docker_only && !inputs.windows_native_only && !inputs.distribution_only && !inputs.services_only && !inputs.windows_only }}
+        name: Native Docker compute on a real Linux engine
+        runs-on: ubuntu-24.04
+        timeout-minutes: 30
+        env:
+            CARGO_TERM_COLOR: never
+            HAPPY_AGENT_TEST_COMPUTE_BINARY: ${{ github.workspace }}/target/debug/happy-agent
+            PROOF_LOGS: ${{ github.workspace }}/.native-docker-proof
+            EXPECT: packages/happy-agent-supervisor/scripts/expect-rust-tests.sh
+        steps:
+            - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+            - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+            - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+              with:
+                  node-version: "24"
+                  package-manager-cache: false
+
+            - name: Install the pinned toolchain and published fixture dependencies
+              run: |
+                  rustup show active-toolchain || rustup toolchain install
+                  pnpm install --frozen-lockfile
+
+            - name: Record the exact engine and required FUSE identity
+              run: |
+                  docker version
+                  uname -a
+                  test -c /dev/fuse
+                  ls -l /dev/fuse
+                  test "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns)" = 1
+                  docker pull ubuntu:24.04
+                  mkdir -p "$PROOF_LOGS"
+                  git rev-parse HEAD | tee "$PROOF_LOGS/commit.txt"
+                  echo '| Suite | Result | Expected | Verdict |' >> "$GITHUB_STEP_SUMMARY"
+                  echo '| --- | --- | --- | --- |' >> "$GITHUB_STEP_SUMMARY"
+
+            - name: Build the whole executable and native test binary
+              run: |
+                  cargo build --locked -p happy-agent --bin happy-agent
+                  cargo test --locked -p happy-agent --bin happy-agent --no-run
+
+            - name: Verify local Docker contracts with no ignored cases
+              run: >-
+                  bash "$EXPECT" "Docker local contracts" exact 5 "$PROOF_LOGS" --
+                  cargo test --locked -p happy-agent --bin happy-agent product::docker::tests::
+                  -- --skip native_docker_ --test-threads=1
+
+            - name: Prove default refusal and Source's explicit test-container namespace allowance
+              run: bash packages/happy-agent/scripts/test-native-docker-namespaces.sh "$HAPPY_AGENT_TEST_COMPUTE_BINARY"
+
+            - name: Verify retained file knowledge and native boundaries
+              run: >-
+                  bash "$EXPECT" "Docker file tool regressions" exact 15 "$PROOF_LOGS" --
+                  cargo test --locked -p happy-agent --bin happy-agent product::tools::files::tests::
+                  -- --test-threads=1
+
+            - name: Prove actual container files, Skills, shells, PTYs, secrets, permissions and durable teardown
+              env:
+                  HAPPY_AGENT_TEST_DOCKER_APPARMOR_PROFILE: happy-compute-container-tests
+              run: >-
+                  bash "$EXPECT" "Docker engine contracts" exact 2 "$PROOF_LOGS" --
+                  cargo test --locked -p happy-agent --bin happy-agent product::docker::tests::native_docker_
+                  -- --include-ignored --test-threads=1 --nocapture
+
+            - name: Confirm the host restriction remains enabled
+              if: ${{ always() }}
+              run: test "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns)" = 1
+
+            - name: Upload exact Docker proof logs
+              if: ${{ always() }}
+              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+              with:
+                  name: native-docker-proof
+                  path: .native-docker-proof
+                  if-no-files-found: error
+                  retention-days: 7
