@@ -20,7 +20,7 @@ on:
                 type: boolean
                 default: false
             windows_only:
-                description: Build and validate only the standalone Windows Agent
+                description: Validate only the native Windows runtime and its single executable
                 type: boolean
                 default: false
 
@@ -67,13 +67,11 @@ jobs:
               run: pnpm --filter @slopus/happy-agent-compute test:live:docker
 
     windows:
+        name: Native Windows runtime
         permissions:
             contents: read
-            id-token: write
         if: ${{ !inputs.services_only }}
-        uses: ./.github/workflows/build-windows.yml
-        with:
-            version: 0.4.48-windows-ci.${{ github.run_number }}
+        uses: ./.github/workflows/verify-native-windows.yml
 
     native-linux:
         if: ${{ !inputs.windows_only }}
