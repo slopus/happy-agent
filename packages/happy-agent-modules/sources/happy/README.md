@@ -242,7 +242,9 @@ A Happy server older than `session-subscribe` never answers it, so after five se
 session falls back to a session-scoped socket of its own, the way all of them used to connect,
 and at most 64 stay subscribed, oldest replaced first. Only one of the two ever carries a session:
 nothing is written on the machine socket for a session until Happy has answered, so no session
-registers its requests twice.
+registers its requests twice. A reconnect asks again, and can reach a server of another version:
+when sessions move onto their own sockets, the ones beyond 64 are let go before any socket opens,
+and when they move back, the ones the cap had left out are restored.
 
 An attachment arrives as its own message just before the words that go with it,
 so it is held rather than delivered, and the read position does not move until

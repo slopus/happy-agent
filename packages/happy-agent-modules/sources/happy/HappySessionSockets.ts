@@ -53,6 +53,12 @@ const rpcRequestSchema = Type.Object({ method: Type.String() }, { additionalProp
 export interface HappySessionSocketsOptions {
     readonly configuration: HappyConnectionConfiguration;
     readonly context: Context;
+    /**
+     * Happy changed how sessions travel after the first decision, as when a reconnect reaches a
+     * server of another version. Sessions moving onto sockets of their own wait for this to settle,
+     * so the owner can bring them within the cap those sockets have before any of them opens.
+     */
+    readonly onTransportChanged?: (transport: HappySessionTransport) => Promise<void>;
     /** Only a test supplies this; left out, a dedicated session socket connects to Happy. */
     readonly socketFactory?: (url: string, options: Record<string, unknown>) => HappySocket;
     readonly version: string;
@@ -77,8 +83,11 @@ export interface HappySessionSocketsOptions {
 export class HappySessionSockets {
     readonly #options: HappySessionSocketsOptions;
     readonly #links = new Map<string, HappySessionLink>();
-    /** Sessions waiting for the next subscription batch. */
-    readonly #pending = new Set<string>();
+    /**
+     * Sessions waiting for the next subscription batch. Answers are matched to the links that
+     * asked, never to a session id alone: a session reopened after leaving asks again for itself.
+     */
+    readonly #pending = new Set<HappySessionLink>();
     /** The machine socket while it is connected. */
     #socket: HappySocket | undefined;
     /** Counts machine connections, so an answer meant for an earlier one is ignored. */
@@ -87,6 +96,11 @@ export class HappySessionSockets {
     #transport: HappySessionTransport | undefined;
     /** The latest decision, kept across reconnects so capacity does not flap while one probes. */
     #decided: HappySessionTransport | undefined;
+    /**
+     * The owner is still letting go of sessions beyond the cap of sockets of their own. It outlives
+     * reconnects: no session socket opens until it has finished, however many connections decide.
+     */
+    #contraction: Promise<void> | undefined;
     #flushScheduled = false;
     #closed = false;
     #settleFirstTransport!: (transport: HappySessionTransport | undefined) => void;
@@ -120,7 +134,7 @@ export class HappySessionSockets {
         this.#socket = socket;
         this.#transport = undefined;
         this.#pending.clear();
-        const first = [...this.#links.keys()].slice(0, MAX_SUBSCRIBE_BATCH);
+        const first = [...this.#links.values()].slice(0, MAX_SUBSCRIBE_BATCH);
         let answered = false;
         const timer = setTimeout(() => {
             if (answered || epoch !== this.#epoch) return;
@@ -128,7 +142,8 @@ export class HappySessionSockets {
             this.#decide("dedicated", []);
         }, SUBSCRIBE_PROBE_TIMEOUT_MS);
         timer.unref();
-        socket.emit("session-subscribe", { sids: first }, (answer: unknown) => {
+        const sids = first.map((link) => link.remoteSessionId);
+        socket.emit("session-subscribe", { sids }, (answer: unknown) => {
             if (answered || epoch !== this.#epoch) return;
             answered = true;
             clearTimeout(timer);
@@ -142,10 +157,8 @@ export class HappySessionSockets {
                 this.#decide("dedicated", []);
                 return;
             }
-            const applied = answer.result === "success";
-            // A first batch that Happy could not apply (`internal`) is asked again like any other.
-            this.#decide("multiplexed", applied ? first : []);
-            if (applied) this.#joined(answer.subscribed);
+            this.#decide("multiplexed", first);
+            if (answer.result === "success") this.#joined(first, answer.subscribed);
             else if (answer.reason === "internal") this.#retry(first, epoch);
         });
     }
@@ -195,8 +208,9 @@ export class HappySessionSockets {
     activate(link: HappySessionLink): void {
         if (this.#closed) return;
         this.#links.set(link.remoteSessionId, link);
-        if (this.#transport === "dedicated") link.useDedicated();
-        else if (this.#transport === "multiplexed") this.#enqueue([link.remoteSessionId]);
+        if (this.#transport === "dedicated") {
+            if (this.#contraction === undefined) link.useDedicated();
+        } else if (this.#transport === "multiplexed") this.#enqueue([link]);
     }
 
     /**
@@ -207,7 +221,7 @@ export class HappySessionSockets {
     release(link: HappySessionLink, methods: readonly string[]): void {
         if (this.#links.get(link.remoteSessionId) !== link) return;
         this.#links.delete(link.remoteSessionId);
-        this.#pending.delete(link.remoteSessionId);
+        this.#pending.delete(link);
         const socket = this.#socket;
         if (socket === undefined || this.#transport === "dedicated") return;
         socket.emit("session-unsubscribe", { sids: [link.remoteSessionId] });
@@ -245,26 +259,61 @@ export class HappySessionSockets {
         });
     }
 
-    #decide(transport: HappySessionTransport, asked: readonly string[]): void {
+    #decide(transport: HappySessionTransport, asked: readonly HappySessionLink[]): void {
+        const previous = this.#decided;
         this.#transport = transport;
         this.#decided = transport;
         this.#settleFirstTransport(transport);
         this.#options.context.log.debug("Happy chose how sessions travel.", { transport });
-        const alreadyAsked = new Set(asked);
-        const unasked: string[] = [];
-        for (const link of this.#links.values()) {
-            if (transport === "dedicated") {
-                link.useDedicated();
-                continue;
+        const changed = previous !== undefined && previous !== transport;
+        if (transport === "multiplexed") {
+            const alreadyAsked = new Set(asked);
+            const unasked: HappySessionLink[] = [];
+            for (const link of this.#links.values()) {
+                link.leaveDedicated();
+                if (!alreadyAsked.has(link)) unasked.push(link);
             }
-            link.leaveDedicated();
-            if (!alreadyAsked.has(link.remoteSessionId)) unasked.push(link.remoteSessionId);
+            if (unasked.length > 0) this.#enqueue(unasked);
+            if (changed) void this.#announce(transport);
+            return;
         }
-        if (unasked.length > 0) this.#enqueue(unasked);
+        // Sessions had no cap on the machine connection, and sockets of their own do: none opens
+        // until the owner has let go of the sessions beyond it.
+        if (changed) {
+            const contraction = this.#announce(transport).finally(() => {
+                if (this.#contraction === contraction) this.#contraction = undefined;
+            });
+            this.#contraction = contraction;
+        }
+        const contraction = this.#contraction;
+        if (contraction === undefined) {
+            this.#carryDedicated();
+            return;
+        }
+        const epoch = this.#epoch;
+        void contraction.then(() => {
+            if (epoch === this.#epoch) this.#carryDedicated();
+        });
     }
 
-    #enqueue(sids: readonly string[]): void {
-        for (const sid of sids) this.#pending.add(sid);
+    async #announce(transport: HappySessionTransport): Promise<void> {
+        try {
+            await this.#options.onTransportChanged?.(transport);
+        } catch (error) {
+            this.#options.context.log.debug(
+                "Happy Agent could not adjust to how sessions travel.",
+                { transport },
+                error,
+            );
+        }
+    }
+
+    #carryDedicated(): void {
+        for (const link of this.#links.values()) link.useDedicated();
+    }
+
+    #enqueue(links: readonly HappySessionLink[]): void {
+        for (const link of links) this.#pending.add(link);
         if (this.#flushScheduled) return;
         this.#flushScheduled = true;
         // Sessions started in one turn of the event loop share one subscription.
@@ -278,31 +327,38 @@ export class HappySessionSockets {
         const socket = this.#socket;
         if (socket === undefined || this.#transport !== "multiplexed") return;
         const epoch = this.#epoch;
-        const sids = [...this.#pending];
+        const links = [...this.#pending];
         this.#pending.clear();
-        for (let start = 0; start < sids.length; start += MAX_SUBSCRIBE_BATCH) {
-            const batch = sids.slice(start, start + MAX_SUBSCRIBE_BATCH);
-            socket.emit("session-subscribe", { sids: batch }, (answer: unknown) => {
+        for (let start = 0; start < links.length; start += MAX_SUBSCRIBE_BATCH) {
+            const batch = links.slice(start, start + MAX_SUBSCRIBE_BATCH);
+            const sids = batch.map((link) => link.remoteSessionId);
+            socket.emit("session-subscribe", { sids }, (answer: unknown) => {
                 if (epoch !== this.#epoch) return;
                 if (!Value.Check(subscribeAnswerSchema, answer)) return;
-                if (answer.result === "success") this.#joined(answer.subscribed);
+                if (answer.result === "success") this.#joined(batch, answer.subscribed);
                 else if (answer.reason === "internal") this.#retry(batch, epoch);
             });
         }
     }
 
     /** Happy could not apply a subscription this time; it is asked again shortly. */
-    #retry(sids: readonly string[], epoch: number): void {
+    #retry(links: readonly HappySessionLink[], epoch: number): void {
         const timer = setTimeout(() => {
             if (epoch !== this.#epoch) return;
-            this.#enqueue(sids.filter((sid) => this.#links.has(sid)));
+            this.#enqueue(links.filter((link) => this.#links.get(link.remoteSessionId) === link));
         }, SUBSCRIBE_RETRY_MS);
         timer.unref();
     }
 
-    /** Happy joined these rooms; a session that stopped meanwhile already left again. */
-    #joined(sids: readonly string[]): void {
-        for (const sid of sids) this.#links.get(sid)?.joinMachine();
+    /**
+     * Happy joined these rooms for the links that asked. One that stopped meanwhile already left
+     * again, and a session reopened since then is a new link that asked on its own.
+     */
+    #joined(asked: readonly HappySessionLink[], subscribed: readonly string[]): void {
+        const joined = new Set(subscribed);
+        for (const link of asked) {
+            if (joined.has(link.remoteSessionId)) link.joinMachine();
+        }
     }
 }
 

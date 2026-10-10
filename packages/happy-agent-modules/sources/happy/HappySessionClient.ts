@@ -309,6 +309,10 @@ export class HappySessionClient {
     #syncPromise: Promise<void> | undefined;
     /** Someone is waiting for the running loop to finish, so it is not paced. */
     #urgent = false;
+    #finishFirstPass!: () => void;
+    readonly #firstPass = new Promise<void>((resolve) => {
+        this.#finishFirstPass = resolve;
+    });
 
     constructor(options: HappySessionClientOptions) {
         this.#options = options;
@@ -357,6 +361,14 @@ export class HappySessionClient {
         await this.#avatarSync;
     }
 
+    /**
+     * Settles once the first pass has finished, however it ended, without hurrying any pass or
+     * waiting for the ones after it.
+     */
+    async firstPass(): Promise<void> {
+        await this.#firstPass;
+    }
+
     /** Tells Happy the session has ended, and stops. */
     async archive(): Promise<void> {
         if (this.#closed || this.#archiving) return;
@@ -387,6 +399,7 @@ export class HappySessionClient {
     async close(): Promise<void> {
         if (this.#closed) return;
         this.#closed = true;
+        this.#finishFirstPass();
         this.#clearRetry();
         this.#clearAvatarRetry();
         await this.#sendSessionEnd().catch(() => undefined);
@@ -401,6 +414,7 @@ export class HappySessionClient {
     async unsubscribe(): Promise<void> {
         if (this.#closed) return;
         this.#closed = true;
+        this.#finishFirstPass();
         this.#clearRetry();
         this.#clearAvatarRetry();
         this.#closeController.abort();
@@ -439,6 +453,8 @@ export class HappySessionClient {
                 this.#options.context.log.debug("Happy synchronization will retry.", {}, error);
                 this.#scheduleRetry();
                 return;
+            } finally {
+                this.#finishFirstPass();
             }
         } while (this.#needsAnotherSync && !this.#closed);
     }

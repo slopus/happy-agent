@@ -92,6 +92,24 @@ async function linkedDaemon(
     return { bot, bots, client, relay, sessionOf };
 }
 
+/** Waits until every bot has one remote session, and the machine socket is in each one's room. */
+async function everyRoomJoined(
+    relay: Awaited<ReturnType<typeof createMobileRelayFixture>>,
+    bots: readonly { readonly id: string }[],
+) {
+    await vi.waitFor(
+        () => {
+            const rooms = relay.machineRooms(ACCOUNT);
+            for (const bot of bots) {
+                const ids = relay.botSessions(ACCOUNT, bot.id);
+                expect(ids).toHaveLength(1);
+                expect(rooms).toContain(ids[0]);
+            }
+        },
+        { timeout: 60_000, interval: 250 },
+    );
+}
+
 async function messages(client: HappyAgentClient, agentId: string): Promise<string> {
     const history = await client.getMessages(agentId);
     return JSON.stringify(history.runs.flatMap((run) => run.messages));
@@ -195,18 +213,39 @@ describe("carrying mobile sessions over the machine connection", () => {
 
     it("publishes more than 64 sessions when Happy carries them on the machine socket", async () => {
         const { bots, relay } = await linkedDaemon({ bots: 70 });
+        await everyRoomJoined(relay, bots);
+        expect(relay.sessionSockets(ACCOUNT)).toBe(0);
+    }, 120_000);
+
+    it("keeps at most 64 session sockets when a reconnect reaches a server that cannot carry them", async () => {
+        const { bots, relay } = await linkedDaemon({ bots: 70 });
+        await everyRoomJoined(relay, bots);
+        relay.answerSubscriptions(false);
+        relay.dropMachineSocket(ACCOUNT);
         await vi.waitFor(
             () => {
-                const rooms = relay.machineRooms(ACCOUNT);
-                for (const bot of bots) {
-                    const ids = relay.botSessions(ACCOUNT, bot.id);
-                    expect(ids).toHaveLength(1);
-                    expect(rooms).toContain(ids[0]);
-                }
+                expect(relay.sessionSockets(ACCOUNT)).toBe(64);
+                expect(relay.machineRooms(ACCOUNT)).toEqual([]);
             },
-            { timeout: 60_000, interval: 250 },
+            { timeout: 30_000, interval: 250 },
         );
-        expect(relay.sessionSockets(ACCOUNT)).toBe(0);
+        // The sessions beyond the cap were let go before any socket opened.
+        expect(relay.peakSessionSockets(ACCOUNT)).toBe(64);
+    }, 120_000);
+
+    it("publishes the sessions the cap left out once a reconnect reaches a server that carries them", async () => {
+        const { bots, relay } = await linkedDaemon({
+            bots: 70,
+            relay: { sessionSubscribe: false },
+        });
+        await vi.waitFor(() => expect(relay.sessionSockets(ACCOUNT)).toBe(64), {
+            timeout: 60_000,
+            interval: 250,
+        });
+        relay.answerSubscriptions(true);
+        relay.dropMachineSocket(ACCOUNT);
+        await everyRoomJoined(relay, bots);
+        await vi.waitFor(() => expect(relay.sessionSockets(ACCOUNT)).toBe(0));
     }, 120_000);
 
     it("leaves a session's room when it is archived, and every room when unlinked", async () => {

@@ -75,6 +75,7 @@ import type { HappyConnectionConfiguration } from "./HappyCredentials.js";
 import { HappyMachineClient, type HappyMachineConnectionEvent } from "./HappyMachineClient.js";
 import { HappyPairing, HappyPairingError } from "./HappyPairing.js";
 import { HappyProjectClient } from "./HappyProjectClient.js";
+import type { HappySessionTransport } from "./HappySessionSockets.js";
 import {
     HappyMessageRefused,
     type HappyInboundMessage,
@@ -175,6 +176,13 @@ interface ConnectedAgent {
 interface AttachmentState {
     readonly agents: Map<string, ConnectedAgent>;
     readonly unsubscribedMappers: Map<string, HappyMessageMapper>;
+}
+
+interface ReplaceableSubscription {
+    readonly agentId: string;
+    readonly attached: ConnectedAgent;
+    readonly bot: boolean;
+    readonly updatedAt: number;
 }
 
 export type HappyIntegrationListener = (
@@ -922,6 +930,8 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
                     ctx.log.error("Happy connection state could not be recorded.", {}, error);
                 });
             },
+            onSessionTransportChanged: async (transport) =>
+                await this.#sessionTransportChanged(ctx, machine, transport),
             operations: this,
             remoteSessionId: async (agentId) =>
                 (await this.#sync.readSession(ctx, agentId))?.remoteSessionId,
@@ -939,7 +949,7 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
         });
         machine.start();
         this.#watchCatalog(ctx);
-        const reconcile = (async () => {
+        this.#queueReconcile(ctx, async () => {
             // Only a computer Happy accepted, or could not answer for yet, restores its sessions.
             // One Happy refused is about to be unlinked or re-registered under a new identity.
             const registration = await machine.firstRegistration();
@@ -950,12 +960,42 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
             await this.#reconcileProjects(ctx);
             await this.#reapArchived(ctx);
             await this.#reconcile(ctx);
+        });
+    }
+
+    /** Restores visible sessions after whatever restoring is already under way. */
+    #queueReconcile(ctx: Context, work: () => Promise<void>): void {
+        const previous = this.#reconcilePromise;
+        const reconcile = (async () => {
+            await previous;
+            await work();
         })().catch((error: unknown) => {
             ctx.log.debug("Happy could not restore its visible sessions.", {}, error);
         });
         this.#reconcilePromise = reconcile;
         void reconcile.finally(() => {
             if (this.#reconcilePromise === reconcile) this.#reconcilePromise = undefined;
+        });
+    }
+
+    /**
+     * Happy changed how sessions travel after the first answer, as when a reconnect reaches a
+     * server of another version. Sessions moving onto sockets of their own are first brought within
+     * the cap those sockets have, by the same rule that replaces a subscription. Sessions the cap
+     * left out are restored once there is no cap.
+     */
+    async #sessionTransportChanged(
+        ctx: Context,
+        machine: HappyMachineClient,
+        transport: HappySessionTransport,
+    ): Promise<void> {
+        if (this.#machine !== machine || this.#stopping) return;
+        if (transport === "dedicated") {
+            await ctx.inTx(async (txCtx) => await this.#trimToCapacity(txCtx));
+            return;
+        }
+        this.#queueReconcile(ctx, async () => {
+            if (this.#machine === machine && !this.#stopping) await this.#reconcile(ctx);
         });
     }
 
@@ -2063,25 +2103,10 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
         // Every caller holds the database transaction, so concurrent creation and activity
         // cannot select the same slot or exceed the budget. Catalog reconciliation never
         // replaces a subscription: only a requested conversation or a new agent event does.
-        if (oldest !== undefined) {
-            state.agents.delete(oldest.agentId);
-            state.unsubscribedMappers.delete(oldest.agentId);
-            state.unsubscribedMappers.set(oldest.agentId, oldest.attached.mapper);
-            while (state.unsubscribedMappers.size > MAX_DEDICATED_SESSIONS) {
-                const first = state.unsubscribedMappers.keys().next().value;
-                if (first === undefined) break;
-                state.unsubscribedMappers.delete(first);
-            }
-        }
+        if (oldest !== undefined) this.#evict(ctx, state, oldest);
         state.unsubscribedMappers.delete(agentId);
         state.agents.set(agentId, attached);
         afterCommit(ctx, () => {
-            // Unsubscribe disconnects synchronously before waiting for outstanding work.
-            // It neither archives the relay session nor ends the agent's turn.
-            if (oldest !== undefined) {
-                this.#forgetGitAgent(oldest.agentId);
-                this.#runTask(async () => await oldest.attached.client.unsubscribe());
-            }
             if (this.#stopping || this.#agents.get(agentId) !== attached) {
                 void attached.client.unsubscribe();
                 return;
@@ -2129,7 +2154,7 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
     }
 
     /**
-     * Durable agent update time, independent of reconnect order and relay keep-alives.
+     * The subscription a new one replaces once every slot is taken.
      *
      * A bot is a person's standing conversation and the reason most of them open the phone, so
      * a project session is always replaced before any bot, and never replaces one itself. Only
@@ -2139,37 +2164,75 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
         ctx: Context,
         agents: ReadonlyMap<string, ConnectedAgent>,
         forBot: boolean,
-    ) {
-        const sessions = await this.#oldestSubscriptionWhere(ctx, agents, false);
-        if (sessions !== undefined || !forBot) return sessions;
-        return await this.#oldestSubscriptionWhere(ctx, agents, true);
+    ): Promise<ReplaceableSubscription | undefined> {
+        const [oldest] = await this.#replaceableSubscriptions(ctx, agents);
+        return oldest === undefined || (oldest.bot && !forBot) ? undefined : oldest;
     }
 
-    async #oldestSubscriptionWhere(
+    /**
+     * Subscriptions in the order they are replaced: every project session before any bot, each
+     * oldest first by durable agent update time, independent of reconnect order and relay
+     * keep-alives. A new subscription replaces only a published one, so one still publishing is
+     * not replaceable until its first relay request has finished. Shrinking to the cap of sockets
+     * of their own counts every attachment, because each one opens a socket once it publishes.
+     */
+    async #replaceableSubscriptions(
         ctx: Context,
         agents: ReadonlyMap<string, ConnectedAgent>,
-        bots: boolean,
-    ) {
-        let oldest: { agentId: string; attached: ConnectedAgent; updatedAt: number } | undefined;
+        includeUnpublished = false,
+    ): Promise<ReplaceableSubscription[]> {
+        const subscriptions: ReplaceableSubscription[] = [];
         for (const [agentId, attached] of agents) {
-            if ((await this.#sync.readSession(ctx, agentId))?.remoteSessionId === undefined)
+            if (
+                !includeUnpublished &&
+                (await this.#sync.readSession(ctx, agentId))?.remoteSessionId === undefined
+            )
                 continue;
-            if (((await this.#bots.forAgent(ctx, agentId)) !== undefined) !== bots) continue;
+            const bot = (await this.#bots.forAgent(ctx, agentId)) !== undefined;
             const latest = await this.#events.latestAgentEvent(ctx, agentId);
             const config =
                 latest === undefined ? await this.#system().config(ctx, agentId) : undefined;
             const updatedAt =
                 latest?.occurredAt ??
                 (typeof config?.metadata?.updatedAt === "number" ? config.metadata.updatedAt : 0);
-            if (
-                oldest === undefined ||
-                updatedAt < oldest.updatedAt ||
-                (updatedAt === oldest.updatedAt && agentId < oldest.agentId)
-            ) {
-                oldest = { agentId, attached, updatedAt };
-            }
+            subscriptions.push({ agentId, attached, bot, updatedAt });
         }
-        return oldest;
+        return subscriptions.sort(
+            (left, right) =>
+                Number(left.bot) - Number(right.bot) ||
+                left.updatedAt - right.updatedAt ||
+                (left.agentId < right.agentId ? -1 : left.agentId > right.agentId ? 1 : 0),
+        );
+    }
+
+    /**
+     * Releases a subscription, keeping its mapper so it resumes where it stopped. Unsubscribing
+     * disconnects synchronously before waiting for outstanding work, and neither archives the
+     * relay session nor ends the agent's turn.
+     */
+    #evict(ctx: Context, state: AttachmentState, oldest: ReplaceableSubscription): void {
+        state.agents.delete(oldest.agentId);
+        state.unsubscribedMappers.delete(oldest.agentId);
+        state.unsubscribedMappers.set(oldest.agentId, oldest.attached.mapper);
+        while (state.unsubscribedMappers.size > MAX_DEDICATED_SESSIONS) {
+            const first = state.unsubscribedMappers.keys().next().value;
+            if (first === undefined) break;
+            state.unsubscribedMappers.delete(first);
+        }
+        afterCommit(ctx, () => {
+            this.#forgetGitAgent(oldest.agentId);
+            this.#runTask(async () => await oldest.attached.client.unsubscribe());
+        });
+    }
+
+    /** Lets go of the subscriptions beyond what sockets of their own may carry. */
+    async #trimToCapacity(ctx: Context): Promise<void> {
+        const state = this.#attachmentState(ctx);
+        if (state.agents.size <= MAX_DEDICATED_SESSIONS) return;
+        for (const subscription of await this.#replaceableSubscriptions(ctx, state.agents, true)) {
+            if (state.agents.size <= MAX_DEDICATED_SESSIONS) return;
+            this.#evict(ctx, state, subscription);
+        }
     }
 
     /**
@@ -2268,7 +2331,9 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
                 ctx.log.debug("Happy could not restore a session.", { agentId }, error);
             }
             if (restoring.length >= RECONCILE_BATCH) {
-                await Promise.all(restoring.splice(0).map(async (client) => await client.settle()));
+                await Promise.all(
+                    restoring.splice(0).map(async (client) => await client.firstPass()),
+                );
             }
             return true;
         };

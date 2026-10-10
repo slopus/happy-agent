@@ -125,8 +125,16 @@ one message it cannot carry.
   that request did not apply and is asked again. Nothing is written for a session on the machine
   socket before that answer, so a session that falls back never registers its RPCs on both
   sockets. Rooms die with the connection, so a reconnect resubscribes everything and each session
-  forces its metadata compare-and-swap again. `delete-session` and ephemerals never reach a
-  room, so nothing depends on them. There is no separate keepalive timer: `session-alive` stays
+  forces its metadata compare-and-swap again. A reconnect can reach a server of another version,
+  so the answer can change: falling back first lets go of the sessions beyond 64 by the
+  replacement rule, counting attachments still publishing, and only then opens sockets (it once
+  opened one for every session; a second reconnect during the trim must wait for it too), and gaining
+  support restores the sessions the cap had left out. A subscription answer belongs to the link
+  that asked, not to the session id: a session reopened while its predecessor's request was in
+  flight used to be marked joined by that answer and then removed by the predecessor's
+  unsubscribe. Startup restore waits for each batch's first pass, not `settle()`, which turns
+  off pacing and follows a busy session's loop indefinitely. `delete-session` and ephemerals
+  never reach a room, so nothing depends on them. There is no separate keepalive timer: `session-alive` stays
   on each sync pass because it carries the session's working state, and a blind timer would tell
   the phone a working session had stopped thinking.
 - The 64-session budget (dedicated sockets only) limits live mobile subscriptions, not bot creation or agent execution.

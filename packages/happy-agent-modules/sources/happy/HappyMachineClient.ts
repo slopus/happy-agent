@@ -21,7 +21,7 @@ import {
 import type { HappyConnectionConfiguration, HappyEncryptionVariant } from "./HappyCredentials.js";
 import type { HappyModel } from "./HappySession.js";
 import type { HappySocket } from "./HappySessionClient.js";
-import { HappySessionSockets } from "./HappySessionSockets.js";
+import { HappySessionSockets, type HappySessionTransport } from "./HappySessionSockets.js";
 
 const HTTP_TIMEOUT_MS = 15_000;
 const RETRY_INTERVAL_MS = 5_000;
@@ -43,6 +43,8 @@ export interface HappyMachineClientOptions {
     readonly operations: HappySpawnOperations;
     readonly models: () => readonly HappyModel[];
     readonly onConnectionChanged?: (event: HappyMachineConnectionEvent) => void;
+    /** Happy changed how this machine's sessions travel; see {@link HappySessionSockets}. */
+    readonly onSessionTransportChanged?: (transport: HappySessionTransport) => Promise<void>;
     /** The session Happy should open, once Happy Agent has published it. */
     readonly remoteSessionId: (agentId: string) => Promise<string | undefined>;
     /** Only a test supplies this; left out, the client opens its own connection to Happy. */
@@ -183,6 +185,9 @@ export class HappyMachineClient {
         this.sessions = new HappySessionSockets({
             configuration: options.configuration,
             context: options.context,
+            ...(options.onSessionTransportChanged === undefined
+                ? {}
+                : { onTransportChanged: options.onSessionTransportChanged }),
             ...(options.socketFactory === undefined
                 ? {}
                 : { socketFactory: options.socketFactory }),

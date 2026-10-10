@@ -14,7 +14,8 @@ import { WebSocketServer, type WebSocket } from "ws";
  *
  * Session updates go to rooms, as on Happy: a session-scoped socket is in its own session's room,
  * and a machine socket joins rooms with `session-subscribe`. `sessionSubscribe: false` behaves
- * like an older server with no such handler, which never answers it.
+ * like an older server with no such handler, which never answers it; `answerSubscriptions`
+ * changes that for later questions, as a reconnect reaching another server version would.
  */
 export async function createMobileRelayFixture(
     options: { readonly legacyMachineDeletion?: boolean; readonly sessionSubscribe?: boolean } = {},
@@ -36,6 +37,9 @@ export async function createMobileRelayFixture(
     /** Every `update-metadata` received, by session id. */
     const metadataWrites: string[] = [];
     const endedSessions: string[] = [];
+    let answersSubscriptions = options.sessionSubscribe !== false;
+    /** The most session-scoped sockets each account had open at once. */
+    const peakSessionSockets = new Map<string, number>();
     const sessions = new Map<
         string,
         {
@@ -256,6 +260,16 @@ export async function createMobileRelayFixture(
             if (packet.startsWith("40")) {
                 const auth = JSON.parse(packet.slice(2));
                 sockets.set(socket, auth);
+                if (auth.clientType === "session-scoped") {
+                    const open = [...sockets.values()].filter(
+                        (other) =>
+                            other.token === auth.token && other.clientType === "session-scoped",
+                    ).length;
+                    peakSessionSockets.set(
+                        auth.token,
+                        Math.max(open, peakSessionSockets.get(auth.token) ?? 0),
+                    );
+                }
                 rooms.set(
                     socket,
                     new Set(auth.clientType === "session-scoped" ? [auth.sessionId] : []),
@@ -274,7 +288,7 @@ export async function createMobileRelayFixture(
             if (auth === undefined) return;
             if (event === "session-subscribe") {
                 // An older server has no handler, so the question is never answered.
-                if (options.sessionSubscribe === false) return;
+                if (!answersSubscriptions) return;
                 if (auth.clientType !== "machine-scoped") {
                     ack({ result: "error", reason: "unsupported-client" });
                     return;
@@ -392,6 +406,12 @@ export async function createMobileRelayFixture(
                 .flatMap(([socket]) => [...(rpcMethods.get(socket) ?? [])])
                 .sort(),
         /** Drops the account's machine connection, as a network blip would; the client reconnects. */
+        /** The most session-scoped sockets the account had open at once. */
+        peakSessionSockets: (token: string) => peakSessionSockets.get(token) ?? 0,
+        /** Whether later subscriptions are answered, as on a server that has the handler. */
+        answerSubscriptions(enabled: boolean) {
+            answersSubscriptions = enabled;
+        },
         dropMachineSocket(token: string) {
             for (const [socket, auth] of sockets)
                 if (auth.token === token && auth.clientType === "machine-scoped")

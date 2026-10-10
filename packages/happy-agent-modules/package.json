@@ -38,6 +38,7 @@
         "build:menu-bar": "node scripts/build-menu-bar.mjs",
         "check": "tsc --noEmit",
         "test": "vitest run --passWithNoTests",
+        "test:live:happy-server": "vitest run --config vitest.live.config.ts tests/runtime/happyMobileMultiplex.live.test.ts",
         "test:live:workos-staging": "vitest run --config vitest.live.config.ts tests/cloud/CloudStaging.live.test.ts"
     },
     "dependencies": {
