@@ -501,7 +501,7 @@ Verify through the primary's authenticated API: `GET /v0/connections` lists the 
 `GET /v0/connections/personal-server/api/v0/health` reaches the remote and reports readiness. The
 primary credential authenticates to the primary; its connection layer supplies the remote token.
 The bundled transport handles this connection without a separate client-side login. A manual
-Tailcat client needs its own v0.4.0 executable; see [Tailcat](../tailcat.md).
+Tailcat client needs its own v0.7.0 executable; see [Tailcat](../tailcat.md).
 
 If health returns 401, check the remote token; if unavailable, check Tailcat state, outbound
 connectivity, and the exact address/port. Do not disable authentication to troubleshoot. Preserve

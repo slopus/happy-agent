@@ -50,7 +50,7 @@ The Happy desktop app is one such client.
                                v
                  happy-agent run  (sessions, agents, tools, SQLite)
                                |
-                               +-- optional Tailcat v0.4.0 tunnel
+                               +-- optional Tailcat v0.7.0 tunnel
                                +-- provider inference
                                +-- sandboxed shell, files, Docker, MCP, terminals
 ```
@@ -83,7 +83,7 @@ In either mode it:
 
 An explicit machine-only Tailcat feature can wrap either transport. A private loopback TCP relay
 adapts the Unix socket and keeps the same path for the team listener. The daemon generates one
-fixed-region Tailcat key, supervises the bundled v0.4.0 process for its whole lifetime, and closes
+fixed-region Tailcat key, supervises the bundled v0.7.0 process for its whole lifetime, and closes
 the tunnel before its underlying API transport. Tailcat supplies connectivity and WireGuard
 encryption only; the API's bearer or WorkOS authentication remains the authority boundary.
 

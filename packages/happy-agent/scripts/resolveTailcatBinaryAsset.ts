@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { accessSync, constants, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-export const TAILCAT_VERSION = "v0.4.0";
+export const TAILCAT_VERSION = "v0.7.0";
 
 interface TailcatAssetTarget {
     readonly key: "darwin-arm64" | "darwin-x64" | "linux-arm64" | "linux-x64" | "win32-x64";
@@ -11,11 +11,11 @@ interface TailcatAssetTarget {
 }
 
 const TAILCAT_SHA256: Readonly<Record<TailcatAssetTarget["key"], string>> = {
-    "win32-x64": "bcb0c6c91e126ee9a5880e45fe067484a1bc056d721447d5fae8575ab6e672bc",
-    "darwin-arm64": "7e9ca0999a0c65eb5f84ca1ac15a767a498280a3fad39f30d6665ab269f5dddc",
-    "darwin-x64": "798d79bccc7333559d924dc6fd0c7d54df338e7a23e89b7c615742f3cce3efa6",
-    "linux-arm64": "b9b77747305bc388d31fe2189079e649e958ddadfde85a50ff25f4529345ef05",
-    "linux-x64": "8e72a7932baf395c79383c668a5856bbc911d5b24f8a329813246c8a73252566",
+    "win32-x64": "58b20f596925445b0b4b66ae21104492a6a896e1c1aee66e338847688b8234e4",
+    "darwin-arm64": "2ca927dcc30d2a2e4ac2c7fed6e36ea317ca88443864e92ecc80cd134ab3991e",
+    "darwin-x64": "f17ae389bcd999ea652db8371a2e26640c694f2476f16f759449b4075f849424",
+    "linux-arm64": "1f8e877f9080ab0436eaf2bb0d0712f190f56d30d3e78ece8d0680b280f1f955",
+    "linux-x64": "75da81231e01f2a52005f26f4eca6df4bce71cb694a42fa467a30e93c3d7a5b9",
 };
 
 /** Resolve and verify the checked-in Tailcat release asset for one Happy Agent binary target. */

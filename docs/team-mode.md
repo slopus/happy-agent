@@ -42,7 +42,7 @@ daemon state at `/var/lib/happy-agent/.happy/agent`.
 ## 1. Install the release binary
 
 Choose the released version and the matching `linux-x64` or `linux-arm64` target. Every release
-contains a self-contained Happy Agent binary with the matching Tailcat v0.4.0 server executable
+contains a self-contained Happy Agent binary with the matching Tailcat v0.7.0 server executable
 embedded in it.
 
 ```sh
@@ -270,7 +270,7 @@ for exact inputs and completion checks. This path manages organization-scoped to
 manual credential extraction. The commands below are an optional low-level diagnostic, not a
 required token-transfer step.
 
-Install Tailcat v0.4.0 on a client machine, obtain a WorkOS access token for the configured client
+Install Tailcat v0.7.0 on a client machine, obtain a WorkOS access token for the configured client
 and organization, then run:
 
 ```sh

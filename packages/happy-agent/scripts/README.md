@@ -50,9 +50,9 @@ performance cost. This is not a hard memory limit and does not constrain native
 allocations or separate helper processes. The Node-compatible distribution is
 unchanged.
 
-Each target embeds a checked-in Tailcat v0.4.0 executable after verifying its pinned SHA-256. The
+Each target embeds a checked-in Tailcat v0.7.0 executable after verifying its pinned SHA-256. The
 Linux assets come unchanged from Tailcat's official release archives. Tailcat publishes no macOS
-archives, so the two Darwin assets were built once from the exact v0.4.0 tag with the upstream
+archives, so the two Darwin assets were built once from the exact v0.7.0 tag with the upstream
 release flags; their provenance is recorded in `../assets/tailcat/README.md`. A normal Happy Agent
 build neither downloads nor compiles Tailcat. The Tailcat executable and BSD-3-Clause license are
 materialized together only when Tailcat exposure is enabled.

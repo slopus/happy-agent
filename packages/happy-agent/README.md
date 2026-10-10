@@ -103,7 +103,7 @@ Windows source builds need the explicit native build steps in
 [the build-script guide](scripts/README.md#native-windows-11-x64). The ordinary TypeScript
 package stays Node-compatible; native libraries, WebAssembly, workers and provider
 executables are adapted at the standalone build boundary. Each target embeds its
-matching Tailcat v0.4.0 asset.
+matching Tailcat v0.7.0 asset.
 
 Windows 11 x64 is the native Windows target. Happy ships one agent executable
 containing its own supervisor and matching sandbox helpers, with no separate
@@ -187,7 +187,7 @@ exact port is occupied and never falls back to a random port.
 Tailcat can wrap either the standalone Unix socket or the team HTTP listener. It is a dedicated,
 account-free transport and applies no Tailcat client allowlist, but it does not bypass Happy Agent
 authentication: standalone requests still need the local bearer token, and team requests still
-need a valid WorkOS token. A client with Tailcat v0.4.0 can reach the endpoint with:
+need a valid WorkOS token. A client with Tailcat v0.7.0 can reach the endpoint with:
 
 ```sh
 address="$(cat ~/.happy/agent/tailcat/address)"

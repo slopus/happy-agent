@@ -64,7 +64,7 @@ Configuration owns Monty's exact private snapshot path at
 path segment.
 
 `[feature.tailcat] enabled = true` is a machine-only opt-in. The Tailcat module opens the daemon's
-active Unix-socket or team HTTP transport through bundled Tailcat v0.4.0, while the Happy API
+active Unix-socket or team HTTP transport through bundled Tailcat v0.7.0, while the Happy API
 continues to require its ordinary local bearer token or WorkOS token. `port` defaults to the fixed,
 IANA-unassigned port `24779`; another nonzero TCP port may be selected in the same global section.
 The module binds exactly that port and never falls back to an ephemeral one. The fixed-region

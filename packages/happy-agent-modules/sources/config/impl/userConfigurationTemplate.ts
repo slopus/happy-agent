@@ -53,7 +53,7 @@ export const HAPPY_TOML_TEMPLATE = `# Happy configuration for Happy Agent.
 # enabled = false
 # engine = "monty"
 
-# Tailcat v0.4.0 opens the active Happy Agent API transport through an account-free,
+# Tailcat v0.7.0 opens the active Happy Agent API transport through an account-free,
 # WireGuard-encrypted tunnel. Happy API bearer or WorkOS authentication still applies.
 # [feature.tailcat]
 # enabled = false

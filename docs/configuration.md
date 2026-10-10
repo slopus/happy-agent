@@ -118,7 +118,7 @@ A repository `happy.toml` cannot enable Ethan mode.
 
 ## Tailcat exposure
 
-Tailcat v0.4.0 gives either daemon transport an account-free, WireGuard-encrypted path across the
+Tailcat v0.7.0 gives either daemon transport an account-free, WireGuard-encrypted path across the
 Internet. It remains explicit and machine-scoped:
 
 ```toml

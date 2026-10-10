@@ -5,6 +5,30 @@
 Both incoming exposure and outgoing SOCKS helpers launch with hidden Windows consoles. Their
 captured output and existing supervision remain authoritative; reconnecting cannot flash a terminal.
 
+## New identities carry a pre-shared key
+
+The bundled Tailcat is v0.7.0. Since v0.6.0, `genkey` adds a WireGuard pre-shared key to new
+server identities and their addresses. Happy Agent keeps that upstream default and does not pass
+`--psk=false`, because the key makes the address itself a secret that is needed to connect. A
+persisted identity created by v0.4.0 has no pre-shared key, and `serve` keeps using it as it is,
+with a warning, so existing addresses keep working for clients of every version. An address that
+has a pre-shared key cannot be reached by Tailcat v0.5.0 or earlier clients. That includes older
+Happy Agent releases dialing out. The arguments Happy Agent passes (`genkey --key=<path>
+--fixed-region`, `--key=<path> serve <port>` with `TAILCAT_ADDR_FILE`, and `--key=new socks
+--listen=127.0.0.1:0 <address>`) and the `SOCKS running at socks5h://127.0.0.1:<port>` line are
+unchanged.
+
+## Tailcat did not cause the macOS app-data prompt
+
+macOS asked users to let Happy access data from other apps just after the bundled Tailcat
+started, and a strings scan showed Tailscale's `safesocket` code for finding Tailscale.app.
+Tailcat seemed to be the cause, but it was not. That code is linked only through the DERP server
+type and runs only in a local debug mode, and Tailcat's `serve`, `socks` and `genkey` produce no
+privacy requests at all. The unified log named the daemon itself as the accessor. A recursive
+watch on the home directory caused it, and the Git module now forbids that watch. Before blaming
+a helper process for a privacy prompt, read the `accessing=` process in tccd's
+`AUTHREQ_ATTRIBUTION` log line.
+
 ## The feature owns its live transport
 
 Tailcat used to be started by the daemon executable after the modules-owned runtime had already

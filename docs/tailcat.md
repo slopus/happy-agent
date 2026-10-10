@@ -1,6 +1,6 @@
 # Tailcat internet exposure
 
-Happy Agent release binaries embed Tailcat v0.4.0 so a standalone or team daemon can be reached
+Happy Agent release binaries embed Tailcat v0.7.0 so a standalone or team daemon can be reached
 from another machine through an encrypted, NAT-traversing Tailcat connection.
 
 Tailcat is its own account-free transport. Despite living in the `tailscale/tailcat` GitHub
@@ -84,10 +84,16 @@ them but keeps `default.private.json`, preserving the identity for the next star
 
 ## Install the remote client
 
-Install Tailcat v0.4.0 from the
+Install Tailcat v0.7.0 from the
 [upstream Tailcat releases](https://github.com/tailscale/tailcat/releases) on the remote machine.
 The Happy Agent release binary contains the server-side executable; it does not install a
 `tailcat` command on other machines.
+
+An identity created by Tailcat v0.6.0 or later includes a WireGuard pre-shared key in its
+address. Clients running Tailcat v0.5.0 or earlier, including Happy Agent releases that bundled
+Tailcat v0.4.0, accept that address but cannot connect to it. An identity created by an earlier
+Happy Agent keeps its shorter address without a pre-shared key, so clients of every version can
+still reach it. The server logs a warning about the missing pre-shared key.
 
 The embedded executable is specific to standalone Happy Agent release binaries. A source checkout
 or the Node-compatible npm package instead resolves `tailcat` from `PATH`; development runs may set
@@ -120,7 +126,7 @@ host name inside the Tailcat connection.
 For a persistent local SOCKS5 listener, provide a local port instead of a command:
 
 ```sh
-tailcat socks "$TAILCAT_ADDRESS" 1080
+tailcat socks --listen=1080 "$TAILCAT_ADDRESS"
 ```
 
 Then point a proxy-aware client at it and let the proxy resolve `server.tailcat`:
