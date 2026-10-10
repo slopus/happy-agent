@@ -5,6 +5,7 @@ use serde_json::Value;
 use std::{collections::BTreeMap, path::PathBuf, sync::Arc, time::Duration};
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
+mod aws;
 mod discovery;
 mod grok;
 
@@ -130,17 +131,7 @@ impl Credential {
             CredentialSource::Grok {auth_file,ambient}=>state=discovery::grok(auth_file.as_deref(),*ambient).await?,
             CredentialSource::Claude {oauth_token,api_key,auth_token,config_dir,ambient}=>state=discovery::claude(oauth_token.as_deref(),api_key.as_deref(),auth_token.as_deref(),config_dir.as_deref(),*ambient).await?,
             CredentialSource::Aws { profile } => {
-                let mut loader = aws_config::defaults(aws_config::BehaviorVersion::latest())
-                    .region(aws_config::Region::new(region.to_owned()));
-                if let Some(profile) = profile {
-                    loader = loader.profile_name(profile);
-                }
-                let config = tokio::time::timeout(Duration::from_secs(30), loader.load()).await?;
-                aws = config.credentials_provider();
-                anyhow::ensure!(
-                    aws.is_some(),
-                    "AWS credentials are unavailable for this profile."
-                );
+                aws = Some(aws::provider(profile.as_deref(), region).await?);
             }
         }
         anyhow::ensure!(
