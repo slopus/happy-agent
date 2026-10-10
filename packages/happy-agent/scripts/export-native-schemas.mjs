@@ -244,9 +244,25 @@ const { codexAuthFileSchema } = await sourcePrivateSchema(
     ),
     ["codexAuthFileSchema"],
 );
+const { discoverySchema: grokDiscovery, tokensSchema: grokTokens } = await sourcePrivateSchema(
+    new URL(
+        "./vendors/grok/GrokSessionCredential.js",
+        new URL(require.resolve("@slopus/happy-providers"), "file:"),
+    ),
+    ["discoverySchema", "tokensSchema"],
+);
+// The Grok CLI session fields an OIDC refresh needs; the original reads each as a non-empty string.
+const grokRefreshable = Type.Object(
+    {
+        refresh_token: Type.String({ minLength: 1 }),
+        oidc_issuer: Type.String({ minLength: 1 }),
+        oidc_client_id: Type.String({ minLength: 1 }),
+    },
+    { additionalProperties: true },
+);
 writeFileSync(
     new URL("../../happy-providers/sources/credentials/schemas.json", import.meta.url),
-    `${JSON.stringify({ codexAuth: codexAuthFileSchema, claudeAuth: Type.Object({ claudeAiOauth: Type.Optional(Type.Object({ accessToken: Type.Optional(Type.String()) }, { additionalProperties: true })) }, { additionalProperties: true }), grokAuth: Type.Object({}, { additionalProperties: true }), grokRecord: Type.Object({ key: Type.Optional(Type.String()) }, { additionalProperties: true }), codexClaims: Type.Object({ "https://api.openai.com/auth": Type.Optional(Type.Object({ chatgpt_account_id: Type.Optional(Type.String()) }, { additionalProperties: true })) }, { additionalProperties: true }) }, null, 2)}\n`,
+    `${JSON.stringify({ codexAuth: codexAuthFileSchema, claudeAuth: Type.Object({ claudeAiOauth: Type.Optional(Type.Object({ accessToken: Type.Optional(Type.String()) }, { additionalProperties: true })) }, { additionalProperties: true }), grokAuth: Type.Object({}, { additionalProperties: true }), grokRecord: Type.Object({ key: Type.Optional(Type.String()) }, { additionalProperties: true }), grokRefreshable, grokDiscovery, grokTokens, codexClaims: Type.Object({ "https://api.openai.com/auth": Type.Optional(Type.Object({ chatgpt_account_id: Type.Optional(Type.String()) }, { additionalProperties: true })) }, { additionalProperties: true }) }, null, 2)}\n`,
 );
 const {
     nodeNameSchema,

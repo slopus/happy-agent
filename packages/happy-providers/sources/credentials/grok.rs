@@ -4,7 +4,7 @@
 //! the store, re-reads the file first, and adopts a token another process already rotated instead
 //! of spending the refresh token twice. A sign-out or a login replaced during the exchange is
 //! authoritative: the store is never recreated or overwritten from memory.
-use super::{bounded_body, local_file};
+use super::{bounded_body, discovery, local_file};
 use serde_json::{Map, Value};
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -80,8 +80,9 @@ fn form(pairs: &[(&str, &str)]) -> String {
         .join("&")
 }
 
-fn text<'a>(record: &'a Value, name: &str) -> Option<&'a str> {
-    record.get(name)?.as_str().filter(|value| !value.is_empty())
+/// Checks `value` against a captured credential schema; an unavailable schema never matches.
+fn valid(name: &str, value: &Value) -> bool {
+    discovery::valid(name, value).unwrap_or(false)
 }
 
 /// Rotates the session whose current token is `token`. Returns the token to use and the store it
@@ -93,17 +94,22 @@ pub(super) async fn refresh(file: &Path, token: &str) -> Option<(String, Value)>
     let _lock = lock(&path).await.ok()?;
     // A sign-out is authoritative; never recreate a deleted login from an in-memory token.
     let disk = read_store(&path).await?;
-    let record = disk.get(OAUTH_SCOPE).filter(|record| record.is_object())?;
-    if let Some(key) = text(record, "key")
+    let record = disk
+        .get(OAUTH_SCOPE)
+        .filter(|record| valid("grokRecord", record))?;
+    if let Some(key) = record["key"].as_str()
         && key != token
         && !expired(record, 0, now_ms())
     {
         return Some((key.to_owned(), disk));
     }
+    if !valid("grokRefreshable", record) {
+        return None;
+    }
     let (Some(refresh_token), Some(issuer), Some(client_id)) = (
-        text(record, "refresh_token"),
-        text(record, "oidc_issuer"),
-        text(record, "oidc_client_id"),
+        record["refresh_token"].as_str(),
+        record["oidc_issuer"].as_str(),
+        record["oidc_client_id"].as_str(),
     ) else {
         return None;
     };
@@ -154,7 +160,7 @@ async fn read_store(path: &Path) -> Option<Value> {
     }
     serde_json::from_slice::<Value>(&bytes)
         .ok()
-        .filter(Value::is_object)
+        .filter(|store| valid("grokAuth", store))
 }
 
 /// Stages the store beside the original and renames it, so a reader never sees a partial login.
@@ -208,7 +214,10 @@ async fn request_tokens(issuer: &str, client_id: &str, refresh_token: &str) -> O
     }
     let metadata: Value =
         serde_json::from_slice(&bounded_body(discovery, RESPONSE_LIMIT).await.ok()?).ok()?;
-    let endpoint = text(&metadata, "token_endpoint")?;
+    if !valid("grokDiscovery", &metadata) {
+        return None;
+    }
+    let endpoint = metadata["token_endpoint"].as_str()?;
     let response = client
         .post(endpoint)
         .header("content-type", "application/x-www-form-urlencoded")
@@ -225,15 +234,12 @@ async fn request_tokens(issuer: &str, client_id: &str, refresh_token: &str) -> O
     }
     let tokens: Value =
         serde_json::from_slice(&bounded_body(response, RESPONSE_LIMIT).await.ok()?).ok()?;
-    let access_token = text(&tokens, "access_token")?.to_owned();
-    let expires_in = match tokens.get("expires_in") {
-        None => None,
-        Some(value) => Some(value.as_f64().filter(|seconds| *seconds >= 0.0)?),
-    };
-    let refresh_token = match tokens.get("refresh_token") {
-        None => None,
-        Some(_) => Some(text(&tokens, "refresh_token")?.to_owned()),
-    };
+    if !valid("grokTokens", &tokens) {
+        return None;
+    }
+    let access_token = tokens["access_token"].as_str()?.to_owned();
+    let expires_in = tokens["expires_in"].as_f64();
+    let refresh_token = tokens["refresh_token"].as_str().map(str::to_owned);
     let expires_at = match expires_in {
         Some(seconds) => Some(iso(now_ms() + (seconds * 1_000.0) as i128)?),
         None => None,

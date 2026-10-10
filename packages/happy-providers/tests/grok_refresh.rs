@@ -501,6 +501,39 @@ async fn refreshes_once_and_replays_a_request_the_proxy_rejected() {
 }
 
 #[tokio::test]
+async fn rejects_tokens_and_logins_outside_their_captured_schemas() {
+    let malformed = [
+        json!({ "access_token": "", "expires_in": 3600 }),
+        json!({ "access_token": "fresh-access", "expires_in": -1 }),
+        json!({ "access_token": "fresh-access", "refresh_token": null }),
+        json!({ "access_token": "fresh-access", "expires_in": "3600" }),
+        json!({ "token": "fresh-access" }),
+    ];
+    let count = malformed.len();
+    let issuer =
+        Issuer::start(move |index| (200, malformed[index.min(count - 1)].clone(), 0)).await;
+    for _ in 0..count {
+        let directory = tempfile::tempdir().unwrap();
+        let file = write_store(directory.path(), &issuer.url, -60);
+        let before = std::fs::read(&file).unwrap();
+        assert_eq!(bearer(&load(&file).await).await, "Bearer stale-access");
+        assert_eq!(std::fs::read(&file).unwrap(), before);
+    }
+    assert_eq!(issuer.token_requests().len(), count);
+
+    // A login without every OIDC field it needs is never sent to the issuer.
+    for missing in ["refresh_token", "oidc_issuer", "oidc_client_id"] {
+        let directory = tempfile::tempdir().unwrap();
+        let file = write_store(directory.path(), &issuer.url, -60);
+        let mut store = stored(&file);
+        store[SCOPE][missing] = json!("");
+        std::fs::write(&file, store.to_string()).unwrap();
+        assert_eq!(bearer(&load(&file).await).await, "Bearer stale-access");
+    }
+    assert_eq!(issuer.token_requests().len(), count);
+}
+
+#[tokio::test]
 async fn maintenance_rotates_an_idle_login_and_keeps_a_rotation_its_caller_stopped_waiting_for() {
     assert_eq!(
         happy_providers::CREDENTIAL_MAINTENANCE_INTERVAL,

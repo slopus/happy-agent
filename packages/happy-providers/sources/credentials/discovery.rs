@@ -5,7 +5,7 @@ use base64::{Engine,engine::general_purpose::URL_SAFE_NO_PAD};
 use serde_json::Value;
 use std::{collections::BTreeMap,path::{Path,PathBuf},sync::OnceLock};
 use tokio::io::AsyncReadExt;
-fn valid(name:&str,value:&Value)->Result<bool> {
+pub(super) fn valid(name:&str,value:&Value)->Result<bool> {
     static SCHEMAS:OnceLock<BTreeMap<String,jsonschema::Validator>>=OnceLock::new();
     let schemas=SCHEMAS.get_or_init(||{let sources:BTreeMap<String,Value>=serde_json::from_str(include_str!("schemas.json")).expect("Captured credential schemas");sources.into_iter().map(|(name,schema)|(name,jsonschema::validator_for(&schema).expect("Valid TypeBox credential schema"))).collect()});
     Ok(schemas.get(name).context("The credential schema is unavailable.")?.is_valid(value))
