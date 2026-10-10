@@ -105,6 +105,8 @@ one message it cannot carry.
       key and tag. The last 50 messages are queued again, so the new session opens with the
       conversation. This happens at most once per client lifetime, so a misbehaving server cannot
       loop it. Legacy accounts encrypt with the account secret and are exempt from the key checks.
+    - A session being archived, such as a reaped subtask, is only deleted and forgotten.
+      Publishing a replacement just to archive it would put a new session on the phone.
 
 ## Session state
 
