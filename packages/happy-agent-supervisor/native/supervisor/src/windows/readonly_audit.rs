@@ -245,3 +245,259 @@ fn source_everyone_restricting_sid_still_grants_everyone_writable_file_access() 
     );
     Ok(())
 }
+
+#[cfg(test)]
+mod capability_only {
+    use super::*;
+    use std::{os::windows::fs::OpenOptionsExt, path::Path};
+    use windows_sys::Win32::{
+        Foundation::GENERIC_READ,
+        Security::{
+            Authorization::ConvertSidToStringSidW, DACL_SECURITY_INFORMATION,
+            GROUP_SECURITY_INFORMATION, GetFileSecurityW, GetSecurityDescriptorDacl,
+            OWNER_SECURITY_INFORMATION, PSID,
+        },
+        Storage::FileSystem::WRITE_DAC,
+    };
+
+    fn user_text(user: PSID) -> io::Result<String> {
+        let mut text = std::ptr::null_mut();
+        checked(unsafe { ConvertSidToStringSidW(user, &mut text) })?;
+        let _allocation = Local(text.cast());
+        let mut length = 0;
+        while length < 256 && unsafe { *text.add(length) } != 0 {
+            length += 1;
+        }
+        assert!(
+            length < 256,
+            "The fixture user SID must fit the bounded string buffer"
+        );
+        Ok(String::from_utf16_lossy(unsafe {
+            std::slice::from_raw_parts(text, length)
+        }))
+    }
+
+    fn create_fixture(path: &Path, sddl: &str) -> io::Result<()> {
+        let sddl = wide(OsStr::new(sddl))?;
+        let mut descriptor = std::ptr::null_mut();
+        checked(unsafe {
+            ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                sddl.as_ptr(),
+                1,
+                &mut descriptor,
+                std::ptr::null_mut(),
+            )
+        })?;
+        let descriptor = Local(descriptor);
+        let attributes = SECURITY_ATTRIBUTES {
+            nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+            lpSecurityDescriptor: descriptor.0,
+            bInheritHandle: 0,
+        };
+        let name = wide(path.as_os_str())?;
+        let handle = unsafe {
+            own(CreateFileW(
+                name.as_ptr(),
+                GENERIC_READ | GENERIC_WRITE,
+                0,
+                &attributes,
+                CREATE_NEW,
+                FILE_ATTRIBUTE_NORMAL,
+                std::ptr::null_mut(),
+            ))?
+        };
+        let mut file = std::fs::File::from(handle);
+        file.write_all(b"initial")
+    }
+
+    fn actual_descriptor(path: &Path) -> io::Result<Vec<usize>> {
+        let name = wide(path.as_os_str())?;
+        let information =
+            OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION;
+        let mut needed = 0;
+        unsafe {
+            GetFileSecurityW(
+                name.as_ptr(),
+                information,
+                std::ptr::null_mut(),
+                0,
+                &mut needed,
+            )
+        };
+        assert!(
+            needed != 0 && needed <= 65_536,
+            "The owned fixture has a bounded descriptor"
+        );
+        let mut descriptor = vec![0usize; (needed as usize).div_ceil(std::mem::size_of::<usize>())];
+        checked(unsafe {
+            GetFileSecurityW(
+                name.as_ptr(),
+                information,
+                descriptor.as_mut_ptr().cast(),
+                needed,
+                &mut needed,
+            )
+        })?;
+        Ok(descriptor)
+    }
+
+    fn access(token: HANDLE, descriptor: &mut [usize], rights: u32) -> io::Result<bool> {
+        let mapping = GENERIC_MAPPING {
+            GenericRead: FILE_GENERIC_READ,
+            GenericWrite: FILE_GENERIC_WRITE,
+            GenericExecute: FILE_GENERIC_EXECUTE,
+            GenericAll: FILE_ALL_ACCESS,
+        };
+        let mut privileges: PRIVILEGE_SET = unsafe { std::mem::zeroed() };
+        let mut privilege_bytes = std::mem::size_of::<PRIVILEGE_SET>() as u32;
+        let mut granted = 0;
+        let mut allowed = 0;
+        checked(unsafe {
+            AccessCheck(
+                descriptor.as_mut_ptr().cast(),
+                token,
+                rights,
+                &mapping,
+                &mut privileges,
+                &mut privilege_bytes,
+                &mut granted,
+                &mut allowed,
+            )
+        })?;
+        Ok(allowed != 0)
+    }
+
+    #[test]
+    fn private_reads_and_null_dacl_writes_have_different_boundaries() -> io::Result<()> {
+        let mut base = std::ptr::null_mut();
+        checked(unsafe {
+            OpenProcessToken(
+                GetCurrentProcess(),
+                TOKEN_DUPLICATE | TOKEN_QUERY,
+                &mut base,
+            )
+        })?;
+        let base = unsafe { own(base)? };
+        let user_information = token_information(raw(&base), TokenUser)?;
+        let user_sid = unsafe { (*user_information.as_ptr().cast::<TOKEN_USER>()).User.Sid };
+        let user = user_text(user_sid)?;
+        // This sole restricting SID is absent from each owned fixture's DACL.
+        let capability = sid("S-1-5-21-61011-61012-61013-61014")?;
+        assert_eq!(unsafe { EqualSid(capability.0, user_sid) }, 0);
+        let restricting = SID_AND_ATTRIBUTES {
+            Sid: capability.0,
+            Attributes: 0,
+        };
+        let mut restricted = std::ptr::null_mut();
+        checked(unsafe {
+            CreateRestrictedToken(
+                raw(&base),
+                DISABLE_MAX_PRIVILEGE | LUA_TOKEN | WRITE_RESTRICTED,
+                0,
+                std::ptr::null(),
+                0,
+                std::ptr::null(),
+                1,
+                &restricting,
+                &mut restricted,
+            )
+        })?;
+        let restricted = unsafe { own(restricted)? };
+        let restricted_sids = token_information(raw(&restricted), TokenRestrictedSids)?;
+        let restrictions = unsafe { &*restricted_sids.as_ptr().cast::<TOKEN_GROUPS>() };
+        assert_eq!(restrictions.GroupCount, 1);
+        assert_ne!(
+            unsafe { EqualSid(restrictions.Groups[0].Sid, capability.0) },
+            0
+        );
+        let mut impersonation = std::ptr::null_mut();
+        checked(unsafe {
+            DuplicateToken(raw(&restricted), SecurityImpersonation, &mut impersonation)
+        })?;
+        let impersonation = unsafe { own(impersonation)? };
+        let directory = tempfile::tempdir()?;
+        let cases = [
+            (
+                "private-user",
+                format!("O:{user}D:P(A;;{FILE_ALL_ACCESS:#x};;;{user})"),
+                false,
+            ),
+            (
+                "everyone",
+                format!("O:{user}D:P(A;;{FILE_ALL_ACCESS:#x};;;WD)"),
+                false,
+            ),
+            ("null-dacl", format!("O:{user}D:NO_ACCESS_CONTROL"), true),
+        ];
+        for (label, sddl, write_allowed) in cases {
+            let path = directory.path().join(label);
+            create_fixture(&path, &sddl)?;
+            let mut descriptor = actual_descriptor(&path)?;
+            let mut present = 0;
+            let mut dacl = std::ptr::null_mut();
+            let mut defaulted = 0;
+            checked(unsafe {
+                GetSecurityDescriptorDacl(
+                    descriptor.as_mut_ptr().cast(),
+                    &mut present,
+                    &mut dacl,
+                    &mut defaulted,
+                )
+            })?;
+            assert_ne!(present, 0, "The fixture must carry its own DACL");
+            assert_eq!(
+                dacl.is_null(),
+                label == "null-dacl",
+                "The kernel retained {label}"
+            );
+            assert!(
+                access(raw(&impersonation), &mut descriptor, FILE_GENERIC_READ)?,
+                "{label} reads"
+            );
+            assert_eq!(
+                access(raw(&impersonation), &mut descriptor, FILE_WRITE_DATA)?,
+                write_allowed,
+                "{label} writes"
+            );
+            let owner_dacl_access = access(raw(&impersonation), &mut descriptor, WRITE_DAC)?;
+            {
+                checked(unsafe { ImpersonateLoggedOnUser(raw(&impersonation)) })?;
+                let _identity = Impersonation;
+                assert_eq!(std::fs::read(&path)?, b"initial", "{label} real reads");
+                let opened = std::fs::OpenOptions::new().write(true).open(&path);
+                if write_allowed {
+                    opened?.write_all(b"changed")?;
+                } else {
+                    match opened {
+                        Ok(_) => panic!("{label} real writes must be denied"),
+                        Err(error) => assert_eq!(
+                            error.raw_os_error(),
+                            Some(5),
+                            "{label} real writes must be denied"
+                        ),
+                    }
+                }
+                let owner_opened = std::fs::OpenOptions::new()
+                    .access_mode(WRITE_DAC)
+                    .open(&path);
+                assert_eq!(
+                    owner_opened.is_ok(),
+                    owner_dacl_access,
+                    "{label} real owner DACL access"
+                );
+            }
+            assert_eq!(
+                std::fs::read(&path)?,
+                if write_allowed {
+                    &b"changed"[..]
+                } else {
+                    &b"initial"[..]
+                }
+            );
+            println!(
+                "capability-only token {label}: read succeeds, data write={write_allowed}, owner DACL access={owner_dacl_access}"
+            );
+        }
+        Ok(())
+    }
+}
