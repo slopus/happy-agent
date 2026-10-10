@@ -28,7 +28,7 @@ permissions:
     contents: read
 
 concurrency:
-    group: verify-supervisor-${{ github.ref }}
+    group: verify-supervisor-${{ github.ref }}-${{ inputs.services_only }}-${{ inputs.windows_only }}
     cancel-in-progress: true
 
 jobs:
