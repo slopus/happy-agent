@@ -8,6 +8,7 @@ use tokio_util::sync::CancellationToken;
 mod aws;
 mod discovery;
 mod grok;
+mod local_file;
 
 /// How often an idle daemon rotates stored Codex and Grok logins through
 /// [`Credential::refresh_for_maintenance`], so a login unused for days is still valid when needed.

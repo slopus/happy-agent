@@ -4,8 +4,9 @@
 //! the store, re-reads the file first, and adopts a token another process already rotated instead
 //! of spending the refresh token twice. A sign-out or a login replaced during the exchange is
 //! authoritative: the store is never recreated or overwritten from memory.
-use super::{bounded_body, discovery};
+use super::{bounded_body, local_file};
 use serde_json::{Map, Value};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -17,6 +18,7 @@ const FALLBACK_TTL_MS: i128 = 30 * 24 * 60 * 60 * 1_000;
 const REFRESH_TIMEOUT: Duration = Duration::from_secs(30);
 const LOCK_TIMEOUT: Duration = Duration::from_secs(30);
 const RESPONSE_LIMIT: usize = 256 * 1024;
+const STORE_LIMIT: u64 = 1024 * 1024;
 
 pub(super) fn now_ms() -> i128 {
     time::OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000
@@ -88,7 +90,7 @@ fn text<'a>(record: &'a Value, name: &str) -> Option<&'a str> {
 pub(super) async fn refresh(file: &Path, token: &str) -> Option<(String, Value)> {
     // Aliases share one lock and one write target.
     let path = tokio::fs::canonicalize(file).await.ok()?;
-    let _lock = FileLock::acquire(&path).await.ok()?;
+    let _lock = lock(&path).await.ok()?;
     // A sign-out is authoritative; never recreate a deleted login from an in-memory token.
     let disk = read_store(&path).await?;
     let record = disk.get(OAUTH_SCOPE).filter(|record| record.is_object())?;
@@ -133,8 +135,20 @@ pub(super) async fn refresh(file: &Path, token: &str) -> Option<(String, Value)>
     Some((tokens.access_token, next))
 }
 
+/// Reads the store through a bounded, non-following open; a store that is not a regular file is
+/// refused rather than waited on.
 async fn read_store(path: &Path) -> Option<Value> {
-    let bytes = discovery::read(path).await.ok()??;
+    let path = path.to_owned();
+    let bytes = tokio::task::spawn_blocking(move || {
+        let file = local_file::open_regular(&path, false, false)?;
+        let mut bytes = Vec::new();
+        file.take(STORE_LIMIT + 1).read_to_end(&mut bytes)?;
+        Ok::<_, std::io::Error>(bytes)
+    })
+    .await
+    .ok()?
+    .ok()
+    .filter(|bytes| bytes.len() as u64 <= STORE_LIMIT)?;
     if bytes.iter().all(u8::is_ascii_whitespace) {
         return Some(Value::Object(Map::new()));
     }
@@ -144,6 +158,8 @@ async fn read_store(path: &Path) -> Option<Value> {
 }
 
 /// Stages the store beside the original and renames it, so a reader never sees a partial login.
+/// The rename replaces the directory entry that was just read as a regular file; it never writes
+/// through a link.
 async fn write_store(path: &Path, store: &Value) -> std::io::Result<()> {
     let directory = path.parent().unwrap_or(Path::new("."));
     let staged = directory.join(format!(".{}.auth.json", uuid::Uuid::new_v4()));
@@ -229,52 +245,14 @@ async fn request_tokens(issuer: &str, client_id: &str, refresh_token: &str) -> O
     })
 }
 
-/// An exclusive advisory lock on `<store>.lock`, shared with every process refreshing the store.
-/// Closing the file releases it.
-struct FileLock {
-    #[cfg(unix)]
-    _file: std::fs::File,
-}
-
-impl FileLock {
-    async fn acquire(store: &Path) -> std::io::Result<Self> {
-        let mut name = store.file_name().unwrap_or_default().to_owned();
-        name.push(".lock");
-        let path: PathBuf = store.with_file_name(name);
-        tokio::task::spawn_blocking(move || Self::acquire_blocking(&path))
-            .await
-            .map_err(std::io::Error::other)?
-    }
-
-    #[cfg(unix)]
-    fn acquire_blocking(path: &Path) -> std::io::Result<Self> {
-        use std::os::unix::{fs::OpenOptionsExt, io::AsRawFd};
-        let file = std::fs::OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .write(true)
-            .mode(0o600)
-            .open(path)?;
-        let deadline = std::time::Instant::now() + LOCK_TIMEOUT;
-        loop {
-            // SAFETY: the descriptor stays open for the lifetime of `file`.
-            if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
-                return Ok(Self { _file: file });
-            }
-            let error = std::io::Error::last_os_error();
-            if error.kind() != std::io::ErrorKind::WouldBlock
-                || std::time::Instant::now() >= deadline
-            {
-                return Err(error);
-            }
-            std::thread::sleep(Duration::from_millis(20));
-        }
-    }
-
-    #[cfg(not(unix))]
-    fn acquire_blocking(_path: &Path) -> std::io::Result<Self> {
-        Ok(Self {})
-    }
+/// Takes the exclusive lock on `<store>.lock` that every process refreshing the store shares.
+async fn lock(store: &Path) -> std::io::Result<local_file::FileLock> {
+    let mut name = store.file_name().unwrap_or_default().to_owned();
+    name.push(".lock");
+    let path: PathBuf = store.with_file_name(name);
+    tokio::task::spawn_blocking(move || local_file::FileLock::acquire_blocking(&path, LOCK_TIMEOUT))
+        .await
+        .map_err(std::io::Error::other)?
 }
 
 #[cfg(test)]

@@ -172,6 +172,7 @@ aws_session_token = tokened-session
     assert!(!format!("{tokened:?}").contains("secret"));
 }
 
+#[cfg(unix)]
 /// A `credential_process` script that counts its runs and reports keys expiring after `seconds`.
 fn process(directory: &Path, name: &str, seconds: i64, exit: i32) -> String {
     let expiration = (time::OffsetDateTime::now_utc() + time::Duration::seconds(seconds))
@@ -200,12 +201,15 @@ fn process(directory: &Path, name: &str, seconds: i64, exit: i32) -> String {
     )
 }
 
+#[cfg(unix)]
 fn runs(directory: &Path, name: &str) -> usize {
     std::fs::read_to_string(directory.join(format!("{name}.runs")))
         .map(|runs| runs.lines().count())
         .unwrap_or(0)
 }
 
+// The fixture processes are POSIX shell scripts.
+#[cfg(unix)]
 #[tokio::test]
 async fn credential_process_profiles_run_once_per_credential_lifetime() {
     let _environment = ENVIRONMENT.lock().await;

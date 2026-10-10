@@ -286,6 +286,44 @@ async fn adopts_a_token_another_process_already_refreshed_under_the_store_lock()
     assert_eq!(issuer.token_requests().len(), 1);
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn refuses_a_fifo_or_symlink_at_the_lock_path_promptly() {
+    let issuer = Issuer::start(|_| fresh_tokens()).await;
+    for planted in ["fifo", "symlink", "store-fifo"] {
+        let directory = tempfile::tempdir().unwrap();
+        let file = write_store(directory.path(), &issuer.url, -60);
+        let credential = load(&file).await;
+        let lock = directory.path().join("auth.json.lock");
+        let target = directory.path().join("elsewhere");
+        match planted {
+            "fifo" => {
+                let path = std::ffi::CString::new(lock.to_str().unwrap()).unwrap();
+                assert_eq!(unsafe { libc::mkfifo(path.as_ptr(), 0o600) }, 0);
+            }
+            "symlink" => std::os::unix::fs::symlink(&target, &lock).unwrap(),
+            _ => {
+                // The login loaded, then the store itself was replaced by a FIFO.
+                std::fs::remove_file(&file).unwrap();
+                let path = std::ffi::CString::new(file.to_str().unwrap()).unwrap();
+                assert_eq!(unsafe { libc::mkfifo(path.as_ptr(), 0o600) }, 0);
+            }
+        }
+        let started = std::time::Instant::now();
+        let refreshing = tokio::time::timeout(Duration::from_secs(5), bearer(&credential));
+        assert_eq!(
+            refreshing
+                .await
+                .expect("a planted path must not stall the refresh"),
+            "Bearer stale-access",
+            "{planted}"
+        );
+        assert!(started.elapsed() < Duration::from_secs(2), "{planted}");
+        assert!(!target.exists(), "the lock never writes through a link");
+        assert!(issuer.token_requests().is_empty(), "{planted}");
+    }
+}
+
 #[tokio::test]
 async fn reports_refresh_failures_instead_of_throwing() {
     // An unreachable identity provider: the request proceeds with the current token.
