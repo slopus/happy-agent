@@ -45,8 +45,10 @@ import type {
 } from "./protocol/bots.js";
 import type {
     ArchiveTaskRequest,
+    CreateTaskRequest,
     JoinTaskRequest,
     LeaveTaskRequest,
+    RenameTaskRequest,
     ReorderTaskRequest,
     TaskListResponse,
     TaskListScope,
@@ -1266,6 +1268,37 @@ export class HappyAgentClient {
             method: "GET",
             path: "v0/tasks",
             query: { scope: options.scope },
+            signal: options.signal,
+        });
+    }
+
+    /**
+     * `POST /v0/tasks` — create a task the caller owns and joins. Without a name it is `New Task`
+     * until it names itself from its first message.
+     */
+    async createTask(
+        request: CreateTaskRequest = {},
+        options: RequestOptions = {},
+    ): Promise<TaskResponse> {
+        return await this.#json({
+            method: "POST",
+            path: "v0/tasks",
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /** `PATCH /v0/tasks/:taskId` — rename; ends automatic naming for the task. */
+    async renameTask(
+        taskId: Cuid2,
+        request: RenameTaskRequest,
+        options: VersionedRequestOptions,
+    ): Promise<TaskResponse> {
+        return await this.#json({
+            method: "PATCH",
+            path: `v0/tasks/${encodeURIComponent(taskId)}`,
+            json: request,
+            ifMatch: options.ifMatch,
             signal: options.signal,
         });
     }

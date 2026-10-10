@@ -87,6 +87,30 @@ export const taskResponseSchema = Type.Object({
 });
 export type TaskResponse = Static<typeof taskResponseSchema>;
 
+/** `POST /v0/tasks` — a person creates a task, which they own and join. */
+export const createTaskRequestSchema = Type.Object({
+    /** The workspace and agent IDs name the new task's own, not existing entities. */
+    agentId: Type.Optional(cuid2Schema),
+    /** Omitted, the daemon derives a unique folder name from `name`, or from `task` without one. */
+    folderName: Type.Optional(taskFolderNameSchema),
+    /** The retry key: repeating it returns the existing task unchanged. */
+    id: Type.Optional(cuid2Schema),
+    mutationId: Type.Optional(mutationIdSchema),
+    /** Omitted, the task is `New Task` until it names itself from its first message. */
+    name: Type.Optional(taskNameSchema),
+    workspaceId: Type.Optional(cuid2Schema),
+});
+export type CreateTaskRequest = Static<typeof createTaskRequestSchema>;
+
+/** `PATCH /v0/tasks/:taskId` — requires `If-Match`; the folder name never changes. */
+export const renameTaskRequestSchema = Type.Object({
+    /** Explicitly forbidden even though request objects tolerate future additive fields. */
+    folderName: Type.Optional(Type.Never()),
+    mutationId: Type.Optional(mutationIdSchema),
+    name: taskNameSchema,
+});
+export type RenameTaskRequest = Static<typeof renameTaskRequestSchema>;
+
 /** `POST /v0/tasks/:taskId/join` */
 export const joinTaskRequestSchema = Type.Object({
     mutationId: Type.Optional(mutationIdSchema),

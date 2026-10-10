@@ -261,8 +261,10 @@ version. Older daemons omit it; a client that shows remaining context counts dow
 Tasks are additive and do not increment the protocol version. Clients detect them through
 `GET /v0/tasks`: `404` means the daemon has no tasks, not that the list is empty. The bootstrap
 `tasks` and `taskMemberships` fields and the `task.*` events are absent on older compatible
-daemons. Task agents and their workspaces appear in no project or workspace listing, so a client
-that does not know about tasks never encounters one.
+daemons. Task agents and their workspaces appear in no project or workspace listing and emit no
+`workspace.*` events, so a client that does not know about tasks never encounters one. The
+workspace `kind` value `"task"` and the workspace `taskId` field appear only on a task's
+workspace, which a client reaches only through a task.
 
 Subtasks are additive and do not increment the protocol version. The agent's optional `subtask`
 boolean defaults to `false` when absent; the workspace's optional `subtaskAgentId` defaults to
@@ -2860,16 +2862,17 @@ workspace route.
 Fields:
 
 - `id` — stable workspace identifier. The root workspace's ID is the project's ID.
-- `projectId` — the root of this workspace's tree; `null` on a bot workspace, which belongs to
-  no tree.
+- `projectId` — the root of this workspace's tree; `null` on a bot or task workspace, which
+  belongs to no tree.
 - `parentId` — the workspace this one was created under; `null` on the root workspace and on a
-  bot workspace.
+  bot or task workspace.
 - `name`, `nameSource` — display name and where it came from: `"user"` for a chosen name,
   `"generated"` for one the daemon derived. The name is also the branch name behind the
   checkout, so renaming moves the branch.
 - `kind` — how the checkout was made: `"root"` for the project's own folder, `"worktree"` for
   a Git worktree, `"copy"` for a plain folder copy (used when the project cannot support
-  worktrees), `"bot"` for a bot's plain created folder.
+  worktrees), `"bot"` for a bot's plain created folder, `"task"` for a task's plain created
+  folder.
 - `compute` — where the workspace's files live and where work executes, same shape as on the
   project. A workspace of a runner project is always on that project's runner. A workspace created
   while its project's `defaultWorkspaceCompute` was `"docker"` reports
@@ -2881,12 +2884,14 @@ Fields:
 - `initialization` — the checkout state, same shape as on the project: a workspace answers
   immediately on creation and builds in the background.
 - `base` — what the workspace was created from: the `ref` the caller named and the `commit`
-  it resolved to at creation time. `null` on a bot workspace, which is created empty rather
-  than cut from anything.
+  it resolved to at creation time. `null` on a bot or task workspace, which is created empty
+  rather than cut from anything.
 - `git` — the same working-tree summary as on the project, for this workspace's checkout.
 - `botId` — optional additive field, always emitted by current daemons. `null` for every
   ordinary workspace; the owning bot's ID on a bot's dedicated workspace. See the bots chapter
   for how bot workspaces behave.
+- `taskId` — optional additive field, present only on a task's dedicated workspace, where it
+  names the owning task. See the tasks chapter for how task workspaces behave.
 - `creatorAgentId` — the agent that created this workspace, when one did; `null` when a
   person created it directly.
 - `subtaskAgentId` — optional additive field, always emitted by current daemons. The resident
@@ -5281,17 +5286,19 @@ one agent, keeps that agent for its whole life, and owns one dedicated folder. U
 no avatar and no administration, and it records who it belongs to: the person whose message led
 to its creation. A task is the root of its own subtasks.
 
-Tasks are created by agents, not by this API: an active bot's agent, or another user-controlled
-root, calls the `create_task` tool on behalf of the person it is working for. The agent that
-created a task may message and archive it through its task tools; people archive and unarchive
-tasks through the routes below. Each task's folder lives under
-the daemon's tasks root beside the bots root, `~/Happy/Tasks/<folderName>`, or on the default
-runner while runners are configured.
+A person creates a task through `POST /v0/tasks`. An agent creates one through its `create_task`
+tool on behalf of the person it is working for: an active bot's agent, or another user-controlled
+root. The agent that created a task may message and archive it through its task tools; people
+rename, archive, and unarchive tasks through the routes below. Each task's folder lives under the
+daemon's tasks root beside the bots root, `~/Happy/Tasks/<folderName>`, or on the default runner
+while runners are configured.
 
-**Owner.** `ownerUserId` is the installation-local Happy user ID of the team member whose message
-the creating agent was working on, resolvable through `GET /v0/users` like message
-`metadata.userId`. It is `null` in standalone mode and when no person is identified, for example
-when another agent's message led to the task. It never changes after creation.
+**Owner.** `ownerUserId` is the installation-local Happy user ID of the person the task belongs
+to, resolvable through `GET /v0/users` like message `metadata.userId`. For a task created through
+`POST /v0/tasks` it is the authenticated team member who created it. For a task an agent created
+it is the team member whose message the creating agent was working on, and it is `null` when no
+person is identified, for example when another agent's message led to the task. It is `null` in
+standalone mode. It never changes after creation.
 
 **Memberships and per-person order.** Any authenticated person may join any task, archived ones
 included. Joining puts the task in that person's own task list; leaving takes it out. Each
@@ -5315,15 +5322,25 @@ mode `ownerUserId` is `null`; the installation's one person is the profile, whos
 `GET /v0/profile/photo`.
 
 **Mapping to workspaces and agents.** A task is one dedicated workspace plus one agent in it, all
-with distinct IDs. The task's workspace is unlisted, like a bot's: it appears in no project list,
-workspace listing, or bootstrap `workspaces` array, and in this protocol revision it is not
-addressable through the workspace routes, which answer `404` for it. The agent is an ordinary
-agent and every agent endpoint works on it unchanged. Its `workspaceId` names the task's
-workspace. It reports `userVisible: true`, `managedByAnotherAgent: false`, and
+with distinct IDs. The workspace is a real workspace, exactly like a bot's: it is fetched from
+`GET /v0/workspaces/:workspaceId`, and its files, file tree, file revisions, terminals, Git state,
+Git watch, proxy, services, and secret attachments all work by its workspace ID. Its `kind` is
+`"task"`, its `taskId` names the task, its `botId`, `projectId`, and `parentId` are `null`, and its
+`agents` array always contains exactly the task's agent. It is not a Git worktree; it is a plain
+folder created empty, so its `base` is `null`. Its lifecycle belongs to the task — renaming,
+archiving, reordering, and creating children through the workspace routes answer `409` — and it
+appears in no project list, `GET /v0/workspaces` listing, or bootstrap `workspaces` array. While the
+task is archived its folder routes answer `409`, as for an archived bot. The daemon emits no
+`workspace.*` events for a task's workspace: its status follows the task, so a client holding the
+workspace object refetches it after `task.updated`.
+
+The agent is an ordinary agent and every agent endpoint works on it unchanged. Its `workspaceId`
+names the task's workspace. It reports `userVisible: true`, `managedByAnotherAgent: false`, and
 `canSendMessages: true` while the task is active, and its `orderKey` is `null`. Its lifecycle
 belongs to the task: agent `archive`, `unarchive`, and `reorder` on a task's agent answer `409`.
-Shared-filesystem subtasks run in the task's workspace and appear in the task agent's `subtasks`
-tree.
+It is the workspace's only primary conversation: `POST /v0/agents` refuses a task's workspace with
+`409`. Shared-filesystem subtasks run in the task's workspace and appear in the task agent's
+`subtasks` tree.
 
 Tasks are a versioned resource. The task's `version` covers its own fields — name and archival.
 Memberships are not versioned: a person's own list has one writer, and the latest reorder wins. The
@@ -5357,7 +5374,8 @@ Fields:
 
 - `id` — stable task identifier.
 - `name` — the human display name, 1–256 nonblank characters without ASCII control characters.
-  The task's agent title follows it.
+  The task's agent title follows it. A task created without a name is called `New Task` until it
+  names itself; see `POST /v0/tasks`.
 - `folderName` — the immutable snake_case folder name, unique across all tasks, archived ones
   included: lowercase ASCII letters, digits, and underscores, starting with a letter, 1–64
   characters.
@@ -5409,6 +5427,76 @@ in the caller's own order. Any other value is `400 invalid_request`.
 Response — `200`: `{ "tasks": [ /* task objects */ ], "memberships": [ /* membership objects */ ] }`.
 `memberships` is always every membership of the caller, in the caller's order, whichever scope was
 requested, so a global list also shows which tasks the caller joined.
+
+### `POST /v0/tasks`
+
+Creates a task for the authenticated person: the row, its dedicated workspace with its folder,
+and its one agent, together. The creator becomes the owner in team mode and joins the task at the
+top of their list.
+
+Request:
+
+```json
+{
+    "id": "t4k8m2q9w1e5r7y3u6i0o2p4",
+    "workspaceId": "w5v4u3t2s1r0q9p8o7n6m5l4",
+    "agentId": "a9b8c7d6e5f4g3h2i1j0k9l8",
+    "name": "Fix login redirect",
+    "folderName": "fix_login_redirect",
+    "mutationId": "..."
+}
+```
+
+- `id` — optional client-supplied task ID; the retry key.
+- `workspaceId`, `agentId` — optional IDs for the new dedicated workspace and its one agent.
+- `name` — optional. A supplied name is deliberate and is never automatically replaced. Omitted,
+  the task is created immediately usable as `New Task` and names itself, as described below. A
+  supplied blank or invalid name is `400`.
+- `folderName` — optional. Omitted, the daemon derives one from the name (lowercased,
+  non-alphanumeric runs collapsed to underscores), starting from `task` without a name, and
+  resolves a collision by appending a numeric suffix. A malformed folder name is `400`; one
+  already taken by any task, archived included, is `409 conflict`.
+
+Malformed IDs return `400 invalid_request`; omitted IDs are generated independently. For a new
+task, all three must be distinct and unused by any task, bot, workspace or project root, or agent,
+archived and hidden included (`409 conflict`).
+
+Repeating `id` returns the current task unchanged (`201`), including after rename, archival, or
+restart; other valid creation fields are ignored and nothing is joined again. Omitted child IDs
+reuse the stored ones; mismatches return `409 conflict` with `currentVersion` and `task`. Retries
+have no side effects or events. Identity checks and creation are atomic, and a folder-setup
+failure rolls back creation without exposing entities or events.
+
+Response — `201`: `{ "task": { ... }, "membership": { ... } }`, the caller's new membership.
+Creation is complete when it answers: the folder exists, the workspace and agent exist, the agent
+is `"idle"`, and the task is ready for its first message through `POST /v0/agents/:agentId/send`.
+New creation emits `task.created`, `task.joined`, and `agent.created` once after commit, echoing
+`mutationId`.
+
+**Automatic naming.** For a task created without a name, by this route or by `create_task`, the
+first accepted text-bearing message starts one asynchronous naming request: a person's message,
+or the message from the agent that created it, which is how a `create_task` call's opening `text`
+arrives. Naming uses that message alone and the same cheap, bounded inference as workspace naming,
+and asks for a short title of the work, two to six words. Message acceptance and the task's own
+turn never wait for naming. Failure or timeout keeps `New Task` and does not fail the message;
+later messages do not retry naming. The generated name updates the task and its agent title
+together, publishing `task.updated` and `agent.updated`. The task's IDs, folder, and workspace
+never change. An explicit rename always wins, including one committed while naming is running.
+
+### `PATCH /v0/tasks/:taskId`
+
+Renames the task. Requires `If-Match` with the task's `version`. Any authenticated person may
+rename a task, as with bots; renaming is not restricted like archival.
+
+Request: `{ "name": "Fix the redirect loop", "mutationId": "..." }`
+
+Renaming also updates the task's agent title and permanently ends automatic naming for the task,
+even when the submitted name equals the current one. The `folderName` is immutable: a request
+carrying `folderName` is `400 invalid_request`.
+
+Response — `200`: `{ "task": { ... }, "membership": { ... } }` with the new name, and a
+`task.updated` event after commit, echoing `mutationId`. `404` when no such task exists, and the
+usual `409` when `If-Match` names an older version.
 
 ### `GET /v0/tasks/:taskId`
 
@@ -5968,8 +6056,9 @@ event is idempotent by attachment ID.
 - `task.created` — a task was created, with its dedicated workspace, folder, and one agent; the
   agent also emits its own `agent.created`.
     - `task` (full task object).
-- `task.updated` — rename, archive, or unarchive. The embedded agent's own state changes travel
-  as `agent.updated` and do not advance the task.
+- `task.updated` — rename, automatic naming, archive, or unarchive. The embedded agent's own
+  state changes travel as `agent.updated` and do not advance the task. A task's workspace has no
+  `workspace.*` events of its own; it follows the task.
     - `taskId` (ID string), `previousVersion`, `version`, `changes`.
 - `task.joined` — the caller joined a task, including the owner's automatic membership at
   creation. In team mode it reaches only that member's connections.

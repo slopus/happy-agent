@@ -9,7 +9,10 @@ import {
     taskUpdatedPayloadSchema,
     type HappyAgentEvent,
 } from "../sources/protocol/events.js";
+import { workspaceSchema } from "../sources/protocol/workspaces.js";
 import {
+    createTaskRequestSchema,
+    renameTaskRequestSchema,
     reorderTaskRequestSchema,
     taskListResponseSchema,
     taskListScopeSchema,
@@ -221,6 +224,82 @@ describe("tasks protocol", () => {
                 url: "http://agent.local/v0/tasks/task1/unarchive",
             },
             { ifMatch: null, method: "GET", url: "http://agent.local/v0/users/owner1/photo" },
+        ]);
+    });
+
+    it("creates and renames tasks, and describes a task's own workspace", async () => {
+        expect(Value.Check(createTaskRequestSchema, {})).toBe(true);
+        expect(Value.Check(createTaskRequestSchema, { name: "Fix login", id: "task1" })).toBe(true);
+        expect(Value.Check(createTaskRequestSchema, { folderName: "Not A Folder" })).toBe(false);
+        expect(Value.Check(renameTaskRequestSchema, { name: "Fix the loop" })).toBe(true);
+        // The folder is fixed at creation, so a rename cannot carry one.
+        expect(Value.Check(renameTaskRequestSchema, { name: "Fix", folderName: "fix_login" })).toBe(
+            false,
+        );
+        expect(
+            Value.Check(workspaceSchema, {
+                agents: [task.agent],
+                archivedAt: null,
+                base: null,
+                botId: null,
+                compute: task.compute,
+                createdAt: task.createdAt,
+                creatorAgentId: null,
+                git: null,
+                id: task.workspaceId,
+                initialization: { attempt: 0, error: null, status: "ready" },
+                kind: "task",
+                name: task.folderName,
+                nameSource: "user",
+                orderKey: "5",
+                parentId: null,
+                projectId: null,
+                status: "active",
+                subtaskAgentId: null,
+                taskId: task.id,
+                updatedAt: task.updatedAt,
+                version,
+            }),
+        ).toBe(true);
+
+        const requests: {
+            method: string;
+            url: string;
+            body: string | null;
+            ifMatch: string | null;
+        }[] = [];
+        const fetch: typeof globalThis.fetch = async (input, init) => {
+            requests.push({
+                body: typeof init?.body === "string" ? init.body : null,
+                ifMatch: new Headers(init?.headers).get("if-match"),
+                method: init?.method ?? "GET",
+                url: input.toString(),
+            });
+            return new Response(JSON.stringify({ task, membership }), {
+                headers: { "content-type": "application/json" },
+                status: init?.method === "POST" ? 201 : 200,
+            });
+        };
+        const client = new HappyAgentClient({ endpoint: "http://agent.local", token: "t", fetch });
+
+        await expect(client.createTask()).resolves.toEqual({ task, membership });
+        await client.createTask({ id: "task1", name: "Fix login", mutationId: "create-1" });
+        await client.renameTask("task1", { name: "Fix the loop" }, { ifMatch: version });
+
+        expect(requests).toEqual([
+            { body: "{}", ifMatch: null, method: "POST", url: "http://agent.local/v0/tasks" },
+            {
+                body: JSON.stringify({ id: "task1", name: "Fix login", mutationId: "create-1" }),
+                ifMatch: null,
+                method: "POST",
+                url: "http://agent.local/v0/tasks",
+            },
+            {
+                body: JSON.stringify({ name: "Fix the loop" }),
+                ifMatch: version,
+                method: "PATCH",
+                url: "http://agent.local/v0/tasks/task1",
+            },
         ]);
     });
 });

@@ -239,7 +239,9 @@ daemon has no tasks. `listTasks()` returns every task, oldest first, and `listTa
 `memberships` in that order. `joinTask()`, `leaveTask()`, and `reorderTask()` change only the
 caller's own list. Leaving never archives. `archiveTask()` and `unarchiveTask()` take the task's
 `version` as `ifMatch` and succeed only when the task reports `canArchive`; resolve the owner
-through `getUsers()` and `getUserPhoto()`. Follow `task.created` and `task.updated` for the tasks, and `task.joined`,
+through `getUsers()` and `getUserPhoto()`. `createTask()` creates a task the caller owns, named or
+left to name itself from its first message, and `renameTask()` renames it. A task's
+`workspaceId` works with every workspace route, files, terminals, and Git included. Follow `task.created` and `task.updated` for the tasks, and `task.joined`,
 `task.reordered`, and `task.left` for the caller's memberships.
 
 Global skill management is additive without a protocol bump. Detect support through

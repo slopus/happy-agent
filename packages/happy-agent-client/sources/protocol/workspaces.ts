@@ -46,15 +46,16 @@ export const workspaceSchema = Type.Object({
         Type.Literal("worktree"),
         Type.Literal("copy"),
         Type.Literal("bot"),
+        Type.Literal("task"),
     ]),
     /** The display name, which is also the branch name behind the checkout. */
     name: Type.String(),
     nameSource: Type.Union([Type.Literal("user"), Type.Literal("generated")]),
     /** Orders this workspace among the siblings sharing its parent. */
     orderKey: Type.String(),
-    /** `null` on a root workspace and on a bot workspace. */
+    /** `null` on a root workspace and on a bot or task workspace. */
     parentId: Nullable(cuid2Schema),
-    /** The root of this workspace's tree; `null` on a bot workspace. */
+    /** The root of this workspace's tree; `null` on a bot or task workspace. */
     projectId: Nullable(cuid2Schema),
     /** Service shutdown barrier during archival; absent on older daemons. */
     serviceCleanup: Type.Optional(Nullable(workspaceServiceCleanupSchema)),
@@ -64,6 +65,8 @@ export const workspaceSchema = Type.Object({
         Type.Literal("archiving"),
         Type.Literal("archived"),
     ]),
+    /** The owning task, present only on a task's dedicated workspace. */
+    taskId: Type.Optional(cuid2Schema),
     /** The resident workspace-bound subtask; absent or null on other workspaces. */
     subtaskAgentId: Type.Optional(Nullable(cuid2Schema)),
     updatedAt: timestampSchema,
