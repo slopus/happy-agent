@@ -250,12 +250,10 @@ describe("carrying mobile sessions over the machine connection", () => {
 
     it("leaves a session's room when it is archived, and every room when unlinked", async () => {
         const { bot, bots, client, relay, sessionOf } = await linkedDaemon({ bots: 2 });
+        // Startup restores sessions one after another, so the second may still be publishing.
+        await everyRoomJoined(relay, bots);
         const sid = sessionOf(bot.id);
         const other = sessionOf(bots[1]!.id);
-        await vi.waitFor(
-            () => expect(relay.machineRooms(ACCOUNT)).toEqual(expect.arrayContaining([sid, other])),
-            { timeout: 10_000 },
-        );
         await client.archiveBot(bot.id, { ifMatch: bot.version });
         await vi.waitFor(
             () => {

@@ -362,7 +362,7 @@ export class HappySessionSockets {
     }
 }
 
-const FORWARDED_EVENTS = ["connect", "update", "rpc-request"] as const;
+const FORWARDED_EVENTS = ["connect", "disconnect", "update", "rpc-request"] as const;
 
 /** One session's view of its transport, shaped like the socket a session client expects. */
 class HappySessionLink implements HappySocket {
@@ -432,9 +432,12 @@ class HappySessionLink implements HappySocket {
         this.fire("connect");
     }
 
+    /** The machine socket stopped carrying this session; whatever it owed is lost. */
     leaveMachine(): void {
+        const carried = this.#subscribed;
         this.#subscribed = false;
         this.#rpcMethods.clear();
+        if (carried) this.fire("disconnect");
     }
 
     useDedicated(): void {
@@ -452,7 +455,9 @@ class HappySessionLink implements HappySocket {
 
     leaveDedicated(): void {
         const socket = this.#dedicated;
+        if (socket === undefined) return;
         this.#dedicated = undefined;
-        socket?.disconnect();
+        socket.disconnect();
+        this.fire("disconnect");
     }
 }

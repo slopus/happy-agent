@@ -309,6 +309,8 @@ export class HappySessionClient {
     #syncPromise: Promise<void> | undefined;
     /** Someone is waiting for the running loop to finish, so it is not paced. */
     #urgent = false;
+    /** Gives up each answer still owed; a dropped connection loses them all. */
+    readonly #unanswered = new Set<() => void>();
     #finishFirstPass!: () => void;
     readonly #firstPass = new Promise<void>((resolve) => {
         this.#finishFirstPass = resolve;
@@ -796,6 +798,11 @@ export class HappySessionClient {
                 socket.emit("rpc-register", { method: `${remoteSessionId}:${method}` });
             }
             this.kick();
+        });
+        // The pass waiting on one of them fails now rather than at its timeout, and the next
+        // `connect` starts it again.
+        socket.on("disconnect", () => {
+            for (const abandon of [...this.#unanswered]) abandon();
         });
         socket.on("update", (value: unknown) => {
             if (
@@ -1386,16 +1393,20 @@ export class HappySessionClient {
     #emitWithAck(event: string, value: unknown): Promise<unknown> {
         return new Promise((resolve, reject) => {
             const socket = this.#socket;
-            if (socket === undefined) {
+            if (socket === undefined || socket.connected === false) {
                 reject(new Error("Happy is not connected."));
                 return;
             }
             const finish = (settle: () => void) => {
                 clearTimeout(timer);
                 this.#closeController.signal.removeEventListener("abort", onAbort);
+                this.#unanswered.delete(onDisconnect);
                 settle();
             };
             const onAbort = () => finish(() => reject(new Error("Happy synchronization stopped.")));
+            const onDisconnect = () =>
+                finish(() => reject(new Error("Happy disconnected before answering.")));
+            this.#unanswered.add(onDisconnect);
             const timer = setTimeout(
                 () => finish(() => reject(new Error("Happy did not answer in time."))),
                 HTTP_TIMEOUT_MS,

@@ -94,6 +94,9 @@ function inAnotherKeyOrder(value: unknown): unknown {
     );
 }
 
+/** An acknowledgement the server never sends, as when the connection drops first. */
+const UNANSWERED = Symbol("unanswered");
+
 /** A socket that records what was emitted and lets a test play the server's part. */
 class FakeSocket implements HappySocket {
     connected = true;
@@ -115,13 +118,18 @@ class FakeSocket implements HappySocket {
         this.#listeners.get("connect")?.();
     }
 
+    /** Plays the connection dropping on its own, losing every answer still owed. */
+    drop(): void {
+        this.connected = false;
+        this.#listeners.get("disconnect")?.();
+    }
+
     emit(event: string, ...values: unknown[]): void {
         this.emitted.push({ event, value: values[0] });
         const callback = values[1];
         if (typeof callback === "function") {
-            (callback as (answer: unknown) => void)(
-                this.acknowledgements.shift() ?? { result: "success", version: 1 },
-            );
+            const answer = this.acknowledgements.shift() ?? { result: "success", version: 1 };
+            if (answer !== UNANSWERED) (callback as (answer: unknown) => void)(answer);
         }
     }
 
@@ -1038,6 +1046,38 @@ describe("keeping one session in step with Happy", () => {
         expect(decode(published.metadata)).toMatchObject({
             lastMode: { modelId: "anthropic/opus-5", providerId: "claude" },
         });
+        await session.close();
+    });
+
+    it("stops waiting for an answer the dropped connection lost, and publishes once it is back", async () => {
+        const server = fakeServer();
+        const socket = new FakeSocket();
+        socket.acknowledgements = [{ result: "success", version: 5 }];
+        const base = fakeOperations();
+        const session = client({ operations: base.operations, server, socket });
+        await session.settle();
+
+        // The write goes out just as the connection drops, so Happy never answers it.
+        socket.acknowledgements = [UNANSWERED];
+        await base.operations.saveDraft(store.context, AGENT_ID, {
+            value: { ...PHONE_MODE, text: "Sent as the connection dropped" },
+            updatedAt: 30_000,
+        });
+        session.kick();
+        await vi.waitFor(() => expect(socket.emittedValues("update-metadata")).toHaveLength(2), {
+            timeout: 3_000,
+        });
+        socket.acknowledgements = [{ result: "success", version: 6 }];
+        socket.drop();
+        socket.reconnect();
+
+        // Well before the answer would have timed out, the write is made again.
+        await vi.waitFor(() => expect(socket.emittedValues("update-metadata")).toHaveLength(3), {
+            timeout: 5_000,
+        });
+        expect(
+            decode((socket.emittedValues("update-metadata")[2] as { metadata: string }).metadata),
+        ).toMatchObject({ draftUpdatedAt: 30_000 });
         await session.close();
     });
 

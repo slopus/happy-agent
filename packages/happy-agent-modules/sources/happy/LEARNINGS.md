@@ -133,7 +133,12 @@ one message it cannot carry.
   that asked, not to the session id: a session reopened while its predecessor's request was in
   flight used to be marked joined by that answer and then removed by the predecessor's
   unsubscribe. Startup restore waits for each batch's first pass, not `settle()`, which turns
-  off pacing and follows a busy session's loop indefinitely. `delete-session` and ephemerals
+  off pacing and follows a busy session's loop indefinitely. A session's view of the machine
+  socket drops writes while it is not carried, and an answer owed when the connection drops never
+  comes, so a compare-and-swap in flight at a reconnect used to hold its pass for the full 15-second
+  timeout before the reconnect's forced CAS could run. The link now reports `disconnect` whenever
+  it stops being carried, on either transport, and the session client gives up every answer still
+  owed at once. `delete-session` and ephemerals
   never reach a room, so nothing depends on them. There is no separate keepalive timer: `session-alive` stays
   on each sync pass because it carries the session's working state, and a blind timer would tell
   the phone a working session had stopped thinking.
