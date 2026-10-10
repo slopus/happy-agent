@@ -1,5 +1,12 @@
 # Native configuration learnings
 
+Runner shell policy uses the project's canonical root even when a command runs
+from a subdirectory. It protects network policy files alongside other root
+settings, rejects symbolic-link guards and invalid root names, and carries the
+Source sensitive and product-private read boundaries. Read only mode has no
+write grants or explicit write guards. Host allowlists enable the supervisor's
+managed proxy; naming a host does not also permit a private address it resolves to.
+
 Security review previously interpreted an agent's compute directory as a path on the daemon.
 A remote directory with the same spelling could therefore select unrelated host instructions.
 Configuration now reads only its own global security policy and public configuration folder's

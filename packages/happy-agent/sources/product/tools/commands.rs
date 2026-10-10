@@ -56,6 +56,7 @@ pub(super) struct CommandSessions {
     runner_events: tokio::sync::broadcast::Sender<(String, Value)>,
 }
 struct CommandSession {
+    kind: SessionKind,
     owner: String,
     id: u64,
     command: String,
@@ -75,6 +76,12 @@ struct CommandSession {
     complete: Notify,
     stop: CancellationToken,
     task: Mutex<Option<JoinHandle<()>>>,
+}
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SessionKind {
+    Tool,
+    RunnerShell,
+    RunnerProgram,
 }
 struct Output {
     stdout: output::BoundedOutput,
@@ -101,6 +108,7 @@ impl Output {
     }
 }
 pub(super) struct Snapshot {
+    process_session: Option<Arc<CommandSession>>,
     pub command: String,
     pub session: u64,
     pub stdout: String,
@@ -396,10 +404,22 @@ impl CommandSessions {
                     .env_remove("HAPPY_RUNNER_TOKEN")
                     .env_remove("HAPPY_RUNNER_ENDPOINT");
             } else {
-                command.arg("-lc").arg(cmd);
+                let command_text = if runner.is_some() && mode != "full_access" && cwd != root {
+                    format!(
+                        "cd '{}' && {cmd}",
+                        cwd.to_string_lossy().replace('\'', "'\\''")
+                    )
+                } else {
+                    cmd.to_owned()
+                };
+                command.arg("-lc").arg(command_text);
             }
             command
-                .current_dir(&cwd)
+                .current_dir(if runner.is_some() && mode != "full_access" {
+                    &root
+                } else {
+                    &cwd
+                })
                 .stdin(std::process::Stdio::piped())
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped())
@@ -418,11 +438,29 @@ impl CommandSessions {
                 });
             }
             let terminal = if arguments["tty"] == true {
-                Some(pty::attach(&mut command)?)
+                Some(if program.is_some() {
+                    pty::attach_product(
+                        &mut command,
+                        arguments["_runnerTerminal"]["cols"].as_u64().unwrap_or(80) as u16,
+                        arguments["_runnerTerminal"]["rows"].as_u64().unwrap_or(24) as u16,
+                        arguments["_runnerTerminal"]["name"]
+                            .as_str()
+                            .unwrap_or("xterm-256color"),
+                    )?
+                } else {
+                    pty::attach(&mut command)?
+                })
             } else {
                 None
             };
             let began = Instant::now();
+            let kind = if stream.is_some() {
+                SessionKind::RunnerProgram
+            } else if runner.is_some() {
+                SessionKind::RunnerShell
+            } else {
+                SessionKind::Tool
+            };
             let session = {
                 let mut sessions = self
                     .sessions
@@ -433,17 +471,32 @@ impl CommandSessions {
                     .values()
                     .filter(|session| {
                         session.owner == agent
+                            && session.kind == kind
                             && !session.finished()
                             && !session.stop.is_cancelled()
                     })
                     .cloned()
                     .collect();
-                if active.len() >= ACTIVE_PER_AGENT {
+                if kind != SessionKind::RunnerProgram && active.len() >= ACTIVE_PER_AGENT {
                     active[0].stop.cancel();
                 }
                 anyhow::ensure!(
-                    sessions.len() < RETAINED_SESSIONS,
+                    kind != SessionKind::Tool
+                        || sessions
+                            .values()
+                            .filter(|session| session.kind == SessionKind::Tool)
+                            .count()
+                            < RETAINED_SESSIONS,
                     "No more background commands can run at once."
+                );
+                anyhow::ensure!(
+                    kind != SessionKind::RunnerProgram
+                        || sessions
+                            .values()
+                            .filter(|session| session.kind == SessionKind::RunnerProgram)
+                            .count()
+                            < 256,
+                    "No more product programs can run at once."
                 );
                 self.groups.reserve()?;
                 anyhow::ensure!(
@@ -465,12 +518,6 @@ impl CommandSessions {
                     Option<pty::Control>,
                 ) = match terminal {
                     Some((reader, writer, control)) => {
-                        if let (Some(cols), Some(rows)) = (
-                            arguments["_runnerTerminal"]["cols"].as_u64(),
-                            arguments["_runnerTerminal"]["rows"].as_u64(),
-                        ) {
-                            control.resize(cols as u16, rows as u16)?;
-                        }
                         (Box::new(writer), Box::new(reader), None, Some(control))
                     }
                     None => (
@@ -501,6 +548,7 @@ impl CommandSessions {
                     .context("The command process identity is unavailable.")?;
                 let group = self.groups.retain(pid, agent);
                 let session = Arc::new(CommandSession {
+                    kind,
                     owner: agent.into(),
                     id,
                     command: cmd.into(),
@@ -518,8 +566,12 @@ impl CommandSessions {
                     _abort_epoch: epoch.clone(),
                     stdin: tokio::sync::Mutex::new(Some(stdin)),
                     state: Mutex::new({
-                        let mut output = Output::new(capture_limit);
-                        if runner.is_some() {
+                        let mut output = Output::new(if kind == SessionKind::RunnerProgram {
+                            0
+                        } else {
+                            capture_limit
+                        });
+                        if kind == SessionKind::RunnerShell {
                             output.retained = Some((
                                 output::BoundedOutput::new(capture_limit),
                                 output::BoundedOutput::new(capture_limit),
@@ -561,6 +613,9 @@ impl CommandSessions {
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(task);
                 sessions.insert(id, session.clone());
+                if kind != SessionKind::Tool {
+                    trim(&mut sessions);
+                }
                 session
             };
             if runner.is_some() {
@@ -570,6 +625,11 @@ impl CommandSessions {
                         .send((agent.to_owned(), json!({"event":"shell.sessions"})));
                 }
                 return Ok(Snapshot {
+                    process_session: if kind == SessionKind::RunnerProgram {
+                        Some(session.clone())
+                    } else {
+                        None
+                    },
                     command: session.command.clone(),
                     session: session.id,
                     stdout: String::new(),
@@ -797,6 +857,17 @@ impl CommandSessions {
                 state.cleanup_error.as_deref().unwrap_or("unknown reason")
             );
         }
+        for session in &sessions {
+            let task = session
+                .task
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .take();
+            if let Some(task) = task {
+                task.await
+                    .context("Archived command completion could not be confirmed.")?;
+            }
+        }
         tokio::select! { biased; _ = cancel.cancelled() => anyhow::bail!("Archived agent process cleanup was interrupted and remains unconfirmed."), result = self.groups.cleanup(Some(agent)) => result? }
         let mut catalog = self
             .sessions
@@ -908,6 +979,7 @@ impl CommandSession {
         let (stderr, stderr_dropped) = output.stderr.drain();
         let dropped = stdout_dropped + stderr_dropped;
         Ok(Snapshot {
+            process_session: None,
             command: self.command.clone(),
             session: self.id,
             stdout,
@@ -1102,10 +1174,15 @@ async fn terminate(
     }
 }
 fn trim(sessions: &mut BTreeMap<u64, Arc<CommandSession>>) {
-    while sessions.len() >= RETAINED_SESSIONS {
+    while sessions
+        .values()
+        .filter(|session| session.kind == SessionKind::Tool)
+        .count()
+        >= RETAINED_SESSIONS
+    {
         let finished = sessions
             .iter()
-            .find(|(_, session)| session.finished())
+            .find(|(_, session)| session.kind == SessionKind::Tool && session.finished())
             .map(|(id, _)| *id);
         if let Some(id) = finished {
             sessions.remove(&id);
@@ -1113,6 +1190,25 @@ fn trim(sessions: &mut BTreeMap<u64, Arc<CommandSession>>) {
             break;
         }
     }
+    let mut shells = BTreeMap::<String, Vec<u64>>::new();
+    for (id, session) in sessions.iter() {
+        if session.kind == SessionKind::RunnerShell {
+            shells.entry(session.owner.clone()).or_default().push(*id);
+        }
+    }
+    for ids in shells.values() {
+        let mut excess = ids.len().saturating_sub(64);
+        for id in ids {
+            if excess == 0 {
+                break;
+            }
+            if sessions.get(id).is_some_and(|session| session.finished()) {
+                sessions.remove(id);
+                excess -= 1;
+            }
+        }
+    }
+    sessions.retain(|_, session| session.kind != SessionKind::RunnerProgram || !session.finished());
 }
 fn truncate(value: &str, max: usize, tokens: usize) -> String {
     let prefix = format!(

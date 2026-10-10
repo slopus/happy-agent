@@ -84,25 +84,117 @@ async fn full_access_commands_run_without_requiring_a_sandbox_namespace() {
 }
 
 #[tokio::test]
+async fn runner_programs_do_not_evict_each_other_at_the_shell_session_limit() {
+    let fixture = Fixture::new().await;
+    let request = json!({"computeId":"programs","cwd":fixture.directory.path()});
+    let mut processes = Vec::new();
+    for stream in 1..=65 {
+        processes.push(
+            fixture
+                .commands
+                .native_runner_process(
+                    "program-quota",
+                    &request,
+                    &json!({"computeId":"programs","stream":stream,"command":"/bin/cat","args":[]}),
+                    &CancellationToken::new(),
+                )
+                .await
+                .unwrap(),
+        );
+    }
+    let prematurely_stopped = fixture
+        .commands
+        .sessions
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .values()
+        .filter(|session| session.owner == "program-quota" && session.stop.is_cancelled())
+        .count();
+    fixture.close().await;
+    drop(processes);
+    assert_eq!(
+        prematurely_stopped, 0,
+        "Source programs belong to the runner stream quota, independently of background shell sessions."
+    );
+}
+
+#[tokio::test]
+async fn runner_shell_retains_only_the_source_64_completed_snapshots_per_compute() {
+    let fixture = Fixture::new().await;
+    let request = json!({"computeId":"shells","cwd":fixture.directory.path()});
+    let options = json!({"command":"printf finished","permissions":{"mode":"full_access","network":{"egress":true,"localBinding":true}}});
+    let cancel = CancellationToken::new();
+    let mut first = 0;
+    for index in 0..65 {
+        let id = fixture
+            .commands
+            .native_runner_start("shell-quota", &request, &options, &cancel)
+            .await
+            .unwrap();
+        if index == 0 {
+            first = id;
+        }
+        let read = fixture
+            .commands
+            .native_runner_read("shell-quota", id, 5000, false, &cancel)
+            .await
+            .unwrap();
+        assert_eq!(read["status"], "completed");
+    }
+    let read = fixture
+        .commands
+        .native_runner_read("shell-quota", first, 0, true, &cancel)
+        .await
+        .unwrap();
+    fixture.close().await;
+    assert!(
+        read.is_null(),
+        "The oldest completed Source shell snapshot must be evicted after 64 retained sessions: {read}"
+    );
+}
+
+#[tokio::test]
 async fn runner_shell_keeps_full_output_and_peek_does_not_consume_the_delta() {
-    let fixture=Fixture::new().await;
-    let request=json!({"computeId":"fixture","cwd":fixture.directory.path()});
-    let cancel=CancellationToken::new();
-    let options=json!({"command":"printf first; read value; printf second","permissions":{"mode":"full_access","network":{"egress":true,"localBinding":true}},"timeoutMs":0});
-    let id=fixture.commands.native_runner_start("runnerfixture",&request,&options,&cancel).await.unwrap();
+    let fixture = Fixture::new().await;
+    let request = json!({"computeId":"fixture","cwd":fixture.directory.path()});
+    let cancel = CancellationToken::new();
+    let options = json!({"command":"printf first; read value; printf second","permissions":{"mode":"full_access","network":{"egress":true,"localBinding":true}},"timeoutMs":0});
+    let id = fixture
+        .commands
+        .native_runner_start("runnerfixture", &request, &options, &cancel)
+        .await
+        .unwrap();
     // A completed start owns no output cursor; the later reader sees its first bytes.
-    let first=fixture.commands.native_runner_read("runnerfixture",id,100,true,&cancel).await.unwrap();
-    assert_eq!(first["stdout"],"first");
-    assert_eq!(first["stdoutDelta"],"first");
-    let consumed=fixture.commands.native_runner_read("runnerfixture",id,0,false,&cancel).await.unwrap();
-    assert_eq!(consumed["stdoutDelta"],"first");
-    assert!(fixture.commands.native_runner_write("runnerfixture",id,b"continue\n",&cancel).await.unwrap());
-    let final_read=fixture.commands.native_runner_read("runnerfixture",id,1000,false,&cancel).await.unwrap();
-    assert_eq!(final_read["stdout"],"firstsecond");
-    assert_eq!(final_read["stdoutDelta"],"second");
-    assert_eq!(final_read["status"],"completed");
-    assert_eq!(final_read["timedOut"],true);
-    assert_eq!(final_read["stdoutBytes"],11);
+    let first = fixture
+        .commands
+        .native_runner_read("runnerfixture", id, 100, true, &cancel)
+        .await
+        .unwrap();
+    assert_eq!(first["stdout"], "first");
+    assert_eq!(first["stdoutDelta"], "first");
+    let consumed = fixture
+        .commands
+        .native_runner_read("runnerfixture", id, 0, false, &cancel)
+        .await
+        .unwrap();
+    assert_eq!(consumed["stdoutDelta"], "first");
+    assert!(
+        fixture
+            .commands
+            .native_runner_write("runnerfixture", id, b"continue\n", &cancel)
+            .await
+            .unwrap()
+    );
+    let final_read = fixture
+        .commands
+        .native_runner_read("runnerfixture", id, 1000, false, &cancel)
+        .await
+        .unwrap();
+    assert_eq!(final_read["stdout"], "firstsecond");
+    assert_eq!(final_read["stdoutDelta"], "second");
+    assert_eq!(final_read["status"], "completed");
+    assert_eq!(final_read["timedOut"], true);
+    assert_eq!(final_read["stdoutBytes"], 11);
     fixture.close().await;
 }
 

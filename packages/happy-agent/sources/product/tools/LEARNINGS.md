@@ -17,6 +17,17 @@ stop, permission reduction, abort, archival, or shutdown owns the corresponding
 cleanup. Starts remember their agent's abort generation before provisioning so a
 command waiting on storage cannot cross an abort and start work for the old turn.
 
+Runner background shell and program starts belong to the compute even while
+their request disconnects. Foreground runs and bounded reads keep their caller's
+cancellation. Compute disposal cancels pending starts before launch and joins
+both program and shell cleanup. Program streams use their own 256-program bound;
+they do not inherit the shell's 64-session eviction. Runner shells retain at
+most 64 completed snapshots per compute, independently of ordinary tool sessions.
+
+Product program terminals receive their requested size and terminal name before
+the child starts, while preserving its configured environment. Ordinary agent
+terminals retain their shared color and pager defaults.
+
 ## A shell exit is different from whole-group teardown
 
 The first native supervisor terminated descendants whenever their shell exited.

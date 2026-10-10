@@ -8,7 +8,11 @@ struct Graph {
     server: Arc<RunnerServer>,
     tools: Arc<ToolsModule>,
 }
-impl Drop for Graph {fn drop(&mut self){self.fixture.lifecycle.begin_shutdown();}}
+impl Drop for Graph {
+    fn drop(&mut self) {
+        self.fixture.lifecycle.begin_shutdown();
+    }
+}
 impl Graph {
     async fn new() -> Self {
         crate::product::process::prepare_child_reaping().unwrap();
@@ -86,6 +90,96 @@ struct Peer {
     next: u64,
     ready: Value,
     methods: std::collections::BTreeSet<String>,
+}
+
+#[tokio::test]
+async fn native_runner_background_start_belongs_to_compute_instead_of_cancelled_request() {
+    let graph = Graph::new().await;
+    let root = graph
+        .fixture
+        .directory
+        .path()
+        .join("runner-background-lifetime");
+    std::fs::create_dir_all(&root).unwrap();
+    let compute = graph
+        .tools
+        .native_runner_compute(&json!({"computeId":"background","cwd":root}))
+        .unwrap();
+    let cancelled_request = CancellationToken::new();
+    cancelled_request.cancel();
+    let (started, _) = compute.request("shell.startSession", &json!({"computeId":"background","options":{"command":"printf owned-shell","permissions":{"mode":"full_access","network":{"egress":true,"localBinding":true}}}}), &[], &cancelled_request).await.unwrap();
+    let (read, _) = compute
+        .request(
+            "shell.readSession",
+            &json!({"computeId":"background","sessionId":started["sessionId"],"waitMs":5000}),
+            &[],
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(read["snapshot"]["stdout"], "owned-shell");
+    let process = compute.process(&json!({"computeId":"background","stream":1,"command":"/bin/sh","args":["-c","printf owned-process"]}), &cancelled_request).await.unwrap();
+    let mut output = process.take_output().unwrap();
+    let mut bytes = Vec::new();
+    while let Some(event) = output.recv().await {
+        match event {
+            NativeRunnerProcessEvent::Data { bytes: chunk, .. } => bytes.extend(chunk),
+            NativeRunnerProcessEvent::Exit { code, .. } => {
+                assert_eq!(code, Some(0));
+                break;
+            }
+        }
+    }
+    assert_eq!(bytes, b"owned-process");
+    compute.dispose().await.unwrap();
+    drop(process);
+    assert!(
+        compute
+            .process(
+                &json!({"computeId":"background","stream":2,"command":"/bin/sh","args":[]}),
+                &CancellationToken::new()
+            )
+            .await
+            .is_err()
+    );
+    graph.close().await;
+}
+
+#[tokio::test]
+async fn native_runner_terminal_has_requested_dimensions_and_environment_before_program_starts() {
+    let graph = Graph::new().await;
+    let mut peer = Peer::connect(graph.server.clone(), "native-terminal-start", 1000).await;
+    let root = graph.fixture.directory.path().join("runner-terminal-start");
+    std::fs::create_dir_all(&root).unwrap();
+    peer.rpc(
+        "compute.create",
+        json!({"computeId":"terminal","cwd":root}),
+        &[],
+    )
+    .await;
+    peer.rpc("process.start", json!({"computeId":"terminal","stream":1,"command":"/bin/sh","args":["-c","stty size; printf '%s|%s' \"$TERM\" \"$PAGER\""],"environment":{"PAGER":"owned-pager"},"terminal":{"cols":103,"rows":37}}), &[]).await;
+    let mut output = Vec::new();
+    loop {
+        let (header, body) = peer
+            .matching(|header| {
+                header["stream"] == 1 && (header["type"] == "data" || header["type"] == "exit")
+            })
+            .await;
+        if header["type"] == "exit" {
+            assert_eq!(header["exitCode"], 0);
+            break;
+        }
+        if header["channel"] == "out" {
+            output.extend(body);
+        }
+    }
+    assert_eq!(
+        String::from_utf8(output).unwrap().replace('\r', ""),
+        "37 103\nxterm-256color|owned-pager"
+    );
+    peer.send(json!({"type":"release","stream":1}), &[]).await;
+    peer.goodbye().await;
+    graph.close().await;
 }
 impl Peer {
     async fn connect(server: Arc<RunnerServer>, instance: &str, grace: u64) -> Self {
@@ -374,6 +468,19 @@ async fn native_runner_binary_peer_executes_all_32_source_methods() {
     assert_eq!(peer.data(10).await, b"finished");
     peer.matching(|header| header["type"] == "exit" && header["stream"] == 10)
         .await;
+    // Source controls remain harmless after a program's owned group has exited.
+    peer.rpc(
+        "process.signal",
+        json!({"stream":10,"signal":"SIGTERM"}),
+        &[],
+    )
+    .await;
+    peer.rpc(
+        "process.resize",
+        json!({"stream":10,"cols":90,"rows":30}),
+        &[],
+    )
+    .await;
     peer.send(json!({"type":"release","stream":10}), &[]).await;
     peer.rpc("process.start",json!({"computeId":"machine","stream":11,"command":"/bin/sh","args":["-c","printf signal-ready; read value"]}),&[]).await;
     assert_eq!(peer.data(11).await, b"signal-ready");
@@ -492,11 +599,24 @@ async fn native_runner_reconnect_replays_unacknowledged_binary_output_and_new_da
 
 #[tokio::test]
 async fn native_runner_missing_stat_keeps_the_source_enoent_code() {
-    let graph=Graph::new().await;
-    let mut peer=Peer::connect(graph.server.clone(),"daemon-a",0).await;
-    peer.rpc("compute.create",json!({"computeId":"machine","cwd":graph.fixture.directory.path()}),&[]).await;
-    let id=peer.next;peer.send(json!({"type":"request","id":id,"method":"fs.stat","params":path("missing")}),&[]).await;
-    let answer=peer.matching(|header|header["type"]=="response"&&header["id"]==id).await;
-    peer.goodbye().await;graph.close().await;
-    assert_eq!(answer.0["error"]["code"],"ENOENT","{}",answer.0);
+    let graph = Graph::new().await;
+    let mut peer = Peer::connect(graph.server.clone(), "daemon-a", 0).await;
+    peer.rpc(
+        "compute.create",
+        json!({"computeId":"machine","cwd":graph.fixture.directory.path()}),
+        &[],
+    )
+    .await;
+    let id = peer.next;
+    peer.send(
+        json!({"type":"request","id":id,"method":"fs.stat","params":path("missing")}),
+        &[],
+    )
+    .await;
+    let answer = peer
+        .matching(|header| header["type"] == "response" && header["id"] == id)
+        .await;
+    peer.goodbye().await;
+    graph.close().await;
+    assert_eq!(answer.0["error"]["code"], "ENOENT", "{}", answer.0);
 }

@@ -26,11 +26,6 @@ impl Control {
 }
 
 pub(super) fn attach(command: &mut tokio::process::Command) -> Result<(Pty, Pty, Control)> {
-    let (master, slave) = open()?;
-    command
-        .stdin(std::process::Stdio::from(slave.try_clone()?))
-        .stdout(std::process::Stdio::from(slave.try_clone()?))
-        .stderr(std::process::Stdio::from(slave));
     for (name, value) in [
         ("TERM", "dumb"),
         ("COLORTERM", ""),
@@ -41,6 +36,29 @@ pub(super) fn attach(command: &mut tokio::process::Command) -> Result<(Pty, Pty,
     ] {
         command.env(name, value);
     }
+    attach_dimensions(command, 80, 24)
+}
+
+pub(super) fn attach_product(
+    command: &mut tokio::process::Command,
+    cols: u16,
+    rows: u16,
+    name: &str,
+) -> Result<(Pty, Pty, Control)> {
+    command.env("TERM", name);
+    attach_dimensions(command, cols, rows)
+}
+
+fn attach_dimensions(
+    command: &mut tokio::process::Command,
+    cols: u16,
+    rows: u16,
+) -> Result<(Pty, Pty, Control)> {
+    let (master, slave) = open(cols, rows)?;
+    command
+        .stdin(std::process::Stdio::from(slave.try_clone()?))
+        .stdout(std::process::Stdio::from(slave.try_clone()?))
+        .stderr(std::process::Stdio::from(slave));
     use std::os::unix::process::CommandExt;
     // Commands has already registered setsid: this second, async-signal-safe
     // child hook gives that new session its controlling terminal.
@@ -59,7 +77,7 @@ pub(super) fn attach(command: &mut tokio::process::Command) -> Result<(Pty, Pty,
     ))
 }
 
-fn open() -> io::Result<(OwnedFd, OwnedFd)> {
+fn open(cols: u16, rows: u16) -> io::Result<(OwnedFd, OwnedFd)> {
     #[cfg(target_os = "linux")]
     let (master, slave) = {
         // Allocate with CLOEXEC atomically: concurrent process starts must never
@@ -118,8 +136,8 @@ fn open() -> io::Result<(OwnedFd, OwnedFd)> {
         (master, slave)
     };
     let size = libc::winsize {
-        ws_row: 24,
-        ws_col: 80,
+        ws_row: rows,
+        ws_col: cols,
         ws_xpixel: 0,
         ws_ypixel: 0,
     };

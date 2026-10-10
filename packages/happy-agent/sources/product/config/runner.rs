@@ -255,13 +255,110 @@ impl ConfigModule {
         };
         let mut denied_reads = resolve(&permissions["deniedReadPaths"])?;
         denied_reads.extend(environment.private_paths.clone());
-        let mut denied_writes = resolve(&permissions["deniedWritePaths"])?;
-        denied_writes.extend(environment.private_paths);
-        denied_writes.extend(environment.protected_paths);
-        denied_writes.push(root.join(".git"));
-        Ok(
-            json!({"mode":permissions["mode"],"allowedReadPaths":resolve(&permissions["allowedReadPaths"])?,"allowedWritePaths":resolve(&permissions["allowedWritePaths"])?,"deniedReadPaths":denied_reads,"deniedWritePaths":denied_writes,"network":permissions["network"]}),
-        )
+        denied_reads.extend(self.runner_sensitive_read_paths(&environment.home, &root)?);
+        let read_only = permissions["mode"] == "read_only";
+        let mut denied_writes = Vec::new();
+        if !read_only {
+            denied_writes = resolve(&permissions["deniedWritePaths"])?;
+            denied_writes.extend(environment.private_paths);
+            denied_writes.extend(resolve(&request["policy"]["readableDirectories"])?);
+            denied_writes.extend(environment.protected_paths);
+            denied_writes.push(root.join(".git"));
+            for path in &denied_writes {
+                match std::fs::symlink_metadata(path) {
+                    Ok(metadata) => ensure!(
+                        !metadata.is_symlink(),
+                        "Restricted host commands cannot protect a symbolic-link path: {}.",
+                        path.display()
+                    ),
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(error.into()),
+                }
+            }
+        }
+        let mut network = permissions["network"].clone();
+        let hosts = network["allowedHosts"].as_array();
+        ensure!(
+            !hosts.is_some_and(|hosts| hosts.contains(&json!("*"))),
+            "Network allowedHosts cannot contain a bare '*'; leave allowedHosts empty for open egress."
+        );
+        if network["egress"] == true && hosts.is_some_and(|hosts| !hosts.is_empty()) {
+            network["outgoingProxy"] = json!({"frontEnds":["http","socks5"]});
+        }
+        let mut policy = json!({"mode":permissions["mode"],"allowedReadPaths":resolve(&permissions["allowedReadPaths"])?,"deniedReadPaths":denied_reads,"deniedWritePaths":denied_writes,"network":network});
+        if !read_only {
+            policy["allowedWritePaths"] = json!(resolve(&permissions["allowedWritePaths"])?);
+        }
+        Ok(policy)
+    }
+    fn runner_sensitive_read_paths(&self, home: &Path, root: &Path) -> Result<Vec<PathBuf>> {
+        let home = match std::fs::canonicalize(home) {
+            Ok(home) => home,
+            Err(_) => absolute(home)?,
+        };
+        let config = std::env::var_os("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .filter(|path| path.is_absolute())
+            .unwrap_or_else(|| home.join(".config"));
+        let mut paths = if root != home && root.starts_with(&home) {
+            Vec::new()
+        } else {
+            vec![home.clone()]
+        };
+        paths.extend(
+            [
+                ".aws",
+                ".azure",
+                ".bash_history",
+                ".claude",
+                ".codex",
+                ".docker",
+                ".env",
+                ".git-credentials",
+                ".gnupg",
+                ".kube",
+                ".netrc",
+                ".node_repl_history",
+                ".npmrc",
+                ".password-store",
+                ".psql_history",
+                ".pypirc",
+                ".python_history",
+                ".ssh",
+                ".zsh_history",
+                "Library/Keychains",
+                ".local/share/keyrings",
+            ]
+            .into_iter()
+            .map(|name| home.join(name)),
+        );
+        paths.extend(
+            ["1Password", "gcloud", "gh", "glab-cli", "op"]
+                .into_iter()
+                .map(|name| config.join(name)),
+        );
+        for name in [
+            "AWS_CONFIG_FILE",
+            "AWS_SHARED_CREDENTIALS_FILE",
+            "CLAUDE_CONFIG_DIR",
+            "CODEX_HOME",
+            "DOCKER_CONFIG",
+            "GIT_CONFIG_GLOBAL",
+            "GNUPGHOME",
+            "KUBECONFIG",
+            "NETRC",
+            "NPM_CONFIG_USERCONFIG",
+        ] {
+            if let Some(path) = std::env::var_os(name).filter(|path| !path.is_empty()) {
+                let path = PathBuf::from(path);
+                paths.push(absolute(&if path.is_absolute() {
+                    path
+                } else {
+                    root.join(path)
+                })?);
+            }
+        }
+        Ok(paths)
     }
     pub fn runner_file_environment(&self, request: &Value) -> Result<ComputeFileEnvironment> {
         let root = PathBuf::from(
@@ -277,35 +374,79 @@ impl ConfigModule {
             .into_iter()
             .map(str::to_owned)
             .collect::<std::collections::BTreeSet<_>>();
-        for name in request["policy"]["protectedProjectFiles"]
-            .as_array()
-            .into_iter()
-            .flatten()
-        {
-            protected.insert(
-                name.as_str()
-                    .context("The protected runner path is invalid.")?
-                    .to_owned(),
-            );
+        for field in ["protectedProjectFiles", "networkPolicyFiles"] {
+            for name in request["policy"][field].as_array().into_iter().flatten() {
+                let name = name
+                    .as_str()
+                    .context("The protected runner path is invalid.")?;
+                let path = Path::new(name);
+                ensure!(
+                    !name.is_empty()
+                        && name != "."
+                        && name != ".."
+                        && !path.is_absolute()
+                        && path
+                            .parent()
+                            .is_some_and(|parent| parent.as_os_str().is_empty()),
+                    "Host project policy file '{name}' must be a root file name."
+                );
+                protected.insert(name.to_owned());
+            }
         }
         let protected_paths = protected
             .into_iter()
             .map(|name| root.join(Path::new(&name)))
             .collect();
+        let mut private_paths = self.runner_settings.as_ref().map_or_else(
+            || vec![self.paths.directory.clone()],
+            |settings| {
+                let mut paths = settings.private_directories.clone();
+                paths.push(self.paths.directory.clone());
+                paths
+            },
+        );
+        for value in request["policy"]["privateDirectories"]
+            .as_array()
+            .into_iter()
+            .flatten()
+        {
+            let path = PathBuf::from(
+                value
+                    .as_str()
+                    .context("The private runner path is invalid.")?,
+            );
+            private_paths.push(absolute(&if path.is_absolute() {
+                path
+            } else {
+                root.join(path)
+            })?);
+        }
+        for name in request["policy"]["privatePathVariables"]
+            .as_array()
+            .into_iter()
+            .flatten()
+        {
+            if let Some(path) = std::env::var_os(
+                name.as_str()
+                    .context("The private runner variable is invalid.")?,
+            )
+            .filter(|path| !path.is_empty())
+            {
+                let path = PathBuf::from(path);
+                private_paths.push(absolute(&if path.is_absolute() {
+                    path
+                } else {
+                    root.join(path)
+                })?);
+            }
+        }
         Ok(ComputeFileEnvironment {
             root,
             home: self
                 .runner_settings
                 .as_ref()
                 .map_or_else(|| self.os_home.clone(), |settings| settings.home.clone()),
-            private_paths: self.runner_settings.as_ref().map_or_else(
-                || vec![self.paths.directory.clone()],
-                |settings| {
-                    let mut paths = settings.private_directories.clone();
-                    paths.push(self.paths.directory.clone());
-                    paths
-                },
-            ),
+            private_paths,
             protected_paths,
         })
     }
@@ -315,6 +456,40 @@ impl ConfigModule {
 mod tests {
     use super::*;
     const TOKEN: &str = "0123456789012345678901234567890123456789012";
+    #[test]
+    fn runner_shell_policy_preserves_source_read_only_and_network_host_rules() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("workspace");
+        std::fs::create_dir(&root).unwrap();
+        let config = ConfigModule::from_home(directory.path().join("private")).unwrap();
+        let request = json!({"computeId":"policy","cwd":root,"policy":{"protectedProjectFiles":["guarded.txt"],"networkPolicyFiles":["network.toml"]}});
+        let read = config.runner_shell_policy(&request, &json!({"mode":"read_only","allowedWritePaths":["extra"],"deniedWritePaths":["other"],"network":{"egress":false,"localBinding":false}})).unwrap();
+        assert_eq!(read["deniedWritePaths"], json!([]));
+        assert!(read.get("allowedWritePaths").is_none());
+        let write = config.runner_shell_policy(&request, &json!({"mode":"workspace_write","network":{"egress":true,"localBinding":false,"allowedHosts":["example.com"]}})).unwrap();
+        assert_eq!(
+            write["network"]["outgoingProxy"],
+            json!({"frontEnds":["http","socks5"]})
+        );
+        assert!(
+            write["deniedWritePaths"]
+                .as_array()
+                .unwrap()
+                .contains(&json!(root.join("network.toml")))
+        );
+        assert!(
+            write["deniedReadPaths"]
+                .as_array()
+                .unwrap()
+                .contains(&json!(config.os_home.join(".ssh")))
+        );
+        assert!(config.runner_shell_policy(&request, &json!({"mode":"workspace_write","network":{"egress":true,"localBinding":false,"allowedHosts":["*"]}})).is_err());
+        for name in ["../escaped", "/absolute", "nested/file", "", ".", ".."] {
+            let request =
+                json!({"computeId":"policy","cwd":root,"policy":{"networkPolicyFiles":[name]}});
+            assert!(config.runner_file_environment(&request).is_err(), "{name}");
+        }
+    }
     #[test]
     fn runner_options_preserve_source_endpoint_prefixes_and_private_token_roots() {
         let directory = tempfile::tempdir().unwrap();

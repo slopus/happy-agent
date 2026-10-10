@@ -106,14 +106,7 @@ async fn connected(server: Arc<owners::RunnerServer>, mut socket: Dialled) -> Re
     let pumped = pump.await;
     drop(incoming);
     drop(outgoing_rx);
-    let result = match tokio::time::timeout(Duration::from_secs(15), &mut work).await {
-        Ok(result) => result?,
-        Err(_) => {
-            work.abort();
-            let _ = work.await;
-            anyhow::bail!("The runner connection did not finish cleanup in time.")
-        }
-    };
+    let result = work.await?;
     if let Err(error) = pumped {
         return Err(error.into());
     }

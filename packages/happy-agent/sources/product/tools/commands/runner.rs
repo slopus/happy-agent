@@ -40,6 +40,9 @@ impl NativeRunnerProcess {
         Ok(())
     }
     pub fn resize(&self, cols: u16, rows: u16) -> Result<()> {
+        if self.session.finished() {
+            return Ok(());
+        }
         if let Some(terminal) = &self.session.terminal {
             terminal.resize(cols, rows)?;
         }
@@ -92,7 +95,7 @@ impl CommandSessions {
             arguments["workdir"] = cwd.clone();
         }
         let (sender, output) = tokio::sync::mpsc::channel(8);
-        let id = self
+        let snapshot = self
             .start_local_snapshot(
                 owner,
                 &configuration,
@@ -104,10 +107,11 @@ impl CommandSessions {
                 Some(request),
                 Some(sender),
             )
-            .await?
-            .session;
+            .await?;
         Ok(Arc::new(NativeRunnerProcess {
-            session: self.session(owner, id)?,
+            session: snapshot
+                .process_session
+                .context("The native product process lost its startup owner.")?,
             output: Mutex::new(Some(output)),
         }))
     }

@@ -184,7 +184,12 @@ impl NativeRunnerCompute {
         let owned_root = root.clone();
         let owned_ignored = ignored.clone();
         let watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
-            if event.as_ref().is_ok_and(|event|matches!(event.kind,notify::EventKind::Access(_))){return;}
+            if event
+                .as_ref()
+                .is_ok_and(|event| matches!(event.kind, notify::EventKind::Access(_)))
+            {
+                return;
+            }
             let mut pending = owned_pending
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -236,7 +241,7 @@ impl NativeRunnerCompute {
     pub async fn process(
         &self,
         params: &Value,
-        cancel: &CancellationToken,
+        _cancel: &CancellationToken,
     ) -> Result<Arc<NativeRunnerProcess>> {
         ensure!(
             !self.closed.load(std::sync::atomic::Ordering::Acquire),
@@ -248,7 +253,7 @@ impl NativeRunnerCompute {
             "The runner process request is invalid."
         );
         self.commands
-            .native_runner_process(&self.process_owner, &self.request, params, cancel)
+            .native_runner_process(&self.process_owner, &self.request, params, &self.lifetime)
             .await
     }
     pub async fn request(
@@ -276,7 +281,18 @@ impl NativeRunnerCompute {
         } else {
             (
                 self.commands
-                    .native_runner_request(&self.owner, &self.request, method, params, body, cancel)
+                    .native_runner_request(
+                        &self.owner,
+                        &self.request,
+                        method,
+                        params,
+                        body,
+                        if method == "shell.startSession" {
+                            &self.lifetime
+                        } else {
+                            cancel
+                        },
+                    )
                     .await?,
                 Vec::new(),
             )
@@ -294,11 +310,11 @@ impl NativeRunnerCompute {
         self.lifetime.cancel();
         self.closed
             .store(true, std::sync::atomic::Ordering::Release);
-        self.commands
-            .archive_agent(&self.process_owner, &CancellationToken::new())
-            .await?;
-        self.commands
-            .archive_agent(&self.owner, &CancellationToken::new())
-            .await
+        let cancel = CancellationToken::new();
+        let (programs, shells) = tokio::join!(
+            self.commands.archive_agent(&self.process_owner, &cancel),
+            self.commands.archive_agent(&self.owner, &cancel)
+        );
+        programs.and(shells)
     }
 }

@@ -257,6 +257,7 @@ impl Commands {
             self.processes.exit(session.id, exit).await?;
         }
         Ok(Snapshot {
+            process_session: None,
             command: session.command.clone(),
             session: session.id,
             stdout: value["stdoutDelta"].as_str().unwrap().into(),

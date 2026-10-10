@@ -801,12 +801,25 @@ impl RunnerServer {
             self.close_stream(stream).await;
         }
         let computes = std::mem::take(&mut *owner.computes.lock().await);
-        for compute in computes.values() {
-            compute.dispose().await?;
+        let mut cleanup = tokio::task::JoinSet::new();
+        for compute in computes.into_values() {
+            cleanup.spawn(async move { compute.dispose().await });
+        }
+        let mut failure = None;
+        while let Some(result) = cleanup.join_next().await {
+            match result {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => {
+                    failure.get_or_insert(error);
+                }
+                Err(error) => {
+                    failure.get_or_insert(error.into());
+                }
+            }
         }
         let mut tasks = owner.tasks.lock().await;
         while tasks.join_next().await.is_some() {}
-        Ok(())
+        failure.map_or(Ok(()), Err)
     }
     fn lease(self: &Arc<Self>, owner: Arc<Owner>) {
         let cancel = self.runners.lifecycle.shutdown.child_token();
@@ -858,7 +871,9 @@ impl RunnerServer {
         let owner = owner.clone();
         let id = id.to_owned();
         let task_owner = owner.clone();
-        owner.tasks.lock().await.spawn(async move {loop {
+        let mut tasks = owner.tasks.lock().await;
+        while tasks.try_join_next().is_some() {}
+        tasks.spawn(async move {loop {
             let event=tokio::select! {event=events.recv()=>event,_=task_owner.stop.cancelled()=>break,_=lifetime.cancelled()=>break};
             match event {
                 Ok((identity,event)) if compute.owns_shell_event(&identity)=>{
