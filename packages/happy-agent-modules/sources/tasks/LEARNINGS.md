@@ -13,8 +13,17 @@ applied it still start, and a new migration drops its table.
 People described tasks as "bots but not bots": no avatar, an owner who created them in team
 chats, a dedicated folder each, otherwise like bots. The module therefore copies the bot
 lifecycle (one root agent, immutable folder, dedicated workspace identity, versioned archival
-and restoration, messaging) and leaves out avatars, administration, system keys, and
-automatic naming. A task's name is chosen by whoever creates it.
+and restoration, messaging) and leaves out avatars, administration, and system keys.
+
+Steve then asked why task workspaces, files, terminals, creation, and rename were missing:
+"just like bots". A task's workspace is now a real workspace of kind `task` that every folder
+route serves (files, terminals, Git) while its lifecycle routes refuse, exactly as for a bot.
+People create tasks through `POST /v0/tasks` like bots, owning them in team mode and joining at
+the top of their list, and anyone may rename one. An unnamed task is `New Task` and names itself
+once from its first text-bearing message — a person's, or the creating agent's opening text with
+its sender line removed. A rename, even to the same name, ends automatic naming, and wins over a
+naming request that is still running. Tasks created before naming existed keep their names as
+chosen.
 
 ## Task order belongs to each person, not to the catalog
 

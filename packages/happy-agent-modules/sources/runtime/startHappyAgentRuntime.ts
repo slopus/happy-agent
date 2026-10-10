@@ -458,6 +458,7 @@ export async function startHappyAgentRuntime(
         const tasks = new TasksModule(
             config,
             abort,
+            titles,
             projects,
             workspaces,
             runners,
@@ -479,9 +480,9 @@ export async function startHappyAgentRuntime(
         const skillFolders = new SkillFoldersModule(config, bots);
         const tailcat = new TailcatModule(config, bots, durableFunctions);
         registerShutdown("tailcat", async (shutdownCtx) => await tailcat.close(shutdownCtx));
-        const terminals = new TerminalsModule(projects, workspaces, runners, bots);
+        const terminals = new TerminalsModule(projects, workspaces, runners, bots, tasks);
         registerShutdown("terminals", async () => await terminals.close());
-        const files = new ProjectFilesModule(projects, workspaces, git, runners, bots);
+        const files = new ProjectFilesModule(projects, workspaces, git, runners, bots, tasks);
         registerShutdown("files", async () => await files.close());
 
         const profile = new ProfileModule<LibSQLDatabase>(config, bots);
@@ -761,6 +762,7 @@ export async function startHappyAgentRuntime(
         });
         registerShutdown("titles", async () => await titles.close());
         registerShutdown("bots", async () => await bots.close());
+        registerShutdown("tasks", async () => await tasks.close());
         registerShutdown("cloud", async () => await cloud.stop());
         registerShutdown("happy", async () => await happy.stop());
 

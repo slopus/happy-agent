@@ -782,6 +782,7 @@ async function started(name: string, workspacesEnabled: boolean, script: Scripte
     const tasks = new TasksModule(
         config,
         abort,
+        titles,
         projects,
         workspaces,
         runners,

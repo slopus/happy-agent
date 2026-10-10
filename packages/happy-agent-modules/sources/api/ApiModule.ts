@@ -27,6 +27,8 @@ import {
     archiveBotRequestSchema,
     archiveTaskRequestSchema,
     createBotRequestSchema,
+    createTaskRequestSchema,
+    renameTaskRequestSchema,
     joinTaskRequestSchema,
     leaveTaskRequestSchema,
     reorderTaskRequestSchema,
@@ -215,6 +217,7 @@ import {
     rootWorkspaceResource,
     taskMembershipResource,
     taskResource,
+    taskWorkspaceResource,
     terminalResource,
     workspaceResource,
 } from "./ApiResourceProjection.js";
@@ -3242,6 +3245,13 @@ export class ApiModule implements AgentModule {
                     "A bot workspace already has its one permanent agent.",
                 );
             }
+            if (ownership.taskId !== undefined) {
+                throw new ApiError(
+                    409,
+                    "conflict",
+                    "A task workspace already has its one permanent agent.",
+                );
+            }
             const baseEnvironment = currentAgentEnvironment();
             const now = Date.now();
             const config: AgentConfig = {
@@ -4830,11 +4840,91 @@ export class ApiModule implements AgentModule {
             });
             return true;
         }
+        if (request.method === "POST" && url.pathname === "/v0/tasks") {
+            const body = await bodyAs(request, createTaskRequestSchema, "task creation");
+            const { mutationId } = body;
+            // The person creating the task owns it; on a standalone installation nobody is named.
+            const owner = this.#team.enabled ? teamUser(ctx)?.id : undefined;
+            this.#taskMember(ctx);
+            const creation = await this.#withMutationId(mutationId, async () => {
+                try {
+                    return await tasks.createWithResult(ctx, {
+                        ...(body.id === undefined ? {} : { id: body.id }),
+                        ...(body.workspaceId === undefined
+                            ? {}
+                            : { workspaceId: body.workspaceId }),
+                        ...(body.agentId === undefined ? {} : { agentId: body.agentId }),
+                        ...(body.name === undefined ? {} : { name: body.name }),
+                        ...(body.folderName === undefined ? {} : { folderName: body.folderName }),
+                        ...(owner === undefined ? {} : { ownerUserId: owner }),
+                    });
+                } catch (error) {
+                    if (error instanceof TaskConflictError && error.task !== undefined) {
+                        const task = await this.#taskResource(ctx, error.task);
+                        throw new ApiError(409, "conflict", error.message, {
+                            currentVersion: task["version"],
+                            task,
+                        });
+                    }
+                    throw error;
+                }
+            });
+            const { task, created } = creation;
+            // As for bots: initial slash-command discovery belongs to the settled agent snapshot,
+            // and a retry joins creation work already running instead of starting it again.
+            if (created) await this.#slashCommands.catalog(ctx, task.agentId);
+            await this.#agentEventChains.get(task.agentId);
+            await this.#queueAgentWork(ctx, task.agentId, undefined, async () => undefined);
+            const resource = await this.#taskResponse(ctx, task);
+            if (created && !this.#announcedAgentCreations.has(task.agentId)) {
+                boundedAdd(
+                    this.#announcedAgentCreations,
+                    task.agentId,
+                    MAX_ANNOUNCED_AGENT_CREATIONS,
+                );
+                this.#journal.append("agent.created", {
+                    agent: (resource["task"] as Record<string, unknown>)["agent"],
+                    ...(mutationId === undefined ? {} : { mutationId }),
+                });
+            }
+            sendJson(response, 201, resource);
+            return true;
+        }
         const direct = /^\/v0\/tasks\/([a-z][a-z0-9]*)$/.exec(url.pathname);
         if (direct !== null && request.method === "GET") {
             const task = await tasks.get(ctx, direct[1] as string);
             if (task === undefined) throw notFound("The task was not found.");
             sendJson(response, 200, await this.#taskResponse(ctx, task));
+            return true;
+        }
+        if (direct !== null && request.method === "PATCH") {
+            const taskId = direct[1] as string;
+            const body = await bodyAs(request, renameTaskRequestSchema, "task rename");
+            const current = await tasks.get(ctx, taskId);
+            if (current === undefined) throw notFound("The task was not found.");
+            const resource = await this.#taskResource(ctx, current);
+            requireIfMatch(request, resource["version"], {
+                currentVersion: resource["version"],
+                task: resource,
+            });
+            try {
+                await this.#withMutationId(
+                    body.mutationId,
+                    async () => await tasks.rename(ctx, taskId, body.name, current.version),
+                );
+            } catch (error: unknown) {
+                if (!(error instanceof TaskConflictError)) throw error;
+                const latest = await tasks.get(ctx, taskId);
+                if (latest === undefined) throw notFound("The task was not found.");
+                const task = await this.#taskResource(ctx, latest);
+                throw new ApiError(409, "conflict", error.message, {
+                    currentVersion: task["version"],
+                    task,
+                });
+            }
+            const renamed = await tasks.get(ctx, taskId);
+            if (renamed === undefined) throw notFound("The task was not found.");
+            sendJson(response, 200, await this.#taskResponse(ctx, renamed));
             return true;
         }
         const action =
@@ -4974,6 +5064,13 @@ export class ApiModule implements AgentModule {
                     "A bot workspace cannot have child workspaces.",
                 );
             }
+            if ((await this.#tasks?.forWorkspace(ctx, body.parentId)) !== undefined) {
+                throw new ApiError(
+                    409,
+                    "conflict",
+                    "A task workspace cannot have child workspaces.",
+                );
+            }
             const root = await this.#projects.get(ctx, body.parentId);
             let projectId: string;
             if (root !== undefined) {
@@ -5041,6 +5138,9 @@ export class ApiModule implements AgentModule {
                 if ((await this.#bots.forWorkspace(ctx, workspaceId)) !== undefined) {
                     throw new ApiError(409, "conflict", "Rename this workspace through its bot.");
                 }
+                if ((await this.#tasks?.forWorkspace(ctx, workspaceId)) !== undefined) {
+                    throw new ApiError(409, "conflict", "Rename this workspace through its task.");
+                }
                 const project = await this.#projects.get(ctx, workspaceId);
                 if (project !== undefined) {
                     throw new ApiError(
@@ -5080,6 +5180,15 @@ export class ApiModule implements AgentModule {
                 action[2] === "archive"
                     ? "Archive this workspace through its bot."
                     : "Reorder this workspace through its bot.",
+            );
+        }
+        if ((await this.#tasks?.forWorkspace(ctx, workspaceId)) !== undefined) {
+            throw new ApiError(
+                409,
+                "conflict",
+                action[2] === "archive"
+                    ? "Archive this workspace through its task."
+                    : "Reorder this workspace through its task.",
             );
         }
         if ((await this.#projects.get(ctx, workspaceId)) !== undefined) {
@@ -5137,6 +5246,20 @@ export class ApiModule implements AgentModule {
             const agent = await this.#buildAgentResource(ctx, bot.agentId, bot.workspaceId, null);
             if (agent === undefined) throw new Error("The bot workspace has no agent.");
             return botWorkspaceResource(bot, agent);
+        }
+        const task = await this.#tasks?.forWorkspace(ctx, workspaceId);
+        if (task !== undefined) {
+            const agent = await this.#buildAgentResource(
+                ctx,
+                task.agentId,
+                task.workspaceId,
+                null,
+                {
+                    userVisible: true,
+                },
+            );
+            if (agent === undefined) throw new Error("The task workspace has no agent.");
+            return taskWorkspaceResource(task, agent);
         }
         const project = await this.#projects.get(ctx, workspaceId);
         if (project !== undefined) {
@@ -5281,15 +5404,14 @@ export class ApiModule implements AgentModule {
         if (fileRoute !== null) {
             const workspaceId = fileRoute[1] as string;
             const kind = fileRoute[2] as "files" | "file-tree" | "file" | "file-revision";
-            const { projectId, childWorkspaceId } = await this.#resolveWorkspaceScope(
-                ctx,
-                workspaceId,
-            );
-            const bot = await this.#bots.forWorkspace(ctx, workspaceId);
+            const { projectId, childWorkspaceId, botId, taskId } =
+                await this.#resolveWorkspaceScope(ctx, workspaceId);
             const root =
-                bot === undefined
-                    ? await this.#files.resolveRoot(ctx, projectId, childWorkspaceId)
-                    : await this.#files.resolveBotRoot(ctx, workspaceId);
+                botId !== undefined
+                    ? await this.#files.resolveBotRoot(ctx, workspaceId)
+                    : taskId !== undefined
+                      ? await this.#files.resolveTaskRoot(ctx, workspaceId)
+                      : await this.#files.resolveRoot(ctx, projectId, childWorkspaceId);
             if (kind === "files" && request.method === "GET") {
                 const query = queryAs(
                     {
@@ -5421,6 +5543,7 @@ export class ApiModule implements AgentModule {
         workspaceId: string,
     ): Promise<{
         readonly botId?: string;
+        readonly taskId?: string;
         readonly childWorkspaceId?: string;
         readonly docker?: { readonly image: string };
         readonly projectId: string;
@@ -5440,6 +5563,20 @@ export class ApiModule implements AgentModule {
                 root: bot.path,
                 ...(bot.runnerId === undefined ? {} : { runnerId: bot.runnerId }),
                 scope: { projectId: bot.id, workspaceId: bot.workspaceId },
+            };
+        }
+        const task = await this.#tasks?.forWorkspace(ctx, workspaceId);
+        if (task !== undefined) {
+            if (task.status !== "active") {
+                throw new ApiError(409, "conflict", "The workspace is not available.");
+            }
+            return {
+                taskId: task.id,
+                childWorkspaceId: task.workspaceId,
+                projectId: task.id,
+                root: task.path,
+                ...(task.runnerId === undefined ? {} : { runnerId: task.runnerId }),
+                scope: { projectId: task.id, workspaceId: task.workspaceId },
             };
         }
         const project = await this.#projects.get(ctx, workspaceId);
@@ -6075,9 +6212,11 @@ export class ApiModule implements AgentModule {
             return;
         }
         if (target.type === "workspace") {
-            const bot = await this.#bots.forWorkspace(ctx, target.id);
-            if (bot !== undefined) {
-                if (requireActive && bot.status !== "active") {
+            const owner =
+                (await this.#bots.forWorkspace(ctx, target.id)) ??
+                (await this.#tasks?.forWorkspace(ctx, target.id));
+            if (owner !== undefined) {
+                if (requireActive && owner.status !== "active") {
                     throw new ApiError(
                         409,
                         "conflict",
@@ -6655,6 +6794,18 @@ export class ApiModule implements AgentModule {
             return;
         }
         if (error instanceof BotConflictError) {
+            sendJson(response, 409, { code: "conflict", error: error.message });
+            return;
+        }
+        if (error instanceof TaskNotFoundError) {
+            sendJson(response, 404, { code: "not_found", error: error.message });
+            return;
+        }
+        if (error instanceof TaskInputError) {
+            sendJson(response, 400, { code: "invalid_request", error: error.message });
+            return;
+        }
+        if (error instanceof TaskConflictError) {
             sendJson(response, 409, { code: "conflict", error: error.message });
             return;
         }

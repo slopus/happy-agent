@@ -103,6 +103,127 @@ describe("the task API", () => {
         });
     }, 30_000);
 
+    it("creates and renames a person's task and opens its workspace like a bot's", async () => {
+        const { runtime, endpoint } = await start(false);
+        const token = (await readFile(runtime.configuration.paths.tokenPath, "utf8")).trim();
+        const client = new HappyAgentClient({ endpoint, token });
+        const before = (await client.getEvents()).latestCursor;
+
+        const created = await client.createTask({ id: "personaltask", mutationId: "create" });
+        expect(created.task).toMatchObject({
+            id: "personaltask",
+            name: "New Task",
+            folderName: "task",
+            ownerUserId: null,
+            creatorAgentId: null,
+            status: "active",
+            canArchive: true,
+            agent: { title: "New Task", userVisible: true, canSendMessages: true },
+        });
+        expect(created.membership).toMatchObject({ taskId: "personaltask", userId: null });
+        // Repeating the creation key answers with the same task and changes nothing.
+        const repeated = await client.createTask({ id: "personaltask", name: "Ignored" });
+        expect(repeated.task).toEqual(created.task);
+        const types = (await client.getEvents({ after: before })).events
+            .filter(
+                (event) =>
+                    event.type.startsWith("task.") ||
+                    (event.type === "agent.created" &&
+                        (event.payload as { agent: { id: string } }).agent.id ===
+                            created.task.agent.id),
+            )
+            .map((event) => [event.type, (event.payload as { mutationId?: string }).mutationId]);
+        expect(types).toEqual([
+            ["task.created", "create"],
+            ["task.joined", "create"],
+            ["agent.created", "create"],
+        ]);
+
+        const renamed = await client.renameTask(
+            created.task.id,
+            { name: "Fix login", mutationId: "rename" },
+            { ifMatch: created.task.version },
+        );
+        expect(renamed.task).toMatchObject({ name: "Fix login", folderName: "task" });
+        expect(renamed.task.agent.title).toBe("Fix login");
+        await expect(
+            client.renameTask(
+                created.task.id,
+                { name: "Stale" },
+                { ifMatch: created.task.version },
+            ),
+        ).rejects.toMatchObject({ status: 409, body: { task: { name: "Fix login" } } });
+        await expect(
+            client.renameTask(created.task.id, { name: "Moved", folderName: "moved" } as never, {
+                ifMatch: renamed.task.version,
+            }),
+        ).rejects.toMatchObject({ status: 400 });
+
+        const { task } = renamed;
+        const { workspace } = await client.getWorkspace(task.workspaceId);
+        expect(workspace).toMatchObject({
+            id: task.workspaceId,
+            kind: "task",
+            taskId: task.id,
+            botId: null,
+            projectId: null,
+            parentId: null,
+            base: null,
+            status: "active",
+            compute: task.compute,
+            agents: [expect.objectContaining({ id: task.agent.id })],
+        });
+        expect((await client.listWorkspaces()).workspaces).not.toContainEqual(
+            expect.objectContaining({ id: task.workspaceId }),
+        );
+        expect((await client.getDesktopBootstrap()).workspaces).not.toContainEqual(
+            expect.objectContaining({ id: task.workspaceId }),
+        );
+
+        const content = Buffer.from("task notes\n").toString("base64");
+        await client.writeFile(task.workspaceId, {
+            content,
+            expectedHash: null,
+            path: "notes.txt",
+        });
+        await expect(client.readFile(task.workspaceId, "notes.txt")).resolves.toMatchObject({
+            content,
+        });
+        if (task.compute.type !== "host") throw new Error("The task folder must be local.");
+        expect(await readFile(join(task.compute.path, "notes.txt"), "utf8")).toBe("task notes\n");
+        const tree = await client.getFileTree(task.workspaceId);
+        expect(JSON.stringify(tree)).toContain("notes.txt");
+
+        // The workspace's lifecycle and its one conversation belong to the task.
+        await expect(
+            client.renameWorkspace(
+                task.workspaceId,
+                { name: "moved" },
+                { ifMatch: workspace.version },
+            ),
+        ).rejects.toMatchObject({ status: 409 });
+        await expect(
+            client.archiveWorkspace(task.workspaceId, { ifMatch: workspace.version }),
+        ).rejects.toMatchObject({ status: 409 });
+        await expect(
+            client.createWorkspace({ name: "child", parentId: task.workspaceId }),
+        ).rejects.toMatchObject({ status: 409 });
+        await expect(client.createAgent({ workspaceId: task.workspaceId })).rejects.toMatchObject({
+            status: 409,
+        });
+
+        // Archival closes the folder routes until the task comes back.
+        const archived = await client.archiveTask(task.id, { ifMatch: task.version });
+        expect((await client.getWorkspace(task.workspaceId)).workspace.status).toBe("archived");
+        await expect(client.readFile(task.workspaceId, "notes.txt")).rejects.toMatchObject({
+            status: 409,
+        });
+        await client.unarchiveTask(task.id, { ifMatch: archived.task.version });
+        await expect(client.readFile(task.workspaceId, "notes.txt")).resolves.toMatchObject({
+            content,
+        });
+    }, 30_000);
+
     it("keeps each team member's list private and lets only owners archive", async () => {
         const { runtime, endpoint, token } = await start(true);
         const [alice, bob, carol] = await Promise.all(
@@ -255,9 +376,28 @@ describe("the task API", () => {
         await expect(carol!.archiveAgent(login.agentId, {})).rejects.toMatchObject({
             status: 409,
         });
-        await expect(carol!.getWorkspace(login.workspaceId)).rejects.toMatchObject({
-            status: 404,
+        // Every member reaches the task's workspace by its ID, though no listing names it.
+        await expect(carol!.getWorkspace(login.workspaceId)).resolves.toMatchObject({
+            workspace: { kind: "task", taskId: login.id },
         });
+
+        // A person who creates a task owns it, and anyone may rename it.
+        const carolTask = await carol!.createTask({ name: "Carol's task" });
+        expect(carolTask.task).toMatchObject({ ownerUserId: carolId, canArchive: true });
+        expect(carolTask.membership?.userId).toBe(carolId);
+        // Its folder exists as soon as creation answers.
+        await expect(carol!.getFileTree(carolTask.task.workspaceId)).resolves.toEqual({
+            entries: [],
+            nextCursor: null,
+        });
+        expect((await bob!.getTask(carolTask.task.id)).task.canArchive).toBe(false);
+        expect((await bob!.getTask(carolTask.task.id)).membership).toBeNull();
+        const bobRenamed = await bob!.renameTask(
+            carolTask.task.id,
+            { name: "Shared task" },
+            { ifMatch: carolTask.task.version },
+        );
+        expect(bobRenamed.task).toMatchObject({ name: "Shared task", ownerUserId: carolId });
 
         // A client shows the owner's photo through the users routes.
         const { profile } = await bob!.getProfile();

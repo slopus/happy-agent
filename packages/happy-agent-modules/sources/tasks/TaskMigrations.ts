@@ -16,7 +16,8 @@ export const TASK_MEMBERS_TABLE = "happy_agent_module_task_members";
  * Base requires the migrations a database has applied to stay a prefix of the declared list, so
  * the checklist's released migration stays here unchanged, the next one removes its table, and
  * the task catalog follows. Tasks have no catalog order of their own: each member orders the tasks
- * they joined, so the order lives on the membership.
+ * they joined, so the order lives on the membership. Every task the released catalog holds was
+ * named by the agent that created it, so the naming flag those rows gain is set.
  */
 export const taskMigrations = [
     [
@@ -85,6 +86,16 @@ export const taskMigrations = [
                 database,
                 sql`CREATE INDEX ${sql.raw(`${TASK_MEMBERS_TABLE}_order`)}
                     ON ${sql.raw(TASK_MEMBERS_TABLE)} (member_id, order_key, task_id)`,
+            );
+        },
+    ],
+    [
+        "004-task-naming",
+        async (_ctx: Context, database: AgentDatabaseFacade<AgentDatabase>): Promise<void> => {
+            await agentDatabaseRun(
+                database,
+                sql`ALTER TABLE ${sql.raw(TASKS_TABLE)}
+                    ADD COLUMN name_configured INTEGER NOT NULL DEFAULT 1`,
             );
         },
     ],

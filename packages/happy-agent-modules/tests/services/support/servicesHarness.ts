@@ -167,6 +167,7 @@ export async function servicesHarness(dispatch = true) {
         const tasks = new TasksModule(
             config,
             abort,
+            titles,
             projects,
             workspaces,
             runners,

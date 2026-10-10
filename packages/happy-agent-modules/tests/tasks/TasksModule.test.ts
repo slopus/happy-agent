@@ -469,11 +469,90 @@ describe("TasksModule", () => {
                 "Renamed",
                 first.version,
             );
-            expect(renamed).toMatchObject({ name: "Renamed", folderName: "first", version: 2 });
+            expect(renamed).toMatchObject({
+                name: "Renamed",
+                nameConfigured: true,
+                folderName: "first",
+                version: 2,
+            });
             expect(fixture.agents.configs.get(first.agentId)?.metadata?.title).toBe("Renamed");
             await expect(
                 fixture.tasks.rename(fixture.database.context, first.id, "Stale", first.version),
             ).rejects.toBeInstanceOf(TaskConflictError);
+        } finally {
+            await fixture.close();
+        }
+    });
+
+    it("names an unnamed task once from its first message, and lets a rename win", async () => {
+        const fixture = await started("tasks-naming");
+        try {
+            const ctx = fixture.database.context;
+            fixture.naming.mockResolvedValue({ title: "Fix the login redirect loop" });
+            const unnamed = await fixture.tasks.create(ctx, {});
+            expect(unnamed).toMatchObject({
+                name: "New Task",
+                nameConfigured: false,
+                folderName: "task",
+            });
+            expect(fixture.agents.configs.get(unnamed.agentId)?.metadata?.title).toBe("New Task");
+
+            await fixture.acceptText(unnamed.agentId, "user", "The login page loops forever.");
+            await vi.waitFor(async () => {
+                expect((await fixture.tasks.get(ctx, unnamed.id))?.name).toBe(
+                    "Fix the login redirect loop",
+                );
+            });
+            const named = (await fixture.tasks.get(ctx, unnamed.id))!;
+            expect(named).toMatchObject({ nameConfigured: true, folderName: "task" });
+            expect(fixture.agents.configs.get(unnamed.agentId)?.metadata?.title).toBe(
+                "Fix the login redirect loop",
+            );
+            expect(fixture.naming).toHaveBeenCalledTimes(1);
+            expect(fixture.naming.mock.calls[0]?.[1]).toMatchObject({
+                firstMessage: "The login page loops forever.",
+                wanted: { title: true },
+                providerId: "scripted",
+            });
+            // Later messages never ask again.
+            await fixture.acceptText(unnamed.agentId, "user", "Also check the logout page.");
+            expect(fixture.naming).toHaveBeenCalledTimes(1);
+
+            // A create_task opening message names the task without its sender line.
+            const opened = await fixture.tasks.create(ctx, {});
+            await fixture.acceptText(
+                opened.agentId,
+                "agent",
+                "Message from agent botagent:\n\nAudit the billing exports.",
+                { tasks: { fromAgentId: "botagent", taskId: opened.id } },
+            );
+            await vi.waitFor(() => expect(fixture.naming).toHaveBeenCalledTimes(2));
+            expect(fixture.naming.mock.calls[1]?.[1]).toMatchObject({
+                firstMessage: "Audit the billing exports.",
+            });
+
+            // A named task is never renamed automatically.
+            const chosen = await fixture.tasks.create(ctx, { name: "Chosen" });
+            await fixture.acceptText(chosen.agentId, "user", "Anything at all.");
+            expect(fixture.naming).toHaveBeenCalledTimes(2);
+
+            // A rename committed while naming runs is the name that stays.
+            let answer!: (names: { title?: string }) => void;
+            fixture.naming.mockReturnValueOnce(
+                new Promise((resolve) => {
+                    answer = resolve;
+                }),
+            );
+            const raced = await fixture.tasks.create(ctx, {});
+            await fixture.acceptText(raced.agentId, "user", "Rewrite the onboarding emails.");
+            await vi.waitFor(() => expect(fixture.naming).toHaveBeenCalledTimes(3));
+            await fixture.tasks.rename(ctx, raced.id, "Onboarding emails", raced.version);
+            answer({ title: "Generated name" });
+            await fixture.tasks.close();
+            expect((await fixture.tasks.get(ctx, raced.id))?.name).toBe("Onboarding emails");
+            expect(fixture.agents.configs.get(raced.agentId)?.metadata?.title).toBe(
+                "Onboarding emails",
+            );
         } finally {
             await fixture.close();
         }
@@ -672,6 +751,32 @@ describe("TasksModule", () => {
         }
     });
 
+    it("keeps tasks named before automatic naming existed as chosen names", async () => {
+        const database = moduleDatabase(taskMigrations.slice(0, 3), "tasks-naming-migration");
+        try {
+            await database.ready;
+            await agentDatabaseRun(
+                database.database,
+                sql`INSERT INTO ${sql.raw(TASKS_TABLE)} (
+                    id, name, folder_name, workspace_id, workspace_version, workspace_updated_at,
+                    agent_id, path, status, version, created_at, updated_at
+                ) VALUES (
+                    'releasedtask', 'Released', 'released', 'releasedworkspace', 1, 1,
+                    'releasedagent', '/tasks/released', 'active', 1, 1, 1
+                )`,
+            );
+            const [, migrate] = taskMigrations[3];
+            await migrate(database.context, database.database);
+            const rows = await agentDatabaseRows<{ readonly name_configured: number }>(
+                database.database,
+                sql`SELECT name_configured FROM ${sql.raw(TASKS_TABLE)}`,
+            );
+            expect(rows.map((row) => Number(row.name_configured))).toEqual([1]);
+        } finally {
+            database.close();
+        }
+    });
+
     it("drops the retired checklist table before creating the task catalog", async () => {
         const database = moduleDatabase(taskMigrations.slice(0, 1), "tasks-legacy-migration");
         try {
@@ -695,6 +800,7 @@ describe("TasksModule", () => {
                 "001-task-state",
                 "002-task-list-removed",
                 "003-task-catalog",
+                "004-task-naming",
             ]);
         } finally {
             database.close();
@@ -745,9 +851,12 @@ async function started(name: string, options: { readonly team?: boolean } = {}) 
         runners,
     );
     const durable = { register: vi.fn(), invoke: vi.fn(), cancel: vi.fn() };
+    const titles = new TitlesModule(config, new HistoryModule(), workspaces);
+    const naming = vi.spyOn(titles, "suggestNames");
     const tasks = new TasksModule(
         config,
         abort,
+        titles,
         projects,
         workspaces,
         runners,
@@ -755,7 +864,6 @@ async function started(name: string, options: { readonly team?: boolean } = {}) 
         durable as unknown as DurableFunctionsModule,
     );
     const taskHooks = tasks.beforeStart(database.context, agents.asRef());
-    const titles = new TitlesModule(config, new HistoryModule(), workspaces);
     const bots = new BotsModule(config, abort, titles, projects, workspaces, runners, tasks);
     const botHooks = bots.beforeStart(database.context, agents.asRef());
     const events: TaskEvent[] = [];
@@ -784,8 +892,33 @@ async function started(name: string, options: { readonly team?: boolean } = {}) 
         database,
         durable,
         events,
+        naming,
         tasks,
         tool,
+        acceptText: async (
+            agentId: string,
+            role: "user" | "agent",
+            text: string,
+            metadata: NonNullable<AgentBaseAcceptedMessage["metadata"]> = {},
+        ): Promise<void> => {
+            const accepted: AgentBaseAcceptedMessage = {
+                id: `message-${String(Math.random())}`,
+                kind: "send",
+                profile: null,
+                message:
+                    role === "agent"
+                        ? {
+                              role: "agent",
+                              author: { id: "botagent", description: "Agent botagent" },
+                              content: [{ type: "text", text }],
+                          }
+                        : { role: "user", content: [{ type: "text", text }] },
+                metadata: role === "user" ? { messageOrigin: "user", ...metadata } : metadata,
+            };
+            await database.context.inTx(async (ctx) => {
+                await taskHooks.messageAcceptedTransact?.(ctx, scopeFor(agentId), accepted);
+            });
+        },
         accept: async (agentId: string, sender: AcceptedSender): Promise<void> => {
             const accepted: AgentBaseAcceptedMessage = {
                 id: `message-${String(Math.random())}`,
@@ -842,6 +975,7 @@ async function started(name: string, options: { readonly team?: boolean } = {}) 
                 .filter((part) => part !== "")
                 .join("\n\n"),
         close: async () => {
+            await tasks.close();
             await bots.close();
             await titles.close();
             database.close();

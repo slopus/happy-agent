@@ -34,6 +34,11 @@ export const taskRecordSchema = Type.Object(
     {
         id: cuid2Schema,
         name: taskNameSchema,
+        /**
+         * Whether the name was chosen rather than the placeholder. An unchosen name is replaced
+         * once, from the task's first message; a rename settles it for good.
+         */
+        nameConfigured: Type.Boolean(),
         folderName: taskFolderNameSchema,
         /** The team user who owns the task; absent on a standalone installation. */
         ownerUserId: Type.Optional(cuid2Schema),
@@ -54,6 +59,9 @@ export const taskRecordSchema = Type.Object(
     },
     { additionalProperties: false },
 );
+
+/** What an unnamed task is called until its first message names it. */
+export const TASK_PLACEHOLDER_NAME = "New Task";
 
 /** The member key of the one person a standalone installation belongs to. */
 export const STANDALONE_TASK_MEMBER = "standalone";
@@ -80,7 +88,8 @@ export const createTaskInputSchema = Type.Object(
         id: Type.Optional(cuid2Schema),
         workspaceId: Type.Optional(cuid2Schema),
         agentId: Type.Optional(cuid2Schema),
-        name: taskNameSchema,
+        /** Omitted, the task is the placeholder until its first message names it. */
+        name: Type.Optional(taskNameSchema),
         folderName: Type.Optional(taskFolderNameSchema),
         ownerUserId: Type.Optional(cuid2Schema),
         creatorAgentId: Type.Optional(cuid2Schema),

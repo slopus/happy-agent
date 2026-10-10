@@ -1,7 +1,11 @@
+import { AsyncResource } from "node:async_hooks";
+
 import { createId } from "@paralleldrive/cuid2";
 import {
     cuid2Schema,
     currentAgentEnvironment,
+    withAgentDatabase,
+    type AgentBaseAcceptedMessage,
     type AgentConfig,
     type AgentKV,
     type AgentModule,
@@ -13,7 +17,7 @@ import {
 import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import { computePermissions, RunnerUnavailableError } from "@slopus/happy-agent-compute";
-import { afterCommit, backoff, type Context } from "@steve.kite/stdlib";
+import { afterCommit, backoff, detach, type Context, type RootContext } from "@steve.kite/stdlib";
 
 import { AbortModule } from "../abort/index.js";
 import { ComputeModule } from "../compute/index.js";
@@ -21,6 +25,7 @@ import { ConfigModule } from "../config/index.js";
 import { DurableFunctionsModule } from "../durableFunctions/index.js";
 import { ProjectsModule } from "../projects/index.js";
 import type { RunnersModule } from "../runners/index.js";
+import { MAX_NAMING_MESSAGE_CHARS, TitlesModule } from "../titles/index.js";
 import { WorkspacesModule } from "../workspaces/index.js";
 import { isUserOriginMetadata, senderAgentIdMetadata } from "../impl/messageOrigin.js";
 
@@ -29,8 +34,10 @@ import {
     createTaskInputSchema,
     STANDALONE_TASK_MEMBER,
     taskMemberIdSchema,
+    taskNameSchema,
     taskRecordSchema,
     TASK_ARCHIVE_FUNCTION,
+    TASK_PLACEHOLDER_NAME,
     TaskConflictError,
     TaskInputError,
     TaskNotFoundError,
@@ -71,6 +78,8 @@ import { sendTaskMessageTool } from "./tools/send_task_message.js";
 
 /** The latest human sender of each agent's conversation, who owns the tasks that agent creates. */
 const OWNER_KEY = "owner";
+/** Marks a task agent's conversation once its first message has started naming the task. */
+const NAME_ATTEMPTED_KEY = "task-name-attempted";
 const ownerSchema = Type.Union([cuid2Schema, Type.Null()]);
 
 /** The catalog manages its tasks' folders; the agent sandbox does not apply to that work. */
@@ -90,18 +99,24 @@ export class TasksModule implements AgentModule {
     readonly migrations = taskMigrations;
 
     readonly #abort: AbortModule;
+    readonly #backgroundScope = new AsyncResource("happy-agent-task-naming");
     readonly #compute: ComputeModule;
     readonly #config: ConfigModule;
     readonly #durableFunctions: DurableFunctionsModule;
     readonly #projects: ProjectsModule;
     readonly #runners: RunnersModule;
+    readonly #titles: TitlesModule;
     readonly #workspaces: WorkspacesModule;
     readonly #listeners = new Set<TaskEventListener>();
+    readonly #namingTasks = new Map<string, Promise<void>>();
     #agents: AgentSystemRef | undefined;
+    #closed = false;
+    #lifetime: RootContext | undefined;
 
     constructor(
         config: ConfigModule,
         abort: AbortModule,
+        titles: TitlesModule,
         projects: ProjectsModule,
         workspaces: WorkspacesModule,
         runners: RunnersModule,
@@ -110,6 +125,7 @@ export class TasksModule implements AgentModule {
     ) {
         this.#config = config;
         this.#abort = abort;
+        this.#titles = titles;
         this.#projects = projects;
         this.#workspaces = workspaces;
         this.#runners = runners;
@@ -151,9 +167,23 @@ export class TasksModule implements AgentModule {
                 archiveTaskTool(this, scope.agent.id),
             ];
         },
-        // Ownership follows the human whose message the agent is working on, in consumption
-        // order. Agent-generated messages never change it; an unidentified human clears it.
         messageAcceptedTransact: async (hookCtx, scope, accepted) => {
+            // An unnamed task takes its name from the first request it is given: a person's
+            // message, or the opening message from the agent that created it.
+            const task = await readTaskByAgent(hookCtx, scope.agent.id);
+            if (task !== undefined) {
+                if (task.nameConfigured) return;
+                const message = namingText(accepted, task);
+                if (message.length === 0) return;
+                if ((await scope.kv.read(hookCtx, NAME_ATTEMPTED_KEY)) !== undefined) return;
+                await scope.kv.write(hookCtx, NAME_ATTEMPTED_KEY, { at: Date.now() });
+                afterCommit(hookCtx, () => {
+                    this.#startNaming(task.id, scope.agent.provider, message);
+                });
+                return;
+            }
+            // Ownership follows the human whose message the agent is working on, in consumption
+            // order. Agent-generated messages never change it; an unidentified human clears it.
             if (accepted.message.role !== "user" || !isUserOriginMetadata(accepted.metadata)) {
                 return;
             }
@@ -164,10 +194,21 @@ export class TasksModule implements AgentModule {
         },
     };
 
-    readonly beforeStart = (_ctx: Context, agents: AgentSystemRef): AgentModuleHooks => {
+    readonly beforeStart = (ctx: Context, agents: AgentSystemRef): AgentModuleHooks => {
         this.#agents = agents;
+        this.#lifetime = withAgentDatabase(detach(ctx), ctx.db) as RootContext;
         return this.#hooks;
     };
+
+    /** Stop accepting automatic names and drain the bounded requests already running. */
+    async close(): Promise<void> {
+        if (this.#closed) return;
+        this.#closed = true;
+        this.#lifetime = undefined;
+        await Promise.allSettled(this.#namingTasks.values());
+        this.#namingTasks.clear();
+        this.#backgroundScope.emitDestroy();
+    }
 
     onEvent(listener: TaskEventListener): TaskUnsubscribe {
         this.#listeners.add(listener);
@@ -400,7 +441,12 @@ export class TasksModule implements AgentModule {
             const workspaceId = input.workspaceId ?? (await this.#unusedIdentity(txCtx, reserved));
             reserved.add(workspaceId);
             const agentId = input.agentId ?? (await this.#unusedIdentity(txCtx, reserved));
-            const folderName = await this.#chooseFolderName(txCtx, input.name, input.folderName);
+            const name = input.name ?? TASK_PLACEHOLDER_NAME;
+            const folderName = await this.#chooseFolderName(
+                txCtx,
+                input.name ?? "task",
+                input.folderName,
+            );
             // A task's folder goes where a bot's would: the default runner once runners are
             // configured, otherwise this installation's public folder.
             const runnerId = this.#runners.enabled ? this.#runners.defaultRunnerId : undefined;
@@ -413,8 +459,8 @@ export class TasksModule implements AgentModule {
                     workingDirectory: path,
                 },
                 // A task's conversation is the task, so it is called what the task is called
-                // and automatic naming never writes over it.
-                metadata: { title: input.name, updatedAt: now, version: 1 },
+                // and chat naming never writes over it; an unnamed task names both itself.
+                metadata: { title: name, updatedAt: now, version: 1 },
                 modules: {
                     compute: {
                         cwd: path,
@@ -426,7 +472,8 @@ export class TasksModule implements AgentModule {
             await agents.create(txCtx, config, { id: agentId, parent: null });
             const task: TaskRecord = {
                 id: taskId,
-                name: input.name,
+                name,
+                nameConfigured: input.name !== undefined,
                 folderName,
                 ...(input.ownerUserId === undefined ? {} : { ownerUserId: input.ownerUserId }),
                 ...(input.creatorAgentId === undefined
@@ -499,20 +546,92 @@ export class TasksModule implements AgentModule {
         return structuredClone(task);
     }
 
-    /** Renames the task and its conversation together. The folder and identities do not move. */
+    /**
+     * Renames the task and its conversation together. The folder and identities do not move. A
+     * rename is a decision, so it also ends automatic naming, even when the name is unchanged.
+     */
     async rename(
         ctx: Context,
         taskId: string,
         name: string,
         expectedVersion: number,
     ): Promise<TaskRecord> {
+        if (!Value.Check(taskNameSchema, name)) {
+            throw new TaskInputError("The task name must be a short, nonblank line of text.");
+        }
         return await ctx.inTx(async (txCtx) => {
             const current = await this.#required(txCtx, taskId);
             this.#assertVersion(current, expectedVersion);
-            if (current.name === name) return current;
-            await this.#updateAgentMetadata(txCtx, current.agentId, { title: name });
-            return await this.#change(txCtx, current, (task) => ({ ...task, name }));
+            if (current.name === name && current.nameConfigured) return current;
+            if (current.name !== name) {
+                await this.#updateAgentMetadata(txCtx, current.agentId, { title: name });
+            }
+            return await this.#change(txCtx, current, (task) => ({
+                ...task,
+                name,
+                nameConfigured: true,
+            }));
         });
+    }
+
+    /** Give an untouched placeholder task the title its first message suggests. */
+    async #nameFromFirstMessage(
+        ctx: Context,
+        taskId: string,
+        providerId: string,
+        message: string,
+    ): Promise<void> {
+        try {
+            const initial = await readTask(ctx, taskId);
+            if (initial === undefined || initial.nameConfigured || initial.status !== "active")
+                return;
+            const suggested = (
+                await this.#titles.suggestNames(ctx, {
+                    firstMessage: message,
+                    wanted: { title: true },
+                    providerId,
+                })
+            ).title;
+            const name = suggested?.split(/\s+/u).slice(0, 6).join(" ").slice(0, 60).trimEnd();
+            if (this.#closed || name === undefined || !Value.Check(taskNameSchema, name)) return;
+            await ctx.inTx(async (txCtx) => {
+                const current = await this.#required(txCtx, taskId);
+                if (current.nameConfigured || current.status !== "active") return;
+                await this.#updateAgentMetadata(txCtx, current.agentId, { title: name });
+                await this.#change(txCtx, current, (task) => ({
+                    ...task,
+                    name,
+                    nameConfigured: true,
+                }));
+            });
+        } catch (error) {
+            ctx.log.debug(
+                "Naming a task from its first message did not happen.",
+                { taskId },
+                error,
+            );
+        }
+    }
+
+    /** Start one detached naming request without delaying message acceptance or the real turn. */
+    #startNaming(taskId: string, providerId: string, message: string): void {
+        const lifetime = this.#lifetime;
+        if (this.#closed || lifetime === undefined || this.#namingTasks.has(taskId)) return;
+        let task!: Promise<void>;
+        task = this.#backgroundScope
+            .runInAsyncScope(
+                async () =>
+                    await this.#nameFromFirstMessage(
+                        lifetime.named("task-initial-naming"),
+                        taskId,
+                        providerId,
+                        message,
+                    ),
+            )
+            .finally(() => {
+                if (this.#namingTasks.get(taskId) === task) this.#namingTasks.delete(taskId);
+            });
+        this.#namingTasks.set(taskId, task);
     }
 
     /**
@@ -756,6 +875,28 @@ export class TasksModule implements AgentModule {
         if (this.#agents === undefined) throw new Error("The tasks module has not started.");
         return this.#agents;
     }
+}
+
+/**
+ * The text a task is named from: a person's message, or a message this module delivered into the
+ * task from another agent, without the sender line it adds. Media and model-only blocks are left
+ * out, and system or service messages name nothing.
+ */
+function namingText(accepted: AgentBaseAcceptedMessage, task: TaskRecord): string {
+    const delivered = accepted.metadata?.["tasks"];
+    const fromAgent =
+        accepted.message.role === "agent" &&
+        typeof delivered === "object" &&
+        delivered !== null &&
+        (delivered as Record<string, unknown>)["taskId"] === task.id;
+    if (accepted.message.role !== "user" && !fromAgent) return "";
+    const text = accepted.message.content
+        .flatMap((block) => (block.type === "text" ? [block.text] : []))
+        .join("\n")
+        .trim();
+    return (fromAgent ? text.replace(/^Message from agent [a-z0-9]+:\s*/u, "") : text)
+        .trim()
+        .slice(-MAX_NAMING_MESSAGE_CHARS);
 }
 
 function deepFreeze<Value>(value: Value): Value {

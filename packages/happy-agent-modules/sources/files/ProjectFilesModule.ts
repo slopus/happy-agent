@@ -14,6 +14,7 @@ import { GitRevisionFileTooLargeError, type GitModule } from "../git/index.js";
 import type { BotsModule } from "../bots/index.js";
 import type { ProjectsModule } from "../projects/index.js";
 import { LocalExecutionDisabledError, type RunnersModule } from "../runners/index.js";
+import type { TasksModule } from "../tasks/index.js";
 import type { WorkspacesModule } from "../workspaces/index.js";
 import { MachineFileIndex } from "./impl/MachineFileIndex.js";
 import { ProjectFileWatcher } from "./ProjectFileWatcher.js";
@@ -181,6 +182,7 @@ export class ProjectFilesModule implements AgentModule {
     readonly #index: WorkspaceFileIndex;
     readonly #machineIndex: MachineFileIndex;
     readonly #runners: RunnersModule;
+    readonly #tasks: TasksModule | undefined;
     readonly #workspaces: WorkspacesModule;
     readonly #writeLocks = new Map<string, Promise<void>>();
     #closed = false;
@@ -197,8 +199,10 @@ export class ProjectFilesModule implements AgentModule {
         git: GitModule,
         runners: RunnersModule,
         bots?: BotsModule,
+        tasks?: TasksModule,
     ) {
         this.#bots = bots;
+        this.#tasks = tasks;
         this.#git = git;
         this.#index = new WorkspaceFileIndex(git);
         this.#machineIndex = new MachineFileIndex(git);
@@ -289,6 +293,22 @@ export class ProjectFilesModule implements AgentModule {
             projectId: bot.id,
             workspaceId: bot.workspaceId,
             ...(await this.#canonicalRoot(bot.runnerId, bot.path)),
+        };
+    }
+
+    /** Resolve one unlisted task workspace through the catalog that owns its physical folder. */
+    async resolveTaskRoot(ctx: Context, workspaceId: string): Promise<ProjectFileRoot> {
+        const task = await this.#tasks?.forWorkspace(ctx, workspaceId);
+        if (task === undefined) {
+            throw new ProjectFileError(404, "missing", "The workspace was not found.");
+        }
+        if (task.status !== "active") {
+            throw new ProjectFileError(409, "conflict", "The workspace is not available.");
+        }
+        return {
+            projectId: task.id,
+            workspaceId: task.workspaceId,
+            ...(await this.#canonicalRoot(task.runnerId, task.path)),
         };
     }
 

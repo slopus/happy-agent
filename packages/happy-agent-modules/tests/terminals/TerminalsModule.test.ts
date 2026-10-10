@@ -5,7 +5,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { durableFunctionsMigrations } from "../../sources/durableFunctions/index.js";
 import { GitModule } from "../../sources/git/index.js";
+import type { RunnersModule } from "../../sources/runners/index.js";
 import { projectMigrations, type ProjectsModule } from "../../sources/projects/index.js";
+import type {
+    TaskEvent,
+    TaskEventListener,
+    TaskRecord,
+    TasksModule,
+} from "../../sources/tasks/index.js";
 import {
     MAX_TERMINALS_PER_SCOPE,
     TerminalError,
@@ -252,6 +259,65 @@ describe("TerminalsModule", () => {
         expect(factory.processes[0]?.killed).toBe(false);
     });
 
+    it("opens a task's terminal in its folder and ends it when the task is archived", async () => {
+        const { ctx, factory, projects, runners, workspaces } =
+            await createWorld("terminals-task-folder");
+        const task: TaskRecord = {
+            id: "taskone",
+            name: "Fix login",
+            nameConfigured: true,
+            folderName: "fix_login",
+            workspaceId: "taskworkspace",
+            workspaceVersion: 1,
+            workspaceUpdatedAt: 1,
+            agentId: "taskagent",
+            path: "/home/steve/happy/Tasks/fix_login",
+            status: "active",
+            version: 1,
+            createdAt: 1,
+            updatedAt: 1,
+        };
+        // The task catalog's own answers for its folder: which task owns a workspace, and when it
+        // was archived. Everything else here is the real projects and workspaces catalogs.
+        let current = task;
+        const listeners = new Set<TaskEventListener>();
+        const tasks = {
+            forWorkspace: async (_ctx: Context, workspaceId: string) =>
+                workspaceId === current.workspaceId ? current : undefined,
+            onEvent: (listener: TaskEventListener) => {
+                listeners.add(listener);
+                return () => listeners.delete(listener);
+            },
+        } as unknown as TasksModule;
+        const module = TerminalsModule.withProcessFactory(
+            projects,
+            workspaces,
+            runners,
+            factory,
+            undefined,
+            tasks,
+        );
+        const scope = { projectId: task.id, workspaceId: task.workspaceId };
+
+        const terminal = await module.create(ctx, scope, {});
+        expect(terminal.workspaceId).toBe(task.workspaceId);
+        expect(factory.started[0]?.cwd).toBe(task.path);
+
+        current = { ...task, status: "archived", archivedAt: 2, version: 2 };
+        const archived: TaskEvent = {
+            eventId: "archive",
+            at: 2,
+            type: "task_updated",
+            task: current,
+            previousTask: task,
+        };
+        for (const listener of listeners) await listener(ctx, archived);
+        await module.whenClosuresSettle();
+        expect(factory.processes[0]?.killed).toBe(true);
+        await expect(module.create(ctx, scope, {})).rejects.toMatchObject({ code: "conflict" });
+        await module.close();
+    });
+
     it("ends every terminal under a project when the project is archived", async () => {
         const { ctx, factory, module, project, projects, workspace } = await createWorld(
             "terminals-project-archived",
@@ -433,6 +499,7 @@ interface World {
     readonly project: { readonly id: string; readonly repositoryRef: string };
     /** The catalogs whose archival decisions this module follows. */
     readonly projects: ProjectsModule;
+    readonly runners: RunnersModule;
     readonly workspaces: WorkspacesModule;
     readonly workspace: { readonly id: string; readonly path: string };
     /**
@@ -513,6 +580,7 @@ async function createWorld(name: string): Promise<World> {
         otherProject,
         project,
         projects,
+        runners,
         workspace,
         workspaces,
         workspacesDirectory: git.normalizeFuturePath(config.workspacesHome),

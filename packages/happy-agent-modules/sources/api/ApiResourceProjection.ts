@@ -254,6 +254,43 @@ export function taskResource(
     };
 }
 
+/** The unlisted workspace owned by one task, shaped like a bot's. */
+export function taskWorkspaceResource(
+    task: TaskRecord,
+    agent: Readonly<Record<string, unknown>>,
+): Record<string, unknown> {
+    return {
+        id: task.workspaceId,
+        projectId: null,
+        parentId: null,
+        botId: null,
+        taskId: task.id,
+        name: task.folderName,
+        nameSource: "user",
+        kind: "task",
+        compute:
+            task.runnerId === undefined
+                ? { type: "host", path: task.path }
+                : { type: "runner", runnerId: task.runnerId, path: task.path },
+        status: task.status,
+        initialization: { status: "ready", attempt: 0, error: null },
+        base: null,
+        git: null,
+        creatorAgentId: task.creatorAgentId ?? null,
+        orderKey: "5",
+        version: apiResourceVersion(
+            task.workspaceUpdatedAt,
+            task.workspaceVersion,
+            task.workspaceId,
+        ),
+        createdAt: task.createdAt,
+        updatedAt: task.workspaceUpdatedAt,
+        archivedAt: task.archivedAt ?? null,
+        agents: [agent],
+        subtaskAgentId: null,
+    };
+}
+
 /** A person's place in one task. The standalone installation's one person has no user ID. */
 export function taskMembershipResource(membership: TaskMembership): Record<string, unknown> {
     return {

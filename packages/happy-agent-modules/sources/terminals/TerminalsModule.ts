@@ -8,6 +8,7 @@ import { createUuidV7Factory } from "../events/index.js";
 import { BotsModule } from "../bots/index.js";
 import { ProjectsModule, type Project } from "../projects/index.js";
 import { RunnersModule } from "../runners/index.js";
+import type { TasksModule } from "../tasks/index.js";
 import { WorkspacesModule } from "../workspaces/index.js";
 
 import {
@@ -53,6 +54,7 @@ export class TerminalsModule {
     readonly #projects: ProjectsModule;
     readonly #runners: RunnersModule;
     readonly #scopes = new Map<string, TerminalCollection>();
+    readonly #tasks: TasksModule | undefined;
     readonly #workspaces: WorkspacesModule;
     /** Closures started by an archival, so shutdown and tests can wait for them. */
     readonly #closures = new Set<Promise<void>>();
@@ -75,8 +77,10 @@ export class TerminalsModule {
         workspaces: WorkspacesModule,
         runners: RunnersModule,
         bots?: BotsModule,
+        tasks?: TasksModule,
     ) {
         this.#bots = bots;
+        this.#tasks = tasks;
         this.#projects = projects;
         this.#runners = runners;
         this.#workspaces = workspaces;
@@ -125,6 +129,22 @@ export class TerminalsModule {
                 ),
             );
         });
+        tasks?.onEvent((ctx, event) => {
+            if (
+                event.type !== "task_updated" ||
+                event.task.status !== "archived" ||
+                event.previousTask.status === "archived"
+            )
+                return;
+            const closeCtx = detach(ctx).named("terminal-archive-closure");
+            this.#closeInBackground(
+                closeCtx,
+                this.closeScope(
+                    { projectId: event.task.id, workspaceId: event.task.workspaceId },
+                    closeCtx,
+                ),
+            );
+        });
     }
 
     /**
@@ -163,8 +183,10 @@ export class TerminalsModule {
         workspaces: WorkspacesModule,
         runners: RunnersModule,
         processFactory: TerminalProcessFactory,
+        bots?: BotsModule,
+        tasks?: TasksModule,
     ): TerminalsModule {
-        const module = new TerminalsModule(projects, workspaces, runners);
+        const module = new TerminalsModule(projects, workspaces, runners, bots, tasks);
         module.#processFactory = processFactory;
         return module;
     }
@@ -398,6 +420,13 @@ export class TerminalsModule {
                     throw new TerminalError("conflict", "An archived bot cannot open a terminal.");
                 }
                 return { kind: "machine", path: bot.path, runnerId: bot.runnerId };
+            }
+            const task = await this.#tasks?.forWorkspace(ctx, scope.workspaceId);
+            if (task !== undefined && task.id === scope.projectId) {
+                if (task.status !== "active") {
+                    throw new TerminalError("conflict", "An archived task cannot open a terminal.");
+                }
+                return { kind: "machine", path: task.path, runnerId: task.runnerId };
             }
         }
         const project = await this.#projects.get(ctx, scope.projectId);

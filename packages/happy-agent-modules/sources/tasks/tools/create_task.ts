@@ -7,7 +7,7 @@ import type { TasksModule } from "../TasksModule.js";
 
 const createTaskToolInputSchema = Type.Object(
     {
-        name: taskNameSchema,
+        name: Type.Optional(taskNameSchema),
         text: Type.Optional(Type.String({ minLength: 1, maxLength: 100_000 })),
     },
     { additionalProperties: false },
@@ -25,7 +25,7 @@ export function createTaskTool(tasks: TasksModule, actingAgentId: string, kv: Ag
         searchKeywords: ["make a task", "new task", "create task", "task folder"],
         description: [
             "Create one persistent task: a user-visible conversation with its own dedicated folder, owned by the person you are working for. A task has no avatar; it can create its own subtasks for project work.",
-            'Give it a short name such as "Fix login redirect"; prefer 2–3 words, 4 at most. Put the details in text, which is delivered as the task\'s first message and starts its work. Omit text to create an idle task for the person to open.',
+            'Give it a short name such as "Fix login redirect"; prefer 2–3 words, 4 at most. Omit the name to let the task name itself from its first message. Put the details in text, which is delivered as the task\'s first message and starts its work. Omit text to create an idle task for the person to open.',
             "Returns the task without waiting. Talk to it later with send_task_message; there is no wait tool.",
         ].join("\n\n"),
         parameters: createTaskToolInputSchema,
