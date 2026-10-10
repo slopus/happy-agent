@@ -23,10 +23,14 @@ explicit `S-1-16-0` SID and verifies its stored authority and RID. An invalid SI
 failed the first kernel run before Silo creation; that run provides no BindFlt
 availability or filesystem-denial evidence.
 
-The corrected fixture created an owned Silo and installed its read-only BindFlt
-mapping on the tested Windows CI host. The exact Silo child read private user and
-null-DACL Untrusted files, while parent and sibling writes remained unaffected.
-The single absolute private-temp exception still denied its first scratch write.
-The probe now uses a separate writable binding on the same owned Silo, following
-the HCS shim's writable binding call. The remaining filesystem assertions still
-require actual kernel execution; none of the later denial cases ran in that test.
+An owned Silo read-only BindFlt mapping with a single absolute private-temp
+exception denied its first scratch write. A separate writable binding with flags
+4 on the same owned Silo, alongside the read-only volume binding with flags 5,
+preserves private-temp creation, writing, reading and deletion in the real kernel.
+The exact Silo child reads private user and null-DACL Untrusted files while data
+writes, owner DACL changes, outside-temp creation, hardlinks from the read-only
+source, and writes through volume GUID and NT GLOBALROOT aliases are denied.
+The inheritable writable file handle is excluded, parent and sibling writes are
+unaffected, and the original fixtures remain unchanged. All 17 native tests pass
+on the tested Windows CI host. This proves the owned fixture-volume cases;
+network, sensitive-read and complete filesystem isolation remain unproven.
