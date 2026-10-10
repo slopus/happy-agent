@@ -10,7 +10,7 @@ import { join, resolve } from "node:path";
 assert.equal(process.platform, "win32", "This gate needs native Windows.");
 assert(process.argv[2], "Select the built Windows executable.");
 const binary = resolve(process.argv[2]);
-const require = createRequire(resolve("packages/happy-agent/package.json"));
+const require = createRequire(resolve("packages/happy-agent-gym/package.json"));
 const { WebSocketServer } = require("ws");
 const root = await mkdtemp(join(tmpdir(), "happy-windows-runner-"));
 const workspace = join(root, "workspace");
