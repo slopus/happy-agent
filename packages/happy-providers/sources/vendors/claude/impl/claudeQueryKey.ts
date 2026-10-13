@@ -2,6 +2,11 @@ import { createHash } from "node:crypto";
 
 import type { SessionReasoningEffort, SessionRunRequest } from "@/core/SessionRunRequest.js";
 import type { SessionTool } from "@/core/SessionTool.js";
+import {
+    claudeSdkBuiltInToolNames,
+    hasClaudeToolSearch,
+    toClaudeMcpToolDefinition,
+} from "@/vendors/claude/impl/toClaudeSdkOptions.js";
 
 const toolFingerprints = new WeakMap<readonly SessionTool[], string>();
 
@@ -10,17 +15,18 @@ const toolFingerprints = new WeakMap<readonly SessionTool[], string>();
  * it may continue that query or has to start another.
  *
  * Callers hand over richer objects than `SessionTool`: an agent tool also carries its return
- * schema, executor, and review hooks. Only the fields Claude is sent belong in the key. A return
- * schema can share subschemas — MCP's bounded JSON value schema references each level twice —
- * and stringifying it repeats every shared node, which grows to megabytes per tool and to
- * hundreds of megabytes for a session with a few dozen MCP tools. The tools are fingerprinted
- * once per array, since a session offers the same array on every turn of its loop.
+ * schema, executor, and review hooks. The key covers the tools exactly as Claude is sent them,
+ * built by the same functions that build the query, so it can neither miss a change Claude would
+ * see nor serialize a field Claude never receives. That matters for MCP tools, whose return
+ * schema references each level of its bounded JSON value twice and grows to megabytes per tool
+ * once written out. The fingerprint is computed once per tools array, which a session keeps for
+ * its lifetime.
  */
 export function claudeQueryKey(options: {
     compaction: boolean;
     effort: SessionReasoningEffort | undefined;
     model: string;
-    structuredOutput: SessionRunRequest["structuredOutput"] | undefined;
+    structuredOutput?: SessionRunRequest["structuredOutput"];
     systemPrompt: string;
     tools: readonly SessionTool[];
 }): string {
@@ -39,25 +45,14 @@ export function claudeQueryKey(options: {
 function claudeToolsFingerprint(tools: readonly SessionTool[]): string {
     const cached = toolFingerprints.get(tools);
     if (cached !== undefined) return cached;
-    const fingerprint = createHash("sha256")
-        .update(JSON.stringify(tools.map(toWireTool)))
-        .digest("base64");
+    const toolSearchEnabled = hasClaudeToolSearch(tools);
+    const wireTools = {
+        builtIn: claudeSdkBuiltInToolNames(tools),
+        mcp: tools
+            .filter((tool) => tool.server === undefined)
+            .map((tool) => toClaudeMcpToolDefinition(tool, toolSearchEnabled)),
+    };
+    const fingerprint = createHash("sha256").update(JSON.stringify(wireTools)).digest("base64");
     toolFingerprints.set(tools, fingerprint);
     return fingerprint;
-}
-
-function toWireTool(tool: SessionTool): SessionTool {
-    return {
-        name: tool.name,
-        ...(tool.namespace === undefined ? {} : { namespace: tool.namespace }),
-        ...(tool.namespaceDescription === undefined
-            ? {}
-            : { namespaceDescription: tool.namespaceDescription }),
-        ...(tool.server === undefined ? {} : { server: tool.server }),
-        ...(tool.description === undefined ? {} : { description: tool.description }),
-        ...(tool.parameters === undefined ? {} : { parameters: tool.parameters }),
-        ...(tool.searchKeywords === undefined ? {} : { searchKeywords: tool.searchKeywords }),
-        ...(tool.defer === undefined ? {} : { defer: tool.defer }),
-        ...(tool.grammar === undefined ? {} : { grammar: tool.grammar }),
-    };
 }

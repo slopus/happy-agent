@@ -9,7 +9,6 @@ function keyFor(tools: readonly SessionTool[]): string {
         compaction: false,
         effort: undefined,
         model: "claude-sonnet-5-5",
-        structuredOutput: undefined,
         systemPrompt: "",
         tools,
     });
@@ -21,6 +20,8 @@ function sharedSubschemaChain(depth: number): unknown {
     for (let level = 0; level < depth; level += 1) node = { anyOf: [node, node] };
     return node;
 }
+
+const toolSearch: SessionTool = { name: "ToolSearch", server: { type: "ToolSearch" } };
 
 describe("claudeQueryKey", () => {
     it("leaves out tool fields Claude is never sent", () => {
@@ -40,6 +41,12 @@ describe("claudeQueryKey", () => {
         expect(keyFor([agentTool]).length).toBeLessThan(1_000);
     });
 
+    it("ignores a namespace description, which Claude is not sent", () => {
+        expect(keyFor([{ name: "search", namespace: "notion" }])).toBe(
+            keyFor([{ name: "search", namespace: "notion", namespaceDescription: "Notion." }]),
+        );
+    });
+
     it("changes when a description Claude is sent changes", () => {
         expect(keyFor([{ name: "search", description: "Search Notion." }])).not.toBe(
             keyFor([{ name: "search", description: "Search the workspace." }]),
@@ -50,5 +57,21 @@ describe("claudeQueryKey", () => {
         expect(
             keyFor([{ name: "search", parameters: Type.Object({ q: Type.String() }) }]),
         ).not.toBe(keyFor([{ name: "search", parameters: Type.Object({ q: Type.Number() }) }]));
+    });
+
+    it("changes when search keywords Claude is sent change", () => {
+        expect(keyFor([{ name: "search", searchKeywords: ["notion"] }])).not.toBe(
+            keyFor([{ name: "search", searchKeywords: ["workspace"] }]),
+        );
+    });
+
+    it("changes when a built-in tool is added", () => {
+        expect(keyFor([{ name: "search" }])).not.toBe(keyFor([{ name: "search" }, toolSearch]));
+    });
+
+    it("changes when a tool is deferred while tool search is on", () => {
+        expect(keyFor([toolSearch, { name: "search" }])).not.toBe(
+            keyFor([toolSearch, { name: "search", defer: true }]),
+        );
     });
 });
