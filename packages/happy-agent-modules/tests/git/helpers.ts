@@ -27,6 +27,7 @@ export async function createRepository(): Promise<string> {
     await git(repository, ["init", "--quiet", "--initial-branch=main"]);
     await git(repository, ["config", "user.email", "test@example.com"]);
     await git(repository, ["config", "user.name", "Test"]);
+    await git(repository, ["config", "core.autocrlf", "false"]);
     return repository;
 }
 

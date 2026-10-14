@@ -3,6 +3,9 @@ import { join, relative, sep } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { servicesHarness, ownerId, workspaceId, definition } from "./support/servicesHarness.js";
 
+// Durable work starts asynchronously and can take seconds on a busy Windows machine.
+const SLOW_WAIT = { timeout: 10_000 };
+
 describe("workspace service cleanup before folder removal", () => {
     it("publishes abort without holding the shared database through service teardown", async () => {
         const f = await servicesHarness();
@@ -10,10 +13,12 @@ describe("workspace service cleanup before folder removal", () => {
         let timeout: NodeJS.Timeout | undefined;
         try {
             const service = await f.services.start(f.ctx, ownerId, definition);
-            await vi.waitFor(async () =>
-                expect((await f.services.get(f.ctx, workspaceId, service.id)).status).toBe(
-                    "running",
-                ),
+            await vi.waitFor(
+                async () =>
+                    expect((await f.services.get(f.ctx, workspaceId, service.id)).status).toBe(
+                        "running",
+                    ),
+                SLOW_WAIT,
             );
             f.holdCleanup();
             stopping = f.abort.abort(f.ctx, ownerId);
@@ -74,10 +79,12 @@ describe("workspace service cleanup before folder removal", () => {
             f.agentConfigs.set(agentId, { modules: { compute: { cwd: workspace.path } } });
             await f.workspaces.attachAgent(f.ctx, workspace.id, agentId);
             const service = await f.services.start(f.ctx, agentId, definition);
-            await vi.waitFor(async () =>
-                expect((await f.services.get(f.ctx, workspace.id, service.id)).status).toBe(
-                    "running",
-                ),
+            await vi.waitFor(
+                async () =>
+                    expect((await f.services.get(f.ctx, workspace.id, service.id)).status).toBe(
+                        "running",
+                    ),
+                SLOW_WAIT,
             );
             await expect(
                 f.storage.transaction(f.ctx, async (txCtx) => {
@@ -100,7 +107,7 @@ describe("workspace service cleanup before folder removal", () => {
                 // Cleanup progress must be observable while runtime termination is pending.
                 if (current?.status === "archived") return;
                 expect(current).toMatchObject({ serviceCleanup: { phase: "stopping_services" } });
-            });
+            }, SLOW_WAIT);
             expect(await f.workspaces.get(f.ctx, workspace.id)).toMatchObject({
                 status: "archiving",
                 serviceCleanup: {
@@ -115,26 +122,30 @@ describe("workspace service cleanup before folder removal", () => {
             );
             try {
                 f.finishCleanup();
-                await vi.waitFor(async () =>
-                    expect(await f.workspaces.get(f.ctx, workspace.id)).toMatchObject({
-                        status: "archiving",
-                        serviceCleanup: {
-                            phase: "blocked",
-                            serviceIds: [service.id],
-                            error: {
-                                code: "service_cleanup_unconfirmed",
-                                message:
-                                    "Service cleanup is not confirmed. Workspace files have been retained.",
+                await vi.waitFor(
+                    async () =>
+                        expect(await f.workspaces.get(f.ctx, workspace.id)).toMatchObject({
+                            status: "archiving",
+                            serviceCleanup: {
+                                phase: "blocked",
+                                serviceIds: [service.id],
+                                error: {
+                                    code: "service_cleanup_unconfirmed",
+                                    message:
+                                        "Service cleanup is not confirmed. Workspace files have been retained.",
+                                },
                             },
-                        },
-                    }),
+                        }),
+                    SLOW_WAIT,
                 );
                 expect((await stat(workspace.path)).isDirectory()).toBe(true);
             } finally {
                 confirmation.mockRestore();
             }
-            await vi.waitFor(async () =>
-                expect((await f.workspaces.get(f.ctx, workspace.id))?.status).toBe("archived"),
+            await vi.waitFor(
+                async () =>
+                    expect((await f.workspaces.get(f.ctx, workspace.id))?.status).toBe("archived"),
+                SLOW_WAIT,
             );
             expect((await f.workspaces.get(f.ctx, workspace.id))?.serviceCleanup).toBe(null);
             await expect(stat(workspace.path)).rejects.toMatchObject({ code: "ENOENT" });

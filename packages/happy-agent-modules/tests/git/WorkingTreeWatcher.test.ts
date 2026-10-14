@@ -44,55 +44,64 @@ describe("WorkingTreeWatcher", { timeout: 60_000 }, () => {
         },
     );
 
-    it("reports working-tree changes and nothing from ignored directories", async () => {
-        const repository = await createRepository();
-        await commitFile(repository, ".gitignore", "build/\n");
-        await mkdir(join(repository, "build", "deep"), { recursive: true });
-        await mkdir(join(repository, "node_modules", "package"), { recursive: true });
-        await mkdir(join(repository, "src"));
-        const { changes, watcher, watching } = watchRepository(repository);
-        await waitFor(() => watching());
+    // Windows lists no ignored directories by design, so events from them are reported there.
+    it.skipIf(process.platform === "win32")(
+        "reports working-tree changes and nothing from ignored directories",
+        async () => {
+            const repository = await createRepository();
+            await commitFile(repository, ".gitignore", "build/\n");
+            await mkdir(join(repository, "build", "deep"), { recursive: true });
+            await mkdir(join(repository, "node_modules", "package"), { recursive: true });
+            await mkdir(join(repository, "src"));
+            const { changes, watcher, watching } = watchRepository(repository);
+            await waitFor(() => watching());
 
-        await writeFile(join(repository, "build", "deep", "output.js"), "built\n");
-        await writeFile(join(repository, "node_modules", "package", "index.js"), "dep\n");
-        await writeFile(join(repository, ".git", "scratch"), "internal\n");
-        await writeFile(join(repository, "src", "main.ts"), "source\n");
-        await waitFor(() => changes.some((change) => change.path === "src/main.ts"));
-        await settle();
-
-        expect(new Set(changes.map((change) => change.path))).toEqual(new Set(["src/main.ts"]));
-        expect(changes[0]?.kind).toBe("create");
-        expect(watcher.isWatching(repository)).toBe(true);
-    });
-
-    it("stops reporting a directory once Git starts ignoring it", async () => {
-        const repository = await createRepository();
-        await commitFile(repository, ".gitignore", "build/\n");
-        const { changes, watching } = watchRepository(repository);
-        await waitFor(() => watching());
-
-        await mkdir(join(repository, "out"));
-        await writeFile(join(repository, ".gitignore"), "build/\nout/\n");
-        await waitFor(() => changes.some((change) => change.path === ".gitignore"));
-
-        // The ignore list is re-derived shortly after `.gitignore` changes, at most every ten
-        // seconds per folder. Until then `out/` is still watched.
-        const deadline = Date.now() + 40_000;
-        let observed: string[] = [];
-        while (Date.now() < deadline) {
-            changes.length = 0;
-            await writeFile(
-                join(repository, "out", "artifact.js"),
-                `built ${String(Date.now())}\n`,
-            );
-            await writeFile(join(repository, "tracked.txt"), `source ${String(Date.now())}\n`);
-            await waitFor(() => changes.some((change) => change.path === "tracked.txt"));
+            await writeFile(join(repository, "build", "deep", "output.js"), "built\n");
+            await writeFile(join(repository, "node_modules", "package", "index.js"), "dep\n");
+            await writeFile(join(repository, ".git", "scratch"), "internal\n");
+            await writeFile(join(repository, "src", "main.ts"), "source\n");
+            await waitFor(() => changes.some((change) => change.path === "src/main.ts"));
             await settle();
-            observed = [...new Set(changes.map((change) => change.path))];
-            if (!observed.includes("out/artifact.js")) break;
-        }
-        expect(observed).toEqual(["tracked.txt"]);
-    }, 120_000);
+
+            expect(new Set(changes.map((change) => change.path))).toEqual(new Set(["src/main.ts"]));
+            expect(changes[0]?.kind).toBe("create");
+            expect(watcher.isWatching(repository)).toBe(true);
+        },
+    );
+
+    // Windows lists no ignored directories by design, so events from them are reported there.
+    it.skipIf(process.platform === "win32")(
+        "stops reporting a directory once Git starts ignoring it",
+        async () => {
+            const repository = await createRepository();
+            await commitFile(repository, ".gitignore", "build/\n");
+            const { changes, watching } = watchRepository(repository);
+            await waitFor(() => watching());
+
+            await mkdir(join(repository, "out"));
+            await writeFile(join(repository, ".gitignore"), "build/\nout/\n");
+            await waitFor(() => changes.some((change) => change.path === ".gitignore"));
+
+            // The ignore list is re-derived shortly after `.gitignore` changes, at most every ten
+            // seconds per folder. Until then `out/` is still watched.
+            const deadline = Date.now() + 40_000;
+            let observed: string[] = [];
+            while (Date.now() < deadline) {
+                changes.length = 0;
+                await writeFile(
+                    join(repository, "out", "artifact.js"),
+                    `built ${String(Date.now())}\n`,
+                );
+                await writeFile(join(repository, "tracked.txt"), `source ${String(Date.now())}\n`);
+                await waitFor(() => changes.some((change) => change.path === "tracked.txt"));
+                await settle();
+                observed = [...new Set(changes.map((change) => change.path))];
+                if (!observed.includes("out/artifact.js")) break;
+            }
+            expect(observed).toEqual(["tracked.txt"]);
+        },
+        120_000,
+    );
 
     it("shares one watch per folder and closes it with its last observer", async () => {
         const repository = await createRepository();

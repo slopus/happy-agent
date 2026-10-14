@@ -10,12 +10,17 @@ import {
     definition,
 } from "./support/servicesHarness.js";
 
+// Durable work starts asynchronously and can take seconds on a busy Windows machine.
+const SLOW_WAIT = { timeout: 10_000 };
+
 const readNow = { waitMs: 0, maxOutputBytes: 65536 };
 const reader = { kind: "api", principalId: "principal", readerId: "view" } as const;
 async function started(f: Awaited<ReturnType<typeof servicesHarness>>) {
     const service = await f.services.start(f.ctx, ownerId, definition);
-    await vi.waitFor(async () =>
-        expect((await f.services.get(f.ctx, workspaceId, service.id)).status).toBe("running"),
+    await vi.waitFor(
+        async () =>
+            expect((await f.services.get(f.ctx, workspaceId, service.id)).status).toBe("running"),
+        SLOW_WAIT,
     );
     return service.id;
 }

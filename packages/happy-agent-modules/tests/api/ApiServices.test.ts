@@ -5,15 +5,20 @@ import { describe, expect, it, vi } from "vitest";
 import { definition, ownerId, peerId, workspaceId } from "../services/support/servicesHarness.js";
 import { serviceApiHarness } from "./support/serviceApiHarness.js";
 
+// Durable work starts asynchronously and can take seconds on a busy Windows machine.
+const SLOW_WAIT = { timeout: 10_000 };
+
 describe("workspace service HTTP API", () => {
     it("uses the published client for discovery, independent consuming input, events and idempotent stop", async () => {
         const f = await serviceApiHarness();
         try {
             const service = await f.services.start(f.ctx, ownerId, definition);
-            await vi.waitFor(async () =>
-                expect((await f.services.get(f.ctx, workspaceId, service.id)).status).toBe(
-                    "running",
-                ),
+            await vi.waitFor(
+                async () =>
+                    expect((await f.services.get(f.ctx, workspaceId, service.id)).status).toBe(
+                        "running",
+                    ),
+                SLOW_WAIT,
             );
             const before = f.api.cursor();
             expect(await f.client.listWorkspaceServices(workspaceId)).toMatchObject({
@@ -68,10 +73,13 @@ describe("workspace service HTTP API", () => {
                 }),
             ).toMatchObject({ service: { status: "stopping" } });
             f.finishCleanup();
-            await vi.waitFor(async () =>
-                expect(
-                    (await f.client.getWorkspaceService(workspaceId, service.id)).service.status,
-                ).toBe("killed"),
+            await vi.waitFor(
+                async () =>
+                    expect(
+                        (await f.client.getWorkspaceService(workspaceId, service.id)).service
+                            .status,
+                    ).toBe("killed"),
+                SLOW_WAIT,
             );
             expect(await f.client.stopWorkspaceService(workspaceId, service.id)).toMatchObject({
                 service: { status: "killed" },
@@ -116,10 +124,24 @@ describe("workspace service HTTP API", () => {
                 ...definition,
                 name: "Other service",
             });
-            await vi.waitFor(async () =>
-                expect((await f.services.get(f.ctx, workspaceId, other.id)).status).toBe("running"),
+            await vi.waitFor(
+                async () =>
+                    expect((await f.services.get(f.ctx, workspaceId, service.id)).status).toBe(
+                        "running",
+                    ),
+                SLOW_WAIT,
             );
-            vi.spyOn(f.running[0]!.service, "connect").mockImplementation(async () => {
+            await vi.waitFor(
+                async () =>
+                    expect((await f.services.get(f.ctx, workspaceId, other.id)).status).toBe(
+                        "running",
+                    ),
+                SLOW_WAIT,
+            );
+            const serviceRuntime = f.running.find(
+                (entry) => entry.service.execution.id === service.id,
+            )!;
+            vi.spyOn(serviceRuntime.service, "connect").mockImplementation(async () => {
                 const endpoint = connect((app.address() as { port: number }).port, "127.0.0.1");
                 await once(endpoint, "connect");
                 return endpoint;

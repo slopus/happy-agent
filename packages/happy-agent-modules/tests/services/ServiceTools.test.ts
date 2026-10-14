@@ -16,6 +16,9 @@ import {
     definition,
 } from "./support/servicesHarness.js";
 
+// Durable work starts asynchronously and can take seconds on a busy Windows machine.
+const SLOW_WAIT = { timeout: 10_000 };
+
 const startArgs = {
     name: "Preview",
     cmd: "node server.js",
@@ -34,10 +37,12 @@ describe("common workspace service tools", () => {
         const f = await servicesHarness();
         try {
             const created = await f.services.start(f.ctx, ownerId, definition);
-            await vi.waitFor(async () =>
-                expect((await f.services.get(f.ctx, workspaceId, created.id)).status).toBe(
-                    "running",
-                ),
+            await vi.waitFor(
+                async () =>
+                    expect((await f.services.get(f.ctx, workspaceId, created.id)).status).toBe(
+                        "running",
+                    ),
+                SLOW_WAIT,
             );
             const input = serviceInputTool(f.services, peerId);
             const observed = vi.spyOn(f.services, "inputForAgent");
@@ -89,10 +94,12 @@ describe("common workspace service tools", () => {
         const f = await servicesHarness();
         try {
             const created = await f.services.start(f.ctx, ownerId, definition);
-            await vi.waitFor(async () =>
-                expect((await f.services.get(f.ctx, workspaceId, created.id)).status).toBe(
-                    "running",
-                ),
+            await vi.waitFor(
+                async () =>
+                    expect((await f.services.get(f.ctx, workspaceId, created.id)).status).toBe(
+                        "running",
+                    ),
+                SLOW_WAIT,
             );
             const stop = serviceStopTool(f.services, peerId);
             expect(await stop.execute(f.ctx, { service_id: created.id }, call(f))).toMatchObject({
@@ -253,7 +260,7 @@ describe("common workspace service tools", () => {
             const tool = serviceStartTool(f.services, ownerId);
             const result = await tool.execute(f.ctx, startArgs, call(f));
             expect(Value.Check(tool.returnType, result)).toBe(true);
-            await vi.waitFor(() => expect(f.start).toHaveBeenCalledTimes(1));
+            await vi.waitFor(() => expect(f.start).toHaveBeenCalledTimes(1), SLOW_WAIT);
             expect(f.start.mock.calls[0]![1]).toMatchObject({
                 cwd: ".",
                 tty: false,

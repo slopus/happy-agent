@@ -191,13 +191,10 @@ describe("plain-directory project registration", () => {
         }
     });
 
-    it("keeps missing, inaccessible, and non-directory paths as registration errors", async () => {
+    it("keeps missing and non-directory paths as registration errors", async () => {
         const root = await mkdtemp(join(tmpdir(), "invalid-directory-registration-"));
         const file = join(root, "file.txt");
-        const inaccessible = join(root, "inaccessible");
         await writeFile(file, "not a directory\n", "utf8");
-        await mkdir(inaccessible);
-        await chmod(inaccessible, 0o000);
         const world = await createWorld(root, "invalid-directory");
         try {
             await expect(
@@ -208,15 +205,32 @@ describe("plain-directory project registration", () => {
             await expect(
                 world.projects.register(world.database.context, { path: file }),
             ).rejects.toMatchObject({ code: "not_directory" });
-            await expect(
-                world.projects.register(world.database.context, { path: inaccessible }),
-            ).rejects.toMatchObject({ code: "path_inaccessible" });
         } finally {
             await world.close();
-            await chmod(inaccessible, 0o755);
             await rm(root, { force: true, recursive: true });
         }
     });
+
+    // chmod cannot remove access to a folder on Windows.
+    it.skipIf(process.platform === "win32")(
+        "keeps an inaccessible path as a registration error",
+        async () => {
+            const root = await mkdtemp(join(tmpdir(), "inaccessible-directory-registration-"));
+            const inaccessible = join(root, "inaccessible");
+            await mkdir(inaccessible);
+            await chmod(inaccessible, 0o000);
+            const world = await createWorld(root, "inaccessible-directory");
+            try {
+                await expect(
+                    world.projects.register(world.database.context, { path: inaccessible }),
+                ).rejects.toMatchObject({ code: "path_inaccessible" });
+            } finally {
+                await world.close();
+                await chmod(inaccessible, 0o755);
+                await rm(root, { force: true, recursive: true });
+            }
+        },
+    );
 });
 
 async function createWorld(root: string, name: string) {

@@ -3,6 +3,9 @@ import { join, relative } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { definition, servicesHarness } from "./support/servicesHarness.js";
 
+// Durable work starts asynchronously and can take seconds on a busy Windows machine.
+const SLOW_WAIT = { timeout: 10_000 };
+
 async function managedProject(f: Awaited<ReturnType<typeof servicesHarness>>) {
     const root = join(f.projects.managedProjectsDirectory, "managed-preview");
     expect(relative(f.config.projectsHome, root)).toBe("managed-preview");
@@ -29,14 +32,16 @@ describe("project-root service cleanup", () => {
         try {
             const { project, root, agentId } = await managedProject(f);
             const service = await f.services.start(f.ctx, agentId, definition);
-            await vi.waitFor(async () =>
-                expect((await f.services.get(f.ctx, project.id, service.id)).status).toBe(
-                    "running",
-                ),
+            await vi.waitFor(
+                async () =>
+                    expect((await f.services.get(f.ctx, project.id, service.id)).status).toBe(
+                        "running",
+                    ),
+                SLOW_WAIT,
             );
             confirmation.mockRejectedValue(new Error("Cleanup proof temporarily unavailable."));
             expect((await f.projects.archive(f.ctx, project.id)).status).toBe("archived");
-            await vi.waitFor(() => expect(confirmation).toHaveBeenCalled());
+            await vi.waitFor(() => expect(confirmation).toHaveBeenCalled(), SLOW_WAIT);
             expect((await stat(root)).isDirectory()).toBe(true);
             await expect(f.services.start(f.ctx, agentId, definition)).rejects.toThrow(
                 /not available|closed/u,
@@ -44,6 +49,7 @@ describe("project-root service cleanup", () => {
             confirmation.mockRestore();
             await vi.waitFor(
                 async () => await expect(stat(root)).rejects.toMatchObject({ code: "ENOENT" }),
+                SLOW_WAIT,
             );
         } finally {
             confirmation.mockRestore();
@@ -65,15 +71,17 @@ describe("project-root service cleanup", () => {
                 await held;
             });
             await f.projects.archive(f.ctx, project.id);
-            await vi.waitFor(() => expect(entered).toBe(true));
+            await vi.waitFor(() => expect(entered).toBe(true), SLOW_WAIT);
             expect((await f.projects.restore(f.ctx, project.id)).status).toBe("active");
             release();
             unsubscribe();
             const service = await f.services.start(f.ctx, agentId, definition);
-            await vi.waitFor(async () =>
-                expect((await f.services.get(f.ctx, project.id, service.id)).status).toBe(
-                    "running",
-                ),
+            await vi.waitFor(
+                async () =>
+                    expect((await f.services.get(f.ctx, project.id, service.id)).status).toBe(
+                        "running",
+                    ),
+                SLOW_WAIT,
             );
             expect((await stat(root)).isDirectory()).toBe(true);
             await f.services.stopAndWait(f.ctx, project.id, service.id);

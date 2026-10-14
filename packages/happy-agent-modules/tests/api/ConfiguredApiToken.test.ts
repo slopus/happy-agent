@@ -19,7 +19,10 @@ it("replaces a generated socket token with the fixed deployment token and preser
     expect(await prepareLocalApiToken(path, false, fixed)).toBe(fixed);
     expect(await prepareLocalApiToken(path, false)).toBe(fixed);
     expect((await readFile(path, "utf8")).trim()).toBe(fixed);
-    expect((await stat(path)).mode & 0o777).toBe(0o600);
+    // Windows has no POSIX permission bits.
+    if (process.platform !== "win32") {
+        expect((await stat(path)).mode & 0o777).toBe(0o600);
+    }
     await expect(prepareLocalApiToken(path, true, fixed)).rejects.toThrow();
     expect((await readFile(path, "utf8")).trim()).toBe(fixed);
 });

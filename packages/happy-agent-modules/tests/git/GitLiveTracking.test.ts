@@ -253,7 +253,7 @@ describe("GitModule live tracking", () => {
 });
 
 async function waitFor(predicate: () => boolean): Promise<void> {
-    const deadline = Date.now() + 5_000;
+    const deadline = Date.now() + 10_000;
     while (Date.now() < deadline) {
         if (predicate()) return;
         await new Promise((resolve) => setTimeout(resolve, 5));

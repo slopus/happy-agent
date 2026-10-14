@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 
 import { Value } from "@sinclair/typebox/value";
 import { createRootContext } from "@steve.kite/stdlib";
@@ -145,7 +145,7 @@ describe("ConfigModule edge coverage", () => {
             await mkdir(relativeRoot, { recursive: true });
             temporaryDirectories.push(relativeRoot);
             const relative = await loadHappyAgentConfiguration(
-                `.context/${relativeRoot.split("/").pop()}`,
+                `.context/${basename(relativeRoot)}`,
             );
 
             expect(Value.Check(happyAgentConfigurationInputSchema, root)).toBe(true);
@@ -196,7 +196,11 @@ describe("ConfigModule edge coverage", () => {
                     process.platform === "darwin" ? "Happy/Config" : "happy/config",
                     "SECURITY.md",
                 ),
-                socketPath: join(root, ".happy", "agent", "server.sock"),
+                // Windows has no unix socket files: the daemon listens on a named pipe instead.
+                socketPath:
+                    process.platform === "win32"
+                        ? expect.stringMatching(/^\\\\\.\\pipe\\happy-agent-[0-9a-f]{64}$/)
+                        : join(root, ".happy", "agent", "server.sock"),
                 tailcatAddressPath: join(root, ".happy", "agent", "tailcat", "address"),
                 tailcatHome: join(root, ".happy", "agent", "tailcat"),
                 tailcatKeyPath: join(root, ".happy", "agent", "tailcat", "default.private.json"),
@@ -209,10 +213,10 @@ describe("ConfigModule edge coverage", () => {
 
         it("expands tilde roots using the current home directory", async () => {
             const root = await temporaryRoot();
-            const tildeRoot = `~/${root.split("/").pop()}`;
+            const tildeRoot = `~/${basename(root)}`;
             const configuration = await loadHappyAgentConfiguration(tildeRoot);
 
-            expect(configuration.paths.happyHome).toBe(join(homedir(), root.split("/").pop()!));
+            expect(configuration.paths.happyHome).toBe(join(homedir(), basename(root)));
         });
 
         it("exposes configured instructions through the normal module hook", async () => {

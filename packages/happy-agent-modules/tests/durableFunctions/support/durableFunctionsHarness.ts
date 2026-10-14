@@ -68,9 +68,12 @@ export function deferred<Value = void>(): {
 }
 
 export async function waitForCondition(check: () => boolean | Promise<boolean>): Promise<void> {
-    await vi.waitFor(async () => {
-        expect(await check()).toBe(true);
-    });
+    await vi.waitFor(
+        async () => {
+            expect(await check()).toBe(true);
+        },
+        { timeout: 10_000 },
+    );
 }
 
 export async function pendingCallCount(ctx: Context): Promise<number> {

@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openAgentSQLiteDatabase, AgentStorage, withAgentDatabase } from "@slopus/happy-agent-base";
@@ -8,6 +8,7 @@ import {
     ServiceRecords,
     type ServiceRecord,
 } from "../../../sources/services/persistence/ServiceRecords.js";
+import { removeDatabaseDirectory } from "../../support/removeDatabaseDirectory.js";
 
 const workspaceId = "aaworkspace";
 let fixture: Awaited<ReturnType<typeof createFixture>>;
@@ -284,7 +285,7 @@ async function createFixture() {
     });
     const close = async () => {
         await connection.close();
-        await rm(directory, { recursive: true, force: true });
+        await removeDatabaseDirectory(directory);
     };
     try {
         await storage.migrate(ctx, []);

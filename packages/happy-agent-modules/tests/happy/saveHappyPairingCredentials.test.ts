@@ -42,8 +42,11 @@ describe("saveHappyPairingCredentials", () => {
             secret: Buffer.alloc(32, 7).toString("base64"),
             token: "happy-token",
         });
-        expect((await stat(settingsPath)).mode & 0o777).toBe(0o600);
-        expect((await stat(credentialsPath)).mode & 0o777).toBe(0o600);
+        // Windows has no POSIX permission bits.
+        if (process.platform !== "win32") {
+            expect((await stat(settingsPath)).mode & 0o777).toBe(0o600);
+            expect((await stat(credentialsPath)).mode & 0o777).toBe(0o600);
+        }
     });
 });
 

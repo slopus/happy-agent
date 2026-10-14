@@ -32,6 +32,9 @@ import { testConfigRootedAt } from "../support/configModule.js";
 import { moduleDatabase } from "../support/moduleDatabase.js";
 import { workspacesCatalogFrom } from "../support/workspacesModule.js";
 
+// Durable work starts asynchronously and can take seconds on a busy Windows machine.
+const SLOW_WAIT = { timeout: 10_000 };
+
 afterEach(cleanupRoots);
 
 describe("nested workspace provisioning", () => {
@@ -209,7 +212,7 @@ describe("nested workspace provisioning", () => {
         const world = await createWorld(
             "workspace-setup-failure",
             `[workspace]
-setup_commands = ['node -e "require(\\"node:fs\\").writeFileSync(\\"setup-ran.txt\\", \\"ran\\"); process.exit(23)"']`,
+setup_commands = ['''node -e "require('node:fs').writeFileSync('setup-ran.txt','ran'); process.exit(23)"''']`,
         );
         try {
             const workspaceId = createId();
@@ -248,8 +251,8 @@ setup_commands = ['node -e "require(\\"node:fs\\").writeFileSync(\\"setup-ran.tx
             "workspace-checkpoint-restart",
             `[workspace]
 setup_commands = [
-  'echo run >> first-runs.txt',
-  'touch second-started; while [ ! -f finish-setup ]; do sleep 1; done'
+  '''node -e "require('node:fs').appendFileSync('first-runs.txt','run\\n')"''',
+  '''node -e "const fs=require('node:fs'); fs.writeFileSync('second-started',''); const t=setInterval(()=>{ fs.existsSync('finish-setup') && clearInterval(t) },200)"'''
 ]`,
         );
         let restarted: ReturnType<typeof workspacesCatalogFrom> | undefined;
@@ -270,7 +273,7 @@ setup_commands = [
 
             await vi.waitFor(() => {
                 expect(existsSync(join(workspace.path, "second-started"))).toBe(true);
-            });
+            }, SLOW_WAIT);
             world.durableFunctions.stop();
             await writeFile(join(workspace.path, "finish-setup"), "yes", "utf8");
 
@@ -307,7 +310,7 @@ setup_commands = [
             "workspace-archive-during-provision",
             `[workspace]
 setup_commands = [
-  'touch setup-started; while true; do sleep 1; done'
+  '''node -e "require('node:fs').writeFileSync('setup-started',''); setInterval(()=>{},1000)"'''
 ]`,
         );
         try {
@@ -326,7 +329,7 @@ setup_commands = [
             if (workspace === undefined) throw new Error("The workspace was not created.");
             await vi.waitFor(() => {
                 expect(existsSync(join(workspace.path, "setup-started"))).toBe(true);
-            });
+            }, SLOW_WAIT);
 
             expect(
                 (await world.workspaces.archive(world.database.context, workspace.id)).status,
@@ -578,7 +581,7 @@ setup_commands = [
                     status: "failed",
                     initializationError: expect.stringMatching(/parent.*ready|parent.*available/iu),
                 });
-            });
+            }, SLOW_WAIT);
         } finally {
             await world.close();
         }

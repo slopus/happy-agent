@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Socket } from "node:net";
@@ -34,6 +34,7 @@ import { TitlesModule } from "../../../sources/titles/index.js";
 import { WorkspacesModule } from "../../../sources/workspaces/index.js";
 import { FakeCompute } from "../../compute/support/FakeCompute.js";
 import { testConfigRootedAt } from "../../support/configModule.js";
+import { removeDatabaseDirectory } from "../../support/removeDatabaseDirectory.js";
 import {
     pendingCallCount,
     waitForCondition,
@@ -257,12 +258,12 @@ export async function servicesHarness(dispatch = true) {
                 await bots.close();
                 git.dispose();
                 await connection.close();
-                await rm(directory, { recursive: true, force: true });
+                await removeDatabaseDirectory(directory);
             },
         };
     } catch (error: unknown) {
         await connection.close();
-        await rm(directory, { recursive: true, force: true });
+        await removeDatabaseDirectory(directory);
         throw error;
     }
 }

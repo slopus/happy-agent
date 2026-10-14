@@ -11,25 +11,32 @@ import {
     definition,
 } from "./support/servicesHarness.js";
 
+// Durable work starts asynchronously and can take seconds on a busy Windows machine.
+const SLOW_WAIT = { timeout: 10_000 };
+
 describe("workspace-owned service runtime", () => {
     it("projects an ordinary process stop as service revocation before cleanup finishes", async () => {
         const f = await servicesHarness();
         try {
             const created = await f.services.start(f.ctx, ownerId, definition);
-            await vi.waitFor(async () =>
-                expect((await f.services.get(f.ctx, workspaceId, created.id)).status).toBe(
-                    "running",
-                ),
+            await vi.waitFor(
+                async () =>
+                    expect((await f.services.get(f.ctx, workspaceId, created.id)).status).toBe(
+                        "running",
+                    ),
+                SLOW_WAIT,
             );
             const running = await f.services.get(f.ctx, workspaceId, created.id);
             f.holdCleanup();
             const stopping = f.compute.stopProcess(f.ctx, ownerId, running.processId!);
             try {
-                await vi.waitFor(async () =>
-                    expect(await f.services.get(f.ctx, workspaceId, created.id)).toMatchObject({
-                        status: "stopping",
-                        endpointStatus: "unavailable",
-                    }),
+                await vi.waitFor(
+                    async () =>
+                        expect(await f.services.get(f.ctx, workspaceId, created.id)).toMatchObject({
+                            status: "stopping",
+                            endpointStatus: "unavailable",
+                        }),
+                    SLOW_WAIT,
                 );
             } finally {
                 f.finishCleanup();
@@ -44,10 +51,12 @@ describe("workspace-owned service runtime", () => {
         const f = await servicesHarness();
         try {
             const created = await f.services.start(f.ctx, ownerId, definition);
-            await vi.waitFor(async () =>
-                expect((await f.services.get(f.ctx, workspaceId, created.id)).status).toBe(
-                    "running",
-                ),
+            await vi.waitFor(
+                async () =>
+                    expect((await f.services.get(f.ctx, workspaceId, created.id)).status).toBe(
+                        "running",
+                    ),
+                SLOW_WAIT,
             );
             const running = await f.services.get(f.ctx, workspaceId, created.id);
             await expect(
@@ -66,11 +75,13 @@ describe("workspace-owned service runtime", () => {
         const f = await servicesHarness();
         try {
             const created = await f.services.start(f.ctx, ownerId, definition);
-            await vi.waitFor(async () =>
-                expect(await f.services.get(f.ctx, workspaceId, created.id)).toMatchObject({
-                    status: "running",
-                    endpointStatus: "waiting",
-                }),
+            await vi.waitFor(
+                async () =>
+                    expect(await f.services.get(f.ctx, workspaceId, created.id)).toMatchObject({
+                        status: "running",
+                        endpointStatus: "waiting",
+                    }),
+                SLOW_WAIT,
             );
             f.setEndpointReachable(true);
             await vi.waitFor(
@@ -79,7 +90,7 @@ describe("workspace-owned service runtime", () => {
                         status: "running",
                         endpointStatus: "reachable",
                     }),
-                { timeout: 3000 },
+                { timeout: 10_000 },
             );
             f.setEndpointReachable(false);
             await vi.waitFor(
@@ -88,7 +99,7 @@ describe("workspace-owned service runtime", () => {
                         status: "running",
                         endpointStatus: "waiting",
                     }),
-                { timeout: 3000 },
+                { timeout: 10_000 },
             );
         } finally {
             await f.close();
@@ -103,7 +114,7 @@ describe("workspace-owned service runtime", () => {
                 new Error("Temporary metadata read failure."),
             );
             await f.beginDispatch();
-            await vi.waitFor(() => expect(f.start).toHaveBeenCalledTimes(1));
+            await vi.waitFor(() => expect(f.start).toHaveBeenCalledTimes(1), SLOW_WAIT);
             expect(await pendingCallCount(f.ctx)).toBe(1);
         } finally {
             // When reproducing the missing delivery guarantee, recreate only the never-spawned
@@ -128,11 +139,13 @@ describe("workspace-owned service runtime", () => {
                 status: "starting",
                 processId: null,
             });
-            await vi.waitFor(async () =>
-                expect(await f.services.get(f.ctx, workspaceId, created.id)).toMatchObject({
-                    status: "running",
-                    processId: expect.any(String),
-                }),
+            await vi.waitFor(
+                async () =>
+                    expect(await f.services.get(f.ctx, workspaceId, created.id)).toMatchObject({
+                        status: "running",
+                        processId: expect.any(String),
+                    }),
+                SLOW_WAIT,
             );
             const running = await f.services.get(f.ctx, workspaceId, created.id);
             expect(f.start).toHaveBeenCalledTimes(1);
@@ -186,10 +199,12 @@ describe("workspace-owned service runtime", () => {
         const f = await servicesHarness();
         try {
             const created = await f.services.start(f.ctx, ownerId, definition);
-            await vi.waitFor(async () =>
-                expect((await f.services.get(f.ctx, workspaceId, created.id)).status).toBe(
-                    "running",
-                ),
+            await vi.waitFor(
+                async () =>
+                    expect((await f.services.get(f.ctx, workspaceId, created.id)).status).toBe(
+                        "running",
+                    ),
+                SLOW_WAIT,
             );
             const credential = await f.services.accessToken(
                 f.ctx,
@@ -217,10 +232,12 @@ describe("workspace-owned service runtime", () => {
             ).rejects.toMatchObject({ code: "service_not_running" });
             expect((await f.services.list(f.ctx, workspaceId)).services).toHaveLength(1);
             f.finishCleanup();
-            await vi.waitFor(async () =>
-                expect((await f.services.get(f.ctx, workspaceId, created.id)).status).toBe(
-                    "killed",
-                ),
+            await vi.waitFor(
+                async () =>
+                    expect((await f.services.get(f.ctx, workspaceId, created.id)).status).toBe(
+                        "killed",
+                    ),
+                SLOW_WAIT,
             );
             expect((await f.services.list(f.ctx, workspaceId)).services).toEqual([]);
             expect(
@@ -243,10 +260,12 @@ describe("workspace-owned service runtime", () => {
             });
             expect((await f.services.get(f.ctx, workspaceId, created.id)).status).toBe("stopping");
             await f.beginDispatch();
-            await vi.waitFor(async () =>
-                expect((await f.services.get(f.ctx, workspaceId, created.id)).status).toBe(
-                    "failed",
-                ),
+            await vi.waitFor(
+                async () =>
+                    expect((await f.services.get(f.ctx, workspaceId, created.id)).status).toBe(
+                        "failed",
+                    ),
+                SLOW_WAIT,
             );
             expect(f.start).not.toHaveBeenCalled();
             expect(f.reconcile).toHaveBeenCalledTimes(1);
@@ -278,15 +297,17 @@ describe("workspace-owned service runtime", () => {
                 metadata: undefined,
             });
             await durableHooks.afterStart!(f.ctx, f.agents);
-            await vi.waitFor(async () =>
-                expect(await recovered.get(f.ctx, workspaceId, created.id)).toMatchObject({
-                    status: "failed",
-                    error: { code: "runtime_lost" },
-                }),
+            await vi.waitFor(
+                async () =>
+                    expect(await recovered.get(f.ctx, workspaceId, created.id)).toMatchObject({
+                        status: "failed",
+                        error: { code: "runtime_lost" },
+                    }),
+                SLOW_WAIT,
             );
             expect(f.start).not.toHaveBeenCalled();
             expect(f.reconcile).toHaveBeenCalledTimes(1);
-            await vi.waitFor(async () => expect(await pendingCallCount(f.ctx)).toBe(0));
+            await vi.waitFor(async () => expect(await pendingCallCount(f.ctx)).toBe(0), SLOW_WAIT);
         } finally {
             recoveredDurable.stop();
             await f.close();

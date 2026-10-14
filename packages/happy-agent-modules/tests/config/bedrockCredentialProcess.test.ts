@@ -81,6 +81,8 @@ describe("Bedrock credential_process configuration", () => {
 });
 
 function shellArgument(value: string): string {
+    // The AWS SDK runs the command through cmd.exe on Windows, which only understands double quotes.
+    if (process.platform === "win32") return `\"${value}\"`;
     return `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
