@@ -261,8 +261,61 @@ policy. Like Codex's macOS Seatbelt path, the policy is passed directly as an ar
 workload receives ordinary stdin with only descriptors 0, 1, and 2. The supervisor itself supplies
 filtered HTTP and SOCKS egress, so compute does not create a host/Docker proxy or socket bridge for
 protections the supervisor already owns. Existing project policy files are denied directly.
-macOS denies missing protected paths natively, while the protected-create monitor is Linux-only.
-Native Windows uses protected placeholders for project configuration files and directories.
+macOS denies missing protected paths natively. On Linux and native Windows, the protected-create
+monitor removes a missing protected path that a restricted command creates, so nothing is ever
+materialized at those paths.
+
+On native Windows, read-only commands that run often, such as Git status scans, can use
+`createHostCommandWorker`. It keeps one sandboxed runner per workspace, so a stream of commands
+pays for one sandbox logon and one private desktop instead of one of each per command.
+
+### The Windows shell runner
+
+On native Windows every restricted command used to start its own supervisor, and every supervisor
+paid for a sandbox setup refresh, a logon of the sandbox account, and a private desktop. Each of
+those is expensive for the whole machine, not just for the command: the logon is work for the
+security subsystem, and every desktop holds graphics memory. An agent that runs hundreds of short
+commands turned that into visible system load. The restricted host shell therefore runs workspace
+commands in a long-lived `SandboxShellRunner` (`happy-agent-supervisor --shell-runner`), which pays
+those costs once and then runs commands for as long as it is in use.
+
+The runner is built so that sharing it never weakens the sandbox:
+
+- **One runner per exact policy.** Runners are keyed by a hash of the runner's whole command line:
+  supervisor, policy, state directory, and workspace. Two callers share a runner only when every
+  permission is identical, so a command never runs under a broader or narrower sandbox than it
+  asked for. A command whose working directory is not the workspace itself keeps the one-shot path,
+  because the supervisor prepares write access for the folder it is given.
+- **The runner holds no environment for commands.** Each request carries the command's complete
+  environment. Nothing one command sets can reach the next, and the runner's own environment is
+  used only to start the sandbox.
+- **Every command is still isolated.** Each command gets its own restricted token, its own job
+  object, and its own scratch folder, which is its `TEMP` and is deleted when it ends. Stopping a
+  command ends its whole process tree without touching any other command.
+- **Commands run concurrently.** Frames on the pipe name the command they belong to, and each
+  command has its own thread inside the sandbox, so a slow or blocked command never holds up
+  another. Commands may have a pseudo-terminal and input, exactly as before.
+- **One private desktop per runner.** Commands share the runner's desktop instead of creating one
+  each.
+- **Its read restrictions are re-checked before every command.** Deny-read ACLs belong to the
+  sandbox group, and every setup reconciles the group's whole set to its own workspace, so another
+  workspace's setup can revoke a deny this runner relies on: the user profile, denied to a
+  workspace outside it, is the important case. Before each command the runner compares the
+  persisted deny-read state with what its own setup left there, and repeats its setup refresh when
+  another setup changed it. A command therefore starts with its deny set in force, exactly as a
+  one-shot command does; if the refresh fails, the command is refused. The scan worker does the
+  same.
+- **A crash is loud and bounded.** If the runner dies, every command it was running ends with an
+  error saying so; none is left waiting. The next command starts a new runner, but only after a
+  backoff that starts at one second, doubles up to five minutes, and resets once a runner has
+  stayed up for a minute. During the backoff commands are refused with a readable message
+  instead of each starting a sandbox setup of its own, which is how setup storms begin.
+- **Its own lifetime.** A runner lives in its own named context derived from the root, never in
+  the context of the tool call or agent that first needed it, so it never retains a finished call.
+  It stops after five minutes without commands. Closing its stdin, including when the daemon
+  exits, stops every command it runs and then the runner.
+
+Setting `HAPPY_WINDOWS_SHELL_RUNNER=0` returns every restricted command to the one-shot path.
 
 The five native supervisor artifacts are installed as optional dependencies so Docker can run a
 Linux supervisor even when the caller is on macOS. The package dependency is exactly

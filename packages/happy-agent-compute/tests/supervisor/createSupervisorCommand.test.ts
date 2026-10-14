@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createSupervisorCommand } from "../../sources/supervisor/createSupervisorCommand.js";
+import {
+    createSupervisorCommand,
+    createSupervisorWorkerCommand,
+} from "../../sources/supervisor/createSupervisorCommand.js";
 
 afterEach(() => vi.unstubAllEnvs());
 const options = {
@@ -60,5 +63,39 @@ describe("Windows supervisor setup selection", () => {
                 environment: { HAPPY_WINDOWS_SANDBOX_NO_PROVISION: "1" },
             }).args,
         ).toContain("--no-provision");
+    });
+});
+
+describe("Windows supervisor worker", () => {
+    it("starts a read-only worker for one workspace with the same installation selection", () => {
+        vi.stubEnv("HAPPY_WINDOWS_SANDBOX_NO_PROVISION", "1");
+        const result = createSupervisorWorkerCommand({
+            cwd: "C:\\project",
+            environment: { HAPPY_WINDOWS_SANDBOX_HOME: "C:\\approved-state" },
+            policy: options.policy,
+            supervisorPath: options.supervisorPath,
+        });
+        expect(result).toEqual({
+            args: [
+                "--policy",
+                JSON.stringify(options.policy),
+                "--no-provision",
+                "--state-dir",
+                "C:\\approved-state",
+                "--cwd",
+                "C:\\project",
+                "--worker",
+            ],
+            command: options.supervisorPath,
+        });
+    });
+    it("refuses a policy that could write", () => {
+        expect(() =>
+            createSupervisorWorkerCommand({
+                cwd: "C:\\project",
+                policy: { ...options.policy, mode: "workspace_write" },
+                supervisorPath: options.supervisorPath,
+            }),
+        ).toThrow("only read-only");
     });
 });
