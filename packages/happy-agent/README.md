@@ -78,6 +78,8 @@ attempt is retained, so further commands fail with an actionable error rather th
 requesting elevation; `sandbox setup --retry` deliberately permits another attempt.
 `HAPPY_WINDOWS_SANDBOX_NO_PROVISION=1` prevents all provisioning, including explicit setup;
 read-only `sandbox status` still works. It does not disable sandbox enforcement.
+`HAPPY_GIT_SCAN_WORKER_MAX` (1–256, default 32) caps the read-only Git scan workers Windows keeps,
+one per workspace; idle ones are stopped first.
 
 Automatic first setup is allowed only for the canonical Windows state when no Happy
 sandbox accounts exist. An explicit missing development state requires deliberate

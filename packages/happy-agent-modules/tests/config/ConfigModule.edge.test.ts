@@ -101,6 +101,32 @@ describe("ConfigModule edge coverage", () => {
             expect("environment" in configured).toBe(false);
         });
 
+        it("reads the Git scan worker cap from the environment and falls back to 32 when it is invalid", async () => {
+            const root = await temporaryRoot();
+            const load = async (name: string, value: string | undefined) =>
+                await ConfigModule.load(join(root, name), {
+                    environment: value === undefined ? {} : { HAPPY_GIT_SCAN_WORKER_MAX: value },
+                });
+
+            const absent = await load(".happy-absent", undefined);
+            expect(absent.gitScanWorkerLimit).toBe(32);
+            expect(absent.gitScanWorkerLimitWarning).toBeUndefined();
+            for (const [value, expected] of [
+                ["8", 8],
+                [" 256 ", 256],
+                ["1", 1],
+            ] as const) {
+                const configured = await load(`.happy-${expected}`, value);
+                expect(configured.gitScanWorkerLimit).toBe(expected);
+                expect(configured.gitScanWorkerLimitWarning).toBeUndefined();
+            }
+            for (const value of ["0", "257", "abc", "1.5"]) {
+                const invalid = await load(`.happy-invalid-${value}`, value);
+                expect(invalid.gitScanWorkerLimit).toBe(32);
+                expect(invalid.gitScanWorkerLimitWarning).toContain("HAPPY_GIT_SCAN_WORKER_MAX");
+            }
+        });
+
         it("recognizes AWS credential material without treating a region-only config as Bedrock credentials", async () => {
             const root = await temporaryRoot();
             const configFile = join(root, ".aws", "config");
@@ -168,6 +194,7 @@ describe("ConfigModule edge coverage", () => {
                     process.platform === "darwin" ? "Happy" : "happy",
                     "Generated",
                 ),
+                gitSnapshotsPath: join(root, ".happy", "agent", "git-snapshots.json"),
                 globalConfigPath: join(
                     root,
                     process.platform === "darwin" ? "Happy/Config" : "happy/config",

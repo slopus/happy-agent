@@ -63,6 +63,7 @@ ignores are excluded from the Linux watch itself, which keeps `node_modules` fro
 spending thousands of inotify watches. The ignore list is re-derived when `.gitignore` changes or
 new directories appear, and events from newly ignored directories are dropped; the native watch
 itself is never replaced, because a second subscription on an already-watched folder can go deaf. `watchWorkingTree` shares that one watch per folder with other modules.
+On Windows, scans reuse one read-only sandbox worker per workspace, capped at `HAPPY_GIT_SCAN_WORKER_MAX` (default 32); eviction never stops a busy, held, or tracked worker.
 The home directory and its ancestors are never watched; their observers poll, because such a
 tree holds other applications' data.
 

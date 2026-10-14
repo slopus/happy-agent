@@ -357,7 +357,10 @@ export class ManagedProcess {
             this.#killed = true;
             this.#status = "killed";
             const startedAt = Date.now();
-            if (this.pid !== null) {
+            if (this.#transport.terminate !== undefined) {
+                // The transport owns a command the host cannot signal; it stops the whole tree.
+                this.#transport.terminate();
+            } else if (this.pid !== null) {
                 await killProcessTree(ctx, this.pid, signal);
             }
 

@@ -185,7 +185,8 @@ service or bundled Codex server.
 The initial Windows boundary follows that implementation rather than promising
 identical macOS/Linux policy capabilities. Workspace writes, protected paths,
 offline execution, interactive commands and process cleanup are supported.
-Protected paths may have Windows-only protected placeholders. Arbitrary independent
+Missing protected paths are never materialized; a restricted command that creates
+one has it removed, as on Linux. Arbitrary independent
 read-denial policies for simultaneous commands are not supported by the shared
 account/group ACL design. Destination allowlists, proxy enforcement and independent
 outbound-versus-listener restrictions are outside this Windows scope; unsupported

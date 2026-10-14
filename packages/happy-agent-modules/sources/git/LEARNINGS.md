@@ -47,6 +47,41 @@ spends hundreds of watches per checkout instead of tens of thousands. Polling re
 fallback for a tree that cannot be watched, backs off while nothing changes, and proves "nothing
 changed" with a status and a stat of each changed path before it will run a diff.
 
+## Count Git processes, not Git work
+
+On Windows every scan Git command was a sandboxed launch: an ACL refresh, a fresh logon, a new
+private desktop, and PowerShell, several seconds each. A workspace that deleted 734
+vendored files paid two launches per deleted file on every scan (`cat-file -e` on the base tree,
+then `cat-file blob`) and then discarded the bytes, because only binary files show an old side.
+One scan took close to an hour, so that workspace never went quiet. It made tens of thousands of
+logons a day, which drove lsass handle growth and system-wide lag.
+
+The old sides of deleted and binary files are now looked up in one batched `ls-tree -l` with
+literal pathspecs. Only a binary file reads its old bytes, with one `cat-file blob` by object ID.
+The old side is fully named by the base and the old path, so a later scan against the same base
+reuses it instead of asking Git again. The half-hourly safety check on an idle repository proves
+the base with one `merge-base` against the snapshot's base branch, instead of rescanning in full.
+When changing scan code, count the Git processes per scan and per idle hour, not only the work
+each one does.
+
+Fewer commands still each paid for a logon, so on Windows scans no longer start one sandbox per
+command. Each workspace keeps one read-only sandbox worker that runs Git directly with its own
+restricted token and job per command, about a tenth of a second each instead of seconds, without
+the PowerShell Base64 wrapper. It stops after five idle minutes unless an agent run in its folder
+still holds it. The worker and its runner keep
+their own working directories outside the workspace, because a live process's working directory
+cannot be deleted on Windows and an idle worker would otherwise block archiving the workspace.
+Git itself is still sandboxed: never move scans out of the sandbox to make them cheaper, because
+repository configuration can run programs.
+
+## The scan worker cap never stops a busy worker
+
+The Windows scan worker cap was a hardcoded 32 that evicted the least recently used worker even
+in the middle of a scan. That scan failed, and the next one paid a sandbox logon to restart the
+worker. The cap is now configurable (`HAPPY_GIT_SCAN_WORKER_MAX`, 1 to 256, default 32), and
+eviction skips workers that are busy, held by an agent run, or followed by the tracker. The count
+may briefly exceed the cap and is trimmed as workers become idle.
+
 ## A working-tree watch must never be replaced or outlive its folder
 
 Two watcher failures surfaced only in the release gate. On Linux, replacing a folder's Parcel
@@ -107,3 +142,14 @@ daemon's own Git would run as the daemon's user against it. Every native branch 
 default workload user's runner, exactly as on a runner. The embedded live Git tracking is not
 ported there, like on runners, so the API answers its Git state with `404` and a message saying
 why.
+
+## Scan workers deny what agent shells deny
+
+On Windows the deny-read ACL state is kept per sandbox group, and each sandbox setup reconciles the
+group to the set it was given, revoking anything else. Agent shells are given the daemon's own
+state directory (token, databases) through the compute module's host policy; scan workers were
+created without it, so each worker setup revoked that deny (dozens of times a day in the sandbox
+log), and while it was revoked a sandboxed command could read the daemon's credentials. Scan
+workers now take the same host policy from the compute module. A worker that denies less than the
+shell undoes the shell's protection, so never create a sandboxed Git command with a narrower
+policy.

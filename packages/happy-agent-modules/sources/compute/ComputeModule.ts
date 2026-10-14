@@ -343,6 +343,17 @@ export class ComputeModule implements AgentModule {
         return Value.Check(agentComputeConfigSchema, raw) ? raw.runnerId : undefined;
     }
 
+    /**
+     * The folder on this machine an agent works in, read from its configuration; undefined for an
+     * agent with no compute or one whose folder is on a runner. A container's folder is mounted
+     * from this machine, so it counts.
+     */
+    hostFolderOf(config: AgentConfig): string | undefined {
+        const raw = config.modules?.[this.name];
+        if (!Value.Check(agentComputeConfigSchema, raw)) return undefined;
+        return raw.runnerId === undefined ? raw.cwd : undefined;
+    }
+
     /** Resolve the exact compute cached for this agent, or no compute when none was configured. */
     async resolve(ctx: Context, agentId: string): Promise<HostCompute | undefined> {
         if (agentId.length === 0) throw new Error("Compute agent ID is invalid.");

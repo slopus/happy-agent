@@ -466,7 +466,7 @@ export async function startHappyAgentRuntime(
 
         const permissions = new PermissionsModule(compute.computeModule, autoModule);
         const abort = new AbortModule(compute.computeModule);
-        const git = new GitModule(config, runners);
+        const git = new GitModule(config, runners, compute.computeModule);
         const projects = new ProjectsModule(
             config,
             git,

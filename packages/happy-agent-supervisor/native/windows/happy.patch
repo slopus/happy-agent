@@ -315,10 +315,20 @@ index 6ba79e6..6d588e9 100644
      Ok(())
  }
 diff --git a/codex-rs/windows-sandbox-rs/src/acl.rs b/codex-rs/windows-sandbox-rs/src/acl.rs
-index 064b7fe..1008d62 100644
+index 064b7fe..8f492b5 100644
 --- a/codex-rs/windows-sandbox-rs/src/acl.rs
 +++ b/codex-rs/windows-sandbox-rs/src/acl.rs
-@@ -524,6 +524,17 @@ unsafe fn ensure_allow_mask_aces_with_inheritance_impl(
+@@ -34,7 +34,9 @@ use windows_sys::Win32::Security::DACL_SECURITY_INFORMATION;
+ use windows_sys::Win32::Security::EqualSid;
+ use windows_sys::Win32::Security::GENERIC_MAPPING;
+ use windows_sys::Win32::Security::GetAce;
++use windows_sys::Win32::Security::AddAce;
+ use windows_sys::Win32::Security::GetAclInformation;
++use windows_sys::Win32::Security::InitializeAcl;
+ use windows_sys::Win32::Security::IsValidAcl;
+ use windows_sys::Win32::Security::MapGenericMask;
+ use windows_sys::Win32::Security::OWNER_SECURITY_INFORMATION;
+@@ -524,6 +526,17 @@ unsafe fn ensure_allow_mask_aces_with_inheritance_impl(
      disallow_mask: u32,
      inheritance: u32,
  ) -> Result<bool> {
@@ -336,7 +346,7 @@ index 064b7fe..1008d62 100644
      let (p_dacl, p_sd) = fetch_dacl_handle(path)?;
      let mut entries: Vec<EXPLICIT_ACCESS_W> = Vec::new();
      for sid in sids {
-@@ -553,7 +564,13 @@ unsafe fn ensure_allow_mask_aces_with_inheritance_impl(
+@@ -553,7 +566,13 @@ unsafe fn ensure_allow_mask_aces_with_inheritance_impl(
              &mut p_new_dacl,
          );
          if code2 == ERROR_SUCCESS {
@@ -351,7 +361,7 @@ index 064b7fe..1008d62 100644
                  to_wide(path).as_ptr() as *mut u16,
                  1,
                  DACL_SECURITY_INFORMATION,
-@@ -561,7 +578,8 @@ unsafe fn ensure_allow_mask_aces_with_inheritance_impl(
+@@ -561,7 +580,8 @@ unsafe fn ensure_allow_mask_aces_with_inheritance_impl(
                  std::ptr::null_mut(),
                  p_new_dacl,
                  std::ptr::null_mut(),
@@ -361,6 +371,198 @@ index 064b7fe..1008d62 100644
              if code3 == ERROR_SUCCESS {
                  added = true;
                  if !p_new_dacl.is_null() {
+@@ -900,55 +920,156 @@ pub unsafe fn add_deny_read_ace(path: &Path, psid: *mut c_void) -> Result<bool>
+ mod tests;
+ 
+ pub unsafe fn revoke_ace(path: &Path, psid: *mut c_void) {
++    // Happy: `REVOKE_ACCESS` removes only allow and audit ACEs, so revoking a
++    // deny-read ACE through `SetEntriesInAclW` silently kept it, while still
++    // rewriting the DACL and re-propagating inheritance through the whole tree.
++    // Drop every explicit allow and deny ACE for `psid` directly instead, and
++    // leave the object alone when it has none.
+     let mut p_sd: *mut c_void = std::ptr::null_mut();
+     let mut p_dacl: *mut ACL = std::ptr::null_mut();
+-    let code = GetNamedSecurityInfoW(
+-        to_wide(path).as_ptr(),
+-        1,
+-        DACL_SECURITY_INFORMATION,
+-        std::ptr::null_mut(),
+-        std::ptr::null_mut(),
+-        &mut p_dacl,
+-        std::ptr::null_mut(),
+-        &mut p_sd,
+-    );
+-    if code != ERROR_SUCCESS {
+-        if !p_sd.is_null() {
+-            LocalFree(p_sd as HLOCAL);
++    let code = unsafe {
++        GetNamedSecurityInfoW(
++            to_wide(path).as_ptr(),
++            1,
++            DACL_SECURITY_INFORMATION,
++            std::ptr::null_mut(),
++            std::ptr::null_mut(),
++            &mut p_dacl,
++            std::ptr::null_mut(),
++            &mut p_sd,
++        )
++    };
++    if code == ERROR_SUCCESS && !p_dacl.is_null() {
++        if let Some(mut without) = unsafe { dacl_without_explicit_aces_for_sid(p_dacl, psid) } {
++            unsafe {
++                let _ = SetNamedSecurityInfoW(
++                    to_wide(path).as_ptr() as *mut u16,
++                    1,
++                    DACL_SECURITY_INFORMATION,
++                    std::ptr::null_mut(),
++                    std::ptr::null_mut(),
++                    without.as_mut_ptr() as *mut ACL,
++                    std::ptr::null_mut(),
++                );
++            }
+         }
+-        return;
+     }
+-    let trustee = TRUSTEE_W {
+-        pMultipleTrustee: std::ptr::null_mut(),
+-        MultipleTrusteeOperation: 0,
+-        TrusteeForm: TRUSTEE_IS_SID,
+-        TrusteeType: TRUSTEE_IS_UNKNOWN,
+-        ptstrName: psid as *mut u16,
++    if !p_sd.is_null() {
++        unsafe { LocalFree(p_sd as HLOCAL) };
++    }
++}
++
++/// A copy of `p_dacl` without the explicit allow and deny ACEs for `psid`, or
++/// `None` when it has none (Happy). The copy is a DWORD-aligned buffer.
++unsafe fn dacl_without_explicit_aces_for_sid(
++    p_dacl: *mut ACL,
++    psid: *mut c_void,
++) -> Option<Vec<u32>> {
++    let mut info: ACL_SIZE_INFORMATION = unsafe { std::mem::zeroed() };
++    let ok = unsafe {
++        GetAclInformation(
++            p_dacl as *const ACL,
++            &mut info as *mut _ as *mut c_void,
++            std::mem::size_of::<ACL_SIZE_INFORMATION>() as u32,
++            AclSizeInformation,
++        )
+     };
+-    let mut explicit: EXPLICIT_ACCESS_W = std::mem::zeroed();
+-    explicit.grfAccessPermissions = 0;
+-    explicit.grfAccessMode = 4; // REVOKE_ACCESS
+-    explicit.grfInheritance = CONTAINER_INHERIT_ACE | OBJECT_INHERIT_ACE;
+-    explicit.Trustee = trustee;
+-    let mut p_new_dacl: *mut ACL = std::ptr::null_mut();
+-    let code2 = SetEntriesInAclW(1, &explicit, p_dacl, &mut p_new_dacl);
+-    if code2 == ERROR_SUCCESS {
+-        let _ = SetNamedSecurityInfoW(
+-            to_wide(path).as_ptr() as *mut u16,
++    if ok == 0 {
++        return None;
++    }
++    let size = info.AclBytesInUse.max(std::mem::size_of::<ACL>() as u32);
++    let mut buffer = vec![0u32; (size as usize).div_ceil(4)];
++    let new_acl = buffer.as_mut_ptr() as *mut ACL;
++    let revision = unsafe { (*p_dacl).AclRevision } as u32;
++    if unsafe { InitializeAcl(new_acl, size, revision) } == 0 {
++        return None;
++    }
++    let mut removed = false;
++    for i in 0..info.AceCount {
++        let mut p_ace: *mut c_void = std::ptr::null_mut();
++        if unsafe { GetAce(p_dacl as *const ACL, i, &mut p_ace) } == 0 {
++            return None;
++        }
++        let hdr = unsafe { &*(p_ace as *const ACE_HEADER) };
++        if unsafe { ace_is_explicit_for_sid(p_ace, psid) }
++            && (hdr.AceType == ACCESS_ALLOWED_ACE_TYPE || hdr.AceType == ACCESS_DENIED_ACE_TYPE)
++        {
++            removed = true;
++            continue;
++        }
++        if unsafe { AddAce(new_acl, revision, u32::MAX, p_ace, hdr.AceSize as u32) } == 0 {
++            return None;
++        }
++    }
++    removed.then_some(buffer)
++}
++
++/// Whether `p_ace` is an explicit (not inherited) ACE naming `psid` (Happy).
++/// Only valid for the allow and deny ACE layouts, which share the SID offset.
++unsafe fn ace_is_explicit_for_sid(p_ace: *mut c_void, psid: *mut c_void) -> bool {
++    let hdr = unsafe { &*(p_ace as *const ACE_HEADER) };
++    if hdr.AceType != ACCESS_ALLOWED_ACE_TYPE && hdr.AceType != ACCESS_DENIED_ACE_TYPE {
++        return false;
++    }
++    if (hdr.AceFlags & INHERITED_ACE) != 0 {
++        return false;
++    }
++    let sid_ptr = (p_ace as usize + std::mem::size_of::<ACE_HEADER>() + std::mem::size_of::<u32>())
++        as *mut c_void;
++    unsafe { EqualSid(sid_ptr, psid) != 0 }
++}
++
++/// Whether `path` itself carries an explicit read deny for `psid` (Happy).
++///
++/// Only an ACE that denies reading file data counts, so a deny-write ACE for
++/// the same SID, which shares `READ_CONTROL` and `SYNCHRONIZE`, is not one.
++pub unsafe fn path_has_explicit_deny_read_for_sid(path: &Path, psid: *mut c_void) -> bool {
++    const FILE_READ_DATA_MASK: u32 = 0x0001;
++    let mut p_sd: *mut c_void = std::ptr::null_mut();
++    let mut p_dacl: *mut ACL = std::ptr::null_mut();
++    let code = unsafe {
++        GetNamedSecurityInfoW(
++            to_wide(path).as_ptr(),
+             1,
+             DACL_SECURITY_INFORMATION,
+             std::ptr::null_mut(),
+             std::ptr::null_mut(),
+-            p_new_dacl,
++            &mut p_dacl,
+             std::ptr::null_mut(),
+-        );
+-        if !p_new_dacl.is_null() {
+-            LocalFree(p_new_dacl as HLOCAL);
++            &mut p_sd,
++        )
++    };
++    let mut found = false;
++    if code == ERROR_SUCCESS && !p_dacl.is_null() {
++        let mut info: ACL_SIZE_INFORMATION = unsafe { std::mem::zeroed() };
++        let ok = unsafe {
++            GetAclInformation(
++                p_dacl as *const ACL,
++                &mut info as *mut _ as *mut c_void,
++                std::mem::size_of::<ACL_SIZE_INFORMATION>() as u32,
++                AclSizeInformation,
++            )
++        };
++        for i in 0..if ok == 0 { 0 } else { info.AceCount } {
++            let mut p_ace: *mut c_void = std::ptr::null_mut();
++            if unsafe { GetAce(p_dacl as *const ACL, i, &mut p_ace) } == 0 {
++                continue;
++            }
++            let hdr = unsafe { &*(p_ace as *const ACE_HEADER) };
++            if hdr.AceType != ACCESS_DENIED_ACE_TYPE || !unsafe { ace_is_explicit_for_sid(p_ace, psid) } {
++                continue;
++            }
++            let ace = unsafe { &*(p_ace as *const ACCESS_DENIED_ACE) };
++            if ace.Mask & (FILE_READ_DATA_MASK | GENERIC_READ_MASK) != 0 {
++                found = true;
++                break;
++            }
+         }
+     }
+     if !p_sd.is_null() {
+-        LocalFree(p_sd as HLOCAL);
++        unsafe { LocalFree(p_sd as HLOCAL) };
+     }
++    found
+ }
+ 
+ /// Grants RX to the null device for the given SID to support stdout/stderr redirection.
 diff --git a/codex-rs/windows-sandbox-rs/src/bin/command_runner/main.rs b/codex-rs/windows-sandbox-rs/src/bin/command_runner/main.rs
 index 1e3c88b..54f4755 100644
 --- a/codex-rs/windows-sandbox-rs/src/bin/command_runner/main.rs
@@ -373,10 +575,32 @@ index 1e3c88b..54f4755 100644
 +    panic!("happy-sandbox-runner is Windows-only");
  }
 diff --git a/codex-rs/windows-sandbox-rs/src/bin/command_runner/win.rs b/codex-rs/windows-sandbox-rs/src/bin/command_runner/win.rs
-index b380aa0..58956f1 100644
+index b380aa0..f35c598 100644
 --- a/codex-rs/windows-sandbox-rs/src/bin/command_runner/win.rs
 +++ b/codex-rs/windows-sandbox-rs/src/bin/command_runner/win.rs
-@@ -77,7 +77,7 @@ use windows_sys::Win32::System::Threading::PROCESS_INFORMATION;
+@@ -31,6 +31,7 @@ use codex_windows_sandbox::OutputStream;
+ use codex_windows_sandbox::PipeSpawnHandles;
+ use codex_windows_sandbox::ResizePayload;
+ use codex_windows_sandbox::SpawnReady;
++use codex_windows_sandbox::ServedFrame;
+ use codex_windows_sandbox::SpawnRequest;
+ use codex_windows_sandbox::StderrMode;
+ use codex_windows_sandbox::StdinMode;
+@@ -45,10 +46,13 @@ use codex_windows_sandbox::hide_current_user_profile_dir;
+ use codex_windows_sandbox::log_note;
+ use codex_windows_sandbox::read_frame;
+ use codex_windows_sandbox::read_handle_loop;
++use codex_windows_sandbox::read_served_frame;
+ use codex_windows_sandbox::spawn_process_with_pipes;
+ use codex_windows_sandbox::to_wide;
+ use codex_windows_sandbox::token_mode_for_permission_profile;
+ use codex_windows_sandbox::write_frame;
++use codex_windows_sandbox::write_served_frame;
++use std::collections::HashMap;
+ use std::ffi::OsStr;
+ use std::fs::File;
+ use std::os::windows::io::FromRawHandle;
+@@ -77,7 +81,7 @@ use windows_sys::Win32::System::Threading::PROCESS_INFORMATION;
  use windows_sys::Win32::System::Threading::TerminateProcess;
  use windows_sys::Win32::System::Threading::WaitForSingleObject;
  
@@ -385,6 +609,398 @@ index b380aa0..58956f1 100644
  const TERMINATION_WAIT_MS: u32 = 5_000;
  const WAIT_TIMEOUT: u32 = 0x0000_0102;
  
+@@ -542,15 +546,380 @@ fn spawn_input_loop(
+     })
+ }
+ 
++/// Write one frame of a served command's conversation (Happy).
++fn write_served(writer: &Arc<StdMutex<File>>, id: u64, message: Message) -> Result<()> {
++    let frame = ServedFrame {
++        id,
++        keep_descendants: false,
++        frame: FramedMessage {
++            version: IPC_PROTOCOL_VERSION,
++            message,
++        },
++    };
++    let mut guard = writer
++        .lock()
++        .map_err(|_| anyhow::anyhow!("runner pipe writer lock poisoned"))?;
++    write_served_frame(&mut *guard, &frame)
++}
++
++fn send_served_error(writer: &Arc<StdMutex<File>>, id: u64, stage: ErrorStage, err: &anyhow::Error) {
++    let _ = write_served(
++        writer,
++        id,
++        Message::Error {
++            payload: ErrorPayload {
++                message: err.to_string(),
++                stage,
++                windows_error_code: windows_error_code(err),
++            },
++        },
++    );
++}
++
++/// Forward bytes to a child's stdin, closing it if the child stops accepting input.
++///
++/// `WriteFile` can consume only part of a buffer on a pipe, so writing continues until every byte
++/// is forwarded. A failed or stalled write closes our end instead of retrying forever.
++fn write_child_stdin(stdin: &mut Option<HANDLE>, bytes: &[u8], log_dir: Option<&Path>) {
++    let Some(handle) = *stdin else {
++        return;
++    };
++    let mut offset = 0usize;
++    while offset < bytes.len() {
++        let chunk = &bytes[offset..];
++        let mut written = 0u32;
++        let ok = unsafe {
++            windows_sys::Win32::Storage::FileSystem::WriteFile(
++                handle,
++                chunk.as_ptr(),
++                chunk.len().min(u32::MAX as usize) as u32,
++                &mut written,
++                ptr::null_mut(),
++            )
++        };
++        if ok == 0 || written == 0 {
++            log_note(
++                &format!("runner stdin write stopped after {offset} bytes; closing child stdin"),
++                log_dir,
++            );
++            unsafe {
++                CloseHandle(handle);
++            }
++            *stdin = None;
++            return;
++        }
++        offset += written as usize;
++    }
++}
++
++/// What the dispatcher keeps for a served command while it runs.
++struct ServedCommand {
++    /// Stdin, resize, and terminate frames, handled by the command's own thread.
++    controls: std::sync::mpsc::Sender<Message>,
++    /// The command's job once it has started, so a stop never waits behind blocked stdin.
++    job: Arc<StdMutex<Option<Arc<JobObject>>>>,
++}
++
++type ServedCommands = Arc<StdMutex<HashMap<u64, ServedCommand>>>;
++
++fn forget_served(commands: &ServedCommands, id: u64) {
++    if let Ok(mut commands) = commands.lock() {
++        commands.remove(&id);
++    }
++}
++
++/// Runs one served command from spawn to exit on its own thread (Happy).
++///
++/// Mirrors the one-shot runner: the command gets its own restricted token, job, pipes or
++/// pseudo-console, and timeout. Its frames carry its id so commands can share the pipes.
++fn run_served_command(
++    id: u64,
++    req: SpawnRequest,
++    keep_descendants: bool,
++    controls: std::sync::mpsc::Receiver<Message>,
++    job_slot: Arc<StdMutex<Option<Arc<JobObject>>>>,
++    writer: Arc<StdMutex<File>>,
++    commands: ServedCommands,
++) {
++    let spawned = match spawn_ipc_process(&req) {
++        Ok(value) => value,
++        Err(err) => {
++            forget_served(&commands, id);
++            send_served_error(&writer, id, ErrorStage::SpawnChild, &err);
++            return;
++        }
++    };
++    let IpcSpawnedProcess {
++        log_dir,
++        pi,
++        job,
++        stdout_handle,
++        stderr_handle,
++        mut stdin_handle,
++        conpty_owner,
++        hpc_handle,
++        _pipe_handles,
++    } = spawned;
++    let log_dir = Some(log_dir);
++    if let Ok(mut slot) = job_slot.lock() {
++        *slot = Some(Arc::clone(&job));
++    }
++    let _ = write_served(
++        &writer,
++        id,
++        Message::SpawnReady {
++            payload: SpawnReady {
++                process_id: unsafe { GetProcessId(pi.hProcess) },
++            },
++        },
++    );
++    let reader = |handle: HANDLE, stream: OutputStream| {
++        let writer = Arc::clone(&writer);
++        let log_dir = log_dir.clone();
++        read_handle_loop(handle, move |chunk| {
++            let message = Message::Output {
++                payload: OutputPayload {
++                    data_b64: encode_bytes(chunk),
++                    stream,
++                },
++            };
++            if let Err(err) = write_served(&writer, id, message) {
++                log_note(
++                    &format!("runner output write failed: {err}"),
++                    log_dir.as_deref(),
++                );
++            }
++        })
++    };
++    let out_thread = reader(stdout_handle, OutputStream::Stdout);
++    let err_thread =
++        (stderr_handle != INVALID_HANDLE_VALUE).then(|| reader(stderr_handle, OutputStream::Stderr));
++
++    let deadline = req
++        .timeout_ms
++        .map(|ms| std::time::Instant::now() + std::time::Duration::from_millis(ms));
++    let mut timed_out = false;
++    let mut stopped = false;
++    'running: loop {
++        if unsafe { WaitForSingleObject(pi.hProcess, 50) } != WAIT_TIMEOUT {
++            break;
++        }
++        if deadline.is_some_and(|deadline| std::time::Instant::now() >= deadline) {
++            timed_out = true;
++            stopped = true;
++            terminate_job_or_process(&job, pi.hProcess, log_dir.as_deref());
++            unsafe { WaitForSingleObject(pi.hProcess, TERMINATION_WAIT_MS) };
++            break;
++        }
++        loop {
++            match controls.try_recv() {
++                Ok(Message::Stdin { payload }) => {
++                    if let Ok(bytes) = decode_bytes(&payload.data_b64) {
++                        write_child_stdin(&mut stdin_handle, &bytes, log_dir.as_deref());
++                    }
++                }
++                Ok(Message::CloseStdin { .. }) => {
++                    if let Some(handle) = stdin_handle.take() {
++                        unsafe {
++                            CloseHandle(handle);
++                        }
++                    }
++                }
++                Ok(Message::Resize {
++                    payload: ResizePayload { rows, cols },
++                }) => {
++                    if let Some(hpc) = hpc_handle {
++                        unsafe {
++                            let _ = ResizePseudoConsole(
++                                hpc,
++                                COORD {
++                                    X: cols as i16,
++                                    Y: rows as i16,
++                                },
++                            );
++                        }
++                    }
++                }
++                Ok(Message::Terminate { .. }) => {
++                    stopped = true;
++                    terminate_job_or_process(&job, pi.hProcess, log_dir.as_deref());
++                }
++                Ok(_) => {}
++                Err(std::sync::mpsc::TryRecvError::Empty) => break,
++                // The parent is gone, and with it everyone who could read this command's output.
++                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
++                    stopped = true;
++                    terminate_job_or_process(&job, pi.hProcess, log_dir.as_deref());
++                    unsafe { WaitForSingleObject(pi.hProcess, TERMINATION_WAIT_MS) };
++                    break 'running;
++                }
++            }
++        }
++    }
++    // A command that ended on its own may leave work running when asked to, exactly as a one-shot
++    // command does. Otherwise nothing it started outlives it: a leftover process would keep its
++    // output pipes open, and nothing would ever collect it.
++    let outcome = if keep_descendants && !stopped {
++        job.preserve_descendants()
++    } else {
++        job.terminate()
++    };
++    if let Err(err) = outcome {
++        log_note(
++            &format!("runner failed to settle a served command's process tree: {err}"),
++            log_dir.as_deref(),
++        );
++    }
++    if let Some(handle) = stdin_handle.take() {
++        unsafe {
++            CloseHandle(handle);
++        }
++    }
++    let mut exit_code: u32 = 1;
++    unsafe {
++        GetExitCodeProcess(pi.hProcess, &mut exit_code);
++        if pi.hThread != 0 {
++            CloseHandle(pi.hThread);
++        }
++        if pi.hProcess != 0 {
++            CloseHandle(pi.hProcess);
++        }
++    }
++    // Closing the pseudo-console flushes and ends its output, so the reader can finish.
++    drop(conpty_owner);
++    let _ = out_thread.join();
++    if let Some(thread) = err_thread {
++        let _ = thread.join();
++    }
++    drop(_pipe_handles);
++    forget_served(&commands, id);
++    let _ = write_served(
++        &writer,
++        id,
++        Message::Exit {
++            payload: ExitPayload {
++                exit_code: if timed_out { 128 + 64 } else { exit_code as i32 },
++                timed_out,
++            },
++        },
++    );
++}
++
++/// Runs many commands at once over the same pipes until the parent closes them (Happy).
++///
++/// The parent pays for one logon, one private desktop, and one setup refresh, instead of one of
++/// each per command. Every frame names its command, and every command gets its own thread,
++/// restricted token, and job, so a slow or blocked command never holds up another. When the
++/// parent closes the pipes, every command still running is stopped before this process exits.
++fn serve(mut pipe_read: File, pipe_write: Arc<StdMutex<File>>) -> Result<()> {
++    let commands: ServedCommands = Arc::new(StdMutex::new(HashMap::new()));
++    let mut threads: Vec<std::thread::JoinHandle<()>> = Vec::new();
++    loop {
++        let ServedFrame {
++            id,
++            keep_descendants,
++            frame,
++        } = match read_served_frame(&mut pipe_read) {
++            Ok(Some(frame)) => frame,
++            Ok(None) | Err(_) => break,
++        };
++        if frame.version != IPC_PROTOCOL_VERSION {
++            send_served_error(
++                &pipe_write,
++                id,
++                ErrorStage::ReadSpawnRequest,
++                &anyhow::anyhow!("runner: unsupported protocol version {}", frame.version),
++            );
++            continue;
++        }
++        match frame.message {
++            Message::SpawnRequest { payload } => {
++                let (controls, received) = std::sync::mpsc::channel();
++                let job = Arc::new(StdMutex::new(None));
++                {
++                    let mut running = commands
++                        .lock()
++                        .map_err(|_| anyhow::anyhow!("runner command table lock poisoned"))?;
++                    if running.contains_key(&id) {
++                        drop(running);
++                        send_served_error(
++                            &pipe_write,
++                            id,
++                            ErrorStage::ReadSpawnRequest,
++                            &anyhow::anyhow!("runner: command {id} is already running"),
++                        );
++                        continue;
++                    }
++                    running.insert(
++                        id,
++                        ServedCommand {
++                            controls,
++                            job: Arc::clone(&job),
++                        },
++                    );
++                }
++                let writer = Arc::clone(&pipe_write);
++                let commands = Arc::clone(&commands);
++                threads.retain(|thread| !thread.is_finished());
++                threads.push(std::thread::spawn(move || {
++                    run_served_command(id, *payload, keep_descendants, received, job, writer, commands)
++                }));
++            }
++            message @ (Message::Stdin { .. }
++            | Message::CloseStdin { .. }
++            | Message::Resize { .. }
++            | Message::Terminate { .. }) => {
++                let Ok(running) = commands.lock() else {
++                    continue;
++                };
++                // A control frame for a command that already ended has nothing left to act on.
++                let Some(command) = running.get(&id) else {
++                    continue;
++                };
++                // Stop the tree here as well: the command's own thread may be blocked writing
++                // stdin the child never reads.
++                if matches!(message, Message::Terminate { .. })
++                    && let Ok(job) = command.job.lock()
++                    && let Some(job) = job.as_ref()
++                {
++                    let _ = job.terminate();
++                }
++                let _ = command.controls.send(message);
++            }
++            Message::SpawnReady { .. }
++            | Message::Output { .. }
++            | Message::Exit { .. }
++            | Message::Error { .. } => {}
++        }
++    }
++    // The parent is gone. Stop every command, then wait for each to release what it holds.
++    if let Ok(mut running) = commands.lock() {
++        for (_, command) in running.drain() {
++            if let Ok(job) = command.job.lock()
++                && let Some(job) = job.as_ref()
++            {
++                let _ = job.terminate();
++            }
++        }
++    }
++    for thread in threads {
++        let _ = thread.join();
++    }
++    Ok(())
++}
++
+ /// Entry point for the Windows command runner process.
+ pub fn main() -> Result<()> {
+     let mut pipe_in = None;
+     let mut pipe_out = None;
++    let mut served = false;
+     for arg in std::env::args().skip(1) {
+         if let Some(rest) = arg.strip_prefix("--pipe-in=") {
+             pipe_in = Some(rest.to_string());
+         } else if let Some(rest) = arg.strip_prefix("--pipe-out=") {
+             pipe_out = Some(rest.to_string());
++        } else if arg == "--serve" {
++            served = true;
+         }
+     }
+ 
+@@ -570,6 +939,10 @@ pub fn main() -> Result<()> {
+     let pipe_write = Arc::new(StdMutex::new(unsafe {
+         File::from_raw_handle(h_pipe_out.into_raw() as _)
+     }));
++    if served {
++        serve(pipe_read, pipe_write)?;
++        std::process::exit(0);
++    }
+ 
+     let req = match read_spawn_request(&mut pipe_read) {
+         Ok(v) => v,
 diff --git a/codex-rs/windows-sandbox-rs/src/bin/setup_main/main.rs b/codex-rs/windows-sandbox-rs/src/bin/setup_main/main.rs
 index 2624607..40189d0 100644
 --- a/codex-rs/windows-sandbox-rs/src/bin/setup_main/main.rs
@@ -397,7 +1013,7 @@ index 2624607..40189d0 100644
 +    panic!("happy-sandbox-setup is Windows-only");
  }
 diff --git a/codex-rs/windows-sandbox-rs/src/bin/setup_main/win.rs b/codex-rs/windows-sandbox-rs/src/bin/setup_main/win.rs
-index f80efe4..7f2baa2 100644
+index f80efe4..51f4205 100644
 --- a/codex-rs/windows-sandbox-rs/src/bin/setup_main/win.rs
 +++ b/codex-rs/windows-sandbox-rs/src/bin/setup_main/win.rs
 @@ -46,11 +46,8 @@ use std::ffi::OsStr;
@@ -506,7 +1122,30 @@ index f80efe4..7f2baa2 100644
          for username in [&payload.offline_username, &payload.online_username] {
              let flags = local_user_flags(username)?.ok_or_else(|| {
                  anyhow::anyhow!("sandbox user {username} disappeared during repair")
-@@ -889,45 +877,13 @@ fn run_setup_full(payload: &Payload, log: &mut dyn Write, sbx_dir: &Path) -> Res
+@@ -872,7 +860,21 @@ fn run_setup_full(payload: &Payload, log: &mut dyn Write, sbx_dir: &Path) -> Res
+ 
+     // Deny-read ACEs must be present before the sandboxed command starts. Apply
+     // them synchronously here instead of delegating them to the background
+-    // helper used for read grants.
++    // helper used for read grants. The persisted deny-read state is shared by
++    // every setup for this principal, so reconcile it under the same lock as the
++    // read grants: two setups racing here would each revoke what the other just
++    // applied. The lock is re-entrant for this thread, so the read-grant step
++    // below takes it again without waiting.
++    let deny_read_guard = acquire_read_acl_mutex().context("acquire deny-read ACL lock")?;
++    // Happy: adding or revoking a deny on a large folder rewrites everything below it while this
++    // helper holds the lock, so record when that work begins.
++    log_line(
++        log,
++        &format!(
++            "reconciling deny-read ACLs for {} paths",
++            payload.deny_read_paths.len()
++        ),
++    )?;
+     let applied_deny_read_paths = unsafe {
+         sync_persistent_deny_read_acls(
+             &payload.codex_home,
+@@ -889,45 +891,14 @@ fn run_setup_full(payload: &Payload, log: &mut dyn Write, sbx_dir: &Path) -> Res
          )?;
      }
  
@@ -546,6 +1185,7 @@ index f80efe4..7f2baa2 100644
 +    // Complete this request's roots under the ACL mutex; never drop them merely
 +    // because another project is being provisioned concurrently.
 +    run_read_acl_only(payload, log).context("prepare selected project read access")?;
++    drop(deny_read_guard);
  
 -    if refresh_only {
 -        setup_runtime_bin::ensure_codex_app_runtime_paths_readable(
@@ -558,7 +1198,7 @@ index f80efe4..7f2baa2 100644
  
      let mut grant_tasks: Vec<(PathBuf, String)> = Vec::new();
  
-@@ -1090,7 +1046,7 @@ fn run_setup_full(payload: &Payload, log: &mut dyn Write, sbx_dir: &Path) -> Res
+@@ -1090,7 +1061,7 @@ fn run_setup_full(payload: &Payload, log: &mut dyn Write, sbx_dir: &Path) -> Res
          log_line(
              log,
              &format!(
@@ -567,7 +1207,7 @@ index f80efe4..7f2baa2 100644
                  payload.write_roots.len(),
                  refresh_errors
              ),
-@@ -1144,8 +1100,8 @@ mod tests {
+@@ -1144,8 +1115,8 @@ mod tests {
      fn payload_json() -> serde_json::Value {
          json!({
              "version": SETUP_VERSION,
@@ -607,10 +1247,10 @@ index bf2476d..4608f9a 100644
  const NON_LOOPBACK_REMOTE_ADDRESSES: &str = "0.0.0.0-126.255.255.255,128.0.0.0-255.255.255.255,::,::2-ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff";
  
 diff --git a/codex-rs/windows-sandbox-rs/src/bin/setup_main/win/read_acl_mutex.rs b/codex-rs/windows-sandbox-rs/src/bin/setup_main/win/read_acl_mutex.rs
-index a96b6a5..3ca29b0 100644
+index a96b6a5..926641c 100644
 --- a/codex-rs/windows-sandbox-rs/src/bin/setup_main/win/read_acl_mutex.rs
 +++ b/codex-rs/windows-sandbox-rs/src/bin/setup_main/win/read_acl_mutex.rs
-@@ -1,61 +1,28 @@
+@@ -1,61 +1,37 @@
  use anyhow::Result;
  use codex_windows_sandbox::to_wide;
  use std::ffi::OsStr;
@@ -623,7 +1263,7 @@ index a96b6a5..3ca29b0 100644
 -use windows_sys::Win32::System::Threading::MUTEX_ALL_ACCESS;
 -use windows_sys::Win32::System::Threading::OpenMutexW;
 -use windows_sys::Win32::System::Threading::ReleaseMutex;
-+use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, HANDLE, WAIT_ABANDONED, WAIT_OBJECT_0};
++use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, HANDLE, WAIT_ABANDONED, WAIT_OBJECT_0, WAIT_TIMEOUT};
 +use windows_sys::Win32::System::Threading::{CreateMutexW, ReleaseMutex, WaitForSingleObject};
  
 -const READ_ACL_MUTEX_NAME: &str = "Local\\CodexSandboxReadAcl";
@@ -673,14 +1313,22 @@ index a96b6a5..3ca29b0 100644
 -    if err == ERROR_ALREADY_EXISTS {
 -        unsafe {
 -            CloseHandle(handle);
--        }
--        return Ok(None);
 +    let handle = unsafe { CreateMutexW(std::ptr::null_mut(), 0, name.as_ptr()) };
 +    if handle == 0 { return Err(anyhow::anyhow!("CreateMutexW failed: {}", unsafe { GetLastError() })); }
 +    let outcome = unsafe { WaitForSingleObject(handle, 30_000) };
 +    if outcome != WAIT_OBJECT_0 && outcome != WAIT_ABANDONED {
++        // Happy: read the error before closing the handle, and only when the wait failed; after
++        // a timeout it would be the stale ERROR_ALREADY_EXISTS left by CreateMutexW.
 +        let error = unsafe { GetLastError() };
 +        unsafe { CloseHandle(handle); }
++        if outcome == WAIT_TIMEOUT {
++            return Err(anyhow::anyhow!(
++                "Another Happy sandbox setup is still updating folder permissions. Changing a large \
++                 folder such as the user profile can take many minutes; this sandbox starts once \
++                 it finishes."
++            ));
+         }
+-        return Ok(None);
 +        return Err(anyhow::anyhow!("Could not acquire Happy project ACL lock: wait={outcome}, error={error}"));
      }
 -    Ok(Some(ReadAclMutexGuard { handle }))
@@ -868,6 +1516,299 @@ index 41b33b6..358d87f 100644
 +        );
      }
  }
+diff --git a/codex-rs/windows-sandbox-rs/src/deny_read_state.rs b/codex-rs/windows-sandbox-rs/src/deny_read_state.rs
+index fd073a4..0b22b74 100644
+--- a/codex-rs/windows-sandbox-rs/src/deny_read_state.rs
++++ b/codex-rs/windows-sandbox-rs/src/deny_read_state.rs
+@@ -1,6 +1,9 @@
++use crate::acl::path_has_explicit_deny_read_for_sid;
+ use crate::acl::revoke_ace;
+ use crate::deny_read_acl::apply_deny_read_acls;
+ use crate::deny_read_acl::lexical_path_key;
++use crate::deny_read_acl::plan_deny_read_acl_paths;
++use crate::logging::log_note;
+ use crate::setup::sandbox_dir;
+ use anyhow::Context;
+ use anyhow::Result;
+@@ -27,6 +30,13 @@ struct PersistentDenyReadAclState {
+ /// each SID, apply the new desired set first, and only then revoke stale paths
+ /// from the same SID so profile changes do not leave old deny-read ACEs behind.
+ ///
++/// Happy: the state is only as good as its record of what was applied, so the
++/// paths about to be applied are recorded before any ACE is written. A setup
++/// killed part-way through then leaves them listed, and the next setup revokes
++/// whichever it does not want. A deny on the user profile root that no record
++/// lists, left by an earlier build that recorded only after applying, is found
++/// in the profile's actual ACL and revoked as well.
++///
+ /// # Safety
+ /// Caller must pass a valid SID pointer matching `principal_sid`.
+ pub unsafe fn sync_persistent_deny_read_acls(
+@@ -34,6 +44,29 @@ pub unsafe fn sync_persistent_deny_read_acls(
+     principal_sid: &str,
+     desired_paths: &[PathBuf],
+     psid: *mut c_void,
++) -> Result<Vec<PathBuf>> {
++    unsafe {
++        sync_deny_read_acls_with_candidates(
++            codex_home,
++            principal_sid,
++            desired_paths,
++            psid,
++            &unrecorded_deny_read_candidates(),
++        )
++    }
++}
++
++/// `sync_persistent_deny_read_acls`, checking `unrecorded` paths' actual ACLs
++/// for a deny this principal holds there that no record lists (Happy).
++///
++/// # Safety
++/// Caller must pass a valid SID pointer matching `principal_sid`.
++unsafe fn sync_deny_read_acls_with_candidates(
++    codex_home: &Path,
++    principal_sid: &str,
++    desired_paths: &[PathBuf],
++    psid: *mut c_void,
++    unrecorded: &[PathBuf],
+ ) -> Result<Vec<PathBuf>> {
+     let state_path = sandbox_dir(codex_home).join(DENY_READ_ACL_STATE_FILE);
+     let mut state = load_state(&state_path)?;
+@@ -43,15 +76,39 @@ pub unsafe fn sync_persistent_deny_read_acls(
+         .cloned()
+         .unwrap_or_default();
+ 
++    // Record what is about to be applied before applying it (Happy).
++    let intended = with_intended_paths(&previous_paths, &plan_deny_read_acl_paths(desired_paths)?);
++    if intended.len() != previous_paths.len() {
++        state
++            .principals
++            .insert(principal_sid.to_string(), intended);
++        store_state(&state_path, &state)?;
++    }
++
+     let applied_paths = unsafe { apply_deny_read_acls(desired_paths, psid) }?;
+     let desired_keys = applied_paths
+         .iter()
+         .map(|path| lexical_path_key(path))
+         .collect::<HashSet<_>>();
+ 
++    let previous_keys = previous_paths
++        .iter()
++        .map(|path| lexical_path_key(path))
++        .collect::<HashSet<_>>();
+     for path in previous_paths {
+         if !desired_keys.contains(&lexical_path_key(&path)) {
+-            revoke_ace(&path, psid);
++            unsafe { revoke_logged(codex_home, &path, psid) };
++        }
++    }
++    // Revoking rewrites a whole tree's inherited ACEs, so only a deny that is
++    // actually there is revoked.
++    for path in unrecorded {
++        let key = lexical_path_key(path);
++        if !desired_keys.contains(&key)
++            && !previous_keys.contains(&key)
++            && unsafe { path_has_explicit_deny_read_for_sid(path, psid) }
++        {
++            unsafe { revoke_logged(codex_home, path, psid) };
+         }
+     }
+ 
+@@ -67,6 +124,51 @@ pub unsafe fn sync_persistent_deny_read_acls(
+     Ok(applied_paths)
+ }
+ 
++/// Revokes one deny this principal no longer wants, noting it in the sandbox log, because on a
++/// large folder it rewrites everything below and can take many minutes (Happy).
++unsafe fn revoke_logged(codex_home: &Path, path: &Path, psid: *mut c_void) {
++    let log_dir = sandbox_dir(codex_home);
++    log_note(&format!("revoking deny-read ACE on {}", path.display()), Some(&log_dir));
++    unsafe { revoke_ace(path, psid) };
++    log_note(&format!("revoked deny-read ACE on {}", path.display()), Some(&log_dir));
++}
++
++/// The recorded paths followed by every planned path they do not already hold.
++fn with_intended_paths(previous: &[PathBuf], planned: &[PathBuf]) -> Vec<PathBuf> {
++    let mut keys = previous
++        .iter()
++        .map(|path| lexical_path_key(path))
++        .collect::<HashSet<_>>();
++    let mut intended = previous.to_vec();
++    for path in planned {
++        if keys.insert(lexical_path_key(path)) {
++            intended.push(path.clone());
++        }
++    }
++    intended
++}
++
++/// Paths where an earlier build could leave a deny it no longer records (Happy).
++///
++/// Only the profile root is denied by one workspace and allowed by another, so
++/// it is the one path whose deny a lost record leaves blocking every workspace
++/// inside the profile.
++fn unrecorded_deny_read_candidates() -> Vec<PathBuf> {
++    crate::happy_setup_gate::default_state_directory()
++        .ok()
++        .and_then(|state| state.parent()?.parent().map(Path::to_path_buf))
++        .into_iter()
++        .collect()
++}
++
++/// The persisted deny-read state exactly as stored, or `None` when there is none (Happy).
++///
++/// Every reconciliation rewrites the file deterministically, so equal bytes mean no setup has
++/// changed any principal's deny set since they were read.
++pub(crate) fn deny_read_state_fingerprint(codex_home: &Path) -> Option<Vec<u8>> {
++    std::fs::read(sandbox_dir(codex_home).join(DENY_READ_ACL_STATE_FILE)).ok()
++}
++
+ fn load_state(path: &Path) -> Result<PersistentDenyReadAclState> {
+     match std::fs::read(path) {
+         Ok(bytes) => serde_json::from_slice(&bytes)
+@@ -80,8 +182,138 @@ fn load_state(path: &Path) -> Result<PersistentDenyReadAclState> {
+     }
+ }
+ 
++/// Replaces the state in one step, so a setup killed while writing it never
++/// leaves a truncated file that every later setup would fail to parse (Happy).
+ fn store_state(path: &Path, state: &PersistentDenyReadAclState) -> Result<()> {
+     let bytes = serde_json::to_vec_pretty(state).context("serialize deny-read ACL state")?;
+-    std::fs::write(path, bytes)
+-        .with_context(|| format!("write deny-read ACL state {}", path.display()))
++    let temporary = path.with_extension("json.tmp");
++    std::fs::write(&temporary, bytes)
++        .with_context(|| format!("write deny-read ACL state {}", temporary.display()))?;
++    std::fs::rename(&temporary, path)
++        .with_context(|| format!("replace deny-read ACL state {}", path.display()))
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use windows_sys::Win32::Foundation::HLOCAL;
++    use windows_sys::Win32::Foundation::LocalFree;
++    use crate::acl::add_deny_read_ace;
++    use crate::token::convert_string_sid_to_sid;
++    use pretty_assertions::assert_eq;
++    use tempfile::TempDir;
++
++    const PRINCIPAL: &str = "S-1-5-21-1111111111-2222222222-3333333333-4444";
++
++    fn recorded(home: &Path) -> Vec<PathBuf> {
++        load_state(&sandbox_dir(home).join(DENY_READ_ACL_STATE_FILE))
++            .unwrap()
++            .principals
++            .remove(PRINCIPAL)
++            .unwrap_or_default()
++    }
++
++    #[test]
++    fn intended_paths_keep_the_record_and_add_new_paths_once() {
++        let previous = vec![PathBuf::from(r"C:\Users\a\.ssh")];
++        let planned = vec![PathBuf::from(r"c:\users\a\.SSH"), PathBuf::from(r"C:\Users\a")];
++        assert_eq!(
++            vec![PathBuf::from(r"C:\Users\a\.ssh"), PathBuf::from(r"C:\Users\a")],
++            with_intended_paths(&previous, &planned)
++        );
++    }
++
++    #[test]
++    fn records_paths_before_applying_them_so_an_interrupted_setup_is_undone() {
++        let home = TempDir::new().unwrap();
++        std::fs::create_dir_all(sandbox_dir(home.path())).unwrap();
++        let denied = TempDir::new().unwrap();
++        let blocker = denied.path().join("file");
++        std::fs::write(&blocker, b"").unwrap();
++        // A path that cannot be created stops the setup after it recorded its intent.
++        let unreachable = blocker.join("below-a-file");
++        let psid = unsafe { convert_string_sid_to_sid(PRINCIPAL) }.unwrap();
++
++        let interrupted = unsafe {
++            sync_deny_read_acls_with_candidates(
++                home.path(),
++                PRINCIPAL,
++                &[denied.path().to_path_buf(), unreachable.clone()],
++                psid,
++                &[],
++            )
++        };
++        assert!(interrupted.is_err());
++        assert_eq!(vec![denied.path().to_path_buf(), unreachable], recorded(home.path()));
++
++        // The next setup wants neither, so it revokes both and forgets them.
++        unsafe { add_deny_read_ace(denied.path(), psid) }.unwrap();
++        let applied = unsafe {
++            sync_deny_read_acls_with_candidates(home.path(), PRINCIPAL, &[], psid, &[])
++        }
++        .unwrap();
++        assert!(applied.is_empty());
++        assert!(!unsafe { path_has_explicit_deny_read_for_sid(denied.path(), psid) });
++        assert!(recorded(home.path()).is_empty());
++        unsafe { LocalFree(psid as HLOCAL) };
++    }
++
++    #[test]
++    fn revokes_an_unrecorded_deny_found_in_the_actual_acl() {
++        let home = TempDir::new().unwrap();
++        std::fs::create_dir_all(sandbox_dir(home.path())).unwrap();
++        let profile = TempDir::new().unwrap();
++        let kept = TempDir::new().unwrap();
++        let psid = unsafe { convert_string_sid_to_sid(PRINCIPAL) }.unwrap();
++        // A deny an earlier build applied and then lost from its record.
++        unsafe { add_deny_read_ace(profile.path(), psid) }.unwrap();
++        assert!(unsafe { path_has_explicit_deny_read_for_sid(profile.path(), psid) });
++
++        let unrecorded = [profile.path().to_path_buf(), kept.path().to_path_buf()];
++        unsafe {
++            sync_deny_read_acls_with_candidates(
++                home.path(),
++                PRINCIPAL,
++                &[kept.path().to_path_buf()],
++                psid,
++                &unrecorded,
++            )
++        }
++        .unwrap();
++        assert!(!unsafe { path_has_explicit_deny_read_for_sid(profile.path(), psid) });
++        // A candidate this setup wants stays denied.
++        assert!(unsafe { path_has_explicit_deny_read_for_sid(kept.path(), psid) });
++        assert_eq!(vec![kept.path().to_path_buf()], recorded(home.path()));
++
++        unsafe { revoke_ace(kept.path(), psid) };
++        unsafe { LocalFree(psid as HLOCAL) };
++    }
++    #[test]
++    fn revoking_removes_a_deny_read_ace_and_leaves_other_principals_alone() {
++        let dir = TempDir::new().unwrap();
++        let psid = unsafe { convert_string_sid_to_sid(PRINCIPAL) }.unwrap();
++        let other = unsafe { convert_string_sid_to_sid("S-1-5-21-1111111111-2222222222-3333333333-5555") }
++            .unwrap();
++        unsafe { add_deny_read_ace(dir.path(), psid) }.unwrap();
++        unsafe { add_deny_read_ace(dir.path(), other) }.unwrap();
++        assert!(unsafe { path_has_explicit_deny_read_for_sid(dir.path(), psid) });
++
++        let child = dir.path().join("child");
++        std::fs::create_dir(&child).unwrap();
++        let inherited = |path: &Path| {
++            let out = std::process::Command::new("icacls").arg(path).output().unwrap();
++            String::from_utf8_lossy(&out.stdout).contains(&PRINCIPAL[4..])
++        };
++        assert!(inherited(&child));
++
++        unsafe { revoke_ace(dir.path(), psid) };
++        assert!(!unsafe { path_has_explicit_deny_read_for_sid(dir.path(), psid) });
++        // The children lose the inherited copies too.
++        assert!(!inherited(&child));
++        assert!(unsafe { path_has_explicit_deny_read_for_sid(dir.path(), other) });
++
++        unsafe { revoke_ace(dir.path(), other) };
++        unsafe { LocalFree(psid as HLOCAL) };
++        unsafe { LocalFree(other as HLOCAL) };
++    }
++}
+\ No newline at end of file
 diff --git a/codex-rs/windows-sandbox-rs/src/desktop.rs b/codex-rs/windows-sandbox-rs/src/desktop.rs
 index d8e7d19..7d55a5a 100644
 --- a/codex-rs/windows-sandbox-rs/src/desktop.rs
@@ -910,10 +1851,95 @@ index 2c8f35c..26977bf 100644
          assert!(LaunchDesktop::open_private(name).is_err(), "{name:?}");
      }
 diff --git a/codex-rs/windows-sandbox-rs/src/elevated/ipc_framed.rs b/codex-rs/windows-sandbox-rs/src/elevated/ipc_framed.rs
-index 1b1766a..47948ee 100644
+index 1b1766a..589c17c 100644
 --- a/codex-rs/windows-sandbox-rs/src/elevated/ipc_framed.rs
 +++ b/codex-rs/windows-sandbox-rs/src/elevated/ipc_framed.rs
-@@ -207,7 +207,7 @@ mod tests {
+@@ -30,6 +30,21 @@ pub struct FramedMessage {
+     pub message: Message,
+ }
+ 
++/// One frame of a served runner's conversation (Happy).
++///
++/// A served runner runs many commands at once over one pair of pipes, so every frame in either
++/// direction names the command it belongs to with the id the parent chose for it.
++#[derive(Debug, Serialize, Deserialize, Clone)]
++pub struct ServedFrame {
++    pub id: u64,
++    /// On a `SpawnRequest`: let processes the command started keep running after it exits, as a
++    /// one-shot runner does. Otherwise the command's whole process tree ends with it.
++    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
++    pub keep_descendants: bool,
++    #[serde(flatten)]
++    pub frame: FramedMessage,
++}
++
+ /// IPC message variants exchanged between parent and runner.
+ ///
+ /// `SpawnRequest`, `Stdin`, `CloseStdin`, `Resize`, and `Terminate` are parent->runner commands.
+@@ -154,6 +169,16 @@ pub fn read_frame<R: Read>(reader: R) -> Result<Option<FramedMessage>> {
+     crate::framed_io::read_frame(reader)
+ }
+ 
++/// Write a length-prefixed served frame (Happy).
++pub fn write_served_frame<W: Write>(writer: W, frame: &ServedFrame) -> Result<()> {
++    crate::framed_io::write_frame(writer, frame)
++}
++
++/// Read a length-prefixed served frame; returns `Ok(None)` on EOF (Happy).
++pub fn read_served_frame<R: Read>(reader: R) -> Result<Option<ServedFrame>> {
++    crate::framed_io::read_frame(reader)
++}
++
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+@@ -184,6 +209,45 @@ mod tests {
+         }
+     }
+ 
++    #[test]
++    fn served_frame_names_its_command_beside_the_message() {
++        let frame = ServedFrame {
++            id: 42,
++            keep_descendants: false,
++            frame: FramedMessage {
++                version: IPC_PROTOCOL_VERSION,
++                message: Message::Exit {
++                    payload: ExitPayload {
++                        exit_code: 3,
++                        timed_out: false,
++                    },
++                },
++            },
++        };
++        let encoded = serde_json::to_value(&frame).expect("serialize");
++        assert_eq!(
++            serde_json::json!({
++                "id": 42,
++                "version": IPC_PROTOCOL_VERSION,
++                "type": "exit",
++                "payload": {"exit_code": 3, "timed_out": false},
++            }),
++            encoded
++        );
++
++        let mut buf = Vec::new();
++        write_served_frame(&mut buf, &ServedFrame { keep_descendants: true, ..frame })
++            .expect("write");
++        let decoded = read_served_frame(buf.as_slice()).expect("read").expect("some");
++        assert_eq!(42, decoded.id);
++        assert!(decoded.keep_descendants);
++        let Message::Exit { payload } = decoded.frame.message else {
++            panic!("unexpected message");
++        };
++        assert_eq!(3, payload.exit_code);
++        assert!(read_served_frame([].as_slice()).expect("eof").is_none());
++    }
++
+     #[test]
+     fn spawn_request_serializes_permission_profile() {
+         let workspace_roots = vec![
+@@ -207,7 +271,7 @@ mod tests {
                      tty: false,
                      stdin_open: false,
                      use_private_desktop: true,
@@ -922,7 +1948,7 @@ index 1b1766a..47948ee 100644
                  }),
              },
          };
-@@ -226,7 +226,7 @@ mod tests {
+@@ -226,7 +290,7 @@ mod tests {
          assert_eq!(PermissionProfile::read_only(), payload.permission_profile);
          assert_eq!(workspace_roots, payload.workspace_roots);
          assert_eq!(
@@ -932,10 +1958,19 @@ index 1b1766a..47948ee 100644
          );
          assert_eq!(
 diff --git a/codex-rs/windows-sandbox-rs/src/elevated/runner_client.rs b/codex-rs/windows-sandbox-rs/src/elevated/runner_client.rs
-index 697ad33..5c38dea 100644
+index 697ad33..5b0083f 100644
 --- a/codex-rs/windows-sandbox-rs/src/elevated/runner_client.rs
 +++ b/codex-rs/windows-sandbox-rs/src/elevated/runner_client.rs
-@@ -214,7 +214,7 @@ fn connect_pipe_with_timeout(
+@@ -96,6 +96,8 @@ impl std::error::Error for RunnerStartupError {}
+ pub(crate) struct RunnerTransport {
+     pipe_write: File,
+     pipe_read: File,
++    /// The private desktop every command from this runner starts on, when one was requested.
++    pub(crate) private_desktop_name: Option<String>,
+ }
+ 
+ fn is_refreshable_windows_error(code: u32) -> bool {
+@@ -214,7 +216,7 @@ fn connect_pipe_with_timeout(
      let (connect_result_tx, connect_result_rx) = mpsc::sync_channel(1);
      let mut connect_thread = Some(
          thread::Builder::new()
@@ -944,16 +1979,44 @@ index 697ad33..5c38dea 100644
              .spawn(move || {
                  let current_process = unsafe { GetCurrentProcess() };
                  let mut thread_handle = 0;
-@@ -336,7 +336,7 @@ pub(crate) fn spawn_runner_transport(
+@@ -322,6 +324,7 @@ pub(crate) fn spawn_runner_transport(
+     log_dir: Option<&Path>,
+     mut spawn_request: SpawnRequest,
+     desktop_policy: Option<&DesktopPolicy>,
++    serve: bool,
+ ) -> Result<RunnerTransport> {
+     spawn_request.private_desktop_name = desktop_policy
+         .map(|policy| shared_private_desktop_for_user(&sandbox_creds.username, policy, log_dir))
+@@ -336,16 +339,24 @@ pub(crate) fn spawn_runner_transport(
      let runner_cmdline = runner_exe
          .to_str()
          .map(str::to_owned)
 -        .unwrap_or_else(|| "codex-command-runner.exe".to_string());
 +        .unwrap_or_else(|| "happy-sandbox-runner.exe".to_string());
      let runner_full_cmd = format!(
-         "{} {} {}",
+-        "{} {} {}",
++        "{} {} {}{}",
          quote_windows_arg(&runner_cmdline),
-@@ -405,7 +405,7 @@ pub(crate) fn spawn_runner_transport(
+         quote_windows_arg(&format!("--pipe-in={pipe_in_name}")),
+-        quote_windows_arg(&format!("--pipe-out={pipe_out_name}"))
++        quote_windows_arg(&format!("--pipe-out={pipe_out_name}")),
++        if serve { " --serve" } else { "" }
+     );
+     let mut cmdline_vec = to_wide(&runner_full_cmd);
+     let exe_w = to_wide(&runner_cmdline);
+-    let cwd_w = to_wide(cwd);
++    // A long-lived serving runner must not hold the workspace as its working directory, because
++    // Windows keeps a process's working directory from being deleted. Each spawn request still
++    // runs its command in the requested directory.
++    let process_cwd = match runner_exe.parent() {
++        Some(directory) if serve => directory,
++        _ => cwd,
++    };
++    let cwd_w = to_wide(process_cwd);
+     let user_w = to_wide(&sandbox_creds.username);
+     let domain_w = to_wide(".");
+     let password_w = to_wide(&sandbox_creds.password);
+@@ -405,7 +416,7 @@ pub(crate) fn spawn_runner_transport(
          unsafe {
              // Keep the process handle alive until the pipe handshake finishes. If the handshake
              // fails after the runner process has already launched, we still need a way to stop
@@ -962,7 +2025,22 @@ index 697ad33..5c38dea 100644
              if pi.hProcess != 0 {
                  let _ = TerminateProcess(pi.hProcess, 1);
                  CloseHandle(pi.hProcess);
-@@ -425,7 +425,7 @@ pub(crate) fn spawn_runner_transport(
+@@ -421,11 +432,22 @@ pub(crate) fn spawn_runner_transport(
+         // From here on, the `RunnerTransport` owns closing the pipes on every success/error path.
+         pipe_write: unsafe { File::from_raw_handle(h_pipe_in as _) },
+         pipe_read: unsafe { File::from_raw_handle(h_pipe_out as _) },
++        private_desktop_name: spawn_request.private_desktop_name.clone(),
+     };
++    if serve {
++        // A serving runner waits for its first request; there is no spawn to acknowledge yet.
++        // The pipes are now its only lifetime anchor: closing them ends it.
++        unsafe {
++            if pi.hProcess != 0 {
++                CloseHandle(pi.hProcess);
++            }
++        }
++        return Ok(transport);
++    }
      let startup_result = (|| -> Result<()> {
          // Keep the runner process HANDLE alive until the *entire* startup handshake finishes.
          // That way, a later `send_spawn_request` or `spawn_ready` failure can still terminate the
@@ -984,6 +2062,18 @@ index c8ae092..5bfcd9d 100644
      (format!("{base}-in"), format!("{base}-out"))
  }
  
+diff --git a/codex-rs/windows-sandbox-rs/src/elevated_impl.rs b/codex-rs/windows-sandbox-rs/src/elevated_impl.rs
+index 702884a..ef0427d 100644
+--- a/codex-rs/windows-sandbox-rs/src/elevated_impl.rs
++++ b/codex-rs/windows-sandbox-rs/src/elevated_impl.rs
+@@ -235,6 +235,7 @@ mod windows_impl {
+                         logs_base_dir,
+                         spawn_request.clone(),
+                         desktop_policy.as_ref(),
++                        /*serve*/ false,
+                     )
+                 },
+                 || {
 diff --git a/codex-rs/windows-sandbox-rs/src/happy_setup_gate.rs b/codex-rs/windows-sandbox-rs/src/happy_setup_gate.rs
 new file mode 100644
 index 0000000..cca41ff
@@ -1659,7 +2749,7 @@ index 6f3a66d..ab723fb 100644
      fn remove_sandbox_users_file_deletes_existing_file() {
          let codex_home = TempDir::new().expect("tempdir");
 diff --git a/codex-rs/windows-sandbox-rs/src/lib.rs b/codex-rs/windows-sandbox-rs/src/lib.rs
-index e83a42a..ee49c67 100644
+index e83a42a..e3dd69f 100644
 --- a/codex-rs/windows-sandbox-rs/src/lib.rs
 +++ b/codex-rs/windows-sandbox-rs/src/lib.rs
 @@ -79,6 +79,8 @@ mod hide_users;
@@ -1682,7 +2772,24 @@ index e83a42a..ee49c67 100644
  pub use identity::sandbox_setup_is_complete_with_settings;
  #[cfg(target_os = "windows")]
  pub use ipc_framed::ErrorPayload;
-@@ -339,6 +345,8 @@ pub use setup::run_elevated_provisioning_setup_with_retained_handles;
+@@ -259,6 +265,16 @@ pub use ipc_framed::read_frame;
+ #[cfg(target_os = "windows")]
+ pub use ipc_framed::write_frame;
+ #[cfg(target_os = "windows")]
++pub use ipc_framed::ServedFrame;
++#[cfg(target_os = "windows")]
++pub use ipc_framed::StdinPayload;
++#[cfg(target_os = "windows")]
++pub use ipc_framed::read_served_frame;
++#[cfg(target_os = "windows")]
++pub use ipc_framed::write_served_frame;
++#[cfg(target_os = "windows")]
++pub use spawn_prep::normalize_served_command_env;
++#[cfg(target_os = "windows")]
+ pub use logging::current_log_file_path;
+ #[cfg(target_os = "windows")]
+ pub use logging::current_log_file_path_for_codex_home;
+@@ -339,6 +355,8 @@ pub use setup::run_elevated_provisioning_setup_with_retained_handles;
  #[cfg(target_os = "windows")]
  pub use setup::run_elevated_setup;
  #[cfg(target_os = "windows")]
@@ -1691,6 +2798,19 @@ index e83a42a..ee49c67 100644
  pub use setup::run_setup_refresh;
  #[cfg(target_os = "windows")]
  pub use setup::run_setup_refresh_with_extra_read_roots;
+@@ -392,6 +410,12 @@ pub use unified_exec::spawn_windows_sandbox_session_elevated_for_permission_prof
+ #[cfg(target_os = "windows")]
+ pub use unified_exec::spawn_windows_sandbox_session_for_level;
+ #[cfg(target_os = "windows")]
++pub use unified_exec::ServedRunnerDenyRead;
++#[cfg(target_os = "windows")]
++pub use unified_exec::WindowsSandboxServedRunner;
++#[cfg(target_os = "windows")]
++pub use unified_exec::spawn_windows_sandbox_served_runner;
++#[cfg(target_os = "windows")]
+ pub use unified_exec::spawn_windows_sandbox_session_legacy;
+ #[cfg(target_os = "windows")]
+ pub use uninstall_windows::clean_up_packaged_windows_sandbox;
 diff --git a/codex-rs/windows-sandbox-rs/src/path_normalization.rs b/codex-rs/windows-sandbox-rs/src/path_normalization.rs
 index 1735b74..5a38d33 100644
 --- a/codex-rs/windows-sandbox-rs/src/path_normalization.rs
@@ -1792,7 +2912,7 @@ index f2524fa..4365444 100644
  /// Versioned provisioning-service message carried in a length-prefixed JSON frame.
  #[derive(Debug, Serialize, Deserialize, Clone)]
 diff --git a/codex-rs/windows-sandbox-rs/src/setup.rs b/codex-rs/windows-sandbox-rs/src/setup.rs
-index 1e84b6f..1e55468 100644
+index 1e84b6f..355d9d3 100644
 --- a/codex-rs/windows-sandbox-rs/src/setup.rs
 +++ b/codex-rs/windows-sandbox-rs/src/setup.rs
 @@ -33,6 +33,8 @@ use crate::setup_error::extract_failure;
@@ -1833,7 +2953,152 @@ index 1e84b6f..1e55468 100644
          mode: SetupMode::Full,
          refresh_only: true,
      };
-@@ -949,20 +953,19 @@ fn run_setup_exe_payload(
+@@ -389,7 +393,7 @@ fn run_setup_refresh_payload(b64: &str, codex_home: &Path) -> Result<()> {
+         ),
+         Some(&sbx_dir),
+     );
+-    let status = cmd.status().map_err(|err| {
++    let status = spawn_outliving_caller(&mut cmd).and_then(|mut child| child.wait()).map_err(|err| {
+         let message = format!(
+             "setup refresh failed to launch helper: helper={}, cwd={}, log={}, error={err}",
+             exe.display(),
+@@ -419,6 +423,135 @@ fn run_setup_refresh_payload(b64: &str, codex_home: &Path) -> Result<()> {
+     Ok(())
+ }
+ 
++/// Starts a refresh helper outside the job of the process that asked for it (Happy).
++///
++/// Adding or revoking a deny-read ACE on a large folder such as the user profile rewrites the
++/// inherited ACEs of everything below it, which can take longer than any caller waits. A helper
++/// in the supervisor's kill-on-close job was killed with the supervisor part-way through, and the
++/// next command started the same rewrite again from the beginning, so it never finished. Outside
++/// the job it runs to completion. Only the helper holding the read-ACL lock keeps working; every
++/// other one gives up within the lock wait, so at most one outlives its caller for long.
++fn spawn_outliving_caller(cmd: &mut Command) -> std::io::Result<std::process::Child> {
++    const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
++    const ERROR_ACCESS_DENIED: i32 = 5;
++    match cmd.creation_flags(CREATE_BREAKAWAY_FROM_JOB).spawn() {
++        // A job that does not permit breakaway refuses the flag; stay in it rather than fail.
++        Err(err) if err.raw_os_error() == Some(ERROR_ACCESS_DENIED) => {
++            cmd.creation_flags(0).spawn()
++        }
++        result => result,
++    }
++}
++
++#[cfg(test)]
++mod breakaway_tests {
++    use super::spawn_outliving_caller;
++    use std::ffi::c_void;
++    use std::io::BufRead;
++    use std::io::BufReader;
++    use std::io::Write;
++    use std::os::windows::io::AsRawHandle;
++    use std::process::Command;
++    use std::process::Stdio;
++    use windows_sys::Win32::Foundation::CloseHandle;
++    use windows_sys::Win32::Foundation::WAIT_TIMEOUT;
++    use windows_sys::Win32::System::JobObjects::AssignProcessToJobObject;
++    use windows_sys::Win32::System::JobObjects::CreateJobObjectW;
++    use windows_sys::Win32::System::JobObjects::JOB_OBJECT_LIMIT_BREAKAWAY_OK;
++    use windows_sys::Win32::System::JobObjects::JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
++    use windows_sys::Win32::System::JobObjects::JOBOBJECT_EXTENDED_LIMIT_INFORMATION;
++    use windows_sys::Win32::System::JobObjects::JobObjectExtendedLimitInformation;
++    use windows_sys::Win32::System::JobObjects::SetInformationJobObject;
++    use windows_sys::Win32::System::Threading::OpenProcess;
++    use windows_sys::Win32::System::Threading::PROCESS_QUERY_LIMITED_INFORMATION;
++    use windows_sys::Win32::System::Threading::PROCESS_SYNCHRONIZE;
++    use windows_sys::Win32::System::Threading::PROCESS_TERMINATE;
++    use windows_sys::Win32::System::Threading::TerminateProcess;
++    use windows_sys::Win32::System::Threading::WaitForSingleObject;
++
++    const CALLER_ENV: &str = "HAPPY_TEST_OUTLIVING_CALLER";
++
++    /// The caller in `a_refresh_helper_outlives_its_callers_kill_on_close_job`; it does nothing
++    /// unless that test started it inside its job.
++    #[test]
++    #[ignore]
++    fn outliving_caller_child() {
++        if std::env::var_os(CALLER_ENV).is_none() {
++            return;
++        }
++        let mut line = String::new();
++        std::io::stdin().lock().read_line(&mut line).unwrap();
++        let helper = spawn_outliving_caller(
++            Command::new("ping")
++                .args(["-n", "30", "127.0.0.1"])
++                .stdin(Stdio::null())
++                .stdout(Stdio::null())
++                .stderr(Stdio::null()),
++        )
++        .unwrap();
++        println!("helper={}", helper.id());
++        std::io::stdout().flush().unwrap();
++        std::thread::sleep(std::time::Duration::from_secs(60));
++    }
++
++    #[test]
++    fn a_refresh_helper_outlives_its_callers_kill_on_close_job() {
++        unsafe {
++            let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
++            assert_ne!(job, 0);
++            let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
++            limits.BasicLimitInformation.LimitFlags =
++                JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_BREAKAWAY_OK;
++            assert_ne!(
++                SetInformationJobObject(
++                    job,
++                    JobObjectExtendedLimitInformation,
++                    &limits as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION as *const c_void,
++                    std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
++                ),
++                0
++            );
++            let mut caller = Command::new(std::env::current_exe().unwrap())
++                .args([
++                    "--exact",
++                    "setup::breakaway_tests::outliving_caller_child",
++                    "--ignored",
++                    "--nocapture",
++                    "--test-threads=1",
++                ])
++                .env(CALLER_ENV, "1")
++                .stdin(Stdio::piped())
++                .stdout(Stdio::piped())
++                .stderr(Stdio::null())
++                .spawn()
++                .unwrap();
++            assert_ne!(AssignProcessToJobObject(job, caller.as_raw_handle() as _), 0);
++            caller.stdin.take().unwrap().write_all(b"go\n").unwrap();
++            let helper_pid: u32 = BufReader::new(caller.stdout.take().unwrap())
++                .lines()
++                .map_while(Result::ok)
++                // The harness prints the test's name on the same line, before the output.
++                .find_map(|line| line.split_once("helper=").map(|(_, pid)| pid.trim().parse().unwrap()))
++                .expect("the caller reports its helper");
++
++            // Closing the job's only handle kills the caller, as stopping a supervisor does.
++            CloseHandle(job);
++            caller.wait().unwrap();
++
++            let helper = OpenProcess(
++                PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE | PROCESS_TERMINATE,
++                0,
++                helper_pid,
++            );
++            assert_ne!(helper, 0, "the helper was killed with its caller's job");
++            let still_running = WaitForSingleObject(helper, 500) == WAIT_TIMEOUT;
++            TerminateProcess(helper, 1);
++            CloseHandle(helper);
++            assert!(still_running, "the helper was killed with its caller's job");
++        }
++    }
++}
++
+ #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+ pub struct SetupMarker {
+     pub version: u32,
+@@ -949,20 +1082,19 @@ fn run_setup_exe_payload(
      };
  
      if !needs_elevation {
@@ -1856,7 +3121,7 @@ index 1e84b6f..1e55468 100644
          }
          .map_err(|err| {
              failure(
-@@ -970,6 +973,7 @@ fn run_setup_exe_payload(
+@@ -970,6 +1102,7 @@ fn run_setup_exe_payload(
                  format!("failed to launch setup helper (non-elevated): {err}"),
              )
          })?;
@@ -1864,7 +3129,7 @@ index 1e84b6f..1e55468 100644
          if !status.success() {
              return Err(report_helper_failure(
                  codex_home,
-@@ -1004,7 +1008,7 @@ fn run_setup_exe_payload(
+@@ -1004,7 +1137,7 @@ fn run_setup_exe_payload(
      // Hide the window for the elevated helper.
      sei.nShow = 0; // SW_HIDE
      let ok = unsafe { ShellExecuteExW(&mut sei) };
@@ -1873,7 +3138,7 @@ index 1e84b6f..1e55468 100644
          let last_error = unsafe { GetLastError() };
          let code = if last_error == ERROR_CANCELLED {
              SetupErrorCode::OrchestratorHelperLaunchCanceled
-@@ -1016,8 +1020,15 @@ fn run_setup_exe_payload(
+@@ -1016,8 +1149,15 @@ fn run_setup_exe_payload(
              format!("ShellExecuteExW failed to launch setup helper: {last_error}"),
          ));
      }
@@ -1890,7 +3155,7 @@ index 1e84b6f..1e55468 100644
          let mut code: u32 = 1;
          GetExitCodeProcess(sei.hProcess, &mut code);
          CloseHandle(sei.hProcess);
-@@ -1040,48 +1051,83 @@ fn run_setup_exe_payload(
+@@ -1040,48 +1180,83 @@ fn run_setup_exe_payload(
  }
  
  pub fn run_elevated_setup(request: SandboxSetupRequest<'_>) -> Result<()> {
@@ -1991,7 +3256,7 @@ index 1e84b6f..1e55468 100644
          version: SETUP_VERSION,
          offline_username: OFFLINE_USERNAME.to_string(),
          online_username: ONLINE_USERNAME.to_string(),
-@@ -1093,11 +1139,11 @@ fn elevated_provisioning_payload(
+@@ -1093,11 +1268,11 @@ fn elevated_provisioning_payload(
          deny_write_paths: Vec::new(),
          proxy_ports: offline_proxy_settings.proxy_ports,
          allow_local_binding: offline_proxy_settings.allow_local_binding,
@@ -2005,7 +3270,7 @@ index 1e84b6f..1e55468 100644
  }
  
  pub fn run_elevated_provisioning_setup(
-@@ -1600,7 +1646,7 @@ mod tests {
+@@ -1600,7 +1775,7 @@ mod tests {
  
          let payload = super::elevated_provisioning_payload(
              &request, /*offline_proxy_settings_override*/ None,
@@ -2014,7 +3279,7 @@ index 1e84b6f..1e55468 100644
  
          assert_eq!(payload.command_cwd, codex_home);
          assert_eq!(payload.read_roots, Vec::<PathBuf>::new());
-@@ -1870,7 +1916,7 @@ mod tests {
+@@ -1870,7 +2045,7 @@ mod tests {
          fs::create_dir_all(&bin_dir).expect("create bin dir");
          fs::create_dir_all(&resources_dir).expect("create resources dir");
          let exe = bin_dir.join("codex.exe");
@@ -2063,6 +3328,28 @@ index dcb8f6f..13de6ed 100644
      let handle = unsafe {
          CreateMutexW(&attributes, /*binitialowner*/ 0, name.as_ptr())
      };
+diff --git a/codex-rs/windows-sandbox-rs/src/spawn_prep.rs b/codex-rs/windows-sandbox-rs/src/spawn_prep.rs
+index 9479c0b..49ccd23 100644
+--- a/codex-rs/windows-sandbox-rs/src/spawn_prep.rs
++++ b/codex-rs/windows-sandbox-rs/src/spawn_prep.rs
+@@ -345,6 +345,17 @@ pub(crate) fn apply_legacy_session_acl_rules(
+     Ok(())
+ }
+ 
++/// Make a served command's environment what a one-shot command's would be (Happy).
++///
++/// A served runner prepares its sandbox once, but every command brings its own environment, so
++/// the adjustments the one-shot path makes while preparing are applied to each command instead.
++pub fn normalize_served_command_env(env_map: &mut HashMap<String, String>, cwd: &Path) {
++    normalize_null_device_env(env_map);
++    ensure_non_interactive_pager(env_map);
++    inherit_path_env(env_map);
++    inject_git_safe_directory(env_map, cwd);
++}
++
+ #[allow(clippy::too_many_arguments)]
+ pub(crate) fn prepare_elevated_spawn_context_for_permissions(
+     permissions: ResolvedWindowsSandboxPermissions,
 diff --git a/codex-rs/windows-sandbox-rs/src/stdio_bridge.rs b/codex-rs/windows-sandbox-rs/src/stdio_bridge.rs
 index 3ad722b..902f648 100644
 --- a/codex-rs/windows-sandbox-rs/src/stdio_bridge.rs
@@ -2218,7 +3505,7 @@ index c13632b..fd68932 100644
 +    Ok(())
 +}
 diff --git a/codex-rs/windows-sandbox-rs/src/unified_exec/backends/elevated.rs b/codex-rs/windows-sandbox-rs/src/unified_exec/backends/elevated.rs
-index 0d7d2ca..d378011 100644
+index 0d7d2ca..3fe46a0 100644
 --- a/codex-rs/windows-sandbox-rs/src/unified_exec/backends/elevated.rs
 +++ b/codex-rs/windows-sandbox-rs/src/unified_exec/backends/elevated.rs
 @@ -24,7 +24,6 @@ use codex_utils_pty::SpawnedProcess;
@@ -2229,7 +3516,28 @@ index 0d7d2ca..d378011 100644
  use tokio::sync::mpsc;
  use tokio::sync::oneshot;
  
-@@ -229,11 +228,11 @@ pub(crate) async fn spawn_windows_sandbox_session_elevated_for_permission_profil
+@@ -95,6 +94,7 @@ fn spawn_runner_transport_with_retry<T>(
+ async fn spawn_runner_transport_task(
+     sandbox_creds: SandboxCreds,
+     request: RunnerTransportRequest,
++    serve: bool,
+ ) -> Result<RunnerTransport> {
+     tokio::task::spawn_blocking(move || -> Result<_> {
+         let desktop_policy = request
+@@ -136,6 +136,7 @@ async fn spawn_runner_transport_task(
+                     log_dir,
+                     spawn_request,
+                     desktop_policy.as_ref(),
++                    serve,
+                 )
+             },
+             refresh_logon_sandbox_creds,
+@@ -225,15 +226,15 @@ pub(crate) async fn spawn_windows_sandbox_session_elevated_for_permission_profil
+         proxy_enforced,
+         proxy_settings_mode,
+     };
+-    let transport = spawn_runner_transport_task(sandbox_creds, request).await?;
++    let transport = spawn_runner_transport_task(sandbox_creds, request, /*serve*/ false).await?;
      let (pipe_write, pipe_read) = transport.into_files();
  
      let (writer_tx, writer_rx) = mpsc::channel::<Vec<u8>>(128);
@@ -2243,6 +3551,256 @@ index 0d7d2ca..d378011 100644
      };
      let (exit_tx, exit_rx) = oneshot::channel::<i32>();
  
+@@ -277,6 +278,189 @@ pub(crate) async fn spawn_windows_sandbox_session_elevated_for_permission_profil
+     ))
+ }
+ 
++/// One logged-on runner that serves many commands, one at a time (Happy).
++///
++/// The setup refresh, the logon, and the private desktop happen once here instead of once per
++/// command. Send each command as a `SpawnRequest` cloned from `template` with its own `command`
++/// and `timeout_ms`, then read frames until its `Exit` or `Error`. Call
++/// `deny_read.ensure_current()` before sending each one. Dropping the pipes ends the runner and
++/// every command it is still running.
++pub struct WindowsSandboxServedRunner {
++    pub pipe_write: std::fs::File,
++    pub pipe_read: std::fs::File,
++    pub template: SpawnRequest,
++    pub deny_read: ServedRunnerDenyRead,
++}
++
++/// Keeps a served runner's deny-read ACLs in force between its commands (Happy).
++///
++/// Deny-read ACEs belong to the sandbox group, not to one runner, and every setup reconciles the
++/// group's persisted set to its own request: it applies its paths and revokes the rest. A one-shot
++/// command runs that reconciliation right before it starts. A served runner runs it once, so
++/// another workspace's setup can revoke a deny this runner's commands rely on, such as the user
++/// profile denied to a workspace outside it, and the runner would go on without it. Before each
++/// command, `ensure_current` compares the persisted state with what this runner last left there
++/// and repeats the runner's own setup refresh when it changed. That restores the guarantee a
++/// one-shot command has: its deny set was in force when it started.
++pub struct ServedRunnerDenyRead {
++    fingerprint: Box<dyn Fn() -> Option<Vec<u8>> + Send + Sync>,
++    refresh: Box<dyn Fn() -> Result<()> + Send + Sync>,
++    current: std::sync::Mutex<Option<Vec<u8>>>,
++}
++
++impl ServedRunnerDenyRead {
++    /// Starts from the state the runner's own setup refresh just left.
++    pub(crate) fn new(
++        fingerprint: Box<dyn Fn() -> Option<Vec<u8>> + Send + Sync>,
++        refresh: Box<dyn Fn() -> Result<()> + Send + Sync>,
++    ) -> Self {
++        let current = std::sync::Mutex::new(fingerprint());
++        Self {
++            fingerprint,
++            refresh,
++            current,
++        }
++    }
++
++    /// Re-applies this runner's deny set if another setup changed the persisted one since this
++    /// runner last applied it, and returns whether it had to. After an error the next call tries
++    /// again, and the caller must not start the command.
++    pub fn ensure_current(&self) -> Result<bool> {
++        let mut current = self
++            .current
++            .lock()
++            .map_err(|_| anyhow::anyhow!("deny-read state lock poisoned"))?;
++        if (self.fingerprint)() == *current {
++            return Ok(false);
++        }
++        (self.refresh)()?;
++        *current = (self.fingerprint)();
++        Ok(true)
++    }
++}
++
++#[allow(clippy::too_many_arguments)]
++pub(crate) async fn spawn_windows_sandbox_served_runner(
++    permission_profile: &PermissionProfile,
++    workspace_roots: &[AbsolutePathBuf],
++    codex_home: &Path,
++    command: Vec<String>,
++    cwd: &Path,
++    mut env_map: HashMap<String, String>,
++    read_roots_override: Option<&[PathBuf]>,
++    read_roots_include_platform_defaults: bool,
++    write_roots_override: Option<&[PathBuf]>,
++    deny_read_paths_override: &[AbsolutePathBuf],
++    deny_write_paths_override: &[AbsolutePathBuf],
++    use_private_desktop: bool,
++) -> Result<WindowsSandboxServedRunner> {
++    let deny_read_paths_override = deny_read_paths_override
++        .iter()
++        .map(AbsolutePathBuf::to_path_buf)
++        .collect::<Vec<_>>();
++    let deny_write_paths_override = deny_write_paths_override
++        .iter()
++        .map(AbsolutePathBuf::to_path_buf)
++        .collect::<Vec<_>>();
++    let permissions =
++        ResolvedWindowsSandboxPermissions::try_from_permission_profile_for_workspace_roots(
++            permission_profile,
++            workspace_roots,
++        )?;
++    let proxy_settings_mode = crate::WindowsSandboxProxySettingsMode::Reconcile;
++    let refresh = {
++        let permissions = permissions.clone();
++        let codex_home = codex_home.to_path_buf();
++        let cwd = cwd.to_path_buf();
++        let env_map = env_map.clone();
++        let command = command.clone();
++        let read_roots_override = read_roots_override.map(<[PathBuf]>::to_vec);
++        let write_roots_override = write_roots_override.map(<[PathBuf]>::to_vec);
++        let deny_read_paths_override = deny_read_paths_override.clone();
++        let deny_write_paths_override = deny_write_paths_override.clone();
++        move || -> Result<()> {
++            prepare_elevated_spawn_context_for_permissions(
++                permissions.clone(),
++                &codex_home,
++                &cwd,
++                &mut env_map.clone(),
++                &command,
++                read_roots_override.as_deref(),
++                read_roots_include_platform_defaults,
++                write_roots_override.as_deref(),
++                &deny_read_paths_override,
++                &deny_write_paths_override,
++                /*proxy_enforced*/ false,
++                proxy_settings_mode,
++            )
++            .map(|_| ())
++        }
++    };
++    let elevated = prepare_elevated_spawn_context_for_permissions(
++        permissions.clone(),
++        codex_home,
++        cwd,
++        &mut env_map,
++        &command,
++        read_roots_override,
++        read_roots_include_platform_defaults,
++        write_roots_override,
++        &deny_read_paths_override,
++        &deny_write_paths_override,
++        /*proxy_enforced*/ false,
++        proxy_settings_mode,
++    )?;
++    let template = SpawnRequest {
++        command,
++        cwd: cwd.to_path_buf(),
++        env: env_map.clone(),
++        permission_profile: permission_profile.clone(),
++        workspace_roots: workspace_roots.to_vec(),
++        codex_home: elevated.sandbox_base,
++        real_codex_home: codex_home.to_path_buf(),
++        cap_sids: elevated.cap_sids,
++        network_proxy_restricting_sid: None,
++        timeout_ms: None,
++        tty: false,
++        stdin_open: false,
++        use_private_desktop,
++        private_desktop_name: None,
++    };
++    let request = RunnerTransportRequest {
++        permissions,
++        codex_home: codex_home.to_path_buf(),
++        cwd: cwd.to_path_buf(),
++        env_map,
++        logs_base_dir: elevated.logs_base_dir,
++        spawn_request: template.clone(),
++        read_roots_override: read_roots_override.map(<[PathBuf]>::to_vec),
++        read_roots_include_platform_defaults,
++        write_roots_override: write_roots_override.map(<[PathBuf]>::to_vec),
++        deny_read_paths_override,
++        deny_write_paths_override,
++        proxy_enforced: false,
++        proxy_settings_mode,
++    };
++    let transport =
++        spawn_runner_transport_task(elevated.sandbox_creds, request, /*serve*/ true).await?;
++    let template = SpawnRequest {
++        private_desktop_name: transport.private_desktop_name.clone(),
++        ..template
++    };
++    let (pipe_write, pipe_read) = transport.into_files();
++    let state_home = codex_home.to_path_buf();
++    let deny_read = ServedRunnerDenyRead::new(
++        Box::new(move || crate::deny_read_state::deny_read_state_fingerprint(&state_home)),
++        Box::new(refresh),
++    );
++    Ok(WindowsSandboxServedRunner {
++        pipe_write,
++        pipe_read,
++        template,
++        deny_read,
++    })
++}
++
+ #[cfg(test)]
+ #[path = "elevated_tests.rs"]
+ mod tests;
+diff --git a/codex-rs/windows-sandbox-rs/src/unified_exec/backends/elevated_tests.rs b/codex-rs/windows-sandbox-rs/src/unified_exec/backends/elevated_tests.rs
+index e802510..dca99fb 100644
+--- a/codex-rs/windows-sandbox-rs/src/unified_exec/backends/elevated_tests.rs
++++ b/codex-rs/windows-sandbox-rs/src/unified_exec/backends/elevated_tests.rs
+@@ -192,3 +192,54 @@ fn retry_uses_original_unified_exec_request_and_stops_after_second_failure() {
+     );
+     assert_eq!(vec![expected_refresh], *refresh_observations.borrow());
+ }
++
++#[test]
++fn served_runner_reapplies_its_deny_set_only_after_another_setup_changed_it() {
++    use super::ServedRunnerDenyRead;
++    use std::sync::Arc;
++    use std::sync::Mutex;
++    use std::sync::atomic::AtomicUsize;
++    use std::sync::atomic::Ordering;
++
++    // The persisted state as this runner's own setup left it.
++    let state = Arc::new(Mutex::new(Some(b"profile denied".to_vec())));
++    let refreshes = Arc::new(AtomicUsize::new(0));
++    let fail = Arc::new(Mutex::new(false));
++    let deny_read = {
++        let state = Arc::clone(&state);
++        let refresh_state = Arc::clone(&state);
++        let refreshes = Arc::clone(&refreshes);
++        let fail = Arc::clone(&fail);
++        ServedRunnerDenyRead::new(
++            Box::new(move || state.lock().unwrap().clone()),
++            Box::new(move || {
++                if *fail.lock().unwrap() {
++                    anyhow::bail!("setup refresh failed");
++                }
++                refreshes.fetch_add(1, Ordering::SeqCst);
++                *refresh_state.lock().unwrap() = Some(b"profile denied".to_vec());
++                Ok(())
++            }),
++        )
++    };
++
++    // Nothing changed: commands start without another setup refresh.
++    assert_eq!(false, deny_read.ensure_current().unwrap());
++    assert_eq!(false, deny_read.ensure_current().unwrap());
++    assert_eq!(0, refreshes.load(Ordering::SeqCst));
++
++    // Another workspace's setup revoked the profile deny.
++    *state.lock().unwrap() = Some(b"profile allowed".to_vec());
++    assert_eq!(true, deny_read.ensure_current().unwrap());
++    assert_eq!(1, refreshes.load(Ordering::SeqCst));
++    assert_eq!(false, deny_read.ensure_current().unwrap());
++
++    // A refresh that fails leaves the runner stale, so the command must not start and the next
++    // command tries again.
++    *state.lock().unwrap() = None;
++    *fail.lock().unwrap() = true;
++    assert!(deny_read.ensure_current().is_err());
++    *fail.lock().unwrap() = false;
++    assert_eq!(true, deny_read.ensure_current().unwrap());
++    assert_eq!(2, refreshes.load(Ordering::SeqCst));
++}
+\ No newline at end of file
 diff --git a/codex-rs/windows-sandbox-rs/src/unified_exec/backends/windows_common.rs b/codex-rs/windows-sandbox-rs/src/unified_exec/backends/windows_common.rs
 index f37829e..903e361 100644
 --- a/codex-rs/windows-sandbox-rs/src/unified_exec/backends/windows_common.rs
@@ -2338,6 +3896,49 @@ index f37829e..903e361 100644
 +        let _ = stdout_tx.blocking_send(formatted);
      }
  }
+diff --git a/codex-rs/windows-sandbox-rs/src/unified_exec/mod.rs b/codex-rs/windows-sandbox-rs/src/unified_exec/mod.rs
+index 4e6020a..9e160fb 100644
+--- a/codex-rs/windows-sandbox-rs/src/unified_exec/mod.rs
++++ b/codex-rs/windows-sandbox-rs/src/unified_exec/mod.rs
+@@ -97,6 +97,38 @@ pub async fn spawn_windows_sandbox_session_for_level(
+     }
+ }
+ 
++pub use backends::elevated::ServedRunnerDenyRead;
++pub use backends::elevated::WindowsSandboxServedRunner;
++
++/// Starts one elevated runner that serves many pipe commands without a terminal (Happy).
++pub async fn spawn_windows_sandbox_served_runner(
++    request: WindowsSandboxSessionRequest<'_>,
++) -> Result<WindowsSandboxServedRunner> {
++    if !matches!(request.windows_sandbox_level, WindowsSandboxLevel::Elevated)
++        || request.proxy_enforced
++        || request.network_proxy_restricting_sid.is_some()
++        || request.tty
++        || request.stdin_open
++    {
++        bail!("a served runner requires the elevated backend without proxying, a terminal, or input");
++    }
++    backends::elevated::spawn_windows_sandbox_served_runner(
++        request.permission_profile,
++        request.workspace_roots,
++        request.codex_home,
++        request.command,
++        request.cwd,
++        request.env_map,
++        request.read_roots_override,
++        request.read_roots_include_platform_defaults,
++        request.write_roots_override,
++        request.deny_read_paths_override,
++        request.deny_write_paths_override,
++        request.use_private_desktop,
++    )
++    .await
++}
++
+ #[allow(clippy::too_many_arguments)]
+ pub async fn spawn_windows_sandbox_session_legacy(
+     permission_profile: &PermissionProfile,
 diff --git a/codex-rs/windows-sandbox-rs/src/uninstall_windows.rs b/codex-rs/windows-sandbox-rs/src/uninstall_windows.rs
 index ff5b779..4587143 100644
 --- a/codex-rs/windows-sandbox-rs/src/uninstall_windows.rs

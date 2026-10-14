@@ -6,7 +6,7 @@ import { countUntrackedFileLines, type UntrackedFileCount } from "./countUntrack
 import { gitIndexFingerprint, gitWorktreeFingerprint } from "./gitWorktreeFingerprint.js";
 import { parseGitRawNumstat, type GitDiffChange } from "./parseGitRawNumstat.js";
 import { parseGitStatusV2, type GitStatusEntry, type GitStatusV2 } from "./parseGitStatusV2.js";
-import { readGitFileAtRevision } from "./readGitFileAtRevision.js";
+import { readGitTreeEntries, type GitTreeEntry } from "./readGitTreeEntries.js";
 import { resolveGitComparisonBase } from "./resolveGitComparisonBase.js";
 import { runScanGit, type ScanGitRunner } from "./runScanGit.js";
 import type {
@@ -245,16 +245,29 @@ async function scanOnce(
     }
     changes.sort((left, right) => (left.path < right.path ? -1 : left.path > right.path ? 1 : 0));
     const displayCandidates = changes.slice(0, FILE_LIST_LIMIT);
+    const sameBase = options.previous?.base === comparison.base;
+    const oldSides = await readOldSides(
+        options.path,
+        comparison.base,
+        displayCandidates.filter(
+            (change) =>
+                needsOldSide(change) &&
+                reusableOldSide(change, sameBase ? previous.get(change.path) : undefined) ===
+                    undefined,
+        ),
+        runGit,
+        options.signal,
+    );
     const displayed: GitFileChange[] = [];
     let hiddenLargeFiles = false;
     for (const change of displayCandidates) {
         const enriched = await enrichDisplayedFile(
             options.path,
-            comparison.base,
             change,
+            oldSides,
             runGit,
             options.signal,
-            options.previous?.base === comparison.base ? previous.get(change.path) : undefined,
+            sameBase ? previous.get(change.path) : undefined,
         );
         if (enriched === undefined) hiddenLargeFiles = true;
         else displayed.push(enriched);
@@ -299,10 +312,54 @@ async function reusableUntrackedCount(
     };
 }
 
-async function enrichDisplayedFile(
+/** Deleted and binary files show their old side, which must exist and fit the display limit. */
+function needsOldSide(change: GitFileChange): boolean {
+    return change.status === "deleted" || change.binary;
+}
+
+function oldPath(change: GitFileChange): string {
+    return change.previousPath ?? change.path;
+}
+
+/**
+ * The old side a scan against the same base already settled for this file.
+ *
+ * The old side is fully named by the base and the old path, so it cannot have changed. A file
+ * the previous scan displayed already passed the size limit; its old bytes were kept only if it
+ * was binary then, so a file that has since become binary is read again.
+ */
+function reusableOldSide(
+    change: GitFileChange,
+    previous: GitFileChange | undefined,
+): { oldBytes: Uint8Array | undefined } | undefined {
+    if (previous === undefined || !needsOldSide(previous)) return undefined;
+    if (oldPath(previous) !== oldPath(change)) return undefined;
+    if (change.binary && !previous.binary) return undefined;
+    return { oldBytes: previous.oldBytes };
+}
+
+/** Looks every needed old side up in one batched tree listing instead of one read per file. */
+async function readOldSides(
     root: string,
     base: string,
+    changes: readonly GitFileChange[],
+    runGit: ScanGitRunner,
+    signal: AbortSignal | undefined,
+): Promise<ReadonlyMap<string, GitTreeEntry>> {
+    if (changes.length === 0) return new Map();
+    return await readGitTreeEntries({
+        cwd: root,
+        paths: changes.map(oldPath),
+        revision: base,
+        runGit,
+        ...(signal === undefined ? {} : { signal }),
+    });
+}
+
+async function enrichDisplayedFile(
+    root: string,
     change: GitFileChange,
+    oldSides: ReadonlyMap<string, GitTreeEntry>,
     runGit: ScanGitRunner,
     signal: AbortSignal | undefined,
     previous: GitFileChange | undefined,
@@ -335,20 +392,29 @@ async function enrichDisplayedFile(
             };
         }
         let oldBytes: Uint8Array | undefined;
-        if (change.status === "deleted" || change.binary) {
-            try {
-                const old = await readGitFileAtRevision({
-                    maximumBytes: DISPLAY_FILE_BYTE_LIMIT,
-                    path: root,
-                    relativePath: change.previousPath ?? change.path,
-                    revision: base,
-                    runGit,
-                    ...(signal === undefined ? {} : { signal }),
-                });
-                if (old.found) oldBytes = old.content;
-            } catch (error) {
-                if (error instanceof Error && error.message.includes("too large")) return undefined;
-                throw error;
+        if (needsOldSide(change)) {
+            const reused = reusableOldSide(change, previous);
+            if (reused !== undefined) {
+                oldBytes = reused.oldBytes;
+            } else {
+                const entry = oldSides.get(oldPath(change));
+                if (entry?.type === "blob") {
+                    if (entry.size === undefined || entry.size > DISPLAY_FILE_BYTE_LIMIT) {
+                        return undefined;
+                    }
+                    // Only a binary file shows its old bytes; a deleted text file needed only
+                    // the size check above.
+                    if (change.binary) {
+                        const old = await runGit({
+                            args: ["cat-file", "blob", entry.objectId],
+                            cwd: root,
+                            maximumBytes: DISPLAY_FILE_BYTE_LIMIT,
+                            ...(signal === undefined ? {} : { signal }),
+                        });
+                        if (old.truncated) return undefined;
+                        oldBytes = old.stdoutBytes;
+                    }
+                }
             }
         }
         const newBytes =

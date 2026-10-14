@@ -114,6 +114,10 @@ const MAX_UNKNOWN_SETTINGS = 256;
 const MAX_PROVENANCE_ENTRIES = 512;
 const MAX_CONFIGURED_COLLABORATORS = 1_000;
 const MAX_CONFIGURED_COLLABORATION_DEPTH = 64;
+
+/** How many Windows Git scan workers are kept by default, and the range `HAPPY_GIT_SCAN_WORKER_MAX` accepts. */
+const DEFAULT_GIT_SCAN_WORKER_LIMIT = 32;
+const GIT_SCAN_WORKER_LIMIT_SCHEMA = Type.Integer({ minimum: 1, maximum: 256 });
 const MAX_INFERENCE_MAX_RETRIES = 100;
 const MAX_TOOL_RESULT_RETENTION_DAYS = 36_500;
 const MAX_MCP_TIMEOUT_SECONDS = 600;
@@ -1171,6 +1175,7 @@ const pathSchemaSet = Type.Object(
         databasePath: pathSchema,
         docsHome: pathSchema,
         generatedPath: pathSchema,
+        gitSnapshotsPath: pathSchema,
         globalConfigPath: pathSchema,
         happyHome: pathSchema,
         historyDumpHome: pathSchema,
@@ -2673,6 +2678,26 @@ export class ConfigModule implements AgentModule {
         return value.length > MAX_CONFIG_STRING_LENGTH ? undefined : value;
     }
 
+    /** How many read-only Git scan workers are kept, from `HAPPY_GIT_SCAN_WORKER_MAX`; 32 when unset or invalid. */
+    get gitScanWorkerLimit(): number {
+        return this.#configuredGitScanWorkerLimit()?.limit ?? DEFAULT_GIT_SCAN_WORKER_LIMIT;
+    }
+
+    /** A sentence for the log when `HAPPY_GIT_SCAN_WORKER_MAX` is set but invalid. */
+    get gitScanWorkerLimitWarning(): string | undefined {
+        const configured = this.#configuredGitScanWorkerLimit();
+        if (configured === undefined || configured.limit !== undefined) return undefined;
+        return `HAPPY_GIT_SCAN_WORKER_MAX must be a whole number from 1 to 256; using ${DEFAULT_GIT_SCAN_WORKER_LIMIT}.`;
+    }
+
+    /** `undefined` when the variable is unset or blank; otherwise its valid limit, if it has one. */
+    #configuredGitScanWorkerLimit(): { limit: number | undefined } | undefined {
+        const value = this.#environmentValue("HAPPY_GIT_SCAN_WORKER_MAX")?.trim();
+        if (value === undefined || value.length === 0) return undefined;
+        const limit = /^[0-9]+$/.test(value) ? Number(value) : undefined;
+        return { limit: Value.Check(GIT_SCAN_WORKER_LIMIT_SCHEMA, limit) ? limit : undefined };
+    }
+
     /** Private data root for a locally onboarded member's mobile connection. */
     happyMobileDataDirectory(userId: string): string {
         if (!Value.Check(Type.String({ pattern: "^[a-z][a-z0-9]{1,31}$" }), userId)) {
@@ -3349,6 +3374,9 @@ function derivePaths(input: HappyAgentConfigurationInput): HappyAgentConfigurati
         databasePath: join(agentHome, "agent.sqlite"),
         docsHome: join(happyHome, "docs"),
         generatedPath: join(publicHome, "Generated"),
+        // The last Git state of each watched repository, so a restart shows it at once and only
+        // has to prove it still current.
+        gitSnapshotsPath: join(agentHome, "git-snapshots.json"),
         globalConfigPath: join(configHome, "happy.toml"),
         happyHome,
         historyDumpHome: join(observationHome, "history"),

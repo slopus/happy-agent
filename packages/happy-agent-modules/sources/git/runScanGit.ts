@@ -1,7 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 
-import { computePermissions, createHostCompute } from "@slopus/happy-agent-compute";
+import {
+    computePermissions,
+    createHostCompute,
+    type HostCommandWorker,
+} from "@slopus/happy-agent-compute";
 import { createRootContext } from "@steve.kite/stdlib";
 
 import type { GitCommandRunner } from "./GitCommandRunner.js";
@@ -67,16 +71,7 @@ export async function runScanGit(options: {
     maximumBytes?: number;
     signal?: AbortSignal;
 }): Promise<ScanGitResult> {
-    const git = await resolveGitExecutable();
-    const argv = [
-        git,
-        "-C",
-        options.cwd,
-        "--no-optional-locks",
-        ...SAFE_CONFIGURATION,
-
-        ...options.args,
-    ];
+    const argv = await scanGitArgv(options.cwd, options.args);
     const rootContext = createRootContext();
     const scanContext = rootContext.named("git-read-only-scan");
     const compute = createHostCompute({
@@ -121,6 +116,48 @@ export async function runScanGit(options: {
     } finally {
         await compute.dispose(scanContext);
     }
+}
+
+/**
+ * Executes the same hardened read-only Git invocation in a workspace's long-lived sandbox worker.
+ *
+ * The worker runs Git directly under the read-only policy, so its output arrives byte-exact
+ * without the shell's Base64 wrapper, and a stream of scans pays for one sandbox start.
+ */
+export async function runScanGitInWorker(
+    worker: HostCommandWorker,
+    options: {
+        args: readonly string[];
+        cwd: string;
+        maximumBytes?: number;
+        signal?: AbortSignal;
+    },
+): Promise<ScanGitResult> {
+    const result = await worker.run({
+        argv: await scanGitArgv(options.cwd, options.args),
+        maxOutputBytes: options.maximumBytes ?? SCAN_OUTPUT_LIMIT,
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
+        timeoutMs: SCAN_TIMEOUT_MS,
+    });
+    // A truncated read is stopped on purpose, so its exit status says nothing about Git.
+    if (!result.truncated && (result.exitCode !== 0 || result.timedOut)) {
+        throw scanGitError(
+            result.timedOut ? "The Git scan timed out." : result.stderr,
+            result.exitCode,
+            result.stderr,
+            result.stdout.toString("utf8"),
+        );
+    }
+    return {
+        stdout: result.stdout.toString("utf8"),
+        stdoutBytes: result.stdout,
+        truncated: result.truncated,
+    };
+}
+
+async function scanGitArgv(cwd: string, args: readonly string[]): Promise<string[]> {
+    const git = await resolveGitExecutable();
+    return [git, "-C", cwd, "--no-optional-locks", ...SAFE_CONFIGURATION, ...args];
 }
 
 /** Adapts an injected host runner without leaving the execution surface the host configured. */
@@ -177,7 +214,7 @@ export function gitCommandRunnerFromScanGitRunner(runGit: ScanGitRunner): GitCom
     };
 }
 
-function scanEnvironment(cwd: string, gitCeilingDirectories?: string): NodeJS.ProcessEnv {
+export function scanEnvironment(cwd: string, gitCeilingDirectories?: string): NodeJS.ProcessEnv {
     const environment: NodeJS.ProcessEnv = { ...process.env };
     for (const name of STRIPPED_ENVIRONMENT) delete environment[name];
     // The shared sandbox correctly withholds private home-directory files. Tell Git not to probe
