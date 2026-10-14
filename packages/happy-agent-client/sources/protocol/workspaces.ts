@@ -33,6 +33,11 @@ export const workspaceSchema = Type.Object({
     base: Nullable(workspaceBaseSchema),
     /** The owning bot on a dedicated bot workspace; `null` on ordinary workspaces. */
     botId: Type.Optional(Nullable(cuid2Schema)),
+    /**
+     * The branch a person chose to compare this workspace's changes with; `null` for automatic.
+     * Absent on older daemons, which offer no choice.
+     */
+    comparisonBase: Type.Optional(Nullable(Type.String())),
     compute: computeSchema,
     createdAt: timestampSchema,
     /** The agent that created this workspace; `null` when a person did. */
@@ -117,6 +122,19 @@ export const renameWorkspaceRequestSchema = Type.Object({
     name: Type.String(),
 });
 export type RenameWorkspaceRequest = Static<typeof renameWorkspaceRequestSchema>;
+
+/**
+ * `PATCH /v0/workspaces/:workspaceId` with either field or both. `comparisonBase` chooses the
+ * branch the workspace's changes are compared with, and `null` returns it to automatic choice.
+ */
+export const updateWorkspaceRequestSchema = Type.Object({
+    comparisonBase: Type.Optional(
+        Nullable(Type.String({ minLength: 1, maxLength: 200, pattern: "^[^-\\s][^\\s]*$" })),
+    ),
+    mutationId: Type.Optional(mutationIdSchema),
+    name: Type.Optional(Type.String()),
+});
+export type UpdateWorkspaceRequest = Static<typeof updateWorkspaceRequestSchema>;
 
 /** `POST /v0/workspaces/:workspaceId/archive` */
 export const archiveWorkspaceRequestSchema = Type.Object({
