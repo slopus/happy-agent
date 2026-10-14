@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { runScanGit } from "../../sources/git/runScanGit.js";
+import { runScanGit, scanEnvironment } from "../../sources/git/runScanGit.js";
 import { cleanupRoots, createRepository, git } from "./helpers.js";
 
 afterEach(cleanupRoots);
@@ -108,5 +108,11 @@ describe("runScanGit", () => {
                 signal: controller.signal,
             }),
         ).rejects.toThrow();
+    });
+});
+
+describe("scanEnvironment", () => {
+    it("marks every scan as a background launch that must never open the setup prompt", () => {
+        expect(scanEnvironment("/workspace").HAPPY_WINDOWS_SANDBOX_BACKGROUND).toBe("1");
     });
 });

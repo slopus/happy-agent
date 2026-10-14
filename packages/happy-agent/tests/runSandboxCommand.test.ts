@@ -76,6 +76,42 @@ describe("Windows sandbox command", () => {
         expect(console.log).toHaveBeenCalledWith("Happy's Windows sandbox is not configured.");
     });
 
+    it("reports whether workspaces outside the user folder are set up", async () => {
+        for (const [externalReady, line] of [
+            [true, "Workspaces outside your user folder: ready."],
+            [
+                false,
+                "Workspaces outside your user folder: not set up yet. Happy asks for administrator approval the first time an agent runs a command in one, or run happy-agent sandbox setup.",
+            ],
+        ] as const) {
+            vi.mocked(console.log).mockClear();
+            execFile.mockImplementation((_file, _args, _options, callback) =>
+                callback(null, JSON.stringify({ ...ready, externalReady }), ""),
+            );
+            await runSandboxCommand(["status"]);
+            expect(console.log).toHaveBeenCalledWith("Happy's Windows sandbox is configured.");
+            expect(console.log).toHaveBeenCalledWith(line);
+        }
+    });
+
+    it("prints no outside-folder line for a helper that does not report it", async () => {
+        await runSandboxCommand(["status"]);
+        expect(
+            vi.mocked(console.log).mock.calls.some(([line]) => String(line).includes("outside")),
+        ).toBe(false);
+    });
+
+    it("reports the profile as ready while the outside accounts are not", async () => {
+        execFile.mockImplementation((_file, _args, _options, callback) =>
+            callback(null, JSON.stringify({ ...ready, externalReady: false }), ""),
+        );
+        await runSandboxCommand(["status"]);
+        expect(console.log).toHaveBeenCalledWith("Happy's Windows sandbox is configured.");
+        expect(console.log).not.toHaveBeenCalledWith(
+            "Run happy-agent sandbox setup to initialize it.",
+        );
+    });
+
     it.each([["setup"], ["setup", "--retry"]])(
         "never resolves or launches setup when prohibited: %j",
         async (...args) => {

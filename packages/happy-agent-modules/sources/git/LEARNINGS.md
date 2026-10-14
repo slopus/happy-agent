@@ -47,6 +47,15 @@ spends hundreds of watches per checkout instead of tens of thousands. Polling re
 fallback for a tree that cannot be watched, backs off while nothing changes, and proves "nothing
 changed" with a status and a stat of each changed path before it will run a diff.
 
+## "Git changes are unavailable" everywhere can be the sandbox, not Git
+
+On Windows, every workspace at once showing Git changes as unavailable was a sandbox ACL problem:
+the sandbox group had been denied the whole user profile, so the read-only scanner could not read
+any repository inside it. Check `icacls $env:USERPROFILE` for a `HappySandboxUsers` deny before
+debugging Git. Setup now removes such a deny on its own; why it existed and how workspaces outside
+the profile avoid it are in
+`packages/happy-agent-supervisor/native/windows/EXTERNAL_SANDBOX_IDENTITY.md`.
+
 ## A working-tree watch must never be replaced or outlive its folder
 
 Two watcher failures surfaced only in the release gate. On Linux, replacing a folder's Parcel
@@ -61,6 +70,17 @@ started a sandboxed `git ls-files` in the folder to learn what to ignore, and a 
 working directory is a folder keeps it locked on Windows even after its parent exits. Windows
 watches recursively in the kernel, so it no longer lists ignored directories at all and keeps
 Node's `fs.watch`; everywhere, closing a watch aborts a listing still in flight.
+
+## Background scans never open the sandbox setup prompt
+
+On Windows the sandbox accounts for workspaces outside the user folder are created the first time
+one is used, behind a one-time administrator prompt. A Git scan runs for every watched workspace
+on every daemon start, so letting it ask would show a prompt after each restart with nothing on
+screen to explain it. Scans therefore mark their environment `HAPPY_WINDOWS_SANDBOX_BACKGROUND=1`,
+which the shared compute turns into the supervisor's `--background` flag. A background launch
+fails with a message naming `happy-agent sandbox setup`, and Git changes show as unavailable until
+the user sets up or starts an agent in that workspace. Only agent commands and
+`happy-agent sandbox setup` may open the prompt.
 
 ## The home directory is never watched
 
