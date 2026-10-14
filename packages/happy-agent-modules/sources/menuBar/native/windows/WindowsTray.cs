@@ -197,25 +197,9 @@ internal sealed class WindowsTray : ApplicationContext
 
     private static Icon CreateIcon()
     {
-        // The same stationary star as the macOS status item, drawn once with no animation timer.
-        using (var bitmap = new Bitmap(32, 32))
-        using (var graphics = Graphics.FromImage(bitmap))
-        {
-            graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-            var points = new PointF[10];
-            for (int i = 0; i < points.Length; i++)
-            {
-                double angle = -Math.PI / 2 + i * Math.PI / 5;
-                double radius = i % 2 == 0 ? 14 : 6;
-                points[i] = new PointF((float)(16 + radius * Math.Cos(angle)), (float)(16 + radius * Math.Sin(angle)));
-            }
-            graphics.FillPolygon(Brushes.Gold, points);
-            IntPtr handle = bitmap.GetHicon();
-            try { using (var borrowed = Icon.FromHandle(handle)) return (Icon)borrowed.Clone(); }
-            finally { DestroyIcon(handle); }
-        }
+        // The official Happy logo, embedded in the executable as a multi-size icon. Asking for the
+        // system's small icon size picks the closest stored image, so it stays sharp on HiDPI.
+        using (var stream = typeof(WindowsTray).Assembly.GetManifestResourceStream("happy.ico"))
+            return new Icon(stream, SystemInformation.SmallIconSize);
     }
-
-    [System.Runtime.InteropServices.DllImport("user32.dll")]
-    private static extern bool DestroyIcon(IntPtr handle);
 }

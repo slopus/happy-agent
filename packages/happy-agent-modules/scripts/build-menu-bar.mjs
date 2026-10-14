@@ -26,6 +26,7 @@ function main() {
             throw new Error("Building the Windows tray requires Windows.");
         const outputRoot = join(packageRoot, "dist", "menuBar", "bin");
         mkdirSync(outputRoot, { recursive: true });
+        const icon = join(nativeRoot, "windows", "happy.ico");
         const compiler = join(
             process.env.SystemRoot ?? "C:\\Windows",
             "Microsoft.NET",
@@ -41,6 +42,8 @@ function main() {
                 "/optimize+",
                 "/platform:x64",
                 `/out:${join(outputRoot, `happy-menu-bar-${requested}.exe`)}`,
+                `/win32icon:${icon}`,
+                `/resource:${icon},happy.ico`,
                 "/reference:System.Windows.Forms.dll",
                 "/reference:System.Drawing.dll",
                 "/reference:System.Runtime.Serialization.dll",

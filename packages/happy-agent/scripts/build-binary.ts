@@ -1,11 +1,20 @@
-import { existsSync, readFileSync, realpathSync, readdirSync } from "node:fs";
+import {
+    existsSync,
+    mkdirSync,
+    readFileSync,
+    realpathSync,
+    readdirSync,
+    writeFileSync,
+} from "node:fs";
 import { copyFile, mkdir, mkdtemp } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
 import { createRequire, type Require } from "node:module";
 import { basename, dirname, extname, join, resolve } from "node:path";
 
+import { orderIconLargestFirst } from "./orderIconLargestFirst.js";
 import { resolveBinaryVersion } from "./resolveBinaryVersion.js";
 import { resolveTailcatBinaryAsset } from "./resolveTailcatBinaryAsset.js";
+import { windowsExecutableVersion } from "./windowsExecutableVersion.js";
 
 const MINIMUM_BUN_VERSION = [1, 4, 2] as const;
 const VIRTUAL_ASSETS_MODULE = "happy-agent:binary-assets";
@@ -124,16 +133,30 @@ async function buildTarget(target: BinaryTarget): Promise<void> {
         `happy-agent-${target.key}${target.platform === "win32" ? ".exe" : ""}`,
     );
     console.log(`Compiling ${target.key}...`);
+    const version = resolveBinaryVersion(
+        readPackageVersion(),
+        process.env.HAPPY_AGENT_RELEASE_VERSION,
+    );
     const result = await Bun.build({
         compile: {
             execArgv: ["--smol"],
             outfile,
             target: target.bunTarget,
+            // Without this metadata the Windows exe presents itself as Bun.
+            ...(target.platform === "win32"
+                ? {
+                      windows: {
+                          icon: resolveWindowsIcon(),
+                          title: "Happy Agent",
+                          publisher: "Slopus",
+                          description: "Happy Agent",
+                          version: windowsExecutableVersion(version),
+                      },
+                  }
+                : {}),
         },
         define: {
-            HAPPY_AGENT_BUILD_VERSION: JSON.stringify(
-                resolveBinaryVersion(readPackageVersion(), process.env.HAPPY_AGENT_RELEASE_VERSION),
-            ),
+            HAPPY_AGENT_BUILD_VERSION: JSON.stringify(version),
             HAPPY_AGENT_STANDALONE: "true",
         },
         entrypoints: [join(happyAgentRoot, "dist", "cli.js")],
@@ -247,6 +270,23 @@ function assertSupportedBunVersion(): void {
             );
         }
     }
+}
+
+function resolveWindowsIcon(): string {
+    const icon = join(
+        directPackageRoot("@slopus/happy-agent-modules"),
+        "sources",
+        "menuBar",
+        "native",
+        "windows",
+        "happy.ico",
+    );
+    if (!existsSync(icon)) throw new Error(`The Windows executable icon is missing: ${icon}`);
+    // Bun keeps its own first icon group, which shows RT_ICON id 1, so the largest image must be first.
+    const ordered = join(happyAgentRoot, "dist", "windows", "happy-agent.ico");
+    mkdirSync(dirname(ordered), { recursive: true });
+    writeFileSync(ordered, orderIconLargestFirst(readFileSync(icon)));
+    return ordered;
 }
 
 function readPackageVersion(): string {
