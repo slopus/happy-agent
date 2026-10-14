@@ -1,4 +1,5 @@
 import { Type, type Static, type TSchema } from "@sinclair/typebox";
+import type { AgentKV } from "@slopus/happy-agent-base";
 import { workspaceServiceCleanupSchema } from "@slopus/happy-agent-client";
 import { Value } from "@sinclair/typebox/value";
 import type { Context } from "@steve.kite/stdlib";
@@ -23,6 +24,7 @@ import {
     workspaceStorageKeySchema,
     workspaceBaseRefSchema,
     workspaceCommitSchema,
+    workspaceComparisonBaseSchema,
     workspaceDockerImageSchema,
     workspaceErrorSchema,
     workspaceInitializationFactsSchema,
@@ -32,6 +34,7 @@ import {
     type WorkspaceGitFacts,
     type WorkspaceReserveHooks,
 } from "./Workspace.js";
+import type { DurableFunctionsModule } from "../durableFunctions/index.js";
 import type { WorkspacesModule } from "./WorkspacesModule.js";
 import { WorkspaceInputError } from "./WorkspaceInputError.js";
 import { workspaceBranchName, workspaceNameKey } from "./WorkspaceIdentity.js";
@@ -112,6 +115,15 @@ export const workspaceStoreInheritNameInputSchema = Type.Object(
 
 export const workspaceStoreSetBranchInputSchema = Type.Object(
     { workspaceId: workspaceIdSchema, branch: workspaceBranchSchema },
+    { additionalProperties: false },
+);
+
+export const workspaceStoreSetComparisonBaseInputSchema = Type.Object(
+    {
+        workspaceId: workspaceIdSchema,
+        comparisonBase: Type.Union([workspaceComparisonBaseSchema, Type.Null()]),
+        expectedVersion: Type.Optional(workspaceVersionSchema),
+    },
     { additionalProperties: false },
 );
 
@@ -226,6 +238,7 @@ export const workspaceStoreSchema = Type.Object(
         rename: mutation(workspaceStoreRenameInputSchema),
         inheritName: mutation(workspaceStoreInheritNameInputSchema),
         setBranch: mutation(workspaceStoreSetBranchInputSchema),
+        setComparisonBase: mutation(workspaceStoreSetComparisonBaseInputSchema),
         recordInitialization: mutation(workspaceStoreRecordInitializationInputSchema),
         markReady: mutation(workspaceStoreWorkspaceInputSchema),
         markFailed: mutation(workspaceStoreFailInputSchema),
@@ -245,6 +258,9 @@ export type WorkspaceStoreReserveInput = Static<typeof workspaceStoreReserveInpu
 export type WorkspaceStoreRenameInput = Static<typeof workspaceStoreRenameInputSchema>;
 export type WorkspaceStoreInheritNameInput = Static<typeof workspaceStoreInheritNameInputSchema>;
 export type WorkspaceStoreSetBranchInput = Static<typeof workspaceStoreSetBranchInputSchema>;
+export type WorkspaceStoreSetComparisonBaseInput = Static<
+    typeof workspaceStoreSetComparisonBaseInputSchema
+>;
 export type WorkspaceStoreRecordInitializationInput = Static<
     typeof workspaceStoreRecordInitializationInputSchema
 >;
@@ -306,7 +322,39 @@ export function assertWorkspaceTransactionChange(
     }
 }
 
-export function createWorkspaceStore(catalog: WorkspacesModule): WorkspaceStore {
+export function createWorkspaceStore(
+    catalog: WorkspacesModule,
+    durableFunctions: DurableFunctionsModule,
+): WorkspaceStore {
+    // A chosen comparison branch is kept beside the row, among Durable Functions' module values,
+    // so choosing one needs no schema migration and a daemon that predates it never sees it.
+    // Before an agent system starts Durable Functions nothing can have been chosen through it.
+    const comparisonBases = (): AgentKV | undefined =>
+        durableFunctions.values("workspaces")?.scoped("comparisonBase");
+    const withComparisonBase = async (
+        ctx: Context,
+        workspace: Workspace | undefined,
+    ): Promise<Workspace | undefined> =>
+        workspace === undefined
+            ? undefined
+            : withChosen(workspace, await comparisonBases()?.read(ctx, workspace.id));
+    const withComparisonBases = async (
+        ctx: Context,
+        workspaces: readonly Workspace[],
+    ): Promise<Workspace[]> => {
+        const store = comparisonBases();
+        if (workspaces.length === 0 || store === undefined) return [...workspaces];
+        const chosen = new Map((await store.list(ctx)).map(({ key, value }) => [key, value]));
+        return workspaces.map((workspace) => withChosen(workspace, chosen.get(workspace.id)));
+    };
+    const requireComparisonBases = (): AgentKV => {
+        const store = comparisonBases();
+        if (store === undefined) {
+            throw new Error("A comparison branch cannot be chosen before the agent system starts.");
+        }
+        return store;
+    };
+
     const now = (): number => {
         const at = Date.now();
         if (!Value.Check(workspaceTimestampSchema, at)) {
@@ -327,7 +375,7 @@ export function createWorkspaceStore(catalog: WorkspacesModule): WorkspaceStore 
         decide: (before: Workspace) => Workspace | undefined | Promise<Workspace | undefined>,
     ): Promise<WorkspaceMutationResult> => {
         const database = ctx.db;
-        const before = await readWorkspace(database, workspaceId);
+        const before = await withComparisonBase(ctx, await readWorkspace(database, workspaceId));
         if (before === undefined) throw new Error(`Workspace "${workspaceId}" was not found.`);
         const decided = await decide(before);
         if (decided === undefined) {
@@ -366,7 +414,7 @@ export function createWorkspaceStore(catalog: WorkspacesModule): WorkspaceStore 
                 cursor,
                 limit,
             });
-            const workspaces = rows.slice(0, limit);
+            const workspaces = await withComparisonBases(ctx, rows.slice(0, limit));
             return {
                 workspaces,
                 cursor,
@@ -374,9 +422,11 @@ export function createWorkspaceStore(catalog: WorkspacesModule): WorkspaceStore 
             };
         },
 
-        get: async (ctx, workspaceId) => await readWorkspace(ctx.db, workspaceId),
+        get: async (ctx, workspaceId) =>
+            await withComparisonBase(ctx, await readWorkspace(ctx.db, workspaceId)),
 
-        getByPath: async (ctx, path) => await readWorkspaceByPath(ctx.db, path),
+        getByPath: async (ctx, path) =>
+            await withComparisonBase(ctx, await readWorkspaceByPath(ctx.db, path)),
 
         rename: async (ctx, input, operation) => {
             const siblings = await readProjectWorkspacesFor(ctx.db, input.workspaceId);
@@ -411,6 +461,27 @@ export function createWorkspaceStore(catalog: WorkspacesModule): WorkspaceStore 
                     ? undefined
                     : { ...before, branch: input.branch },
             ),
+
+        setComparisonBase: async (ctx, input, operation) =>
+            await update(ctx, input.workspaceId, operation, async (before) => {
+                assertExpectedVersion(
+                    before,
+                    input.expectedVersion,
+                    "The workspace changed before its comparison branch could be chosen.",
+                );
+                if (isSettled(before) || (before.comparisonBase ?? null) === input.comparisonBase) {
+                    return undefined;
+                }
+                // Written in the transaction that advances the row, so both commit or neither.
+                if (input.comparisonBase === null) {
+                    await requireComparisonBases().delete(ctx, before.id);
+                    const automatic: Workspace = { ...before };
+                    delete automatic.comparisonBase;
+                    return automatic;
+                }
+                await requireComparisonBases().write(ctx, before.id, input.comparisonBase);
+                return { ...before, comparisonBase: input.comparisonBase };
+            }),
 
         recordInitialization: async (ctx, input, operation) =>
             await update(ctx, input.workspaceId, operation, (before) => {
@@ -568,6 +639,17 @@ export function createWorkspaceStore(catalog: WorkspacesModule): WorkspaceStore 
                 return sameJson(probed, before) ? undefined : probed;
             }),
     };
+}
+
+/** The record with the comparison branch stored for it; anything unreadable counts as none. */
+function withChosen(workspace: Workspace, stored: unknown): Workspace {
+    if (Value.Check(workspaceComparisonBaseSchema, stored)) {
+        return { ...workspace, comparisonBase: stored };
+    }
+    if (workspace.comparisonBase === undefined) return workspace;
+    const automatic: Workspace = { ...workspace };
+    delete automatic.comparisonBase;
+    return automatic;
 }
 
 /** Archival is terminal: an observation that arrives afterwards changes nothing. */

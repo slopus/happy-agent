@@ -325,6 +325,11 @@ order, so older clients see the same arrays they always did. Older daemons omit 
 answer the route with `404`; clients then keep the order the daemon supplies and offer no
 subtask reordering.
 
+Comparison branches are additive and do not increment the protocol version. The git state's
+`baseRef`, `baseSource`, and `baseNotice` and the workspace's `comparisonBase` are absent on older
+daemons; clients then show no comparison branch and offer no way to choose one. Older daemons
+compare every workspace with its default branch.
+
 By explicit product decision, the unused managed-root creation option is removed from both the
 client and daemon as a one-off exception to additive compatibility. `POST /v0/agents` rejects
 `parentAgentId` as an unknown request field with `400 invalid_request`; it creates only
@@ -3063,6 +3068,7 @@ workspace route.
     "status": "active",
     "initialization": { "status": "ready", "attempt": 1, "error": null },
     "base": { "ref": "main", "commit": "4f2a1c9" },
+    "comparisonBase": null,
     "git": {
         "branch": "fix-login",
         "head": "8b3d2e1",
@@ -3112,6 +3118,11 @@ Fields:
 - `base` — what the workspace was created from: the `ref` the caller named and the `commit`
   it resolved to at creation time. `null` on a bot or task workspace, which is created empty
   rather than cut from anything.
+- `comparisonBase` — optional additive field, always emitted by current daemons. The branch a
+  person chose to compare this workspace's changes with, as they wrote it (`"release-v8.8"`,
+  `"origin/release-v8.8"`), or `null` when the daemon chooses automatically. It is a preference,
+  not a promise: the git state's `baseRef`, `baseSource`, and `baseNotice` say what the changes
+  are actually compared with. Always `null` on a root, bot, or task workspace.
 - `git` — the same working-tree summary as on the project, for this workspace's checkout.
 - `botId` — optional additive field, always emitted by current daemons. `null` for every
   ordinary workspace; the owning bot's ID on a bot's dedicated workspace. See the bots chapter
@@ -3200,6 +3211,23 @@ Response — `200`: `{ "workspace": { ... } }`. The root workspace is renamed th
 project (`PATCH /v0/projects/:projectId`), not here; renaming it through this route is `409`.
 A bot workspace's name is fixed by its bot's immutable username, so renaming it here is also
 `409`.
+
+The same route sets the branch the workspace's changes are compared with. `comparisonBase` is
+an optional additive request field; `name` becomes optional when it is present, and a request
+must carry at least one of the two:
+
+`{ "comparisonBase": "release-v8.8", "mutationId": "..." }`
+
+- a string of 1 to 200 characters chooses that branch. It must not start with `-` and must not
+  contain whitespace or control characters; otherwise the request is `400`. The daemon does not
+  require the branch to exist yet: one that is missing is reported through the git state's
+  `baseNotice` until it appears.
+- `null` returns the workspace to automatic choice.
+
+The change is durable and published as `workspace.updated`; the next git state, with its
+`git.updated` event, is measured against the new choice. Setting `comparisonBase` on a root,
+bot, or task workspace is `409`. Daemons older than this field answer `400` to any request that
+carries it; a client detects support by `comparisonBase` being present on the workspace object.
 
 ### `POST /v0/workspaces/:workspaceId/archive`
 
@@ -3854,7 +3882,10 @@ The git state object:
         "behind": 0
     },
     "comparison": "ready",
-    "base": "origin/main",
+    "base": "4f2a1c93b7e0d5a6c8f1e2d3b4a5968778695a4b",
+    "baseRef": "origin/main",
+    "baseSource": "default",
+    "baseNotice": null,
     "changedFiles": 3,
     "insertions": 120,
     "deletions": 14,
@@ -3878,10 +3909,35 @@ The git state object:
 
 - `facts` — where the repository stands: branch (absent when `detached`), `head`, the
   `upstream` it tracks, and how far `ahead`/`behind` it is.
-- `comparison`, `base` — what the changes are measured against: the merge base with
-  `origin/<default branch>`, else the merge base with the local default branch, else `HEAD`,
-  else (no commits yet) the empty tree. `"unavailable"` only when the repository could not be
-  read; then only `facts` are meaningful.
+- `comparison`, `base` — what the changes are measured against. `base` is a commit ID: the
+  merge base of `HEAD` with the comparison branch (see `baseRef`), else `HEAD` itself when no
+  comparison branch shares history with it, else (no commits yet) the empty tree.
+  `"unavailable"` only when the repository could not be read; then only `facts` are meaningful.
+- `baseRef` — optional additive field, always emitted by current daemons. The comparison branch,
+  written the way a person writes it: `"origin/release-v8.8"` for a remote branch, `"main"` for a
+  local one. `null` when `base` is `HEAD` or the empty tree. The comparison branch is the first of
+  these that exists and shares history with `HEAD`:
+    1. the workspace's `comparisonBase`, when a person chose one;
+    2. the branch the workspace was created from (its `base.ref`), unless that is the default
+       branch, or HEAD no longer contains the workspace's `base.commit` (its branch was rebased
+       or reset onto something else);
+    3. a branch the repository records for the current branch: the ref it was created from, the
+       pull request base the GitHub CLI records, or an upstream whose branch name differs from
+       the current branch's;
+    4. the repository's default branch.
+
+    Remote branches are looked up on the remote the current branch tracks, else `origin`, else the
+    only remote. The default branch is always preferred on that remote; a branch named in steps
+    1–3 is preferred locally unless its name starts with a remote.
+
+- `baseSource` — optional additive field, always emitted by current daemons. Which step chose
+  `baseRef`: `"explicit"`, `"workspace"`, `"inferred"`, or `"default"`. `null` when `baseRef` is
+  `null`.
+- `baseNotice` — optional additive field, always emitted by current daemons. `null`, or one
+  human-readable sentence saying that a chosen or recorded comparison branch was not found and
+  what the changes are compared with instead, for example `The chosen comparison branch
+"release-v9.0" was not found. Changes are compared with origin/main.` Clients show it beside
+  the comparison rather than letting the numbers change meaning silently.
 - `changedFiles`, `insertions`, `deletions`, `countsExact` — the summary numbers; `countsExact`
   is `false` when a large tree made the daemon estimate.
 - `files` — per-file changes: `status` is `"added"`, `"modified"`, `"deleted"`, `"renamed"`,
@@ -3893,6 +3949,27 @@ The git state object:
 
 The current git state, scanning if nothing fresh is cached. Response — `200`:
 `{ "git": { ... } }`; `404` for a workspace without a repository.
+
+#### `GET /v0/workspaces/:workspaceId/git/branches`
+
+The branches a workspace's changes can be compared with, for choosing `comparisonBase`.
+Query: `query`, an optional case-insensitive substring of at most 200 characters, and `limit`,
+1 to 200, default 50. Response, `200`:
+`{ "branches": [ { "ref": "origin/release-v8.8", "remote": true, "committedAt": 1755400000000 } ], "truncated": false }`
+
+- `ref`: written like the git state's `baseRef`, and accepted unchanged as `comparisonBase`.
+  Local branches and every remote's tracking branches are listed. Symbolic refs such as
+  `origin/HEAD`, the checked-out branch, and names longer than 200 characters are not.
+- `remote`: whether `ref` is a remote-tracking branch. `committedAt` is the tip commit's time,
+  or `null` when it cannot be read.
+- Branches whose name, with or without its remote, starts with `query` come first. The rest
+  are ordered newest commit first, and an empty `query` lists the newest branches.
+  `truncated` is `true` when more branches matched than were returned.
+- The list reads refs already on the machine. It never fetches, and it may lag the remote by a
+  few seconds.
+
+`400` for an invalid `query`, `limit`, or unknown parameter. `404` for a workspace on a runner
+or without a repository. Daemons older than this route answer `404`.
 
 #### `POST /v0/git/watch`
 

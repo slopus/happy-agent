@@ -1,5 +1,7 @@
 import { Type, type Static } from "@sinclair/typebox";
 
+import { gitComparisonBaseSourceSchema } from "./resolveGitComparisonBase.js";
+
 export const gitRemoteSourceSchema = Type.Union([
     Type.Object(
         {
@@ -74,8 +76,14 @@ export type GitFileChange = Static<typeof gitFileChangeSchema>;
 export const gitChangeStateSchema = Type.Object(
     {
         base: Type.Optional(Type.String()),
+        /** When the repository was last read for an inferred comparison branch. */
+        baseCheckedAt: Type.Optional(Type.Number()),
+        /** Why the preferred comparison branch is not the one used, in words a person can read. */
+        baseNotice: Type.Optional(Type.String()),
         /** The full branch ref `base` was measured from; absent for HEAD and the empty tree. */
         baseRef: Type.Optional(Type.String()),
+        /** Where the comparison branch came from. */
+        baseSource: Type.Optional(gitComparisonBaseSourceSchema),
         changedFiles: Type.Integer({ minimum: 0 }),
         comparison: Type.Union([Type.Literal("ready"), Type.Literal("unavailable")]),
         conflicted: Type.Boolean(),
@@ -103,8 +111,14 @@ export type GitChangeSnapshot = Static<typeof gitChangeSnapshotSchema>;
 
 export const gitTrackedEntitySchema = Type.Object(
     {
+        /** The branch a person chose to compare this workspace with. */
+        comparisonBase: Type.Optional(Type.String({ minLength: 1, maxLength: 1_024 })),
         path: Type.String({ minLength: 1 }),
         projectId: Type.String({ minLength: 1 }),
+        /** The branch the workspace was created from. */
+        recordedBaseRef: Type.Optional(Type.String({ minLength: 1, maxLength: 1_024 })),
+        /** The commit the workspace was created at; its record applies only while HEAD holds it. */
+        recordedBaseCommit: Type.Optional(Type.String({ pattern: "^[0-9a-f]{7,64}$" })),
         workspaceId: Type.Optional(Type.String({ minLength: 1 })),
     },
     { additionalProperties: false },

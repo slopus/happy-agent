@@ -260,11 +260,13 @@ export async function writeWorkspace(
             `Workspace "${workspace.id}" changed before this write could be applied to it.`,
         );
     }
+    // The chosen comparison branch is kept beside the row, so the row holds everything else.
+    const { comparisonBase, ...row } = workspace;
     const stored = await readWorkspace(database, workspace.id);
-    if (stored === undefined || !sameJson(stored, workspace)) {
+    if (stored === undefined || !sameJson(stored, row)) {
         throw new Error(`Workspace "${workspace.id}" did not store the state that was written.`);
     }
-    return stored;
+    return comparisonBase === undefined ? stored : { ...stored, comparisonBase };
 }
 
 /** Advances the resource version for a change owned by an adjacent workspace table. */

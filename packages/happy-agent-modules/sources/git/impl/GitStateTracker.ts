@@ -1,5 +1,6 @@
 import type { Context, RootContext } from "@steve.kite/stdlib";
 
+import type { GitComparisonPreferences } from "../resolveGitComparisonBase.js";
 import type { ScanGitRunner } from "../runScanGit.js";
 import {
     readGitWorktreeFingerprint,
@@ -18,16 +19,27 @@ const TRACKED_LIMIT = 256;
 const SCAN_CONCURRENCY = 2;
 const DEBOUNCE_MS = 150;
 const MAXIMUM_DEBOUNCE_MS = 750;
-const RECURSIVE_WATCH_STALE_MS = 2 * 60 * 1000;
+/**
+ * A watched repository is rescanned on its working-tree and Git metadata events, so its stale
+ * check is only a safety net for an event the operating system lost. On Windows each check of a
+ * background workspace would otherwise keep its scan sandbox busy around the clock.
+ */
+const RECURSIVE_WATCH_STALE_MS = 30 * 60 * 1000;
 const POLLING_STALE_MS = 30_000;
 const WORKTREE_PATH_LIMIT = 128;
 const WORKTREE_PATH_BATCH = 64;
 const PATH_STATUS_OUTPUT_LIMIT = 64 * 1024;
 const BACKOFF_START_MS = 1_000;
 const BACKOFF_LIMIT_MS = 30_000;
-/** However long a repository has been idle, a full scan still runs this often. */
+/**
+ * However long a repository has been idle, its comparison base is proved again this often: by
+ * merge base when the snapshot names its base branch, and otherwise by a full scan.
+ */
 const FULL_SCAN_LIMIT_MS = 30 * 60 * 1000;
-/** Each unchanged stale check doubles the wait, up to this many times the starting interval. */
+/**
+ * Each unchanged stale check of a polled repository doubles the wait, up to this many times the
+ * starting interval.
+ */
 const IDLE_RECONCILE_FACTOR = 10;
 
 /** The stale deadline of a repository whose working tree is not delivering events. */
@@ -44,8 +56,24 @@ export const GIT_WATCHED_RECONCILE_STALE_AFTER_MS = RECURSIVE_WATCH_STALE_MS;
  */
 export interface GitStateTrackerOwner {
     deliver(ctx: Context, entity: GitTrackedEntity, snapshot: GitChangeSnapshot): Promise<void>;
+    /** Records a repository's latest scanned state for the next daemon to start from. */
+    remember?(
+        entity: GitTrackedEntity,
+        state: GitChangeState,
+        fingerprint: string | undefined,
+    ): void;
     report(ctx: Context, error: unknown, entity: GitTrackedEntity): void;
+    /** What a previous daemon last knew about a repository, if anything. */
+    restore?(entity: GitTrackedEntity): GitRestoredState | undefined;
     stamp(state: GitChangeState): GitChangeSnapshot;
+}
+
+/** A repository's state as a previous daemon left it. */
+export interface GitRestoredState {
+    fingerprint?: string;
+    /** Whether something was left out, so the state is only shown until a full scan replaces it. */
+    partial: boolean;
+    state: GitChangeState;
 }
 
 interface RepositoryTracker {
@@ -74,6 +102,11 @@ interface RepositoryTracker {
     reconcileDelayMs: number;
     /** Whether the queued scan is only a stale check, which a matching fingerprint satisfies. */
     reconciling: boolean;
+    /**
+     * A snapshot restored from a previous daemon awaiting its first check: `"verify"` when a
+     * matching fingerprint proves it current, `"rescan"` when only a full scan can replace it.
+     */
+    restored: "rescan" | "verify" | undefined;
     scanController: AbortController | undefined;
     scanning: boolean;
     snapshot: GitChangeSnapshot | undefined;
@@ -214,6 +247,7 @@ export class GitStateTracker {
             reconcileAfterScan: false,
             reconcileDelayMs: GIT_RECONCILE_STALE_AFTER_MS,
             reconciling: false,
+            restored: undefined,
             scanController: undefined,
             scanning: false,
             snapshot: undefined,
@@ -223,6 +257,17 @@ export class GitStateTracker {
             unwatch: undefined,
             unwatchTree: undefined,
         };
+        // What the previous daemon knew is served at once; the first check proves or replaces it.
+        const restored = this.#owner.restore?.(entity);
+        if (restored !== undefined) {
+            tracker.snapshot = this.#owner.stamp(restored.state);
+            tracker.snapshotDelivered = true;
+            tracker.fingerprint = restored.fingerprint;
+            // Refs may have moved while no daemon watched them, so the base is proved at once.
+            tracker.fullScanAt = Number.NEGATIVE_INFINITY;
+            tracker.restored =
+                restored.partial || restored.fingerprint === undefined ? "rescan" : "verify";
+        }
         this.#trackers.set(key, tracker);
         this.#evictExpired();
         if (!this.#trackers.has(key)) return;
@@ -460,6 +505,15 @@ export class GitStateTracker {
     }
 
     #watchChanged(tracker: RepositoryTracker, change: GitRepositoryChange): void {
+        if (change.kind === "armed" && tracker.restored !== undefined) {
+            const verify = tracker.restored === "verify";
+            tracker.restored = undefined;
+            // A restored snapshot only has to be proved current, queued like any stale check.
+            if (verify) {
+                this.#reconcileBy(tracker, Date.now());
+                return;
+            }
+        }
         if (
             change.kind === "refs" &&
             !gitReferenceChangeAffectsSnapshot(tracker.snapshot, change.entry)
@@ -612,6 +666,7 @@ export class GitStateTracker {
                     ? {}
                     : { gitDirectory: tracker.gitDirectory }),
                 path: tracker.entity.path,
+                preferences: comparisonPreferences(tracker.entity),
                 ...(tracker.snapshot === undefined ? {} : { previous: tracker.snapshot }),
                 runGit: this.#scan,
                 signal: controller.signal,
@@ -630,6 +685,7 @@ export class GitStateTracker {
                 await this.#owner.deliver(ctx, tracker.entity, snapshot);
                 tracker.snapshotDelivered = true;
             }
+            this.#owner.remember?.(tracker.entity, state, scanned.fingerprint);
             this.#settleReconcile(tracker, unchanged);
         } catch (error) {
             if (this.#disposed || tracker.generation !== generation) return;
@@ -664,25 +720,43 @@ export class GitStateTracker {
      * Whether the delivered snapshot is provably still current, by fingerprint alone.
      *
      * Only a stale check may be answered this way: a Git metadata event or an explicit refresh
-     * always scans. A full scan still runs at least every `FULL_SCAN_LIMIT_MS`, so a missed
-     * `origin/main` move cannot hide behind an unchanged working tree for long.
+     * always scans. The base is proved again at least every `FULL_SCAN_LIMIT_MS`, so a missed
+     * `origin/main` move cannot hide behind an unchanged working tree for long. With HEAD and the
+     * working tree fixed by the fingerprint, an unchanged merge base with the base branch fixes
+     * the diff too, so that proof costs one Git process instead of a full scan.
      */
     async #stillCurrent(tracker: RepositoryTracker, signal: AbortSignal): Promise<boolean> {
         if (
             tracker.fingerprint === undefined ||
             tracker.gitDirectory === undefined ||
             !tracker.snapshotDelivered ||
-            Date.now() - tracker.fullScanAt >= FULL_SCAN_LIMIT_MS
+            tracker.snapshot === undefined
         ) {
             return false;
         }
+        const baseDue = Date.now() - tracker.fullScanAt >= FULL_SCAN_LIMIT_MS;
+        const proof = baseDue ? baseProof(tracker.snapshot) : undefined;
+        if (baseDue && proof === undefined) return false;
         const fingerprint = await readGitWorktreeFingerprint({
             gitDirectory: tracker.gitDirectory,
             path: tracker.entity.path,
             runGit: this.#scan,
             signal,
         });
-        return fingerprint !== undefined && fingerprint === tracker.fingerprint;
+        if (fingerprint === undefined || fingerprint !== tracker.fingerprint) return false;
+        if (proof === undefined) return true;
+        try {
+            const result = await this.#scan({
+                args: ["merge-base", "--end-of-options", proof.ref, proof.head],
+                cwd: tracker.entity.path,
+                signal,
+            });
+            if (result.stdout.trim() !== proof.base) return false;
+        } catch {
+            return false;
+        }
+        tracker.fullScanAt = Date.now();
+        return true;
     }
 
     /** Clears retry backoff and schedules the next stale check: sooner after change, later when idle. */
@@ -692,9 +766,11 @@ export class GitStateTracker {
         if (tracker.backoffTimer !== undefined) clearTimeout(tracker.backoffTimer);
         tracker.backoffTimer = undefined;
         const staleAfter = this.#staleAfter(tracker);
-        tracker.reconcileDelayMs = unchanged
-            ? Math.min(staleAfter * IDLE_RECONCILE_FACTOR, tracker.reconcileDelayMs * 2)
-            : staleAfter;
+        // A watched repository's safety net is already long; only polling relaxes further.
+        tracker.reconcileDelayMs =
+            unchanged && !tracker.treeWatching
+                ? Math.min(staleAfter * IDLE_RECONCILE_FACTOR, tracker.reconcileDelayMs * 2)
+                : staleAfter;
         tracker.reconcileAt = tracker.reconcileAfterScan
             ? Date.now()
             : Date.now() + tracker.reconcileDelayMs;
@@ -704,6 +780,7 @@ export class GitStateTracker {
     async #runScan(entity: GitTrackedEntity, signal?: AbortSignal): Promise<GitChangeState> {
         return await scanGitRepository({
             path: entity.path,
+            preferences: comparisonPreferences(entity),
             runGit: this.#scan,
             ...(signal === undefined ? {} : { signal }),
         });
@@ -714,6 +791,15 @@ export function entityKey(entity: GitTrackedEntity): string {
     return entity.workspaceId === undefined
         ? `project:${entity.projectId}`
         : `workspace:${entity.workspaceId}`;
+}
+
+/** What a merge base must still equal for a snapshot measured against a named base branch. */
+function baseProof(
+    snapshot: GitChangeSnapshot,
+): { base: string; head: string; ref: string } | undefined {
+    const { base, baseRef, facts } = snapshot;
+    if (base === undefined || baseRef === undefined || facts.head === undefined) return undefined;
+    return { base, head: facts.head, ref: baseRef };
 }
 
 function sameState(left: GitChangeSnapshot | undefined, right: GitChangeState): boolean {
@@ -727,47 +813,59 @@ function sameEntity(left: GitTrackedEntity, right: GitTrackedEntity): boolean {
     return (
         left.path === right.path &&
         left.projectId === right.projectId &&
-        left.workspaceId === right.workspaceId
+        left.workspaceId === right.workspaceId &&
+        left.comparisonBase === right.comparisonBase &&
+        left.recordedBaseRef === right.recordedBaseRef &&
+        left.recordedBaseCommit === right.recordedBaseCommit
     );
 }
 
+/** What a tracked workspace says about its comparison branch, in the scan's terms. */
+function comparisonPreferences(entity: GitTrackedEntity): GitComparisonPreferences {
+    return {
+        ...(entity.comparisonBase === undefined ? {} : { comparisonBase: entity.comparisonBase }),
+        ...(entity.recordedBaseRef === undefined
+            ? {}
+            : { recordedBaseRef: entity.recordedBaseRef }),
+        ...(entity.recordedBaseCommit === undefined
+            ? {}
+            : { recordedBaseCommit: entity.recordedBaseCommit }),
+    };
+}
+
+/**
+ * Whether a branch or remote ref moving can change what a snapshot shows.
+ *
+ * The narrow case follows the chosen comparison branch: the snapshot's own branch, its upstream,
+ * and its comparison ref. A comparison on the default branch also follows every remote's HEAD and,
+ * when the base is a local branch, that branch on any remote, since either can take its place.
+ * Without a comparison ref, or when the preferred one was missing, any branch may become it.
+ */
 export function gitReferenceChangeAffectsSnapshot(
     snapshot: GitChangeSnapshot | undefined,
     entry: string | undefined,
 ): boolean {
     if (entry === undefined || snapshot === undefined) return true;
     const normalized = entry.replaceAll("\\", "/").replace(/\.lock$/, "");
-    // A remote base is the narrow, shared case. Without one, any origin branch or the local
-    // default branch appearing or moving can change which base the next scan picks.
-    const base = snapshot.baseRef?.replace(/^refs\//, "");
-    const remoteBase = base?.startsWith("remotes/") === true ? base : undefined;
-    if (normalized.startsWith("heads/")) {
-        const branch = snapshot.facts.branch;
-        return (
-            branch === undefined ||
-            referenceEventMatches(`heads/${branch}`, normalized) ||
-            (remoteBase === undefined &&
-                (base === undefined
-                    ? referenceEventMatches("heads/main", normalized) ||
-                      referenceEventMatches("heads/master", normalized)
-                    : referenceEventMatches(base, normalized)))
-        );
-    }
-    if (normalized.startsWith("remotes/")) {
-        const upstream =
-            snapshot.facts.upstream === undefined
-                ? undefined
-                : `remotes/${snapshot.facts.upstream}`;
-        return (
-            (remoteBase === undefined
-                ? referenceEventMatches("remotes/origin", normalized) ||
-                  normalized.startsWith("remotes/origin/")
-                : referenceEventMatches(remoteBase, normalized)) ||
-            (upstream !== undefined && referenceEventMatches(upstream, normalized))
-        );
-    }
     if (normalized === "tags" || normalized.startsWith("tags/")) return false;
-    return true;
+    if (!normalized.startsWith("heads/") && !normalized.startsWith("remotes/")) return true;
+    const branch = snapshot.facts.branch;
+    if (branch === undefined || referenceEventMatches(`heads/${branch}`, normalized)) return true;
+    const upstream = snapshot.facts.upstream;
+    if (upstream !== undefined && referenceEventMatches(`remotes/${upstream}`, normalized)) {
+        return true;
+    }
+    const base = snapshot.baseRef?.replace(/^refs\//, "");
+    if (base === undefined || snapshot.baseNotice !== undefined) return true;
+    if (referenceEventMatches(base, normalized)) return true;
+    if (snapshot.baseSource !== "default" || !normalized.startsWith("remotes/")) return false;
+    // `remotes/<remote>/HEAD` names the default branch; a local default yields to a remote one.
+    const remoteBranch = normalized.slice(normalized.indexOf("/", "remotes/".length) + 1);
+    return (
+        normalized.split("/").length <= 2 ||
+        remoteBranch === "HEAD" ||
+        (base.startsWith("heads/") && remoteBranch === base.slice("heads/".length))
+    );
 }
 
 function referenceEventMatches(expected: string, observed: string): boolean {

@@ -141,3 +141,18 @@ reads to finish as well.
 A bot whose owner keeps it inside its own tree is not offered the workspace tools, on its own agent
 or on tasks it opened. Opening or browsing another project's workspaces is the reach the setting
 removes; the bot's own dedicated folder is unaffected.
+
+## A chosen comparison branch lives beside the row, not in it
+
+A person can choose the branch a workspace's changes are compared with when the inferred one is
+wrong, such as for a workspace cut from a release branch that should not count the release's own
+commits. The choice is kept under this module's Durable Functions values, keyed by workspace ID,
+rather than in a new column: test builds of this daemon must not carry a schema migration that a
+released daemon would not recognize, and an official daemon simply ignores the entry. It is written
+and cleared in the same transaction as the workspace version bump and its `set_comparison_base`
+update event, so a
+rolled-back change leaves neither the choice nor the event behind. Every read of a workspace merges
+it back in, and other row changes keep it. Whether upstream later moves it to a column is a separate
+decision. The API re-tracks a watched workspace after the choice changes; the session list and the
+Desktop's Git watch build the same tracked entity, including the choice, so neither replaces the
+other's tracker and forces a rescan.

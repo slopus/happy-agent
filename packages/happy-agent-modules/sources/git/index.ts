@@ -48,6 +48,7 @@ export { type GitComparisonBase } from "./resolveGitComparisonBase.js";
 export { workspaceBaseSchema, type WorkspaceBase } from "./resolveWorkspaceBase.js";
 export { GitRevisionFileTooLargeError, type GitRevisionFile } from "./readGitFileAtRevision.js";
 export { type GitWorkingTreeFiles } from "./listGitWorkingTreeFiles.js";
+export { gitBranchListSchema, type GitBranch, type GitBranchList } from "./listGitBranches.js";
 export { type UntrackedFileCount } from "./countUntrackedFileLines.js";
 export {
     type WorkingTreeChange,

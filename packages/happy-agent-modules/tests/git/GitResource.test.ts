@@ -40,6 +40,9 @@ it("matches the public HTTP Git projection without exposing private content", ()
         facts: { ...source.facts, upstream: null },
         comparison: "ready",
         base: source.base,
+        baseRef: null,
+        baseSource: null,
+        baseNotice: null,
         changedFiles: 1,
         countsExact: true,
         conflicted: false,
@@ -61,6 +64,28 @@ it("matches the public HTTP Git projection without exposing private content", ()
         ],
     });
     expect(JSON.stringify(response)).not.toContain("private-token");
+});
+
+it("says which branch the changes are compared with, the way a person writes it", () => {
+    const source = snapshot();
+    source.baseRef = "refs/remotes/origin/release-v8.8";
+    source.baseSource = "inferred";
+    source.baseNotice =
+        'The chosen comparison branch "release-v9.0" was not found. Changes are compared with origin/release-v8.8.';
+    expect(new GitModule().resource(source)).toMatchObject({
+        baseRef: "origin/release-v8.8",
+        baseSource: "inferred",
+        baseNotice: source.baseNotice,
+    });
+
+    source.baseRef = "refs/heads/main";
+    source.baseSource = "explicit";
+    delete source.baseNotice;
+    expect(new GitModule().resource(source)).toMatchObject({
+        baseRef: "main",
+        baseSource: "explicit",
+        baseNotice: null,
+    });
 });
 
 it("preserves complete shared state without applying a transport-specific limit", () => {

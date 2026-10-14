@@ -1342,7 +1342,19 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
                 "Changes require a workspace at the root of an available Git repository.",
             );
         }
-        return { success: true, git: this.#git.resource(await this.#git.snapshot(root.root)) };
+        const workspaceId = await this.#workspaces.workspaceForAgent(ctx, agentId);
+        const workspace =
+            workspaceId === undefined ? undefined : await this.#workspaces.get(ctx, workspaceId);
+        const snapshot = await this.#git.snapshot(root.root, undefined, undefined, {
+            ...(workspace?.comparisonBase === undefined
+                ? {}
+                : { comparisonBase: workspace.comparisonBase }),
+            ...(workspace?.baseRef === undefined ? {} : { recordedBaseRef: workspace.baseRef }),
+            ...(workspace?.baseCommit === undefined
+                ? {}
+                : { recordedBaseCommit: workspace.baseCommit }),
+        });
+        return { success: true, git: this.#git.resource(snapshot) };
     }
 
     async readFile(
@@ -2536,6 +2548,15 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
                 : this.#gitSummary(agentId, {
                       path: cwd,
                       projectId: owner.project.id,
+                      // The same entity the workspace API tracks: one without the chosen or
+                      // recorded base would be measured against another branch and replace it.
+                      ...(owner.comparisonBase === undefined
+                          ? {}
+                          : { comparisonBase: owner.comparisonBase }),
+                      ...(owner.baseRef === undefined ? {} : { recordedBaseRef: owner.baseRef }),
+                      ...(owner.baseCommit === undefined
+                          ? {}
+                          : { recordedBaseCommit: owner.baseCommit }),
                       ...(owner.workspace === undefined ? {} : { workspaceId: owner.workspace.id }),
                   });
         let lastUserOrFinalAssistantTextMessageAt: number | undefined;
@@ -2651,6 +2672,12 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
     ): Promise<{
         bot?: HappySessionSnapshot["bot"];
         avatarVersion?: number;
+        /** The branch the agent's workspace was created from. */
+        baseRef?: string;
+        /** The commit the agent's workspace was created at. */
+        baseCommit?: string;
+        /** The branch a person chose to compare the agent's workspace with. */
+        comparisonBase?: string;
         gitBranch?: string;
         project?: { id: string; kind: "home" | "regular"; name: string };
         workspace?: { id: string; name: string };
@@ -2676,6 +2703,13 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
                 if (workspace !== undefined) {
                     const project = await this.#projects.get(ctx, workspace.projectRef);
                     return {
+                        ...(workspace.baseRef === undefined ? {} : { baseRef: workspace.baseRef }),
+                        ...(workspace.baseCommit === undefined
+                            ? {}
+                            : { baseCommit: workspace.baseCommit }),
+                        ...(workspace.comparisonBase === undefined
+                            ? {}
+                            : { comparisonBase: workspace.comparisonBase }),
                         ...(workspace.branch === undefined ? {} : { gitBranch: workspace.branch }),
                         ...(project === undefined
                             ? {}

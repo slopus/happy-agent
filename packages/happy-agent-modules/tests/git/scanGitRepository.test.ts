@@ -1,5 +1,5 @@
 import { execFile as execFileCallback } from "node:child_process";
-import { rm, utimes, writeFile } from "node:fs/promises";
+import { mkdir, rm, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
@@ -221,6 +221,82 @@ describe("scanGitRepository fingerprints and reuse", () => {
         await utimes(path, new Date(2_000_000_000_000), new Date(2_000_000_000_000));
         const recounted = await scanGitRepository({ path: repository, previous, runGit });
         expect(recounted.files.find((file) => file.path === "untracked.txt")?.insertions).toBe(1);
+    });
+
+    // Each Git process is a sandboxed launch on Windows. A branch that deleted hundreds of files
+    // used to pay two launches per file on every scan, which kept the machine busy indefinitely.
+    it("looks deleted and binary old sides up in one listing and reuses them", async () => {
+        const repository = await createRepository();
+        await mkdir(join(repository, "vendor"));
+        const deleted = Array.from({ length: 40 }, (_, index) => `vendor/file-${String(index)}.js`);
+        for (const path of deleted) await writeFile(join(repository, path), `${path}\n`);
+        // Literal paths: a glob reading of "[1]" would miss this file, and a missed large file
+        // would wrongly be displayed.
+        const large = "large [1].txt";
+        await writeFile(join(repository, large), Buffer.alloc(1024 * 1024 + 1, 65));
+        await writeFile(join(repository, "large 1.txt"), "decoy\n");
+        await writeFile(join(repository, "image.bin"), Buffer.from([0, 1, 2, 3]));
+        const base = await commitFile(repository, "kept.txt", "kept\n");
+        await setOriginMain(repository, base);
+        await git(repository, ["checkout", "--quiet", "-b", "feature"]);
+        await git(repository, ["--literal-pathspecs", "rm", "--quiet", "-r", "vendor", large]);
+        await writeFile(join(repository, "image.bin"), Buffer.from([0, 7, 8, 9]));
+        const commands: string[][] = [];
+        const counted: typeof runGit = async (options) => {
+            commands.push([...options.args]);
+            return await runGit(options);
+        };
+
+        const first = await scanGitRepository({ path: repository, runGit: counted });
+        const lookups = commands.filter((args) => args[0] === "ls-tree");
+        const reads = commands.filter((args) => args[0] === "cat-file");
+        expect(lookups).toHaveLength(1);
+        expect(reads).toEqual([["cat-file", "blob", expect.stringMatching(/^[0-9a-f]{40,64}$/u)]]);
+        expect(first.changedFiles).toBe(deleted.length + 2);
+        expect(first.files.some((file) => file.path === large)).toBe(false);
+        expect(first.filesTruncated).toBe(true);
+        expect(first.files.filter((file) => file.status === "deleted")).toHaveLength(
+            deleted.length,
+        );
+        const image = first.files.find((file) => file.path === "image.bin");
+        expect(Buffer.from(image?.oldBytes ?? [])).toEqual(Buffer.from([0, 1, 2, 3]));
+        expect(Buffer.from(image?.newBytes ?? [])).toEqual(Buffer.from([0, 7, 8, 9]));
+
+        // The old side is named by the base and the old path alone, so a later scan against the
+        // same base reads none of it again, even after the new side moved. Only the hidden large
+        // file, which the previous snapshot does not carry, is listed again.
+        commands.length = 0;
+        await writeFile(join(repository, "image.bin"), Buffer.from([0, 5, 5]));
+        const second = await scanGitRepository({
+            path: repository,
+            previous: first,
+            runGit: counted,
+        });
+        expect(commands.filter((args) => args[0] === "cat-file")).toEqual([]);
+        expect(
+            commands.filter((args) => args[0] === "ls-tree").map((args) => args.slice(7)),
+        ).toEqual([[`:(literal)${large}`]]);
+        const moved = second.files.find((file) => file.path === "image.bin");
+        expect(Buffer.from(moved?.oldBytes ?? [])).toEqual(Buffer.from([0, 1, 2, 3]));
+        expect(Buffer.from(moved?.newBytes ?? [])).toEqual(Buffer.from([0, 5, 5]));
+        expect(second.files.filter((file) => file.status === "deleted")).toHaveLength(
+            deleted.length,
+        );
+        expect(second.filesTruncated).toBe(true);
+    });
+
+    it("leaves an added binary file without an old side", async () => {
+        const repository = await createRepository();
+        const base = await commitFile(repository, "kept.txt", "kept\n");
+        await setOriginMain(repository, base);
+        await writeFile(join(repository, "image.bin"), Buffer.from([0, 1, 2]));
+        await git(repository, ["add", "image.bin"]);
+
+        const snapshot = await scanGitRepository({ path: repository, runGit });
+        const image = snapshot.files.find((file) => file.path === "image.bin");
+        expect(image).toMatchObject({ binary: true, status: "added" });
+        expect(image?.oldBytes).toBeUndefined();
+        expect(Buffer.from(image?.newBytes ?? [])).toEqual(Buffer.from([0, 1, 2]));
     });
 });
 

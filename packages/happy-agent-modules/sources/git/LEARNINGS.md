@@ -28,6 +28,44 @@ A typed "why unavailable" field for clients was proposed alongside this and drop
 fallbacks the only cause left is a failed Git read, which a client's "temporarily unavailable"
 message already describes correctly, so the protocol did not change.
 
+## Every caller tracks a workspace with the same comparison preferences
+
+A worktree cut from origin/release-v8.8 showed its whole distance from origin/main as changes,
+although the workspace recorded release-v8.8 as its base. The workspace API tracked it with that
+recorded base, but the Happy session list tracked the same workspace without it. The tracker is
+keyed by workspace and replaces itself whenever the entity differs, so the session list's
+renewals kept winning and also forced a rescan each time the two alternated.
+
+Whoever builds a tracked entity or asks for a snapshot of a workspace passes the workspace's
+recorded `baseRef` and `baseCommit` (and, once it exists, its chosen comparison branch). The
+comparison follows the merge base with that branch, so commits that land on the branch later never
+count as this workspace's changes. Heuristics that guess a branch are only for folders with no
+recorded base.
+
+## A recorded base says where a workspace was cut, not where its branch lives now
+
+Three worktrees were cut at the release-v8.8 tip, so they recorded origin/release-v8.8, and
+were then rebased or reset onto main. Their counts showed the whole distance between main and the
+release branch (+17k to +34k) instead of their own work. The recorded branch now applies only while
+HEAD still contains the recorded `baseCommit` (`git merge-base --is-ancestor`, one Git process per
+comparison). Once it does not, the comparison falls through to what the repository records and then
+the default branch, without a notice; `baseSource` already says where the branch came from. A
+rebase onto a newer tip of the same branch keeps the old commit in history, so the record keeps
+applying. A ranking of candidate branches by distance was rejected as a heuristic that costs a walk
+per candidate. Asking whether `baseCommit` is on the recorded branch detects nothing, because it
+always is.
+
+A rebase onto main does not remove the cut commit when main has merged the release branch. HEAD
+still holds that commit, so the commit test alone keeps the old record. The recorded branch
+therefore applies only while its fork point with HEAD is at least as near as the default branch's
+fork point. If the default branch forks from HEAD at a newer commit, HEAD now lives on the default
+branch and the record is dropped, with no notice. Equal fork points keep the record. A recorded
+fork point that is newer or unrelated keeps it too. This costs one more measure and one
+`merge-base --is-ancestor` only when the two fork points differ.
+
+The base commit is part of the tracked entity, so a snapshot measured or remembered without it is
+never reused for a workspace that has one.
+
 ## A missing revision is not a missing file
 
 Git's path lookup can say a file does not exist in an object even when that object itself is
@@ -107,3 +145,14 @@ daemon's own Git would run as the daemon's user against it. Every native branch 
 default workload user's runner, exactly as on a runner. The embedded live Git tracking is not
 ported there, like on runners, so the API answers its Git state with `404` and a message saying
 why.
+
+## A branch picker lists refs once, not per keystroke
+
+The comparison-branch picker asks for matching branches as a person types. Each listing is one
+read-only `for-each-ref` over `refs/heads` and `refs/remotes`, already sorted newest first and
+capped at 2 MiB, through the same scan sandbox as the Git state; it never fetches. The parsed list
+answers every query for that folder for five seconds, so a burst of typing filters in memory
+instead of starting a Git process per keystroke. It lists every remote's branches rather than only
+the compared remote's, because any `<remote>/<branch>` resolves as a comparison base and finding
+the primary remote would cost a second process. It leaves the checked-out branch out, because a
+branch compared with itself measures nothing, and touches no tracker, snapshot, or event.

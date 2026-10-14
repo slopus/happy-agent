@@ -237,7 +237,11 @@ describe("GitModule repository reads", () => {
 
         await expect(
             module.resolveComparisonBase(repository, { head: branchHead }),
-        ).resolves.toEqual({ base: head, baseRef: "refs/remotes/origin/main" });
+        ).resolves.toEqual({
+            base: head,
+            baseRef: "refs/remotes/origin/main",
+            baseSource: "default",
+        });
         await expect(module.resolveCommit(repository, "origin/main")).resolves.toBe(head);
     });
 });

@@ -81,6 +81,7 @@ import {
     workspaceReserveHooksSchema,
     workspaceReserveInputSchema,
     workspaceSetBranchInputSchema,
+    workspaceSetComparisonBaseInputSchema,
     workspaceSchema,
     type Workspace,
     type WorkspaceApplyGitFactsInput,
@@ -97,6 +98,7 @@ import {
     type WorkspaceReserveHooks,
     type WorkspaceReserveInput,
     type WorkspaceSetBranchInput,
+    type WorkspaceSetComparisonBaseInput,
 } from "./Workspace.js";
 import { assertWorkspaceRecord } from "./WorkspaceRecord.js";
 import {
@@ -277,7 +279,7 @@ export class WorkspacesModule implements AgentModule {
         this.#projects = projects;
         this.#enabled = config.configuration.values.features.workspaces;
         this.#workspacesDirectory = git.normalizeFuturePath(config.workspacesHome);
-        this.#store = createWorkspaceStore(this);
+        this.#store = createWorkspaceStore(this, durableFunctions);
         this.#mutations = new WorkspaceMutations(this.#store);
 
         durableFunctions.register({
@@ -546,6 +548,47 @@ export class WorkspacesModule implements AgentModule {
         );
         if (previousBranch === undefined || previousBranch === named.branch) return named;
         return await this.#moveGitBranch(ctx, named, previousBranch);
+    }
+
+    /**
+     * Chooses the branch the workspace's changes are compared with, or returns it to automatic
+     * choice with `null`. The branch need not exist: the comparison falls back and says so.
+     */
+    async setComparisonBase(
+        ctx: Context,
+        input: WorkspaceSetComparisonBaseInput,
+    ): Promise<Workspace> {
+        this.#assertEnabled();
+        this.#assertInput(
+            workspaceSetComparisonBaseInputSchema,
+            input,
+            "workspace comparison branch",
+        );
+        const normalized = structuredClone(input);
+        return await this.#mutate(
+            ctx,
+            "set_comparison_base",
+            normalized.operationId,
+            normalized.workspaceId,
+            async (txCtx, request) =>
+                await this.#store.setComparisonBase(
+                    txCtx,
+                    {
+                        workspaceId: normalized.workspaceId,
+                        comparisonBase: normalized.comparisonBase,
+                        ...(normalized.expectedVersion === undefined
+                            ? {}
+                            : { expectedVersion: normalized.expectedVersion }),
+                    },
+                    request,
+                ),
+            (before, after) => ({
+                type: "workspace_updated",
+                change: "set_comparison_base",
+                workspace: after,
+                previousWorkspace: requirePreviousWorkspace(before),
+            }),
+        );
     }
 
     /** Records the branch a host actually created or renamed to. */

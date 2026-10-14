@@ -110,6 +110,16 @@ export const workspaceBaseRefSchema = Type.String({
     pattern: GIT_REF_PATTERN,
 });
 
+/**
+ * The branch a person chose to compare a workspace's changes with, as they wrote it. It need not
+ * exist yet; it only must not be read as an option or carry whitespace or control characters.
+ */
+export const workspaceComparisonBaseSchema = Type.String({
+    minLength: 1,
+    maxLength: 200,
+    pattern: "^[^\\-\\s\\x00-\\x1f\\x7f-\\x9f][^\\s\\x00-\\x1f\\x7f-\\x9f]*$",
+});
+
 /** Immutable commit the workspace was cut from; the anchor for every later comparison. */
 export const workspaceCommitSchema = Type.String({
     minLength: 4,
@@ -222,6 +232,7 @@ export const workspaceMutationOperationSchema = Type.Union([
     Type.Literal("rename"),
     Type.Literal("inherit_name"),
     Type.Literal("set_branch"),
+    Type.Literal("set_comparison_base"),
     Type.Literal("record_initialization"),
     Type.Literal("mark_ready"),
     Type.Literal("mark_failed"),
@@ -264,6 +275,11 @@ export const workspaceSchema = Type.Object(
         dockerImage: Type.Optional(workspaceDockerImageSchema),
         baseRef: Type.Optional(workspaceBaseRefSchema),
         baseCommit: Type.Optional(workspaceCommitSchema),
+        /**
+         * The branch a person chose to compare this workspace with. It is kept beside the row
+         * rather than in it, so reading it never needs a schema migration.
+         */
+        comparisonBase: Type.Optional(workspaceComparisonBaseSchema),
         gitCommonDir: Type.Optional(workspaceGitCommonDirSchema),
         presence: workspacePresenceSchema,
         status: workspaceStatusSchema,
@@ -375,6 +391,17 @@ export const workspaceRenameInputSchema = Type.Object(
     {
         workspaceId: workspaceIdSchema,
         name: workspaceNameSchema,
+        expectedVersion: Type.Optional(workspaceVersionSchema),
+        operationId: Type.Optional(workspaceOperationIdSchema),
+    },
+    { additionalProperties: false },
+);
+
+/** Chooses the branch a workspace's changes are compared with; `null` returns to automatic. */
+export const workspaceSetComparisonBaseInputSchema = Type.Object(
+    {
+        workspaceId: workspaceIdSchema,
+        comparisonBase: Type.Union([workspaceComparisonBaseSchema, Type.Null()]),
         expectedVersion: Type.Optional(workspaceVersionSchema),
         operationId: Type.Optional(workspaceOperationIdSchema),
     },
@@ -513,6 +540,8 @@ export type WorkspaceReserveHooks = Static<typeof workspaceReserveHooksSchema>;
 export type WorkspaceCreateToolInput = Static<typeof workspaceCreateToolInputSchema>;
 export type WorkspaceArchiveOptions = Static<typeof workspaceArchiveOptionsSchema>;
 export type WorkspaceRenameInput = Static<typeof workspaceRenameInputSchema>;
+export type WorkspaceSetComparisonBaseInput = Static<typeof workspaceSetComparisonBaseInputSchema>;
+export type WorkspaceComparisonBase = Static<typeof workspaceComparisonBaseSchema>;
 export type WorkspaceRenameToolInput = Static<typeof workspaceRenameToolInputSchema>;
 export type WorkspaceInheritNameInput = Static<typeof workspaceInheritNameInputSchema>;
 export type WorkspaceReorderInput = Static<typeof workspaceReorderInputSchema>;

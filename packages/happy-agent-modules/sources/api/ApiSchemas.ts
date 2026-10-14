@@ -13,6 +13,7 @@ export {
 
 import { createTerminalInputSchema, resizeTerminalInputSchema } from "../terminals/index.js";
 import { userSettingValueSchema } from "../userSettings/index.js";
+import { workspaceComparisonBaseSchema } from "../workspaces/index.js";
 
 /** A configured runner's ID. */
 const runnerIdSchema = Type.String({ pattern: "^[a-z][a-z0-9_-]{0,63}$" });
@@ -77,6 +78,19 @@ export const renameBodySchema = Type.Object(
     {
         mutationId: Type.Optional(mutationIdSchema),
         name: Type.String({ minLength: 1, maxLength: 500 }),
+    },
+    { additionalProperties: false },
+);
+
+/**
+ * `PATCH /v0/workspaces/:workspaceId`: a new name, the branch its changes are compared with, or
+ * both. `null` returns the comparison to automatic choice.
+ */
+export const workspaceUpdateBodySchema = Type.Object(
+    {
+        comparisonBase: Type.Optional(Type.Union([workspaceComparisonBaseSchema, Type.Null()])),
+        mutationId: Type.Optional(mutationIdSchema),
+        name: Type.Optional(Type.String({ minLength: 1, maxLength: 500 })),
     },
     { additionalProperties: false },
 );

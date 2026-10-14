@@ -307,6 +307,7 @@ import {
     terminalResizeBodySchema,
     userSettingBodySchema,
     workspaceCreateBodySchema,
+    workspaceUpdateBodySchema,
 } from "./ApiSchemas.js";
 import { WorkspaceProxy } from "./WorkspaceProxy.js";
 import { SubtaskInputError, SubtasksModule } from "../subtasks/index.js";
@@ -6079,31 +6080,66 @@ export class ApiModule implements AgentModule {
                 return true;
             }
             if (request.method === "PATCH") {
+                const body = await bodyAs(request, workspaceUpdateBodySchema, "workspace update");
+                const comparing = body.comparisonBase !== undefined;
+                if (body.name === undefined && !comparing) {
+                    throw invalidRequest("Send a new name, a comparison branch, or both.");
+                }
                 if ((await this.#bots.forWorkspace(ctx, workspaceId)) !== undefined) {
-                    throw new ApiError(409, "conflict", "Rename this workspace through its bot.");
+                    throw new ApiError(
+                        409,
+                        "conflict",
+                        comparing
+                            ? "A bot's workspace has no comparison branch to choose."
+                            : "Rename this workspace through its bot.",
+                    );
                 }
                 if ((await this.#tasks?.forWorkspace(ctx, workspaceId)) !== undefined) {
-                    throw new ApiError(409, "conflict", "Rename this workspace through its task.");
+                    throw new ApiError(
+                        409,
+                        "conflict",
+                        comparing
+                            ? "A task's workspace has no comparison branch to choose."
+                            : "Rename this workspace through its task.",
+                    );
                 }
                 const project = await this.#projects.get(ctx, workspaceId);
                 if (project !== undefined) {
                     throw new ApiError(
                         409,
                         "conflict",
-                        "Rename the root workspace through its project.",
+                        comparing
+                            ? "A project's own folder has no comparison branch to choose."
+                            : "Rename the root workspace through its project.",
                     );
                 }
-                const body = await bodyAs(request, renameBodySchema, "workspace rename");
                 const current = await this.#requireWorkspaceMatch(ctx, request, workspaceId);
-                const workspace = await this.#withMutationId(
-                    body.mutationId,
-                    async () =>
-                        await this.#workspaces.rename(ctx, {
+                const workspace = await this.#withMutationId(body.mutationId, async () => {
+                    let updated = current;
+                    if (body.name !== undefined) {
+                        updated = await this.#workspaces.rename(ctx, {
                             workspaceId,
                             name: body.name,
-                            expectedVersion: current.version,
-                        }),
-                );
+                            expectedVersion: updated.version,
+                        });
+                    }
+                    if (body.comparisonBase !== undefined) {
+                        updated = await this.#workspaces.setComparisonBase(ctx, {
+                            workspaceId,
+                            comparisonBase: body.comparisonBase,
+                            expectedVersion: updated.version,
+                        });
+                    }
+                    return updated;
+                });
+                if (
+                    workspace.status === "ready" &&
+                    (current.comparisonBase ?? null) !== (workspace.comparisonBase ?? null)
+                ) {
+                    // The next scan is measured against the new choice, not by a stale tracker.
+                    const scope = await this.#resolveWorkspaceScope(ctx, workspaceId);
+                    if (scope.runnerId === undefined) this.#git.retrack(gitTrackedEntity(scope));
+                }
                 sendJson(response, 200, {
                     workspace: {
                         ...workspaceResource(workspace),
@@ -6437,17 +6473,41 @@ export class ApiModule implements AgentModule {
         const git = /^\/v0\/workspaces\/([a-z][a-z0-9]*)\/git$/.exec(url.pathname);
         if (git !== null && request.method === "GET") {
             const workspaceId = git[1] as string;
-            const { root, runnerId } = await this.#resolveWorkspaceScope(ctx, workspaceId);
+            const scope = await this.#resolveWorkspaceScope(ctx, workspaceId);
             // Live Git state is read only for folders this process reads itself.
-            if (this.#runners !== undefined && !this.#runners.native(runnerId)) {
+            if (this.#runners !== undefined && !this.#runners.native(scope.runnerId)) {
                 throw notFound(
-                    runnerId === undefined
+                    scope.runnerId === undefined
                         ? "Git state is not tracked while work runs as a separate Linux user."
                         : "Git state is not tracked on runners.",
                 );
             }
-            const snapshot = await this.#git.snapshot(root, workspaceId);
+            const snapshot = await this.#git.snapshot(
+                scope.root,
+                workspaceId,
+                undefined,
+                gitComparisonPreferences(scope),
+            );
             sendJson(response, 200, { git: this.#git.resource(snapshot) });
+            return true;
+        }
+        const branches = /^\/v0\/workspaces\/([a-z][a-z0-9]*)\/git\/branches$/.exec(url.pathname);
+        if (branches !== null && request.method === "GET") {
+            assertOnlyQueryParameters(url, ["limit", "query"]);
+            const query = url.searchParams.get("query") ?? "";
+            if (query.length > 200 || /[\u0000-\u001f\u007f-\u009f]/u.test(query)) {
+                throw invalidRequest("The branch query must be at most 200 printable characters.");
+            }
+            const limit = integerParameter(url.searchParams.get("limit"), 50, 1, 200);
+            const scope = await this.#resolveWorkspaceScope(ctx, branches[1] as string);
+            // Like its Git state, a folder's branches are read only on this machine.
+            if (scope.runnerId !== undefined) {
+                throw notFound("Git state is not tracked on runners.");
+            }
+            const list = await this.#git.branches(scope.root, { limit, query });
+            if (list === undefined)
+                throw notFound("This workspace's folder is not a Git repository.");
+            sendJson(response, 200, list);
             return true;
         }
         return false;
@@ -6469,17 +6529,11 @@ export class ApiModule implements AgentModule {
             readonly workspaceId: string;
         }[] = [];
         for (const workspaceId of body.workspaceIds) {
-            const { projectId, childWorkspaceId, root, runnerId } =
-                await this.#resolveWorkspaceScope(ctx, workspaceId);
+            const scope = await this.#resolveWorkspaceScope(ctx, workspaceId);
             // A folder on a runner, or a workload user's, has no live Git state; it is simply
             // absent from the answer.
-            if (this.#runners !== undefined && !this.#runners.native(runnerId)) continue;
-            const entity = {
-                path: root,
-                projectId,
-                ...(childWorkspaceId === undefined ? {} : { workspaceId: childWorkspaceId }),
-            };
-            tracked.push({ entity, workspaceId });
+            if (this.#runners !== undefined && !this.#runners.native(scope.runnerId)) continue;
+            tracked.push({ entity: gitTrackedEntity(scope), workspaceId });
         }
         this.#git.replaceTracked(tracked.map(({ entity }) => entity));
         for (const { entity, workspaceId } of tracked) {
@@ -6493,9 +6547,15 @@ export class ApiModule implements AgentModule {
         ctx: Context,
         workspaceId: string,
     ): Promise<{
+        /** The commit a child workspace was created at, on `baseRef`. */
+        readonly baseCommit?: string;
+        /** The branch a child workspace was created from. */
+        readonly baseRef?: string;
         readonly botId?: string;
         readonly taskId?: string;
         readonly childWorkspaceId?: string;
+        /** The branch a person chose to compare a child workspace with. */
+        readonly comparisonBase?: string;
         readonly docker?: { readonly image: string };
         readonly projectId: string;
         readonly root: string;
@@ -6554,7 +6614,12 @@ export class ApiModule implements AgentModule {
             throw new ApiError(409, "conflict", "The workspace is not available.");
         }
         return {
+            ...(workspace.baseCommit === undefined ? {} : { baseCommit: workspace.baseCommit }),
+            ...(workspace.baseRef === undefined ? {} : { baseRef: workspace.baseRef }),
             childWorkspaceId: workspace.id,
+            ...(workspace.comparisonBase === undefined
+                ? {}
+                : { comparisonBase: workspace.comparisonBase }),
             ...(workspace.dockerImage === undefined
                 ? {}
                 : { docker: { image: workspace.dockerImage } }),
@@ -8755,4 +8820,48 @@ function storedWorkspaceCompute(
         );
     }
     return { type: "docker", image: requested.image };
+}
+
+/** What a workspace says about the branch its changes are compared with. */
+function gitComparisonPreferences(scope: {
+    readonly baseCommit?: string;
+    readonly baseRef?: string;
+    readonly comparisonBase?: string;
+}): {
+    readonly comparisonBase?: string;
+    readonly recordedBaseCommit?: string;
+    readonly recordedBaseRef?: string;
+} {
+    return {
+        ...(scope.comparisonBase === undefined ? {} : { comparisonBase: scope.comparisonBase }),
+        ...(scope.baseRef === undefined ? {} : { recordedBaseRef: scope.baseRef }),
+        ...(scope.baseCommit === undefined ? {} : { recordedBaseCommit: scope.baseCommit }),
+    };
+}
+
+/**
+ * The entity a workspace's live Git state is tracked as. The Happy session list builds the same
+ * one: two callers that disagree replace each other's tracker and rescan every time.
+ */
+function gitTrackedEntity(scope: {
+    readonly baseCommit?: string;
+    readonly baseRef?: string;
+    readonly childWorkspaceId?: string;
+    readonly comparisonBase?: string;
+    readonly projectId: string;
+    readonly root: string;
+}): {
+    readonly comparisonBase?: string;
+    readonly path: string;
+    readonly projectId: string;
+    readonly recordedBaseCommit?: string;
+    readonly recordedBaseRef?: string;
+    readonly workspaceId?: string;
+} {
+    return {
+        path: scope.root,
+        projectId: scope.projectId,
+        ...gitComparisonPreferences(scope),
+        ...(scope.childWorkspaceId === undefined ? {} : { workspaceId: scope.childWorkspaceId }),
+    };
 }

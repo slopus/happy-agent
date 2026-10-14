@@ -32,6 +32,7 @@ export const workspaceUpdateChangeSchema = Type.Union([
     Type.Literal("mark_failed"),
     Type.Literal("mark_initialization_failed"),
     Type.Literal("set_branch"),
+    Type.Literal("set_comparison_base"),
     Type.Literal("begin_archive"),
     Type.Literal("apply_git_facts"),
     Type.Literal("apply_probe"),

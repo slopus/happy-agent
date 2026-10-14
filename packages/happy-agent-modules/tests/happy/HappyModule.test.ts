@@ -158,6 +158,8 @@ async function fixture() {
     const workspaces = new Map<
         string,
         {
+            baseCommit?: string;
+            baseRef?: string;
             id: string;
             name: string;
             path: string;
@@ -1036,6 +1038,37 @@ describe("Happy session activity metadata", () => {
         expect(test.gitState.tracked).toContainEqual({
             path: "/projects/rig",
             projectId: "project-1",
+        });
+    });
+
+    it("compares a workspace's changes with the branch it was created from", async () => {
+        const test = await fixture();
+        test.workspaces.set("workspace-1", {
+            ...test.workspaces.get("workspace-1")!,
+            baseCommit: "de6ce8da",
+            baseRef: "origin/release-v8.8",
+        });
+        test.workspaceAgents.set("agent-release", "workspace-1");
+        test.configs.set("agent-release", {
+            environment: {
+                osVersion: "test",
+                platform: "darwin",
+                shell: "/bin/zsh",
+                workingDirectory: "/projects/rig/rpc",
+            },
+            metadata: { version: 1 },
+        });
+
+        await test.module.session(databases.at(-1)!.context, "agent-release");
+
+        // The workspace API tracks the same entity with its recorded base; tracking it without
+        // one would measure it against the default branch and replace that tracker.
+        expect(test.gitState.tracked).toContainEqual({
+            path: "/projects/rig/rpc",
+            projectId: "project-1",
+            recordedBaseCommit: "de6ce8da",
+            recordedBaseRef: "origin/release-v8.8",
+            workspaceId: "workspace-1",
         });
     });
 });

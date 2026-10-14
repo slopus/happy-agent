@@ -55,6 +55,10 @@ The executor receives a real `AgentKV` scoped to `call.<callId>.`. Its values li
 own table and its transactions compose with the agent database transaction on the supplied
 context. Completion and cancellation erase the entire scope with the call row.
 
+`values(owner)` gives a module durable entries of its own in the same table, scoped to
+`module.<owner>.`. No call owns them, so nothing erases them but their owner. The workspaces module
+keeps each workspace's chosen comparison branch there, which needs no schema migration.
+
 An executor resolution is checked against its result schema. The successful completion transaction
 deletes the call and its state, then runs `onSuccess` in that same transaction. If `onSuccess`
 throws, everything rolls back and the call remains for the next restart. If the executor throws or

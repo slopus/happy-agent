@@ -202,6 +202,21 @@ export class DurableFunctionsModule implements AgentModule {
         });
     }
 
+    /**
+     * A module's own durable entries, kept in this module's key-value table under `owner` and
+     * never under a call's prefix, so finishing or cancelling a call never removes them. Reads and
+     * writes join the transaction `ctx` carries. Undefined until an agent system has started this
+     * module and handed it its database.
+     */
+    values(owner: string): AgentKV | undefined {
+        if (owner.length === 0 || owner.includes(".")) {
+            throw new Error("A Durable Functions value owner is a non-empty name without dots.");
+        }
+        return this.#persistence === undefined
+            ? undefined
+            : new AgentKV(this.#persistence, `module.${owner}.`);
+    }
+
     /** Stop taking new work and abort every execution this process still holds. */
     stop(): void {
         if (this.#stopped) return;

@@ -22,11 +22,13 @@ import { countUntrackedFileLines, type UntrackedFileCount } from "./countUntrack
 import { createGitWorktree } from "./createGitWorktree.js";
 import { detectGitDefaultBranch } from "./detectGitDefaultBranch.js";
 import { cloneOnRunner } from "./impl/cloneOnRunner.js";
-import { GitStateTracker } from "./impl/GitStateTracker.js";
+import { GitSnapshotStore } from "./impl/GitSnapshotStore.js";
+import { entityKey, GitStateTracker } from "./impl/GitStateTracker.js";
 import { RunnerGitCredentialTunnel } from "./impl/RunnerGitCredentialTunnel.js";
 import { runnerGitCommandRunner, runnerScanGit } from "./impl/runnerGitRunners.js";
 import { WorkingTreeWatcher, type WorkingTreeObserver } from "./impl/WorkingTreeWatcher.js";
 import { isGitWorktreeAt } from "./isGitWorktreeAt.js";
+import { listGitBranches, type GitBranchList } from "./listGitBranches.js";
 import { listGitWorkingTreeFiles, type GitWorkingTreeFiles } from "./listGitWorkingTreeFiles.js";
 import { normalizeFuturePath } from "./normalizeFuturePath.js";
 import { normalizeProjectCwd } from "./normalizeProjectCwd.js";
@@ -40,7 +42,12 @@ import { remoteProjectName } from "./remoteProjectName.js";
 import { removeGitWorktree } from "./removeGitWorktree.js";
 import { renameGitBranch } from "./renameGitBranch.js";
 import { resolveGitCommit } from "./resolveGitCommit.js";
-import { resolveGitComparisonBase, type GitComparisonBase } from "./resolveGitComparisonBase.js";
+import {
+    resolveGitComparisonBase,
+    shortRef,
+    type GitComparisonBase,
+    type GitComparisonPreferences,
+} from "./resolveGitComparisonBase.js";
 import { resolveWorkspaceBase, type WorkspaceBase } from "./resolveWorkspaceBase.js";
 import { directGitCommandRunner, runGitCommandWithEnvironment } from "./runGitCommand.js";
 import {
@@ -50,6 +57,7 @@ import {
     type ScanGitRunner,
 } from "./runScanGit.js";
 import { scanGitRepository } from "./scanGitRepository.js";
+import { selectGitBranches } from "./selectGitBranches.js";
 import { selectGitRemoteUrl } from "./selectGitRemoteUrl.js";
 import { supportsRecursiveWorktreeWatch } from "./watchGitRepositoryChanges.js";
 import {
@@ -66,6 +74,8 @@ import {
 } from "./types.js";
 
 const SNAPSHOT_CACHE_MS = 2_000;
+/** How long one branch listing answers a person typing into a branch picker. */
+const BRANCH_CACHE_MS = 5_000;
 const MAX_CACHE_ENTRIES = 32;
 const MAX_SNAPSHOT_FILES = 1_000;
 const MAX_WATCH_ENTITIES = 256;
@@ -144,6 +154,8 @@ export type GitSnapshotObserver = (
 
 interface CachedSnapshot {
     readonly expiresAt: number;
+    /** The comparison preferences the snapshot was scanned with, serialized. */
+    readonly preferences: string;
     readonly root: string;
     readonly snapshot: GitChangeSnapshot;
 }
@@ -166,11 +178,17 @@ export class GitModule implements AgentModule {
     readonly name = "git";
 
     readonly #cache = new Map<string, CachedSnapshot>();
+    readonly #branchCache = new Map<
+        string,
+        { readonly expiresAt: number; readonly list: Promise<GitBranchList | undefined> }
+    >();
     readonly #credentials = new GitCredentialBroker();
     readonly #generation = randomUUID();
     readonly #observers = new Set<GitSnapshotObserver>();
     readonly #runners: RunnersModule | undefined;
     readonly #runnerMachines = new Map<string, GitMachine>();
+    /** The last state of each watched repository, kept across restarts. */
+    readonly #snapshots: GitSnapshotStore | undefined;
     readonly #tunnel = new RunnerGitCredentialTunnel();
     #config: ConfigModule | undefined;
     /** Whether Git is reached directly, which is what makes a credential-carrying runner possible. */
@@ -187,6 +205,10 @@ export class GitModule implements AgentModule {
     constructor(config?: ConfigModule, runners?: RunnersModule) {
         this.#config = config;
         this.#runners = runners;
+        this.#snapshots =
+            config === undefined
+                ? undefined
+                : new GitSnapshotStore(config.configuration.paths.gitSnapshotsPath);
         this.#foreground = directGitCommandRunner;
         this.#scan =
             config === undefined
@@ -218,10 +240,12 @@ export class GitModule implements AgentModule {
 
     /**
      * Adopts the collection's lifetime so watchers and background scans outlive the call that
-     * started them. Git contributes no tools, instructions, or hooks.
+     * started them, and reads the Git state the previous daemon left, so a client reconnecting
+     * after a restart sees it at once. Git contributes no tools, instructions, or hooks.
      */
-    readonly beforeStart = (ctx: Context): void => {
+    readonly beforeStart = async (ctx: Context): Promise<void> => {
         this.#lifetime ??= detach(ctx);
+        await this.#snapshots?.load();
     };
 
     // --- Paths and names -------------------------------------------------------------------
@@ -441,6 +465,41 @@ export class GitModule implements AgentModule {
             runGit: this.#machine(options.runnerId).scan,
             ...(options.signal === undefined ? {} : { signal: options.signal }),
         });
+    }
+
+    /**
+     * The branches a repository already knows that match what a person is typing, for choosing a
+     * comparison branch. One read-only Git process lists every branch, without fetching; the list
+     * answers every query for a few seconds, so typing filters in memory. `undefined` when the
+     * folder is not a repository.
+     */
+    async branches(
+        path: string,
+        options: { readonly limit: number; readonly query: string },
+    ): Promise<GitBranchList | undefined> {
+        const now = Date.now();
+        for (const [key, cached] of this.#branchCache) {
+            if (cached.expiresAt <= now) this.#branchCache.delete(key);
+        }
+        let cached = this.#branchCache.get(path);
+        if (cached === undefined) {
+            while (this.#branchCache.size >= MAX_CACHE_ENTRIES) {
+                const oldest = this.#branchCache.keys().next().value as string | undefined;
+                if (oldest === undefined) break;
+                this.#branchCache.delete(oldest);
+            }
+            const list = listGitBranches({ path, runGit: this.#scan });
+            cached = { expiresAt: now + BRANCH_CACHE_MS, list };
+            this.#branchCache.set(path, cached);
+            // A failed listing is not remembered; the next keystroke asks Git again.
+            list.catch(() => {
+                if (this.#branchCache.get(path)?.list === list) this.#branchCache.delete(path);
+            });
+        }
+        const list = await cached.list;
+        return list === undefined
+            ? undefined
+            : selectGitBranches(list, options.query, options.limit);
     }
 
     /** How many lines an untracked file adds, and whether it is binary or could not be counted. */
@@ -673,6 +732,11 @@ export class GitModule implements AgentModule {
             },
             comparison: snapshot.comparison,
             base: snapshot.base ?? null,
+            // Written the way a person writes a branch, and null when the base is HEAD or the
+            // empty tree, so a client can say what the numbers are measured against.
+            baseRef: snapshot.baseRef === undefined ? null : shortRef(snapshot.baseRef),
+            baseSource: snapshot.baseRef === undefined ? null : (snapshot.baseSource ?? null),
+            baseNotice: snapshot.baseNotice ?? null,
             changedFiles: snapshot.changedFiles,
             insertions: snapshot.insertions,
             deletions: snapshot.deletions,
@@ -698,18 +762,33 @@ export class GitModule implements AgentModule {
         return this.#generation;
     }
 
-    /** One repository's change snapshot, served from a short-lived cache. */
-    async snapshot(root: string, key = root, signal?: AbortSignal): Promise<GitChangeSnapshot> {
+    /**
+     * One repository's change snapshot, served from a short-lived cache. `preferences` carries
+     * what the workspace says about the branch its changes are compared with.
+     */
+    async snapshot(
+        root: string,
+        key = root,
+        signal?: AbortSignal,
+        preferences: GitComparisonPreferences = {},
+    ): Promise<GitChangeSnapshot> {
         const now = Date.now();
         this.#evictExpired(now);
         const cached = this.#cache.get(key);
-        if (cached !== undefined && cached.expiresAt > now && cached.root === root) {
+        const wanted = JSON.stringify(preferences);
+        if (
+            cached !== undefined &&
+            cached.expiresAt > now &&
+            cached.root === root &&
+            cached.preferences === wanted
+        ) {
             this.#cache.delete(key);
             this.#cache.set(key, cached);
             return cached.snapshot;
         }
         const state = await scanGitRepository({
             path: root,
+            preferences,
             runGit: this.#scan,
             ...(signal === undefined ? {} : { signal }),
         });
@@ -729,6 +808,7 @@ export class GitModule implements AgentModule {
         }
         this.#cache.set(key, {
             expiresAt: Date.now() + SNAPSHOT_CACHE_MS,
+            preferences: wanted,
             root,
             snapshot,
         });
@@ -805,6 +885,18 @@ export class GitModule implements AgentModule {
         this.#trackerInstance().replace(entities);
     }
 
+    /**
+     * Measures an already watched repository with what its workspace now says, such as a newly
+     * chosen comparison branch. The changed entity replaces the old one and is scanned again; a
+     * repository nobody watches stays unwatched.
+     */
+    retrack(entity: GitTrackedEntity): void {
+        if (this.#disposed || this.#tracker?.trackedKeys.includes(entityKey(entity)) !== true) {
+            return;
+        }
+        this.#tracker.watch(entity);
+    }
+
     /** Stops watching one repository and releases its watchers and timers. */
     untrack(entity: GitTrackedEntity): void {
         this.#tracker?.unwatch(entity);
@@ -872,6 +964,7 @@ export class GitModule implements AgentModule {
         this.#tracker = undefined;
         this.#tree?.dispose();
         this.#tree = undefined;
+        void this.#snapshots?.dispose();
         this.#tunnel.close();
         this.#runnerMachines.clear();
         this.#observers.clear();
@@ -898,6 +991,29 @@ export class GitModule implements AgentModule {
                     for (const observer of observers) {
                         await observer(ctx, entity, snapshot);
                     }
+                },
+                remember: (entity, state, fingerprint) => {
+                    this.#snapshots?.remember(entityKey(entity), entity, state, fingerprint);
+                },
+                restore: (entity) => {
+                    const entry = this.#snapshots?.get(entityKey(entity));
+                    // A state measured against another comparison branch is not this one.
+                    if (
+                        entry === undefined ||
+                        entry.entity.path !== entity.path ||
+                        entry.entity.comparisonBase !== entity.comparisonBase ||
+                        entry.entity.recordedBaseRef !== entity.recordedBaseRef ||
+                        entry.entity.recordedBaseCommit !== entity.recordedBaseCommit
+                    ) {
+                        return undefined;
+                    }
+                    return {
+                        ...(entry.fingerprint === undefined
+                            ? {}
+                            : { fingerprint: entry.fingerprint }),
+                        partial: entry.partial,
+                        state: entry.state,
+                    };
                 },
                 report: (ctx, error, entity) => {
                     ctx.log.debug("A Git watcher could not scan a repository.", {

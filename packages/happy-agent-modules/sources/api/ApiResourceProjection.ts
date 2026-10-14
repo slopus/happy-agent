@@ -187,6 +187,7 @@ export function workspaceResource(
                       ref: workspace.baseRef ?? null,
                       commit: workspace.baseCommit ?? null,
                   },
+        comparisonBase: workspace.comparisonBase ?? null,
         git: hasGit
             ? {
                   branch: workspace.branch,
@@ -284,6 +285,7 @@ export function taskWorkspaceResource(
         status: task.status,
         initialization: { status: "ready", attempt: 0, error: null },
         base: null,
+        comparisonBase: null,
         git: null,
         creatorAgentId: task.creatorAgentId ?? null,
         orderKey: "5",
@@ -415,6 +417,7 @@ export function botWorkspaceResource(
         status: bot.status,
         initialization: { status: "ready", attempt: 0, error: null },
         base: null,
+        comparisonBase: null,
         git: null,
         creatorAgentId: null,
         orderKey: "5",
@@ -448,6 +451,7 @@ export function rootWorkspaceResource(
             error: project.initializationError ?? null,
         },
         base: null,
+        comparisonBase: null,
         git:
             project.gitBranch === undefined &&
             project.gitHead === undefined &&
