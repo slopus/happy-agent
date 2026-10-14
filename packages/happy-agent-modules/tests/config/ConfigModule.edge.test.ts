@@ -168,6 +168,7 @@ describe("ConfigModule edge coverage", () => {
                     process.platform === "darwin" ? "Happy" : "happy",
                     "Generated",
                 ),
+                gitSnapshotsPath: join(root, ".happy", "agent", "git-snapshots.json"),
                 globalConfigPath: join(
                     root,
                     process.platform === "darwin" ? "Happy/Config" : "happy/config",

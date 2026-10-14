@@ -22,7 +22,8 @@ import { countUntrackedFileLines, type UntrackedFileCount } from "./countUntrack
 import { createGitWorktree } from "./createGitWorktree.js";
 import { detectGitDefaultBranch } from "./detectGitDefaultBranch.js";
 import { cloneOnRunner } from "./impl/cloneOnRunner.js";
-import { GitStateTracker } from "./impl/GitStateTracker.js";
+import { GitSnapshotStore } from "./impl/GitSnapshotStore.js";
+import { entityKey, GitStateTracker } from "./impl/GitStateTracker.js";
 import { RunnerGitCredentialTunnel } from "./impl/RunnerGitCredentialTunnel.js";
 import { runnerGitCommandRunner, runnerScanGit } from "./impl/runnerGitRunners.js";
 import { WorkingTreeWatcher, type WorkingTreeObserver } from "./impl/WorkingTreeWatcher.js";
@@ -171,6 +172,8 @@ export class GitModule implements AgentModule {
     readonly #observers = new Set<GitSnapshotObserver>();
     readonly #runners: RunnersModule | undefined;
     readonly #runnerMachines = new Map<string, GitMachine>();
+    /** The last state of each watched repository, kept across restarts. */
+    readonly #snapshots: GitSnapshotStore | undefined;
     readonly #tunnel = new RunnerGitCredentialTunnel();
     #config: ConfigModule | undefined;
     /** Whether Git is reached directly, which is what makes a credential-carrying runner possible. */
@@ -187,6 +190,10 @@ export class GitModule implements AgentModule {
     constructor(config?: ConfigModule, runners?: RunnersModule) {
         this.#config = config;
         this.#runners = runners;
+        this.#snapshots =
+            config === undefined
+                ? undefined
+                : new GitSnapshotStore(config.configuration.paths.gitSnapshotsPath);
         this.#foreground = directGitCommandRunner;
         this.#scan =
             config === undefined
@@ -218,10 +225,12 @@ export class GitModule implements AgentModule {
 
     /**
      * Adopts the collection's lifetime so watchers and background scans outlive the call that
-     * started them. Git contributes no tools, instructions, or hooks.
+     * started them, and reads the Git state the previous daemon left, so a client reconnecting
+     * after a restart sees it at once. Git contributes no tools, instructions, or hooks.
      */
-    readonly beforeStart = (ctx: Context): void => {
+    readonly beforeStart = async (ctx: Context): Promise<void> => {
         this.#lifetime ??= detach(ctx);
+        await this.#snapshots?.load();
     };
 
     // --- Paths and names -------------------------------------------------------------------
@@ -872,6 +881,7 @@ export class GitModule implements AgentModule {
         this.#tracker = undefined;
         this.#tree?.dispose();
         this.#tree = undefined;
+        void this.#snapshots?.dispose();
         this.#tunnel.close();
         this.#runnerMachines.clear();
         this.#observers.clear();
@@ -898,6 +908,21 @@ export class GitModule implements AgentModule {
                     for (const observer of observers) {
                         await observer(ctx, entity, snapshot);
                     }
+                },
+                remember: (entity, state, fingerprint) => {
+                    this.#snapshots?.remember(entityKey(entity), entity, state, fingerprint);
+                },
+                restore: (entity) => {
+                    const entry = this.#snapshots?.get(entityKey(entity));
+                    // A state recorded for another path is not this one.
+                    if (entry === undefined || entry.entity.path !== entity.path) return undefined;
+                    return {
+                        ...(entry.fingerprint === undefined
+                            ? {}
+                            : { fingerprint: entry.fingerprint }),
+                        partial: entry.partial,
+                        state: entry.state,
+                    };
                 },
                 report: (ctx, error, entity) => {
                     ctx.log.debug("A Git watcher could not scan a repository.", {
