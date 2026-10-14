@@ -1,5 +1,5 @@
 import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { createRootContext } from "@steve.kite/stdlib";
@@ -223,6 +223,73 @@ describe("starting a session from somebody's phone", () => {
         });
     });
 
+    it("expands ~ and ~ plus a separator against the home folder", async () => {
+        const name = "happy-spawn-missing-folder-for-test";
+        const separators = process.platform === "win32" ? ["/", "\\"] : ["/"];
+        for (const separator of separators) {
+            const spawn = spawner("remote-1");
+            expect(
+                await handleHappySpawnSession({
+                    ctx,
+                    operations: spawn.operations,
+                    machineId: "machine-1",
+                    models: MODELS,
+                    params: request({ directory: `~${separator}${name}` }),
+                    remoteSessionId: spawn.remoteSessionId,
+                }),
+            ).toEqual({
+                directory: join(homedir(), name),
+                type: "requestToApproveDirectoryCreation",
+            });
+            expect(spawn.started).toEqual([]);
+        }
+
+        const spawn = spawner("remote-1");
+        await handleHappySpawnSession({
+            ctx,
+            operations: spawn.operations,
+            machineId: "machine-1",
+            models: MODELS,
+            params: request({ directory: "~" }),
+            remoteSessionId: spawn.remoteSessionId,
+        });
+        expect(spawn.started[0]).toMatchObject({ cwd: homedir() });
+    });
+
+    it.runIf(process.platform === "win32")(
+        "accepts a drive-letter folder and a ~\\ folder on Windows",
+        async () => {
+            expect(directory).toMatch(/^[A-Za-z]:\\/);
+            const spawn = spawner("remote-1");
+            await expect(
+                handleHappySpawnSession({
+                    ctx,
+                    operations: spawn.operations,
+                    machineId: "machine-1",
+                    models: MODELS,
+                    params: request(),
+                    remoteSessionId: spawn.remoteSessionId,
+                }),
+            ).resolves.toEqual({ sessionId: "remote-1", type: "success" });
+            expect(spawn.started[0]).toMatchObject({ cwd: directory });
+
+            const missing = "happy-spawn-missing-windows-folder";
+            await expect(
+                handleHappySpawnSession({
+                    ctx,
+                    operations: spawn.operations,
+                    machineId: "machine-1",
+                    models: MODELS,
+                    params: request({ directory: `~\\${missing}` }),
+                    remoteSessionId: spawn.remoteSessionId,
+                }),
+            ).resolves.toEqual({
+                directory: join(homedir(), missing),
+                type: "requestToApproveDirectoryCreation",
+            });
+        },
+    );
+
     it("refuses a request it does not understand", async () => {
         const spawn = spawner("remote-1");
         expect(
@@ -264,7 +331,7 @@ describe("starting a catalog-owned Happy Agent session", () => {
         { id: "project-1", kind: "project" },
         { id: "workspace-1", kind: "workspace" },
         { kind: "newWorkspace", projectId: "project-1" },
-        { kind: "projectFolder", projectPath: "/tmp/new-happy-project" },
+        { kind: "projectFolder", projectPath: join(tmpdir(), "new-happy-project") },
     ] as const)("passes the $kind target to the daemon unchanged", async (target) => {
         const spawn = spawner("remote-1");
 
