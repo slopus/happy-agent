@@ -71,3 +71,14 @@ override. Only absolute paths are accepted. A relative path has no working direc
 on, and `~` depends on which home the daemon resolves, so the saved entry is always the exact path. A missing folder or a file path is also rejected, so a typo cannot be saved and
 then quietly find nothing. There is no database intent to recover. The runtime file write is atomic
 and adding or removing is idempotent, so the tools are marked durable without Durable Functions.
+
+## Builtin skills live in the package, not on the agent's machine
+
+The documentation promised builtin skills, but the builtin root went away with the old Rig skill
+loader, so a skill meant for every user could only be installed by hand into each person's
+`~/.agents/skills`. Builtin skills now ship under `sources/skills/builtin/` and are read into memory
+when the module loads. They are not a filesystem root: discovery walks the agent's compute, which
+may be a container or a remote machine with no copy of Happy Agent, and the bundled binary has no
+files at all, so its build adapter inlines each document. A builtin entry has source `builtin`, a
+location of the form `builtin:<name>/SKILL.md` that the model is told is not a path, and the lowest
+precedence, so a user or project skill of the same name replaces it.

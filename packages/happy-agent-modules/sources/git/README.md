@@ -32,7 +32,7 @@ collection still works — it takes a lifetime of its own.
   diff programs, and bounds both time and output.
 - **Reading a repository.** `probe`, `facts`, `topLevel`, `commonDir`, `worktreeIdentity`,
   `isWorktreeAt`, `defaultBranch`, `selectRemoteUrl`, `resolveCommit`, `resolveComparisonBase`,
-  `readFileAtRevision`, `listWorkingTreeFiles`, `countUntrackedFileLines`.
+  `readFileAtRevision`, `compareRevisions`, `listWorkingTreeFiles`, `countUntrackedFileLines`.
 - **Changing a repository.** `clone`, `resolveWorkspaceBase`, `createWorktree`, `removeWorktree`,
   `renameBranch`.
 - **Credentials.** `registerCredential`, `commandAuthentication`, `daemonAuthentication`,

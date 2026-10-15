@@ -756,6 +756,7 @@ export function resolveBinaryForTarget(key, binaryPath) {
     }
     addDocumentationAdapter(adapters);
     addPermissionPromptAdapter(adapters, modulesRoot);
+    addBuiltinSkillsAdapter(adapters, modulesRoot);
     addAdapter(adapters, onlyMatchingFile(justBashChunks, /^js-exec-[A-Z0-9]+\.js$/u), {
         name: "just-bash JavaScript worker resolver",
         required: true,
@@ -985,6 +986,32 @@ function addPermissionPromptAdapter(
                 ),
         },
     );
+}
+
+function addBuiltinSkillsAdapter(adapters: Map<string, SourceAdapter>, modulesRoot: string): void {
+    const declaration =
+        'const guidedReview = readFileSync(new URL("../builtin/guided-review/SKILL.md", import.meta.url), "utf8");';
+    const guidedReview = readFileSync(
+        join(modulesRoot, "dist", "skills", "builtin", "guided-review", "SKILL.md"),
+        "utf8",
+    );
+
+    addAdapter(adapters, join(modulesRoot, "dist", "skills", "impl", "builtinSkills.js"), {
+        name: "builtin skills",
+        required: true,
+        adapt: (source) =>
+            replaceOnce(
+                replaceOnce(
+                    source,
+                    'import { readFileSync } from "node:fs";\n',
+                    "",
+                    "builtin skills file import",
+                ),
+                declaration,
+                `const guidedReview = ${JSON.stringify(guidedReview)};`,
+                "builtin skill declarations",
+            ),
+    });
 }
 
 function directPackageRoot(name: string): string {

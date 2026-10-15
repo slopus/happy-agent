@@ -286,6 +286,15 @@ export const gitWatchBodySchema = Type.Object(
     { additionalProperties: false },
 );
 
+/** `GET /v0/workspaces/:workspaceId/git/compare` — two commit-ish revisions. */
+export const gitCompareQuerySchema = Type.Object(
+    {
+        base: Type.String({ minLength: 1, maxLength: 256 }),
+        head: Type.String({ minLength: 1, maxLength: 256 }),
+    },
+    { additionalProperties: false },
+);
+
 export const draftBodySchema = Type.Object(
     {
         draft: Type.Union([

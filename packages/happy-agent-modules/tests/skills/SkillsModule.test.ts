@@ -6,7 +6,7 @@ import type {
 import { createRootContext, withTracer } from "@steve.kite/stdlib";
 import { describe, expect, it } from "vitest";
 
-import { SkillsModule } from "../../sources/skills/index.js";
+import { BuiltinSkillsModule, SkillsModule } from "../../sources/skills/index.js";
 import { FakeCompute } from "../compute/support/FakeCompute.js";
 import { resolveModuleHooks } from "../support/moduleHooks.js";
 import { scriptedComputeModule } from "../support/computeModule.js";
@@ -531,6 +531,37 @@ describe("SkillsModule", () => {
                     source: "project",
                 },
             ],
+        });
+    });
+
+    it("offers builtin skills from memory, below a filesystem skill of the same name", async () => {
+        const compute = new FakeCompute("/workspace");
+        compute.directories.add("/workspace/.git");
+        const module = new SkillsModule(
+            scriptedComputeModule(async () => compute),
+            undefined,
+            undefined,
+            new BuiltinSkillsModule(),
+        );
+
+        const listed = await module.list(ctx, agentId);
+        expect(listed.skills).toEqual([
+            expect.objectContaining({
+                location: "builtin:guided-review/SKILL.md",
+                name: "guided-review",
+                source: "builtin",
+            }),
+        ]);
+        const document = await module.read(ctx, agentId, { name: "guided-review" });
+        expect(document.content).toContain("```happy-diff");
+
+        compute.write(
+            "/workspace/.agents/skills/guided-review/SKILL.md",
+            skill("guided-review", "The project's own tour.", "Project instructions."),
+        );
+        await expect(module.read(ctx, agentId, { name: "guided-review" })).resolves.toMatchObject({
+            location: "/workspace/.agents/skills/guided-review/SKILL.md",
+            content: expect.stringContaining("Project instructions."),
         });
     });
 });

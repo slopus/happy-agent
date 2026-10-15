@@ -167,7 +167,7 @@ import {
     ProjectFileError,
     ProjectFilesModule,
 } from "../files/index.js";
-import { GitModule } from "../git/index.js";
+import { GitModule, GitNotRepositoryError, GitRevisionNotCommitError } from "../git/index.js";
 import { HappyIntegrationRequestError, HappyModule } from "../happy/index.js";
 import {
     HistoryModule,
@@ -296,6 +296,7 @@ import {
     documentBodySchema,
     draftBodySchema,
     emptyMutationBodySchema,
+    gitCompareQuerySchema,
     gitWatchBodySchema,
     invokeSlashCommandRequestSchema,
     messageSendBodySchema,
@@ -6642,6 +6643,32 @@ export class ApiModule implements AgentModule {
             }
             const snapshot = await this.#git.snapshot(root, workspaceId);
             sendJson(response, 200, { git: this.#git.resource(snapshot) });
+            return true;
+        }
+        const compare = /^\/v0\/workspaces\/([a-z][a-z0-9]*)\/git\/compare$/.exec(url.pathname);
+        if (compare !== null && request.method === "GET") {
+            const query = queryAs(
+                {
+                    base: url.searchParams.get("base") ?? undefined,
+                    head: url.searchParams.get("head") ?? undefined,
+                },
+                gitCompareQuerySchema,
+                "Git compare",
+            );
+            const { root, runnerId } = await this.#resolveWorkspaceScope(ctx, compare[1] as string);
+            try {
+                const comparison = await this.#git.compareRevisions({
+                    base: query.base,
+                    head: query.head,
+                    path: root,
+                    ...(runnerId === undefined ? {} : { runnerId }),
+                });
+                sendJson(response, 200, comparison);
+            } catch (error) {
+                if (error instanceof GitNotRepositoryError) throw notFound(error.message);
+                if (error instanceof GitRevisionNotCommitError) throw invalidRequest(error.message);
+                throw error;
+            }
             return true;
         }
         return false;

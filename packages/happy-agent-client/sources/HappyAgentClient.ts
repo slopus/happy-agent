@@ -148,7 +148,13 @@ import type {
     WriteFileRequest,
     WriteFileResponse,
 } from "./protocol/files.js";
-import type { GitStateResponse, WatchGitRequest, WatchGitResponse } from "./protocol/git.js";
+import type {
+    GitCompareQuery,
+    GitCompareResponse,
+    GitStateResponse,
+    WatchGitRequest,
+    WatchGitResponse,
+} from "./protocol/git.js";
 import type { HappyIntegrationResponse } from "./protocol/integrations.js";
 import type {
     CloseLiveSessionRequest,
@@ -2235,6 +2241,23 @@ export class HappyAgentClient {
         return await this.#json({
             method: "GET",
             path: `v0/workspaces/${encodeURIComponent(workspaceId)}/git`,
+            signal: options.signal,
+        });
+    }
+
+    /**
+     * `GET /v0/workspaces/:workspaceId/git/compare` — the files that differ between two
+     * commits. An older daemon answers `404`, which means the list cannot be had.
+     */
+    async compareWorkspaceGit(
+        workspaceId: Cuid2,
+        query: GitCompareQuery,
+        options: RequestOptions = {},
+    ): Promise<GitCompareResponse> {
+        return await this.#json({
+            method: "GET",
+            path: `v0/workspaces/${encodeURIComponent(workspaceId)}/git/compare`,
+            query: { base: query.base, head: query.head },
             signal: options.signal,
         });
     }

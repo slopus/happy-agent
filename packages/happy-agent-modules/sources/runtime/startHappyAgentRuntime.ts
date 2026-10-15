@@ -77,7 +77,12 @@ import { SearchModule } from "../search/index.js";
 import { SecretsModule } from "../secrets/index.js";
 import { ServicesModule } from "../services/index.js";
 import { SlashCommandsModule } from "../slashCommands/index.js";
-import { SkillsModule, GlobalSkillsModule, SkillFoldersModule } from "../skills/index.js";
+import {
+    BuiltinSkillsModule,
+    GlobalSkillsModule,
+    SkillFoldersModule,
+    SkillsModule,
+} from "../skills/index.js";
 import { SystemPromptModule } from "../systemPrompt/index.js";
 import { TailcatModule } from "../tailcat/index.js";
 import { TasksModule } from "../tasks/index.js";
@@ -428,7 +433,12 @@ export async function startHappyAgentRuntime(
                   );
         const durableFunctions = new DurableFunctionsModule();
         const globalSkills = new GlobalSkillsModule(config, durableFunctions);
-        const compute = createComputeModules(computeModule, globalSkills, config);
+        const compute = createComputeModules(
+            computeModule,
+            globalSkills,
+            config,
+            new BuiltinSkillsModule(),
+        );
         registerShutdown("global-skills", async () => await globalSkills.close());
         registerShutdown("compute", async (shutdownCtx) => {
             await Promise.allSettled([

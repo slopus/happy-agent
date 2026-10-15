@@ -47,6 +47,11 @@ export { type GitWorktreeIdentity } from "./readGitWorktreeIdentity.js";
 export { type GitComparisonBase } from "./resolveGitComparisonBase.js";
 export { workspaceBaseSchema, type WorkspaceBase } from "./resolveWorkspaceBase.js";
 export { GitRevisionFileTooLargeError, type GitRevisionFile } from "./readGitFileAtRevision.js";
+export {
+    GitNotRepositoryError,
+    GitRevisionNotCommitError,
+    type GitRevisionComparison,
+} from "./compareGitRevisions.js";
 export { type GitWorkingTreeFiles } from "./listGitWorkingTreeFiles.js";
 export { type UntrackedFileCount } from "./countUntrackedFileLines.js";
 export {

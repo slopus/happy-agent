@@ -1,5 +1,9 @@
 import type { ConfigModule } from "../config/index.js";
-import { SkillsModule, type GlobalSkillsModule } from "../skills/index.js";
+import {
+    SkillsModule,
+    type BuiltinSkillsModule,
+    type GlobalSkillsModule,
+} from "../skills/index.js";
 import { ComputeModule } from "./ComputeModule.js";
 
 export interface CreatedComputeModules {
@@ -15,14 +19,16 @@ export interface CreatedComputeModules {
  * skills module reading through it. The compute module is built by its caller — ordinarily
  * `new ComputeModule(config, secrets)`, or `ComputeModule.withProvider(...)` where the machine is
  * swapped — and this puts the pair in the order an agent collection wants them. Configuration,
- * when given, supplies the extra skill folders named in the user and project `happy.toml`.
+ * when given, supplies the extra skill folders named in the user and project `happy.toml`; the
+ * builtin skills module, when given, the skills Happy Agent ships.
  */
 export function createComputeModules(
     computeModule: ComputeModule,
     globalSkills?: GlobalSkillsModule,
     config?: ConfigModule,
+    builtinSkills?: BuiltinSkillsModule,
 ): CreatedComputeModules {
-    const skillsModule = new SkillsModule(computeModule, globalSkills, config);
+    const skillsModule = new SkillsModule(computeModule, globalSkills, config, builtinSkills);
     return {
         computeModule,
         skillsModule,

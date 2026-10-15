@@ -1,7 +1,12 @@
 # Skills module
 
 ```ts
-const skills = new SkillsModule(computeModule, globalSkillsModule, configModule);
+const skills = new SkillsModule(
+    computeModule,
+    globalSkillsModule,
+    configModule,
+    new BuiltinSkillsModule(),
+);
 ```
 
 The daemon additionally installs `new GlobalSkillsModule(configModule, durableFunctionsModule)`
@@ -20,9 +25,15 @@ folders come after those: the project root's `happy.toml` is read through the co
 `[skills] directories` entries are resolved against the project root and scanned as project skills;
 the machine's configured folders are scanned as user skills, but only on the daemon's native
 filesystem, since they name paths on this machine. A configured folder never outranks a standard
-root for a same-named skill, and a missing or invalid project file simply adds nothing. Apart from
-that, a skill is a file on the agent's own machine, so an agent with no machine has no skills and
-is given no skill tools.
+root for a same-named skill, and a missing or invalid project file simply adds nothing.
+
+The optional fourth dependency, `BuiltinSkillsModule`, supplies the skills Happy Agent ships.
+Builtin skills ship inside the package under `sources/skills/builtin/` and are read into memory
+when the module loads, never from the agent's machine: a container or remote compute has no copy
+of Happy Agent's files, and the bundled binary embeds them through a build adapter. They join the
+catalog last with source `builtin` and the location `builtin:<name>/SKILL.md`, rank below every
+filesystem root, and only `read_skill` (or the slash command) reads them. An agent with no machine
+still has no skills and is given no skill tools.
 
 The catalog and skill documents are read live through `compute.fs`, bounded, and exposed through
 model instructions plus `list_skills` and `read_skill`. Both tools read inside Happy Agent's own filesystem

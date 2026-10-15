@@ -34,6 +34,7 @@ import { parseHostingRepository, type HostingRepository } from "./parseHostingRe
 import { probeGitRepository, type GitRepositoryProbe } from "./probeGitRepository.js";
 import { readGitCommonDir } from "./readGitCommonDir.js";
 import { readGitFileAtRevision, type GitRevisionFile } from "./readGitFileAtRevision.js";
+import { compareGitRevisions, type GitRevisionComparison } from "./compareGitRevisions.js";
 import { readGitTopLevel } from "./readGitTopLevel.js";
 import { readGitWorktreeIdentity, type GitWorktreeIdentity } from "./readGitWorktreeIdentity.js";
 import { remoteProjectName } from "./remoteProjectName.js";
@@ -424,6 +425,30 @@ export class GitModule implements AgentModule {
             path: options.path,
             relativePath: options.relativePath,
             revision: options.revision,
+            runGit: this.#machine(options.runnerId).scan,
+            ...(options.signal === undefined ? {} : { signal: options.signal }),
+        });
+    }
+
+    /**
+     * The files that differ between two commits, capped like a change snapshot's list.
+     *
+     * Throws `GitNotRepositoryError` outside a repository and `GitRevisionNotCommitError` when
+     * either side does not name a commit.
+     */
+    async compareRevisions(
+        options: GitPlacement & {
+            readonly base: string;
+            readonly head: string;
+            readonly path: string;
+            readonly signal?: AbortSignal;
+        },
+    ): Promise<GitRevisionComparison> {
+        return await compareGitRevisions({
+            base: options.base,
+            head: options.head,
+            maximumFiles: MAX_SNAPSHOT_FILES,
+            path: options.path,
             runGit: this.#machine(options.runnerId).scan,
             ...(options.signal === undefined ? {} : { signal: options.signal }),
         });
