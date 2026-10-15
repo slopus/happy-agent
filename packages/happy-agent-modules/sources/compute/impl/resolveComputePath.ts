@@ -9,7 +9,7 @@
  */
 
 /** The separator the machine uses, read from a path it already gave us. */
-function separatorOf(path: string): string {
+export function separatorOf(path: string): string {
     return path.includes("\\") && !path.includes("/") ? "\\" : "/";
 }
 

@@ -11,8 +11,8 @@ const CLAUDE_MODEL = "anthropic/opus-5";
 const ctx = createRootContext().named("happy-agent-modules-claude-compute-files");
 
 /** A machine with a few files on it, and Claude's tools over it. */
-async function machine() {
-    const compute = new FakeCompute();
+async function machine(cwd?: string) {
+    const compute = new FakeCompute(cwd);
     return { compute, ...(await computeToolset(ctx, compute, { model: CLAUDE_MODEL })) };
 }
 
@@ -500,5 +500,81 @@ describe("Claude's Glob and Grep", () => {
 
         expect(result.text).toBe("No matches found");
         expect(result.matched_files).toBe(0);
+    });
+
+    it("filters by a glob without a slash at any depth, as ripgrep does", async () => {
+        const { compute, tool, call } = await machine();
+        compute.write("/workspace/top.ts", "const needle = 1;");
+        compute.write("/workspace/src/deep/a.ts", "const needle = 2;");
+        compute.write("/workspace/src/deep/a.md", "needle");
+
+        const result = await tool("Grep").execute(ctx, { pattern: "needle", glob: "*.ts" }, call);
+
+        expect(result.text.split("\n").sort()).toEqual([
+            "/workspace/src/deep/a.ts",
+            "/workspace/top.ts",
+        ]);
+    });
+});
+
+describe("Claude's Glob and Grep on a Windows machine", () => {
+    /** A Windows machine whose paths use backslashes, with files at three depths. */
+    async function windows() {
+        const found = await machine("C:\\work");
+        found.compute.write("C:\\work\\README.md", "needle at the top");
+        found.compute.write("C:\\work\\ideas\\plan.md", "needle in ideas");
+        found.compute.write("C:\\work\\ideas\\old\\draft.md", "needle deeper");
+        found.compute.write("C:\\work\\scripts\\run.ps1", "needle in a script");
+        return found;
+    }
+
+    it.each([
+        ["**/plan.md", ["C:\\work\\ideas\\plan.md"]],
+        ["ideas/*.md", ["C:\\work\\ideas\\plan.md"]],
+        ["*/plan.md", ["C:\\work\\ideas\\plan.md"]],
+        ["ideas/**/*.md", ["C:\\work\\ideas\\old\\draft.md", "C:\\work\\ideas\\plan.md"]],
+        ["ideas\\plan.md", ["C:\\work\\ideas\\plan.md"]],
+        ["**\\draft.md", ["C:\\work\\ideas\\old\\draft.md"]],
+        [
+            "**/*.md",
+            ["C:\\work\\README.md", "C:\\work\\ideas\\old\\draft.md", "C:\\work\\ideas\\plan.md"],
+        ],
+        ["*.md", ["C:\\work\\README.md"]],
+    ])("matches %s the way it matches on any other machine", async (pattern, expected) => {
+        const { tool, call } = await windows();
+
+        const result = await tool("Glob").execute(ctx, { pattern }, call);
+
+        expect(result.text.split("\n").sort()).toEqual(expected);
+    });
+
+    it("matches below a folder named as the search path", async () => {
+        const { tool, call } = await windows();
+
+        const result = await tool("Glob").execute(
+            ctx,
+            { pattern: "old/*.md", path: "C:\\work\\ideas" },
+            call,
+        );
+
+        expect(result.text).toBe("C:\\work\\ideas\\old\\draft.md");
+    });
+
+    it("filters Grep by a glob with a folder in it", async () => {
+        const { tool, call } = await windows();
+
+        const anchored = await tool("Grep").execute(
+            ctx,
+            { pattern: "needle", glob: "ideas/*.md" },
+            call,
+        );
+        const bare = await tool("Grep").execute(ctx, { pattern: "needle", glob: "*.md" }, call);
+
+        expect(anchored.text).toBe("C:\\work\\ideas\\plan.md");
+        expect(bare.text.split("\n").sort()).toEqual([
+            "C:\\work\\README.md",
+            "C:\\work\\ideas\\old\\draft.md",
+            "C:\\work\\ideas\\plan.md",
+        ]);
     });
 });

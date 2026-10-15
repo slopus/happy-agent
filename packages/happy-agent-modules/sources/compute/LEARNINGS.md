@@ -199,3 +199,15 @@ read the database and credentials. Resolution now asks `RunnersModule.userFor` f
 host compute only when there is no runner, no container, and no user; every other agent machine,
 the permission reviewer's included, is built on the user's local runner. Secrets are refused there
 because they would have to be delivered across the user boundary first.
+
+## Globs compare folders with `/` on every machine
+
+Glob and the Grep `glob` filter matched a pattern against the path relative to the search root,
+written with the machine's own separator. A Windows path uses `\`, which `*` matched as an
+ordinary character while a `/` in the pattern never matched it. So on Windows `**/plan.md` and
+`ideas/*.md` found nothing, and `*.md` reached into every folder. The relative path is now
+compared with `/` between its folders, and on a machine that writes `\` a `\` in the pattern is a
+separator too, because no Windows name can contain one and the dialect has no escape character.
+The results keep the machine's own separators. A bare pattern such as `*.md` now stays at the
+top of the search in Glob on every machine. The Claude and Grok Grep `glob` filters follow
+`rg --glob` instead: a glob without a slash names files at any depth, as Kimi's Grep already did.

@@ -86,9 +86,12 @@ export class FakeCompute implements Compute {
 
     /** Modification times come from a counter, so "changed since read" is exact. */
     #clock = 1_000;
+    /** The separator the machine writes, taken from its working directory: `C:\work` is Windows. */
+    readonly #separator: string;
 
     constructor(cwd = "/workspace") {
         this.cwd = cwd;
+        this.#separator = cwd.includes("\\") && !cwd.includes("/") ? "\\" : "/";
         this.directories.add(cwd);
         this.fs = this.#createFileSystem();
         this.shell = this.#createShell();
@@ -114,10 +117,10 @@ export class FakeCompute implements Compute {
     }
 
     private ensureParentDirectories(path: string): void {
-        let directory = parent(path);
+        let directory = parent(path, this.#separator);
         while (directory !== "" && !this.directories.has(directory)) {
             this.directories.add(directory);
-            directory = parent(directory);
+            directory = parent(directory, this.#separator);
         }
     }
 
@@ -139,7 +142,8 @@ export class FakeCompute implements Compute {
         // Named here rather than through the published `readdir`, so a test that replaces one
         // listing call to prove the other is used does not silently disable both.
         const namesIn = (path: string): string[] => {
-            const prefix = path.endsWith("/") ? path : `${path}/`;
+            const separator = this.#separator;
+            const prefix = path.endsWith(separator) ? path : `${path}${separator}`;
             const names = new Set<string>();
             for (const candidate of [
                 ...this.files.keys(),
@@ -147,7 +151,7 @@ export class FakeCompute implements Compute {
                 ...this.links.keys(),
             ]) {
                 if (!candidate.startsWith(prefix) || candidate === path) continue;
-                names.add(candidate.slice(prefix.length).split("/")[0] ?? "");
+                names.add(candidate.slice(prefix.length).split(separator)[0] ?? "");
             }
             return [...names];
         };
@@ -198,7 +202,7 @@ export class FakeCompute implements Compute {
                 let directory = path;
                 while (directory !== "" && !this.directories.has(directory)) {
                     this.directories.add(directory);
-                    directory = parent(directory);
+                    directory = parent(directory, this.#separator);
                 }
                 return Promise.resolve();
             },
@@ -399,7 +403,7 @@ export class FakeCompute implements Compute {
 }
 
 /** The directory holding a path, in the fake machine's own flat namespace. */
-function parent(path: string): string {
-    const cut = path.lastIndexOf("/");
+function parent(path: string, separator: string): string {
+    const cut = path.lastIndexOf(separator);
     return cut <= 0 ? "" : path.slice(0, cut);
 }

@@ -1,9 +1,9 @@
 import type { Context } from "@steve.kite/stdlib";
 
 import type { Compute } from "../Compute.js";
+import { computeGlobMatcher } from "./computeGlobMatcher.js";
 import { computePermissionsForContext } from "./computePermissionsForContext.js";
-import { globToRegExp } from "./globToRegExp.js";
-import { relativeComputePath, resolveComputePath } from "./resolveComputePath.js";
+import { resolveComputePath } from "./resolveComputePath.js";
 import { walkComputeFiles } from "./walkComputeFiles.js";
 
 /** The paths one name search found. */
@@ -32,10 +32,10 @@ export async function findComputeFiles(
 ): Promise<ComputeFileMatches> {
     const permissions = computePermissionsForContext(ctx);
     const root = resolveComputePath(options.path ?? ".", compute.cwd, compute.fs.home);
-    const expression = globToRegExp(options.pattern);
+    const matches = computeGlobMatcher(options.pattern, root);
     const walked = await walkComputeFiles(compute.fs, permissions, root);
     const matched = walked.files
-        .filter((file) => expression.test(relativeComputePath(root, file.path)))
+        .filter((file) => matches(file.path))
         .sort((left, right) => right.mtimeMs - left.mtimeMs);
     const shown = matched.slice(0, options.limit);
     return {

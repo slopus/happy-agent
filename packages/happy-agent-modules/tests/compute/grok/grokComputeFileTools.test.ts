@@ -221,6 +221,30 @@ describe("Grok's compute file tools", () => {
         expect(llmText(tool("grep").toLLM(capped))).toContain("Capped.");
     });
 
+    it("filters by a glob the way ripgrep does, on either kind of path", async () => {
+        const { tool } = await project();
+
+        const bare = await tool("grep").execute(ctx, { pattern: "export", glob: "*.ts" });
+        const anchored = await tool("grep").execute(ctx, {
+            pattern: "export",
+            glob: "sources/util.ts",
+        });
+
+        expect(bare.matched_files).toBe(2);
+        expect(anchored.text).toBe("/workspace/sources/util.ts:1: export const NAME = 'util';");
+
+        const compute = new FakeCompute("C:\\work");
+        compute.write("C:\\work\\sources\\util.ts", "export const NAME = 'util';\n");
+        const windows = await computeToolset(ctx, compute, { model: GROK_MODEL });
+
+        const found = await windows.tool("grep").execute(ctx, {
+            pattern: "export",
+            glob: "sources/*.ts",
+        });
+
+        expect(found.text).toBe("C:\\work\\sources\\util.ts:1: export const NAME = 'util';");
+    });
+
     it("says plainly when nothing matched", async () => {
         const { tool } = await project();
 

@@ -16,6 +16,7 @@ import {
     basenameComputePath,
 } from "../../../sources/compute/impl/resolveComputePath.js";
 import { globToRegExp } from "../../../sources/compute/impl/globToRegExp.js";
+import { computeGlobMatcher } from "../../../sources/compute/impl/computeGlobMatcher.js";
 import {
     isGitIgnored,
     loadInitialGitIgnoreScopes,
@@ -162,6 +163,20 @@ describe("compute implementation boundaries", () => {
         expect(globToRegExp("file[1].ts").test("file[1].ts")).toBe(true);
         expect(globToRegExp("file[1].ts").test("file1.ts")).toBe(false);
         expect(globToRegExp("README", { ignoreCase: true }).test("readme")).toBe(true);
+    });
+
+    it("matches globs against the folders of a Windows path", () => {
+        const windows = (pattern: string) => computeGlobMatcher(pattern, "C:\\work");
+        expect(windows("**/plan.md")("C:\\work\\ideas\\plan.md")).toBe(true);
+        expect(windows("ideas/*.md")("C:\\work\\ideas\\plan.md")).toBe(true);
+        expect(windows("ideas\\*.md")("C:\\work\\ideas\\plan.md")).toBe(true);
+        expect(windows("*.md")("C:\\work\\ideas\\plan.md")).toBe(false);
+        expect(windows("*.md")("C:\\work\\plan.md")).toBe(true);
+        // A POSIX name may hold a backslash, so there it stays an ordinary character.
+        const posix = (pattern: string) => computeGlobMatcher(pattern, "/work");
+        expect(posix("a\\b.md")("/work/a\\b.md")).toBe(true);
+        expect(posix("a/b.md")("/work/a\\b.md")).toBe(false);
+        expect(posix("*.md")("/work/a\\b.md")).toBe(true);
     });
 
     it("allows a file with no valid remembered read and records later reads", async () => {

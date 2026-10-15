@@ -1,10 +1,10 @@
 import type { Context } from "@steve.kite/stdlib";
 
 import type { Compute } from "../Compute.js";
+import { computeGlobMatcher } from "./computeGlobMatcher.js";
 import { computePermissionsForContext } from "./computePermissionsForContext.js";
 import { escapeRegExp } from "./escapeRegExp.js";
-import { globToRegExp } from "./globToRegExp.js";
-import { relativeComputePath, resolveComputePath } from "./resolveComputePath.js";
+import { resolveComputePath } from "./resolveComputePath.js";
 import { walkComputeFiles } from "./walkComputeFiles.js";
 
 /** How a content search answers: matching lines, the paths, or one count per file. */
@@ -86,16 +86,17 @@ export async function searchComputeFileContents(
         ignoreCase: options.caseInsensitive === true,
         multiline: options.multiline === true,
     });
-    const fileExpression =
-        options.filePattern === undefined ? undefined : globToRegExp(options.filePattern);
+    const fileMatches =
+        options.filePattern === undefined
+            ? undefined
+            : computeGlobMatcher(options.filePattern, root);
     const walked = await walkComputeFiles(compute.fs, permissions, root, {
         respectGitIgnore: true,
     });
     const type = normalizeFileType(options.type);
     const wanted = walked.files.filter(
         (file) =>
-            (fileExpression === undefined ||
-                fileExpression.test(relativeComputePath(root, file.path))) &&
+            (fileMatches === undefined || fileMatches(file.path)) &&
             (type === undefined || type.test(file.path)),
     );
     const outputMode = options.outputMode ?? "content";

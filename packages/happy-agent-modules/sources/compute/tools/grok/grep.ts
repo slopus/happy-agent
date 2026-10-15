@@ -109,7 +109,10 @@ export function grokGrepTool(compute: Compute) {
                 lineNumbers: true,
                 limit: args.head_limit ?? DEFAULT_HEAD_LIMIT,
                 ...(args.path === undefined ? {} : { path: args.path }),
-                ...(args.glob === undefined ? {} : { filePattern: args.glob }),
+                // A glob without a slash names files at any depth, as `rg --glob` reads it.
+                ...(args.glob === undefined
+                    ? {}
+                    : { filePattern: args.glob.includes("/") ? args.glob : `**/${args.glob}` }),
                 ...(args["-B"] === undefined ? {} : { before: args["-B"] }),
                 ...(args["-A"] === undefined ? {} : { after: args["-A"] }),
                 ...(args["-C"] === undefined ? {} : { before: args["-C"], after: args["-C"] }),

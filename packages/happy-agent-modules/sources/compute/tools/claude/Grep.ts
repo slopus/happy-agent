@@ -149,7 +149,10 @@ export function claudeGrepTool(compute: Compute) {
             const found = await searchComputeFileContents(compute, ctx, {
                 pattern: args.pattern,
                 ...(args.path === undefined ? {} : { path: args.path }),
-                ...(args.glob === undefined ? {} : { filePattern: args.glob }),
+                // A glob without a slash names files at any depth, as `rg --glob` reads it.
+                ...(args.glob === undefined
+                    ? {}
+                    : { filePattern: args.glob.includes("/") ? args.glob : `**/${args.glob}` }),
                 ...(args.type === undefined ? {} : { type: args.type }),
                 outputMode: args.output_mode ?? "files_with_matches",
                 ...(args["-i"] === undefined ? {} : { caseInsensitive: args["-i"] }),
