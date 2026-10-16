@@ -1,6 +1,7 @@
 import { spawn as spawnChildProcess } from "node:child_process";
 
 import type { ComputeProcessExit, ComputeProcessSignal } from "../../ComputeProcesses.js";
+import { spawnAcceptingCtrlC } from "./spawnAcceptingCtrlC.js";
 
 /** A started program as the host sees it, before output delivery is layered on top. */
 export interface HostProcessSource {
@@ -138,11 +139,13 @@ function startBunTerminal(
     });
     let subprocess: BunSubprocess;
     try {
-        subprocess = bun.spawn([options.command, ...options.args], {
-            cwd: options.cwd,
-            env: options.env,
-            terminal: pty,
-        });
+        subprocess = spawnAcceptingCtrlC(() =>
+            bun.spawn([options.command, ...options.args], {
+                cwd: options.cwd,
+                env: options.env,
+                terminal: pty,
+            }),
+        );
         pty.ref();
     } catch (error) {
         pty.close();

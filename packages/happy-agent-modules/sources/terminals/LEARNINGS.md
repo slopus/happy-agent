@@ -41,3 +41,14 @@ path, and the module carries no pseudo-terminal code of its own.
 The compute starts terminals only under Bun, the runtime the Happy Agent binary runs on; node-pty is
 for the gym's own harness, not the product. Without a named shell, a POSIX machine runs its own
 `$SHELL`, which only that machine knows, so the terminal starts `/bin/sh` and execs it there.
+
+## Ctrl+C reaches a Windows terminal's programs
+
+On Windows, Ctrl+C in a terminal did nothing: `ping -t` kept running in PowerShell and in cmd. The
+desktop sent `\x03` and the console turned it into a Ctrl+C event, but every program ignored it.
+The daemon starts detached, which on Windows is a new process group, and that makes it ignore
+Ctrl+C. Windows passes that flag on to every program the daemon starts. node-pty clears it for its
+child; Bun's terminal does not.
+
+The compute now clears the flag in its own process for the one synchronous terminal spawn, then
+sets it back, so the shell answers Ctrl+C and nothing else the daemon starts changes.

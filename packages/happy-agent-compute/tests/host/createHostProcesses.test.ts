@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -114,6 +115,71 @@ describe.runIf(process.platform !== "win32")("host processes", () => {
         await expect(started.exited).resolves.toMatchObject({ signal: "SIGKILL" });
     });
 });
+
+describe.runIf(process.platform === "win32")("host processes on Windows", () => {
+    // A detached daemon ignores Ctrl+C, and Windows passes that on to every program it starts.
+    it.runIf(underBun)(
+        "interrupts a terminal program with Ctrl+C from a daemon that ignores it",
+        async () => {
+            const ctrlC = ignoreCtrlC();
+            cleanups.push(async () => ctrlC.restore());
+            const { processes } = await hostProcesses();
+            const started = await processes.start(ctx, {
+                command: "ping.exe",
+                args: ["-t", "127.0.0.1"],
+                terminal: { cols: 100, rows: 30 },
+            });
+            let output = "";
+            started.onStdout((chunk) => {
+                output += Buffer.from(chunk).toString();
+            });
+            await waitFor(() => output.split("127.0.0.1").length > 2, 10_000);
+
+            await started.write("\x03");
+
+            await expect(
+                Promise.race([
+                    started.exited.then(() => "exited"),
+                    new Promise((resolve) => setTimeout(() => resolve("still running"), 5_000)),
+                ]),
+            ).resolves.toBe("exited");
+            expect(ctrlC.ignored()).toBe(true);
+        },
+    );
+});
+
+/**
+ * Makes this process ignore Ctrl+C, as a daemon started in its own process group does, and reads
+ * the flag back from the process parameters, where Windows keeps it.
+ */
+function ignoreCtrlC() {
+    const ffi = createRequire(import.meta.url)("bun:ffi");
+    const kernel32 = ffi.dlopen("kernel32.dll", {
+        GetCurrentProcess: { args: [], returns: "ptr" },
+        SetConsoleCtrlHandler: { args: ["ptr", "bool"], returns: "bool" },
+    });
+    const ntdll = ffi.dlopen("ntdll.dll", {
+        NtQueryInformationProcess: { args: ["ptr", "i32", "ptr", "u32", "ptr"], returns: "i32" },
+    });
+    const ignored = () => {
+        const basic = new BigUint64Array(6);
+        ntdll.symbols.NtQueryInformationProcess(
+            kernel32.symbols.GetCurrentProcess(),
+            0,
+            basic,
+            basic.byteLength,
+            null,
+        );
+        const parameters = ffi.read.ptr(Number(basic[1]), 0x20);
+        return (ffi.read.u32(parameters, 0x18) & 1) === 1;
+    };
+    const before = ignored();
+    kernel32.symbols.SetConsoleCtrlHandler(null, true);
+    return {
+        ignored,
+        restore: () => kernel32.symbols.SetConsoleCtrlHandler(null, before),
+    };
+}
 
 async function hostProcesses(environment: NodeJS.ProcessEnv = {}) {
     // The real path: `$PWD` is what the kernel says, and macOS's temporary folder is a symlink.
