@@ -27,7 +27,7 @@ export function getGrokAuthPath(
 
 export async function readGrokAuthStore(path: string): Promise<GrokAuthStore> {
     try {
-        const source = await readFile(path, "utf8");
+        const source = (await readFile(path, "utf8")).replace(/^\uFEFF/u, "");
         if (source.trim().length === 0) return {};
         const value: unknown = JSON.parse(source);
         if (value === null || Array.isArray(value) || typeof value !== "object") {

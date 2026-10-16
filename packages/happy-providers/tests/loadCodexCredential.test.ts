@@ -166,6 +166,23 @@ describe("loadCodexCredential with a real Codex auth file", () => {
             name: "codex-api-key",
         });
     });
+
+    it("loads an auth.json saved with a leading UTF-8 BOM on Windows", async () => {
+        const root = await mkdtemp(join(tmpdir(), "rig-codex-auth-"));
+        tempDirectories.push(root);
+        const authFile = join(root, "auth.json");
+        await writeFile(
+            authFile,
+            `\uFEFF${JSON.stringify({ auth_mode: "apikey", OPENAI_API_KEY: "bom-key" })}`,
+        );
+
+        const credential = await loadCodexCredential({ authFile, env: {} });
+
+        expect(credential).toMatchObject({
+            credential: { apiKey: "bom-key" },
+            name: "codex-api-key",
+        });
+    });
 });
 
 async function writeAuthFile(contents: Record<string, unknown>): Promise<string> {

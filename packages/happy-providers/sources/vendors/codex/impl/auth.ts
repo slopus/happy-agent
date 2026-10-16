@@ -59,7 +59,7 @@ export type CodexStoredAuth =
     | { authMode: "session"; quotaAuth?: CodexQuotaAuth };
 
 export function readCodexAuth(contents: string): CodexStoredAuth | undefined {
-    const parsed: unknown = JSON.parse(contents);
+    const parsed: unknown = JSON.parse(contents.replace(/^\uFEFF/u, ""));
     if (!Value.Check(codexAuthFileSchema, parsed)) {
         return undefined;
     }
