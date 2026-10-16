@@ -30,7 +30,9 @@ export function describeHappyProvider(
         id: providerId,
         kind: providerType ?? "unknown",
         name:
-            (providerType === null ? undefined : KNOWN_PROVIDER_NAMES[providerType]) ??
+            (providerType !== null && providerId === providerType
+                ? KNOWN_PROVIDER_NAMES[providerType]
+                : undefined) ??
             providerId
                 .replaceAll(/[_-]+/gu, " ")
                 .replaceAll(/\b\w/gu, (character) => character.toUpperCase()),
