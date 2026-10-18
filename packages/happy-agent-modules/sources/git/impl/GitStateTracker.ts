@@ -18,16 +18,27 @@ const TRACKED_LIMIT = 256;
 const SCAN_CONCURRENCY = 2;
 const DEBOUNCE_MS = 150;
 const MAXIMUM_DEBOUNCE_MS = 750;
-const RECURSIVE_WATCH_STALE_MS = 2 * 60 * 1000;
+/**
+ * A watched repository is rescanned on its working-tree and Git metadata events, so its stale
+ * check is only a safety net for an event the operating system lost. On Windows each check of a
+ * background workspace would otherwise keep its scan sandbox busy around the clock.
+ */
+const RECURSIVE_WATCH_STALE_MS = 30 * 60 * 1000;
 const POLLING_STALE_MS = 30_000;
 const WORKTREE_PATH_LIMIT = 128;
 const WORKTREE_PATH_BATCH = 64;
 const PATH_STATUS_OUTPUT_LIMIT = 64 * 1024;
 const BACKOFF_START_MS = 1_000;
 const BACKOFF_LIMIT_MS = 30_000;
-/** However long a repository has been idle, a full scan still runs this often. */
+/**
+ * However long a repository has been idle, its comparison base is proved again this often: by
+ * merge base when the snapshot names its base branch, and otherwise by a full scan.
+ */
 const FULL_SCAN_LIMIT_MS = 30 * 60 * 1000;
-/** Each unchanged stale check doubles the wait, up to this many times the starting interval. */
+/**
+ * Each unchanged stale check of a polled repository doubles the wait, up to this many times the
+ * starting interval.
+ */
 const IDLE_RECONCILE_FACTOR = 10;
 
 /** The stale deadline of a repository whose working tree is not delivering events. */
@@ -44,8 +55,24 @@ export const GIT_WATCHED_RECONCILE_STALE_AFTER_MS = RECURSIVE_WATCH_STALE_MS;
  */
 export interface GitStateTrackerOwner {
     deliver(ctx: Context, entity: GitTrackedEntity, snapshot: GitChangeSnapshot): Promise<void>;
+    /** Records a repository's latest scanned state for the next daemon to start from. */
+    remember?(
+        entity: GitTrackedEntity,
+        state: GitChangeState,
+        fingerprint: string | undefined,
+    ): void;
     report(ctx: Context, error: unknown, entity: GitTrackedEntity): void;
+    /** What a previous daemon last knew about a repository, if anything. */
+    restore?(entity: GitTrackedEntity): GitRestoredState | undefined;
     stamp(state: GitChangeState): GitChangeSnapshot;
+}
+
+/** A repository's state as a previous daemon left it. */
+export interface GitRestoredState {
+    fingerprint?: string;
+    /** Whether something was left out, so the state is only shown until a full scan replaces it. */
+    partial: boolean;
+    state: GitChangeState;
 }
 
 interface RepositoryTracker {
@@ -74,6 +101,11 @@ interface RepositoryTracker {
     reconcileDelayMs: number;
     /** Whether the queued scan is only a stale check, which a matching fingerprint satisfies. */
     reconciling: boolean;
+    /**
+     * A snapshot restored from a previous daemon awaiting its first check: `"verify"` when a
+     * matching fingerprint proves it current, `"rescan"` when only a full scan can replace it.
+     */
+    restored: "rescan" | "verify" | undefined;
     scanController: AbortController | undefined;
     scanning: boolean;
     snapshot: GitChangeSnapshot | undefined;
@@ -214,6 +246,7 @@ export class GitStateTracker {
             reconcileAfterScan: false,
             reconcileDelayMs: GIT_RECONCILE_STALE_AFTER_MS,
             reconciling: false,
+            restored: undefined,
             scanController: undefined,
             scanning: false,
             snapshot: undefined,
@@ -223,6 +256,17 @@ export class GitStateTracker {
             unwatch: undefined,
             unwatchTree: undefined,
         };
+        // What the previous daemon knew is served at once; the first check proves or replaces it.
+        const restored = this.#owner.restore?.(entity);
+        if (restored !== undefined) {
+            tracker.snapshot = this.#owner.stamp(restored.state);
+            tracker.snapshotDelivered = true;
+            tracker.fingerprint = restored.fingerprint;
+            // Refs may have moved while no daemon watched them, so the base is proved at once.
+            tracker.fullScanAt = Number.NEGATIVE_INFINITY;
+            tracker.restored =
+                restored.partial || restored.fingerprint === undefined ? "rescan" : "verify";
+        }
         this.#trackers.set(key, tracker);
         this.#evictExpired();
         if (!this.#trackers.has(key)) return;
@@ -460,6 +504,15 @@ export class GitStateTracker {
     }
 
     #watchChanged(tracker: RepositoryTracker, change: GitRepositoryChange): void {
+        if (change.kind === "armed" && tracker.restored !== undefined) {
+            const verify = tracker.restored === "verify";
+            tracker.restored = undefined;
+            // A restored snapshot only has to be proved current, queued like any stale check.
+            if (verify) {
+                this.#reconcileBy(tracker, Date.now());
+                return;
+            }
+        }
         if (
             change.kind === "refs" &&
             !gitReferenceChangeAffectsSnapshot(tracker.snapshot, change.entry)
@@ -630,6 +683,7 @@ export class GitStateTracker {
                 await this.#owner.deliver(ctx, tracker.entity, snapshot);
                 tracker.snapshotDelivered = true;
             }
+            this.#owner.remember?.(tracker.entity, state, scanned.fingerprint);
             this.#settleReconcile(tracker, unchanged);
         } catch (error) {
             if (this.#disposed || tracker.generation !== generation) return;
@@ -664,25 +718,43 @@ export class GitStateTracker {
      * Whether the delivered snapshot is provably still current, by fingerprint alone.
      *
      * Only a stale check may be answered this way: a Git metadata event or an explicit refresh
-     * always scans. A full scan still runs at least every `FULL_SCAN_LIMIT_MS`, so a missed
-     * `origin/main` move cannot hide behind an unchanged working tree for long.
+     * always scans. The base is proved again at least every `FULL_SCAN_LIMIT_MS`, so a missed
+     * `origin/main` move cannot hide behind an unchanged working tree for long. With HEAD and the
+     * working tree fixed by the fingerprint, an unchanged merge base with the base branch fixes
+     * the diff too, so that proof costs one Git process instead of a full scan.
      */
     async #stillCurrent(tracker: RepositoryTracker, signal: AbortSignal): Promise<boolean> {
         if (
             tracker.fingerprint === undefined ||
             tracker.gitDirectory === undefined ||
             !tracker.snapshotDelivered ||
-            Date.now() - tracker.fullScanAt >= FULL_SCAN_LIMIT_MS
+            tracker.snapshot === undefined
         ) {
             return false;
         }
+        const baseDue = Date.now() - tracker.fullScanAt >= FULL_SCAN_LIMIT_MS;
+        const proof = baseDue ? baseProof(tracker.snapshot) : undefined;
+        if (baseDue && proof === undefined) return false;
         const fingerprint = await readGitWorktreeFingerprint({
             gitDirectory: tracker.gitDirectory,
             path: tracker.entity.path,
             runGit: this.#scan,
             signal,
         });
-        return fingerprint !== undefined && fingerprint === tracker.fingerprint;
+        if (fingerprint === undefined || fingerprint !== tracker.fingerprint) return false;
+        if (proof === undefined) return true;
+        try {
+            const result = await this.#scan({
+                args: ["merge-base", "--end-of-options", proof.ref, proof.head],
+                cwd: tracker.entity.path,
+                signal,
+            });
+            if (result.stdout.trim() !== proof.base) return false;
+        } catch {
+            return false;
+        }
+        tracker.fullScanAt = Date.now();
+        return true;
     }
 
     /** Clears retry backoff and schedules the next stale check: sooner after change, later when idle. */
@@ -692,9 +764,11 @@ export class GitStateTracker {
         if (tracker.backoffTimer !== undefined) clearTimeout(tracker.backoffTimer);
         tracker.backoffTimer = undefined;
         const staleAfter = this.#staleAfter(tracker);
-        tracker.reconcileDelayMs = unchanged
-            ? Math.min(staleAfter * IDLE_RECONCILE_FACTOR, tracker.reconcileDelayMs * 2)
-            : staleAfter;
+        // A watched repository's safety net is already long; only polling relaxes further.
+        tracker.reconcileDelayMs =
+            unchanged && !tracker.treeWatching
+                ? Math.min(staleAfter * IDLE_RECONCILE_FACTOR, tracker.reconcileDelayMs * 2)
+                : staleAfter;
         tracker.reconcileAt = tracker.reconcileAfterScan
             ? Date.now()
             : Date.now() + tracker.reconcileDelayMs;
@@ -714,6 +788,15 @@ export function entityKey(entity: GitTrackedEntity): string {
     return entity.workspaceId === undefined
         ? `project:${entity.projectId}`
         : `workspace:${entity.workspaceId}`;
+}
+
+/** What a merge base must still equal for a snapshot measured against a named base branch. */
+function baseProof(
+    snapshot: GitChangeSnapshot,
+): { base: string; head: string; ref: string } | undefined {
+    const { base, baseRef, facts } = snapshot;
+    if (base === undefined || baseRef === undefined || facts.head === undefined) return undefined;
+    return { base, head: facts.head, ref: baseRef };
 }
 
 function sameState(left: GitChangeSnapshot | undefined, right: GitChangeState): boolean {

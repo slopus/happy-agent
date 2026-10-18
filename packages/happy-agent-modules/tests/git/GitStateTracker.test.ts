@@ -9,6 +9,7 @@ import {
     GIT_RECONCILE_STALE_AFTER_MS,
     GitStateTracker,
     gitReferenceChangeAffectsSnapshot,
+    type GitRestoredState,
     type GitStateTrackerOwner,
 } from "../../sources/git/impl/GitStateTracker.js";
 import {
@@ -189,6 +190,43 @@ describe("GitStateTracker scheduling", () => {
         }
     });
 
+    it("proves an idle base by merge base instead of rescanning every half hour", async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(1_000);
+        const scan = testScan();
+        const tracker = new GitStateTracker(createRootContext(), scan.run, owner());
+        // Subscriptions renew well inside the watch lifetime while a client is looking.
+        const idle = async (milliseconds: number) => {
+            for (let elapsed = 0; elapsed < milliseconds; elapsed += 60_000) {
+                tracker.watch(entity);
+                await advance(60_000);
+            }
+        };
+        try {
+            await startTracking(tracker);
+            expect(scan.diffReads).toBe(1);
+            const scanMergeBases = scan.mergeBaseReads.length;
+
+            await idle(2 * 60 * 60 * 1000);
+            expect(scan.diffReads).toBe(1);
+            expect(scan.mergeBaseReads.length).toBeGreaterThan(scanMergeBases);
+            expect(scan.mergeBaseReads.at(-1)).toEqual([
+                "merge-base",
+                "--end-of-options",
+                "refs/remotes/origin/main",
+                HEAD,
+            ]);
+
+            // A base branch that moved without any event is still caught within the limit.
+            scan.mergeBase = "b".repeat(40);
+            await idle(31 * 60 * 1000);
+            expect(scan.diffReads).toBe(2);
+            expect(tracker.snapshot(entity)?.base).toBe("b".repeat(40));
+        } finally {
+            tracker.dispose();
+        }
+    });
+
     it("checks promptly and cheaply when the working-tree watch goes live", async () => {
         vi.useFakeTimers();
         vi.setSystemTime(1_000);
@@ -217,6 +255,107 @@ describe("GitStateTracker scheduling", () => {
             expect(scan.fullStatusReads).toBe(2);
         } finally {
             tracker.dispose();
+        }
+    });
+
+    it("checks a watched repository only every half hour while its events stay quiet", async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(1_000);
+        const scan = testScan();
+        let observer: WorkingTreeObserver | undefined;
+        const tree = {
+            dispose: () => undefined,
+            watch: (_root: string, watching: WorkingTreeObserver) => {
+                observer = watching;
+                return () => undefined;
+            },
+        } as unknown as WorkingTreeWatcher;
+        const tracker = new GitStateTracker(createRootContext(), scan.run, owner(), tree);
+        // Subscriptions renew well inside the watch lifetime while a client is looking.
+        const idle = async (milliseconds: number) => {
+            for (let elapsed = 0; elapsed < milliseconds; elapsed += 60_000) {
+                tracker.watch(entity);
+                await advance(60_000);
+            }
+        };
+        try {
+            await startTracking(tracker);
+            observer?.onWatching?.(true);
+            await advance(1);
+            expect(scan.fullStatusReads).toBe(2);
+
+            await idle(29 * 60_000);
+            expect(scan.fullStatusReads).toBe(2);
+            await idle(2 * 60_000);
+            expect(scan.fullStatusReads).toBe(3);
+            // Quiet checks do not stretch the safety net any further.
+            await idle(28 * 60_000);
+            expect(scan.fullStatusReads).toBe(3);
+            await idle(3 * 60_000);
+            expect(scan.fullStatusReads).toBe(4);
+            expect(scan.diffReads).toBe(1);
+        } finally {
+            tracker.dispose();
+        }
+    });
+
+    it("starts from the state a previous daemon left and only proves it current", async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(1_000);
+        const remembered: GitRestoredState[] = [];
+        const before = testScan();
+        const first = new GitStateTracker(createRootContext(), before.run, {
+            ...owner(),
+            remember: (_entity, state, fingerprint) => {
+                remembered.push({
+                    ...(fingerprint === undefined ? {} : { fingerprint }),
+                    partial: false,
+                    state,
+                });
+            },
+        });
+        await startTracking(first);
+        first.dispose();
+        expect(remembered).toHaveLength(1);
+        expect(remembered[0]!.fingerprint).toBeDefined();
+
+        const scan = testScan();
+        const restarted = new GitStateTracker(createRootContext(), scan.run, {
+            ...owner(),
+            restore: () => remembered[0],
+        });
+        try {
+            restarted.watch(entity);
+            // A reconnecting client is answered before any Git runs.
+            expect(restarted.snapshot(entity)?.facts.head).toBe(HEAD);
+            await settlePromises();
+            await advance(150);
+            // One status read proves the working tree and one merge base proves the base; the
+            // diff is never read again.
+            expect(scan.fullStatusReads).toBe(1);
+            expect(scan.mergeBaseReads).toHaveLength(1);
+            expect(scan.diffReads).toBe(0);
+        } finally {
+            restarted.dispose();
+        }
+    });
+
+    it("scans a restored state in full when it was kept without everything", async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(1_000);
+        const scan = testScan();
+        const restarted = new GitStateTracker(createRootContext(), scan.run, {
+            ...owner(),
+            restore: () => ({ fingerprint: "kept", partial: true, state: stampedSnapshot() }),
+        });
+        try {
+            restarted.watch(entity);
+            expect(restarted.snapshot(entity)).toBeDefined();
+            await settlePromises();
+            await advance(150);
+            expect(scan.diffReads).toBe(1);
+        } finally {
+            restarted.dispose();
         }
     });
 
@@ -300,6 +439,8 @@ describe("gitReferenceChangeAffectsSnapshot", () => {
 interface TestScan {
     diffReads: number;
     fullStatusReads: number;
+    mergeBase: string;
+    readonly mergeBaseReads: string[][];
     pathStatusDirty: boolean;
     pathStatusReads: number;
     run: ScanGitRunner;
@@ -310,6 +451,8 @@ function testScan(): TestScan {
     const scan: TestScan = {
         diffReads: 0,
         fullStatusReads: 0,
+        mergeBase: HEAD,
+        mergeBaseReads: [],
         pathStatusDirty: false,
         pathStatusReads: 0,
         statusEntries: [],
@@ -339,7 +482,10 @@ function testScan(): TestScan {
                 }
                 return result(`${options.cwd}/.git\n`);
             }
-            if (command === "merge-base") return result(`${HEAD}\n`);
+            if (command === "merge-base") {
+                scan.mergeBaseReads.push([...options.args]);
+                return result(`${scan.mergeBase}\n`);
+            }
             if (command === "diff") {
                 scan.diffReads += 1;
                 return result("");
