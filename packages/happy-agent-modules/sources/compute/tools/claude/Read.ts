@@ -36,19 +36,16 @@ const exact = { additionalProperties: false } as const;
 
 // Notebook and PDF parsing are deliberately outside this surface. Both are refused in a sentence
 // rather than thrown, because the model's next move is to convert the file, not to retry the read.
-const CLAUDE_READ_DESCRIPTION = `Reads a file from the local filesystem. Paths outside the active workspace may require permission or be blocked by the selected permission mode.
-If the user provides a path to a file, assume the path is valid. It is okay to read a file that does not exist; an error will be returned.
+const CLAUDE_READ_DESCRIPTION = `Reads a file from the local filesystem.
 
-Usage:
-- The file_path parameter must be an absolute path, not a relative path
-- By default, it reads up to ${String(MAX_LINES_TO_READ)} lines starting from the beginning of the file
-- You can optionally specify a line offset and limit (especially handy for long files), but it's recommended to read the whole file by not providing these parameters
+- \`file_path\` must be an absolute path.
+- Reads up to ${String(MAX_LINES_TO_READ)} lines by default.
+- When you already know which part of the file you need, only read that part. This can be important for larger files.
 - Results are returned using cat -n format, with line numbers starting at 1
-- This tool reads common image formats (for example PNG and JPG) and presents them visually.
-- Jupyter notebooks (.ipynb files) are not supported. Ask the user to export the notebook to a plain-text format before reading it.
-- This tool can only read files, not directories. To read a directory, use an ls command via the Bash tool.
-- You will regularly be asked to read screenshots. If the user provides a path to a screenshot, ALWAYS use this tool to view the file at the path. This tool will work with all temporary file paths.
-- Empty files are returned as \`(empty file)\`.`;
+- Reads images (PNG, JPG, …) and presents them visually. PDFs and Jupyter notebooks (.ipynb) are not parsed; convert them to text first.
+- Reading a directory or a missing file returns an error; an empty file returns \`(empty file)\`.
+- Do NOT re-read a file you just edited to verify — Edit/Write would have errored if the change failed, and the harness tracks file state for you.
+- Paths outside the active workspace may require permission or be blocked by the selected permission mode.`;
 
 /** What one read found: a page of text, an image, or a format this surface will not parse. */
 const claudeReadResultSchema = Type.Union([
@@ -112,11 +109,8 @@ function createClaudeReadTool(
         description: images
             ? CLAUDE_READ_DESCRIPTION
             : CLAUDE_READ_DESCRIPTION.replace(
-                  "- This tool reads common image formats (for example PNG and JPG) and presents them visually.",
-                  "- This tool reads text files. Image input is not supported by the current model.",
-              ).replace(
-                  "- You will regularly be asked to read screenshots. If the user provides a path to a screenshot, ALWAYS use this tool to view the file at the path. This tool will work with all temporary file paths.\n",
-                  "",
+                  "- Reads images (PNG, JPG, …) and presents them visually.",
+                  "- Reads text files. Image input is not supported by the current model.",
               ),
         parameters: Type.Object(
             {

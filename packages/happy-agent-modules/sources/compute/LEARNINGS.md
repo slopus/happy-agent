@@ -190,6 +190,15 @@ when the text no longer applies is the edit refused with the read-again error. W
 vendors' tools keep the strict refusal, because a whole-file write over unseen changes would
 discard them.
 
+## Claude tool text follows Claude Code 2.1.303
+
+Read, Edit, Write, and Bash use Claude Code 2.1.303's wording wherever it is true here. Read asks the
+model to read only the part it needs and not to re-read a file it just edited; the older text
+recommended reading whole files, which costs context on every large file. Two Claude Code claims
+are left out because they are false for Happy Agent: Edit and Write do not require a prior Read,
+and the working directory does not persist between Bash calls. The Bash `timeout` schema carries no
+maximum; a longer wait is clamped to ten minutes, as Claude Code does, instead of failing the call.
+
 ## Windows protected placeholders
 
 The Windows product policy permits empty protected placeholders when project metadata is absent.

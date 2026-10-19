@@ -20,20 +20,25 @@ const MAX_TIMEOUT_MS = 600_000;
 
 const exact = { additionalProperties: false } as const;
 
+/** Claude Code's own guidance for the `description` argument. */
+const CLAUDE_BASH_DESCRIPTION_FIELD =
+    'Clear, concise description of what this command does in active voice. Never use words like "complex" or "risk" in the description - just describe what it does.\n\nSay what the command does in plain words: do not echo the command\'s text, its flags, or file paths - the user reads this description, often without seeing the command.\n\nFor simple commands (git, npm, standard CLI tools), keep it brief (5-10 words):\n- ls → "List files in current directory"\n- git status → "Show working tree status"\n- npm install → "Install package dependencies"\n\nFor commands that are harder to parse at a glance (piped commands, obscure flags, etc.), add enough context to clarify what it does:\n- find . -name "*.tmp" -exec rm {} \\; → "Find and delete all .tmp files recursively"\n- git reset --hard origin/main → "Discard all local changes and match remote main"\n- curl -s url | jq \'.data[]\' → "Fetch JSON from URL and extract data array elements"';
+
 function shellDescription(shellName: "Bash" | "PowerShell"): string {
     return `Executes a command using ${shellName === "PowerShell" ? "Windows PowerShell 5.1 (powershell.exe) on native Windows" : "the Unix shell listed in the environment"} and returns its output.
 
 - Every ${shellName} call starts in the primary working directory. A directory change affects only that call.
 - Environment variables and shell functions do not carry over between commands.
+- Command output is displayed to you, not reliably to the user.
 - Prefer the dedicated file and search tools over shell equivalents when one fits.
-- \`timeout\` is in milliseconds: default ${String(DEFAULT_TIMEOUT_MS)}, max ${String(MAX_TIMEOUT_MS)}. It is how long you wait, not how long the command may live: a command still running when the wait ends keeps running in the background and comes back with a shell ID.
+- \`timeout\` is in milliseconds: default ${String(DEFAULT_TIMEOUT_MS)}, max ${String(MAX_TIMEOUT_MS)} for a foreground command. It is how long you wait, not how long the command may live: a command still running when the wait ends keeps running in the background and comes back with a shell ID.
 - \`run_in_background\` starts the command in the background right away, waiting about ${String(COMPUTE_BACKGROUND_GRACE_MS / 1_000)} seconds to see that it did not fall over. Use it for dev servers and watchers. No \`&\` needed.
 - Read a background shell with \`${shellName}Output\`, type into it with \`${shellName}Input\`, and stop it with \`${shellName}Stop\`.
 
 # Git
 - Interactive flags such as \`git rebase -i\` and \`git add -i\` are not supported.
 - Use the \`gh\` CLI for GitHub operations.
-- Commit or push only when the user asks.
+- Commit or push only when the user asks. If on the default branch, branch first.
 
 Happy Agent extensions: \`dangerouslyDisableSandbox\` requests one reviewed Full-access execution in Auto mode; it never bypasses Read only or Workspace write mode. \`secrets\` selects attached secret bundles to expose to this command as environment variables. Secret selection is reviewed separately and stays sandboxed unless \`dangerouslyDisableSandbox\` is also true.
 
@@ -56,14 +61,13 @@ export function claudeBashTool(compute: Compute, shellName: "Bash" | "PowerShell
                 // rather than refusing the call, so the schema carries no maximum.
                 timeout: Type.Optional(
                     Type.Number({
-                        description: `Optional timeout in milliseconds (max ${String(MAX_TIMEOUT_MS)})`,
+                        description: `Optional timeout in milliseconds (max ${String(MAX_TIMEOUT_MS)} for a foreground command)`,
                         minimum: 0,
                     }),
                 ),
                 description: Type.Optional(
                     Type.String({
-                        description:
-                            'Clear, concise description of what this command does in active voice. Never use words like "complex" or "risk" in the description.',
+                        description: CLAUDE_BASH_DESCRIPTION_FIELD,
                     }),
                 ),
                 run_in_background: Type.Optional(

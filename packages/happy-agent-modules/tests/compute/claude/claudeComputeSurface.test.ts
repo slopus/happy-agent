@@ -106,6 +106,21 @@ describe("Claude compute surface", () => {
         );
     });
 
+    it("uses Claude Code's guidance on reading only what is needed", async () => {
+        const { tool } = await claudeTools();
+
+        expect(tool("Read").description).toContain(
+            "When you already know which part of the file you need, only read that part.",
+        );
+        expect(tool("Read").description).toContain(
+            "Do NOT re-read a file you just edited to verify",
+        );
+        expect(tool("Read").description).not.toContain("read the whole file");
+        // Happy Agent lets a change through without a prior Read, so neither tool claims otherwise.
+        expect(tool("Edit").description).not.toContain("must Read");
+        expect(tool("Write").description).not.toContain("haven't Read");
+    });
+
     it("matches the vendor descriptors' argument names and required split", async () => {
         const { tool } = await claudeTools();
 

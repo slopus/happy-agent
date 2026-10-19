@@ -10,13 +10,10 @@ import { writeComputeTextFile } from "../../impl/writeComputeTextFile.js";
 
 const exact = { additionalProperties: false } as const;
 
-const CLAUDE_WRITE_DESCRIPTION = `Writes a file to the local filesystem.
+// Claude Code's wording, without its prior-Read requirement for overwriting.
+const CLAUDE_WRITE_DESCRIPTION = `Writes a file to the local filesystem, overwriting if one exists.
 
-Usage:
-- This tool will overwrite the existing file if there is one at the provided path.
-- Prefer the Edit tool for modifying existing files -- it only sends the diff. Only use this tool to create new files or for complete rewrites.
-- NEVER create documentation files (*.md) or README files unless explicitly requested by the User.
-- Only use emojis if the user explicitly requests it. Avoid writing emojis to files unless asked.`;
+When to use: creating a new file, or fully replacing one. For partial changes, use Edit instead.`;
 
 /** Claude's `Write`: create a file or replace one whole. */
 export function claudeWriteTool(compute: Compute, reads: FileReadLog) {

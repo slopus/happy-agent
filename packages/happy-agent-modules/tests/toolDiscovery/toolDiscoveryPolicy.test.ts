@@ -18,8 +18,15 @@ const eagerDirectories = [
     "compute/tools/glm",
     "userInput",
 ];
-/** Prioritizing's whole tool array, which it receives without tool search. */
-const eagerFiles = ["spaces/tools/prioritizingTools.ts"];
+/**
+ * Prioritizing's whole tool array, which it receives without tool search, and the feature tools
+ * both native harnesses expose eagerly: Agent/spawn_agent and SendMessage/send_message.
+ */
+const eagerFiles = [
+    "spaces/tools/prioritizingTools.ts",
+    "collaboration/tools/create_agent.ts",
+    "collaboration/tools/send_message.ts",
+];
 
 interface ToolDefinition {
     readonly file: string;

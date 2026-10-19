@@ -7,7 +7,10 @@ classifies future modules. Each executable tool definition sets `defer` itself a
 capability and BM25 keywords. This keeps fixed tool arrays correct when a module is installed on
 its own and prevents sibling tools from receiving identical broad search terms.
 
-Compute and structured user-input tools are deliberately eager. Most feature tools are deferred.
+Compute and structured user-input tools are deliberately eager, and so are `create_agent` and
+`send_agent_message`: Claude Code exposes Agent and SendMessage eagerly and Codex exposes spawn_agent
+and send_message eagerly, and a model that must search for delegation first rarely delegates. Most
+other feature tools are deferred.
 Provider-owned discovery tools do not set `defer`; their native server descriptor owns the call.
 
 ## Native discovery selection is closed
