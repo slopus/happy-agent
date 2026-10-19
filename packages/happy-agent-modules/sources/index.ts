@@ -74,6 +74,7 @@ export * from "./team/index.js";
 
 // Code Mode: opt-in engine-selected replacement instructions and one-tool surface.
 export * from "./codeMode/index.js";
+export * from "./codexExec/index.js";
 
 // Config: the resolved filesystem layout and layered Happy Agent settings.
 export {

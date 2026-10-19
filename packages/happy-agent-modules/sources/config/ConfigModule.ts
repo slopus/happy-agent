@@ -671,6 +671,12 @@ const partialValuesSchema = Type.Object(
                             { additionalProperties: false },
                         ),
                     ),
+                    codex_exec: Type.Optional(
+                        Type.Object(
+                            { enabled: Type.Optional(Type.Boolean()) },
+                            { additionalProperties: false },
+                        ),
+                    ),
                     mobile_connector: Type.Optional(
                         Type.Object(
                             {
@@ -1116,6 +1122,10 @@ const resolvedValuesSchema = Type.Object(
                     { enabled: Type.Boolean(), engine: codeModeEngineSchema },
                     { additionalProperties: false },
                 ),
+                codexExec: Type.Object(
+                    { enabled: Type.Boolean() },
+                    { additionalProperties: false },
+                ),
                 mobileConnector: Type.Object(
                     {
                         enabled: Type.Boolean(),
@@ -1539,6 +1549,7 @@ const DEFAULT_VALUES: HappyAgentConfigValues = {
     },
     feature: {
         codemode: { enabled: false, engine: "monty" },
+        codexExec: { enabled: true },
         mobileConnector: { enabled: true, port: DEFAULT_MOBILE_CONNECTOR_PORT },
         tailcat: { enabled: false, port: DEFAULT_TAILCAT_PORT },
         team: {
@@ -2530,6 +2541,11 @@ export class ConfigModule implements AgentModule {
             keyPath: join(home, `${name}.private.json`),
             portPath: join(home, `${name}.port`),
         };
+    }
+
+    /** Whether Codex models that run on code mode get their tools through `exec`. */
+    get codexExecEnabled(): boolean {
+        return this.configuration.values.feature.codexExec.enabled;
     }
 
     /** Whether phones may pair and connect directly; machine configuration only. */
@@ -4109,6 +4125,9 @@ function mergeValues(...partials: readonly PartialValues[]): HappyAgentConfigVal
         if (partial.feature?.codemode !== undefined) {
             Object.assign(merged.feature.codemode, partial.feature.codemode);
         }
+        if (partial.feature?.codex_exec !== undefined) {
+            Object.assign(merged.feature.codexExec, partial.feature.codex_exec);
+        }
         if (partial.feature?.mobile_connector !== undefined) {
             Object.assign(merged.feature.mobileConnector, partial.feature.mobile_connector);
         }
@@ -4276,6 +4295,7 @@ function normalizeFeatures(value: NonNullable<PartialValues["features"]>): Recor
 function normalizeFeature(value: NonNullable<PartialValues["feature"]>): Record<string, unknown> {
     return {
         ...(value.codemode === undefined ? {} : { codemode: { ...value.codemode } }),
+        ...(value.codex_exec === undefined ? {} : { codex_exec: { ...value.codex_exec } }),
         ...(value.mobile_connector === undefined
             ? {}
             : { mobile_connector: { ...value.mobile_connector } }),
@@ -5021,6 +5041,12 @@ function calculateProvenance(...sources: readonly PartialValues[]): Record<strin
                         result["feature.codemode.engine"] = name;
                     }
                 }
+                if (feature?.codex_exec !== undefined) {
+                    result["feature.codexExec"] = name;
+                    if (feature.codex_exec.enabled !== undefined) {
+                        result["feature.codexExec.enabled"] = name;
+                    }
+                }
                 if (feature?.mobile_connector !== undefined) {
                     result["feature.mobileConnector"] = name;
                     if (feature.mobile_connector.enabled !== undefined) {
@@ -5157,6 +5183,20 @@ function readFeature(
     assertTableSize(value, "feature");
     const result: Record<string, unknown> = {};
     for (const [key, item] of Object.entries(value)) {
+        if (key === "codex_exec") {
+            if (!isTable(item)) throw new Error("feature.codex_exec must be a TOML table.");
+            assertTableSize(item, "feature.codex_exec");
+            const codexExec: Record<string, unknown> = {};
+            for (const [codexExecKey, codexExecValue] of Object.entries(item)) {
+                if (codexExecKey !== "enabled") {
+                    unknown(`feature.codex_exec.${codexExecKey}`);
+                    continue;
+                }
+                codexExec[codexExecKey] = codexExecValue;
+            }
+            result.codex_exec = codexExec;
+            continue;
+        }
         if (key === "mobile_connector") {
             if (!isTable(item)) throw new Error("feature.mobile_connector must be a TOML table.");
             assertTableSize(item, "feature.mobile_connector");

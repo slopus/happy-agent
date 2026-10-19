@@ -310,6 +310,9 @@ importers:
       '@ff-labs/fff-node':
         specifier: ^0.9.6
         version: 0.9.6
+      '@jitl/quickjs-singlefile-mjs-release-sync':
+        specifier: 0.32.0
+        version: 0.32.0
       '@libsql/client':
         specifier: 0.18.0
         version: 0.18.0(patch_hash=90434d5ce5f0f99730247b66b6916a4a40d3019cdf938903efa57e36177f75f8)
@@ -394,6 +397,9 @@ importers:
       prosemirror-transform:
         specifier: 1.12.2
         version: 1.12.2
+      quickjs-emscripten-core:
+        specifier: 0.32.0
+        version: 0.32.0
       sharp:
         specifier: ^0.35.3
         version: 0.35.3(@types/node@24.13.3)
@@ -1148,6 +1154,9 @@ packages:
 
   '@jitl/quickjs-ffi-types@0.32.0':
     resolution: {integrity: sha512-v9T+GQpmk43VDJ7d72sf0Nexhk+ArvtUihW27dy7lqAl0zBObFKtSBBIm5RBjwIhE8VwsPPm9PNuvPvNqLWUEg==}
+
+  '@jitl/quickjs-singlefile-mjs-release-sync@0.32.0':
+    resolution: {integrity: sha512-h9g2Dri6WxKNjX6a1+sFAafOVxj1n5YIA1GAzMoSdIqK1M8cG07tz3GxKVC3Gbdutz14uQ3oc3Q2lll8otInhA==}
 
   '@jitl/quickjs-wasmfile-debug-asyncify@0.32.0':
     resolution: {integrity: sha512-EX8zbXwGqCgAE764M+qvkHtyXDi/FUoMBea0JnES7vCM3P7a2+EOZOjGv85wtZ2sJhI1oJ+nekmqpOODFDY+hw==}
@@ -4655,6 +4664,10 @@ snapshots:
       minipass: 7.1.3
 
   '@jitl/quickjs-ffi-types@0.32.0': {}
+
+  '@jitl/quickjs-singlefile-mjs-release-sync@0.32.0':
+    dependencies:
+      '@jitl/quickjs-ffi-types': 0.32.0
 
   '@jitl/quickjs-wasmfile-debug-asyncify@0.32.0':
     dependencies:

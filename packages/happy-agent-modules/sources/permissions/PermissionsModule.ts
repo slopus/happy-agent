@@ -231,6 +231,19 @@ export class PermissionsModule implements AgentModule {
     }
 
     /**
+     * Decide one call that a tool makes on the model's behalf, such as a call inside Codex's
+     * `exec`, exactly as the same call made directly would be decided: the same mode limits, Auto
+     * review, elevation, refusal circuit, and events. The caller runs the call under the decision.
+     */
+    async decideToolCall(
+        ctx: Context,
+        scope: AgentModuleScope,
+        call: AgentBaseToolCall,
+    ): Promise<AgentBaseToolCallDecision | undefined> {
+        return await this.#beforeToolCall(ctx, scope, call);
+    }
+
+    /**
      * Keep the collection the module is part of. It is what lets a turn drowning in refusals be
      * stopped.
      */

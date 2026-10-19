@@ -11,6 +11,7 @@ const sourcesRoot = join(dirname(fileURLToPath(import.meta.url)), "../../sources
 // Every vendor's machine tools are eager; present_files is a common tool and stays deferred.
 const eagerDirectories = [
     "codeMode",
+    "codexExec",
     "compute/tools/claude",
     "compute/tools/codex",
     "compute/tools/grok",
