@@ -22,6 +22,10 @@ Usage:
 - The edit will FAIL if \`old_string\` is not unique in the file. Either provide a larger string with more surrounding context to make it unique or use \`replace_all\` to change every instance of \`old_string\`.
 - Use \`replace_all\` for replacing and renaming strings across the file. This parameter is useful if you want to rename a variable for instance.`;
 
+// Claude Code's own wording for an edit applied to a file that changed after it was read.
+const STALE_RECOVERED_NOTE =
+    " (note: the file had been modified on disk since you last read it — the edit applied cleanly, but the file contains other changes not in your context. Read it before edits that depend on surrounding content.)";
+
 /** Claude's `Edit`: replace exact text inside a file. */
 export function claudeEditTool(compute: Compute, reads: FileReadLog) {
     return defineAgentTool({
@@ -58,6 +62,7 @@ export function claudeEditTool(compute: Compute, reads: FileReadLog) {
                 path: Type.String(),
                 replacements: Type.Integer(),
                 presentation: computeFileDiffPresentationSchema,
+                staleRecovered: Type.Optional(Type.Literal(true)),
             },
             exact,
         ),
@@ -83,7 +88,15 @@ export function claudeEditTool(compute: Compute, reads: FileReadLog) {
                 oldText: old_string,
                 newText: new_string,
                 ...(replace_all === undefined ? {} : { replaceAll: replace_all }),
+                // Claude Code applies an edit whose text still matches a file changed since it was
+                // read, such as by the model's own shell command, and says so in the result.
+                applyWhenStale: true,
             }),
-        toLLM: (result) => [{ type: "text", text: `The file ${result.path} has been updated.` }],
+        toLLM: (result) => [
+            {
+                type: "text",
+                text: `The file ${result.path} has been updated.${result.staleRecovered === true ? STALE_RECOVERED_NOTE : ""}`,
+            },
+        ],
     });
 }

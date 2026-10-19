@@ -1,3 +1,4 @@
+import { Value } from "@sinclair/typebox/value";
 import { createRootContext } from "@steve.kite/stdlib";
 import { describe, expect, it } from "vitest";
 
@@ -69,6 +70,19 @@ describe("Claude's Bash", () => {
         expect(modelText(tool(`${CLAUDE_SHELL}`), result)).toContain(
             "still running as background shell 1",
         );
+    });
+
+    it("accepts a timeout beyond the maximum and waits only the maximum, as Claude Code does", async () => {
+        const { compute, tool, call } = await machine();
+        compute.script("pnpm test", { chunks: ["ok\n"], exitCode: 0 });
+        const bash = tool(`${CLAUDE_SHELL}`);
+
+        expect(Value.Check(bash.parameters!, { command: "pnpm test", timeout: 3_600_000 })).toBe(
+            true,
+        );
+        const result = await bash.execute(ctx, { command: "pnpm test", timeout: 3_600_000 }, call);
+
+        expect(result.exitCode).toBe(0);
     });
 
     it("passes the terminal request through to the machine", async () => {

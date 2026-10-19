@@ -34,53 +34,55 @@ export async function moveComputeFile(
         readonly requireRead?: boolean;
     },
 ): Promise<ComputeFileMove> {
-    const permissions = computePermissionsForContext(ctx);
     const sourcePath = resolveComputePath(options.source, compute.cwd, compute.fs.home);
     const destinationPath = resolveComputePath(options.destination, compute.cwd, compute.fs.home);
-    if (sourcePath === destinationPath) {
-        throw new Error("The source and destination are the same path.");
-    }
-    const sourceStat = await compute.fs.stat(permissions, sourcePath);
-    if (sourceStat.isDirectory) {
-        throw new Error(`This path is a directory; only files are moved here: ${sourcePath}`);
-    }
-    if (options.requireRead !== false) {
-        await reads.assertRead(ctx, compute.fs, permissions, sourcePath);
-    }
-    const destinationExists = await compute.fs.exists(permissions, destinationPath);
-    const existingDestinationStat = destinationExists
-        ? await compute.fs.lstat(permissions, destinationPath)
-        : undefined;
-    const [canonicalSource, canonicalDestination] = await Promise.all([
-        canonicalComputePath(compute.fs, permissions, sourcePath),
-        canonicalComputePath(compute.fs, permissions, destinationPath),
-    ]);
-    const isCaseOnlyMove =
-        existingDestinationStat?.isFile === true &&
-        existingDestinationStat.isSymbolicLink === false &&
-        canonicalSource !== undefined &&
-        canonicalSource === canonicalDestination &&
-        sourcePath !== destinationPath;
-    if (destinationExists && !isCaseOnlyMove) {
-        throw new Error(`The move destination already exists: ${destinationPath}`);
-    }
-    const parent = parentComputePath(destinationPath);
-    const createdDirectories =
-        parent === destinationPath
-            ? []
-            : await missingParentDirectories(compute, permissions, parent);
-    try {
-        if (parent !== destinationPath) {
-            await compute.fs.mkdir(permissions, parent, { recursive: true });
+    return await reads.change(ctx, [sourcePath, destinationPath], async (ctx) => {
+        const permissions = computePermissionsForContext(ctx);
+        if (sourcePath === destinationPath) {
+            throw new Error("The source and destination are the same path.");
         }
-        await compute.fs.move(permissions, sourcePath, destinationPath);
-    } catch (error) {
-        await removeCreatedDirectories(compute, permissions, createdDirectories);
-        throw error;
-    }
-    const movedDestinationStat = await compute.fs.stat(permissions, destinationPath);
-    await reads.record(ctx, destinationPath, movedDestinationStat.mtimeMs);
-    return { source: sourcePath, destination: destinationPath };
+        const sourceStat = await compute.fs.stat(permissions, sourcePath);
+        if (sourceStat.isDirectory) {
+            throw new Error(`This path is a directory; only files are moved here: ${sourcePath}`);
+        }
+        if (options.requireRead !== false) {
+            await reads.assertRead(ctx, compute.fs, permissions, sourcePath);
+        }
+        const destinationExists = await compute.fs.exists(permissions, destinationPath);
+        const existingDestinationStat = destinationExists
+            ? await compute.fs.lstat(permissions, destinationPath)
+            : undefined;
+        const [canonicalSource, canonicalDestination] = await Promise.all([
+            canonicalComputePath(compute.fs, permissions, sourcePath),
+            canonicalComputePath(compute.fs, permissions, destinationPath),
+        ]);
+        const isCaseOnlyMove =
+            existingDestinationStat?.isFile === true &&
+            existingDestinationStat.isSymbolicLink === false &&
+            canonicalSource !== undefined &&
+            canonicalSource === canonicalDestination &&
+            sourcePath !== destinationPath;
+        if (destinationExists && !isCaseOnlyMove) {
+            throw new Error(`The move destination already exists: ${destinationPath}`);
+        }
+        const parent = parentComputePath(destinationPath);
+        const createdDirectories =
+            parent === destinationPath
+                ? []
+                : await missingParentDirectories(compute, permissions, parent);
+        try {
+            if (parent !== destinationPath) {
+                await compute.fs.mkdir(permissions, parent, { recursive: true });
+            }
+            await compute.fs.move(permissions, sourcePath, destinationPath);
+        } catch (error) {
+            await removeCreatedDirectories(compute, permissions, createdDirectories);
+            throw error;
+        }
+        const movedDestinationStat = await compute.fs.stat(permissions, destinationPath);
+        await reads.record(ctx, destinationPath, movedDestinationStat.mtimeMs);
+        return { source: sourcePath, destination: destinationPath };
+    });
 }
 
 async function missingParentDirectories(

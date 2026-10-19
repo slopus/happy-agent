@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { GrokProvider, GrokSessionCredential } from "@slopus/happy-providers";
+import { CodexProvider, GrokProvider, GrokSessionCredential } from "@slopus/happy-providers";
 import { AgentProviders, type AgentModel } from "@slopus/happy-agent-base";
 import { createRootContext } from "@steve.kite/stdlib";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -1264,6 +1264,25 @@ describe("ConfigModule", () => {
         expect(parseHappyAgentConfigToml(source).values.feature?.tailcat).toEqual({
             enabled: false,
         });
+    });
+
+    it("lets the Codex model choose Responses Lite and its tool-call parallelism", async () => {
+        const root = await mkdtemp(join(tmpdir(), "happy-agent-config-codex-lite-"));
+        temporaryDirectories.push(root);
+        const folder = join(root, process.platform === "darwin" ? "Happy/Config" : "happy/config");
+        await mkdir(folder, { recursive: true });
+        await writeFile(
+            join(folder, "happy.toml"),
+            ["[providers.codex]", "enabled = true", 'api_key = "test-key"'].join("\n"),
+        );
+
+        const config = await ConfigModule.load(join(root, ".happy"));
+        const provider = await config.providers.resolve("codex", "openai/gpt-6.1-sol");
+
+        // Forcing parallel tool calls would also force the standard Responses envelope, which
+        // native Codex never sends to models that take Responses Lite.
+        expect(provider).toBeInstanceOf(CodexProvider);
+        expect((provider as CodexProvider).parallelToolCalls).toBeUndefined();
     });
 
     it("uses the ambient Grok CLI session without an explicit auth file", async () => {

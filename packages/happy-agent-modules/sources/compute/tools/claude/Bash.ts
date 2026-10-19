@@ -52,10 +52,11 @@ export function claudeBashTool(compute: Compute, shellName: "Bash" | "PowerShell
         parameters: Type.Object(
             {
                 command: Type.String({ description: "The command to execute" }),
+                // Claude Code states the maximum in the description and clamps a longer wait
+                // rather than refusing the call, so the schema carries no maximum.
                 timeout: Type.Optional(
                     Type.Number({
                         description: `Optional timeout in milliseconds (max ${String(MAX_TIMEOUT_MS)})`,
-                        maximum: MAX_TIMEOUT_MS,
                         minimum: 0,
                     }),
                 ),

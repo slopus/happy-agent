@@ -42,21 +42,25 @@ export function kimiWriteTool(compute: Compute, reads: FileReadLog) {
         ...kimiPathPolicy(compute, true, "writing"),
         execute: async (ctx, args) => {
             const path = resolveComputePath(args.path, compute.cwd, compute.fs.home);
-            const permissions = computePermissionsForContext(ctx);
-            await reads.assertRead(ctx, compute.fs, permissions, path);
-            const previous = (await compute.fs.exists(permissions, path))
-                ? await readKimiText(compute, ctx, path)
-                : undefined;
-            const content =
-                args.mode === "append" ? (previous?.content ?? "") + args.content : args.content;
-            if (Buffer.byteLength(content) > MAX_KIMI_TEXT_BYTES)
-                throw new Error("The resulting file exceeds the 8 MiB limit.");
-            return await writeComputeTextFile(compute, reads, ctx, {
-                path,
-                content: args.content,
-                append: args.mode === "append",
-                maxBytes: MAX_KIMI_TEXT_BYTES,
-                ...(previous === undefined ? {} : { expectedSource: previous }),
+            return await reads.change(ctx, [path], async (ctx) => {
+                const permissions = computePermissionsForContext(ctx);
+                await reads.assertRead(ctx, compute.fs, permissions, path);
+                const previous = (await compute.fs.exists(permissions, path))
+                    ? await readKimiText(compute, ctx, path)
+                    : undefined;
+                const content =
+                    args.mode === "append"
+                        ? (previous?.content ?? "") + args.content
+                        : args.content;
+                if (Buffer.byteLength(content) > MAX_KIMI_TEXT_BYTES)
+                    throw new Error("The resulting file exceeds the 8 MiB limit.");
+                return await writeComputeTextFile(compute, reads, ctx, {
+                    path,
+                    content: args.content,
+                    append: args.mode === "append",
+                    maxBytes: MAX_KIMI_TEXT_BYTES,
+                    ...(previous === undefined ? {} : { expectedSource: previous }),
+                });
             });
         },
         toLLM: (result) => [

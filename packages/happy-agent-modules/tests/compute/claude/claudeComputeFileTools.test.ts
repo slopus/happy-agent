@@ -332,7 +332,7 @@ describe("Claude's Write and Edit", () => {
         );
     });
 
-    it("refuses an edit to a file that changed after it was read", async () => {
+    it("refuses an edit to a file that changed after it was read when its text no longer applies", async () => {
         const { compute, tool, call } = await machine();
         compute.write("/workspace/app.ts", "const a = 1;");
         await tool("Read").execute(ctx, { file_path: "/workspace/app.ts" }, call);
@@ -342,10 +342,183 @@ describe("Claude's Write and Edit", () => {
         await expect(
             tool("Edit").execute(
                 ctx,
-                { file_path: "/workspace/app.ts", old_string: "99", new_string: "3" },
+                { file_path: "/workspace/app.ts", old_string: "= 1;", new_string: "= 3;" },
                 call,
             ),
         ).rejects.toThrow(/changed since it was last read/);
+        expect(compute.files.get("/workspace/app.ts")?.content).toBe("const a = 99;");
+    });
+
+    it("applies an edit whose text still matches a file changed after it was read, and says so", async () => {
+        const { compute, tool, call } = await machine();
+        compute.write("/workspace/app.ts", "const a = 1;\nconst b = 2;");
+        await tool("Read").execute(ctx, { file_path: "/workspace/app.ts" }, call);
+        // The model's own shell command, for example, changed another line.
+        compute.write("/workspace/app.ts", "const a = 1;\nconst b = 20;");
+
+        const edited = await tool("Edit").execute(
+            ctx,
+            {
+                file_path: "/workspace/app.ts",
+                old_string: "const a = 1;",
+                new_string: "const a = 3;",
+            },
+            call,
+        );
+
+        expect(compute.files.get("/workspace/app.ts")?.content).toBe("const a = 3;\nconst b = 20;");
+        expect(edited.staleRecovered).toBe(true);
+        expect(modelText(tool("Edit"), edited)).toContain(
+            "the file had been modified on disk since you last read it",
+        );
+    });
+
+    it("applies every edit in one batch to the same file, as if made one after another", async () => {
+        const { compute, tool, call } = await machine();
+        const lines = Array.from({ length: 6 }, (_, i) => `const v${i} = ${i};`);
+        compute.write("/workspace/app.ts", lines.join("\n"));
+        await tool("Read").execute(ctx, { file_path: "/workspace/app.ts" }, call);
+
+        const results = await Promise.allSettled(
+            lines.map((line, i) =>
+                tool("Edit").execute(
+                    ctx,
+                    {
+                        file_path: "/workspace/app.ts",
+                        old_string: line,
+                        new_string: `const v${i} = ${i + 100};`,
+                    },
+                    call,
+                ),
+            ),
+        );
+
+        expect(results.map((result) => result.status)).toEqual(lines.map(() => "fulfilled"));
+        expect(compute.files.get("/workspace/app.ts")?.content).toBe(
+            lines.map((_, i) => `const v${i} = ${i + 100};`).join("\n"),
+        );
+        for (const result of results) {
+            expect(result.status === "fulfilled" && result.value.staleRecovered).toBeUndefined();
+        }
+    });
+
+    it("applies a Write and the Edits after it to one file in a single batch", async () => {
+        const { compute, tool, call } = await machine();
+        compute.write("/workspace/app.ts", "old");
+        await tool("Read").execute(ctx, { file_path: "/workspace/app.ts" }, call);
+
+        const results = await Promise.allSettled([
+            tool("Write").execute(
+                ctx,
+                { file_path: "/workspace/app.ts", content: "const a = 1;\nconst b = 2;" },
+                call,
+            ),
+            tool("Edit").execute(
+                ctx,
+                { file_path: "/workspace/app.ts", old_string: "a = 1", new_string: "a = 10" },
+                call,
+            ),
+            tool("Edit").execute(
+                ctx,
+                { file_path: "/workspace/app.ts", old_string: "b = 2", new_string: "b = 20" },
+                call,
+            ),
+        ]);
+
+        expect(results.map((result) => result.status)).toEqual([
+            "fulfilled",
+            "fulfilled",
+            "fulfilled",
+        ]);
+        expect(compute.files.get("/workspace/app.ts")?.content).toBe(
+            "const a = 10;\nconst b = 20;",
+        );
+    });
+
+    it("creates and then edits several files in a single batch", async () => {
+        const { compute, tool, call } = await machine();
+
+        const results = await Promise.allSettled([
+            tool("Write").execute(ctx, { file_path: "/workspace/a.ts", content: "a = 1;" }, call),
+            tool("Write").execute(ctx, { file_path: "/workspace/b.ts", content: "b = 1;" }, call),
+            tool("Edit").execute(
+                ctx,
+                { file_path: "/workspace/a.ts", old_string: "a = 1", new_string: "a = 2" },
+                call,
+            ),
+            tool("Edit").execute(
+                ctx,
+                { file_path: "/workspace/b.ts", old_string: "b = 1", new_string: "b = 2" },
+                call,
+            ),
+        ]);
+
+        expect(results.map((result) => result.status)).toEqual(results.map(() => "fulfilled"));
+        expect(compute.files.get("/workspace/a.ts")?.content).toBe("a = 2;");
+        expect(compute.files.get("/workspace/b.ts")?.content).toBe("b = 2;");
+    });
+
+    it("lets an Edit follow the agent's own Write without reading the file again", async () => {
+        const { compute, tool, call } = await machine();
+        await tool("Write").execute(
+            ctx,
+            { file_path: "/workspace/app.ts", content: "x = 1;" },
+            call,
+        );
+        await tool("Edit").execute(
+            ctx,
+            { file_path: "/workspace/app.ts", old_string: "x = 1", new_string: "x = 2" },
+            call,
+        );
+
+        const second = await tool("Edit").execute(
+            ctx,
+            { file_path: "/workspace/app.ts", old_string: "x = 2", new_string: "x = 3" },
+            call,
+        );
+
+        expect(second.staleRecovered).toBeUndefined();
+        expect(compute.files.get("/workspace/app.ts")?.content).toBe("x = 3;");
+    });
+
+    it("keeps both agents' edits when a parent and its child change one file at once", async () => {
+        const compute = new FakeCompute();
+        const parent = await computeToolset(ctx, compute, {
+            agentId: "parent",
+            model: CLAUDE_MODEL,
+        });
+        const child = await computeToolset(ctx, compute, {
+            agentId: "child",
+            model: CLAUDE_MODEL,
+            sharedWith: parent,
+        });
+        const lines = Array.from({ length: 4 }, (_, i) => `const v${i} = ${i};`);
+        compute.write("/workspace/app.ts", lines.join("\n"));
+        for (const agent of [parent, child]) {
+            await agent.tool("Read").execute(ctx, { file_path: "/workspace/app.ts" }, agent.call);
+        }
+
+        const results = await Promise.allSettled(
+            lines.map((line, i) => {
+                const agent = i % 2 === 0 ? parent : child;
+                return agent.tool("Edit").execute(
+                    ctx,
+                    {
+                        file_path: "/workspace/app.ts",
+                        old_string: line,
+                        new_string: `const v${i} = ${i + 100};`,
+                    },
+                    agent.call,
+                );
+            }),
+        );
+
+        // Each agent sees the other's change as a real one it has not read, so its edit applies
+        // because the text it names is still there, and says the file holds unseen changes.
+        expect(results.map((result) => result.status)).toEqual(lines.map(() => "fulfilled"));
+        expect(compute.files.get("/workspace/app.ts")?.content).toBe(
+            lines.map((_, i) => `const v${i} = ${i + 100};`).join("\n"),
+        );
     });
 
     it("refuses an ambiguous edit unless every occurrence was asked for", async () => {

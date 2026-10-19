@@ -170,6 +170,26 @@ nontransactional edit, because the local libSQL client rotates its native connec
 transaction; custom stores without the production database boundary use an Agent KV transaction as
 the safe fallback.
 
+## One agent's file changes run one at a time
+
+A model can send several Edits to the same file in one parallel batch. Each change used to check
+the read log, write, and then record its own write, so the later edits in a batch saw a file
+modified since their read and were refused as stale even though nothing outside the agent had
+touched it. Every file-changing operation (Claude and Kimi Edit and Write, Codex apply_patch,
+delete, move) now runs inside `FileReadLog.change`, which holds one per-agent lock from the
+staleness check through recording the result. A batch therefore applies as if its edits were made
+one after another. The lock is re-entrant through the context, so a change that calls another
+change does not deadlock.
+
+## A stale Claude Edit applies when its text still matches
+
+Claude Code does not refuse an Edit just because the file changed after it was read. If
+`old_string` still matches exactly once (or `replace_all` was requested), the edit applies and the
+result carries Claude Code's note that the file has other changes not in the model's context. Only
+when the text no longer applies is the edit refused with the read-again error. Write and the other
+vendors' tools keep the strict refusal, because a whole-file write over unseen changes would
+discard them.
+
 ## Windows protected placeholders
 
 The Windows product policy permits empty protected placeholders when project metadata is absent.

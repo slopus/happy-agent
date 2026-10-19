@@ -156,6 +156,56 @@ describe("codex apply_patch", () => {
         });
     });
 
+    it("applies every patch in one parallel batch, across one file and several", async () => {
+        const toolset = await machine();
+        const lines = Array.from({ length: 4 }, (_, i) => `const v${i} = ${i};`);
+        await addFile(toolset, "sources/shared.ts", lines);
+
+        const results = await Promise.allSettled([
+            ...lines.map((line, i) =>
+                toolset.tool("apply_patch").execute(
+                    ctx,
+                    {
+                        patch: patch(
+                            "*** Update File: sources/shared.ts",
+                            "@@",
+                            `-${line}`,
+                            `+const v${i} = ${i + 100};`,
+                        ),
+                    },
+                    toolset.call,
+                ),
+            ),
+            toolset
+                .tool("apply_patch")
+                .execute(
+                    ctx,
+                    { patch: patch("*** Add File: sources/fresh.ts", "+export const fresh = 1;") },
+                    toolset.call,
+                ),
+            toolset.tool("apply_patch").execute(
+                ctx,
+                {
+                    patch: patch(
+                        "*** Update File: sources/fresh.ts",
+                        "@@",
+                        "-export const fresh = 1;",
+                        "+export const fresh = 2;",
+                    ),
+                },
+                toolset.call,
+            ),
+        ]);
+
+        expect(results.map((result) => result.status)).toEqual(results.map(() => "fulfilled"));
+        expect(toolset.compute.files.get("/workspace/sources/shared.ts")?.content).toBe(
+            lines.map((_, i) => `const v${i} = ${i + 100};`).join("\n"),
+        );
+        expect(toolset.compute.files.get("/workspace/sources/fresh.ts")?.content).toBe(
+            "export const fresh = 2;",
+        );
+    });
+
     it("keeps unchanged context lines exactly where they were", async () => {
         const toolset = await machine();
         await addFile(toolset, "app.ts", ["one", "two", "three", "four"]);

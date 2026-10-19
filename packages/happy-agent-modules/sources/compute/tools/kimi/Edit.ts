@@ -40,21 +40,23 @@ export function kimiEditTool(compute: Compute, reads: FileReadLog) {
         ...kimiPathPolicy(compute, true, "editing"),
         execute: async (ctx, args) => {
             const path = resolveComputePath(args.path, compute.cwd, compute.fs.home);
-            await reads.assertRead(ctx, compute.fs, computePermissionsForContext(ctx), path);
-            const file = await readKimiText(compute, ctx, path);
-            const oldText = file.crlf
-                ? args.old_string.replaceAll("\r\n", "\n").replaceAll("\n", "\r\n")
-                : args.old_string;
-            const newText = file.crlf
-                ? args.new_string.replaceAll("\r\n", "\n").replaceAll("\n", "\r\n")
-                : args.new_string;
-            return await editComputeText(compute, reads, ctx, {
-                path,
-                oldText,
-                newText,
-                maxBytes: MAX_KIMI_TEXT_BYTES,
-                expectedSource: file,
-                ...(args.replace_all === undefined ? {} : { replaceAll: args.replace_all }),
+            return await reads.change(ctx, [path], async (ctx) => {
+                await reads.assertRead(ctx, compute.fs, computePermissionsForContext(ctx), path);
+                const file = await readKimiText(compute, ctx, path);
+                const oldText = file.crlf
+                    ? args.old_string.replaceAll("\r\n", "\n").replaceAll("\n", "\r\n")
+                    : args.old_string;
+                const newText = file.crlf
+                    ? args.new_string.replaceAll("\r\n", "\n").replaceAll("\n", "\r\n")
+                    : args.new_string;
+                return await editComputeText(compute, reads, ctx, {
+                    path,
+                    oldText,
+                    newText,
+                    maxBytes: MAX_KIMI_TEXT_BYTES,
+                    expectedSource: file,
+                    ...(args.replace_all === undefined ? {} : { replaceAll: args.replace_all }),
+                });
             });
         },
         toLLM: (result) => [

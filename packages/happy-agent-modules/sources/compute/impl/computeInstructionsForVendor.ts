@@ -25,7 +25,7 @@ const instructionsByVendor: Readonly<Record<ComputeToolVendor, string>> = Object
     // A foreign agent already knows its own tools.
     foreign: "",
     claude: [
-        "Write and Edit can change an existing file without a prior Read. If a file was read or written earlier and then changed on disk, the stale change is refused; Read it again first.",
+        "Write and Edit can change an existing file without a prior Read. If a file was read or written earlier and then changed on disk, Write is refused, and Edit applies only while its old_string still matches; otherwise Read it again first.",
         "A command that outlives its timeout is not killed. It keeps running and comes back with a shell ID, and every later BashOutput of it returns only what is new.",
     ].join("\n"),
     codex: [
@@ -42,7 +42,7 @@ const instructionsByVendor: Readonly<Record<ComputeToolVendor, string>> = Object
         "ReadMediaFile accepts filesystem images only; this Bedrock route does not support video or Kimi session attachment URLs.",
     ].join("\n"),
     glm: [
-        "Write and Edit can change an existing file without a prior Read. If a file was read or written earlier and then changed on disk, the stale change is refused; Read it again first.",
+        "Write and Edit can change an existing file without a prior Read. If a file was read or written earlier and then changed on disk, Write is refused, and Edit applies only while its old_string still matches; otherwise Read it again first.",
         "A command that outlives its timeout keeps running and returns a shell ID. BashOutput returns only new output; BashInput sends characters and BashStop ends the process tree.",
         "This model accepts text only. Read returns a clear unsupported result for images; convert them to text before reading.",
     ].join("\n"),

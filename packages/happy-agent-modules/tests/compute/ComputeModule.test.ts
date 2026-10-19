@@ -184,7 +184,9 @@ describe("ComputeModule", () => {
 
         expect(claudeInstructions).not.toContain("/srv/app");
         expect(claudeInstructions).toContain("without a prior Read");
-        expect(claudeInstructions).toContain("the stale change is refused");
+        expect(claudeInstructions).toContain(
+            "Edit applies only while its old_string still matches",
+        );
         expect(claudeInstructions).toContain("comes back with a shell ID");
 
         const grokInstructions = await hooks.instructions!(agentCtx, {
