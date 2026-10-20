@@ -66,6 +66,11 @@ the creator's turn, or the creator's recorded last mode when a workflow creates 
 than their own. As in Codex's `spawn_agent`, both may now be omitted and default to the
 creator's, and the description says to set them only when the user or the task calls for it.
 
+Codex's `spawn_agent` also tells the model not to spawn unless the user or AGENTS.md explicitly
+asks for delegation. `create_agent` deliberately does not: delegation is a core Happy feature, and
+that rule would switch it off in practice. The waste it would have prevented came from how the child
+ran (a higher effort and an Auto reviewer), which inheritance fixes.
+
 ## Messages and interruption
 
 Messages between a creator and collaborator are steering in both directions. After the opening task
