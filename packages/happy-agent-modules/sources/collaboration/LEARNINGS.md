@@ -71,6 +71,15 @@ asks for delegation. `create_agent` deliberately does not: delegation is a core 
 that rule would switch it off in practice. The waste it would have prevented came from how the child
 ran (a higher effort and an Auto reviewer), which inheritance fixes.
 
+## Collaborators are announced at the tail, not in the instructions
+
+The instructions listed an agent's collaborators, so creating one changed the instructions. They
+are the cached prefix of every request, and a change rebuilt the provider session: Codex opened a
+new socket and re-sent the whole conversation uncached, and Claude restarted its query. The list
+is now a system notice appended before the next inference when it changes, recorded in the history
+store so compaction re-announces it. The instructions hold only what is fixed for the agent: its
+own ID and its creator's.
+
 ## Messages and interruption
 
 Messages between a creator and collaborator are steering in both directions. After the opening task

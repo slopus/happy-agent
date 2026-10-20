@@ -43,8 +43,8 @@ Review the parser change.
 That name is the address. Answering is not a separate operation: the recipient calls
 `send_agent_message` back to the agent the message came from.
 
-Every agent's own address is stated in the module's instructions. Its creator and collaborator
-addresses are rebuilt every turn from `parentOf` and `childOf`:
+Every agent's own address and its creator's are stated in the module's instructions, rebuilt every
+turn from `parentOf`:
 
 ```
 Your Agent ID is b7c1.
@@ -53,13 +53,20 @@ When a file you mention will be read outside your own chat (...), link it as
 You were created by agent a3f2. When you stop working, whatever you said last is reported to it
 automatically, so finish by stating your answer. Use send_agent_message only to tell it something
 before then.
-Collaborators you created: b7c1, b7c2. Each reports back on its own when it finishes; nothing waits
-for them.
 ```
 
 That matters because the `Message from agent ...` line ages out of history on compaction, while the
 relationship does not — an agent that could not name its creator would have no way to answer it.
 Nothing is stored to make this work; the ancestry is read from the agent collection each turn.
+
+The collaborators an agent created change while it works, so they are not part of the instructions,
+which are the cached prefix of every request. They are announced in a system notice appended before
+the next inference whenever the list changes, and again after compaction starts a new history:
+
+```
+Collaborators you created: b7c1, b7c2. Each reports back on its own when it finishes; nothing waits
+for them.
+```
 
 The Agent ID also addresses the agent's files. A bare `path:line` is read against the reader's own
 workspace, so a file mentioned in a message, a report, or a relay from another workspace is written

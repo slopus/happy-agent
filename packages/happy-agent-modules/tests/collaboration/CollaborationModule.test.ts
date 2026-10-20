@@ -1406,24 +1406,58 @@ describe("collaboration", () => {
         expect(instructions).not.toContain("reported to it automatically, so finish");
     });
 
-    it("tells an agent which collaborators it created", async () => {
+    it("keeps an agent's instructions unchanged when it creates a collaborator", async () => {
         const collection = new Collection();
         const { module, hooks, ctx } = await started(collection);
+        const before = await hooks.instructions!(ctx, { agent: { id: "parent" } } as never);
+
         await module.createAgent(ctx, "parent", TASK, "child");
 
-        const instructions = await hooks.instructions!(ctx, {
-            agent: { id: "parent" },
-        } as never);
-
-        expect(instructions).toContain("Collaborators you created: child.");
+        // The instructions are the cached prefix of every request; changing them rebuilds the
+        // provider session and re-sends the conversation uncached.
+        expect(await hooks.instructions!(ctx, { agent: { id: "parent" } } as never)).toBe(before);
     });
 
-    it("includes both creator and collaborator addresses in deterministic instruction order", async () => {
+    it("announces an agent's collaborators once per change and again in a new history", async () => {
+        const collection = new Collection();
+        const { module, hooks, ctx } = await started(collection);
+        const historyKV = memoryKV();
+        const scope = (kv = historyKV) => ({ agent: { id: "parent" }, historyKV: kv }) as never;
+        const inference = { type: "inference", inference: {} } as never;
+        const notify = async (kv?: ReturnType<typeof memoryKV>) =>
+            await hooks.systemNotificationsTransact!(ctx, scope(kv), inference);
+
+        expect(await notify()).toBeUndefined();
+        await module.createAgent(ctx, "parent", TASK, "child");
+        expect(await notify()).toEqual([
+            {
+                role: "system",
+                content: [
+                    {
+                        type: "text",
+                        text: "Collaborators you created: child. Each reports back on its own when it finishes; nothing waits for them.",
+                    },
+                ],
+            },
+        ]);
+        expect(await notify()).toBeUndefined();
+
+        await module.createAgent(ctx, "parent", TASK, "second");
+        expect(JSON.stringify(await notify())).toContain(
+            "Collaborators you created: child, second.",
+        );
+        // Compaction replaces the history, and with it the handle the notice was recorded in.
+        expect(JSON.stringify(await notify(memoryKV()))).toContain(
+            "Collaborators you created: child, second.",
+        );
+    });
+
+    it("keeps creator and own addresses in deterministic instruction order", async () => {
         const config = await temporaryTestConfig(NO_CROSS_WORKSPACE_TOML);
         const collection = new Collection();
-        collection.seed("sibling", "parent");
+        collection.seed("parent", "root");
         collection.seed("child", "parent");
-        const { module, hooks, ctx } = await started(collection, config);
+        const { hooks, ctx } = await started(collection, config);
 
         const instructions = await hooks.instructions!(ctx, {
             agent: { id: "parent" },
@@ -1432,7 +1466,7 @@ describe("collaboration", () => {
         expect(instructions.split("\n")).toEqual([
             "Your Agent ID is parent.",
             expect.stringContaining("happy-file://agents/parent/"),
-            "Collaborators you created: sibling, child. Each reports back on its own when it finishes; nothing waits for them.",
+            expect.stringContaining("You were created by agent root."),
         ]);
     });
 

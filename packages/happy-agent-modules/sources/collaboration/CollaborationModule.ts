@@ -7,6 +7,7 @@ import {
     type AgentBaseAcceptedMessage,
     type AgentBasePersistedEvent,
     type AgentBaseSettlement,
+    type AgentBaseSystemNotificationBoundary,
     type AgentBaseTurn,
     type AgentConfig,
     type AgentMetadata,
@@ -20,6 +21,7 @@ import {
     type AnyAgentTool,
 } from "@slopus/happy-agent-base";
 import { createId } from "@paralleldrive/cuid2";
+import type { SessionSystemMessage } from "@slopus/happy-providers";
 import { Type, type TSchema } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import { messageModeSchema } from "@slopus/happy-agent-client";
@@ -62,6 +64,9 @@ import { archiveAgentTool } from "./tools/archive_agent.js";
 import { createAgentTool } from "./tools/create_agent.js";
 import { interruptAgentTool } from "./tools/interrupt_agent.js";
 import { sendMessageTool } from "./tools/send_message.js";
+
+/** The collaborator notice last appended to the current history. */
+const ANNOUNCED_COLLABORATORS_KEY = "announced-collaborators";
 
 /**
  * Collaboration lets one agent put another to work.
@@ -485,12 +490,30 @@ export class CollaborationModule implements AgentModule {
          * The same ID addresses this agent's files: a `path:line` is read against the reader's own
          * workspace, so text read in another chat links files through the agent instead.
          */
+        /**
+         * The collaborators this agent created, announced as a notice rather than written into the
+         * instructions. The instructions are the cached prefix of every request, so a line that
+         * changed when a collaborator was created rebuilt the provider session and re-sent the
+         * whole conversation uncached. A notice is appended at the tail instead, once per change
+         * and again after compaction clears the history it was announced in.
+         */
+        systemNotificationsTransact: async (
+            ctx: Context,
+            scope: AgentModuleScope,
+            boundary: AgentBaseSystemNotificationBoundary,
+        ): Promise<readonly SessionSystemMessage[] | undefined> => {
+            if (boundary.type !== "inference") return undefined;
+            const children = await this.#requireAgents().childOf(ctx, scope.agent.id);
+            if (children.length === 0) return undefined;
+            const text = `Collaborators you created: ${children.join(", ")}. Each reports back on its own when it finishes; nothing waits for them.`;
+            const announced = await scope.historyKV.read(ctx, ANNOUNCED_COLLABORATORS_KEY);
+            if (announced === text) return undefined;
+            await scope.historyKV.write(ctx, ANNOUNCED_COLLABORATORS_KEY, text);
+            return [{ role: "system", content: [{ type: "text", text }] }];
+        },
         instructions: async (ctx: Context, scope: AgentModuleScope): Promise<string> => {
             const agents = this.#requireAgents();
-            const [parent, children] = await Promise.all([
-                agents.parentOf(ctx, scope.agent.id),
-                agents.childOf(ctx, scope.agent.id),
-            ]);
+            const parent = await agents.parentOf(ctx, scope.agent.id);
             const lines: string[] = [
                 `Your Agent ID is ${scope.agent.id}.`,
                 `When a file you mention will be read outside your own chat (a message to another agent, a report to your creator, or files from another agent's workspace), link it as [Foo.tsx:42](happy-file://agents/${scope.agent.id}/<path from your workspace root>#L42-L50), percent-encoding spaces and other special characters. For a file elsewhere, use its agent's ID, or happy-file://workspaces/<workspace ID>/<path>. Copy happy-file links you receive unchanged. Otherwise keep writing path:line.`,
@@ -500,11 +523,6 @@ export class CollaborationModule implements AgentModule {
                     reportsToCreator(scope.agent.metadata)
                         ? `You were created by agent ${parent}. When you stop working, whatever you said last is reported to it automatically, so finish by stating your answer. Use send_agent_message only to tell it something before then.`
                         : `You were created by agent ${parent}. What you say is not reported to it automatically; use send_agent_message when it needs to hear from you.`,
-                );
-            }
-            if (children.length > 0) {
-                lines.push(
-                    `Collaborators you created: ${children.join(", ")}. Each reports back on its own when it finishes; nothing waits for them.`,
                 );
             }
             if (await this.#reachesAcrossWorkspaces(ctx, scope.agent.id)) {
