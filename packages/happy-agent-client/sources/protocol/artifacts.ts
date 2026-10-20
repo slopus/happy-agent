@@ -55,6 +55,18 @@ export const artifactBackgroundSchema = Type.String({
 });
 export type ArtifactBackground = Static<typeof artifactBackgroundSchema>;
 
+/**
+ * How a version's author wants it shown in a chat: inline collapsed to its title, inline at its
+ * full height, or as a card that opens it beside the chat. Whether one viewer collapsed an inline
+ * artifact is that viewer's own state, never the artifact's.
+ */
+export const artifactDisplaySchema = Type.Union([
+    Type.Literal("inline_compact"),
+    Type.Literal("inline_expanded"),
+    Type.Literal("side"),
+]);
+export type ArtifactDisplay = Static<typeof artifactDisplaySchema>;
+
 /** A background as a request names it: the same colours in either case, or `null` for none. */
 export const artifactBackgroundInputSchema = Nullable(
     Type.String({ pattern: "^#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$" }),
@@ -153,11 +165,17 @@ export const artifactSchema = Type.Object({
     deletedAt: Nullable(timestampSchema),
     deletedBy: Nullable(artifactAuthorSchema),
     deletedSource: Nullable(artifactSourceSchema),
+    /** The latest version's display preference; `null` leaves it to the client, absent on older daemons. */
+    display: Type.Optional(Nullable(artifactDisplaySchema)),
     /** The latest version's entry: the file a client opens to show the artifact. */
     entry: artifactFileSchema,
     /** How many files the latest version holds. */
     fileCount: Type.Integer({ minimum: 1 }),
     id: cuid2Schema,
+    /** The latest version's major label, from 1; absent on older daemons. */
+    latestMajor: Type.Optional(Type.Integer({ minimum: 1 })),
+    /** The latest version's minor label, from 0; absent on older daemons. */
+    latestMinor: Type.Optional(Type.Integer({ minimum: 0 })),
     /** The number of the latest version, from 1. */
     latestVersion: Type.Integer({ minimum: 1 }),
     /** The latest version's files' bytes together. */
@@ -182,10 +200,17 @@ export const artifactVersionSchema = Type.Object({
     background: Type.Optional(Nullable(artifactBackgroundSchema)),
     createdAt: timestampSchema,
     createdBy: artifactAuthorSchema,
+    /** How this version's author wants it shown; `null` leaves it to the client, absent on older daemons. */
+    display: Type.Optional(Nullable(artifactDisplaySchema)),
     /** One of `files`: the file a client opens to show this version. */
     entry: artifactFileSchema,
     /** Every file, in `path` order by Unicode code point. */
     files: Type.Array(artifactFileSchema),
+    /** The major part of the version's `major.minor` label, from 1; absent on older daemons. */
+    major: Type.Optional(Type.Integer({ minimum: 1 })),
+    /** The minor part of the version's label, from 0; absent on older daemons. */
+    minor: Type.Optional(Type.Integer({ minimum: 0 })),
+    /** The version's identity within its artifact, from 1, whatever its label. */
     number: Type.Integer({ minimum: 1 }),
     source: Nullable(artifactSourceSchema),
     title: artifactTitleSchema,
@@ -315,13 +340,19 @@ export type CreateArtifactRequest = Static<typeof createArtifactRequestSchema>;
 
 /**
  * `PATCH /v0/artifacts/:artifactId` — requires `If-Match` and at least one of `title`,
- * `background`, `files`, `remove`, and `replaceAll`. The new version starts from the latest one's files, or from none
- * with `replaceAll`; `files` adds or replaces paths and `remove` takes paths out.
+ * `background`, `files`, `remove`, `replaceAll`, and `major`. The new version starts from the
+ * latest one's files, or from none with `replaceAll`; `files` adds or replaces paths and `remove`
+ * takes paths out.
  */
 export const updateArtifactRequestSchema = Type.Object({
     /** A colour sets the new version's background, `null` clears it, and absent keeps it. */
     background: Type.Optional(artifactBackgroundInputSchema),
     files: Type.Optional(Type.Array(artifactFileInputSchema, { maxItems: 256 })),
+    /**
+     * Make the new version this major version, `major.0`: exactly one more than the latest
+     * major, and only while the latest version's minor is above 0. Absent makes the next minor.
+     */
+    major: Type.Optional(Type.Integer({ minimum: 2 })),
     mutationId: Type.Optional(mutationIdSchema),
     remove: Type.Optional(Type.Array(artifactPathSchema, { maxItems: 256 })),
     replaceAll: Type.Optional(Type.Boolean()),

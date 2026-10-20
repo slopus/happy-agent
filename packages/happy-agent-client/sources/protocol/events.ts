@@ -22,6 +22,7 @@ import type { Agent, AgentDraftSnapshot, AgentProfile } from "./agents.js";
 import {
     artifactAuthorSchema,
     artifactBackgroundSchema,
+    artifactDisplaySchema,
     artifactFileSchema,
     artifactSchema,
     artifactSourceSchema,
@@ -342,8 +343,14 @@ export type ArtifactCreatedPayload = Static<typeof artifactCreatedPayloadSchema>
 export const artifactUpdatedChangesSchema = Type.Object({
     /** Absent on older daemons. */
     background: Type.Optional(Nullable(artifactBackgroundSchema)),
+    /** Absent on older daemons. */
+    display: Type.Optional(Nullable(artifactDisplaySchema)),
     entry: artifactFileSchema,
     fileCount: Type.Integer({ minimum: 1 }),
+    /** Absent on older daemons. */
+    latestMajor: Type.Optional(Type.Integer({ minimum: 1 })),
+    /** Absent on older daemons. */
+    latestMinor: Type.Optional(Type.Integer({ minimum: 0 })),
     latestVersion: Type.Integer({ minimum: 1 }),
     size: Type.Integer({ minimum: 1 }),
     title: artifactTitleSchema,

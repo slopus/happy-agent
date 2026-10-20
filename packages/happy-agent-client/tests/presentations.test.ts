@@ -10,6 +10,7 @@ import {
     explorationPresentationSchema,
     fileDiffPresentationSchema,
     mediaPresentationSchema,
+    pagePresentationSchema,
     searchPresentationSchema,
     toolPresentationSchema,
     type ToolPresentation,
@@ -104,6 +105,12 @@ const presentations = [
         artifactType: "markdown",
         title: "Q3 revenue report",
     },
+    {
+        type: "page",
+        url: "http://localhost:5173/",
+        title: "Shop preview",
+        display: null,
+    },
 ] satisfies ToolPresentation[];
 
 describe("tool presentation schemas", () => {
@@ -117,6 +124,7 @@ describe("tool presentation schemas", () => {
             agentSpawnPresentationSchema,
             mediaPresentationSchema,
             artifactPresentationSchema,
+            pagePresentationSchema,
         ];
 
         expect(
@@ -125,6 +133,33 @@ describe("tool presentation schemas", () => {
         expect(
             presentations.map((presentation, index) => Value.Check(schemas[index]!, presentation)),
         ).toEqual(presentations.map(() => true));
+    });
+
+    it("says which version an artifact shows, and how a page asks to be shown", () => {
+        const artifact = {
+            type: "artifact",
+            artifactId: "r7k2m9q4w1e5t8y3u6i0o2p5",
+            version: 2,
+            artifactType: "html",
+            title: "Q3 at a glance",
+        };
+        expect(Value.Check(artifactPresentationSchema, artifact)).toBe(true);
+        for (const shows of ["latest", "version"]) {
+            expect(Value.Check(artifactPresentationSchema, { ...artifact, shows })).toBe(true);
+        }
+        expect(Value.Check(artifactPresentationSchema, { ...artifact, shows: "first" })).toBe(
+            false,
+        );
+
+        const page = { type: "page", url: "http://localhost:5173/", title: "Shop preview" };
+        for (const display of [null, "inline_compact", "inline_expanded", "side"]) {
+            expect(Value.Check(pagePresentationSchema, { ...page, display })).toBe(true);
+        }
+        expect(Value.Check(pagePresentationSchema, page)).toBe(false);
+        expect(Value.Check(pagePresentationSchema, { ...page, display: "modal" })).toBe(false);
+        expect(Value.Check(pagePresentationSchema, { ...page, url: "", display: null })).toBe(
+            false,
+        );
     });
 
     it("requires measured images and bounds media items", () => {

@@ -370,6 +370,12 @@ them always includes `background` on artifact and version objects, `null` when u
 `changes` of `artifact.updated`. Older compatible daemons omit it and ignore a `background` sent to
 them; a client then shows every artifact on a transparent slot.
 
+Artifact display preferences are additive and do not increment the protocol version. A daemon that
+has them always includes `display` on artifact and version objects, `null` when unset, and in the
+`changes` of `artifact.updated`. Older compatible daemons omit it; a client then decides on its own
+how to show every artifact. Agent-written artifact directories change only the agent tools'
+arguments and how an agent's versions are made; no request or response schema changes for them.
+
 User settings are additive and do not increment the protocol version. A daemon that serves them
 always includes `userSettings` in desktop bootstrap and never answers `GET /v0/user-settings` with
 `404`. Older compatible daemons omit the bootstrap field, answer the user-settings routes with
@@ -6087,8 +6093,8 @@ workspace follows the ordinary permission boundary for reading files. An image m
 32 MiB, a video 256 MiB, and a document or other file 64 MiB, with at most 256 MiB per call; a
 directory, an empty file, or a file over its limit fails the call.
 
-**`artifact`** — an artifact the call created, or a new version it made, for a client to show as a
-card that opens it. This presentation is outcome-derived: it appears only when the call completes
+**`artifact`** — an artifact the call created, changed, or took up for editing, for a client to
+show in the chat. This presentation is outcome-derived: it appears only when the call completes
 successfully.
 
 ```json
@@ -6096,22 +6102,57 @@ successfully.
     "type": "artifact",
     "artifactId": "r7k2m9q4w1e5t8y3u6i0o2p5",
     "version": 3,
-    "artifactType": "markdown",
-    "title": "Q3 revenue report"
+    "artifactType": "html",
+    "title": "Q3 revenue report",
+    "shows": "latest"
 }
 ```
 
-`artifactId` and `artifactType` are the artifact's `id` and `type`, `version` is the version
-number the call produced, and `title` is the artifact's title at that version. The card needs
-nothing else: a client opens the artifact through the artifact routes, preferably at `version`,
-and may show the artifact's current title in place of the recorded one. A later deletion leaves
-the presentation unchanged; the artifact routes then answer `404`.
+`artifactId` and `artifactType` are the artifact's `id` and `type`, `version` is the artifact's
+latest version when the call completed, and `title` is the artifact's title at that version.
+`shows` says which version the chat shows:
 
-Media and artifact presentations are additive and do not increment the protocol version. Older
-daemons omit them and answer the media route with `404`. As with `agent_spawn`, these blocks
+- `"latest"` — the artifact as it is now, following every later version. `create_artifact`
+  presents this way: the agent writes the artifact's files after the call, with
+  `write_artifact_file` and `edit_artifact_file`, so the versions that matter come after it. This is where a client shows an HTML artifact inline,
+  by its `display` preference.
+- `"version"` — exactly `version`. `update_artifact` presents this way, as a record of the change it
+  made.
+
+Absent, as from older daemons, means `"version"`, and so does a value a client does not
+recognize. The presentation needs nothing else: a client reads the artifact's live title, latest
+version, and display preference through the artifact routes and keeps them current from
+`artifact.updated` events. A later deletion leaves the presentation unchanged; the artifact routes
+then answer `404`.
+
+**`page`** — a web page the call asked the chat to show inline. This presentation is
+outcome-derived as well.
+
+```json
+{
+    "type": "page",
+    "url": "http://localhost:5173/",
+    "title": "Checkout preview",
+    "display": "inline_expanded"
+}
+```
+
+`url` is an `http` or `https` URL of at most 4,096 characters, as the agent's own machine reaches
+it: `localhost` names the agent's machine, not the client's. A client shows it the way it opens a
+web page for that agent, through the agent's network, and never sends it the client's own cookies
+or credentials. `title` is 1–256 characters naming the page for the reader. `display` is a display
+preference exactly as for artifacts (see "Display" under "Artifacts"), or `null` for the client's
+choice. An agent presents a page with `show_page`, which takes `{ "url", "title", "display"? }`
+and only records the presentation: the daemon never fetches the page. In Auto, every `show_page`
+call is reviewed, and the reviewer is shown its URL and title. A page shown inline reaches
+the network like any other page the client shows. That is a potential vulnerability, so a client
+gives it the same sandbox it gives every web page.
+
+Media, artifact, and page presentations are additive and do not increment the protocol version.
+Older daemons omit them and answer the media route with `404`. As with `agent_spawn`, these blocks
 retain their raw `arguments` and `result` even when `omitToolData=true`, so older clients keep
 rendering these calls through their unknown-presentation fallback. Clients never need to parse
-the raw fields to render a recognized media or artifact presentation.
+the raw fields to render a recognized media, artifact, or page presentation.
 
 Other calls, including background-terminal-input calls, currently carry no presentation and keep
 their raw data. The presentation set may grow; a client that meets an unknown presentation type
@@ -9107,19 +9148,66 @@ team mode every member sees all of it, wherever each artifact was made. Each art
 where it was created — its `source` — and who created it and who last changed it.
 
 Almost any agent publishes artifacts through its artifact tools: `create_artifact`,
-`update_artifact`, `list_artifacts`, `read_artifact`, `read_artifact_file`, and `delete_artifact`.
+`write_artifact_file`, `edit_artifact_file`, `read_artifact_file`, `update_artifact`,
+`list_artifacts`, `read_artifact`, and `delete_artifact`.
 The daemon records the acting agent as the author and the place the agent works in as the source.
 People publish through the routes below. Either way, creating an artifact and every later update
 each make a new immutable version; nothing is overwritten. Deleting an artifact leaves a tombstone.
+
+**Artifact tools.** An agent writes an artifact's files with artifact tools that work directly on
+the daemon's catalog. There is one copy of every artifact, the catalog's, and nothing on any
+machine to keep in step, so the tools are the same for every agent, whichever model runs it and
+whoever executes its other tools. They take the artifact's `artifactId` and a `path` inside it,
+under the file object's path rules below, and otherwise follow the file tools agents already know:
+
+| Tool                  | Arguments                                                                  | Does                                                                                   |
+| --------------------- | -------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `create_artifact`     | `type`, `title`, `display`, `background`, `files`                          | Issues the artifact's ID and makes version 1.0                                         |
+| `write_artifact_file` | `artifactId`, `path`, `content`                                            | Writes one whole text file, adding it or replacing the one there                       |
+| `edit_artifact_file`  | `artifactId`, `path`, `old_string`, `new_string`, `replace_all`            | Replaces exact text in one text file of the latest version                             |
+| `read_artifact_file`  | `artifactId`, `path`, `version`, `offset`, `limit`                         | Reads a text file as numbered lines, or shows an image                                 |
+| `update_artifact`     | `artifactId`, `title`, `display`, `background`, `files`, `remove`, `major` | Changes what files cannot say, copies files in, removes files, bumps the major version |
+
+The daemon issues every artifact's ID in `create_artifact`; the model never chooses one. A Markdown
+or HTML artifact starts from a short entry holding its title, and an image, image series, video, or
+document starts from the files the call copies in. `files` on `create_artifact` and
+`update_artifact` copies files from the agent's machine, each `{ "fromPath": "...", "path": "..." }`,
+which is how an agent publishes images it generated and files it built with the shell; a `path`
+left out is the file's own name. Reading those files follows the agent's permission mode like any
+other read on its machine.
+
+`edit_artifact_file` works as an exact-text edit does: `old_string` must appear exactly once in the
+latest version's text unless `replace_all` is `true`, and must differ from `new_string`; otherwise
+the call fails and changes nothing. `write_artifact_file` and `edit_artifact_file` handle UTF-8
+text; other files arrive through `files`. `read_artifact_file` numbers lines from 1, as a line
+number, a tab, and the line; `offset` is the first line to read and `limit` how many, at most 2,000
+by default, and it reads the latest version unless `version` names another.
+
+Each tool call that writes an artifact makes exactly one new version of it, recorded as made by the
+calling agent where it works: a minor version, unless `update_artifact` names `major`. The new
+version must satisfy its type's rules and limits below; otherwise the call fails and makes nothing.
+A write that leaves every file as it was makes no version. A version is keyed by its tool call, so
+a call repeated after the daemon restarts makes nothing a second time, and an edit applied to text
+someone else changed while the call ran fails instead of undoing that change. One agent makes at
+most 100 versions of one artifact in any hour through its tools; a write beyond that fails and asks
+the agent to make its changes in fewer calls.
+
+Reading is never reviewed, since every agent can read every artifact. Writing follows the
+permission mode. Read only refuses every artifact write. An agent writes artifacts it created
+itself without review in Workspace write, Auto, and Full access. Writing an artifact the agent did
+not create — one a person or another agent made — is refused in Workspace write, reviewed in Auto
+as a new version of that artifact visible to everyone using the installation, and allowed in Full
+access. An artifact write never needs or grants Full access to the agent's machine; only reading a
+`files` copy from outside the agent's workspace does.
 
 An agent mentions an artifact in its replies with the reference tag
 `<happy-artifact id="…"/>`, which clients show as a link labeled with the artifact's live title;
 see "Reference tags". The writing and reading tools give the agent the exact tag.
 
-Artifact content lives on the daemon's machine, in its private data directory
-(`.happy/agent/artifacts`), never in a project or workspace folder. It is stored once per distinct
-content, so a file that several versions or artifacts share is kept once. An artifact made by an
-agent on a runner or in a container is served by the daemon like any other.
+Published artifact content lives on the daemon's machine, in its private data directory
+(`.happy/agent/artifacts`). Published content is stored once per distinct content, so a file that
+several versions or artifacts share is kept once. An artifact made by an agent on a runner or in a
+container is served by the daemon like any other.
 
 **Bundles.** Every version is a small tree of files, each named by its `path` inside the artifact,
 such as `index.md`, `images/chart.png`, or `assets/css/site.css`. One file is the version's
@@ -9186,13 +9274,25 @@ also discriminated by `kind`:
 Authors are extensible in the same way; a client shows an unrecognized `kind` as "someone else".
 
 **Versions.** Versions are numbered from 1 and never change once made. Each records its title, its
-files, its author, its source, and when it was made. A new version starts from the files of the
-latest one and adds, replaces, or removes individual files, so files that did not change carry over
-without being sent again; it may also replace every file at once. An update that changes only the
-title or the background makes a new version holding the same files. The artifact object mirrors
-its latest version in `latestVersion`, `title`, `entry`, `fileCount`, `size`, and `background`,
-records its creation in `source`, `createdBy`, and `createdAt`, and its latest change in
-`updatedBy`, `updatedSource`, and `updatedAt`.
+files, its author, its source, and when it was made. The integer `number` identifies a version
+everywhere, in routes and reference tags, and every version takes the next one, whatever it
+changed.
+
+Each version also carries a `major.minor` label. The first version is 1.0. Every change makes a
+minor version, the next minor of the same major, unless it asks for a major version: an update
+naming `major` makes the version `major.0`. `major` must be exactly one more than the latest
+version's major, and the latest version must be a minor one — its minor above 0 — so a major
+version always follows at least one change since the previous major; anything else is
+`400 invalid_request` and makes nothing. A major version holds whatever else the same update
+changes, or the latest files unchanged.
+
+A new version starts from the files of the latest one and adds, replaces, or removes individual
+files, so files that did not change carry over without being sent again; it may also replace every
+file at once. An update that changes only the title or the background makes a new version holding
+the same files. The artifact object mirrors its latest version in `latestVersion`, `latestMajor`,
+`latestMinor`, `title`, `entry`, `fileCount`, `size`, and `background`, records its creation in
+`source`, `createdBy`, and `createdAt`, and its latest change in `updatedBy`, `updatedSource`, and
+`updatedAt`.
 
 **Backgrounds.** A client shows an artifact on a transparent slot, so the surface around it — a
 desktop pane, a chat card — shows through, in light and dark. A version may instead name a
@@ -9203,6 +9303,28 @@ accepted in either case and stored in lowercase, and nothing else: no colour nam
 variables, or other CSS. A new version keeps the latest version's background unless the change
 names another or clears it. A client uses it only as the slot's background colour and checks the
 pattern again before it does.
+
+**Display.** A version may name a `display` preference, how its author wants it shown in a chat:
+
+- `"inline_compact"` — inline in the conversation, collapsed to its title until a viewer expands
+  it.
+- `"inline_expanded"` — inline in the conversation at its full height.
+- `"side"` — as its title in the conversation, opened beside the chat.
+
+`null` leaves the choice to the client. It is a preference, not a guarantee: a client that cannot
+show an artifact inline opens it as it opens any other. Whether one viewer has collapsed an inline
+artifact is that viewer's own state and never part of the artifact. A new version keeps the latest
+version's display unless the change names another or clears it. Only an agent's `create_artifact`
+and `update_artifact` set it; the routes below never change it. The set of values may grow; a
+client treats a value it does not recognize as `null`.
+
+A client shows an HTML artifact inline where a tool-call presentation with `shows` `"latest"`
+names it (see "Tool-call presentations"), always at its latest version. Inline means the page's
+full height in the flow of the conversation: the client measures the page at the exact width it is
+shown at and never caps it or scrolls inside it, so a page that needs scrolling of its own belongs
+beside the chat. The page is laid on the conversation's own surface, with no frame or background of
+its own unless the version names a `background`, and the client gives it the conversation's color
+scheme, light or dark, as its `color-scheme`. The standard styles below make that the default.
 
 **Deletion.** Deleting leaves a tombstone. `status` becomes `"deleted"`, `deletedBy`,
 `deletedSource`, and `deletedAt` record the deletion, which is also the artifact's latest change,
@@ -9227,6 +9349,8 @@ updating or deleting an artifact requires `If-Match` with it.
     "title": "Q3 revenue report",
     "status": "active",
     "latestVersion": 2,
+    "latestMajor": 1,
+    "latestMinor": 1,
     "entry": {
         "path": "index.md",
         "mimeType": "text/markdown",
@@ -9236,6 +9360,7 @@ updating or deleting an artifact requires `If-Match` with it.
     "fileCount": 3,
     "size": 412870,
     "background": null,
+    "display": "inline_expanded",
     "source": {
         "kind": "workspace",
         "workspaceId": "w5v4u3t2s1r0q9p8o7n6m5l4",
@@ -9262,10 +9387,13 @@ Fields:
   characters.
 - `status` — `"active"` or `"deleted"`.
 - `latestVersion` — the number of the latest version.
+- `latestMajor`, `latestMinor` — the latest version's `major` and `minor` label. Absent from older
+  daemons.
 - `entry` — the latest version's entry, as a file object.
 - `fileCount`, `size` — how many files the latest version holds, and their bytes together. The
   files themselves are listed by the version.
 - `background` — the latest version's background, or `null` for a transparent slot.
+- `display` — the latest version's display preference, or `null` to leave it to the client.
 - `source` — where the artifact was created, or `null`.
 - `createdBy`, `createdAt` — who created the artifact, and when.
 - `updatedBy`, `updatedSource`, `updatedAt` — who made the latest change, where, and when. After
@@ -9281,6 +9409,8 @@ Fields:
 {
     "artifactId": "r7k2m9q4w1e5t8y3u6i0o2p5",
     "number": 2,
+    "major": 1,
+    "minor": 1,
     "title": "Q3 revenue report",
     "entry": {
         /* the entry's file object */
@@ -9289,6 +9419,7 @@ Fields:
         /* file objects, in path order */
     ],
     "background": null,
+    "display": "inline_expanded",
     "createdBy": { "kind": "user", "userId": "u1x2y3z4a5b6c7d8e9f0g1h2" },
     "source": null,
     "createdAt": 1755400000000
@@ -9296,9 +9427,11 @@ Fields:
 ```
 
 - `artifactId`, `number` — the artifact and the version's number within it, from 1.
+- `major`, `minor` — the version's label, `major.minor`; see "Versions". Absent from older daemons.
 - `title`, `entry`, `files` — the artifact as this version left it. `files` is the version's whole
   manifest, ordered by `path` in Unicode code point order; `entry` is one of them.
 - `background` — the colour behind this version's content, or `null` for a transparent slot.
+- `display` — how this version's author wants it shown, or `null` to leave it to the client.
 - `createdBy`, `source`, `createdAt` — who made this version, where, and when.
 
 ### The file object
@@ -9538,6 +9671,8 @@ Request:
 - `background` — optional; the first version's background, as described above. Omitted or `null`
   means none. Leave it out unless the content needs one fixed canvas.
 
+The first version's `display` is `null`.
+
 A `background` that is not such a colour is `400 invalid_request`. Files that break the type's
 rules — a missing entry, too many or too few files, a media type the type does not accept, a file
 or total over its limit, an entry that is not valid UTF-8, an invalid path, or a path that is also
@@ -9563,19 +9698,22 @@ Request:
     "source": { "kind": "project", "projectId": "p1o2i3u4y5t6r7e8w9q0a1s2" },
     "files": [{ "path": "images/chart.png", "uploadId": "u9q3m5p7b2e4f6g8h1j3k5l7" }],
     "remove": ["images/old-chart.png"],
-    "replaceAll": false
+    "replaceAll": false,
+    "major": 2
 }
 ```
 
-Every field is optional, but at least one of `title`, `background`, `files`, `remove`, and
-`replaceAll` is required. The new version starts from the latest version's files, or from none
-when `replaceAll` is `true`. `files`, up to 256 version files, then adds each path or replaces the
+Every field is optional, but at least one of `title`, `background`, `files`, `remove`,
+`replaceAll`, and `major` is required. The new version starts from the latest version's files, or
+from none when `replaceAll` is `true`. `files`, up to 256 version files, then adds each path or replaces the
 file already there, and `remove`, up to 256 paths, takes files out. A path both written and
 removed, or removed but not present, is `400`, and the result must satisfy the type's rules just
 as a creation does. An omitted `title` keeps the current title. A `background` colour sets the
 new version's background, `null` clears it, and omitting it keeps the latest version's; anything
-else is `400`. `source` says where this change is being made; it becomes the new version's
-`source` and the artifact's `updatedSource`.
+else is `400`. The new version keeps the latest version's `display`. `source` says where this
+change is being made; it becomes the new version's `source` and the artifact's `updatedSource`.
+`major` makes the new version that major version, as "Versions" describes; without it the new
+version is the next minor one.
 
 Response — `200`: `{ "artifact": { ... } }` with the new `latestVersion`, and an `artifact.updated`
 event after commit, echoing `mutationId`. File errors are `400` and upload errors `404`, as in
@@ -9674,6 +9812,79 @@ and gets `window.happy`. It is served as `text/javascript; charset=utf-8` with a
 `Cache-Control: no-cache`, and a matching `If-None-Match` answers `304`. It changes with the daemon,
 and pages never need to bundle a copy. The SDK is described in the artifact apps recipe that ships
 with these docs (`recipe/artifact-apps.md`).
+
+#### `GET /v0/artifacts/:artifactId/api/v1/style.css`
+
+Happy's standard styles for a page, loaded first with
+`<link rel="stylesheet" href="/api/v1/style.css">`. They lay the page on whatever surface shows it:
+a transparent root with no margin, the chat's typeface and sizes, text, link, code, table, and rule
+colors that follow the page's `color-scheme` through `light-dark()`, and the styles of the standard
+components below. Every rule has zero specificity, so anything the page writes itself wins. They
+also define custom properties a page may use, each a color that follows the color scheme:
+`--happy-text`, `--happy-muted`, `--happy-faint`, `--happy-border`, `--happy-surface`,
+`--happy-accent`, `--happy-added`, `--happy-removed`, `--happy-diff-added`, `--happy-diff-removed`,
+and `--happy-chart-1` to `--happy-chart-6`, and `--happy-font` and `--happy-mono`. It is served as `text/css; charset=utf-8` with an `ETag` and
+`Cache-Control: no-cache`, and a matching `If-None-Match` answers `304`.
+
+#### `GET /v0/artifacts/:artifactId/api/v1/components.js`
+
+The standard components, loaded last with `<script src="/api/v1/components.js"></script>`. It
+defines five custom elements and nothing else. Each reads what it shows from the page itself, so
+the page's own scripts are never needed:
+
+- `<happy-diff src="changes.diff">` — a unified diff, such as `git diff` or `diff -u` writes, from a
+  file of the artifact named by `src` or from a `<script type="text/x-diff">` child. `path` shows
+  one file of it and `lines` (`"40-52"`) only the lines of the changed file in that range, with the
+  hunks around them; every file shows a header with its path, status, and added and removed line
+  counts.
+- `<happy-code src="src/app.ts">` — code, highlighted where the host can, from a file of the artifact
+  named by `src` or from a `<script type="text/plain">` child, whose surrounding blank lines and
+  common indent are removed. `language` (`"ts"`, `"python"`) names its language, which otherwise
+  comes from `path` or `src`; `path` also shows a header with the file's name; and `lines`
+  (`"40-52"`) shows only the lines in that range. Lines are numbered, by their place in the code,
+  when it comes from `src` or `lines` is given.
+- `<happy-files src="changes.diff">` — files as a tree grouped under their folders: the files a
+  diff changes, with their status and counts, or the paths of a `<script type="application/json">`
+  child holding an array of `{ "path", "status"?, "added"?, "removed"? }`. A file that a
+  `<happy-diff>` on the page shows scrolls to it when clicked.
+- `<happy-chart type="bar">` — a chart drawn as SVG at the element's width: `type` is `"bar"`,
+  `"hbar"`, `"line"`, or `"area"`, and a `<script type="application/json">` child holds
+  `{ "labels": ["…"], "series": [{ "name": "…", "values": [1, 2] }], "unit"?: "…" }`.
+- `<happy-diagram>` — a Mermaid diagram, from a `<script type="text/x-mermaid">` child, drawn as SVG
+  in the page's colors: flowcharts, sequence, state, class, and entity-relationship diagrams.
+
+Diffs and code are drawn by the code renderer the page's host provides, if it has one: the
+script loads `code.js` beside itself, at `/api/v1/code.js` of the page, as an ES module, only when
+the page holds a `<happy-diff>` or `<happy-code>`. Happy Desktop provides the renderer and styling
+it uses for full-file diffs and code, so they look the same inline. The daemon itself serves no
+such module and answers `404`; without one, and wherever the renderer fails, each element draws
+plain monospace text with numbered lines and colored additions and deletions, and no highlighting.
+Long lines wrap unless the element has a `nowrap` attribute, which scrolls them instead.
+
+A host's `code.js` exports `version` (`1`) and two functions. Each draws into `target`, an empty
+element inside the component, and returns `{ dispose() }`, or a promise of it, which the component
+calls before drawing again or when it is removed; a function that throws or rejects leaves that
+element to the plain rendering.
+
+- `renderDiff(target, { patch, path, previousPath, status, wrap })` — one file: `patch` is its
+  git patch (`diff --git` header, mode and rename lines, `---` and `+++` lines, and the hunks shown,
+  already cut to `path` and `lines`), `path` its path (the old path when deleted), `previousPath`
+  its old path when renamed or else `null`, `status` `"added"`, `"deleted"`, `"renamed"`, or
+  `"modified"`, and `wrap` whether long lines wrap.
+- `renderCode(target, { code, path, name, language, lines, lineNumbers, wrap })` — `code` is the
+  whole text, `path` the `path` attribute or `null` (a header naming the file is drawn when set),
+  `name` the path or `src` to infer a language from, `language` the `language` attribute or
+  `null`, `lines` `{ "first", "last" }` (1-based and inclusive) to show only those lines numbered as
+  in the code, or `null`, `lineNumbers` whether to number lines, and `wrap` as above. A language the
+  renderer does not know is drawn as plain text.
+
+The style sheet colors the renderer's `diffs-container` element through its `--diffs-*` custom
+properties, from the page's own `--happy-*` colors and fonts.
+
+An element that cannot show what it was given says why in its own place rather than leaving the page
+blank. The script is served like `style.css`, and so is the diagram renderer it loads on demand, at
+`GET /v0/artifacts/:artifactId/api/v1/diagrams.js`, which pages never load themselves. The set of
+elements may grow; an element the script does not define is left as the page wrote it.
 
 #### `GET /v0/artifacts/:artifactId/api/v1/me`
 
@@ -10545,8 +10756,9 @@ agent's change carries none.
     - `artifact` (full artifact object).
 - `artifact.updated` — a new version was made.
     - `artifactId` (ID string), `previousVersion`, `version`, `changes`.
-    - `changes` always holds `latestVersion`, `title`, `entry`, `fileCount`, `size`, `background`,
-      `updatedBy`, `updatedSource`, and `updatedAt`. Read the new version's files through the
+    - `changes` always holds `latestVersion`, `latestMajor`, `latestMinor`, `title`, `entry`,
+      `fileCount`, `size`, `background`, `display`, `updatedBy`, `updatedSource`, and `updatedAt`;
+      older daemons leave out `latestMajor` and `latestMinor`. Read the new version's files through the
       version routes.
 - `artifact.deleted` — the artifact was deleted and is now a tombstone.
     - `artifactId` (ID string), `previousVersion`, `version`, `changes`.

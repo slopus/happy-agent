@@ -18,7 +18,7 @@ import {
     type MessageMode,
     type Timestamp,
 } from "./common.js";
-import { artifactTitleSchema, artifactTypeSchema } from "./artifacts.js";
+import { artifactDisplaySchema, artifactTitleSchema, artifactTypeSchema } from "./artifacts.js";
 import type { UsageBreakdown } from "./usage.js";
 import { userIdSchema } from "./users.js";
 
@@ -223,19 +223,48 @@ export const mediaPresentationSchema = Type.Object({
 /** Images, videos, documents, and files a completed call showed the person inline. */
 export type MediaPresentation = Static<typeof mediaPresentationSchema>;
 
-/** An artifact a completed call created or versioned, shown as a card that opens it. */
+/**
+ * Which version an artifact presentation shows: `"latest"` follows the artifact as it changes and is
+ * where an HTML artifact is shown inline; `"version"` is exactly the presented one. Absent, or a
+ * value this client does not know, means `"version"`.
+ */
+export const artifactPresentationShowsSchema = Type.Union([
+    Type.Literal("latest"),
+    Type.Literal("version"),
+]);
+
+/** Which version an artifact presentation shows. */
+export type ArtifactPresentationShows = Static<typeof artifactPresentationShowsSchema>;
+
+/** An artifact a completed call created, changed, or took up for editing, shown in the chat. */
 export const artifactPresentationSchema = Type.Object({
     type: Type.Literal("artifact"),
     artifactId: cuid2Schema,
-    /** The version number this call produced. */
+    /** The artifact's latest version when the call completed. */
     version: Type.Integer({ minimum: 1 }),
     artifactType: artifactTypeSchema,
     /** The artifact's title at that version. */
     title: artifactTitleSchema,
+    /** Which version the chat shows; absent on older daemons, meaning `"version"`. */
+    shows: Type.Optional(artifactPresentationShowsSchema),
 });
 
-/** An artifact a completed call created or versioned, shown as a card that opens it. */
+/** An artifact a completed call created, changed, or took up for editing, shown in the chat. */
 export type ArtifactPresentation = Static<typeof artifactPresentationSchema>;
+
+/**
+ * A web page a completed call asked the chat to show inline, at a URL as the agent's own machine
+ * reaches it. `display` is an artifact display preference, or `null` for the client's choice.
+ */
+export const pagePresentationSchema = Type.Object({
+    type: Type.Literal("page"),
+    url: Type.String({ minLength: 1, maxLength: 4096 }),
+    title: Type.String({ minLength: 1, maxLength: 256 }),
+    display: Nullable(artifactDisplaySchema),
+});
+
+/** A web page a completed call asked the chat to show inline. */
+export type PagePresentation = Static<typeof pagePresentationSchema>;
 
 /** Every display-ready tool-call presentation the client understands. */
 export const toolPresentationSchema = Type.Union([
@@ -247,6 +276,7 @@ export const toolPresentationSchema = Type.Union([
     agentSpawnPresentationSchema,
     mediaPresentationSchema,
     artifactPresentationSchema,
+    pagePresentationSchema,
 ]);
 
 /** Every display-ready tool-call presentation the client understands. */

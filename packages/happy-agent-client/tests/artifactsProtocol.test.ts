@@ -110,6 +110,15 @@ describe("artifacts protocol", () => {
             }),
         ).toBe(false);
         expect(Value.Check(artifactVersionSchema, firstVersion)).toBe(true);
+        // A display preference is the author's, absent from older daemons, null for the client's own.
+        for (const display of [null, "inline_compact", "inline_expanded", "side"]) {
+            expect(Value.Check(artifactSchema, { ...artifact, display })).toBe(true);
+            expect(Value.Check(artifactVersionSchema, { ...firstVersion, display })).toBe(true);
+        }
+        expect(Value.Check(artifactSchema, { ...artifact, display: "modal" })).toBe(false);
+        expect(Value.Check(artifactVersionSchema, { ...firstVersion, display: "modal" })).toBe(
+            false,
+        );
         expect(
             Value.Check(artifactListResponseSchema, {
                 artifacts: [artifact],
@@ -132,6 +141,43 @@ describe("artifacts protocol", () => {
                     sha256,
                     size: 48_213,
                 },
+            }),
+        ).toBe(true);
+    });
+
+    it("labels versions major.minor beside their numbers, and still reads older daemons", () => {
+        expect(Value.Check(artifactSchema, { ...artifact, latestMajor: 2, latestMinor: 0 })).toBe(
+            true,
+        );
+        expect(Value.Check(artifactVersionSchema, { ...firstVersion, major: 1, minor: 0 })).toBe(
+            true,
+        );
+        expect(Value.Check(artifactVersionSchema, { ...firstVersion, major: 0, minor: 0 })).toBe(
+            false,
+        );
+        expect(Value.Check(artifactVersionSchema, { ...firstVersion, major: 1, minor: -1 })).toBe(
+            false,
+        );
+        expect(Value.Check(artifactSchema, { ...artifact, latestMajor: 0 })).toBe(false);
+        expect(
+            Value.Check(artifactUpdatedPayloadSchema, {
+                artifactId: artifact.id,
+                changes: {
+                    background: null,
+                    display: null,
+                    entry,
+                    fileCount: 2,
+                    latestMajor: 1,
+                    latestMinor: 1,
+                    latestVersion: 2,
+                    size: 66_447,
+                    title: artifact.title,
+                    updatedAt: createdAt,
+                    updatedBy: artifact.updatedBy,
+                    updatedSource: null,
+                },
+                previousVersion: version,
+                version: nextVersion,
             }),
         ).toBe(true);
     });
@@ -219,6 +265,9 @@ describe("artifacts protocol", () => {
                 replaceAll: false,
             }),
         ).toBe(true);
+        expect(Value.Check(updateArtifactRequestSchema, { major: 2 })).toBe(true);
+        expect(Value.Check(updateArtifactRequestSchema, { major: 1 })).toBe(false);
+        expect(Value.Check(updateArtifactRequestSchema, { major: 2.5 })).toBe(false);
         expect(Value.Check(deleteArtifactRequestSchema, {})).toBe(true);
         expect(
             Value.Check(deleteArtifactRequestSchema, {
@@ -241,6 +290,7 @@ describe("artifacts protocol", () => {
                 payload: {
                     artifactId: artifact.id,
                     changes: {
+                        display: "inline_expanded",
                         entry,
                         fileCount: 2,
                         latestVersion: 2,
