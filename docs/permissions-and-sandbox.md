@@ -238,6 +238,34 @@ execution for that one command and explain why. In Read only or Workspace write,
 stop and tell the user which limit it was. A sandbox refusal is not a bug in your
 command and is not something to route around.
 
+### macOS browser startup crashes
+
+Chrome has been observed aborting during macOS application registration
+(`_RegisterApplication` / `TransformProcessType`, `SIGABRT`) when launched from a
+restricted Happy Agent shell, producing "Google Chrome quit unexpectedly" dialogs.
+A bounded headless check of the same installed Chrome succeeded outside Happy
+Agent's sandbox with a fresh temporary profile. This establishes a local
+workaround; the exact denied operation has not been isolated, and this does not
+establish that every browser crash has the same cause.
+
+When this startup failure has been observed in the current environment or
+documented for it by the user or project instructions, apply the existing
+blocked-work rule before another browser launch. In Auto, request reviewed Full
+access for only the exact authorized browser test or screenshot command, using
+the active shell tool's escalation field and a concrete reason. Keep Auto selected;
+an allowed review lifts Happy Agent's sandbox only for that call. In Read only or
+Workspace write, explain that reviewed execution is unavailable and ask for
+direction. If review is denied or execution is unavailable, report browser
+verification as blocked or skipped.
+
+Use an isolated temporary browser profile, preferably under the workspace's
+`.context/`, limit the check to the necessary files or sites, enforce a process
+timeout, and close only processes created by the check. Shell tool wait limits
+background commands; they do not terminate them. Do not use the person's normal
+profile, cookies, or saved sessions. If startup fails, stop and inspect the error;
+repeated or concurrent relaunches can create more native crash dialogs. Do not
+bypass review, pass `--no-sandbox`, or weaken system protections.
+
 ### Platform implementations
 
 - **macOS** uses the system Seatbelt sandbox at `/usr/bin/sandbox-exec` with a
