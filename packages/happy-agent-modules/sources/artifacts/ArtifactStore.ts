@@ -34,10 +34,13 @@ interface ArtifactRow {
     readonly title: string;
     readonly status: string;
     readonly latest_version: number | string;
+    readonly latest_major: number | string;
+    readonly latest_minor: number | string;
     readonly entry_json: string;
     readonly file_count: number | string;
     readonly size: number | string;
     readonly background: string | null;
+    readonly display: string | null;
     readonly source_json: string | null;
     readonly created_by_json: string;
     readonly created_at: number | string;
@@ -53,9 +56,12 @@ interface ArtifactRow {
 interface VersionRow {
     readonly artifact_id: string;
     readonly number: number | string;
+    readonly major: number | string;
+    readonly minor: number | string;
     readonly title: string;
     readonly entry_path: string;
     readonly background: string | null;
+    readonly display: string | null;
     readonly created_by_json: string;
     readonly source_json: string | null;
     readonly created_at: number | string;
@@ -275,16 +281,17 @@ export async function insertArtifact(
         await agentDatabaseRun(
             txCtx.db,
             sql`INSERT INTO ${sql.raw(ARTIFACTS_TABLE)} (
-                id, type, title, status, latest_version, entry_json, file_count, size, background,
-                source_json, source_kind, source_id, source_agent_id,
+                id, type, title, status, latest_version, latest_major, latest_minor, entry_json,
+                file_count, size, background, display, source_json, source_kind, source_id, source_agent_id,
                 created_by_json, created_by_kind, created_by_id, created_at,
                 updated_by_json, updated_source_json, updated_at,
                 deleted_by_json, deleted_source_json, deleted_at, revision
             ) VALUES (
                 ${artifact.id}, ${artifact.type}, ${artifact.title}, ${artifact.status},
-                ${artifact.latestVersion}, ${JSON.stringify(artifact.entry)},
+                ${artifact.latestVersion}, ${artifact.latestMajor}, ${artifact.latestMinor},
+                ${JSON.stringify(artifact.entry)},
                 ${artifact.fileCount}, ${artifact.size}, ${artifact.background ?? null},
-                ${json(source)}, ${source?.kind ?? null},
+                ${artifact.display ?? null}, ${json(source)}, ${source?.kind ?? null},
                 ${source === undefined ? null : artifactSourceId(source)},
                 ${source?.agentId ?? null},
                 ${JSON.stringify(artifact.createdBy)}, ${artifact.createdBy.kind},
@@ -311,7 +318,12 @@ export async function insertArtifactVersion(
 ): Promise<void> {
     assertArtifact(artifact);
     assertVersion(version);
-    if (version.artifactId !== artifact.id || version.number !== artifact.latestVersion) {
+    if (
+        version.artifactId !== artifact.id ||
+        version.number !== artifact.latestVersion ||
+        version.major !== artifact.latestMajor ||
+        version.minor !== artifact.latestMinor
+    ) {
         throw new Error("The artifact version does not belong at the head of its artifact.");
     }
     await ctx.inTx(async (txCtx) => {
@@ -320,9 +332,11 @@ export async function insertArtifactVersion(
             artifact,
             expectedRevision,
             sql`title = ${artifact.title}, latest_version = ${artifact.latestVersion},
+                latest_major = ${artifact.latestMajor}, latest_minor = ${artifact.latestMinor},
                 entry_json = ${JSON.stringify(artifact.entry)},
                 file_count = ${artifact.fileCount}, size = ${artifact.size},
-                background = ${artifact.background ?? null}`,
+                background = ${artifact.background ?? null},
+                display = ${artifact.display ?? null}`,
         );
         await insertVersion(txCtx, version, operationId);
     });
@@ -377,6 +391,24 @@ export async function updateArtifactUploadReceived(
     if (changed.length !== 1) throw new Error("The artifact upload was not waiting for its bytes.");
 }
 
+/** How many versions of one artifact this agent made since `since`, by any of its tools. */
+export async function queryRecentAgentVersionCount(
+    ctx: Context,
+    artifactId: string,
+    agentId: string,
+    since: number,
+): Promise<number> {
+    const rows = await agentDatabaseRows<{ created_by_json: string }>(
+        ctx.db,
+        sql`SELECT created_by_json FROM ${sql.raw(ARTIFACT_VERSIONS_TABLE)}
+            WHERE artifact_id = ${artifactId} AND created_at >= ${since}`,
+    );
+    return rows.filter((row) => {
+        const author = parseAuthor(row.created_by_json);
+        return author?.kind === "agent" && author.agentId === agentId;
+    }).length;
+}
+
 export async function deleteArtifactUpload(ctx: Context, uploadId: string): Promise<void> {
     await agentDatabaseRun(
         ctx.db,
@@ -410,10 +442,11 @@ async function insertVersion(
     await agentDatabaseRun(
         ctx.db,
         sql`INSERT INTO ${sql.raw(ARTIFACT_VERSIONS_TABLE)}
-            (artifact_id, number, title, entry_path, background, created_by_json, source_json,
-                created_at, operation_id)
-            VALUES (${version.artifactId}, ${version.number}, ${version.title},
-                ${version.entry.path}, ${version.background ?? null},
+            (artifact_id, number, major, minor, title, entry_path, background, display,
+                created_by_json, source_json, created_at, operation_id)
+            VALUES (${version.artifactId}, ${version.number}, ${version.major}, ${version.minor},
+                ${version.title},
+                ${version.entry.path}, ${version.background ?? null}, ${version.display ?? null},
                 ${JSON.stringify(version.createdBy)},
                 ${json(version.source)}, ${version.createdAt}, ${operationId ?? null})`,
     );
@@ -478,10 +511,13 @@ function artifactFromRow(row: ArtifactRow): ArtifactRecord {
         title: row.title,
         status: row.status,
         latestVersion: Number(row.latest_version),
+        latestMajor: Number(row.latest_major),
+        latestMinor: Number(row.latest_minor),
         entry: JSON.parse(row.entry_json) as unknown,
         fileCount: Number(row.file_count),
         size: Number(row.size),
         ...(row.background === null ? {} : { background: row.background }),
+        ...(row.display === null ? {} : { display: row.display }),
         ...(source === undefined ? {} : { source }),
         createdBy: JSON.parse(row.created_by_json) as unknown,
         createdAt: Number(row.created_at),
@@ -504,10 +540,13 @@ function versionFromRow(row: VersionRow, files: readonly ArtifactFile[]): Artifa
     const version = {
         artifactId: row.artifact_id,
         number: Number(row.number),
+        major: Number(row.major),
+        minor: Number(row.minor),
         title: row.title,
         entry,
         files: [...files],
         ...(row.background === null ? {} : { background: row.background }),
+        ...(row.display === null ? {} : { display: row.display }),
         createdBy: JSON.parse(row.created_by_json) as unknown,
         ...(source === undefined ? {} : { source }),
         createdAt: Number(row.created_at),

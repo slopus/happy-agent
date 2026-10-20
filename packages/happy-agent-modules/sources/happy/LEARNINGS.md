@@ -48,12 +48,17 @@ one message it cannot carry.
 Agents now mention artifacts, conversations, workspaces, and projects as `<happy-KIND id="…"/>`
 tags. The phone cannot render them, and API.md requires every integration to get plain Markdown,
 never a raw tag. The mapper stays synchronous and knows nothing of catalogs. After it runs, the
-connection rewrites only agent-role text and service notices with the client package's own
+connection rewrites only agent-role text, service notices, and tool-call descriptions with the client package's own
 fallback renderer, resolving each distinct reference once and in order, inside the event's
 transaction. The module takes the artifacts and tasks modules for this; bots, projects,
 workspaces, and the agent collection were already at hand. An inert reference, or a lookup
 that throws, becomes the placeholder, because naming optional context must never stall the
 outbox. History keeps the tags, so a later client still renders them as links.
+
+The phone shows no page, artifact, or presented file, so the row of the call that showed one is
+all a person reading along there learns of it. Those rows say what was shown: the mapper writes
+an artifact as its reference tag in the tool-call description, and the same pass names it, as
+plain words rather than Markdown, because a description is not Markdown.
 
 File links, `[label](happy-file://…)`, get the same treatment for the same reason: the phone cannot
 open another workspace's file, and a raw `happy-file` URL means nothing there. The client

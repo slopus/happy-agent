@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { createId } from "@paralleldrive/cuid2";
 import { ensurePrivateDirectory } from "@slopus/happy-agent-compute";
 import {
@@ -75,6 +77,7 @@ import {
     queryArtifactVersion,
     queryArtifactVersionForOperation,
     queryArtifactVersionPage,
+    queryRecentAgentVersionCount,
     updateArtifactDeleted,
     updateArtifactUploadReceived,
 } from "./ArtifactStore.js";
@@ -83,6 +86,7 @@ import {
     artifactMimeTypeForPath,
     checkArtifactFiles,
     compareArtifactPaths,
+    formatBytes,
     MAX_ARTIFACT_UPLOAD_BYTES,
 } from "./ArtifactTypes.js";
 import {
@@ -96,15 +100,34 @@ import {
 import { ARTIFACT_REFERENCE_INSTRUCTIONS } from "./tools/common.js";
 import { createArtifactTool } from "./tools/create_artifact.js";
 import { deleteArtifactTool } from "./tools/delete_artifact.js";
+import { editArtifactFileTool } from "./tools/edit_artifact_file.js";
 import { listArtifactsTool } from "./tools/list_artifacts.js";
 import { readArtifactFileTool } from "./tools/read_artifact_file.js";
 import { readArtifactTool } from "./tools/read_artifact.js";
 import { updateArtifactTool } from "./tools/update_artifact.js";
+import { writeArtifactFileTool } from "./tools/write_artifact_file.js";
 
 /** Who is acting and where, as an agent's own conversation decides it. */
 export interface ArtifactActor {
     readonly author: ArtifactAuthor;
     readonly source: ArtifactSource;
+}
+
+/** How many versions one agent makes of one artifact in any hour before it must slow down. */
+export const MAX_AGENT_ARTIFACT_VERSIONS_PER_HOUR = 100;
+
+/** The largest text file the artifact tools read whole to edit, an html entry's own limit. */
+export const MAX_ARTIFACT_TEXT_BYTES = 16 * 1024 * 1024;
+
+/** What one tool call changes in one artifact's files, to become one version. */
+export interface ArtifactFileChanges {
+    readonly agentId: string;
+    readonly artifactId: string;
+    /** The revision the call read the artifact at; a version made meanwhile refuses the change. */
+    readonly expectedRevision?: number | undefined;
+    readonly operationId: string;
+    readonly writes: ReadonlyMap<string, Uint8Array>;
+    readonly removes: readonly string[];
 }
 
 /**
@@ -171,6 +194,8 @@ export class ArtifactsModule implements AgentModule {
         instructions: () => ARTIFACT_REFERENCE_INSTRUCTIONS,
         tools: async (_ctx: Context, scope: AgentModuleScope): Promise<readonly AnyAgentTool[]> => [
             createArtifactTool(this, this.#compute, scope.agent.id),
+            writeArtifactFileTool(this, scope.agent.id),
+            editArtifactFileTool(this, scope.agent.id),
             updateArtifactTool(this, this.#compute, scope.agent.id),
             listArtifactsTool(this, scope.agent.id),
             readArtifactTool(this),
@@ -431,6 +456,7 @@ export class ArtifactsModule implements AgentModule {
             }
             const { files, entry } = await this.#placeFiles(txCtx, input.type, [], input.files);
             const background = input.background?.toLowerCase();
+            const display = input.display;
             const now = Date.now();
             const artifact: ArtifactRecord = {
                 id: input.id ?? createId(),
@@ -438,10 +464,13 @@ export class ArtifactsModule implements AgentModule {
                 title: input.title,
                 status: "active",
                 latestVersion: 1,
+                latestMajor: 1,
+                latestMinor: 0,
                 entry,
                 fileCount: files.length,
                 size: totalSize(files),
                 ...(background === undefined ? {} : { background }),
+                ...(display === undefined ? {} : { display }),
                 ...(input.source === undefined ? {} : { source: input.source }),
                 createdBy: input.author,
                 createdAt: now,
@@ -453,10 +482,13 @@ export class ArtifactsModule implements AgentModule {
             const version: ArtifactVersion = {
                 artifactId: artifact.id,
                 number: 1,
+                major: 1,
+                minor: 0,
                 title: input.title,
                 entry,
                 files,
                 ...(background === undefined ? {} : { background }),
+                ...(display === undefined ? {} : { display }),
                 createdBy: input.author,
                 ...(input.source === undefined ? {} : { source: input.source }),
                 createdAt: now,
@@ -476,8 +508,9 @@ export class ArtifactsModule implements AgentModule {
     /**
      * Make a new version from the latest one's files, or from none with `replaceAll`: `files`
      * adds or replaces paths and `remove` takes paths out, so unchanged files carry over without
-     * being sent again. An omitted title or background keeps the current one, and a `null`
-     * background clears it. A version already made under the same `operationId` is not made again.
+     * being sent again. An omitted title, background, or display keeps the current one, and a
+     * `null` background or display clears it. A version already made under the same `operationId`
+     * is not made again.
      */
     async update(ctx: Context, input: UpdateArtifactInput): Promise<ArtifactRecord> {
         if (!Value.Check(updateArtifactInputSchema, input)) {
@@ -488,11 +521,15 @@ export class ArtifactsModule implements AgentModule {
         if (
             input.title === undefined &&
             input.background === undefined &&
+            input.display === undefined &&
             input.files === undefined &&
             input.remove === undefined &&
-            input.replaceAll === undefined
+            input.replaceAll === undefined &&
+            input.major === undefined
         ) {
-            throw new ArtifactInputError("Change the title, the background, or the files.");
+            throw new ArtifactInputError(
+                "Change the title, the background, the display, or the files, or make a major version.",
+            );
         }
         return await ctx.inTx(async (txCtx) => {
             const current = await this.#required(txCtx, input.artifactId);
@@ -510,6 +547,18 @@ export class ArtifactsModule implements AgentModule {
                 );
             }
             this.#assertRevision(current, input.expectedRevision);
+            if (input.major !== undefined) {
+                if (input.major !== current.latestMajor + 1) {
+                    throw new ArtifactInputError(
+                        `The next major version is ${String(current.latestMajor + 1)}: it is at ${String(current.latestMajor)}.${String(current.latestMinor)} now.`,
+                    );
+                }
+                if (current.latestMinor === 0) {
+                    throw new ArtifactInputError(
+                        `Version ${String(current.latestMajor)}.0 is already a major version; change something before making the next one.`,
+                    );
+                }
+            }
             const latest = await queryArtifactVersion(txCtx, current.id, current.latestVersion);
             if (latest === undefined) throw new Error("Artifact storage lost the latest version.");
             const kept = new Map(
@@ -536,6 +585,8 @@ export class ArtifactsModule implements AgentModule {
                 input.background === undefined
                     ? current.background
                     : (input.background?.toLowerCase() ?? undefined);
+            const display =
+                input.display === undefined ? current.display : (input.display ?? undefined);
             const next: ArtifactRecord = {
                 ...current,
                 title,
@@ -543,6 +594,8 @@ export class ArtifactsModule implements AgentModule {
                 fileCount: files.length,
                 size: totalSize(files),
                 latestVersion: current.latestVersion + 1,
+                latestMajor: input.major ?? current.latestMajor,
+                latestMinor: input.major === undefined ? current.latestMinor + 1 : 0,
                 updatedBy: input.author,
                 updatedAt: now,
                 revision: current.revision + 1,
@@ -551,13 +604,18 @@ export class ArtifactsModule implements AgentModule {
             if (input.source !== undefined) next.updatedSource = input.source;
             delete next.background;
             if (background !== undefined) next.background = background;
+            delete next.display;
+            if (display !== undefined) next.display = display;
             const version: ArtifactVersion = {
                 artifactId: current.id,
                 number: next.latestVersion,
+                major: next.latestMajor,
+                minor: next.latestMinor,
                 title,
                 entry,
                 files,
                 ...(background === undefined ? {} : { background }),
+                ...(display === undefined ? {} : { display }),
                 createdBy: input.author,
                 ...(input.source === undefined ? {} : { source: input.source }),
                 createdAt: now,
@@ -613,6 +671,135 @@ export class ArtifactsModule implements AgentModule {
             });
             return structuredClone(next);
         });
+    }
+
+    /**
+     * Whether a version keyed by `operationId` was already made, and the artifact as it is now if
+     * so: a tool call repeated after a restart answers with that instead of changing anything.
+     */
+    async madeByOperation(
+        ctx: Context,
+        artifactId: string,
+        operationId: string,
+    ): Promise<ArtifactRecord | undefined> {
+        return await ctx.inTx(async (txCtx) => {
+            const current = await queryArtifact(txCtx, artifactId);
+            if (current === undefined) return undefined;
+            const made = await queryArtifactVersionForOperation(txCtx, artifactId, operationId);
+            return made === undefined ? undefined : structuredClone(current);
+        });
+    }
+
+    /**
+     * One file of an active artifact's latest version as UTF-8 text, with the artifact as it was
+     * read, so a change made from the text can name the revision it started at.
+     */
+    async readText(
+        ctx: Context,
+        artifactId: string,
+        path: string,
+    ): Promise<{
+        readonly artifact: ArtifactRecord;
+        readonly file: ArtifactFile;
+        readonly text: string;
+    }> {
+        const artifact = await this.#requiredActiveOutsideTx(ctx, artifactId);
+        const stored = await this.storedFile(ctx, artifactId, artifact.latestVersion, path);
+        if (stored.file.size > MAX_ARTIFACT_TEXT_BYTES) {
+            throw new ArtifactInputError(
+                `${JSON.stringify(path)} is larger than the ${formatBytes(MAX_ARTIFACT_TEXT_BYTES)} a text file may be to edit.`,
+            );
+        }
+        const read = await this.readFile(ctx, artifactId, artifact.latestVersion, path, {
+            maxBytes: stored.file.size,
+        });
+        let text: string;
+        try {
+            text = new TextDecoder("utf-8", { fatal: true }).decode(read.bytes);
+        } catch {
+            throw new ArtifactInputError(
+                `${JSON.stringify(path)} is not UTF-8 text, so it cannot be edited as text. Replace it with update_artifact's files.`,
+            );
+        }
+        return { artifact, file: read.file, text };
+    }
+
+    /**
+     * Turn what one tool call changed in an artifact's files into its next version, made by the
+     * agent where it works and keyed by `operationId`, so a call repeated after a restart makes
+     * nothing twice. A version someone made while the call ran refuses the change, rather than
+     * letting text edited against the older files undo it. A file written exactly as it already
+     * is changes nothing, and a call that changes nothing makes no version.
+     */
+    async commitFileChanges(
+        ctx: Context,
+        changes: ArtifactFileChanges,
+    ): Promise<{ readonly artifact: ArtifactRecord; readonly changed: boolean }> {
+        const done = await this.madeByOperation(ctx, changes.artifactId, changes.operationId);
+        if (done !== undefined) return { artifact: done, changed: true };
+        const current = await this.#requiredActiveOutsideTx(ctx, changes.artifactId);
+        if (
+            changes.expectedRevision !== undefined &&
+            current.revision !== changes.expectedRevision
+        ) {
+            throw new ArtifactConflictError(
+                `Artifact ${current.id} changed while this call ran, so it was not changed. Read it again and repeat the change.`,
+                current,
+            );
+        }
+        const latest = await this.getVersion(ctx, current.id, current.latestVersion);
+        const stored = new Map(latest.files.map((file) => [file.path, file.sha256]));
+        const writes = [...changes.writes].filter(
+            ([path, bytes]) =>
+                stored.get(path) !== createHash("sha256").update(bytes).digest("hex"),
+        );
+        if (writes.length === 0 && changes.removes.length === 0) {
+            return { artifact: current, changed: false };
+        }
+        await this.assertAgentVersionBudget(ctx, changes.agentId, current.id);
+        const files: ArtifactPlacement[] = [];
+        for (const [path, bytes] of writes) {
+            if (bytes.byteLength === 0) {
+                throw new ArtifactInputError(
+                    `${JSON.stringify(path)} would be empty; every file of an artifact holds at least one byte.`,
+                );
+            }
+            files.push({ path, uploadId: (await this.stageUpload(ctx, bytes)).id });
+        }
+        const actor = await this.actorFor(ctx, changes.agentId);
+        const artifact = await this.update(ctx, {
+            artifactId: current.id,
+            expectedRevision: current.revision,
+            operationId: changes.operationId,
+            ...(files.length === 0 ? {} : { files }),
+            ...(changes.removes.length === 0 ? {} : { remove: [...changes.removes] }),
+            author: actor.author,
+            source: actor.source,
+        });
+        return { artifact, changed: true };
+    }
+
+    /**
+     * Refuse another version from an agent that already made
+     * `MAX_AGENT_ARTIFACT_VERSIONS_PER_HOUR` of this artifact in the last hour, so a model stuck
+     * repeating an edit cannot bury the artifact's history.
+     */
+    async assertAgentVersionBudget(
+        ctx: Context,
+        agentId: string,
+        artifactId: string,
+    ): Promise<void> {
+        const recent = await queryRecentAgentVersionCount(
+            ctx,
+            artifactId,
+            agentId,
+            Date.now() - 60 * 60 * 1000,
+        );
+        if (recent >= MAX_AGENT_ARTIFACT_VERSIONS_PER_HOUR) {
+            throw new ArtifactInputError(
+                `You made ${String(recent)} versions of artifact ${artifactId} in the last hour. Make your remaining changes in fewer calls, such as one Write of the whole file or one patch, or publish files you built with update_artifact.`,
+            );
+        }
     }
 
     /**
@@ -822,6 +1009,15 @@ export class ArtifactsModule implements AgentModule {
     async #required(ctx: Context, artifactId: string): Promise<ArtifactRecord> {
         const artifact = await queryArtifact(ctx, artifactId);
         if (artifact === undefined) throw new ArtifactNotFoundError();
+        return artifact;
+    }
+
+    async #requiredActiveOutsideTx(ctx: Context, artifactId: string): Promise<ArtifactRecord> {
+        const artifact = await this.get(ctx, artifactId);
+        if (artifact === undefined) throw new ArtifactNotFoundError();
+        if (artifact.status === "deleted") {
+            throw new ArtifactNotFoundError("The artifact was deleted.");
+        }
         return artifact;
     }
 

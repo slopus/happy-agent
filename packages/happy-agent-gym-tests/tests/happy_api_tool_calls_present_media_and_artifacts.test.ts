@@ -300,7 +300,7 @@ describe("tool calls present media and artifacts in the chat", () => {
         const created = await call("create_artifact", {
             type: "markdown",
             title: "Q3 report",
-            files: [{ content: "# Q3\n\n![Chart](chart.png)\n" }, { fromPath: "out/chart.png" }],
+            files: [{ fromPath: "out/chart.png" }],
         });
         expect(created.result.text).toContain("as a card that opens it");
         const { artifacts } = await gym.client.listArtifacts();
@@ -319,7 +319,6 @@ describe("tool calls present media and artifacts in the chat", () => {
         const updated = await call("update_artifact", {
             artifactId,
             title: "Q3 report, reviewed",
-            files: [{ path: "notes.md", content: "Checked.\n" }],
         });
         expect(updated.block).toMatchObject({
             presentation: {

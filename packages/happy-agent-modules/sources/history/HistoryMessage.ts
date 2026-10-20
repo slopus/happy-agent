@@ -332,6 +332,24 @@ const historyArtifactPresentationSchema = Type.Object(
             Type.Literal("document"),
         ]),
         title: Type.String({ minLength: 1, maxLength: 256 }),
+        /** Which version the chat shows; absent on records from before it, meaning `"version"`. */
+        shows: Type.Optional(Type.Union([Type.Literal("latest"), Type.Literal("version")])),
+    },
+    { additionalProperties: false },
+);
+
+const historyDisplaySchema = Type.Union([
+    Type.Literal("inline_compact"),
+    Type.Literal("inline_expanded"),
+    Type.Literal("side"),
+]);
+
+const historyPagePresentationSchema = Type.Object(
+    {
+        type: Type.Literal("page"),
+        url: Type.String({ minLength: 1, maxLength: 4096 }),
+        title: Type.String({ minLength: 1, maxLength: 256 }),
+        display: Type.Union([historyDisplaySchema, Type.Null()]),
     },
     { additionalProperties: false },
 );
@@ -340,6 +358,7 @@ const historyArtifactPresentationSchema = Type.Object(
 export const historyToolPresentationSchema = Type.Union([
     historyFileDiffPresentationSchema,
     historyMediaPresentationSchema,
+    historyPagePresentationSchema,
     historyArtifactPresentationSchema,
 ]);
 

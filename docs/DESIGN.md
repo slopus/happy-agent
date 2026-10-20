@@ -100,6 +100,30 @@ You _may_ render a toolbar or a header **for the page's own content** — a list
 filter row, a document's breadcrumb — as long as it reads as part of the
 content, not as a second window frame. See §9.6.
 
+### 1.5 Happy artifact pages
+
+An HTML artifact is the one case where Happy does serve styles and components.
+Its page loads `<link rel="stylesheet" href="/api/v1/style.css">` first and
+`<script src="/api/v1/components.js"></script>` last. The style sheet defines
+its own `--happy-*` colour variables for artifact pages — `--happy-text`,
+`--happy-muted`, `--happy-faint`, `--happy-border`, `--happy-surface`,
+`--happy-accent`, `--happy-added`, `--happy-removed`, `--happy-diff-added`,
+`--happy-diff-removed`, `--happy-chart-1` to `--happy-chart-6`, `--happy-font`,
+and `--happy-mono` — and an artifact page uses those instead of the §5
+vocabulary. The components are `<happy-diff>`, `<happy-code>`, `<happy-files>`,
+`<happy-chart>`, and `<happy-diagram>`; `recipe/artifact-apps.md` shows each
+one. In Happy Desktop, `<happy-diff>` and `<happy-code>` draw diffs and code
+with the same renderer and styling as the desktop's changed-file pane and code
+blocks, so use them rather than a hand-made `<pre>` or diff table.
+
+An artifact shown inline is part of the chat's reply. The chat draws it at its
+full height and never caps it, so it is embedded content (§2.2) with **no**
+internal scrollport: no fixed heights, no `overflow: auto` regions, no frame,
+and no background of its own. Lay it out as that part of the reply would read:
+headings, prose, code, quotes, file trees, and clean visualizations, separated
+by spacing and hairlines. A stack of rounded cards, tinted callout boxes, and a
+coloured stripe down a block's left edge are never acceptable (§16).
+
 ---
 
 ## 2. Surfaces, dimensions, and gutters

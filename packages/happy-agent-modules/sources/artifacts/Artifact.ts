@@ -15,6 +15,8 @@ export const artifactTimestampSchema = Type.Integer({
     maximum: Number.MAX_SAFE_INTEGER,
 });
 export const artifactCounterSchema = Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER });
+/** The minor part of a version's label, which a major version starts at 0. */
+export const artifactMinorSchema = Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER });
 /** A human display title: nonblank, without control characters. */
 export const artifactTitleSchema = Type.String({
     minLength: 1,
@@ -45,6 +47,15 @@ export const artifactSha256Schema = Type.String({ pattern: "^[0-9a-f]{64}$" });
 export const artifactBackgroundSchema = Type.String({
     pattern: "^#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$",
 });
+/**
+ * How a version's author wants it shown in a chat: inline collapsed to its title, inline at its
+ * full height, or as a card that opens it beside the chat.
+ */
+export const artifactDisplaySchema = Type.Union([
+    Type.Literal("inline_compact"),
+    Type.Literal("inline_expanded"),
+    Type.Literal("side"),
+]);
 /** A background as someone names it: the same colours, in either case. */
 export const artifactBackgroundInputSchema = Type.String({
     pattern: "^#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$",
@@ -148,11 +159,16 @@ export const artifactRecordSchema = Type.Object(
         title: artifactTitleSchema,
         status: artifactStatusSchema,
         latestVersion: artifactCounterSchema,
+        /** The latest version's `major.minor` label. */
+        latestMajor: artifactCounterSchema,
+        latestMinor: artifactMinorSchema,
         entry: artifactFileSchema,
         fileCount: Type.Integer({ minimum: 1, maximum: MAX_ARTIFACT_FILES }),
         size: artifactCounterSchema,
         /** The latest version's background; absent for a transparent slot. */
         background: Type.Optional(artifactBackgroundSchema),
+        /** The latest version's display preference; absent leaves it to the client. */
+        display: Type.Optional(artifactDisplaySchema),
         source: Type.Optional(artifactSourceSchema),
         createdBy: artifactAuthorSchema,
         createdAt: artifactTimestampSchema,
@@ -175,11 +191,19 @@ export const artifactVersionSchema = Type.Object(
     {
         artifactId: cuid2Schema,
         number: artifactCounterSchema,
+        /**
+         * The version's `major.minor` label. Every change is the next minor of the same major,
+         * unless it asks for the next major, which starts at minor 0.
+         */
+        major: artifactCounterSchema,
+        minor: artifactMinorSchema,
         title: artifactTitleSchema,
         entry: artifactFileSchema,
         files: Type.Array(artifactFileSchema, { minItems: 1, maxItems: MAX_ARTIFACT_FILES }),
         /** The colour behind this version's content; absent for a transparent slot. */
         background: Type.Optional(artifactBackgroundSchema),
+        /** How this version's author wants it shown; absent leaves it to the client. */
+        display: Type.Optional(artifactDisplaySchema),
         createdBy: artifactAuthorSchema,
         source: Type.Optional(artifactSourceSchema),
         createdAt: artifactTimestampSchema,
@@ -229,6 +253,8 @@ export const createArtifactInputSchema = Type.Object(
         files: Type.Array(artifactPlacementSchema, { minItems: 1, maxItems: MAX_ARTIFACT_FILES }),
         /** The first version's background; absent for a transparent slot. */
         background: Type.Optional(artifactBackgroundInputSchema),
+        /** The first version's display preference; absent leaves it to the client. */
+        display: Type.Optional(artifactDisplaySchema),
         author: artifactAuthorSchema,
         source: Type.Optional(artifactSourceSchema),
     },
@@ -251,6 +277,13 @@ export const updateArtifactInputSchema = Type.Object(
         replaceAll: Type.Optional(Type.Boolean()),
         /** A colour sets the new version's background, `null` clears it, and absent keeps it. */
         background: Type.Optional(Type.Union([artifactBackgroundInputSchema, Type.Null()])),
+        /** A preference sets the new version's display, `null` clears it, and absent keeps it. */
+        display: Type.Optional(Type.Union([artifactDisplaySchema, Type.Null()])),
+        /**
+         * Make the new version this major one, `major.0`. It must be one more than the latest
+         * major, and the latest version must be a minor one.
+         */
+        major: Type.Optional(Type.Integer({ minimum: 2, maximum: Number.MAX_SAFE_INTEGER })),
         author: artifactAuthorSchema,
         source: Type.Optional(artifactSourceSchema),
     },
@@ -302,6 +335,7 @@ export const artifactVersionQuerySchema = Type.Object(
 
 export type ArtifactType = Static<typeof artifactTypeSchema>;
 export type ArtifactStatus = Static<typeof artifactStatusSchema>;
+export type ArtifactDisplay = Static<typeof artifactDisplaySchema>;
 export type ArtifactFile = Static<typeof artifactFileSchema>;
 export type ArtifactSource = Static<typeof artifactSourceSchema>;
 export type ArtifactSourceInput = Static<typeof artifactSourceInputSchema>;

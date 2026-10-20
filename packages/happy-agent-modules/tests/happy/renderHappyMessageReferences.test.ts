@@ -57,6 +57,45 @@ describe("renderHappyMessageReferences", () => {
         expect(asked).toEqual(["known", "gone"]);
     });
 
+    it("names the artifacts in tool-call rows as plain words, sharing the lookups", async () => {
+        const asked: string[] = [];
+        const start = (call: string, description: string): HappySessionProtocolMessage =>
+            message("agent", {
+                args: {},
+                call,
+                description,
+                name: "update_artifact",
+                t: "tool-call-start",
+                title: "Update Artifact",
+            });
+        const untouched = start("c3", "Listing artifacts");
+        const rendered = await renderHappyMessageReferences(
+            [
+                start("c1", 'Updating <happy-artifact id="known"/>'),
+                message("agent", { t: "text", text: 'Done: <happy-artifact id="known"/>.' }),
+                start("c2", 'Deleting <happy-artifact id="gone"/>'),
+                untouched,
+            ],
+            async (reference) => {
+                asked.push(reference.id);
+                return reference.id === "known" ? "Q3 [draft]" : undefined;
+            },
+        );
+
+        expect(
+            rendered.map(({ content: { ev } }) =>
+                ev.t === "tool-call-start" ? ev.description : "text" in ev ? ev.text : ev.t,
+            ),
+        ).toEqual([
+            "Updating Q3 [draft]",
+            "Done: Q3 \\[draft\\].",
+            "Deleting an unavailable artifact",
+            "Listing artifacts",
+        ]);
+        expect(rendered[3]).toBe(untouched);
+        expect(asked).toEqual(["known", "gone"]);
+    });
+
     it("turns the agent's file links into their labels, alongside its tags", async () => {
         const link = "happy-file://agents/a1b2/packages/app/Foo.tsx#L42";
         const original = message("agent", { t: "text", text: "Nothing to rewrite." });

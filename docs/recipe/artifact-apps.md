@@ -12,7 +12,7 @@ that contract and is the right choice for almost every page.
 ## What you get
 
 - **One store per artifact.** Every version of the artifact uses the same store, so publishing a
-  new version with `update_artifact` keeps the data. Everyone using this Happy Agent shares it:
+  new version by changing its files keeps the data. Everyone using this Happy Agent shares it:
   each of the user's devices, and in team mode every member.
 - **Who is looking.** `happy.user` is the viewer: a stable `id`, plus `name`, `firstName`,
   `lastName`, and `photoUrl`, each of which may be `null`. Every write records its author in
@@ -50,10 +50,83 @@ that contract and is the right choice for almost every page.
    (`votes/<userId>`). Use `happy.kv.update` for anything genuinely shared, such as a counter.
 7. Unconfirmed writes live only in the page's memory and are dropped if the page closes; the
    daemon's store is the source of truth.
-8. Leave `html` and `body` without a background and set `color-scheme: light dark`, so the page
-   sits on the surface of whatever shows it, in light and dark. Keep the layout flat: no card
-   inside a card, and no coloured stripe down a card's left edge. The Happy design system in
+8. Start the page with `<link rel="stylesheet" href="/api/v1/style.css">` and leave `html` and
+   `body` without a background, so the page sits on the surface of whatever shows it, in light and
+   dark. An app shown inline is drawn at its full height in the reply, so give it no fixed height
+   and nothing that scrolls inside it. Keep the layout flat: no card inside a card, no stack of
+   rounded cards, and no coloured stripe down a card's left edge. The Happy design system in
    `../DESIGN.md` has the rest.
+9. Write the page in order: CSS, then HTML, then scripts at the end of the body, which run only on
+   the complete page.
+
+## Standard styles and components
+
+Every artifact page can load two more files the daemon serves beside the SDK, so they upgrade
+with Happy Agent too:
+
+- `/api/v1/style.css`, first. It sets the chat's typeface and sizes, a transparent page that
+  follows light and dark, and plain styles for text, links, code, tables, and rules. The body is
+  inset by `--happy-page-inset` beside the chat, and by nothing inline, where the page lines up
+  with the reply, so give the page no margin of its own. Every rule has zero specificity, so your
+  own CSS always wins. Use its colour variables instead of fixed colours:
+  `--happy-text`, `--happy-muted`, `--happy-faint`, `--happy-border`, `--happy-surface`,
+  `--happy-accent`, `--happy-added`, `--happy-removed`, `--happy-diff-added`,
+  `--happy-diff-removed`, and `--happy-chart-1` to `--happy-chart-6`, with `--happy-font` and
+  `--happy-mono` for type.
+- `/api/v1/components.js`, last. It defines five elements that read what they show from the page.
+  In Happy Desktop, diffs and code are drawn with the renderer and styling it uses for them;
+  elsewhere they are plain numbered lines without highlighting:
+
+```html
+<!-- A unified diff, such as git diff writes, saved as a file of the artifact. -->
+<happy-diff src="changes.diff"></happy-diff>
+<!-- One file of it, and only lines 40–52 of the changed file. -->
+<happy-diff src="changes.diff" path="src/app.ts" lines="40-52"></happy-diff>
+
+<!-- Code from a file of the artifact: a header naming it, and only lines 40–52, numbered. -->
+<happy-code src="src/app.ts" path="src/app.ts" lines="40-52"></happy-code>
+<!-- A snippet written in the page; language names it, otherwise path or src does. -->
+<happy-code language="python">
+    <script type="text/plain">
+        def greet(name):
+            return f"Hello, {name}!"
+    </script>
+</happy-code>
+<!-- Long lines wrap; nowrap on either element scrolls them instead. -->
+<happy-code src="src/app.ts" nowrap></happy-code>
+
+<!-- The files a diff changes as a tree, with status and counts; clicking one scrolls to its diff. -->
+<happy-files src="changes.diff"></happy-files>
+<happy-files>
+    <script type="application/json">
+        [{ "path": "src/app.ts", "status": "modified", "added": 12, "removed": 3 }]
+    </script>
+</happy-files>
+
+<!-- "bar", "hbar", "line", or "area", drawn at the element's width; height="…" sets a plot's. -->
+<happy-chart type="bar">
+    <script type="application/json">
+        {
+            "labels": ["Mon", "Tue"],
+            "series": [{ "name": "Requests", "values": [120, 340] }],
+            "unit": "rpm"
+        }
+    </script>
+</happy-chart>
+
+<!-- Mermaid flowcharts, sequence, state, class, and entity-relationship diagrams. -->
+<happy-diagram>
+    <script type="text/x-mermaid">
+        flowchart LR
+            Write --> Version
+    </script>
+</happy-diagram>
+```
+
+A page's script may set an element's `source` property instead — the diff text, the file list or
+diff text, the chart object, or the diagram text — and the element redraws, so a live app can feed
+a chart from its store. An element that cannot show what it was given says why in its own place.
+Anything else is yours to draw: an SVG in the `--happy-*` colours fits right in.
 
 ## The SDK
 
@@ -93,8 +166,8 @@ reads the store again, which the SDK does by itself.
 ## A complete example: a shared to-do list
 
 This page lists to-dos from everyone, with each author's photo and name, shows the sync state,
-and works offline. Publish it with `create_artifact` as an `html` artifact whose `index.html`
-holds exactly this:
+and works offline. Create it with `create_artifact` as an `html` artifact and write its
+`index.html` with `write_artifact_file` as exactly this:
 
 ```html
 <!doctype html>
@@ -377,7 +450,9 @@ outage. The loop that finds most bugs:
    few writes, cut the streams. Check that both pages end up showing the same thing and that
    `GET /__happy/data` holds what you expect, with no doubled items.
 3. Read `GET /__happy/logs?level=warn` and `GET /__happy/requests` for anything surprising.
-4. Publish with `create_artifact` or `update_artifact`. After people use it, read
+4. Publish the app's files in one `update_artifact` call, each as a `fromPath` file such as
+   `{ "fromPath": "my-app/index.html", "path": "index.html" }`, so the call makes one new version.
+   `create_artifact` takes the same `files` for a new artifact. After people use it, read
    `read_artifact_logs`, filtered by `level`, `userId`, or `since`, to see what broke for whom.
 
 ### Reproduce a bug with real data

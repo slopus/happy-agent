@@ -19,7 +19,10 @@ export const ARTIFACT_UPLOADS_TABLE = "happy_agent_module_artifact_uploads";
  * full JSON. Every version's manifest is rows of its own, keyed by path, so serving one file is one
  * keyed lookup and whether stored content is still used is one indexed lookup by digest. An upload
  * without a digest is still receiving its bytes. A version's background, mirrored on the catalog
- * row for its latest version, is `NULL` for a transparent slot.
+ * row for its latest version, is `NULL` for a transparent slot, and its display preference, mirrored
+ * the same way, is `NULL` when it leaves the choice to the client. Every version carries its
+ * `major.minor` label beside its number, and the catalog row mirrors the latest one's; versions
+ * made before labels existed read as 1.0, 1.1, and so on.
  */
 export const artifactMigrations = [
     [
@@ -138,6 +141,52 @@ export const artifactMigrations = [
             await agentDatabaseRun(
                 database,
                 sql`ALTER TABLE ${sql.raw(ARTIFACT_VERSIONS_TABLE)} ADD COLUMN background TEXT`,
+            );
+        },
+    ],
+    [
+        "003-artifact-display",
+        async (_ctx: Context, database: AgentDatabaseFacade<AgentDatabase>): Promise<void> => {
+            await agentDatabaseRun(
+                database,
+                sql`ALTER TABLE ${sql.raw(ARTIFACTS_TABLE)} ADD COLUMN display TEXT`,
+            );
+            await agentDatabaseRun(
+                database,
+                sql`ALTER TABLE ${sql.raw(ARTIFACT_VERSIONS_TABLE)} ADD COLUMN display TEXT`,
+            );
+        },
+    ],
+    [
+        "004-artifact-version-labels",
+        async (_ctx: Context, database: AgentDatabaseFacade<AgentDatabase>): Promise<void> => {
+            await agentDatabaseRun(
+                database,
+                sql`ALTER TABLE ${sql.raw(ARTIFACTS_TABLE)}
+                    ADD COLUMN latest_major INTEGER NOT NULL DEFAULT 1`,
+            );
+            await agentDatabaseRun(
+                database,
+                sql`ALTER TABLE ${sql.raw(ARTIFACTS_TABLE)}
+                    ADD COLUMN latest_minor INTEGER NOT NULL DEFAULT 0`,
+            );
+            await agentDatabaseRun(
+                database,
+                sql`UPDATE ${sql.raw(ARTIFACTS_TABLE)} SET latest_minor = latest_version - 1`,
+            );
+            await agentDatabaseRun(
+                database,
+                sql`ALTER TABLE ${sql.raw(ARTIFACT_VERSIONS_TABLE)}
+                    ADD COLUMN major INTEGER NOT NULL DEFAULT 1`,
+            );
+            await agentDatabaseRun(
+                database,
+                sql`ALTER TABLE ${sql.raw(ARTIFACT_VERSIONS_TABLE)}
+                    ADD COLUMN minor INTEGER NOT NULL DEFAULT 0`,
+            );
+            await agentDatabaseRun(
+                database,
+                sql`UPDATE ${sql.raw(ARTIFACT_VERSIONS_TABLE)} SET minor = number - 1`,
             );
         },
     ],

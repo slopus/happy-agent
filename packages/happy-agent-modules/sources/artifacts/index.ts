@@ -3,6 +3,7 @@ export {
     artifactBackgroundInputSchema,
     artifactBackgroundSchema,
     artifactCounterSchema,
+    artifactDisplaySchema,
     artifactFileInputSchema,
     artifactFileSchema,
     artifactListQuerySchema,
@@ -32,6 +33,7 @@ export {
     updateArtifactInputSchema,
     type ArtifactAuthor,
     type ArtifactCreation,
+    type ArtifactDisplay,
     type ArtifactFile,
     type ArtifactFileInput,
     type ArtifactListQuery,
@@ -72,4 +74,9 @@ export {
     MAX_ARTIFACT_UPLOAD_BYTES,
     type ArtifactTypeRule,
 } from "./ArtifactTypes.js";
-export { ArtifactsModule, type ArtifactActor } from "./ArtifactsModule.js";
+export {
+    ArtifactsModule,
+    MAX_AGENT_ARTIFACT_VERSIONS_PER_HOUR,
+    type ArtifactActor,
+    type ArtifactFileChanges,
+} from "./ArtifactsModule.js";

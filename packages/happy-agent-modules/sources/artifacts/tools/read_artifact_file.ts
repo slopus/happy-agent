@@ -7,13 +7,15 @@ import { ImageProcessingError } from "../../impl/images/ImageProcessingError.js"
 import { prepareImageForPrompt } from "../../impl/images/prepareImageForPrompt.js";
 import { MAX_PROMPT_IMAGE_INPUT_BYTES } from "../../impl/images/referenceImageLimits.js";
 import { artifactCounterSchema, artifactFileSchema, artifactPathSchema } from "../Artifact.js";
-import type { ArtifactsModule } from "../ArtifactsModule.js";
+import { MAX_ARTIFACT_TEXT_BYTES, type ArtifactsModule } from "../ArtifactsModule.js";
 import { formatBytes } from "../ArtifactTypes.js";
 import { decodeArtifactText } from "../impl/decodeArtifactText.js";
 import { ARTIFACT_TOOL_CAPABILITY } from "./common.js";
 
-/** How much of a text file one read hands the model. */
-const MAX_FILE_TEXT_BYTES = 64 * 1024;
+/** How many lines one read returns when the model does not ask for fewer. */
+const MAX_LINES_TO_READ = 2_000;
+/** How much text one read may carry, however few lines that turns out to be. */
+const MAX_CHARACTERS = 60_000;
 /** The longest side and the largest encoding of an image shown to the model. */
 const MAX_IMAGE_DIMENSION = 2048;
 const MAX_IMAGE_BYTES = 3 * 1024 * 1024;
@@ -31,7 +33,22 @@ const readArtifactFileToolInputSchema = Type.Object(
         artifactId: cuid2Schema,
         path: artifactPathSchema,
         version: Type.Optional(artifactCounterSchema),
-        offset: Type.Optional(Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER })),
+        offset: Type.Optional(
+            Type.Integer({
+                minimum: 0,
+                maximum: Number.MAX_SAFE_INTEGER,
+                description:
+                    "The line number to start reading from. Only provide if the file is too large to read at once",
+            }),
+        ),
+        limit: Type.Optional(
+            Type.Integer({
+                exclusiveMinimum: 0,
+                maximum: Number.MAX_SAFE_INTEGER,
+                description:
+                    "The number of lines to read. Only provide if the file is too large to read at once.",
+            }),
+        ),
     },
     { additionalProperties: false },
 );
@@ -41,10 +58,13 @@ const artifactFileReadSchema = Type.Object({
     artifactId: cuid2Schema,
     version: artifactCounterSchema,
     file: artifactFileSchema,
+    /** The lines read, each as its number, a tab, and the line. */
     text: Type.Optional(Type.String()),
-    /** Where the shown text starts, and where the next read starts when more follows. */
-    offset: Type.Optional(Type.Integer({ minimum: 0 })),
-    nextOffset: Type.Optional(Type.Integer({ minimum: 0 })),
+    startLine: Type.Optional(Type.Integer({ minimum: 1 })),
+    returnedLines: Type.Optional(Type.Integer({ minimum: 0 })),
+    totalLines: Type.Optional(Type.Integer({ minimum: 0 })),
+    /** The line the next read starts at, when more follows. */
+    nextOffset: Type.Optional(Type.Integer({ minimum: 1 })),
     image: Type.Optional(Type.Object({ data: Type.String(), mimeType: Type.String() })),
     /** Why the file's content is not shown. */
     note: Type.Optional(Type.String()),
@@ -58,7 +78,7 @@ export function readArtifactFileTool(artifacts: ArtifactsModule) {
         defer: true,
         capabilities: [ARTIFACT_TOOL_CAPABILITY],
         searchKeywords: ["read artifact file", "view artifact image", "artifact asset"],
-        description: `Read one file of an artifact by its path, from the latest version unless you name one. Text files, such as Markdown, HTML, CSS, scripts, and SVG, come back ${formatBytes(MAX_FILE_TEXT_BYTES)} at a time; pass nextOffset back as offset to read on. Images are shown to you. Other files, such as videos and PDFs, are described without their bytes. List an artifact's files with read_artifact.`,
+        description: `Reads one file of an artifact by its path, from the latest version unless you name one. Text files, such as Markdown, HTML, CSS, scripts, and SVG, come back as numbered lines: a line number, then a tab, then the line, numbered from 1. By default it reads up to ${String(MAX_LINES_TO_READ)} lines from the start; offset and limit read another stretch of a long file. Images are shown to you. Other files, such as videos and PDFs, are described without their bytes. List an artifact's files with read_artifact.`,
         parameters: readArtifactFileToolInputSchema,
         returnType: artifactFileReadSchema,
         durable: false,
@@ -78,19 +98,24 @@ export function readArtifactFileTool(artifacts: ArtifactsModule) {
             if (RASTER_IMAGE_MIME_TYPES.has(stored.file.mimeType)) {
                 return { ...base, ...(await readImage(ctx, artifacts, input, stored.version)) };
             }
+            if (stored.file.size > MAX_ARTIFACT_TEXT_BYTES) {
+                return {
+                    ...base,
+                    note: `This file is larger than the ${formatBytes(MAX_ARTIFACT_TEXT_BYTES)} a text file may be to read.`,
+                };
+            }
             const read = await artifacts.readFile(
                 ctx,
                 input.artifactId,
                 stored.version,
                 input.path,
                 {
-                    ...(input.offset === undefined ? {} : { offset: input.offset }),
-                    maxBytes: MAX_FILE_TEXT_BYTES,
+                    maxBytes: stored.file.size,
                 },
             );
             const decoded = decodeArtifactText(stored.file.mimeType, read.bytes, {
-                atStart: read.offset === 0,
-                atEnd: !read.more,
+                atStart: true,
+                atEnd: true,
             });
             if (decoded === undefined) {
                 return {
@@ -98,12 +123,34 @@ export function readArtifactFileTool(artifacts: ArtifactsModule) {
                     note: "This file is not text or an image, so its bytes are not shown.",
                 };
             }
-            const nextOffset = read.offset + decoded.consumed;
+            const lines = decoded.text.split(/\r?\n/);
+            // A trailing newline ends the last line rather than starting another.
+            if (lines.length > 1 && lines.at(-1) === "") lines.pop();
+            const totalLines = decoded.text === "" ? 0 : lines.length;
+            const startLine = Math.max(1, input.offset ?? 1);
+            const wanted = lines.slice(
+                startLine - 1,
+                startLine - 1 + Math.min(input.limit ?? MAX_LINES_TO_READ, MAX_LINES_TO_READ),
+            );
+            let text = "";
+            let returnedLines = 0;
+            for (const [index, line] of wanted.entries()) {
+                const numbered = `${String(startLine + index)}\t${line}`;
+                if (returnedLines > 0 && text.length + 1 + numbered.length > MAX_CHARACTERS) break;
+                text =
+                    returnedLines === 0
+                        ? numbered.slice(0, MAX_CHARACTERS)
+                        : `${text}\n${numbered}`;
+                returnedLines += 1;
+            }
+            const next = startLine + returnedLines;
             return {
                 ...base,
-                text: decoded.text,
-                offset: read.offset,
-                ...(nextOffset < stored.file.size ? { nextOffset } : {}),
+                text,
+                startLine,
+                returnedLines,
+                totalLines,
+                ...(next <= totalLines ? { nextOffset: next } : {}),
             };
         },
         toLLM: (read) => formatArtifactFileRead(read),
@@ -151,11 +198,13 @@ function formatArtifactFileRead(read: ArtifactFileRead): readonly SessionOutputB
         return [{ type: "text", text: `${header} ${read.note ?? ""}`.trim() }];
     }
     const lines = [
-        read.offset === undefined || read.offset === 0
-            ? header
-            : `${header} From byte ${String(read.offset)}:`,
-        read.text,
+        read.totalLines === 0
+            ? `${header} (empty file)`
+            : read.returnedLines === 0
+              ? `${header} It has ${String(read.totalLines)} lines, so nothing follows line ${String((read.startLine ?? 1) - 1)}.`
+              : `${header} Lines ${String(read.startLine)}–${String((read.startLine ?? 1) + (read.returnedLines ?? 0) - 1)} of ${String(read.totalLines)}:`,
     ];
+    if (read.text !== "") lines.push(read.text);
     if (read.nextOffset !== undefined) {
         lines.push(`[More follows; read on with offset ${String(read.nextOffset)}.]`);
     }

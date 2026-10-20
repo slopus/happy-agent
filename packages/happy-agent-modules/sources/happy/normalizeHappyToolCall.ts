@@ -1,5 +1,6 @@
 import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
+import { formatHappyReferenceTag, happyReferenceSchema } from "@slopus/happy-agent-client";
 import { posix } from "node:path";
 
 import {
@@ -329,6 +330,9 @@ export function happyToolCallPresentation(
         };
     }
 
+    const shown = shownDescription(originalName, args);
+    if (shown !== undefined) return { title, description: shown };
+
     if (displayArgs === undefined) {
         return { title, description: `Running ${title}` };
     }
@@ -507,6 +511,91 @@ function workspaceAndServiceDescription(
         default:
             return undefined;
     }
+}
+
+const ARTIFACT_KIND_NOUNS: Readonly<Record<string, string>> = {
+    document: "document",
+    html: "page",
+    image: "image",
+    image_series: "images",
+    markdown: "document",
+    video: "video",
+};
+
+const artifactIdArgumentsSchema = Type.Object(
+    { artifactId: nonEmptyString },
+    { additionalProperties: true },
+);
+
+const createArtifactArgumentsSchema = Type.Object(
+    { title: Type.String(), type: Type.String() },
+    { additionalProperties: true },
+);
+
+const showPageArgumentsSchema = Type.Object(
+    { title: Type.String(), url: Type.String() },
+    { additionalProperties: true },
+);
+
+const presentFilesArgumentsSchema = Type.Object(
+    { filepaths: Type.Array(Type.String(), { minItems: 1 }) },
+    { additionalProperties: true },
+);
+
+/**
+ * What an agent shows in the chat, said in words, because the phone shows none of it: the row is
+ * all a person reading along there learns of a page, an artifact, or a presented file. An
+ * artifact is named by its reference tag, which the connection turns into its current title.
+ */
+function shownDescription(name: string, args: Record<string, unknown>): string | undefined {
+    switch (name) {
+        case "create_artifact": {
+            if (!Value.Check(createArtifactArgumentsSchema, args)) return undefined;
+            const noun = ARTIFACT_KIND_NOUNS[args.type] ?? "artifact";
+            return namedDescription(`Creating ${noun}`, args.title);
+        }
+        case "show_page":
+            if (!Value.Check(showPageArgumentsSchema, args)) return undefined;
+            return namedDescription("Showing page", args.title);
+        case "present_files": {
+            if (!Value.Check(presentFilesArgumentsSchema, args)) return undefined;
+            const first = posix.basename(args.filepaths[0]!.replaceAll("\\", "/"));
+            const more = args.filepaths.length - 1;
+            return namedDescription(
+                "Showing",
+                more === 0 ? first : `${first} and ${String(more)} more`,
+            );
+        }
+        case "list_artifacts":
+            return "Listing artifacts";
+        case "update_artifact":
+            return artifactDescription("Updating", args);
+        case "write_artifact_file":
+            return artifactDescription("Writing", args);
+        case "edit_artifact_file":
+            return artifactDescription("Editing", args);
+        case "delete_artifact":
+            return artifactDescription("Deleting", args);
+        case "read_artifact":
+        case "read_artifact_file":
+            return artifactDescription("Reading", args);
+        case "read_artifact_logs":
+            return artifactDescription("Checking for errors in", args);
+        case "read_artifact_data":
+            return artifactDescription("Reading the shared data of", args);
+        case "write_artifact_data":
+            return artifactDescription("Changing the shared data of", args);
+        default:
+            return undefined;
+    }
+}
+
+function artifactDescription(action: string, args: Record<string, unknown>): string {
+    if (!Value.Check(artifactIdArgumentsSchema, args)) return `${action} an artifact`;
+    const reference = { kind: "artifact", id: args.artifactId };
+    return Value.Check(happyReferenceSchema, reference)
+        ? `${action} ${formatHappyReferenceTag(reference)}`
+        : `${action} an artifact`;
 }
 
 function targetDescription(action: string, target: string | undefined): string {

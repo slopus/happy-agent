@@ -265,10 +265,14 @@ export class FakeCompute implements Compute {
                         new Error("This machine is read-only: nothing may be changed."),
                     );
                 }
-                this.write(
-                    path,
-                    typeof content === "string" ? content : new TextDecoder().decode(content),
-                );
+                if (typeof content === "string") {
+                    this.write(path, content);
+                } else {
+                    // Kept as bytes too, so a binary file reads back exactly as it was written.
+                    this.writeBuffer(path, new Uint8Array(content));
+                    const file = this.files.get(path)!;
+                    this.files.set(path, { ...file, content: new TextDecoder().decode(content) });
+                }
                 return Promise.resolve();
             },
         };

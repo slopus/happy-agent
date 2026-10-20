@@ -163,7 +163,7 @@ describe("ChatMediaModule", () => {
             "not in any parent or child chat",
         );
         const tools = await hooks.tools!(ctx, { agent: { id: "agent-one" } } as AgentModuleScope);
-        expect(tools.map((tool) => tool.name)).toEqual(["present_files"]);
+        expect(tools.map((tool) => tool.name)).toEqual(["present_files", "show_page"]);
         const [tool] = tools;
         expect(tool!.durable).toBe(true);
         expect(await tool!.shouldReviewInAutoMode({ filepaths: ["note.txt"] }, ctx)).toBe(false);
@@ -198,5 +198,50 @@ describe("ChatMediaModule", () => {
                 text: 'Presented 1 file to the user in this chat: "note.txt" (file, text/plain, 4 bytes). The user sees them inline now, so do not repeat their paths or describe them as if the user cannot see them. They appear only in this chat\'s history, not in any parent or child chat; if a user should see them in another chat, the agent in that chat must present them there.',
             },
         ]);
+    });
+
+    it("shows a page by its URL, never fetching it, and refuses what is not a web page", async () => {
+        const module = chatMedia(new FakeCompute());
+        const hooks = await resolveModuleHooks(ctx, module);
+        const tools = await hooks.tools!(ctx, { agent: { id: "agent-one" } } as AgentModuleScope);
+        const tool = tools.find((candidate) => candidate.name === "show_page")!;
+        expect(tool.durable).toBe(true);
+        // Every page is reviewed in Auto, and the reviewer sees exactly which address and title.
+        const page = { url: "http://localhost:5173/", title: "Checkout\u202e" };
+        expect(await tool.shouldReviewInAutoMode(page, ctx)).toBe(true);
+        expect(tool.shouldRunInFullAccessInAutoMode).toBeUndefined();
+        const action = tool.describeAutoPermissionAction?.(page, ctx);
+        expect(action).toContain('"http://localhost:5173/"');
+        expect(action).toContain('titled "Checkout\\u{202e}"');
+        expect(action).toContain("through this agent's network");
+
+        const result = await tool.execute(
+            ctx,
+            { url: "http://localhost:5173", title: "Checkout", display: "inline_compact" },
+            { id: "callpage" } as never,
+        );
+        expect(result).toEqual({
+            presentation: {
+                type: "page",
+                url: "http://localhost:5173/",
+                title: "Checkout",
+                display: "inline_compact",
+            },
+        });
+        expect(tool.toLLM(result)[0]).toMatchObject({
+            text: expect.stringContaining('Showing "Checkout" (http://localhost:5173/)'),
+        });
+        await expect(
+            tool.execute(ctx, { url: "https://example.com/", title: "Example" }, {} as never),
+        ).resolves.toMatchObject({ presentation: { display: null } });
+        await expect(
+            tool.execute(ctx, { url: "file:///etc/passwd", title: "Secrets" }, {} as never),
+        ).rejects.toThrow("Only http and https pages");
+        await expect(
+            tool.execute(ctx, { url: "https://me:pw@example.com/", title: "Login" }, {} as never),
+        ).rejects.toThrow("cannot carry a user name or password");
+        await expect(
+            tool.execute(ctx, { url: "not a url", title: "Nope" }, {} as never),
+        ).rejects.toThrow("is not a URL");
     });
 });

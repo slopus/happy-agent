@@ -3,6 +3,7 @@ import {
     agentSpawnPresentationSchema,
     artifactPresentationSchema,
     mediaPresentationSchema,
+    pagePresentationSchema,
     type AgentSpawnPresentation,
 } from "@slopus/happy-agent-client";
 
@@ -60,6 +61,7 @@ const toolPresentationSchema = Type.Union([
     historyToolPresentationSchema,
     mediaPresentationSchema,
     artifactPresentationSchema,
+    pagePresentationSchema,
     Type.Object(
         {
             type: Type.Literal("search"),
@@ -137,7 +139,8 @@ export function toolCallResource(
         presentation !== undefined &&
         presentation.type !== "agent_spawn" &&
         presentation.type !== "media" &&
-        presentation.type !== "artifact";
+        presentation.type !== "artifact" &&
+        presentation.type !== "page";
     return {
         type: "tool_call",
         id: call.id,

@@ -123,6 +123,21 @@ describe("artifact dev server", () => {
         const client = await fetch(`${server.url}/api/v1/client.js`);
         expect(client.headers.get("content-type")).toBe("text/javascript; charset=utf-8");
         expect(await client.text()).toContain("Happy artifact data SDK");
+        // The standard styles, components, and diagram renderer, each revalidated by its ETag.
+        for (const [route, type, marker] of [
+            ["style.css", "text/css; charset=utf-8", "--happy-chart-6"],
+            ["components.js", "text/javascript; charset=utf-8", '"happy-code"'],
+            ["diagrams.js", "text/javascript; charset=utf-8", "happyDiagrams"],
+        ] as const) {
+            const response = await fetch(`${server.url}/api/v1/${route}`);
+            expect(response.headers.get("content-type")).toBe(type);
+            expect(await response.text()).toContain(marker);
+            const etag = response.headers.get("etag")!;
+            const again = await fetch(`${server.url}/api/v1/${route}`, {
+                headers: { "if-none-match": etag },
+            });
+            expect(again.status).toBe(304);
+        }
         const panel = await fetch(`${server.url}/__happy/`);
         expect(await panel.text()).toContain("Artifact dev server");
     });

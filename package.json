@@ -43,7 +43,7 @@
     "packageManager": "pnpm@10.28.1",
     "pnpm": {
         "overrides": {
-            "@slopus/happy-providers": "0.0.46",
+            "@slopus/happy-providers": "0.0.47",
             "@steve.kite/stdlib": "0.0.12"
         },
         "supportedArchitectures": {

@@ -8,7 +8,7 @@
         "test:gym:api": "pnpm dlx bun@1.4.2 scripts/runHappyApiSuite.ts"
     },
     "devDependencies": {
-        "@slopus/happy-agent-client": "0.0.103",
+        "@slopus/happy-agent-client": "0.0.104",
         "@slopus/happy-agent-gym": "workspace:*",
         "@types/node": "^24.0.10",
         "@types/ws": "8.18.1",

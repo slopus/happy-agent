@@ -20,6 +20,7 @@ import {
     type ArtifactDataEntry,
     type ArtifactDataSignal,
 } from "../artifactData/index.js";
+import { artifactStandardFile } from "../artifactData/impl/artifactStandardFiles.js";
 import { createSseWriter, type SseWriter } from "../transport/index.js";
 import { ApiError, invalidRequest, notFound } from "./ApiError.js";
 
@@ -77,6 +78,16 @@ export class ApiArtifactData {
         try {
             if (route === "client.js" && method === "GET") {
                 return this.#sendClient(request, response);
+            }
+            const standard = artifactStandardFile(route);
+            if (standard !== undefined && method === "GET") {
+                return sendCached(
+                    request,
+                    response,
+                    standard.bytes,
+                    standard.etag,
+                    standard.contentType,
+                );
             }
             if (route === "me" && method === "GET") {
                 return sendJson(response, 200, { user: await this.#data.me(ctx) });
@@ -175,20 +186,13 @@ export class ApiArtifactData {
 
     #sendClient(request: IncomingMessage, response: ServerResponse): void {
         const { text, etag } = this.#data.clientScript();
-        const headers = { "cache-control": "no-cache", etag };
-        if (request.headers["if-none-match"] === etag) {
-            response.writeHead(304, headers);
-            response.end();
-            return;
-        }
-        const bytes = Buffer.from(text, "utf8");
-        response.writeHead(200, {
-            ...headers,
-            "content-length": bytes.byteLength,
-            "content-type": "text/javascript; charset=utf-8",
-            "x-content-type-options": "nosniff",
-        });
-        response.end(bytes);
+        sendCached(
+            request,
+            response,
+            Buffer.from(text, "utf8"),
+            etag,
+            "text/javascript; charset=utf-8",
+        );
     }
 
     async #sendPhoto(
@@ -431,4 +435,27 @@ function apiError(error: unknown): unknown {
         return new ApiError(409, "cursor_unavailable", error.message);
     }
     return error;
+}
+
+/** A file served with its ETag, revalidated on every use, so it upgrades with the daemon. */
+function sendCached(
+    request: IncomingMessage,
+    response: ServerResponse,
+    bytes: Buffer,
+    etag: string,
+    contentType: string,
+): void {
+    const headers = { "cache-control": "no-cache", etag };
+    if (request.headers["if-none-match"] === etag) {
+        response.writeHead(304, headers);
+        response.end();
+        return;
+    }
+    response.writeHead(200, {
+        ...headers,
+        "content-length": bytes.byteLength,
+        "content-type": contentType,
+        "x-content-type-options": "nosniff",
+    });
+    response.end(bytes);
 }

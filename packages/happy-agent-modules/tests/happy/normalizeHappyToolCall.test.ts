@@ -213,6 +213,58 @@ describe("Happy mobile tool-call normalization", () => {
     });
 
     it.each([
+        [
+            "create_artifact",
+            { type: "html", title: "Q3 at a glance", files: [] },
+            "Creating page: Q3 at a glance",
+        ],
+        ["create_artifact", { type: "markdown", title: "Notes" }, "Creating document: Notes"],
+        [
+            "show_page",
+            { url: "http://localhost:5173/", title: "Shop preview" },
+            "Showing page: Shop preview",
+        ],
+        ["present_files", { filepaths: ["/tmp/out/report.pdf"] }, "Showing: report.pdf"],
+        [
+            "present_files",
+            { filepaths: ["C:\\out\\demo.mp4", "/tmp/a.png", "/tmp/b.png"] },
+            "Showing: demo.mp4 and 2 more",
+        ],
+        [
+            "update_artifact",
+            { artifactId: "e2q1jay4th45phqmlucbljaj", title: "Q3" },
+            'Updating <happy-artifact id="e2q1jay4th45phqmlucbljaj"/>',
+        ],
+        [
+            "write_artifact_file",
+            { artifactId: "e2q1jay4th45phqmlucbljaj", path: "index.html", content: "<p>" },
+            'Writing <happy-artifact id="e2q1jay4th45phqmlucbljaj"/>',
+        ],
+        [
+            "edit_artifact_file",
+            { artifactId: "e2q1jay4th45phqmlucbljaj", path: "index.html" },
+            'Editing <happy-artifact id="e2q1jay4th45phqmlucbljaj"/>',
+        ],
+        [
+            "read_artifact_logs",
+            { artifactId: "e2q1jay4th45phqmlucbljaj", level: "warn" },
+            'Checking for errors in <happy-artifact id="e2q1jay4th45phqmlucbljaj"/>',
+        ],
+        [
+            "write_artifact_data",
+            { artifactId: "e2q1jay4th45phqmlucbljaj", key: "steps/1", value: "true" },
+            'Changing the shared data of <happy-artifact id="e2q1jay4th45phqmlucbljaj"/>',
+        ],
+        ["delete_artifact", { artifactId: "not a valid id!" }, "Deleting an artifact"],
+        ["edit_artifact_file", {}, "Editing an artifact"],
+        ["show_page", { url: "http://localhost:5173/" }, "Running Show Page"],
+    ])("says what %s shows, since the phone shows none of it", (name, args, description) => {
+        const normalized = normalizeHappyToolCall(name, args);
+        expect(normalized).toEqual({ name, args });
+        expect(happyToolCallPresentation(name, normalized).description).toBe(description);
+    });
+
+    it.each([
         ["exec_command", { cmd: "pnpm test" }, "CodexBash", "Running CodexBash"],
         [
             "run_terminal_command",

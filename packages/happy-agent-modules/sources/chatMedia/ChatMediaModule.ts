@@ -25,10 +25,11 @@ import { chatMediaCandidate, chatMediaName } from "./impl/chatMediaKind.js";
 import { measureChatImage } from "./impl/measureChatImage.js";
 import { writeChatMediaContent } from "./impl/writeChatMediaContent.js";
 import { presentFilesTool } from "./tools/present_files.js";
+import { showPageTool } from "./tools/show_page.js";
 
 /** What every agent is told about media it shows in a chat. */
 export const CHAT_MEDIA_INSTRUCTIONS =
-    "Images you generate, artifacts you create or update, and files you show with present_files appear inline in this chat for the user automatically. Do not paste their paths or links, and do not describe them as if the user cannot see them. They appear only in this chat's history, not in any parent or child chat: when you work for another agent, its user does not see what you showed here, so give that agent the file paths or artifact IDs it needs to present them itself. Use present_files when the user should see a file, document, image, or video from your machine.";
+    "Images you generate, artifacts you create or update, files you show with present_files, and web pages you show with show_page appear inline in this chat for the user automatically. Do not paste their paths or links, and do not describe them as if the user cannot see them. They appear only in this chat's history, not in any parent or child chat: when you work for another agent, its user does not see what you showed here, so give that agent the file paths or artifact IDs it needs to present them itself. Someone following this chat from a phone sees only their titles, so when what you showed answers the request, also give its main point in a sentence of your reply. Use present_files when the user should see a file, document, image, or video from your machine, and show_page for a running web page such as your dev server.";
 
 /**
  * Media shown inline in a chat: generated images and files an agent presents.
@@ -58,6 +59,7 @@ export class ChatMediaModule implements AgentModule {
         instructions: () => CHAT_MEDIA_INSTRUCTIONS,
         tools: (_ctx: Context, scope: AgentModuleScope): readonly AnyAgentTool[] => [
             presentFilesTool(this, this.#compute, scope.agent.id),
+            showPageTool(),
         ],
     };
 

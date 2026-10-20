@@ -100,10 +100,13 @@ describe("artifact file bundles over the API", () => {
             title: "Q3 revenue report",
             status: "active",
             latestVersion: 1,
+            latestMajor: 1,
+            latestMinor: 0,
             entry,
             fileCount: 3,
             size: Buffer.byteLength(ENTRY) + Buffer.byteLength(STYLE) + CHART.byteLength,
             background: null,
+            display: null,
             source: null,
             createdBy: { kind: "user", userId: null },
             createdAt: expect.any(Number),
@@ -119,7 +122,14 @@ describe("artifact file bundles over the API", () => {
 
         // The manifest lists every file in path order, the entry among them.
         const { version } = await gym.client.getArtifactVersion(artifact.id, 1);
-        expect(version).toMatchObject({ artifactId: artifact.id, number: 1, entry, source: null });
+        expect(version).toMatchObject({
+            artifactId: artifact.id,
+            number: 1,
+            major: 1,
+            minor: 0,
+            entry,
+            source: null,
+        });
         expect(version.files.map((file) => [file.path, file.mimeType])).toEqual([
             ["assets/site style.css", "text/css"],
             ["images/chart.png", "image/png"],

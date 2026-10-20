@@ -7,13 +7,18 @@ export function formatArtifactLine(artifact: ArtifactRecord): string {
         artifact.id,
         ARTIFACT_TYPE_RULES[artifact.type].label,
         JSON.stringify(artifact.title),
-        `version ${String(artifact.latestVersion)}`,
+        formatArtifactVersion(artifact),
         `${formatFileCount(artifact.fileCount)} (${formatBytes(artifact.size)}) opening ${JSON.stringify(artifact.entry.path)}${formatArtifactBackground(artifact.background)}`,
         `${artifact.status === "deleted" ? "deleted" : "updated"} ${new Date(artifact.updatedAt).toISOString()} by ${formatArtifactAuthor(artifact.updatedBy)}`,
     ];
     if (artifact.source !== undefined)
         parts.push(`made in ${formatArtifactSource(artifact.source)}`);
     return `- ${parts.join(" · ")}`;
+}
+
+/** The latest version a model is told about: its number, and its major.minor label. */
+export function formatArtifactVersion(artifact: ArtifactRecord): string {
+    return `version ${String(artifact.latestVersion)} (${String(artifact.latestMajor)}.${String(artifact.latestMinor)})`;
 }
 
 /** The background a model is told about, as a clause; nothing for a transparent slot. */

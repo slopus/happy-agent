@@ -86,6 +86,8 @@ describe("artifact versions and tombstones over the API", () => {
             id: first.id,
             title: "Landing page, restyled",
             latestVersion: 2,
+            latestMajor: 1,
+            latestMinor: 1,
             fileCount: 2,
             createdAt: first.createdAt,
             createdBy: first.createdBy,
@@ -105,6 +107,10 @@ describe("artifact versions and tombstones over the API", () => {
         const v2 = (await gym.client.getArtifactVersion(first.id, 2)).version;
         expect(v2.entry).toEqual(v1.entry);
         expect(v2.files.map((file) => file.path)).toEqual(["index.html", "style.css"]);
+        expect([v1, v2].map((version) => [version.number, version.major, version.minor])).toEqual([
+            [1, 1, 0],
+            [2, 1, 1],
+        ]);
 
         // A title alone makes a version holding the same files.
         const { artifact: third } = await gym.client.updateArtifact(
@@ -149,11 +155,14 @@ describe("artifact versions and tombstones over the API", () => {
             version: second.version,
             changes: {
                 latestVersion: 2,
+                latestMajor: 1,
+                latestMinor: 1,
                 title: second.title,
                 entry: second.entry,
                 fileCount: 2,
                 size: second.size,
                 background: null,
+                display: null,
                 updatedBy: second.updatedBy,
                 updatedSource: null,
                 updatedAt: second.updatedAt,
@@ -166,6 +175,30 @@ describe("artifact versions and tombstones over the API", () => {
             changes: { latestVersion: 3, entry: second.entry, fileCount: 2 },
         });
         expect(events[1]!.payload).not.toHaveProperty("mutationId");
+
+        // A major version names exactly the next major, after at least one minor change.
+        for (const major of [3, 1]) {
+            await expect(
+                gym.client.updateArtifact(first.id, { major } as never, {
+                    ifMatch: fourth.version,
+                }),
+            ).rejects.toMatchObject({ status: 400 });
+        }
+        const { artifact: fifth } = await gym.client.updateArtifact(
+            first.id,
+            { major: 2 } as never,
+            { ifMatch: fourth.version },
+        );
+        expect(fifth).toMatchObject({ latestVersion: 5, latestMajor: 2, latestMinor: 0 });
+        expect((await gym.client.getArtifactVersion(first.id, 5)).version).toMatchObject({
+            number: 5,
+            major: 2,
+            minor: 0,
+            files: (await gym.client.getArtifactVersion(first.id, 4)).version.files,
+        });
+        await expect(
+            gym.client.updateArtifact(first.id, { major: 3 } as never, { ifMatch: fifth.version }),
+        ).rejects.toMatchObject({ status: 400 });
     });
 
     it("leaves a tombstone that stops serving content and survives a retried deletion", async () => {

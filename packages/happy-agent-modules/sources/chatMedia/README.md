@@ -40,7 +40,7 @@ History and returns the snapshot path only when the snapshot is still present.
 `storedItems(ctx, agentId, callId)` returns every item of one call whose snapshot is still
 present; the exported bots module sends those with an exported bot's reply.
 
-## The tool
+## The tools
 
 `present_files` is a common tool every agent receives. It takes `filepaths`, one to ten paths on
 the agent's machine, and reads them through compute under the call's permissions, so runners and
@@ -49,6 +49,10 @@ empty file, an image over 32 MiB, a video over 256 MiB, another file over 64 MiB
 256 MiB in one call fails the call. A path outside the workspace is reviewed in Auto and runs with
 Full access only when allowed, through compute's shared path-boundary helpers. The tool is
 durable: a repeated call reads the same files and records the same items.
+
+`show_page` presents a web page inline by its `url`, `title`, and `display`. It records only the
+presentation; the daemon never fetches the page, and the client opens it through the agent's
+network. Every call is reviewed in Auto, with the URL and title shown to the reviewer.
 
 Every agent is told, through this module's instructions, that generated images, artifact cards,
 and presented files appear inline in its own chat only, not in parent or child chats.

@@ -60,6 +60,13 @@ the write's time in its first 48 bits; `updatedAt` is that time.
 - `userId`, `me`, `users(ctx, artifactId, ids)`, and `userPhoto` describe people, and agents
   that wrote, the way a page may see them.
 - `clientScript()` is the browser SDK served at `/api/v1/client.js`.
+- `impl/artifactStandardFiles.ts` holds the standard styles (`/api/v1/style.css`), components
+  (`/api/v1/components.js`), and the diagram renderer they load (`/api/v1/diagrams.js`), which
+  every artifact page may load and which do not depend on the store. The renderer is Beautiful
+  Mermaid, bundled into `impl/artifactDiagramsScript.ts` by `scripts/build-artifact-diagrams.mjs`;
+  regenerate it rather than editing it. The code renderer `<happy-diff>` and `<happy-code>` use
+  is not the daemon's: they import `/api/v1/code.js` from the page's host, which Happy Desktop
+  provides, and draw plain numbered lines where it is missing.
 
 - `appendLogs(ctx, artifactId, batch)` keeps a page's report as the caller, with the artifact's
   newest version; `readLogs` reads the log newest first.

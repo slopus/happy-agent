@@ -378,11 +378,14 @@ const DRAIN_REPORT_INTERVAL_MS = 5_000;
 /** What `artifact.updated` and `artifact.deleted` always carry in `changes`. */
 const ARTIFACT_UPDATED_FIELDS = [
     "latestVersion",
+    "latestMajor",
+    "latestMinor",
     "title",
     "entry",
     "fileCount",
     "size",
     "background",
+    "display",
     "updatedBy",
     "updatedSource",
     "updatedAt",
@@ -6613,6 +6616,7 @@ export class ApiModule implements AgentModule {
                             ...(body.replaceAll === undefined
                                 ? {}
                                 : { replaceAll: body.replaceAll }),
+                            ...(body.major === undefined ? {} : { major: body.major }),
                             author: this.#artifactUser(ctx),
                             ...(source === undefined ? {} : { source }),
                         }),
