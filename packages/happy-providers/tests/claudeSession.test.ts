@@ -1677,6 +1677,74 @@ describe("ClaudeSession", () => {
         expect(textFromSessionEvents(secondRun)).toBe("NEW_SESSION_RECOVERED");
     });
 
+    it("interrupts a turn left waiting on tool results before closing its query", async () => {
+        const credential = await ClaudeAuthTokenCredential.tryLoad({ authToken: "test-token" });
+        if (credential === null) throw new Error("Expected test credential.");
+        const calls: string[] = [];
+        const query = Object.assign(
+            fakeToolCallQuery(() => calls.push("close")),
+            {
+                interrupt: vi.fn(async () => {
+                    calls.push("interrupt");
+                }),
+            },
+        );
+        const session = new ClaudeSession("close-open-turn-session", {
+            instructions: "",
+            credential,
+            model: "sonnet[1m]",
+            query: (() => query) as ClaudeSdkQuery,
+            tools: [],
+        });
+
+        const events = await collectSessionEvents(
+            session.run(testContext, {
+                context: {
+                    instructions: "",
+                    messages: [
+                        { role: "user", content: [{ type: "text" as const, text: "Run it." }] },
+                    ],
+                },
+            }),
+        );
+        expect(events.at(-1)).toMatchObject({ type: "done", state: "tool_call" });
+        session.destroy();
+
+        // Ending input alone lets Claude Code answer the open call as interrupted and send one
+        // more request; the interrupt must reach it first.
+        expect(calls).toEqual(["interrupt", "close"]);
+    });
+
+    it("closes a finished turn's query without interrupting it", async () => {
+        const credential = await ClaudeAuthTokenCredential.tryLoad({ authToken: "test-token" });
+        if (credential === null) throw new Error("Expected test credential.");
+        const interrupt = vi.fn(async () => {});
+        const close = vi.fn();
+        const query = Object.assign(fakeQuery("DONE"), { close, interrupt });
+        const session = new ClaudeSession("close-finished-turn-session", {
+            instructions: "",
+            credential,
+            model: "sonnet[1m]",
+            query: (() => query) as ClaudeSdkQuery,
+            tools: [],
+        });
+
+        await collectSessionEvents(
+            session.run(testContext, {
+                context: {
+                    instructions: "",
+                    messages: [
+                        { role: "user", content: [{ type: "text" as const, text: "Say done." }] },
+                    ],
+                },
+            }),
+        );
+        session.destroy();
+
+        expect(close).toHaveBeenCalledOnce();
+        expect(interrupt).not.toHaveBeenCalled();
+    });
+
     it("closes a Claude query when abort fires during query construction", async () => {
         const credential = await ClaudeAuthTokenCredential.tryLoad({ authToken: "test-token" });
         if (credential === null) throw new Error("Expected test credential.");
