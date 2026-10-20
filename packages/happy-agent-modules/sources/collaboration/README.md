@@ -162,10 +162,19 @@ collaborator cannot turn it into a different model, make it think harder, or wid
 The requested selection is validated against the live `AgentSystemRef.models` filtered by each
 provider's `include_subagent_models` and `exclude_subagent_models` before anything is created, so a
 model the collection does not offer to subagents is refused rather than reaching a provider. The
-same filtered list is rendered in the model-facing tool description. When the call omits
-`provider`, the tool uses its creator's current provider if that provider serves the requested
-model; otherwise an unambiguous model route is still accepted and an ambiguous one is refused.
-Direct workflow creation passes through the same validation.
+same filtered list is rendered in the model-facing tool description. Like Codex's `spawn_agent`,
+`create_agent` lets the model omit `model` and `effort`: the collaborator then runs on its
+creator's model and provider, at the creator's effort when the model offers it and the model's
+default otherwise, and keeps the creator's service tier only with the creator's own model. When the
+call omits `provider`, the tool uses its creator's current provider if that provider serves the
+requested model; otherwise an unambiguous model route is still accepted and an ambiguous one is
+refused. Direct workflow creation names its selection in full and passes through the same
+validation.
+
+Every collaborator works under its creator's permission mode, as in Codex and Claude Code: the
+mode in force on the creator's turn, or, for a workflow creating from its own background context,
+the mode the creator last ran with. A collaborator therefore never gains access its creator was
+not given, and never loses access the person gave to the work it is part of.
 
 Before `create_agent` creates its child, it resolves the exact provider/model pair and writes
 `agent_spawn` with the catalog name to the original History tool-call record. History publishes

@@ -1,6 +1,8 @@
 import {
     agentConfig,
     agentDatabase,
+    agentId as contextAgentId,
+    agentPermissionMode,
     DEFAULT_AGENT_PERMISSION_MODE,
     type AgentBaseAcceptedMessage,
     type AgentBasePersistedEvent,
@@ -13,12 +15,14 @@ import {
     type AgentModuleAction,
     type AgentModuleHooks,
     type AgentModuleScope,
+    type AgentPermissionMode,
     type AgentSystemRef,
     type AnyAgentTool,
 } from "@slopus/happy-agent-base";
 import { createId } from "@paralleldrive/cuid2";
 import { Type, type TSchema } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
+import { messageModeSchema } from "@slopus/happy-agent-client";
 import { afterCommit, type Context } from "@steve.kite/stdlib";
 
 import { AbortModule } from "../abort/index.js";
@@ -360,8 +364,31 @@ export class CollaborationModule implements AgentModule {
         } else if ((await agents.parentOf(ctx, agentId)) !== actingAgentId) {
             throw new Error(`Agent "${agentId}" already exists.`);
         }
-        await this.#deliver(ctx, actingAgentId, agentId, input.text, agentId, "send", selection);
+        await this.#deliver(ctx, actingAgentId, agentId, input.text, agentId, "send", {
+            ...selection,
+            permissionMode: await this.#creatorPermissionMode(ctx, actingAgentId),
+        });
         return { agentId };
+    }
+
+    /**
+     * The mode a new collaborator works under: its creator's, as in Codex and Claude Code. A
+     * collaborator is part of its creator's work, so it neither loses the access the person gave
+     * that work nor gains access they withheld. On the creator's own turn the mode is the one in
+     * force on its context; a workflow creating from its own background context reads the mode
+     * the creator last ran with, and falls back to the product default only when none is recorded.
+     */
+    async #creatorPermissionMode(
+        ctx: Context,
+        actingAgentId: string,
+    ): Promise<AgentPermissionMode> {
+        if (contextAgentId(ctx) === actingAgentId) return agentPermissionMode(ctx);
+        const recorded = (await this.#requireAgents().config(ctx, actingAgentId))?.metadata?.[
+            "lastMode"
+        ];
+        return Value.Check(messageModeSchema, recorded)
+            ? recorded.permissionMode
+            : DEFAULT_AGENT_PERMISSION_MODE;
     }
 
     /** Send text to an Agent ID allowed by the installation's collaboration boundary. */
@@ -690,7 +717,12 @@ export class CollaborationModule implements AgentModule {
         text: string,
         messageId: string,
         delivery: "send" | "steer",
-        selection: (CollaborationAgentSelection & { readonly provider: string }) | undefined,
+        selection:
+            | (CollaborationAgentSelection & {
+                  readonly provider: string;
+                  readonly permissionMode: AgentPermissionMode;
+              })
+            | undefined,
     ): Promise<void> {
         const agents = this.#requireAgents();
         const run = async (work: (workCtx: Context) => Promise<void>): Promise<void> =>
@@ -721,15 +753,15 @@ export class CollaborationModule implements AgentModule {
             // the collaborator runs with. It is stamped on the message the way an API message
             // carries its mode, and recorded as the agent's last mode, so a person who joins a
             // user-visible collaborator composes on top of the coordinator's choice instead of the
-            // daemon defaults. The permission mode is the one Agent Base gives a new agent, sent
-            // explicitly so the recorded mode is what the collaborator actually runs with.
+            // daemon defaults. The permission mode is the creator's, sent explicitly so the recorded
+            // mode is what the collaborator actually runs with.
             const mode =
                 selection === undefined
                     ? fallback?.mode
                     : {
                           effort: selection.effort,
                           modelId: selection.model,
-                          permissionMode: DEFAULT_AGENT_PERMISSION_MODE,
+                          permissionMode: selection.permissionMode,
                           providerId: selection.provider,
                           serviceTier: selection.serviceTier ?? null,
                       };
@@ -745,7 +777,7 @@ export class CollaborationModule implements AgentModule {
                     : {
                           model: selection.model,
                           effort: selection.effort,
-                          permissionMode: DEFAULT_AGENT_PERMISSION_MODE,
+                          permissionMode: selection.permissionMode,
                           provider: selection.provider,
                           ...(selection.serviceTier === undefined
                               ? {}

@@ -1,5 +1,6 @@
 import {
     withAgentConfig,
+    withAgentContext,
     type AgentConfig,
     type AgentMessageAcceptance,
     type AgentMetadata,
@@ -252,6 +253,13 @@ function textEnd(text: string) {
 
 function settlement(settlementId: string, error?: string) {
     return { loopId: "loop", settlementId, ...(error === undefined ? {} : { error }) } as never;
+}
+
+async function createTool(hooks: AgentModuleHooks, ctx: Context, provider: string) {
+    const tools = await hooks.tools!(ctx, { agent: { id: "parent", provider } } as never);
+    const create = tools.find((tool) => tool.name === "create_agent");
+    if (create === undefined) throw new Error("The create_agent tool was not offered.");
+    return create;
 }
 
 function toolCall(id: string) {
@@ -966,6 +974,103 @@ describe("collaboration", () => {
             effort: "medium",
             provider: "claude",
         });
+    });
+
+    it("runs a collaborator on its creator's model, effort, and tier when the call omits them", async () => {
+        const collection = new Collection();
+        const { hooks, ctx } = await started(collection);
+        const turn = withAgentContext(ctx, {
+            id: "parent",
+            provider: "codex",
+            model: "gpt-5.6-sol",
+            effort: "low",
+            serviceTier: "priority",
+            permissionMode: "auto",
+        });
+        const create = await createTool(hooks, turn, "codex");
+
+        await create.execute(
+            turn,
+            { title: "Helper", text: "Check the parser." },
+            toolCall("inheritedchild"),
+        );
+
+        expect(collection.delivered[0]!.options).toMatchObject({
+            model: "gpt-5.6-sol",
+            effort: "low",
+            provider: "codex",
+            serviceTier: "priority",
+        });
+    });
+
+    it("uses the chosen model's default effort when it does not offer the creator's", async () => {
+        const collection = new Collection();
+        const { hooks, ctx } = await started(collection);
+        const turn = withAgentContext(ctx, {
+            id: "parent",
+            provider: "codex",
+            model: "gpt-5.6-sol",
+            effort: "low",
+            serviceTier: "priority",
+            permissionMode: "auto",
+        });
+        const create = await createTool(hooks, turn, "codex");
+
+        await create.execute(
+            turn,
+            { title: "Helper", model: "opus-5", provider: "claude", text: "Check the parser." },
+            toolCall("defaulteffortchild"),
+        );
+
+        expect(collection.delivered[0]!.options).toMatchObject({
+            model: "opus-5",
+            effort: "medium",
+            provider: "claude",
+        });
+        expect(collection.delivered[0]!.options).not.toHaveProperty("serviceTier");
+    });
+
+    it.each(["read_only", "workspace_write", "auto", "full_access"] as const)(
+        "gives a collaborator its creator's %s permission mode",
+        async (permissionMode) => {
+            const collection = new Collection();
+            const { hooks, ctx } = await started(collection);
+            const turn = withAgentContext(ctx, {
+                id: "parent",
+                provider: "codex",
+                model: "gpt-5.6-sol",
+                effort: "medium",
+                permissionMode,
+            });
+            const create = await createTool(hooks, turn, "codex");
+
+            await create.execute(turn, TASK, toolCall("modechild"));
+
+            expect(collection.delivered[0]!.options).toMatchObject({ permissionMode });
+            expect(collection.configs.get("modechild")?.metadata?.["lastMode"]).toMatchObject({
+                permissionMode,
+            });
+        },
+    );
+
+    it("gives a collaborator created off its creator's turn the mode its creator last ran with", async () => {
+        const collection = new Collection();
+        collection.seed("parent", null, {
+            metadata: {
+                lastMode: {
+                    effort: "medium",
+                    modelId: "gpt-5.6-sol",
+                    permissionMode: "read_only",
+                    providerId: "codex",
+                    serviceTier: null,
+                },
+            },
+        });
+        const { module, ctx } = await started(collection);
+
+        await module.createAgent(ctx, "parent", TASK, "workflowchild");
+
+        expect(collection.delivered[0]!.options).toMatchObject({ permissionMode: "read_only" });
     });
 
     it("refuses a service tier the chosen model does not offer", async () => {

@@ -170,16 +170,18 @@ nontransactional edit, because the local libSQL client rotates its native connec
 transaction; custom stores without the production database boundary use an Agent KV transaction as
 the safe fallback.
 
-## One agent's file changes run one at a time
+## Changes to the same file run one at a time
 
-A model can send several Edits to the same file in one parallel batch. Each change used to check
-the read log, write, and then record its own write, so the later edits in a batch saw a file
-modified since their read and were refused as stale even though nothing outside the agent had
-touched it. Every file-changing operation (Claude and Kimi Edit and Write, Codex apply_patch,
-delete, move) now runs inside `FileReadLog.change`, which holds one per-agent lock from the
-staleness check through recording the result. A batch therefore applies as if its edits were made
-one after another. The lock is re-entrant through the context, so a change that calls another
-change does not deadlock.
+A model can send several Edits to the same file in one parallel batch, and a parent and its
+collaborator can edit one file at once. Each change used to check the read log, write, and then
+record its own write, so the later changes saw a file modified since their read and were refused as
+stale even though nothing outside the agents had touched it. Every file-changing operation (Claude
+and Kimi Edit and Write, Codex apply_patch, delete, move) now runs inside `FileReadLog.change`,
+which holds a lock per resolved path, shared by every agent, from the staleness check through
+recording the result. Paths are locked in sorted order, so a move or a multi-file patch cannot
+deadlock against another. Changes to one file therefore apply as if made one after another, while
+changes to different files still run in parallel. The lock is re-entrant through the context, so a
+change that calls another change does not deadlock.
 
 ## A stale Claude Edit applies when its text still matches
 
