@@ -20,12 +20,12 @@ const MINIMUM_OUTPUT_CHARACTERS = 4_000;
  *
  * This is Codex's own unified exec shape, not the module's: a session that is still running is
  * named by `session_id`, one that has ended by `exit_code`, and output that had to be cut says so
- * by carrying the token count the machine really produced. Another vendor's command tools answer
- * in their own words, and nothing here is meant to be reused by them.
+ * by carrying the token count the machine really produced. The command is not echoed back: the
+ * model wrote it, and a script reading the answer in exec already holds it. Another vendor's
+ * command tools answer in their own words, and nothing here is meant to be reused by them.
  */
 export const unifiedExecOutputSchema = Type.Object(
     {
-        command: Type.Optional(Type.String()),
         exit_code: Type.Optional(Type.Integer()),
         original_token_count: Type.Optional(Type.Integer()),
         output: Type.String(),
@@ -73,7 +73,6 @@ export function createUnifiedExecOutput(
         : produced;
     const running = snapshot.status === "running";
     return {
-        command: snapshot.command,
         ...(running ? { session_id: snapshot.sessionId } : {}),
         ...(!running && snapshot.exitCode !== null ? { exit_code: snapshot.exitCode } : {}),
         ...(truncated || droppedBytes > 0 ? { original_token_count: originalTokenCount } : {}),
