@@ -178,6 +178,11 @@ requested model; otherwise an unambiguous model route is still accepted and an a
 refused. Direct workflow creation names its selection in full and passes through the same
 validation.
 
+GPT models also receive Codex's own delegation rule verbatim in the collaboration instructions:
+not to spawn sub-agents unless the user or applicable AGENTS.md or skill instructions explicitly ask
+for them. Claude models follow Claude Code, which has no such rule. The model ID decides the family,
+and the kind of provider decides only when the ID does not.
+
 Every collaborator works under its creator's permission mode, as in Codex and Claude Code: the
 mode in force on the creator's turn, or, for a workflow creating from its own background context,
 the mode the creator last ran with. A collaborator therefore never gains access its creator was

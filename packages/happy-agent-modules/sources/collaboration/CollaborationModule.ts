@@ -21,7 +21,7 @@ import {
     type AnyAgentTool,
 } from "@slopus/happy-agent-base";
 import { createId } from "@paralleldrive/cuid2";
-import type { SessionSystemMessage } from "@slopus/happy-providers";
+import { providerModelFamily, type SessionSystemMessage } from "@slopus/happy-providers";
 import { Type, type TSchema } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import { messageModeSchema } from "@slopus/happy-agent-client";
@@ -64,6 +64,14 @@ import { archiveAgentTool } from "./tools/archive_agent.js";
 import { createAgentTool } from "./tools/create_agent.js";
 import { interruptAgentTool } from "./tools/interrupt_agent.js";
 import { sendMessageTool } from "./tools/send_message.js";
+
+/**
+ * Codex's own rule for when a model may delegate, verbatim from the developer message Codex sends
+ * GPT models. Without it, GPT models offered `create_agent` start reviewers and helpers on their own
+ * in most coding tasks, roughly doubling their requests without solving more.
+ */
+const CODEX_MULTI_AGENT_MODE =
+    "<multi_agent_mode>Any earlier instruction enabling proactive multi-agent delegation no longer applies. Do not spawn sub-agents unless the user or applicable AGENTS.md/skill instructions explicitly ask for sub-agents, delegation, or parallel agent work.</multi_agent_mode>";
 
 /** The collaborator notice last appended to the current history. */
 const ANNOUNCED_COLLABORATORS_KEY = "announced-collaborators";
@@ -530,6 +538,7 @@ export class CollaborationModule implements AgentModule {
                     "Cross-workspace agent messaging is enabled. You can use send_agent_message to text any existing agent when you know its Agent ID. Agent IDs are unguessable, so the user or another agent must share the recipient ID with you.",
                 );
             }
+            if (isCodexModel(scope.agent)) lines.push(CODEX_MULTI_AGENT_MODE);
             return lines.join("\n");
         },
 
@@ -1206,4 +1215,13 @@ function isArchived(metadata: AgentMetadata | undefined): boolean {
 function belongsToWorkflow(metadata: AgentMetadata | undefined): boolean {
     const workflow = metadata?.["workflow"];
     return workflow !== null && typeof workflow === "object" && !Array.isArray(workflow);
+}
+
+/**
+ * Whether the agent runs a GPT model, which Codex tells when not to delegate. The model ID names
+ * its family even through another provider; the kind of provider answers only when it does not.
+ */
+function isCodexModel(agent: AgentModuleScope["agent"]): boolean {
+    const family = agent.model === undefined ? undefined : providerModelFamily(agent.model);
+    return family === undefined ? agent.providerKind === "codex" : family === "codex";
 }

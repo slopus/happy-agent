@@ -66,10 +66,17 @@ the creator's turn, or the creator's recorded last mode when a workflow creates 
 than their own. As in Codex's `spawn_agent`, both may now be omitted and default to the
 creator's, and the description says to set them only when the user or the task calls for it.
 
-Codex's `spawn_agent` also tells the model not to spawn unless the user or AGENTS.md explicitly
-asks for delegation. `create_agent` deliberately does not: delegation is a core Happy feature, and
-that rule would switch it off in practice. The waste it would have prevented came from how the child
-ran (a higher effort and an Auto reviewer), which inheritance fixes.
+## GPT models get Codex's rule against unrequested delegation
+
+With `create_agent` offered eagerly and no rule about when to use it, GPT-6.1 Sol started a
+reviewer or helper in most benchmark coding tasks: the runs that spawned used about twice native
+Codex's input tokens without solving more, while the runs that did not matched native. Deferring
+the tool did not help, because the deferred tool is still listed by name and Sol called it
+directly. Native Codex keeps spawning available but sends GPT models a developer message,
+`<multi_agent_mode>`, saying not to spawn unless the user, AGENTS.md, or a skill explicitly asks.
+The rule follows native per model family: GPT models get that text verbatim in the collaboration
+instructions, and Claude models do not, since Claude Code has no such rule. Delegation stays
+available and eager for every model.
 
 ## Collaborators are announced at the tail, not in the instructions
 

@@ -1470,6 +1470,34 @@ describe("collaboration", () => {
         ]);
     });
 
+    it("gives GPT models Codex's own rule against unrequested delegation, verbatim", async () => {
+        const collection = new Collection();
+        const { hooks, ctx } = await started(collection);
+        // Copied from the developer message Codex 0.163.0 sends GPT-6.1 Sol.
+        const native =
+            "<multi_agent_mode>Any earlier instruction enabling proactive multi-agent delegation no longer applies. Do not spawn sub-agents unless the user or applicable AGENTS.md/skill instructions explicitly ask for sub-agents, delegation, or parallel agent work.</multi_agent_mode>";
+        const instructionsFor = async (agent: Record<string, unknown>) =>
+            await hooks.instructions!(ctx, { agent: { id: "parent", ...agent } } as never);
+
+        expect(
+            (await instructionsFor({ model: "openai/gpt-6.1-sol", providerKind: "codex" })).split(
+                "\n",
+            ),
+        ).toContain(native);
+        expect(
+            await instructionsFor({ model: "openai/gpt-6.1-sol", providerKind: "bedrock" }),
+        ).toContain(native);
+        expect(await instructionsFor({ model: undefined, providerKind: "codex" })).toContain(
+            native,
+        );
+        expect(
+            await instructionsFor({ model: "anthropic/opus-5-5", providerKind: "claude" }),
+        ).not.toContain("multi_agent_mode");
+        expect(
+            await instructionsFor({ model: "xai/grok-4.7", providerKind: "grok" }),
+        ).not.toContain("multi_agent_mode");
+    });
+
     it("always tells an agent its own Agent ID", async () => {
         const config = await temporaryTestConfig(NO_CROSS_WORKSPACE_TOML);
         const collection = new Collection();
