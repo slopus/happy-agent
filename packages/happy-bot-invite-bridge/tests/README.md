@@ -5,14 +5,15 @@ concurrent recipients, hashed credentials, session lifetime, cross-bot isolation
 delivery, read-only access, reporting, blocking, and send limits.
 
 `multiSeatInvites.test.ts` covers concurrent and cross-process seat claims, recovery when full,
-separate histories from one link, one-member revocation without seat reuse, and rejected or
-normalized display names. `transportFailures.test.ts` verifies the name actually reaches the
-bridge frame, plus HTTP failure isolation, durable delivery failures, replay, and backpressure.
+shared history including late joiners, one-member revocation without seat reuse, forged sender
+text, group isolation and limits, and rejected or normalized display names.
+`transportFailures.test.ts` verifies the fixed group label and quoted attribution reach the
+bridge frame, plus IPv6 proxy addresses, HTTP failure isolation, durable failures, replay, and backpressure.
 
 ```text
 guestCredentials.test.ts -> GuestStore -> temporary SQLite
 ```
 
 The real daemon and HTTP/WebSocket pipeline are covered by
-`packages/happy-agent-gym-tests/tests/app_clip_guests_exchange_only_their_own_messages_through_an_exported_bot.test.ts`.
+`packages/happy-agent-gym-tests/tests/app_clip_members_share_one_group_and_isolate_other_invites.test.ts`.
 Its optional live case uses a normally configured provider auth file without copying credentials.

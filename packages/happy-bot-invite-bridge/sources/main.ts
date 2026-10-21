@@ -53,7 +53,7 @@ async function main(): Promise<void> {
                 JSON.stringify(
                     {
                         inviteId: invite.id,
-                        userIds: invite.userIds,
+                        groupUserId: invite.groupUserId,
                         maxMembers: invite.userIds.length,
                         url: `${origin.origin}/bot/invite/${invite.token}`,
                     },
@@ -63,7 +63,7 @@ async function main(): Promise<void> {
                 { mode: 0o600, flag: "wx" },
             );
             console.log(
-                `Invitation saved privately. Append all ${invite.userIds.length} bridge user IDs to bot ${botId} in one owner allowlist update, then verify and mark approved. Invitation ID: ${invite.id}.\n${JSON.stringify(invite.userIds, null, 2)}`,
+                `Invitation saved privately. Append the shared group bridge user ID to bot ${botId}'s owner allowlist, then verify and mark approved for ${invite.userIds.length} members. Invitation ID: ${invite.id}.\n${invite.groupUserId}`,
             );
             await store.close();
             return;
@@ -71,11 +71,11 @@ async function main(): Promise<void> {
         if (command === "revoke" || command === "mark-approved") {
             if (args[0] === undefined) throw new Error("Provide the invitation ID to revoke.");
             if (command === "mark-approved") {
-                if (args[1] !== "--count" || args[2] === undefined || !/^\d{1,2}$/.test(args[2]))
+                if (args[1] !== "--group-user-id" || args[2] === undefined)
                     throw new Error(
-                        "Mark approval requires --count N after verifying all N seat IDs on the daemon allowlist.",
+                        "Mark approval requires --group-user-id ID after verifying that single shared group ID on the daemon allowlist.",
                     );
-                await store.approve(args[0], Number(args[2]));
+                await store.approve(args[0], args[2]);
             } else await store.revoke(args[0]);
             await store.close();
             console.log(

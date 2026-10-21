@@ -23,7 +23,7 @@ async function fixture() {
         expiresAt: Date.now() + 86_400_000,
         readOnly: false,
     });
-    await store.approve(invite.id, 1);
+    await store.approve(invite.id, invite.groupUserId);
     return { store, invite, path };
 }
 
@@ -41,8 +41,8 @@ describe("invitation credentials and isolated history", () => {
             });
             await store.reply("a", {
                 seq: index + 1,
-                userId: invite.userIds[0]!,
-                chatId: invite.userIds[0]!,
+                userId: invite.groupUserId,
+                chatId: invite.groupUserId,
                 text: `Reply ${index}`,
             });
         }
@@ -91,7 +91,7 @@ describe("invitation credentials and isolated history", () => {
         });
         await store.authorize(recovered.sessionId, recovered.sessionToken, "a");
         // Neither bearer nor invitation secret is in SQLite or its WAL.
-        for (const file of ["guests-v2.sqlite", "guests-v2.sqlite-wal"]) {
+        for (const file of ["guests-v3.sqlite", "guests-v3.sqlite-wal"]) {
             const data = await readFile(join(path, file)).catch(() => Buffer.alloc(0));
             for (const value of [
                 invite.token,
@@ -160,7 +160,7 @@ describe("invitation credentials and isolated history", () => {
             expiresAt: Date.now() + 86_400_000,
             readOnly: false,
         });
-        await store.approve(otherInvite.id, 1);
+        await store.approve(otherInvite.id, otherInvite.groupUserId);
         const a = await store.redeem(invite.token, nonce(), "a", "Guest");
         const b = await store.redeem(otherInvite.token, nonce(), "b", "Other");
         await expect(store.read(a.sessionId, b.sessionToken, "a", 0)).rejects.toMatchObject({
@@ -175,28 +175,28 @@ describe("invitation credentials and isolated history", () => {
         expect(await store.pending("a")).toHaveLength(1);
         await store.reply("b", {
             seq: 1,
-            userId: invite.userIds[0]!,
-            chatId: invite.userIds[0]!,
+            userId: invite.groupUserId,
+            chatId: invite.groupUserId,
             text: "Wrong bot",
         });
         await store.reply("a", {
             seq: 1,
-            userId: invite.userIds[0]!,
-            chatId: otherInvite.userIds[0]!,
+            userId: invite.groupUserId,
+            chatId: otherInvite.groupUserId,
             text: "Wrong chat",
         });
         const reply = {
             seq: 1,
-            userId: invite.userIds[0]!,
-            chatId: invite.userIds[0]!,
+            userId: invite.groupUserId,
+            chatId: invite.groupUserId,
             text: "For A",
         };
         await store.reply("a", reply);
         await store.reply("a", reply);
         await store.reply("b", {
             seq: 1,
-            userId: otherInvite.userIds[0]!,
-            chatId: otherInvite.userIds[0]!,
+            userId: otherInvite.groupUserId,
+            chatId: otherInvite.groupUserId,
         });
         expect(
             (await store.read(a.sessionId, a.sessionToken, "a", 0)).messages.map(
@@ -228,7 +228,7 @@ describe("invitation credentials and isolated history", () => {
         ).rejects.toMatchObject({
             status: 503,
         });
-        await store.approve(readonlyInvite.id, 1);
+        await store.approve(readonlyInvite.id, readonlyInvite.groupUserId);
         const reader = await store.redeem(readonlyInvite.token, nonce(), "a", "Reader");
         await expect(
             store.send(reader.sessionId, reader.sessionToken, "a", { localId: "one", text: "No" }),

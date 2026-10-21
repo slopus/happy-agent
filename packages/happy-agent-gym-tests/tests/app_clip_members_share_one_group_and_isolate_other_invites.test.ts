@@ -42,7 +42,15 @@ async function scenario(live: boolean) {
                     .findLast((message) => message.role === "user")
                     ?.content.flatMap((block) => (block.type === "text" ? [block.text] : []))
                     .join("\n") ?? "";
-            return { content: [{ type: "text", text: `Answering: ${text}` }] };
+            const envelope = text.split("\n").at(-1)!;
+            return {
+                content: [
+                    {
+                        type: "text",
+                        text: `Answering: ${envelope.startsWith('{"sender":') ? JSON.parse(envelope).text : text}`,
+                    },
+                ],
+            };
         },
     });
     cleanups.push(async () => await gym.dispose());
@@ -103,11 +111,11 @@ async function scenario(live: boolean) {
         };
     };
     const exports = [
-        await exportBot(firstBot.id, first.userIds),
-        await exportBot(secondBot.id, second.userIds),
+        await exportBot(firstBot.id, [first.groupUserId]),
+        await exportBot(secondBot.id, [second.groupUserId]),
     ];
-    await store.approve(first.id, 2);
-    await store.approve(second.id, 1);
+    await store.approve(first.id, first.groupUserId);
+    await store.approve(second.id, second.groupUserId);
     if (live) {
         await gym.send(
             "You are a disposable App Clip test bot. Answer guests concisely. Do not use any tools or access files. Reply exactly READY to this setup message.",
@@ -193,7 +201,7 @@ async function scenario(live: boolean) {
     });
     expect(pending.status).toBe(503);
     expect(pending.headers.get("retry-after")).toBe("1");
-    await store.approve(readerInvite.id, 1);
+    await store.approve(readerInvite.id, readerInvite.groupUserId);
     const reader = await redeem(readerInvite.token);
     expect(
         (
@@ -206,7 +214,7 @@ async function scenario(live: boolean) {
     ).toBe(403);
     const input = live
         ? `Reply exactly CLIP_LIVE_${nonce()} and nothing else. Do not use tools.`
-        : "Private first guest message";
+        : "Shared first guest message";
     const send = async (session: typeof a, text: string) =>
         await fetch(url(session.sessionId), {
             method: "POST",
@@ -216,10 +224,9 @@ async function scenario(live: boolean) {
     expect((await send(a, input)).status).toBe(202);
     expect((await send(a, input)).status).toBe(202);
     expect((await send(b, "Second guest only")).status).toBe(202);
-    expect((await send(c, "Same invite second member")).status).toBe(202);
-    const awaitReply = async (session: typeof a, description: string) => {
+    const awaitReply = async (session: typeof a, description: string, expectedReplies = 1) => {
         let cursor: string | null = null;
-        const messages: { role: string; text: string }[] = [];
+        const messages: { role: string; text: string; senderName: string; isMine: boolean }[] = [];
         return await gym.waitUntil(
             async () => {
                 const response = await fetch(
@@ -229,11 +236,12 @@ async function scenario(live: boolean) {
                 expect(response.status).toBe(200);
                 const page = (await response.json()) as {
                     cursor: string | null;
-                    messages: { role: string; text: string }[];
+                    messages: { role: string; text: string; senderName: string; isMine: boolean }[];
                 };
                 cursor = page.cursor;
                 messages.push(...page.messages);
-                return messages.some((message) => message.role === "assistant")
+                return messages.filter((message) => message.role === "assistant").length >=
+                    expectedReplies
                     ? { messages }
                     : undefined;
             },
@@ -246,20 +254,40 @@ async function scenario(live: boolean) {
         expect(aReply.messages.at(-1)?.text).toContain(input.match(/CLIP_LIVE_[A-Za-z0-9_-]+/)![0]);
     else expect(aReply.messages.at(-1)?.text).toBe(`Answering: ${input}`);
     const bReply = await awaitReply(b, "second export independently replies");
-    const cReply = await awaitReply(c, "another member of the same invite independently replies");
-    expect(JSON.stringify(cReply)).not.toContain(input);
+    expect(
+        (await send(c, "Same invite second member. Say hello to the group. Do not use tools."))
+            .status,
+    ).toBe(202);
+    const cReply = await awaitReply(c, "another member receives the same group conversation", 2);
+    expect(
+        cReply.messages
+            .filter((message) => message.role === "user")
+            .map((message) => ({
+                text: message.text,
+                name: message.senderName,
+                isMine: message.isMine,
+            })),
+    ).toEqual([
+        { text: input, name: "Ada", isMine: false },
+        {
+            text: "Same invite second member. Say hello to the group. Do not use tools.",
+            name: "Zoë",
+            isMine: true,
+        },
+    ]);
+    expect(cReply.messages.filter((message) => message.role === "assistant")).toHaveLength(2);
     expect(JSON.stringify(bReply)).not.toContain(input);
     expect((await fetch(url(a.sessionId), { headers: headers(b.sessionToken) })).status).toBe(404);
     const children = (await gym.client.getAgentActivity(firstBot.agent.id)).subagents;
-    expect(children).toHaveLength(2);
-    const ada = children.find((child) => child.title === "Ada on App Clip");
+    expect(children).toHaveLength(1);
+    const ada = children.find((child) => child.title === "App Clip group on App Clip");
     expect(ada).toBeDefined();
-    expect(children.some((child) => child.title === "Zoë on App Clip")).toBe(true);
     const guestHistory = await gym.client.getMessages(ada!.id);
     const guestMessages = guestHistory.runs
         .flatMap((run) => run.messages)
         .filter((message) => message.role === "user");
-    expect(guestMessages).toHaveLength(1);
+    expect(guestMessages).toHaveLength(2);
+    expect(new Set(guestMessages.map((message) => message.metadata.userId)).size).toBe(1);
     const guestUserId = guestMessages[0]!.metadata.userId!;
     expect((await gym.client.getUsers([guestUserId])).users[0]).toMatchObject({
         kind: "guest",
@@ -314,12 +342,12 @@ async function scenario(live: boolean) {
 
 describe("App Clip invitation bridge through the real exported-bot pipeline", () => {
     it(
-        "keeps two exports and guests isolated with durable, idempotent exchanges",
+        "shares one conversation per invitation while isolating exports and revoking only one member",
         async () => await scenario(false),
         90_000,
     );
     it.skipIf(process.env.HAPPY_CLIP_LIVE_AUTH_FILE === undefined)(
-        "receives a real online model reply in an isolated guest subtask",
+        "receives real online model replies in one shared guest subtask",
         async () => await scenario(true),
         240_000,
     );

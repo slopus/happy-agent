@@ -77,7 +77,7 @@ async function fixture(options: { twoExports?: boolean; trustedProxyAddress?: st
         expiresAt: Date.now() + 86_400_000,
         readOnly: false,
     });
-    await store.approve(invite.id, 1);
+    await store.approve(invite.id, invite.groupUserId);
     const session = await store.redeem(invite.token, nonce(), "a", "Zoë");
     const headers = {
         authorization: `Bearer ${session.sessionToken}`,
@@ -141,7 +141,12 @@ describe("gateway failure boundaries", () => {
             expect(test.frames.some((frame) => frame.type === "message")).toBe(true),
         );
         const message = test.frames.find((frame) => frame.type === "message")!;
-        expect(message.name).toBe("Zoë");
+        expect(message.name).toBe("App Clip group");
+        expect(message.userId).toBe(test.invite.groupUserId);
+        expect(JSON.parse(message.text!.split("\n").at(-1)!)).toEqual({
+            sender: { memberId: test.session.memberId, displayName: "Zoë", verified: false },
+            text: "Hello",
+        });
         const socket = [...test.sockets][0]!;
         socket.send(
             JSON.stringify({
@@ -161,8 +166,8 @@ describe("gateway failure boundaries", () => {
             JSON.stringify({
                 type: "reply",
                 seq: 1,
-                userId: test.invite.userIds[0]!,
-                chatId: test.invite.userIds[0]!,
+                userId: test.invite.groupUserId,
+                chatId: test.invite.groupUserId,
                 text: "X".repeat(31_949) + "😀" + "X".repeat(8_000),
                 attachments: [{ path: "/private/daemon/path" }],
             }),
@@ -188,8 +193,8 @@ describe("gateway failure boundaries", () => {
                 JSON.stringify({
                     type: "reply",
                     seq: 2,
-                    userId: test.invite.userIds[0]!,
-                    chatId: test.invite.userIds[0]!,
+                    userId: test.invite.groupUserId,
+                    chatId: test.invite.groupUserId,
                     text: "Once",
                 }),
             );
@@ -259,6 +264,7 @@ describe("gateway failure boundaries", () => {
             expect((await redeem("192.0.2.1")).status).toBe(404);
         expect((await redeem("192.0.2.1")).status).toBe(429);
         expect((await redeem("192.0.2.2")).status).toBe(404);
+        expect((await redeem("2001:db8::1")).status).toBe(404);
         expect((await redeem("192.0.2.1, 192.0.2.2")).status).toBe(400);
         expect((await fetch(test.url, { headers: test.headers })).status).toBe(200);
     });

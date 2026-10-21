@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 import { createClient, type Client, type Row } from "@libsql/client";
 import { Value } from "@sinclair/typebox/value";
 import { displayNameSchema, HttpError, maxMembersSchema, type Send } from "../contracts.js";
+import { formatGroupMessage } from "../formatGroupMessage.js";
 
 const secret = () => randomBytes(32).toString("base64url");
 const digest = (token: string) => createHash("sha256").update(token).digest("hex");
@@ -13,10 +14,12 @@ export type GuestMessage = {
     role: "user" | "assistant";
     text: string;
     createdAt: number;
+    senderName: string;
+    isMine: boolean;
 };
 export type PendingMessage = { id: string; userId: string; text: string; name: string };
 
-/** Generation 2 owns an invitation's fixed seat pool and each member's private history. */
+/** Generation 3 owns member credentials and one shared chat and bridge guest per invite. */
 export class GuestStore {
     private tail: Promise<unknown> = Promise.resolve();
     private waiting = 0;
@@ -26,12 +29,13 @@ export class GuestStore {
         const path = resolve(directory);
         await mkdir(path, { recursive: true, mode: 0o700 });
         await chmod(path, 0o700);
-        const file = join(path, "guests-v2.sqlite");
+        const file = join(path, "guests-v3.sqlite");
         const db = createClient({ url: pathToFileURL(file).href });
         await db.execute("PRAGMA busy_timeout=5000");
         await db.execute("PRAGMA journal_mode=WAL");
         await db.execute(`CREATE TABLE IF NOT EXISTS invites (
             id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE, bot_id TEXT NOT NULL, bot_name TEXT NOT NULL,
+            group_user_id TEXT NOT NULL UNIQUE, group_label TEXT NOT NULL,
             expires_at INTEGER NOT NULL, read_only INTEGER NOT NULL, revoked INTEGER NOT NULL DEFAULT 0,
             approved INTEGER NOT NULL DEFAULT 0, max_members INTEGER NOT NULL, used INTEGER NOT NULL DEFAULT 0)`);
         await db.execute(`CREATE TABLE IF NOT EXISTS members (
@@ -41,11 +45,14 @@ export class GuestStore {
             revoked INTEGER NOT NULL DEFAULT 0, blocked INTEGER NOT NULL DEFAULT 0, reported_at INTEGER,
             UNIQUE(invite_id,nonce_hash))`);
         await db.execute(`CREATE TABLE IF NOT EXISTS messages (
-            cursor INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, member_id TEXT NOT NULL,
+            cursor INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, invite_id TEXT NOT NULL, member_id TEXT,
             role TEXT NOT NULL, text TEXT NOT NULL, created_at INTEGER NOT NULL, local_id TEXT,
             delivery TEXT NOT NULL, UNIQUE(member_id,local_id))`);
         await db.execute(
             "CREATE INDEX IF NOT EXISTS messages_member ON messages(member_id,cursor)",
+        );
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS messages_invite ON messages(invite_id,cursor)",
         );
         await chmod(file, 0o600);
         return new GuestStore(db);
@@ -74,7 +81,7 @@ export class GuestStore {
         maxMembers: number;
         expiresAt: number;
         readOnly: boolean;
-    }): Promise<{ id: string; userIds: string[]; token: string }> {
+    }): Promise<{ id: string; userIds: string[]; groupUserId: string; token: string }> {
         if (!Value.Check(maxMembersSchema, options.maxMembers))
             throw new Error("Choose between one and twenty members.");
         return await this.locked(async () => {
@@ -83,13 +90,14 @@ export class GuestStore {
                 throw new Error("Invitation lifetime must be between one second and 24 hours.");
             const token = secret();
             const id = secret();
+            const groupUserId = `clip_group_${secret()}`;
             const userIds = Array.from({ length: options.maxMembers }, () => `clip_${secret()}`);
             const tx = await this.db.transaction("write");
             try {
                 // Prune the whole invitation only after every possible member session expired.
                 const cutoff = now - 31 * 86_400_000;
                 await tx.execute({
-                    sql: "DELETE FROM messages WHERE member_id IN (SELECT m.id FROM members m JOIN invites i ON i.id=m.invite_id WHERE i.expires_at<?)",
+                    sql: "DELETE FROM messages WHERE invite_id IN (SELECT id FROM invites WHERE expires_at<?)",
                     args: [cutoff],
                 });
                 await tx.execute({
@@ -103,7 +111,7 @@ export class GuestStore {
                         "The gateway's 100-member limit is reached. Wait for expired invitations to be removed.",
                     );
                 await tx.execute({
-                    sql: "INSERT INTO invites(id,token_hash,bot_id,bot_name,expires_at,read_only,max_members) VALUES(?,?,?,?,?,?,?)",
+                    sql: "INSERT INTO invites(id,token_hash,bot_id,bot_name,expires_at,read_only,max_members,group_user_id,group_label) VALUES(?,?,?,?,?,?,?,?,?)",
                     args: [
                         id,
                         digest(token),
@@ -112,6 +120,8 @@ export class GuestStore {
                         options.expiresAt,
                         options.readOnly ? 1 : 0,
                         options.maxMembers,
+                        groupUserId,
+                        "App Clip group",
                     ],
                 });
                 for (const userId of userIds)
@@ -120,7 +130,7 @@ export class GuestStore {
                         args: [secret(), id, userId, options.botId, options.readOnly ? 1 : 0],
                     });
                 await tx.commit();
-                return { id, userIds, token };
+                return { id, userIds, groupUserId, token };
             } finally {
                 await tx.close();
             }
@@ -296,8 +306,8 @@ export class GuestStore {
         return await this.locked(async () => {
             const member = await this.querySession(sessionId, token, botId);
             const result = await this.db.execute({
-                sql: "SELECT cursor,id,role,text,created_at FROM messages WHERE member_id=? AND cursor>? ORDER BY cursor LIMIT 100",
-                args: [String(member["id"]), after],
+                sql: "SELECT h.cursor,h.id,h.role,h.text,h.created_at,h.member_id,m.name,i.bot_name FROM messages h JOIN invites i ON i.id=h.invite_id LEFT JOIN members m ON m.id=h.member_id WHERE h.invite_id=? AND h.cursor>? ORDER BY h.cursor LIMIT 100",
+                args: [String(member["invite_id"]), after],
             });
             await this.db.execute({
                 sql: "UPDATE members SET last_active=? WHERE id=?",
@@ -309,6 +319,9 @@ export class GuestStore {
                     role: row["role"] === "user" ? "user" : "assistant",
                     text: String(row["text"]),
                     createdAt: Number(row["created_at"]),
+                    senderName:
+                        row["role"] === "user" ? String(row["name"]) : String(row["bot_name"]),
+                    isMine: row["role"] === "user" && row["member_id"] === member["id"],
                 })),
                 cursor:
                     result.rows.length === 0
@@ -332,6 +345,7 @@ export class GuestStore {
                 if (member["read_only"] === 1)
                     throw new HttpError(403, "This conversation is read only.");
                 const memberId = String(member["id"]);
+                const inviteId = String(member["invite_id"]);
                 const duplicate = await tx.execute({
                     sql: "SELECT text FROM messages WHERE member_id=? AND local_id=?",
                     args: [memberId, message.localId],
@@ -345,10 +359,7 @@ export class GuestStore {
                     sql: "SELECT count(*) AS count,sum(CASE WHEN role='user' THEN 1 ELSE 0 END) AS user_count,sum(CASE WHEN created_at>? AND role='user' THEN 1 ELSE 0 END) AS recent FROM messages WHERE member_id=?",
                     args: [Date.now() - 60_000, memberId],
                 });
-                if (
-                    Number(count.rows[0]?.["count"]) >= 200 ||
-                    Number(count.rows[0]?.["user_count"]) >= 100
-                )
+                if (Number(count.rows[0]?.["user_count"]) >= 100)
                     throw new HttpError(
                         429,
                         "This conversation has reached its message limit. Ask the owner for a new invitation.",
@@ -356,9 +367,28 @@ export class GuestStore {
                     );
                 if (Number(count.rows[0]?.["recent"]) >= 10)
                     throw new HttpError(429, "Please wait a minute before sending more messages.");
+                const group = await tx.execute({
+                    sql: "SELECT count(*) AS total,sum(CASE WHEN role='user' THEN 1 ELSE 0 END) AS users,sum(CASE WHEN role='user' AND created_at>? THEN 1 ELSE 0 END) AS recent FROM messages WHERE invite_id=?",
+                    args: [Date.now() - 60_000, inviteId],
+                });
+                if (
+                    Number(group.rows[0]?.["total"]) >= 1000 ||
+                    Number(group.rows[0]?.["users"]) >= 500
+                )
+                    throw new HttpError(
+                        429,
+                        "This group has reached its message limit. Ask the owner for a new invitation.",
+                        "limit_reached",
+                    );
+                if (Number(group.rows[0]?.["recent"]) >= 30)
+                    throw new HttpError(
+                        429,
+                        "Please wait a minute before sending more messages to this group.",
+                        "rate_limited",
+                    );
                 await tx.execute({
-                    sql: "INSERT INTO messages(id,member_id,role,text,created_at,local_id,delivery) VALUES(?,?,'user',?,?,?,'pending')",
-                    args: [secret(), memberId, message.text, Date.now(), message.localId],
+                    sql: "INSERT INTO messages(id,invite_id,member_id,role,text,created_at,local_id,delivery) VALUES(?,?,?,'user',?,?,?,'pending')",
+                    args: [secret(), inviteId, memberId, message.text, Date.now(), message.localId],
                 });
                 await tx.execute({
                     sql: "UPDATE members SET last_active=? WHERE id=?",
@@ -374,14 +404,18 @@ export class GuestStore {
     async pending(botId: string): Promise<PendingMessage[]> {
         return await this.locked(async () => {
             const result = await this.db.execute({
-                sql: "SELECT h.id,h.text,m.user_id,m.name FROM messages h JOIN members m ON h.member_id=m.id JOIN invites i ON i.id=m.invite_id WHERE h.delivery='pending' AND m.bot_id=? AND i.revoked=0 AND m.revoked=0 AND m.blocked=0 AND m.read_only=0 AND m.session_expires_at>? ORDER BY h.cursor LIMIT 32",
+                sql: "SELECT h.id,h.text,m.id AS member_id,m.name,i.group_user_id,i.group_label FROM messages h JOIN members m ON h.member_id=m.id JOIN invites i ON i.id=m.invite_id WHERE h.delivery='pending' AND m.bot_id=? AND i.revoked=0 AND m.revoked=0 AND m.blocked=0 AND m.read_only=0 AND m.session_expires_at>? ORDER BY h.cursor LIMIT 32",
                 args: [botId, Date.now()],
             });
             return result.rows.map((row) => ({
                 id: String(row["id"]),
-                userId: String(row["user_id"]),
-                text: String(row["text"]),
-                name: String(row["name"]),
+                userId: String(row["group_user_id"]),
+                text: formatGroupMessage({
+                    memberId: String(row["member_id"]),
+                    displayName: String(row["name"]),
+                    text: String(row["text"]),
+                }),
+                name: String(row["group_label"]),
             }));
         });
     }
@@ -400,11 +434,11 @@ export class GuestStore {
             const tx = await this.db.transaction("write");
             try {
                 await tx.execute({
-                    sql: `INSERT OR IGNORE INTO messages(id,member_id,role,text,created_at,delivery)
-                    SELECT ?,h.member_id,'assistant','This message could not be delivered.',?,'acked'
+                    sql: `INSERT OR IGNORE INTO messages(id,invite_id,role,text,created_at,delivery)
+                    SELECT ?,h.invite_id,'assistant','This message could not be delivered.',?,'acked'
                     FROM messages h JOIN members m ON m.id=h.member_id JOIN invites i ON i.id=m.invite_id
                     WHERE h.id=? AND h.role='user' AND i.revoked=0 AND m.revoked=0 AND m.blocked=0 AND m.session_expires_at>?
-                    AND (SELECT count(*) FROM messages history WHERE history.member_id=m.id)<200`,
+                    AND (SELECT count(*) FROM messages history WHERE history.invite_id=i.id)<1000`,
                     args: [`reject_${id}`, Date.now(), id, Date.now()],
                 });
                 await tx.execute({
@@ -425,10 +459,11 @@ export class GuestStore {
         await this.locked(async () => {
             if (frame.userId !== frame.chatId) return;
             await this.db.execute({
-                sql: `INSERT OR IGNORE INTO messages(id,member_id,role,text,created_at,delivery)
-                SELECT ?,m.id,'assistant',?,?,'acked' FROM members m JOIN invites i ON i.id=m.invite_id
-                WHERE m.user_id=? AND m.bot_id=? AND m.session_id IS NOT NULL AND i.revoked=0 AND m.revoked=0 AND m.blocked=0 AND m.session_expires_at>?
-                AND (SELECT count(*) FROM messages h WHERE h.member_id=m.id)<200`,
+                sql: `INSERT OR IGNORE INTO messages(id,invite_id,role,text,created_at,delivery)
+                SELECT ?,i.id,'assistant',?,?,'acked' FROM invites i
+                WHERE i.group_user_id=? AND i.bot_id=? AND i.revoked=0
+                AND EXISTS(SELECT 1 FROM members m WHERE m.invite_id=i.id AND m.session_expires_at>?)
+                AND (SELECT count(*) FROM messages h WHERE h.invite_id=i.id)<1000`,
                 args: [
                     `reply_${frame.userId}_${frame.seq}`,
                     frame.text === undefined
@@ -461,15 +496,15 @@ export class GuestStore {
             });
         });
     }
-    async approve(inviteId: string, count: number): Promise<void> {
+    async approve(inviteId: string, groupUserId: string): Promise<void> {
         await this.locked(async () => {
             const result = await this.db.execute({
-                sql: "UPDATE invites SET approved=1 WHERE id=? AND revoked=0 AND max_members=?",
-                args: [inviteId, count],
+                sql: "UPDATE invites SET approved=1 WHERE id=? AND revoked=0 AND group_user_id=?",
+                args: [inviteId, groupUserId],
             });
             if (result.rowsAffected !== 1)
                 throw new Error(
-                    "The invitation member count does not match. Verify every seat on the daemon allowlist first.",
+                    "The invitation group ID does not match. Verify its shared group ID on the daemon allowlist first.",
                 );
         });
     }
