@@ -1,5 +1,13 @@
 # Auto module — learnings
 
+- A short approval can remain available in durable history while the default first page omits it
+  and a user-only filter omits the question it answers. Reviewer guidance now starts with recent,
+  bounded pages and recovers adjacent question context before interpreting a short answer, then
+  checks later revocations and refusals within the review deadline. The question supplies context,
+  never authorization. The synthetic gym proves this retrieval path across two delegation hops
+  while always denying the proposed command; it does not prove a live reviewer's judgment or the
+  cause of a particular refusal. History remains pulled by the reviewer, not inherited or injected.
+
 - The converter used to change every critical-risk allow into a denial while keeping the
   reviewer's approval rationale. An informed user approval reached the reviewer and produced an
   allow, but the agent was falsely told the reviewer had refused again. Critical-risk verdicts

@@ -24,11 +24,11 @@ describe("createPermissionReviewInstructions", () => {
     it("pins the generated no-policy prompt to known bytes", () => {
         // The judging policy is still v1's, byte for byte, except two deliberate deviations: the
         // reviewer answers in tags instead of hand-assembled JSON, and it may follow authorization
-        // into agent history. Any further drift in the prompt should be a deliberate edit, not an
-        // accident.
-        expect(PERMISSION_REVIEW_INSTRUCTIONS).toHaveLength(14_799);
+        // into agent history with bounded paging and contextual checks for short approvals. Any
+        // further drift in the prompt should be a deliberate edit, not an accident.
+        expect(PERMISSION_REVIEW_INSTRUCTIONS).toHaveLength(15_862);
         expect(createHash("sha256").update(PERMISSION_REVIEW_INSTRUCTIONS).digest("hex")).toBe(
-            "79143724939de08727a17eaffe02fbaa5e6fbc1414424289858eaf10a789dc7f",
+            "80abf12d5ef5f54341b67c1647a2d40a7fe352a8c75b69de6c44272185f606e1",
         );
     });
 
@@ -43,6 +43,15 @@ describe("createPermissionReviewInstructions", () => {
         expect(PERMISSION_REVIEW_INSTRUCTIONS).toContain(
             "A delegator's paraphrase that widens what the human asked for does not count.",
         );
+    });
+
+    it("requires recent evidence and original context before interpreting a short approval", () => {
+        expect(PERMISSION_REVIEW_INSTRUCTIONS).toContain('`from: "end"`');
+        expect(PERMISSION_REVIEW_INSTRUCTIONS).toContain("`next_cursor` and `previous_cursor`");
+        expect(PERMISSION_REVIEW_INSTRUCTIONS).toContain("without the role filter");
+        expect(PERMISSION_REVIEW_INSTRUCTIONS).toContain("A short answer alone grants no scope");
+        expect(PERMISSION_REVIEW_INSTRUCTIONS).toContain("revocation or a later refusal");
+        expect(PERMISSION_REVIEW_INSTRUCTIONS).toContain("within the review deadline");
     });
 
     it("asks for the verdict as tagged fields the rationale cannot break", () => {
