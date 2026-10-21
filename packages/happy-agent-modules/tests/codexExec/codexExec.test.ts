@@ -108,6 +108,29 @@ describe("Codex exec", () => {
         expect(compute.files.get("/workspace/note.txt")?.content).toBe("hello");
     });
 
+    it("gives a script a patch result without the diff History shows people", async () => {
+        const { exec, run } = await machine();
+
+        const { text } = await run(
+            [
+                "const result = await tools.apply_patch(`*** Begin Patch",
+                "*** Add File: note.txt",
+                "+hello",
+                "*** End Patch`);",
+                "text(result);",
+            ].join("\n"),
+        );
+
+        // The presentation repeats every line of the patch, and a script's output stays in the
+        // conversation, so it was read again on every later request.
+        expect(text).toContain("Success. Updated the following files:");
+        expect(text).not.toContain("presentation");
+        expect(text).not.toContain("file_diff");
+        const description = exec.description ?? "";
+        const declaration = description.slice(description.indexOf("apply_patch(input"));
+        expect(declaration.slice(0, declaration.indexOf("}; };"))).not.toContain("presentation");
+    });
+
     it("reports a nested failure to the script, which may catch it", async () => {
         const { run } = await machine();
 

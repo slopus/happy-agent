@@ -12,6 +12,7 @@ import type { SessionOutputBlock } from "@slopus/happy-providers";
 import { withLifetime, type Context } from "@steve.kite/stdlib";
 
 import { codexExecDeclaration, singleStringField } from "./codexExecDeclaration.js";
+import { codexExecModelResult } from "./codexExecModelResult.js";
 import { runCodexExecCell } from "./runCodexExecCell.js";
 
 /** Codex's own grammar for `exec`: JavaScript source, optionally led by one pragma line. */
@@ -158,7 +159,7 @@ async function runNestedTool(
     if (!Value.Check(ran.returnType, result)) {
         throw new Error(`${ran.name} returned a result outside its own schema.`);
     }
-    return result;
+    return codexExecModelResult(result);
 }
 
 /** A string stands for a freeform tool's text, or for a tool's one required string argument. */

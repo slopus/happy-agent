@@ -1,5 +1,7 @@
 import type { AnyAgentTool } from "@slopus/happy-agent-base";
 
+import { codexExecModelResultSchema } from "./codexExecModelResult.js";
+
 /** How deep a schema is written out before the rest is called `unknown`. */
 const MAX_DEPTH = 4;
 
@@ -19,7 +21,7 @@ export function codexExecDeclaration(identifier: string, tool: AnyAgentTool): st
         tool.grammar !== undefined
             ? "input: string"
             : `args: ${tool.parameters === undefined ? "{}" : typeOf(tool.parameters, 0)}${singleStringField(tool) === undefined ? "" : " | string"}`;
-    const result = typeOf(tool.returnType, 0);
+    const result = typeOf(codexExecModelResultSchema(tool.returnType), 0);
     const output = result.length > MAX_RESULT_TYPE_CHARACTERS ? "unknown" : result;
     return `declare const tools: { ${identifier}(${input}): Promise<${output}>; };`;
 }

@@ -33,3 +33,12 @@ instance be dropped whole: disposing a runtime asserts that every guest handle w
 a script that left promises behind cannot guarantee that. Synchronous computation is interrupted
 after ten seconds without an `await`. Awaits have no overall cap, because nested tools bound their
 own waits. A script left awaiting something nothing can settle fails at once rather than hanging.
+
+## A script gets results without their presentation
+
+A nested call handed the script its tool's whole result, including `presentation`, which a tool
+fills for History to show people: an `apply_patch` result carried every line of its patch again
+as a diff. Script output stays in the conversation, so on GPT-6.1 Sol coding tasks that diff was a
+quarter to a third of all `exec` output and 7–21% of each run's input. Native Codex returns no such
+field. A nested result now drops `presentation` and is declared without it; a direct call is
+unchanged, because the model reads it through `toLLM` and History still records the presentation.
