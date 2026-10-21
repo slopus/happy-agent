@@ -97,6 +97,36 @@ on the Clip's trusted origin, forward only `/v1/bot-invites/redeem` and `/v1/bot
 the associated-domain/AASA and invitation pages, and apply client-IP rate limits at the proxy.
 Do not expose the daemon socket, owner API, or registry through that proxy.
 
+## Preview HTTPS edge
+
+The included `edge/edge.mjs` serves AASA, the invitation landing page, and only the guest API
+routes. Set the Apple IDs to match the installed app and its Clip. For Happy Preview:
+
+```sh
+APPLE_TEAM_ID=466DQWDR8C APP_BUNDLE_ID=com.slopus.happy.preview \
+CLIP_BUNDLE_ID=com.slopus.happy.preview.Clip APP_STORE_ID=6749025570 \
+EDGE_PORT=8790 GATEWAY_PORT=8789 node packages/happy-bot-invite-bridge/edge/edge.mjs
+```
+
+In another terminal:
+
+```sh
+cloudflared tunnel --url http://127.0.0.1:8790
+```
+
+Use the resulting HTTPS origin when creating an invitation. Set the gateway registry's
+`trustedProxyAddress` to `127.0.0.1`. The edge drops incoming `X-Forwarded-For` and replaces it with
+Cloudflare's `CF-Connecting-IP`; both IPv4 and IPv6 are accepted by the gateway. Run it only behind
+the Cloudflare tunnel: the loopback listener trusts that tunnel's header. Do not expose it through
+another proxy without revisiting that trust boundary. Nothing logs invitation URLs or credentials.
+The edge aborts an upstream long poll when the client disconnects.
+
+A quick tunnel changes hostname on restart. It is suitable for a temporary preview; a stable
+domain or named tunnel and matching native associated-domain/host configuration are needed for
+continuity. AASA and the web card alone do not register an App Clip experience with Apple. The
+current Preview 25 host is pinned in the native build; changing it requires a new build. See
+[the continuation plan](../../master-plans/28-app-clip-guests.md).
+
 ## Client contract
 
 `POST /v1/bot-invites/redeem` accepts `{token, redeemNonce, displayName}`. Token and nonce are base64url strings of
