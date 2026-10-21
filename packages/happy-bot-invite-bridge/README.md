@@ -1,0 +1,189 @@
+# App Clip invitation bridge
+
+This private executable gives an App Clip a narrow text chat API. It is a chat-service bridge
+for the existing exported-bot protocol, not a Happy Agent API or a new agent runtime. The daemon
+continues to create attributed guests, enforce its allowlist, run each guest in its own subtask
+in Auto, and persist outgoing replies. No custom daemon build is needed.
+
+```text
+App Clip -- HTTPS /v1 --> invitation bridge -- exported-bot WebSocket --> daemon
+                             |                                      |
+                      private guest SQLite                 guest / isolated subtask
+```
+
+The bridge must run as a trusted process beside the standalone daemon, or reach an exported-bot
+WebSocket over WSS. A bridge token grants access to every guest of its export. Use a **dedicated
+bridge export**, never an export already connected to another program: a second connection
+replaces the first. Telegram exports can coexist.
+
+## Local setup
+
+All paths below are absolute. Keep state, token files, registry, and invitation output outside
+version control. The CLI writes state directories with mode 0700 and invitations with mode 0600;
+it never prints invitation or bridge credentials. The registry contains file paths, not tokens.
+
+1. Create a dedicated bot with a restricted folder and purpose using the existing owner tools.
+   Never export the Chief of Staff. Export it with `set_bridge_exported_bot`, `service: "App Clip"`,
+   `unknownSenders: "ignore"`, and a private `tokenFile`.
+2. Create an invitation:
+
+    ```sh
+    pnpm --filter @slopus/happy-bot-invite-bridge start invite /private/state BOT_ID 'Bot name' /private/invite.json https://app.happy.engineering 'Guest name'
+    ```
+
+    The private file contains the invitation URL, invitation ID, and assigned bridge user ID.
+    The link can be redeemed for 24 hours. One invitation admits **one guest only**; generate a
+    new invitation for another person. Add `read-only` as the last argument for a read-only session.
+
+3. **Before sharing**, owner authorization must allow this bridge user ID. Call
+   `get_exported_bot_status`, read the full current `allowedUsers`, append the generated ID,
+   then call `set_bridge_exported_bot` with that complete list. Serialize these owner operations;
+   the replace-list tool has no compare-and-swap and concurrent editors can overwrite additions.
+   The public gateway has no owner credential or enrollment capability. If approval is omitted,
+   the gateway refuses redemption with 503. After the allowlist update succeeds, enable the link:
+
+    ```sh
+    pnpm --filter @slopus/happy-bot-invite-bridge start mark-approved /private/state INVITATION_ID
+    ```
+
+    Run this owner-only local step only after verifying the generated ID on the export's allowlist.
+    Removing it later from the daemon allowlist should be paired with gateway revocation; the
+    gateway cannot inspect the daemon's owner-only configuration. An `ask` export may return the
+    daemon's fixed access-request notice if the owner makes these settings inconsistent.
+
+4. Create a private registry:
+
+    ```json
+    {
+        "trustedProxyAddress": "127.0.0.1",
+        "exports": [
+            {
+                "botId": "BOT_ID",
+                "connectUrl": "ws+unix:///absolute/daemon.sock:/v0/exported-bots/connect?protocol=1",
+                "tokenFile": "/private/clip-bridge.token"
+            }
+        ]
+    }
+    ```
+
+    Up to ten distinct exports can share one endpoint. Each has its own WebSocket and server-side
+    credential. Invitations select the bot; the Clip has no compiled bot identifier. Adding
+    another bot changes this private registry and restarts the bridge, with no Clip rebuild.
+    `trustedProxyAddress` is optional: set it only when that exact TCP peer is the proxy you own.
+    It must replace `X-Forwarded-For` with exactly one validated client IP, without a forwarded chain.
+    Without this option, forwarded-address headers are ignored.
+
+5. Start:
+
+    ```sh
+    pnpm --filter @slopus/happy-bot-invite-bridge start serve /private/state /private/registry.json 8787
+    ```
+
+The listener binds only `127.0.0.1`. A local simulator demo can use a secure tunnel to this port.
+**No public host is deployed by this package.** Production must explicitly deploy an HTTPS proxy
+on the Clip's trusted origin, forward only `/v1/bot-invites/redeem` and `/v1/bot-guest/*` here, serve
+the associated-domain/AASA and invitation pages, and apply client-IP rate limits at the proxy.
+Do not expose the daemon socket, owner API, or registry through that proxy.
+
+## Client contract
+
+`POST /v1/bot-invites/redeem` accepts `{token, redeemNonce}`. Both values are base64url strings of
+43 characters representing independent 32-byte random values. The client persists its nonce
+before sending the request. A successful response is
+`{sessionId, sessionToken, botName, expiresAt, readOnly}`; `expiresAt` is Unix milliseconds.
+The session lasts 30 days from first redemption unless the owner revokes it or the guest leaves.
+Its expiry does not extend on retry. This is independent of the invitation's 24-hour redeem window.
+
+A retry with the same token and nonce recovers the same session ID and rotates the session bearer,
+invalidating the previous bearer. A different nonce receives 409. Never redeem one link concurrently.
+Persist the returned session bearer in the keychain before discarding the pending nonce. There is
+no periodic bearer refresh: the session remains valid through its stated expiry, with owner revoke
+available throughout. A lost keychain requires a new owner invitation.
+
+All session routes require `Authorization: Bearer <sessionToken>`. Each request checks the bound
+session, bot, expiry, revocation, and block state. The bearer opens only these routes, not the
+daemon API. Credentials and invitation tokens are stored only as SHA-256 hashes in SQLite.
+
+- `GET /v1/bot-guest/sessions/:id/messages?after=<cursor>&wait=25` returns
+  `{messages:[{id,role,text,createdAt}],cursor,status}`. Roles are `user` and `assistant`, times are
+  Unix milliseconds, cursor is a nullable numeric string, and status is `online` or `offline`.
+  `after` defaults to zero; pages contain at most 100 messages. `wait` defaults to zero and is at
+  most 25 seconds. One long poll per session is allowed. Revoke/expiry is checked at least once
+  per second while waiting and on the final read.
+- `POST` to that messages route accepts `{localId,text}` and returns 202 `{}` after durable
+  queuing. `localId` is 1–128 ASCII letters, digits, `_` or `-`; text is 1–4,000 characters and
+  must contain non-whitespace. Retrying the same ID and text is safe. Reusing it for different
+  text receives 409. Sends remain queued while the bot is offline. A daemon terminal rejection
+  is not retried and produces a fixed delivery-failed notice. An accepted send does not promise
+  that inference will succeed.
+- `POST /v1/bot-guest/sessions/:id/report` with `{}` records the timestamp and invitation ID
+  for owner inspection. It does not send report content to inference.
+- `POST /v1/bot-guest/sessions/:id/block` with `{}` ends access immediately. The client should
+  clear its keychain session and leave the conversation after success.
+
+| Status | Meaning                                                                                    |
+| ------ | ------------------------------------------------------------------------------------------ |
+| 400    | Invalid JSON, input, cursor, or wait duration                                              |
+| 401    | Missing or malformed bearer                                                                |
+| 403    | Read-only session cannot send                                                              |
+| 404    | Unknown, revoked, blocked, wrong-session, or rotated credential                            |
+| 409    | Invitation used by a different nonce, or local message ID reused with different text       |
+| 410    | Invitation redeem window or guest session expired                                          |
+| 413    | Request body exceeds 16 KiB                                                                |
+| 429    | Rate or transcript limit; `Retry-After: 60`. Poll conflict uses `Retry-After: 1`           |
+| 503    | Bot offline during redemption, unavailable export, or bounded queue full; `Retry-After: 1` |
+
+## Durability, limits, and trust
+
+The gateway stores its own guest-only transcript in private SQLite. It never queries owner
+history or a daemon database. Outgoing message IDs are random and persisted before their first
+bridge send; reconnects reuse them. Replies are committed before the daemon receives their ack;
+their bot/guest/sequence identity prevents duplicate history after a crash. Attachments are not
+served: attachment fields and paths are discarded, and attachment-only replies become a fixed
+notice that files are unavailable here. The daemon's stranger notice is fixed service text and
+does not contain another person's history.
+
+Oversized reply text is shortened to 32,000 characters with a visible marker, then acknowledged
+after its durable write. A rejected send becomes a fixed assistant notice without daemon details.
+Unexpected HTTP failures return fixed 500 responses and do not stop unrelated conversations.
+An export with a refused credential remains offline while other exports continue serving.
+
+This bridge terminates TLS and stores guest plaintext. It is a trusted chat endpoint, **not an
+end-to-end encrypted client of Happy's relay**. Deploy beside the owner daemon when possible.
+Its credentials and storage need the same protection as that daemon. This does not make an
+otherwise blind Happy relay a plaintext processor.
+
+There are at most 100 invitations, 100 user messages and 200 total messages per invitation.
+New invitations prune records whose invitation or session expired more than 24 hours ago.
+Existing transcripts and deduplication IDs remain until that expiry; cursors increase monotonically.
+Per session, at most ten sends per minute are accepted. The listener admits at most 200 concurrent
+requests/connections and 100 long polls; the SQLite work queue admits 256 operations and the
+bridge uses a one-message stream buffer with socket backpressure and bounds unacknowledged
+outgoing messages at 32 per export. Reconnects replay durable unacknowledged work.
+
+The HTTP limit is 120 requests and ten redemption attempts per minute per **TCP peer**, or per
+client IP when the exact proxy hop is explicitly configured. Authenticated session requests
+have separate session buckets, so failed public redemptions cannot consume their request budget.
+The proxy must still enforce ingress limits. No request paths, headers, bodies, or
+credentials are logged. Configure proxy access/error logging to redact `/bot/invite/*`, request
+bodies, and Authorization headers; do not log credential-bearing invocation URLs.
+
+429 responses include `code: "poll_conflict"` for an existing long poll and `code: "limit_reached"`
+for the permanent transcript cap; the latter requires a new owner invitation. Other rate limits
+are temporary. The numeric cursor currently comes from one private database sequence, so gaps
+can reveal approximate cross-session message volume, never their contents or identities.
+After the 200-message retention cap, further incoming replies are acknowledged and discarded;
+existing history stays intact. The owner should issue a new invitation before that cap is reached.
+
+Owner commands, using the same private state directory:
+
+```sh
+pnpm --filter @slopus/happy-bot-invite-bridge start reports /private/state
+pnpm --filter @slopus/happy-bot-invite-bridge start revoke /private/state INVITATION_ID
+```
+
+Revocation prevents future reads, sends, recovery, and queued delivery. It cannot undo a message
+the daemon already accepted or cancel an already-running guest task. The owner can also remove
+the guest from the existing daemon allowlist and archive its subtask. The gateway supplies
+report and leave controls; content moderation policy, operator response, and App Store metadata
+remain explicit distribution work.

@@ -451,6 +451,34 @@ importers:
         specifier: ^3.2.4
         version: 3.2.6(@types/node@24.13.3)(jiti@2.7.0)(tsx@4.23.0)(yaml@2.9.0)
 
+  packages/happy-bot-invite-bridge:
+    dependencies:
+      '@libsql/client':
+        specifier: 0.18.0
+        version: 0.18.0(patch_hash=90434d5ce5f0f99730247b66b6916a4a40d3019cdf938903efa57e36177f75f8)
+      '@sinclair/typebox':
+        specifier: ^0.34.49
+        version: 0.34.49
+      ws:
+        specifier: ^8.21.1
+        version: 8.21.1
+    devDependencies:
+      '@types/node':
+        specifier: ^24.0.10
+        version: 24.13.3
+      '@types/ws':
+        specifier: ^8.18.1
+        version: 8.18.1
+      tsx:
+        specifier: ^4.23.0
+        version: 4.23.0
+      typescript:
+        specifier: ^5.8.3
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.4
+        version: 3.2.6(@types/node@24.13.3)(jiti@2.7.0)(tsx@4.23.0)(yaml@2.9.0)
+
   packages/happy-plugins:
     dependencies:
       '@sinclair/typebox':

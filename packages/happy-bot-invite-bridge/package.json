@@ -1,0 +1,22 @@
+{
+    "name": "@slopus/happy-bot-invite-bridge",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "start": "node --import tsx sources/main.ts",
+        "check": "tsc --noEmit",
+        "test": "vitest run"
+    },
+    "dependencies": {
+        "@libsql/client": "0.18.0",
+        "@sinclair/typebox": "^0.34.49",
+        "ws": "^8.21.1"
+    },
+    "devDependencies": {
+        "@types/node": "^24.0.10",
+        "@types/ws": "^8.18.1",
+        "tsx": "^4.23.0",
+        "typescript": "^5.8.3",
+        "vitest": "^3.2.4"
+    }
+}
