@@ -3,11 +3,28 @@ import { FormatRegistry, Type, type Static } from "@sinclair/typebox";
 
 FormatRegistry.Set("clip-ip-address", (value) => isIP(value) !== 0);
 export const ipAddressSchema = Type.String({ format: "clip-ip-address" });
+const nameSegments = new Intl.Segmenter("und", { granularity: "grapheme" });
+FormatRegistry.Set("clip-display-name", (value) => {
+    if (!/^[\p{L}\p{M}\p{N} .'’_-]+$/u.test(value) || /[\p{C}\p{Zl}\p{Zp}]/u.test(value))
+        return false;
+    const segments = [...nameSegments.segment(value)];
+    return (
+        segments.length >= 1 &&
+        segments.length <= 40 &&
+        segments.every(
+            ({ segment }) =>
+                !/^\p{M}/u.test(segment) && (segment.match(/\p{M}/gu)?.length ?? 0) <= 4,
+        )
+    );
+});
+export const displayNameSchema = Type.String({ format: "clip-display-name", maxLength: 256 });
+export const maxMembersSchema = Type.Integer({ minimum: 1, maximum: 20 });
 
 export const redeemSchema = Type.Object(
     {
         token: Type.String({ pattern: "^[A-Za-z0-9_-]{43}$" }),
         redeemNonce: Type.String({ pattern: "^[A-Za-z0-9_-]{43}$" }),
+        displayName: Type.String({ minLength: 1, maxLength: 256 }),
     },
     { additionalProperties: false },
 );

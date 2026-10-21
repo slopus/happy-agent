@@ -19,18 +19,18 @@ async function fixture() {
     const invite = await store.createInvite({
         botId: "a",
         botName: "A",
-        name: "Guest",
+        maxMembers: 1,
         expiresAt: Date.now() + 86_400_000,
         readOnly: false,
     });
-    await store.approve(invite.id);
+    await store.approve(invite.id, 1);
     return { store, invite, path };
 }
 
 describe("invitation credentials and isolated history", () => {
     it("bounds retained history without discarding accepted replies or breaking pagination", async () => {
         const { store, invite } = await fixture();
-        const session = await store.redeem(invite.token, nonce(), "a");
+        const session = await store.redeem(invite.token, nonce(), "a", "Guest");
         const start = Date.now();
         const clock = vi.spyOn(Date, "now");
         for (let index = 0; index < 100; index++) {
@@ -41,8 +41,8 @@ describe("invitation credentials and isolated history", () => {
             });
             await store.reply("a", {
                 seq: index + 1,
-                userId: invite.userId,
-                chatId: invite.userId,
+                userId: invite.userIds[0]!,
+                chatId: invite.userIds[0]!,
                 text: `Reply ${index}`,
             });
         }
@@ -77,20 +77,21 @@ describe("invitation credentials and isolated history", () => {
     it("atomically binds one redeem nonce, recovers a lost response, rotates the bearer, and revokes recovery", async () => {
         const { store, invite, path } = await fixture();
         const redeemNonce = nonce();
-        const first = await store.redeem(invite.token, redeemNonce, "a");
-        const recovered = await store.redeem(invite.token, redeemNonce, "a");
+        const first = await store.redeem(invite.token, redeemNonce, "a", "Guest");
+        const recovered = await store.redeem(invite.token, redeemNonce, "a", "Changed name");
         expect(recovered.sessionId).toBe(first.sessionId);
         expect(recovered.sessionToken).not.toBe(first.sessionToken);
         expect(recovered.expiresAt).toBe(first.expiresAt);
         await expect(
             store.authorize(first.sessionId, first.sessionToken, "a"),
         ).rejects.toMatchObject({ status: 404 });
-        await expect(store.redeem(invite.token, nonce(), "a")).rejects.toMatchObject({
-            status: 409,
+        await expect(store.redeem(invite.token, nonce(), "a", "Guest")).rejects.toMatchObject({
+            status: 410,
+            code: "invite_full",
         });
         await store.authorize(recovered.sessionId, recovered.sessionToken, "a");
         // Neither bearer nor invitation secret is in SQLite or its WAL.
-        for (const file of ["guests.sqlite", "guests.sqlite-wal"]) {
+        for (const file of ["guests-v2.sqlite", "guests-v2.sqlite-wal"]) {
             const data = await readFile(join(path, file)).catch(() => Buffer.alloc(0));
             for (const value of [
                 invite.token,
@@ -104,7 +105,7 @@ describe("invitation credentials and isolated history", () => {
         await expect(
             store.read(recovered.sessionId, recovered.sessionToken, "a", 0),
         ).rejects.toMatchObject({ status: 404 });
-        await expect(store.redeem(invite.token, redeemNonce, "a")).rejects.toMatchObject({
+        await expect(store.redeem(invite.token, redeemNonce, "a", "Guest")).rejects.toMatchObject({
             status: 404,
         });
     });
@@ -112,18 +113,21 @@ describe("invitation credentials and isolated history", () => {
     it("allows one winning person under concurrent redemption requests", async () => {
         const { store, invite } = await fixture();
         const results = await Promise.allSettled([
-            store.redeem(invite.token, nonce(), "a"),
-            store.redeem(invite.token, nonce(), "a"),
+            store.redeem(invite.token, nonce(), "a", "Guest"),
+            store.redeem(invite.token, nonce(), "a", "Guest"),
         ]);
         expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
         const failure = results.find((result) => result.status === "rejected");
-        expect(failure).toMatchObject({ status: "rejected", reason: { status: 409 } });
+        expect(failure).toMatchObject({
+            status: "rejected",
+            reason: { status: 410, code: "invite_full" },
+        });
     });
 
     it("keeps sessions independent of the redeem window and enforces session expiry on reads and queued delivery", async () => {
         const { store, invite } = await fixture();
         const start = Date.now();
-        const session = await store.redeem(invite.token, nonce(), "a");
+        const session = await store.redeem(invite.token, nonce(), "a", "Guest");
         await store.send(session.sessionId, session.sessionToken, "a", {
             localId: "one",
             text: "Hello",
@@ -131,7 +135,7 @@ describe("invitation credentials and isolated history", () => {
         vi.spyOn(Date, "now").mockReturnValue(start + 2 * 86_400_000);
         await store.authorize(session.sessionId, session.sessionToken, "a");
         expect(await store.pending("a")).toHaveLength(1);
-        await expect(store.redeem(invite.token, nonce(), "a")).rejects.toMatchObject({
+        await expect(store.redeem(invite.token, nonce(), "a", "Guest")).rejects.toMatchObject({
             status: 410,
         });
         vi.spyOn(Date, "now").mockReturnValue(session.expiresAt + 1);
@@ -152,13 +156,13 @@ describe("invitation credentials and isolated history", () => {
         const otherInvite = await store.createInvite({
             botId: "b",
             botName: "B",
-            name: "Other",
+            maxMembers: 1,
             expiresAt: Date.now() + 86_400_000,
             readOnly: false,
         });
-        await store.approve(otherInvite.id);
-        const a = await store.redeem(invite.token, nonce(), "a");
-        const b = await store.redeem(otherInvite.token, nonce(), "b");
+        await store.approve(otherInvite.id, 1);
+        const a = await store.redeem(invite.token, nonce(), "a", "Guest");
+        const b = await store.redeem(otherInvite.token, nonce(), "b", "Other");
         await expect(store.read(a.sessionId, b.sessionToken, "a", 0)).rejects.toMatchObject({
             status: 404,
         });
@@ -171,20 +175,29 @@ describe("invitation credentials and isolated history", () => {
         expect(await store.pending("a")).toHaveLength(1);
         await store.reply("b", {
             seq: 1,
-            userId: invite.userId,
-            chatId: invite.userId,
+            userId: invite.userIds[0]!,
+            chatId: invite.userIds[0]!,
             text: "Wrong bot",
         });
         await store.reply("a", {
             seq: 1,
-            userId: invite.userId,
-            chatId: otherInvite.userId,
+            userId: invite.userIds[0]!,
+            chatId: otherInvite.userIds[0]!,
             text: "Wrong chat",
         });
-        const reply = { seq: 1, userId: invite.userId, chatId: invite.userId, text: "For A" };
+        const reply = {
+            seq: 1,
+            userId: invite.userIds[0]!,
+            chatId: invite.userIds[0]!,
+            text: "For A",
+        };
         await store.reply("a", reply);
         await store.reply("a", reply);
-        await store.reply("b", { seq: 1, userId: otherInvite.userId, chatId: otherInvite.userId });
+        await store.reply("b", {
+            seq: 1,
+            userId: otherInvite.userIds[0]!,
+            chatId: otherInvite.userIds[0]!,
+        });
         expect(
             (await store.read(a.sessionId, a.sessionToken, "a", 0)).messages.map(
                 (message) => message.text,
@@ -206,19 +219,21 @@ describe("invitation credentials and isolated history", () => {
         const readonlyInvite = await store.createInvite({
             botId: "a",
             botName: "A",
-            name: "Reader",
+            maxMembers: 1,
             expiresAt: Date.now() + 86_400_000,
             readOnly: true,
         });
-        await expect(store.redeem(readonlyInvite.token, nonce(), "a")).rejects.toMatchObject({
+        await expect(
+            store.redeem(readonlyInvite.token, nonce(), "a", "Reader"),
+        ).rejects.toMatchObject({
             status: 503,
         });
-        await store.approve(readonlyInvite.id);
-        const reader = await store.redeem(readonlyInvite.token, nonce(), "a");
+        await store.approve(readonlyInvite.id, 1);
+        const reader = await store.redeem(readonlyInvite.token, nonce(), "a", "Reader");
         await expect(
             store.send(reader.sessionId, reader.sessionToken, "a", { localId: "one", text: "No" }),
         ).rejects.toMatchObject({ status: 403 });
-        const session = await store.redeem(invite.token, nonce(), "a");
+        const session = await store.redeem(invite.token, nonce(), "a", "Guest");
         for (let i = 0; i < 10; i++)
             await store.send(session.sessionId, session.sessionToken, "a", {
                 localId: String(i),
@@ -232,7 +247,7 @@ describe("invitation credentials and isolated history", () => {
         ).rejects.toMatchObject({ status: 429 });
         await store.abuse(session.sessionId, session.sessionToken, "a", "report");
         expect(await store.reports()).toEqual([
-            { inviteId: invite.id, reportedAt: expect.any(Number) },
+            { inviteId: invite.id, memberId: session.memberId, reportedAt: expect.any(Number) },
         ]);
         await store.abuse(session.sessionId, session.sessionToken, "a", "block");
         await expect(

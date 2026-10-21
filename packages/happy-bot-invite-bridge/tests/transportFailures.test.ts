@@ -25,6 +25,7 @@ async function fixture(options: { twoExports?: boolean; trustedProxyAddress?: st
         id?: string;
         seq?: number;
         userId?: string;
+        name?: string;
         chatId?: string;
         text?: string;
     }[] = [];
@@ -72,12 +73,12 @@ async function fixture(options: { twoExports?: boolean; trustedProxyAddress?: st
     const invite = await store.createInvite({
         botId: "a",
         botName: "A",
-        name: "Guest",
+        maxMembers: 1,
         expiresAt: Date.now() + 86_400_000,
         readOnly: false,
     });
-    await store.approve(invite.id);
-    const session = await store.redeem(invite.token, nonce(), "a");
+    await store.approve(invite.id, 1);
+    const session = await store.redeem(invite.token, nonce(), "a", "Zoë");
     const headers = {
         authorization: `Bearer ${session.sessionToken}`,
         ...(options.trustedProxyAddress === undefined ? {} : { "x-forwarded-for": "192.0.2.1" }),
@@ -120,7 +121,7 @@ describe("gateway failure boundaries", () => {
             .mockRejectedValueOnce(new Error("private SQL diagnostic"));
         const response = await fetch(`${test.origin}/v1/bot-invites/redeem`, {
             method: "POST",
-            body: JSON.stringify({ token: nonce(), redeemNonce: nonce() }),
+            body: JSON.stringify({ token: nonce(), redeemNonce: nonce(), displayName: "Guest" }),
         });
         expect(response.status).toBe(500);
         expect(await response.text()).not.toContain("private");
@@ -140,6 +141,7 @@ describe("gateway failure boundaries", () => {
             expect(test.frames.some((frame) => frame.type === "message")).toBe(true),
         );
         const message = test.frames.find((frame) => frame.type === "message")!;
+        expect(message.name).toBe("Zoë");
         const socket = [...test.sockets][0]!;
         socket.send(
             JSON.stringify({
@@ -159,8 +161,8 @@ describe("gateway failure boundaries", () => {
             JSON.stringify({
                 type: "reply",
                 seq: 1,
-                userId: test.invite.userId,
-                chatId: test.invite.userId,
+                userId: test.invite.userIds[0]!,
+                chatId: test.invite.userIds[0]!,
                 text: "X".repeat(31_949) + "😀" + "X".repeat(8_000),
                 attachments: [{ path: "/private/daemon/path" }],
             }),
@@ -186,8 +188,8 @@ describe("gateway failure boundaries", () => {
                 JSON.stringify({
                     type: "reply",
                     seq: 2,
-                    userId: test.invite.userId,
-                    chatId: test.invite.userId,
+                    userId: test.invite.userIds[0]!,
+                    chatId: test.invite.userIds[0]!,
                     text: "Once",
                 }),
             );
@@ -247,7 +249,11 @@ describe("gateway failure boundaries", () => {
             await fetch(`${test.origin}/v1/bot-invites/redeem`, {
                 method: "POST",
                 headers: { "x-forwarded-for": address },
-                body: JSON.stringify({ token: nonce(), redeemNonce: nonce() }),
+                body: JSON.stringify({
+                    token: nonce(),
+                    redeemNonce: nonce(),
+                    displayName: "Guest",
+                }),
             });
         for (let index = 0; index < 10; index++)
             expect((await redeem("192.0.2.1")).status).toBe(404);

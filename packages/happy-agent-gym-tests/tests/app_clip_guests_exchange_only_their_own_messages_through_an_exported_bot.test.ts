@@ -56,19 +56,19 @@ async function scenario(live: boolean) {
     const first = await store.createInvite({
         botId: firstBot.id,
         botName: firstBot.name,
-        name: "First guest",
+        maxMembers: 2,
         expiresAt: Date.now() + 86_400_000,
         readOnly: false,
     });
     const second = await store.createInvite({
         botId: secondBot.id,
         botName: secondBot.name,
-        name: "Second guest",
+        maxMembers: 1,
         expiresAt: Date.now() + 86_400_000,
         readOnly: false,
     });
     let calls = 0;
-    const exportBot = async (botId: string, userId: string) => {
+    const exportBot = async (botId: string, userIds: string[]) => {
         const callId = `clip_export_${++calls}`;
         commands.set(chief.agent.id, {
             content: [
@@ -80,14 +80,14 @@ async function scenario(live: boolean) {
                         botId,
                         service: "App Clip",
                         tokenFile: `clip-${calls}.token`,
-                        allowedUsers: [userId],
+                        allowedUsers: userIds,
                         unknownSenders: "ignore",
                     },
                 },
             ],
         });
         await gym.send(
-            `Export only the isolated test bot for guest ${userId}, request ${callId}.`,
+            `Export only the isolated test bot for guests ${userIds.join(", ")}, request ${callId}.`,
             { sessionId: chief.agent.id, permissionMode: "full_access" },
         );
         const result = await gym.waitUntil(
@@ -103,11 +103,11 @@ async function scenario(live: boolean) {
         };
     };
     const exports = [
-        await exportBot(firstBot.id, first.userId),
-        await exportBot(secondBot.id, second.userId),
+        await exportBot(firstBot.id, first.userIds),
+        await exportBot(secondBot.id, second.userIds),
     ];
-    await store.approve(first.id);
-    await store.approve(second.id);
+    await store.approve(first.id, 2);
+    await store.approve(second.id, 1);
     if (live) {
         await gym.send(
             "You are a disposable App Clip test bot. Answer guests concisely. Do not use any tools or access files. Reply exactly READY to this setup message.",
@@ -132,20 +132,29 @@ async function scenario(live: boolean) {
         () => ([...gateway.bridges.values()].every((bridge) => bridge.online) ? true : undefined),
         "both dedicated bridges online",
     );
-    const redeem = async (token: string) => {
+    const redeem = async (token: string, displayName = "Guest") => {
         const response = await fetch(`${origin}/v1/bot-invites/redeem`, {
             method: "POST",
-            body: JSON.stringify({ token, redeemNonce: nonce() }),
+            body: JSON.stringify({ token, redeemNonce: nonce(), displayName }),
         });
         expect(response.status).toBe(200);
         return (await response.json()) as {
             sessionId: string;
             sessionToken: string;
             botName: string;
+            memberId: string;
+            displayName: string;
         };
     };
-    const a = await redeem(first.token);
+    const a = await redeem(first.token, "Ada");
+    const c = await redeem(first.token, "Zoë");
     const b = await redeem(second.token);
+    const full = await fetch(`${origin}/v1/bot-invites/redeem`, {
+        method: "POST",
+        body: JSON.stringify({ token: first.token, redeemNonce: nonce(), displayName: "Third" }),
+    });
+    expect(full.status).toBe(410);
+    expect(await full.json()).toMatchObject({ code: "invite_full" });
     const url = (id: string) => `${origin}/v1/bot-guest/sessions/${id}/messages`;
     const headers = (token: string) => ({ authorization: `Bearer ${token}` });
     expect((await fetch(url(a.sessionId))).status).toBe(401);
@@ -170,17 +179,21 @@ async function scenario(live: boolean) {
     const readerInvite = await store.createInvite({
         botId: firstBot.id,
         botName: firstBot.name,
-        name: "Read only",
+        maxMembers: 1,
         expiresAt: Date.now() + 86_400_000,
         readOnly: true,
     });
     const pending = await fetch(`${origin}/v1/bot-invites/redeem`, {
         method: "POST",
-        body: JSON.stringify({ token: readerInvite.token, redeemNonce: nonce() }),
+        body: JSON.stringify({
+            token: readerInvite.token,
+            redeemNonce: nonce(),
+            displayName: "Reader",
+        }),
     });
     expect(pending.status).toBe(503);
     expect(pending.headers.get("retry-after")).toBe("1");
-    await store.approve(readerInvite.id);
+    await store.approve(readerInvite.id, 1);
     const reader = await redeem(readerInvite.token);
     expect(
         (
@@ -203,6 +216,7 @@ async function scenario(live: boolean) {
     expect((await send(a, input)).status).toBe(202);
     expect((await send(a, input)).status).toBe(202);
     expect((await send(b, "Second guest only")).status).toBe(202);
+    expect((await send(c, "Same invite second member")).status).toBe(202);
     const awaitReply = async (session: typeof a, description: string) => {
         let cursor: string | null = null;
         const messages: { role: string; text: string }[] = [];
@@ -232,11 +246,16 @@ async function scenario(live: boolean) {
         expect(aReply.messages.at(-1)?.text).toContain(input.match(/CLIP_LIVE_[A-Za-z0-9_-]+/)![0]);
     else expect(aReply.messages.at(-1)?.text).toBe(`Answering: ${input}`);
     const bReply = await awaitReply(b, "second export independently replies");
+    const cReply = await awaitReply(c, "another member of the same invite independently replies");
+    expect(JSON.stringify(cReply)).not.toContain(input);
     expect(JSON.stringify(bReply)).not.toContain(input);
     expect((await fetch(url(a.sessionId), { headers: headers(b.sessionToken) })).status).toBe(404);
     const children = (await gym.client.getAgentActivity(firstBot.agent.id)).subagents;
-    expect(children).toHaveLength(1);
-    const guestHistory = await gym.client.getMessages(children[0]!.id);
+    expect(children).toHaveLength(2);
+    const ada = children.find((child) => child.title === "Ada on App Clip");
+    expect(ada).toBeDefined();
+    expect(children.some((child) => child.title === "Zoë on App Clip")).toBe(true);
+    const guestHistory = await gym.client.getMessages(ada!.id);
     const guestMessages = guestHistory.runs
         .flatMap((run) => run.messages)
         .filter((message) => message.role === "user");
@@ -256,10 +275,11 @@ async function scenario(live: boolean) {
         headers: headers(a.sessionToken),
     });
     await requestStarted;
-    await store.revoke(first.id);
+    await store.revokeMember(first.id, a.memberId);
     expect((await waitingResponse).status).toBe(404);
     expect((await fetch(url(a.sessionId), { headers: headers(a.sessionToken) })).status).toBe(404);
     expect((await send(a, "No longer allowed")).status).toBe(404);
+    expect((await fetch(url(c.sessionId), { headers: headers(c.sessionToken) })).status).toBe(200);
     const reported = await fetch(`${origin}/v1/bot-guest/sessions/${b.sessionId}/report`, {
         method: "POST",
         headers: headers(b.sessionToken),
@@ -267,7 +287,7 @@ async function scenario(live: boolean) {
     });
     expect(reported.status).toBe(200);
     expect(await store.reports()).toEqual([
-        { inviteId: second.id, reportedAt: expect.any(Number) },
+        { inviteId: second.id, memberId: b.memberId, reportedAt: expect.any(Number) },
     ]);
     const blocked = await fetch(`${origin}/v1/bot-guest/sessions/${b.sessionId}/block`, {
         method: "POST",
@@ -280,7 +300,7 @@ async function scenario(live: boolean) {
     for (let i = 0; i < 11; i++) {
         const response = await fetch(`${origin}/v1/bot-invites/redeem`, {
             method: "POST",
-            body: JSON.stringify({ token: nonce(), redeemNonce: nonce() }),
+            body: JSON.stringify({ token: nonce(), redeemNonce: nonce(), displayName: "Guest" }),
         });
         if (response.status === 429) {
             rateLimited = response;

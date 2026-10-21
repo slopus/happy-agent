@@ -2,8 +2,9 @@ import { createHash, randomBytes } from "node:crypto";
 import { chmod, mkdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { createClient, type Client, type InStatement, type Row } from "@libsql/client";
-import { HttpError, type Send } from "../contracts.js";
+import { createClient, type Client, type Row } from "@libsql/client";
+import { Value } from "@sinclair/typebox/value";
+import { displayNameSchema, HttpError, maxMembersSchema, type Send } from "../contracts.js";
 
 const secret = () => randomBytes(32).toString("base64url");
 const digest = (token: string) => createHash("sha256").update(token).digest("hex");
@@ -15,7 +16,7 @@ export type GuestMessage = {
 };
 export type PendingMessage = { id: string; userId: string; text: string; name: string };
 
-/** Owns the gateway's private SQLite state; never opens a daemon database. */
+/** Generation 2 owns an invitation's fixed seat pool and each member's private history. */
 export class GuestStore {
     private tail: Promise<unknown> = Promise.resolve();
     private waiting = 0;
@@ -25,24 +26,28 @@ export class GuestStore {
         const path = resolve(directory);
         await mkdir(path, { recursive: true, mode: 0o700 });
         await chmod(path, 0o700);
-        const db = createClient({ url: pathToFileURL(join(path, "guests.sqlite")).href });
-        await db.execute("PRAGMA journal_mode=WAL");
+        const file = join(path, "guests-v2.sqlite");
+        const db = createClient({ url: pathToFileURL(file).href });
         await db.execute("PRAGMA busy_timeout=5000");
+        await db.execute("PRAGMA journal_mode=WAL");
         await db.execute(`CREATE TABLE IF NOT EXISTS invites (
-            id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE, user_id TEXT NOT NULL UNIQUE,
-            bot_id TEXT NOT NULL, bot_name TEXT NOT NULL, name TEXT NOT NULL,
+            id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE, bot_id TEXT NOT NULL, bot_name TEXT NOT NULL,
             expires_at INTEGER NOT NULL, read_only INTEGER NOT NULL, revoked INTEGER NOT NULL DEFAULT 0,
-            session_id TEXT UNIQUE, session_hash TEXT UNIQUE, redeem_nonce_hash TEXT, redeemed_at INTEGER, session_expires_at INTEGER,
-            blocked INTEGER NOT NULL DEFAULT 0, reported_at INTEGER, approved INTEGER NOT NULL DEFAULT 0)`);
+            approved INTEGER NOT NULL DEFAULT 0, max_members INTEGER NOT NULL, used INTEGER NOT NULL DEFAULT 0)`);
+        await db.execute(`CREATE TABLE IF NOT EXISTS members (
+            id TEXT PRIMARY KEY, invite_id TEXT NOT NULL, user_id TEXT NOT NULL UNIQUE, bot_id TEXT NOT NULL,
+            name TEXT, session_id TEXT UNIQUE, session_hash TEXT UNIQUE, nonce_hash TEXT,
+            joined_at INTEGER, last_active INTEGER, session_expires_at INTEGER, read_only INTEGER NOT NULL,
+            revoked INTEGER NOT NULL DEFAULT 0, blocked INTEGER NOT NULL DEFAULT 0, reported_at INTEGER,
+            UNIQUE(invite_id,nonce_hash))`);
         await db.execute(`CREATE TABLE IF NOT EXISTS messages (
-            cursor INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE,
-            invite_id TEXT NOT NULL, role TEXT NOT NULL, text TEXT NOT NULL,
-            created_at INTEGER NOT NULL, local_id TEXT, delivery TEXT NOT NULL,
-            UNIQUE(invite_id, local_id))`);
+            cursor INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, member_id TEXT NOT NULL,
+            role TEXT NOT NULL, text TEXT NOT NULL, created_at INTEGER NOT NULL, local_id TEXT,
+            delivery TEXT NOT NULL, UNIQUE(member_id,local_id))`);
         await db.execute(
-            "CREATE INDEX IF NOT EXISTS messages_guest ON messages(invite_id, cursor)",
+            "CREATE INDEX IF NOT EXISTS messages_member ON messages(member_id,cursor)",
         );
-        await chmod(join(path, "guests.sqlite"), 0o600);
+        await chmod(file, 0o600);
         return new GuestStore(db);
     }
 
@@ -66,47 +71,56 @@ export class GuestStore {
     async createInvite(options: {
         botId: string;
         botName: string;
-        name: string;
+        maxMembers: number;
         expiresAt: number;
         readOnly: boolean;
-    }): Promise<{ id: string; userId: string; token: string }> {
+    }): Promise<{ id: string; userIds: string[]; token: string }> {
+        if (!Value.Check(maxMembersSchema, options.maxMembers))
+            throw new Error("Choose between one and twenty members.");
         return await this.locked(async () => {
             const now = Date.now();
             if (options.expiresAt <= now || options.expiresAt > now + 86_400_000)
                 throw new Error("Invitation lifetime must be between one second and 24 hours.");
             const token = secret();
             const id = secret();
-            const userId = `clip_${secret()}`;
+            const userIds = Array.from({ length: options.maxMembers }, () => `clip_${secret()}`);
             const tx = await this.db.transaction("write");
             try {
+                // Prune the whole invitation only after every possible member session expired.
+                const cutoff = now - 31 * 86_400_000;
                 await tx.execute({
-                    sql: "DELETE FROM messages WHERE invite_id IN (SELECT id FROM invites WHERE COALESCE(session_expires_at,expires_at) < ?)",
-                    args: [now - 86_400_000],
+                    sql: "DELETE FROM messages WHERE member_id IN (SELECT m.id FROM members m JOIN invites i ON i.id=m.invite_id WHERE i.expires_at<?)",
+                    args: [cutoff],
                 });
                 await tx.execute({
-                    sql: "DELETE FROM invites WHERE COALESCE(session_expires_at,expires_at) < ?",
-                    args: [now - 86_400_000],
+                    sql: "DELETE FROM members WHERE invite_id IN (SELECT id FROM invites WHERE expires_at<?)",
+                    args: [cutoff],
                 });
-                const count = await tx.execute("SELECT count(*) AS count FROM invites");
-                if (Number(count.rows[0]?.["count"]) >= 100)
+                await tx.execute({ sql: "DELETE FROM invites WHERE expires_at<?", args: [cutoff] });
+                const count = await tx.execute("SELECT count(*) AS count FROM members");
+                if (Number(count.rows[0]?.["count"]) + options.maxMembers > 100)
                     throw new Error(
-                        "Invitation limit reached. Wait for expired invitations to be removed.",
+                        "The gateway's 100-member limit is reached. Wait for expired invitations to be removed.",
                     );
                 await tx.execute({
-                    sql: "INSERT INTO invites(id,token_hash,user_id,bot_id,bot_name,name,expires_at,read_only) VALUES(?,?,?,?,?,?,?,?)",
+                    sql: "INSERT INTO invites(id,token_hash,bot_id,bot_name,expires_at,read_only,max_members) VALUES(?,?,?,?,?,?,?)",
                     args: [
                         id,
                         digest(token),
-                        userId,
                         options.botId,
                         options.botName,
-                        options.name,
                         options.expiresAt,
                         options.readOnly ? 1 : 0,
+                        options.maxMembers,
                     ],
                 });
+                for (const userId of userIds)
+                    await tx.execute({
+                        sql: "INSERT INTO members(id,invite_id,user_id,bot_id,read_only) VALUES(?,?,?,?,?)",
+                        args: [secret(), id, userId, options.botId, options.readOnly ? 1 : 0],
+                    });
                 await tx.commit();
-                return { id, userId, token };
+                return { id, userIds, token };
             } finally {
                 await tx.close();
             }
@@ -117,9 +131,12 @@ export class GuestStore {
         token: string,
         nonce: string,
         botId: string,
+        suppliedName: string,
     ): Promise<{
         sessionId: string;
         sessionToken: string;
+        memberId: string;
+        displayName: string;
         botName: string;
         expiresAt: number;
         readOnly: boolean;
@@ -137,37 +154,85 @@ export class GuestStore {
                         503,
                         "The owner is still preparing this invitation. Try again shortly.",
                     );
-                if (invite["session_id"] !== null && invite["redeem_nonce_hash"] !== digest(nonce))
-                    throw new HttpError(
-                        409,
-                        "This invitation has already been used. Ask the owner for a new link.",
-                    );
-                if (invite["session_id"] !== null) this.requireActive(invite, true);
-                const sessionId =
-                    invite["session_id"] === null ? secret() : String(invite["session_id"]);
-                const sessionToken = secret();
-                const expiresAt =
-                    invite["session_id"] === null
-                        ? Date.now() + 30 * 86_400_000
-                        : Number(invite["session_expires_at"]);
-                await tx.execute({
-                    sql: "UPDATE invites SET session_id=?,session_hash=?,redeem_nonce_hash=?,redeemed_at=COALESCE(redeemed_at,?),session_expires_at=? WHERE id=?",
-                    args: [
-                        sessionId,
-                        digest(sessionToken),
-                        digest(nonce),
-                        Date.now(),
-                        expiresAt,
-                        String(invite["id"]),
-                    ],
+                const inviteId = String(invite["id"]);
+                const nonceHash = digest(nonce);
+                const existing = await tx.execute({
+                    sql: "SELECT * FROM members WHERE invite_id=? AND nonce_hash=?",
+                    args: [inviteId, nonceHash],
                 });
+                const sessionToken = secret();
+                let member: Row;
+                if (existing.rows[0] !== undefined) {
+                    member = this.requireActive(existing.rows[0], true);
+                    await tx.execute({
+                        sql: "UPDATE members SET session_hash=?,last_active=? WHERE id=?",
+                        args: [digest(sessionToken), Date.now(), String(member["id"])],
+                    });
+                } else {
+                    // Only a new claim accepts a name. Recovery ignores supplied display data.
+                    // Reject invisible/control data before whitespace normalization hides it.
+                    const normalized = suppliedName.normalize("NFC");
+                    const displayName = normalized.replace(/\s+/gu, " ").trim();
+                    if (
+                        /[\p{C}\p{Zl}\p{Zp}]/u.test(normalized) ||
+                        !Value.Check(displayNameSchema, displayName)
+                    )
+                        throw new HttpError(
+                            400,
+                            "Enter a name of 1–40 characters using letters, numbers, spaces, or simple name punctuation.",
+                            "invalid_name",
+                        );
+                    if (Number(invite["used"]) >= Number(invite["max_members"]))
+                        throw new HttpError(410, "This invite is full.", "invite_full");
+                    const recent = await tx.execute({
+                        sql: "SELECT count(*) AS count FROM members WHERE invite_id=? AND joined_at>?",
+                        args: [inviteId, Date.now() - 60_000],
+                    });
+                    if (Number(recent.rows[0]?.["count"]) >= Number(invite["max_members"]))
+                        throw new HttpError(
+                            429,
+                            "Please wait a minute before joining this invitation.",
+                            "rate_limited",
+                        );
+                    // A revoked/expired member's seat is never available again.
+                    const claimed = await tx.execute({
+                        sql: `UPDATE members SET name=?,nonce_hash=?,session_id=?,session_hash=?,joined_at=?,last_active=?,session_expires_at=?
+                            WHERE id=(SELECT id FROM members WHERE invite_id=? AND joined_at IS NULL AND revoked=0 AND blocked=0 ORDER BY id LIMIT 1)
+                            AND joined_at IS NULL AND revoked=0
+                            AND EXISTS(SELECT 1 FROM invites WHERE id=? AND used<max_members)`,
+                        args: [
+                            displayName,
+                            nonceHash,
+                            secret(),
+                            digest(sessionToken),
+                            Date.now(),
+                            Date.now(),
+                            Date.now() + 30 * 86_400_000,
+                            inviteId,
+                            inviteId,
+                        ],
+                    });
+                    if (claimed.rowsAffected !== 1)
+                        throw new HttpError(410, "This invite is full.", "invite_full");
+                    await tx.execute({
+                        sql: "UPDATE invites SET used=used+1 WHERE id=? AND used<max_members",
+                        args: [inviteId],
+                    });
+                    const fresh = await tx.execute({
+                        sql: "SELECT * FROM members WHERE invite_id=? AND nonce_hash=?",
+                        args: [inviteId, nonceHash],
+                    });
+                    member = this.requireActive(fresh.rows[0], true);
+                }
                 await tx.commit();
                 return {
-                    sessionId,
+                    sessionId: String(member["session_id"]),
                     sessionToken,
+                    memberId: String(member["id"]),
+                    displayName: String(member["name"]),
                     botName: String(invite["bot_name"]),
-                    expiresAt,
-                    readOnly: invite["read_only"] === 1,
+                    expiresAt: Number(member["session_expires_at"]),
+                    readOnly: member["read_only"] === 1,
                 };
             } finally {
                 await tx.close();
@@ -176,16 +241,21 @@ export class GuestStore {
     }
 
     private requireActive(row: Row | undefined, session = false): Row {
-        if (row === undefined || row["revoked"] === 1 || row["blocked"] === 1)
+        if (
+            row === undefined ||
+            row["revoked"] === 1 ||
+            row["blocked"] === 1 ||
+            row["invite_revoked"] === 1
+        )
             throw new HttpError(404, "This conversation is no longer available.");
         if (Number(row[session ? "session_expires_at" : "expires_at"]) <= Date.now())
-            throw new HttpError(410, "This invitation has expired.");
+            throw new HttpError(410, "This invitation has expired.", "expired");
         return row;
     }
 
     private async querySession(sessionId: string, token: string, botId: string): Promise<Row> {
         const result = await this.db.execute({
-            sql: "SELECT * FROM invites WHERE session_id=? AND session_hash=? AND bot_id=?",
+            sql: "SELECT m.*,i.revoked AS invite_revoked FROM members m JOIN invites i ON i.id=m.invite_id WHERE m.session_id=? AND m.session_hash=? AND m.bot_id=?",
             args: [sessionId, digest(token), botId],
         });
         return this.requireActive(result.rows[0], true);
@@ -204,7 +274,7 @@ export class GuestStore {
     async querySessionBot(sessionId: string, token: string): Promise<string> {
         return await this.locked(async () => {
             const result = await this.db.execute({
-                sql: "SELECT * FROM invites WHERE session_id=? AND session_hash=?",
+                sql: "SELECT m.*,i.revoked AS invite_revoked FROM members m JOIN invites i ON i.id=m.invite_id WHERE m.session_id=? AND m.session_hash=?",
                 args: [sessionId, digest(token)],
             });
             return String(this.requireActive(result.rows[0], true)["bot_id"]);
@@ -224,10 +294,14 @@ export class GuestStore {
         after: number,
     ): Promise<{ messages: GuestMessage[]; cursor: string | null }> {
         return await this.locked(async () => {
-            const invite = await this.querySession(sessionId, token, botId);
+            const member = await this.querySession(sessionId, token, botId);
             const result = await this.db.execute({
-                sql: "SELECT cursor,id,role,text,created_at FROM messages WHERE invite_id=? AND cursor>? ORDER BY cursor LIMIT 100",
-                args: [String(invite["id"]), after],
+                sql: "SELECT cursor,id,role,text,created_at FROM messages WHERE member_id=? AND cursor>? ORDER BY cursor LIMIT 100",
+                args: [String(member["id"]), after],
+            });
+            await this.db.execute({
+                sql: "UPDATE members SET last_active=? WHERE id=?",
+                args: [Date.now(), String(member["id"])],
             });
             return {
                 messages: result.rows.map((row) => ({
@@ -251,16 +325,16 @@ export class GuestStore {
             const tx = await this.db.transaction("write");
             try {
                 const found = await tx.execute({
-                    sql: "SELECT * FROM invites WHERE session_id=? AND session_hash=? AND bot_id=?",
+                    sql: "SELECT m.*,i.revoked AS invite_revoked FROM members m JOIN invites i ON i.id=m.invite_id WHERE m.session_id=? AND m.session_hash=? AND m.bot_id=?",
                     args: [sessionId, digest(token), botId],
                 });
-                const invite = this.requireActive(found.rows[0], true);
-                if (invite["read_only"] === 1)
+                const member = this.requireActive(found.rows[0], true);
+                if (member["read_only"] === 1)
                     throw new HttpError(403, "This conversation is read only.");
-                const inviteId = String(invite["id"]);
+                const memberId = String(member["id"]);
                 const duplicate = await tx.execute({
-                    sql: "SELECT text FROM messages WHERE invite_id=? AND local_id=?",
-                    args: [inviteId, message.localId],
+                    sql: "SELECT text FROM messages WHERE member_id=? AND local_id=?",
+                    args: [memberId, message.localId],
                 });
                 if (duplicate.rows.length > 0) {
                     if (duplicate.rows[0]!["text"] !== message.text)
@@ -268,8 +342,8 @@ export class GuestStore {
                     return;
                 }
                 const count = await tx.execute({
-                    sql: "SELECT count(*) AS count, sum(CASE WHEN role='user' THEN 1 ELSE 0 END) AS user_count, sum(CASE WHEN created_at > ? AND role='user' THEN 1 ELSE 0 END) AS recent FROM messages WHERE invite_id=?",
-                    args: [Date.now() - 60_000, inviteId],
+                    sql: "SELECT count(*) AS count,sum(CASE WHEN role='user' THEN 1 ELSE 0 END) AS user_count,sum(CASE WHEN created_at>? AND role='user' THEN 1 ELSE 0 END) AS recent FROM messages WHERE member_id=?",
+                    args: [Date.now() - 60_000, memberId],
                 });
                 if (
                     Number(count.rows[0]?.["count"]) >= 200 ||
@@ -283,8 +357,12 @@ export class GuestStore {
                 if (Number(count.rows[0]?.["recent"]) >= 10)
                     throw new HttpError(429, "Please wait a minute before sending more messages.");
                 await tx.execute({
-                    sql: "INSERT INTO messages(id,invite_id,role,text,created_at,local_id,delivery) VALUES(?,?,'user',?,?,?,'pending')",
-                    args: [secret(), inviteId, message.text, Date.now(), message.localId],
+                    sql: "INSERT INTO messages(id,member_id,role,text,created_at,local_id,delivery) VALUES(?,?,'user',?,?,?,'pending')",
+                    args: [secret(), memberId, message.text, Date.now(), message.localId],
+                });
+                await tx.execute({
+                    sql: "UPDATE members SET last_active=? WHERE id=?",
+                    args: [Date.now(), memberId],
                 });
                 await tx.commit();
             } finally {
@@ -296,7 +374,7 @@ export class GuestStore {
     async pending(botId: string): Promise<PendingMessage[]> {
         return await this.locked(async () => {
             const result = await this.db.execute({
-                sql: "SELECT m.id,m.text,i.user_id,i.name FROM messages m JOIN invites i ON m.invite_id=i.id WHERE m.delivery='pending' AND i.bot_id=? AND i.revoked=0 AND i.blocked=0 AND i.read_only=0 AND i.session_expires_at>? ORDER BY m.cursor LIMIT 32",
+                sql: "SELECT h.id,h.text,m.user_id,m.name FROM messages h JOIN members m ON h.member_id=m.id JOIN invites i ON i.id=m.invite_id WHERE h.delivery='pending' AND m.bot_id=? AND i.revoked=0 AND m.revoked=0 AND m.blocked=0 AND m.read_only=0 AND m.session_expires_at>? ORDER BY h.cursor LIMIT 32",
                 args: [botId, Date.now()],
             });
             return result.rows.map((row) => ({
@@ -322,11 +400,11 @@ export class GuestStore {
             const tx = await this.db.transaction("write");
             try {
                 await tx.execute({
-                    sql: `INSERT OR IGNORE INTO messages(id,invite_id,role,text,created_at,delivery)
-                    SELECT ?,m.invite_id,'assistant','This message could not be delivered.',?,'acked'
-                    FROM messages m JOIN invites i ON i.id=m.invite_id WHERE m.id=? AND m.role='user'
-                    AND i.revoked=0 AND i.blocked=0 AND i.session_expires_at>?
-                    AND (SELECT count(*) FROM messages history WHERE history.invite_id=i.id)<200`,
+                    sql: `INSERT OR IGNORE INTO messages(id,member_id,role,text,created_at,delivery)
+                    SELECT ?,h.member_id,'assistant','This message could not be delivered.',?,'acked'
+                    FROM messages h JOIN members m ON m.id=h.member_id JOIN invites i ON i.id=m.invite_id
+                    WHERE h.id=? AND h.role='user' AND i.revoked=0 AND m.revoked=0 AND m.blocked=0 AND m.session_expires_at>?
+                    AND (SELECT count(*) FROM messages history WHERE history.member_id=m.id)<200`,
                     args: [`reject_${id}`, Date.now(), id, Date.now()],
                 });
                 await tx.execute({
@@ -346,13 +424,11 @@ export class GuestStore {
     ): Promise<void> {
         await this.locked(async () => {
             if (frame.userId !== frame.chatId) return;
-            // A conditional insert makes revocation and reply delivery one SQLite boundary.
             await this.db.execute({
-                sql: `INSERT OR IGNORE INTO messages(id,invite_id,role,text,created_at,delivery)
-                    SELECT ?,i.id,'assistant',?,?,'acked' FROM invites i
-                    WHERE i.user_id=? AND i.bot_id=? AND i.session_id IS NOT NULL
-                    AND i.revoked=0 AND i.blocked=0 AND i.session_expires_at>?
-                    AND (SELECT count(*) FROM messages m WHERE m.invite_id=i.id)<200`,
+                sql: `INSERT OR IGNORE INTO messages(id,member_id,role,text,created_at,delivery)
+                SELECT ?,m.id,'assistant',?,?,'acked' FROM members m JOIN invites i ON i.id=m.invite_id
+                WHERE m.user_id=? AND m.bot_id=? AND m.session_id IS NOT NULL AND i.revoked=0 AND m.revoked=0 AND m.blocked=0 AND m.session_expires_at>?
+                AND (SELECT count(*) FROM messages h WHERE h.member_id=m.id)<200`,
                 args: [
                     `reply_${frame.userId}_${frame.seq}`,
                     frame.text === undefined
@@ -377,13 +453,63 @@ export class GuestStore {
             });
         });
     }
-
-    async approve(inviteId: string): Promise<void> {
+    async revokeMember(inviteId: string, memberId: string): Promise<void> {
         await this.locked(async () => {
             await this.db.execute({
-                sql: "UPDATE invites SET approved=1 WHERE id=? AND revoked=0",
+                sql: "UPDATE members SET revoked=1 WHERE invite_id=? AND id=?",
+                args: [inviteId, memberId],
+            });
+        });
+    }
+    async approve(inviteId: string, count: number): Promise<void> {
+        await this.locked(async () => {
+            const result = await this.db.execute({
+                sql: "UPDATE invites SET approved=1 WHERE id=? AND revoked=0 AND max_members=?",
+                args: [inviteId, count],
+            });
+            if (result.rowsAffected !== 1)
+                throw new Error(
+                    "The invitation member count does not match. Verify every seat on the daemon allowlist first.",
+                );
+        });
+    }
+
+    async listMembers(inviteId: string): Promise<{
+        used: number;
+        maxMembers: number;
+        members: {
+            memberId: string;
+            userId: string;
+            displayName: string;
+            joinedAt: number;
+            lastActive: number;
+            revoked: boolean;
+        }[];
+    }> {
+        return await this.locked(async () => {
+            const invite = (
+                await this.db.execute({
+                    sql: "SELECT used,max_members FROM invites WHERE id=?",
+                    args: [inviteId],
+                })
+            ).rows[0];
+            if (invite === undefined) throw new Error("Invitation not found.");
+            const rows = await this.db.execute({
+                sql: "SELECT * FROM members WHERE invite_id=? AND joined_at IS NOT NULL ORDER BY joined_at,id",
                 args: [inviteId],
             });
+            return {
+                used: Number(invite["used"]),
+                maxMembers: Number(invite["max_members"]),
+                members: rows.rows.map((row) => ({
+                    memberId: String(row["id"]),
+                    userId: String(row["user_id"]),
+                    displayName: String(row["name"]),
+                    joinedAt: Number(row["joined_at"]),
+                    lastActive: Number(row["last_active"]),
+                    revoked: row["revoked"] === 1 || row["blocked"] === 1,
+                })),
+            };
         });
     }
 
@@ -394,28 +520,28 @@ export class GuestStore {
         action: "block" | "report",
     ): Promise<void> {
         await this.locked(async () => {
-            const invite = await this.querySession(sessionId, token, botId);
-            const statement: InStatement =
+            const member = await this.querySession(sessionId, token, botId);
+            await this.db.execute(
                 action === "block"
                     ? {
-                          sql: "UPDATE invites SET blocked=1 WHERE id=?",
-                          args: [String(invite["id"])],
+                          sql: "UPDATE members SET blocked=1 WHERE id=?",
+                          args: [String(member["id"])],
                       }
                     : {
-                          sql: "UPDATE invites SET reported_at=? WHERE id=?",
-                          args: [Date.now(), String(invite["id"])],
-                      };
-            await this.db.execute(statement);
+                          sql: "UPDATE members SET reported_at=? WHERE id=?",
+                          args: [Date.now(), String(member["id"])],
+                      },
+            );
         });
     }
-
-    async reports(): Promise<{ inviteId: string; reportedAt: number }[]> {
+    async reports(): Promise<{ inviteId: string; memberId: string; reportedAt: number }[]> {
         return await this.locked(async () => {
             const result = await this.db.execute(
-                "SELECT id,reported_at FROM invites WHERE reported_at IS NOT NULL ORDER BY reported_at DESC LIMIT 100",
+                "SELECT invite_id,id,reported_at FROM members WHERE reported_at IS NOT NULL ORDER BY reported_at DESC LIMIT 100",
             );
             return result.rows.map((row) => ({
-                inviteId: String(row["id"]),
+                inviteId: String(row["invite_id"]),
+                memberId: String(row["id"]),
                 reportedAt: Number(row["reported_at"]),
             }));
         });

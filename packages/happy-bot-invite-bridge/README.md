@@ -28,25 +28,35 @@ it never prints invitation or bridge credentials. The registry contains file pat
 2. Create an invitation:
 
     ```sh
-    pnpm --filter @slopus/happy-bot-invite-bridge start invite /private/state BOT_ID 'Bot name' /private/invite.json https://app.happy.engineering 'Guest name'
+    pnpm --filter @slopus/happy-bot-invite-bridge start invite /private/state BOT_ID 'Bot name' /private/invite.json https://app.happy.engineering 2
     ```
 
-    The private file contains the invitation URL, invitation ID, and assigned bridge user ID.
-    The link can be redeemed for 24 hours. One invitation admits **one guest only**; generate a
-    new invitation for another person. Add `read-only` as the last argument for a read-only session.
+    Choose 1–20 members. The private file contains the opaque invitation URL, invitation ID,
+    `maxMembers`, and all pre-generated bridge `userIds`. The CLI also prints these IDs as one
+    JSON block. The URL contains no capacity, bot, or guest identifiers. The link can be redeemed
+    for 24 hours. Each new person enters their name and claims a distinct seat, guest ID, and
+    private session. Anyone holding this shareable link can take a seat until all N are gone;
+    treat it as an invitation to N otherwise unknown people. Keep the existing optional
+    `read-only` last argument only when deliberately creating that kind of session.
 
-3. **Before sharing**, owner authorization must allow this bridge user ID. Call
-   `get_exported_bot_status`, read the full current `allowedUsers`, append the generated ID,
-   then call `set_bridge_exported_bot` with that complete list. Serialize these owner operations;
+3. **Before sharing**, owner authorization must allow every seat ID. Call
+   `get_exported_bot_status`, read the full current `allowedUsers`, append all N generated IDs,
+   then call `set_bridge_exported_bot` once with that complete list. The daemon allowlist has
+   a hard limit of 256 IDs (`MAX_EXPORTED_BOT_ALLOWED_USERS`); check that the addition fits.
+   Re-read `get_exported_bot_status` and verify all N IDs before enabling the invitation.
+   Serialize these owner operations;
    the replace-list tool has no compare-and-swap and concurrent editors can overwrite additions.
    The public gateway has no owner credential or enrollment capability. If approval is omitted,
    the gateway refuses redemption with 503. After the allowlist update succeeds, enable the link:
 
     ```sh
-    pnpm --filter @slopus/happy-bot-invite-bridge start mark-approved /private/state INVITATION_ID
+    pnpm --filter @slopus/happy-bot-invite-bridge start mark-approved /private/state INVITATION_ID --count 2
     ```
 
-    Run this owner-only local step only after verifying the generated ID on the export's allowlist.
+    Run this owner-only local step only after verifying all generated IDs on the export's allowlist.
+    The supplied count must match the invitation's pool. Never approve each seat through separate
+    replace-list calls. Unclaimed IDs remain on the allowlist until the owner prunes them; only
+    this trusted gateway holds the credential that can use them.
     Removing it later from the daemon allowlist should be paired with gateway revocation; the
     gateway cannot inspect the daemon's owner-only configuration. An `ask` export may return the
     daemon's fixed access-request notice if the owner makes these settings inconsistent.
@@ -87,18 +97,36 @@ Do not expose the daemon socket, owner API, or registry through that proxy.
 
 ## Client contract
 
-`POST /v1/bot-invites/redeem` accepts `{token, redeemNonce}`. Both values are base64url strings of
+`POST /v1/bot-invites/redeem` accepts `{token, redeemNonce, displayName}`. Token and nonce are base64url strings of
 43 characters representing independent 32-byte random values. The client persists its nonce
 before sending the request. A successful response is
-`{sessionId, sessionToken, botName, expiresAt, readOnly}`; `expiresAt` is Unix milliseconds.
+`{sessionId, sessionToken, memberId, displayName, botName, expiresAt, readOnly}`; `expiresAt` is Unix milliseconds.
 The session lasts 30 days from first redemption unless the owner revokes it or the guest leaves.
 Its expiry does not extend on retry. This is independent of the invitation's 24-hour redeem window.
 
 A retry with the same token and nonce recovers the same session ID and rotates the session bearer,
-invalidating the previous bearer. A different nonce receives 409. Never redeem one link concurrently.
+invalidating the previous bearer. Recovery keeps the original display name, consumes no seat,
+and works even when the pool is full. Another nonce atomically claims the next unused seat;
+an exhausted pool returns 410 `{code:"invite_full",error:"This invite is full."}` without counts,
+names, or member IDs. Never concurrently recover the same member nonce.
 Persist the returned session bearer in the keychain before discarding the pending nonce. There is
 no periodic bearer refresh: the session remains valid through its stated expiry, with owner revoke
 available throughout. A lost keychain requires a new owner invitation.
+
+Names are self-asserted and unverified: someone can call themselves "Kirill". They never select
+routing, credentials, keys, or paths. The server normalizes NFC, rejects Unicode control,
+format, private-use, unassigned, surrogate, line, and paragraph separator characters, collapses
+ordinary whitespace and trims. Names must contain 1–40 grapheme clusters of letters, marks,
+numbers, spaces, `.`, `'`, `’`, `-`, or `_`, with no leading combining mark and at most four
+marks per grapheme. A rejected name returns 400 `code:"invalid_name"` before any seat is claimed;
+the client can correct it and resubmit the same nonce. The first accepted name is immutable.
+
+The bridge sends this name in the existing frame's `name` field. The unchanged daemon uses it
+for `Team.createGuest`, the subtask title `<name> on App Clip`, owner-facing export status, and
+the exported-bot conversation instruction wrapper. That wrapper immediately says this is an
+outside guest, never the owner or a team member, and never owner authorization. Messages retain
+guest origin and Auto permissions. Preapproved seats do not trigger stranger-access notices to
+the Chief of Staff. Name validation prevents control, tag, bidi, or markup framing in that wrapper.
 
 All session routes require `Authorization: Bearer <sessionToken>`. Each request checks the bound
 session, bot, expiry, revocation, and block state. The bearer opens only these routes, not the
@@ -116,7 +144,7 @@ daemon API. Credentials and invitation tokens are stored only as SHA-256 hashes 
   text receives 409. Sends remain queued while the bot is offline. A daemon terminal rejection
   is not retried and produces a fixed delivery-failed notice. An accepted send does not promise
   that inference will succeed.
-- `POST /v1/bot-guest/sessions/:id/report` with `{}` records the timestamp and invitation ID
+- `POST /v1/bot-guest/sessions/:id/report` with `{}` records the timestamp, invitation and member IDs
   for owner inspection. It does not send report content to inference.
 - `POST /v1/bot-guest/sessions/:id/block` with `{}` ends access immediately. The client should
   clear its keychain session and leave the conversation after success.
@@ -127,8 +155,8 @@ daemon API. Credentials and invitation tokens are stored only as SHA-256 hashes 
 | 401    | Missing or malformed bearer                                                                |
 | 403    | Read-only session cannot send                                                              |
 | 404    | Unknown, revoked, blocked, wrong-session, or rotated credential                            |
-| 409    | Invitation used by a different nonce, or local message ID reused with different text       |
-| 410    | Invitation redeem window or guest session expired                                          |
+| 409    | Local message ID reused with different text                                                |
+| 410    | `invite_full` for exhausted seats; `expired` for an expired invite or session              |
 | 413    | Request body exceeds 16 KiB                                                                |
 | 429    | Rate or transcript limit; `Retry-After: 60`. Poll conflict uses `Retry-After: 1`           |
 | 503    | Bot offline during redemption, unavailable export, or bounded queue full; `Retry-After: 1` |
@@ -153,8 +181,9 @@ end-to-end encrypted client of Happy's relay**. Deploy beside the owner daemon w
 Its credentials and storage need the same protection as that daemon. This does not make an
 otherwise blind Happy relay a plaintext processor.
 
-There are at most 100 invitations, 100 user messages and 200 total messages per invitation.
-New invitations prune records whose invitation or session expired more than 24 hours ago.
+There are at most 100 pre-generated seats across all invitations, including unclaimed or revoked
+seats. Each member has at most 100 user messages and 200 total messages. New invitation creation
+prunes invitations that expired over 31 days ago, after every possible 30-day member session ended.
 Existing transcripts and deduplication IDs remain until that expiry; cursors increase monotonically.
 Per session, at most ten sends per minute are accepted. The listener admits at most 200 concurrent
 requests/connections and 100 long polls; the SQLite work queue admits 256 operations and the
@@ -167,6 +196,7 @@ have separate session buckets, so failed public redemptions cannot consume their
 The proxy must still enforce ingress limits. No request paths, headers, bodies, or
 credentials are logged. Configure proxy access/error logging to redact `/bot/invite/*`, request
 bodies, and Authorization headers; do not log credential-bearing invocation URLs.
+Each invitation also bounds new claims per minute to its N-seat capacity; recovery claims no seat.
 
 429 responses include `code: "poll_conflict"` for an existing long poll and `code: "limit_reached"`
 for the permanent transcript cap; the latter requires a new owner invitation. Other rate limits
@@ -179,11 +209,22 @@ Owner commands, using the same private state directory:
 
 ```sh
 pnpm --filter @slopus/happy-bot-invite-bridge start reports /private/state
+pnpm --filter @slopus/happy-bot-invite-bridge start members /private/state INVITATION_ID
+pnpm --filter @slopus/happy-bot-invite-bridge start revoke-member /private/state INVITATION_ID MEMBER_ID
 pnpm --filter @slopus/happy-bot-invite-bridge start revoke /private/state INVITATION_ID
 ```
 
+`members` lists names, member and bridge IDs, joined and last-active times, revoked state, and
+seats used/max. These are local owner operations; no guest HTTP endpoint exposes the roster.
+Member revocation or leaving kills only that member. Invitation revocation kills every member.
+Neither revocation, expiry, nor leaving returns a seat to the pool: a guest ID is never reused,
+because it continues to own its old daemon subtask and history. Issue a new invitation instead.
 Revocation prevents future reads, sends, recovery, and queued delivery. It cannot undo a message
 the daemon already accepted or cancel an already-running guest task. The owner can also remove
 the guest from the existing daemon allowlist and archive its subtask. The gateway supplies
 report and leave controls; content moderation policy, operator response, and App Store metadata
 remain explicit distribution work.
+
+This undeployed preview advances private storage to generation 2 (`guests-v2.sqlite`). Version 1
+invitations and sessions are not carried over, repaired, or reinterpreted. Issue fresh links on
+upgrade. An already-running version 1 demo can continue against its separate old file.

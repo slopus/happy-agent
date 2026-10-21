@@ -131,7 +131,12 @@ export function createGuestServer(options: {
                     503,
                     "The bot is offline. Try opening the invitation again shortly.",
                 );
-            return await options.store.redeem(input.token, input.redeemNonce, botId);
+            return await options.store.redeem(
+                input.token,
+                input.redeemNonce,
+                botId,
+                input.displayName,
+            );
         }
         const match =
             /^\/v1\/bot-guest\/sessions\/([A-Za-z0-9_-]{43})\/(messages|block|report)$/.exec(

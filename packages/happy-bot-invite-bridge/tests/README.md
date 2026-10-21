@@ -4,6 +4,11 @@
 concurrent recipients, hashed credentials, session lifetime, cross-bot isolation, duplicate
 delivery, read-only access, reporting, blocking, and send limits.
 
+`multiSeatInvites.test.ts` covers concurrent and cross-process seat claims, recovery when full,
+separate histories from one link, one-member revocation without seat reuse, and rejected or
+normalized display names. `transportFailures.test.ts` verifies the name actually reaches the
+bridge frame, plus HTTP failure isolation, durable delivery failures, replay, and backpressure.
+
 ```text
 guestCredentials.test.ts -> GuestStore -> temporary SQLite
 ```
