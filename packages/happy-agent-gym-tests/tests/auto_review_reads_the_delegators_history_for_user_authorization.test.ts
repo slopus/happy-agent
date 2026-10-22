@@ -44,7 +44,11 @@ describe("Auto review reads the delegator's history for user authorization", () 
                     if (request.instructions.includes("<outcome>")) {
                         return review(request, historyReads);
                     }
-                    if (request.messages.at(-1)?.role === "tool") {
+                    // The parent's notice of the collaborator it created may follow the result.
+                    if (
+                        request.messages.findLast((message) => message.role !== "system")?.role ===
+                        "tool"
+                    ) {
                         return { content: [{ type: "text", text: "Done." }] };
                     }
                     if (request.sessionId === parentAgentId) {
