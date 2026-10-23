@@ -15,16 +15,11 @@ export function sendMessageTool(
 ) {
     return defineAgentTool({
         name: "send_agent_message",
-        defer: true,
+        // Eager alongside create_agent, as Claude Code's SendMessage and Codex's send_message are.
+        defer: false,
         capabilities: [
             "Create, message, and coordinate coding subagents.",
             ...(crossWorkspace ? ["Message agents by Agent ID across workspaces."] : []),
-        ],
-        searchKeywords: [
-            "message subagent",
-            "reply to parent agent",
-            "steer collaborator",
-            ...(crossWorkspace ? ["message agent by id", "cross workspace agent"] : []),
         ],
         description: [
             crossWorkspace

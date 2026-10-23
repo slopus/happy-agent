@@ -335,6 +335,12 @@ results. The listener is removed on normal completion, error, synchronous query-
 failure, or cancellation. The same resources are also closed by `destroy()`, or when model,
 effort, tools, prompt, or compaction mode changes.
 
+Closing a query whose turn has not returned a result, such as one waiting on Rig's tool results,
+first sends the SDK's `interrupt()` and only then ends its input. Ending input alone makes Claude
+Code answer the open tool calls as interrupted and send one more model request in the two seconds
+before the SDK terminates it. The interrupt is written ahead of the end of input, so Claude Code
+ends the turn instead.
+
 ## Trace and test coverage
 
 `tests/vendors/captureClaudeTrace.mjs` captures vanilla CLI behavior with real inference,

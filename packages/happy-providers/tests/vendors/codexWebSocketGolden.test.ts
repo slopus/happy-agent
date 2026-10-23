@@ -12,6 +12,7 @@ const websocket = vi.hoisted(() => ({
     connectionHeaders: [] as Record<string, string>[],
     emitCustomToolResponse: false,
     emitProductionShapeToolResponse: false,
+    emitServerItemMetadata: false,
     emptyCompletedOutput: false,
     expected101Once: false,
     failMidstreamOnce: false,
@@ -346,13 +347,21 @@ vi.mock("openai/resources/responses/ws", () => ({
                 responseOutput.push(compactionItem);
             } else if (websocket.emitProductionShapeToolResponse && request.generate !== false) {
                 websocket.emitProductionShapeToolResponse = false;
+                // The live service stamps its own turn metadata on every output item and reports
+                // an empty logprobs list on text it was not asked to score.
+                const serverFields = websocket.emitServerItemMetadata
+                    ? { metadata: { turn_id: "078bccd1-9150-410f-81af-e87d5b87260c" } }
+                    : {};
+                const textFields = websocket.emitServerItemMetadata ? { logprobs: [] } : {};
                 const reasoningItem = {
+                    ...serverFields,
                     id: "reasoning-item",
                     type: "reasoning",
                     encrypted_content: "opaque-reasoning",
                     summary: [],
                 };
                 const messageItem = {
+                    ...serverFields,
                     id: "commentary-item",
                     type: "message",
                     role: "assistant",
@@ -363,10 +372,12 @@ vi.mock("openai/resources/responses/ws", () => ({
                             type: "output_text",
                             text: "Checking.",
                             annotations: [],
+                            ...textFields,
                         },
                     ],
                 };
                 const toolItem = {
+                    ...serverFields,
                     id: "function-tool-item",
                     type: "function_call",
                     status: "completed",
@@ -608,6 +619,7 @@ describe("Codex CLI mode WebSocket goldens", () => {
         websocket.connectionHeaders.splice(0);
         websocket.emitCustomToolResponse = false;
         websocket.emitProductionShapeToolResponse = false;
+        websocket.emitServerItemMetadata = false;
         websocket.emptyCompletedOutput = false;
         websocket.failMidstreamOnce = false;
         websocket.midstreamFailures = 0;
@@ -1950,6 +1962,84 @@ describe("Codex CLI mode WebSocket goldens", () => {
         session.destroy();
     });
 
+    it("sends GPT-6.1 Sol the Responses Lite envelope and chains past live server item fields", async () => {
+        websocket.emitProductionShapeToolResponse = true;
+        websocket.emitServerItemMetadata = true;
+        const session = await codexProvider("auto", 1, undefined, "gpt-6.1-sol").session(
+            "<SESSION_ID>",
+            { instructions: "Base instructions.", tools: codexCliTools("gpt-5.6-sol") },
+        );
+        const user = {
+            role: "user" as const,
+            content: [{ type: "text" as const, text: "inspect it" }],
+        };
+        await drain(
+            session.run(testContext, {
+                context: { instructions: "", messages: [user] },
+                effort: "medium",
+            }),
+        );
+        await drain(
+            session.run(testContext, {
+                context: {
+                    instructions: "",
+                    messages: [
+                        user,
+                        {
+                            role: "assistant",
+                            content: [
+                                {
+                                    type: "reasoning",
+                                    reasoning: JSON.stringify({
+                                        id: "reasoning-item",
+                                        type: "reasoning",
+                                        encrypted_content: "opaque-reasoning",
+                                        summary: [],
+                                    }),
+                                },
+                                { type: "text", text: "Checking." },
+                                {
+                                    type: "tool_call",
+                                    callId: "function-call",
+                                    name: "exec_command",
+                                    arguments: '{"cmd":"true"}',
+                                    vendor: { provider: "codex", type: "function_call" },
+                                },
+                            ],
+                        },
+                        {
+                            role: "tool",
+                            content: [{ type: "text", text: "done" }],
+                            callId: "function-call",
+                            vendor: { provider: "codex", type: "function_call" },
+                        },
+                    ],
+                },
+                effort: "medium",
+            }),
+        );
+
+        const [warmup, first, second] = websocket.sent;
+        expect(websocket.sent).toHaveLength(3);
+        expect(websocket.connectionHeaders).toHaveLength(1);
+        expect(warmup).toMatchObject({ generate: false, model: "gpt-6.1-sol" });
+        expect(warmup!.input[0]).toMatchObject({ type: "additional_tools", role: "developer" });
+        expect(warmup!.input[1]).toMatchObject({ type: "message", role: "developer" });
+        for (const frame of [first!, second!]) {
+            expect(frame).not.toHaveProperty("instructions");
+            expect(frame).not.toHaveProperty("tools");
+            expect(frame.parallel_tool_calls).toBe(false);
+            expect(frame.reasoning).toMatchObject({ context: "all_turns" });
+        }
+        expect(first!.previous_response_id).toBe("<PREVIOUS_RESPONSE_ID>");
+        expect(first!.input).toEqual([{ type: "message", role: "user", content: "inspect it" }]);
+        expect(second!.previous_response_id).toBe("response");
+        expect(second!.input).toEqual([
+            { type: "function_call_output", call_id: "function-call", output: "done" },
+        ]);
+        session.destroy();
+    });
+
     it("replays full context once when a cached continuation loses a tool output", async () => {
         const prompt = codexCliPrompt("gpt-5.6-sol", "websocket");
         websocket.emitCustomToolResponse = true;
@@ -3077,6 +3167,7 @@ function codexProvider(
     transport: "auto" | "websocket",
     inferenceMaxRetries: number,
     parallelToolCalls?: boolean,
+    model = "gpt-5.6-sol",
 ): CodexProvider {
     return new CodexProvider({
         credential: {
@@ -3084,7 +3175,7 @@ function codexProvider(
             credential: { accessToken: "test", accountId: "account" },
         } as never,
         endpoint: "http://localhost.invalid/backend-api/codex",
-        model: "gpt-5.6-sol",
+        model,
         ...(parallelToolCalls === undefined ? {} : { parallelToolCalls }),
         inferenceMaxRetries,
         transport,

@@ -23,7 +23,11 @@ it("announces a mid-run fallback configuration before its first streamed output 
             defaultEffort: "medium",
             effortLevels: ["medium"],
         })),
-        config: `[providers]
+        // The scripted model calls list_skills directly, which a code-mode model reaches only
+        // through exec; the fallback, not that tool surface, is under test.
+        config: `[feature.codex_exec]
+enabled = false
+[providers]
 default_enable = false
 [providers.gym]
 type = "codex"

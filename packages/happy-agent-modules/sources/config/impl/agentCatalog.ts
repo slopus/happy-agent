@@ -814,7 +814,6 @@ async function createProvider(
         }
         return new CodexProvider({
             credential: required(credential, id, "codex", defaultCodexLogin),
-            parallelToolCalls: true,
             ...(provider.baseUrl === undefined ? {} : { endpoint: provider.baseUrl }),
             ...(provider.transport === undefined || provider.transport === "auto"
                 ? {}

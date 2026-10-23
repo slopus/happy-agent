@@ -77,6 +77,9 @@ function clearIgnoredMetadata(value: unknown): unknown {
     if (typeof value !== "object" || value === null || Array.isArray(value)) return value;
     const copy = structuredClone(value) as Record<string, unknown>;
     delete copy.internal_chat_message_metadata_passthrough;
+    // The service stamps its own turn metadata on every output item. Codex's typed response item
+    // has no such field and drops it on receipt, so it never takes part in Codex's comparison.
+    delete copy.metadata;
     // Public assistant blocks intentionally omit provider-generated output-item identities.
     // The stateful session still has the original items, so compare their caller-visible
     // semantics and keep stable call_id values as the continuation identity.
@@ -88,6 +91,20 @@ function clearIgnoredMetadata(value: unknown): unknown {
     ) {
         delete copy.status;
     }
-    if (copy.type === "message") delete copy.phase;
+    if (copy.type === "message") {
+        delete copy.phase;
+        // Public text blocks keep only the text, so their replay carries no `logprobs`. The
+        // service reports an empty list when none were requested; that empty list says nothing
+        // the replay lacks, while real log probabilities still force a full request.
+        if (Array.isArray(copy.content)) copy.content = copy.content.map(clearEmptyLogprobs);
+    }
     return copy;
+}
+
+function clearEmptyLogprobs(part: unknown): unknown {
+    if (typeof part !== "object" || part === null || Array.isArray(part)) return part;
+    if (!("logprobs" in part) || !Array.isArray(part.logprobs) || part.logprobs.length > 0)
+        return part;
+    const { logprobs: _logprobs, ...rest } = part;
+    return rest;
 }

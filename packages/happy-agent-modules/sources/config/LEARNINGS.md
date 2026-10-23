@@ -172,6 +172,14 @@ event when eligibility changes; unchanged proactive refreshes do not reset their
 Every Ultrafast inference rechecks the local account identity, including restored saved choices,
 and rejects unsupported choices visibly rather than silently executing a differently priced tier.
 
+## Codex models choose their own tool-call parallelism
+
+The catalog must not pass `parallelToolCalls` to `CodexProvider`. Forcing it on also forces the
+standard Responses envelope, so models that native Codex runs on Responses Lite (the v2 models,
+GPT-6.1 Sol among them) lost the `additional_tools` item, `reasoning.context: "all_turns"`, and
+`parallel_tool_calls: false`. Leave the option unset so the provider applies each model's own
+contract.
+
 ## Idle credential maintenance excludes Claude
 
 Refreshing only when inference needs a credential leaves idle Codex and Grok accounts unattended.

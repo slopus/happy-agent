@@ -10,17 +10,16 @@ import { shouldReviewComputePath } from "../../impl/shouldReviewComputePath.js";
 
 const exact = { additionalProperties: false } as const;
 
-// Read numbers a line as the number, a tab, then the line, so that is what the model is told to
-// strip. Describing a prefix it will not actually see is how an exact-match edit fails for a
-// reason nobody can find.
-const CLAUDE_EDIT_DESCRIPTION = `Performs exact string replacements in files.
+// Claude Code's wording, without its prior-Read requirement: Happy Agent lets an edit through
+// whenever its text matches the file as it is now.
+const CLAUDE_EDIT_DESCRIPTION = `Performs exact string replacement in a file.
 
-Usage:
-- When editing text from Read tool output, ensure you preserve the exact indentation (tabs/spaces) as it appears AFTER the line number prefix. The line number prefix format is: line number + tab. Everything after that is the actual file content to match. Never include any part of the line number prefix in the old_string or new_string.
-- ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required.
-- Only use emojis if the user explicitly requests it. Avoid adding emojis to files unless asked.
-- The edit will FAIL if \`old_string\` is not unique in the file. Either provide a larger string with more surrounding context to make it unique or use \`replace_all\` to change every instance of \`old_string\`.
-- Use \`replace_all\` for replacing and renaming strings across the file. This parameter is useful if you want to rename a variable for instance.`;
+- \`old_string\` must match the file exactly, including indentation, and be unique — the edit fails otherwise. Strip the Read line prefix (line number + tab) before matching.
+- \`replace_all: true\` replaces every occurrence instead.`;
+
+// Claude Code's own wording for an edit applied to a file that changed after it was read.
+const STALE_RECOVERED_NOTE =
+    " (note: the file had been modified on disk since you last read it — the edit applied cleanly, but the file contains other changes not in your context. Read it before edits that depend on surrounding content.)";
 
 /** Claude's `Edit`: replace exact text inside a file. */
 export function claudeEditTool(compute: Compute, reads: FileReadLog) {
@@ -58,6 +57,7 @@ export function claudeEditTool(compute: Compute, reads: FileReadLog) {
                 path: Type.String(),
                 replacements: Type.Integer(),
                 presentation: computeFileDiffPresentationSchema,
+                staleRecovered: Type.Optional(Type.Literal(true)),
             },
             exact,
         ),
@@ -83,7 +83,15 @@ export function claudeEditTool(compute: Compute, reads: FileReadLog) {
                 oldText: old_string,
                 newText: new_string,
                 ...(replace_all === undefined ? {} : { replaceAll: replace_all }),
+                // Claude Code applies an edit whose text still matches a file changed since it was
+                // read, such as by the model's own shell command, and says so in the result.
+                applyWhenStale: true,
             }),
-        toLLM: (result) => [{ type: "text", text: `The file ${result.path} has been updated.` }],
+        toLLM: (result) => [
+            {
+                type: "text",
+                text: `The file ${result.path} has been updated.${result.staleRecovered === true ? STALE_RECOVERED_NOTE : ""}`,
+            },
+        ],
     });
 }

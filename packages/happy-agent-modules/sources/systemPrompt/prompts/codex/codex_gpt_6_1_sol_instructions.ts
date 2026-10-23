@@ -2,13 +2,12 @@
  * Codex's own base instructions for `gpt-6.1-sol`: the model's `instructions_template` from
  * `codex-rs/models-manager/models.json` in openai/codex, which Codex sends as literal text. The
  * identity changes, `You are Codex` and `As Codex` becoming Happy Agent's own, and guidance for
- * Codex features Happy Agent does not have is removed: apps and plugins, code mode's
- * `functions.exec`, the asynchronous user-input tool, memory, interactive visualizations, `/**
- * Codex's own base instructions for `gpt-6.1-sol`: the model's `instructions_template` from
-
- * skill mentions, and orchestrator or aliased skills. The catalog's `persistent_instructions` are
- * not part of it; Codex sends them as a separate developer message only in its persistent mode,
- * which Happy Agent does not have.
+ * Codex features Happy Agent does not have is removed: apps and plugins, the asynchronous
+ * user-input tool, memory, interactive visualizations, `$skill` mentions, and orchestrator or
+ * aliased skills. The two `functions.exec` batching lines are not here: the Codex exec module
+ * contributes them only while it actually offers `exec`. The catalog's `persistent_instructions`
+ * are not part of it; Codex sends them as a separate developer message only in its persistent
+ * mode, which Happy Agent does not have.
  */
 export const codex_gpt_6_1_sol_instructions =
     "{{identity}}, an agent based on GPT-6. You and the user share one workspace, and your job " +

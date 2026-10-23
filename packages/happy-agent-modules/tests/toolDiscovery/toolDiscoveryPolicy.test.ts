@@ -11,6 +11,7 @@ const sourcesRoot = join(dirname(fileURLToPath(import.meta.url)), "../../sources
 // Every vendor's machine tools are eager; present_files is a common tool and stays deferred.
 const eagerDirectories = [
     "codeMode",
+    "codexExec",
     "compute/tools/claude",
     "compute/tools/codex",
     "compute/tools/grok",
@@ -18,8 +19,15 @@ const eagerDirectories = [
     "compute/tools/glm",
     "userInput",
 ];
-/** Prioritizing's whole tool array, which it receives without tool search. */
-const eagerFiles = ["spaces/tools/prioritizingTools.ts"];
+/**
+ * Prioritizing's whole tool array, which it receives without tool search, and the feature tools
+ * both native harnesses expose eagerly: Agent/spawn_agent and SendMessage/send_message.
+ */
+const eagerFiles = [
+    "spaces/tools/prioritizingTools.ts",
+    "collaboration/tools/create_agent.ts",
+    "collaboration/tools/send_message.ts",
+];
 
 interface ToolDefinition {
     readonly file: string;

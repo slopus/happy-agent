@@ -1,5 +1,6 @@
 import {
     withAgentConfig,
+    withAgentContext,
     type AgentConfig,
     type AgentMessageAcceptance,
     type AgentMetadata,
@@ -252,6 +253,13 @@ function textEnd(text: string) {
 
 function settlement(settlementId: string, error?: string) {
     return { loopId: "loop", settlementId, ...(error === undefined ? {} : { error }) } as never;
+}
+
+async function createTool(hooks: AgentModuleHooks, ctx: Context, provider: string) {
+    const tools = await hooks.tools!(ctx, { agent: { id: "parent", provider } } as never);
+    const create = tools.find((tool) => tool.name === "create_agent");
+    if (create === undefined) throw new Error("The create_agent tool was not offered.");
+    return create;
 }
 
 function toolCall(id: string) {
@@ -968,6 +976,103 @@ describe("collaboration", () => {
         });
     });
 
+    it("runs a collaborator on its creator's model, effort, and tier when the call omits them", async () => {
+        const collection = new Collection();
+        const { hooks, ctx } = await started(collection);
+        const turn = withAgentContext(ctx, {
+            id: "parent",
+            provider: "codex",
+            model: "gpt-5.6-sol",
+            effort: "low",
+            serviceTier: "priority",
+            permissionMode: "auto",
+        });
+        const create = await createTool(hooks, turn, "codex");
+
+        await create.execute(
+            turn,
+            { title: "Helper", text: "Check the parser." },
+            toolCall("inheritedchild"),
+        );
+
+        expect(collection.delivered[0]!.options).toMatchObject({
+            model: "gpt-5.6-sol",
+            effort: "low",
+            provider: "codex",
+            serviceTier: "priority",
+        });
+    });
+
+    it("uses the chosen model's default effort when it does not offer the creator's", async () => {
+        const collection = new Collection();
+        const { hooks, ctx } = await started(collection);
+        const turn = withAgentContext(ctx, {
+            id: "parent",
+            provider: "codex",
+            model: "gpt-5.6-sol",
+            effort: "low",
+            serviceTier: "priority",
+            permissionMode: "auto",
+        });
+        const create = await createTool(hooks, turn, "codex");
+
+        await create.execute(
+            turn,
+            { title: "Helper", model: "opus-5", provider: "claude", text: "Check the parser." },
+            toolCall("defaulteffortchild"),
+        );
+
+        expect(collection.delivered[0]!.options).toMatchObject({
+            model: "opus-5",
+            effort: "medium",
+            provider: "claude",
+        });
+        expect(collection.delivered[0]!.options).not.toHaveProperty("serviceTier");
+    });
+
+    it.each(["read_only", "workspace_write", "auto", "full_access"] as const)(
+        "gives a collaborator its creator's %s permission mode",
+        async (permissionMode) => {
+            const collection = new Collection();
+            const { hooks, ctx } = await started(collection);
+            const turn = withAgentContext(ctx, {
+                id: "parent",
+                provider: "codex",
+                model: "gpt-5.6-sol",
+                effort: "medium",
+                permissionMode,
+            });
+            const create = await createTool(hooks, turn, "codex");
+
+            await create.execute(turn, TASK, toolCall("modechild"));
+
+            expect(collection.delivered[0]!.options).toMatchObject({ permissionMode });
+            expect(collection.configs.get("modechild")?.metadata?.["lastMode"]).toMatchObject({
+                permissionMode,
+            });
+        },
+    );
+
+    it("gives a collaborator created off its creator's turn the mode its creator last ran with", async () => {
+        const collection = new Collection();
+        collection.seed("parent", null, {
+            metadata: {
+                lastMode: {
+                    effort: "medium",
+                    modelId: "gpt-5.6-sol",
+                    permissionMode: "read_only",
+                    providerId: "codex",
+                    serviceTier: null,
+                },
+            },
+        });
+        const { module, ctx } = await started(collection);
+
+        await module.createAgent(ctx, "parent", TASK, "workflowchild");
+
+        expect(collection.delivered[0]!.options).toMatchObject({ permissionMode: "read_only" });
+    });
+
     it("refuses a service tier the chosen model does not offer", async () => {
         const collection = new Collection();
         const { module, hooks, ctx } = await started(collection);
@@ -1301,24 +1406,58 @@ describe("collaboration", () => {
         expect(instructions).not.toContain("reported to it automatically, so finish");
     });
 
-    it("tells an agent which collaborators it created", async () => {
+    it("keeps an agent's instructions unchanged when it creates a collaborator", async () => {
         const collection = new Collection();
         const { module, hooks, ctx } = await started(collection);
+        const before = await hooks.instructions!(ctx, { agent: { id: "parent" } } as never);
+
         await module.createAgent(ctx, "parent", TASK, "child");
 
-        const instructions = await hooks.instructions!(ctx, {
-            agent: { id: "parent" },
-        } as never);
-
-        expect(instructions).toContain("Collaborators you created: child.");
+        // The instructions are the cached prefix of every request; changing them rebuilds the
+        // provider session and re-sends the conversation uncached.
+        expect(await hooks.instructions!(ctx, { agent: { id: "parent" } } as never)).toBe(before);
     });
 
-    it("includes both creator and collaborator addresses in deterministic instruction order", async () => {
+    it("announces an agent's collaborators once per change and again in a new history", async () => {
+        const collection = new Collection();
+        const { module, hooks, ctx } = await started(collection);
+        const historyKV = memoryKV();
+        const scope = (kv = historyKV) => ({ agent: { id: "parent" }, historyKV: kv }) as never;
+        const inference = { type: "inference", inference: {} } as never;
+        const notify = async (kv?: ReturnType<typeof memoryKV>) =>
+            await hooks.systemNotificationsTransact!(ctx, scope(kv), inference);
+
+        expect(await notify()).toBeUndefined();
+        await module.createAgent(ctx, "parent", TASK, "child");
+        expect(await notify()).toEqual([
+            {
+                role: "system",
+                content: [
+                    {
+                        type: "text",
+                        text: "Collaborators you created: child. Each reports back on its own when it finishes; nothing waits for them.",
+                    },
+                ],
+            },
+        ]);
+        expect(await notify()).toBeUndefined();
+
+        await module.createAgent(ctx, "parent", TASK, "second");
+        expect(JSON.stringify(await notify())).toContain(
+            "Collaborators you created: child, second.",
+        );
+        // Compaction replaces the history, and with it the handle the notice was recorded in.
+        expect(JSON.stringify(await notify(memoryKV()))).toContain(
+            "Collaborators you created: child, second.",
+        );
+    });
+
+    it("keeps creator and own addresses in deterministic instruction order", async () => {
         const config = await temporaryTestConfig(NO_CROSS_WORKSPACE_TOML);
         const collection = new Collection();
-        collection.seed("sibling", "parent");
+        collection.seed("parent", "root");
         collection.seed("child", "parent");
-        const { module, hooks, ctx } = await started(collection, config);
+        const { hooks, ctx } = await started(collection, config);
 
         const instructions = await hooks.instructions!(ctx, {
             agent: { id: "parent" },
@@ -1327,8 +1466,36 @@ describe("collaboration", () => {
         expect(instructions.split("\n")).toEqual([
             "Your Agent ID is parent.",
             expect.stringContaining("happy-file://agents/parent/"),
-            "Collaborators you created: sibling, child. Each reports back on its own when it finishes; nothing waits for them.",
+            expect.stringContaining("You were created by agent root."),
         ]);
+    });
+
+    it("gives GPT models Codex's own rule against unrequested delegation, verbatim", async () => {
+        const collection = new Collection();
+        const { hooks, ctx } = await started(collection);
+        // Copied from the developer message Codex 0.163.0 sends GPT-6.1 Sol.
+        const native =
+            "<multi_agent_mode>Any earlier instruction enabling proactive multi-agent delegation no longer applies. Do not spawn sub-agents unless the user or applicable AGENTS.md/skill instructions explicitly ask for sub-agents, delegation, or parallel agent work.</multi_agent_mode>";
+        const instructionsFor = async (agent: Record<string, unknown>) =>
+            await hooks.instructions!(ctx, { agent: { id: "parent", ...agent } } as never);
+
+        expect(
+            (await instructionsFor({ model: "openai/gpt-6.1-sol", providerKind: "codex" })).split(
+                "\n",
+            ),
+        ).toContain(native);
+        expect(
+            await instructionsFor({ model: "openai/gpt-6.1-sol", providerKind: "bedrock" }),
+        ).toContain(native);
+        expect(await instructionsFor({ model: undefined, providerKind: "codex" })).toContain(
+            native,
+        );
+        expect(
+            await instructionsFor({ model: "anthropic/opus-5-5", providerKind: "claude" }),
+        ).not.toContain("multi_agent_mode");
+        expect(
+            await instructionsFor({ model: "xai/grok-4.7", providerKind: "grok" }),
+        ).not.toContain("multi_agent_mode");
     });
 
     it("always tells an agent its own Agent ID", async () => {

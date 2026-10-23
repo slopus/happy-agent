@@ -59,6 +59,23 @@ export const collaborationCreateInputSchema = Type.Object(
 );
 
 /**
+ * What a model passes to `create_agent`. Like Codex's `spawn_agent`, the model and effort may be
+ * omitted, and the collaborator then runs on its creator's own model and effort.
+ */
+export const collaborationToolCreateInputSchema = Type.Object(
+    {
+        title: Type.String({ minLength: 1, maxLength: 256 }),
+        model: Type.Optional(Type.String({ minLength: 1, maxLength: 256 })),
+        effort: Type.Optional(collaborationEffortSchema),
+        harness: Type.Optional(Type.String({ minLength: 1, maxLength: 256 })),
+        provider: Type.Optional(Type.String({ minLength: 1, maxLength: 256 })),
+        serviceTier: Type.Optional(collaborationServiceTierSchema),
+        text: collaborationMessageTextSchema,
+    },
+    { additionalProperties: false },
+);
+
+/**
  * What an agent asks a new conversation to run on, before it is checked against what is offered:
  * the model-facing fields of `create_agent`, shared by every tool that opens a conversation.
  */
@@ -134,6 +151,7 @@ export type CollaborationServiceTier = Static<typeof collaborationServiceTierSch
 export type CollaborationAgentSelection = Static<typeof collaborationAgentSelectionSchema>;
 export type CollaborationModelChoice = Static<typeof collaborationModelChoiceSchema>;
 export type CollaborationCreateInput = Static<typeof collaborationCreateInputSchema>;
+export type CollaborationToolCreateInput = Static<typeof collaborationToolCreateInputSchema>;
 export type CollaborationCreateOptions = Static<typeof collaborationCreateOptionsSchema>;
 export type CollaborationSendInput = Static<typeof collaborationSendInputSchema>;
 export type CollaborationCreateResult = Static<typeof collaborationCreateResultSchema>;

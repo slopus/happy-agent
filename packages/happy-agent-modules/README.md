@@ -144,6 +144,7 @@ its public methods, and its storage and event contracts.
 | [Permissions](sources/permissions/README.md)          | The permission mode turned into behavior: per-call review, temporary elevation, refusal handling, and mode-change notices.                      |
 | [Tool discovery](sources/toolDiscovery/README.md)     | Provider-owned native search for deferred tools, with eager fallback on unsupported provider/model routes.                                      |
 | [Code Mode](sources/codeMode/README.md)               | Opt-in engine-selected replacement prompt and tool surface: continuous Monty Python or stateless system Bun TypeScript.                         |
+| [Codex exec](sources/codexExec/README.md)             | Native Codex code mode for the models that use it: tools nested in one JavaScript `exec`, each call still decided by permissions.               |
 | Auto (`sources/auto`)                                 | The automatic reviewer permissions asks in Auto mode, running on its own private database and its own read-only compute.                        |
 | [MCP](sources/mcp/README.md)                          | MCP servers, tools, resources, and prompts, always reviewed in Auto.                                                                            |
 | [Search](sources/search/README.md)                    | A bounded common `web_fetch` plus explicit per-vendor search tool wrappers.                                                                     |

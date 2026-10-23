@@ -243,6 +243,65 @@ describe("Codex response items", () => {
         ]);
     });
 
+    it("continues the chain after the server's turn metadata and empty logprobs", () => {
+        // The exact shape a live GPT-6.1 Sol response item has. Codex's typed item drops the
+        // server's `metadata`, and an empty `logprobs` carries nothing a replay must keep, so
+        // neither may force the whole transcript to be resent.
+        const user = toOpenAIResponseInput({
+            instructions: "instructions",
+            messages: [{ role: "user", content: [{ type: "text" as const, text: "Go." }] }],
+        });
+        const previousRequest = { model: "gpt-6.1-sol", input: user };
+        const responseItems = [
+            {
+                id: "msg_server",
+                type: "message",
+                status: "completed",
+                role: "assistant",
+                phase: "commentary",
+                metadata: { turn_id: "078bccd1-9150-410f-81af-e87d5b87260c" },
+                content: [{ type: "output_text", text: "Looking.", annotations: [], logprobs: [] }],
+            },
+            {
+                id: "fc_server",
+                type: "function_call",
+                status: "completed",
+                call_id: "call-1",
+                name: "exec_command",
+                arguments: '{"cmd":"ls"}',
+                metadata: { turn_id: "078bccd1-9150-410f-81af-e87d5b87260c" },
+            },
+        ];
+        const rebuilt = {
+            model: "gpt-6.1-sol",
+            input: toOpenAIResponseInput({
+                instructions: "instructions",
+                messages: [
+                    { role: "user", content: [{ type: "text" as const, text: "Go." }] },
+                    {
+                        role: "assistant",
+                        content: [
+                            { type: "text", text: "Looking." },
+                            {
+                                type: "tool_call",
+                                callId: "call-1",
+                                name: "exec_command",
+                                arguments: '{"cmd":"ls"}',
+                            },
+                        ],
+                    },
+                    {
+                        role: "tool",
+                        content: [{ type: "text" as const, text: "a" }],
+                        callId: "call-1",
+                    },
+                ],
+            }),
+        };
+
+        expect(getCodexIncrementalInput(previousRequest, responseItems, rebuilt)).toHaveLength(1);
+    });
+
     it("rebuilds context after executor argument normalization", () => {
         const user = { type: "message", role: "user", content: "Read it." };
         const functionCall = {

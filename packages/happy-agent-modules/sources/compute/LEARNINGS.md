@@ -170,6 +170,37 @@ nontransactional edit, because the local libSQL client rotates its native connec
 transaction; custom stores without the production database boundary use an Agent KV transaction as
 the safe fallback.
 
+## Changes to the same file run one at a time
+
+A model can send several Edits to the same file in one parallel batch, and a parent and its
+collaborator can edit one file at once. Each change used to check the read log, write, and then
+record its own write, so the later changes saw a file modified since their read and were refused as
+stale even though nothing outside the agents had touched it. Every file-changing operation (Claude
+and Kimi Edit and Write, Codex apply_patch, delete, move) now runs inside `FileReadLog.change`,
+which holds a lock per resolved path, shared by every agent, from the staleness check through
+recording the result. Paths are locked in sorted order, so a move or a multi-file patch cannot
+deadlock against another. Changes to one file therefore apply as if made one after another, while
+changes to different files still run in parallel. The lock is re-entrant through the context, so a
+change that calls another change does not deadlock.
+
+## A stale Claude Edit applies when its text still matches
+
+Claude Code does not refuse an Edit just because the file changed after it was read. If
+`old_string` still matches exactly once (or `replace_all` was requested), the edit applies and the
+result carries Claude Code's note that the file has other changes not in the model's context. Only
+when the text no longer applies is the edit refused with the read-again error. Write and the other
+vendors' tools keep the strict refusal, because a whole-file write over unseen changes would
+discard them.
+
+## Claude tool text follows Claude Code 2.1.303
+
+Read, Edit, Write, and Bash use Claude Code 2.1.303's wording wherever it is true here. Read asks the
+model to read only the part it needs and not to re-read a file it just edited; the older text
+recommended reading whole files, which costs context on every large file. Two Claude Code claims
+are left out because they are false for Happy Agent: Edit and Write do not require a prior Read,
+and the working directory does not persist between Bash calls. The Bash `timeout` schema carries no
+maximum; a longer wait is clamped to ten minutes, as Claude Code does, instead of failing the call.
+
 ## Windows protected placeholders
 
 The Windows product policy permits empty protected placeholders when project metadata is absent.

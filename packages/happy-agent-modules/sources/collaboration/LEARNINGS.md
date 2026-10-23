@@ -52,9 +52,40 @@ A collaborator ran on the model its creator chose, but nothing recorded that cho
 agent's mode, so the mode endpoint and bootstrap reported `null`. Clients treat a null mode as
 "use the daemon defaults", so the first user message to a user-visible subtask silently moved it
 onto the default model, and could reset its context when the default was another provider type.
-Every creation path now resolves the provider, sends the opening task with an explicit
+Every creation path now resolves the provider, sends the opening task with the creator's
 permission mode, stamps the full mode on that message's metadata, and records it as the
 agent's `lastMode`, so a person joining composes on top of the coordinator's selection.
+
+## A collaborator inherits its creator's permission mode and, by default, its model
+
+Every collaborator used to start in Auto whatever its creator ran in. A Full access creator's
+children then paid for an Auto reviewer on every boundary action, and a Read only or guest creator
+could reach Auto through a child. A collaborator now works under its creator's mode: the one on
+the creator's turn, or the creator's recorded last mode when a workflow creates it off-turn.
+`create_agent` also required a model and an effort, so models routinely picked a higher effort
+than their own. As in Codex's `spawn_agent`, both may now be omitted and default to the
+creator's, and the description says to set them only when the user or the task calls for it.
+
+## GPT models get Codex's rule against unrequested delegation
+
+With `create_agent` offered eagerly and no rule about when to use it, GPT-6.1 Sol started a
+reviewer or helper in most benchmark coding tasks: the runs that spawned used about twice native
+Codex's input tokens without solving more, while the runs that did not matched native. Deferring
+the tool did not help, because the deferred tool is still listed by name and Sol called it
+directly. Native Codex keeps spawning available but sends GPT models a developer message,
+`<multi_agent_mode>`, saying not to spawn unless the user, AGENTS.md, or a skill explicitly asks.
+The rule follows native per model family: GPT models get that text verbatim in the collaboration
+instructions, and Claude models do not, since Claude Code has no such rule. Delegation stays
+available and eager for every model.
+
+## Collaborators are announced at the tail, not in the instructions
+
+The instructions listed an agent's collaborators, so creating one changed the instructions. They
+are the cached prefix of every request, and a change rebuilt the provider session: Codex opened a
+new socket and re-sent the whole conversation uncached, and Claude restarted its query. The list
+is now a system notice appended before the next inference when it changes, recorded in the history
+store so compaction re-announces it. The instructions hold only what is fixed for the agent: its
+own ID and its creator's.
 
 ## Messages and interruption
 

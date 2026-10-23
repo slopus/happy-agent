@@ -19,7 +19,8 @@ describe("codex compute command tools", () => {
 
         const result = await tool("exec_command").execute(ctx, { cmd: "pnpm test" }, call);
 
-        expect(result.command).toBe("pnpm test");
+        // Codex's answer does not echo the command back; the model wrote it.
+        expect(Object.keys(result).sort()).toEqual(["exit_code", "output", "wall_time_seconds"]);
         expect(result.exit_code).toBe(0);
         expect(result.session_id).toBeUndefined();
         expect(result.output).toBe("12 tests passed\n");

@@ -90,139 +90,157 @@ export async function applyCodexPatch(
     ctx: Context,
     options: { readonly patch: string; readonly workdir?: string },
 ): Promise<CodexPatchResult> {
-    const permissions = computePermissionsForContext(ctx);
     const workdir = resolveComputePath(
         options.workdir ?? compute.cwd,
         compute.cwd,
         compute.fs.home,
     );
     const operations = parseCodexPatch(options.patch);
-    const fileDiffs = new BoundedFileDiffCollector();
-    const simulated = new Map<string, SimulatedFile>();
-    const planned: PlannedChange[] = [];
-    const summaries: string[] = [];
+    const paths = operations.flatMap((operation) => [
+        resolveComputePath(operation.path, workdir, compute.fs.home),
+        ...(operation.kind === "update" && operation.moveTo !== undefined
+            ? [resolveComputePath(operation.moveTo, workdir, compute.fs.home)]
+            : []),
+    ]);
+    return await reads.change(ctx, paths, async (ctx) => {
+        const permissions = computePermissionsForContext(ctx);
+        const fileDiffs = new BoundedFileDiffCollector();
+        const simulated = new Map<string, SimulatedFile>();
+        const planned: PlannedChange[] = [];
+        const summaries: string[] = [];
 
-    for (const operation of operations) {
-        const path = resolveComputePath(operation.path, workdir, compute.fs.home);
-        const file = await loadSimulatedFile(compute, permissions, simulated, path);
+        for (const operation of operations) {
+            const path = resolveComputePath(operation.path, workdir, compute.fs.home);
+            const file = await loadSimulatedFile(compute, permissions, simulated, path);
 
-        if (operation.kind === "add") {
-            if (file.exists) {
-                throw new Error(`This patch adds a file that already exists: ${path}`);
+            if (operation.kind === "add") {
+                if (file.exists) {
+                    throw new Error(`This patch adds a file that already exists: ${path}`);
+                }
+                file.content = operation.lines.join("\n");
+                file.exists = true;
+                planned.push({ kind: "add", path, content: file.content });
+                fileDiffs.addWholeFile(operation.path, "add", operation.lines);
+                summaries.push(`A ${operation.path}`);
+                continue;
             }
-            file.content = operation.lines.join("\n");
-            file.exists = true;
-            planned.push({ kind: "add", path, content: file.content });
-            fileDiffs.addWholeFile(operation.path, "add", operation.lines);
-            summaries.push(`A ${operation.path}`);
-            continue;
-        }
 
-        if (operation.kind === "delete") {
+            if (operation.kind === "delete") {
+                if (!file.exists) {
+                    throw new Error(`This patch deletes a file that does not exist: ${path}`);
+                }
+                await reads.assertRead(ctx, compute.fs, permissions, path);
+                const deletedContent = file.content;
+                file.content = "";
+                file.exists = false;
+                planned.push({ kind: "delete", path });
+                fileDiffs.addWholeFile(
+                    operation.path,
+                    "delete",
+                    iterateDiffContentLines(deletedContent),
+                );
+                summaries.push(`D ${operation.path}`);
+                continue;
+            }
+
             if (!file.exists) {
-                throw new Error(`This patch deletes a file that does not exist: ${path}`);
+                throw new Error(`This patch updates a file that does not exist: ${path}`);
             }
-            await reads.assertRead(ctx, compute.fs, permissions, path);
-            const deletedContent = file.content;
+            const provenByContext = hunksProveFileContents(operation.hunks);
+            if (!provenByContext) {
+                await reads.assertRead(ctx, compute.fs, permissions, path);
+            }
+            const sourceContent = file.content;
+            const updated = applyCodexPatchHunks(sourceContent, operation.hunks, path);
+
+            if (operation.moveTo === undefined) {
+                if (updated.content === file.content) {
+                    throw new Error(`This update changes nothing in ${path}.`);
+                }
+                file.content = updated.content;
+                planned.push({ kind: "update", path, content: updated.content, provenByContext });
+                fileDiffs.add({ kind: "update", path: operation.path, hunks: updated.hunks });
+                summaries.push(`M ${operation.path}`);
+                continue;
+            }
+
+            const destination = resolveComputePath(operation.moveTo, workdir, compute.fs.home);
+            if (destination === path) {
+                throw new Error(`This patch moves ${path} onto itself.`);
+            }
+            const target = await loadSimulatedFile(compute, permissions, simulated, destination);
+            if (target.exists) {
+                throw new Error(
+                    `This patch moves a file onto one that already exists: ${destination}`,
+                );
+            }
+            const contentChanged = updated.content !== file.content;
             file.content = "";
             file.exists = false;
-            planned.push({ kind: "delete", path });
+            target.content = updated.content;
+            target.exists = true;
+            planned.push({
+                kind: "move",
+                path,
+                destination,
+                content: updated.content,
+                contentChanged,
+                provenByContext,
+            });
             fileDiffs.addWholeFile(
                 operation.path,
                 "delete",
-                iterateDiffContentLines(deletedContent),
+                iterateDiffContentLines(sourceContent),
             );
-            summaries.push(`D ${operation.path}`);
-            continue;
-        }
-
-        if (!file.exists) {
-            throw new Error(`This patch updates a file that does not exist: ${path}`);
-        }
-        const provenByContext = hunksProveFileContents(operation.hunks);
-        if (!provenByContext) {
-            await reads.assertRead(ctx, compute.fs, permissions, path);
-        }
-        const sourceContent = file.content;
-        const updated = applyCodexPatchHunks(sourceContent, operation.hunks, path);
-
-        if (operation.moveTo === undefined) {
-            if (updated.content === file.content) {
-                throw new Error(`This update changes nothing in ${path}.`);
-            }
-            file.content = updated.content;
-            planned.push({ kind: "update", path, content: updated.content, provenByContext });
-            fileDiffs.add({ kind: "update", path: operation.path, hunks: updated.hunks });
+            fileDiffs.addWholeFile(
+                operation.moveTo,
+                "add",
+                iterateDiffContentLines(updated.content),
+            );
             summaries.push(`M ${operation.path}`);
-            continue;
         }
 
-        const destination = resolveComputePath(operation.moveTo, workdir, compute.fs.home);
-        if (destination === path) {
-            throw new Error(`This patch moves ${path} onto itself.`);
-        }
-        const target = await loadSimulatedFile(compute, permissions, simulated, destination);
-        if (target.exists) {
-            throw new Error(`This patch moves a file onto one that already exists: ${destination}`);
-        }
-        const contentChanged = updated.content !== file.content;
-        file.content = "";
-        file.exists = false;
-        target.content = updated.content;
-        target.exists = true;
-        planned.push({
-            kind: "move",
-            path,
-            destination,
-            content: updated.content,
-            contentChanged,
-            provenByContext,
-        });
-        fileDiffs.addWholeFile(operation.path, "delete", iterateDiffContentLines(sourceContent));
-        fileDiffs.addWholeFile(operation.moveTo, "add", iterateDiffContentLines(updated.content));
-        summaries.push(`M ${operation.path}`);
-    }
-
-    const changes: CodexPatchChange[] = [];
-    for (const change of planned) {
-        if (change.kind === "add" || change.kind === "update") {
-            await writeComputeTextFile(compute, reads, ctx, {
-                path: change.path,
-                content: change.content,
-                // The hunks matched the file before anything was planned, so a remembered
-                // timestamp does not add another useful freshness check.
-                ...(change.kind === "update" && change.provenByContext
-                    ? { requireRead: false }
-                    : {}),
+        const changes: CodexPatchChange[] = [];
+        for (const change of planned) {
+            if (change.kind === "add" || change.kind === "update") {
+                await writeComputeTextFile(compute, reads, ctx, {
+                    path: change.path,
+                    content: change.content,
+                    // The hunks matched the file before anything was planned, so a remembered
+                    // timestamp does not add another useful freshness check.
+                    ...(change.kind === "update" && change.provenByContext
+                        ? { requireRead: false }
+                        : {}),
+                });
+                changes.push({ kind: change.kind, path: change.path });
+                continue;
+            }
+            if (change.kind === "delete") {
+                await deleteComputeFile(compute, reads, ctx, { path: change.path });
+                changes.push({ kind: "delete", path: change.path });
+                continue;
+            }
+            await moveComputeFile(compute, reads, ctx, {
+                source: change.path,
+                destination: change.destination,
+                ...(change.provenByContext ? { requireRead: false } : {}),
             });
-            changes.push({ kind: change.kind, path: change.path });
-            continue;
+            // The move records the destination, so the following rewrite checks the state just moved.
+            if (change.contentChanged) {
+                await writeComputeTextFile(compute, reads, ctx, {
+                    path: change.destination,
+                    content: change.content,
+                });
+            }
+            changes.push({ kind: "move", path: change.path, moved_to: change.destination });
         }
-        if (change.kind === "delete") {
-            await deleteComputeFile(compute, reads, ctx, { path: change.path });
-            changes.push({ kind: "delete", path: change.path });
-            continue;
-        }
-        await moveComputeFile(compute, reads, ctx, {
-            source: change.path,
-            destination: change.destination,
-            ...(change.provenByContext ? { requireRead: false } : {}),
-        });
-        // The move records the destination, so the following rewrite checks the state just moved.
-        if (change.contentChanged) {
-            await writeComputeTextFile(compute, reads, ctx, {
-                path: change.destination,
-                content: change.content,
-            });
-        }
-        changes.push({ kind: "move", path: change.path, moved_to: change.destination });
-    }
 
-    return {
-        changes,
-        summary: ["Success. Updated the following files:", ...summaries].join("\n"),
-        presentation: fileDiffs.finish(),
-    };
+        return {
+            changes,
+            summary: ["Success. Updated the following files:", ...summaries].join("\n"),
+            presentation: fileDiffs.finish(),
+        };
+    });
 }
 
 /** What one file holds right now, remembered so several hunks can build on each other. */

@@ -57,6 +57,9 @@ forever, including provider errors, failed compactions, and fatal internal run-s
 explicit cancellation, provider disablement, or daemon shutdown stops active work.
 
 `[feature.codemode] enabled` is an opt-in experimental feature flag, defaulting to `false`.
+`[feature.codex_exec] enabled` defaults to `true`. It gives the Codex models that native Codex runs in
+code mode their tools through one JavaScript `exec` tool, as native Codex does; set it to `false`
+to give those models every tool directly.
 `engine` selects `"monty"` (the default continuous Python interpreter) or `"bun"` (a stateless
 system Bun JavaScript/TypeScript proof of concept). When enabled, the final Code Mode module
 replaces the complete model prompt and tool surface with the selected engine's single tool.

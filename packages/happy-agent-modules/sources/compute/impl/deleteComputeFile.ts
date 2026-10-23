@@ -20,15 +20,17 @@ export async function deleteComputeFile(
     ctx: Context,
     options: { readonly path: string; readonly requireRead?: boolean },
 ): Promise<{ readonly path: string }> {
-    const permissions = computePermissionsForContext(ctx);
     const filePath = resolveComputePath(options.path, compute.cwd, compute.fs.home);
-    const stat = await compute.fs.stat(permissions, filePath);
-    if (stat.isDirectory) {
-        throw new Error(`This path is a directory; only files are deleted here: ${filePath}`);
-    }
-    if (options.requireRead !== false) {
-        await reads.assertRead(ctx, compute.fs, permissions, filePath);
-    }
-    await compute.fs.rm(permissions, filePath, { force: false });
-    return { path: filePath };
+    return await reads.change(ctx, [filePath], async (ctx) => {
+        const permissions = computePermissionsForContext(ctx);
+        const stat = await compute.fs.stat(permissions, filePath);
+        if (stat.isDirectory) {
+            throw new Error(`This path is a directory; only files are deleted here: ${filePath}`);
+        }
+        if (options.requireRead !== false) {
+            await reads.assertRead(ctx, compute.fs, permissions, filePath);
+        }
+        await compute.fs.rm(permissions, filePath, { force: false });
+        return { path: filePath };
+    });
 }

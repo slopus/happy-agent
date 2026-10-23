@@ -1,10 +1,13 @@
 import {
     agentConfig,
     agentDatabase,
+    agentId as contextAgentId,
+    agentPermissionMode,
     DEFAULT_AGENT_PERMISSION_MODE,
     type AgentBaseAcceptedMessage,
     type AgentBasePersistedEvent,
     type AgentBaseSettlement,
+    type AgentBaseSystemNotificationBoundary,
     type AgentBaseTurn,
     type AgentConfig,
     type AgentMetadata,
@@ -13,12 +16,15 @@ import {
     type AgentModuleAction,
     type AgentModuleHooks,
     type AgentModuleScope,
+    type AgentPermissionMode,
     type AgentSystemRef,
     type AnyAgentTool,
 } from "@slopus/happy-agent-base";
 import { createId } from "@paralleldrive/cuid2";
+import { providerModelFamily, type SessionSystemMessage } from "@slopus/happy-providers";
 import { Type, type TSchema } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
+import { messageModeSchema } from "@slopus/happy-agent-client";
 import { afterCommit, type Context } from "@steve.kite/stdlib";
 
 import { AbortModule } from "../abort/index.js";
@@ -58,6 +64,17 @@ import { archiveAgentTool } from "./tools/archive_agent.js";
 import { createAgentTool } from "./tools/create_agent.js";
 import { interruptAgentTool } from "./tools/interrupt_agent.js";
 import { sendMessageTool } from "./tools/send_message.js";
+
+/**
+ * Codex's own rule for when a model may delegate, verbatim from the developer message Codex sends
+ * GPT models. Without it, GPT models offered `create_agent` start reviewers and helpers on their own
+ * in most coding tasks, roughly doubling their requests without solving more.
+ */
+const CODEX_MULTI_AGENT_MODE =
+    "<multi_agent_mode>Any earlier instruction enabling proactive multi-agent delegation no longer applies. Do not spawn sub-agents unless the user or applicable AGENTS.md/skill instructions explicitly ask for sub-agents, delegation, or parallel agent work.</multi_agent_mode>";
+
+/** The collaborator notice last appended to the current history. */
+const ANNOUNCED_COLLABORATORS_KEY = "announced-collaborators";
 
 /**
  * Collaboration lets one agent put another to work.
@@ -360,8 +377,31 @@ export class CollaborationModule implements AgentModule {
         } else if ((await agents.parentOf(ctx, agentId)) !== actingAgentId) {
             throw new Error(`Agent "${agentId}" already exists.`);
         }
-        await this.#deliver(ctx, actingAgentId, agentId, input.text, agentId, "send", selection);
+        await this.#deliver(ctx, actingAgentId, agentId, input.text, agentId, "send", {
+            ...selection,
+            permissionMode: await this.#creatorPermissionMode(ctx, actingAgentId),
+        });
         return { agentId };
+    }
+
+    /**
+     * The mode a new collaborator works under: its creator's, as in Codex and Claude Code. A
+     * collaborator is part of its creator's work, so it neither loses the access the person gave
+     * that work nor gains access they withheld. On the creator's own turn the mode is the one in
+     * force on its context; a workflow creating from its own background context reads the mode
+     * the creator last ran with, and falls back to the product default only when none is recorded.
+     */
+    async #creatorPermissionMode(
+        ctx: Context,
+        actingAgentId: string,
+    ): Promise<AgentPermissionMode> {
+        if (contextAgentId(ctx) === actingAgentId) return agentPermissionMode(ctx);
+        const recorded = (await this.#requireAgents().config(ctx, actingAgentId))?.metadata?.[
+            "lastMode"
+        ];
+        return Value.Check(messageModeSchema, recorded)
+            ? recorded.permissionMode
+            : DEFAULT_AGENT_PERMISSION_MODE;
     }
 
     /** Send text to an Agent ID allowed by the installation's collaboration boundary. */
@@ -458,12 +498,30 @@ export class CollaborationModule implements AgentModule {
          * The same ID addresses this agent's files: a `path:line` is read against the reader's own
          * workspace, so text read in another chat links files through the agent instead.
          */
+        /**
+         * The collaborators this agent created, announced as a notice rather than written into the
+         * instructions. The instructions are the cached prefix of every request, so a line that
+         * changed when a collaborator was created rebuilt the provider session and re-sent the
+         * whole conversation uncached. A notice is appended at the tail instead, once per change
+         * and again after compaction clears the history it was announced in.
+         */
+        systemNotificationsTransact: async (
+            ctx: Context,
+            scope: AgentModuleScope,
+            boundary: AgentBaseSystemNotificationBoundary,
+        ): Promise<readonly SessionSystemMessage[] | undefined> => {
+            if (boundary.type !== "inference") return undefined;
+            const children = await this.#requireAgents().childOf(ctx, scope.agent.id);
+            if (children.length === 0) return undefined;
+            const text = `Collaborators you created: ${children.join(", ")}. Each reports back on its own when it finishes; nothing waits for them.`;
+            const announced = await scope.historyKV.read(ctx, ANNOUNCED_COLLABORATORS_KEY);
+            if (announced === text) return undefined;
+            await scope.historyKV.write(ctx, ANNOUNCED_COLLABORATORS_KEY, text);
+            return [{ role: "system", content: [{ type: "text", text }] }];
+        },
         instructions: async (ctx: Context, scope: AgentModuleScope): Promise<string> => {
             const agents = this.#requireAgents();
-            const [parent, children] = await Promise.all([
-                agents.parentOf(ctx, scope.agent.id),
-                agents.childOf(ctx, scope.agent.id),
-            ]);
+            const parent = await agents.parentOf(ctx, scope.agent.id);
             const lines: string[] = [
                 `Your Agent ID is ${scope.agent.id}.`,
                 `When a file you mention will be read outside your own chat (a message to another agent, a report to your creator, or files from another agent's workspace), link it as [Foo.tsx:42](happy-file://agents/${scope.agent.id}/<path from your workspace root>#L42-L50), percent-encoding spaces and other special characters. For a file elsewhere, use its agent's ID, or happy-file://workspaces/<workspace ID>/<path>. Copy happy-file links you receive unchanged. Otherwise keep writing path:line.`,
@@ -475,16 +533,12 @@ export class CollaborationModule implements AgentModule {
                         : `You were created by agent ${parent}. What you say is not reported to it automatically; use send_agent_message when it needs to hear from you.`,
                 );
             }
-            if (children.length > 0) {
-                lines.push(
-                    `Collaborators you created: ${children.join(", ")}. Each reports back on its own when it finishes; nothing waits for them.`,
-                );
-            }
             if (await this.#reachesAcrossWorkspaces(ctx, scope.agent.id)) {
                 lines.push(
                     "Cross-workspace agent messaging is enabled. You can use send_agent_message to text any existing agent when you know its Agent ID. Agent IDs are unguessable, so the user or another agent must share the recipient ID with you.",
                 );
             }
+            if (isCodexModel(scope.agent)) lines.push(CODEX_MULTI_AGENT_MODE);
             return lines.join("\n");
         },
 
@@ -690,7 +744,12 @@ export class CollaborationModule implements AgentModule {
         text: string,
         messageId: string,
         delivery: "send" | "steer",
-        selection: (CollaborationAgentSelection & { readonly provider: string }) | undefined,
+        selection:
+            | (CollaborationAgentSelection & {
+                  readonly provider: string;
+                  readonly permissionMode: AgentPermissionMode;
+              })
+            | undefined,
     ): Promise<void> {
         const agents = this.#requireAgents();
         const run = async (work: (workCtx: Context) => Promise<void>): Promise<void> =>
@@ -721,15 +780,15 @@ export class CollaborationModule implements AgentModule {
             // the collaborator runs with. It is stamped on the message the way an API message
             // carries its mode, and recorded as the agent's last mode, so a person who joins a
             // user-visible collaborator composes on top of the coordinator's choice instead of the
-            // daemon defaults. The permission mode is the one Agent Base gives a new agent, sent
-            // explicitly so the recorded mode is what the collaborator actually runs with.
+            // daemon defaults. The permission mode is the creator's, sent explicitly so the recorded
+            // mode is what the collaborator actually runs with.
             const mode =
                 selection === undefined
                     ? fallback?.mode
                     : {
                           effort: selection.effort,
                           modelId: selection.model,
-                          permissionMode: DEFAULT_AGENT_PERMISSION_MODE,
+                          permissionMode: selection.permissionMode,
                           providerId: selection.provider,
                           serviceTier: selection.serviceTier ?? null,
                       };
@@ -745,7 +804,7 @@ export class CollaborationModule implements AgentModule {
                     : {
                           model: selection.model,
                           effort: selection.effort,
-                          permissionMode: DEFAULT_AGENT_PERMISSION_MODE,
+                          permissionMode: selection.permissionMode,
                           provider: selection.provider,
                           ...(selection.serviceTier === undefined
                               ? {}
@@ -1156,4 +1215,13 @@ function isArchived(metadata: AgentMetadata | undefined): boolean {
 function belongsToWorkflow(metadata: AgentMetadata | undefined): boolean {
     const workflow = metadata?.["workflow"];
     return workflow !== null && typeof workflow === "object" && !Array.isArray(workflow);
+}
+
+/**
+ * Whether the agent runs a GPT model, which Codex tells when not to delegate. The model ID names
+ * its family even through another provider; the kind of provider answers only when it does not.
+ */
+function isCodexModel(agent: AgentModuleScope["agent"]): boolean {
+    const family = agent.model === undefined ? undefined : providerModelFamily(agent.model);
+    return family === undefined ? agent.providerKind === "codex" : family === "codex";
 }
