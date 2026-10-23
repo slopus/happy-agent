@@ -167,6 +167,19 @@ const mediaItemSizeSchema = Type.Integer({ minimum: 0 });
 const mediaItemDimensionSchema = Type.Integer({ minimum: 1 });
 const mediaItemThumbhashSchema = Type.String({ minLength: 1, maxLength: 128 });
 
+/**
+ * Where an item came from on the agent's machine: `path` exactly as the agent wrote it, such as a
+ * read's `file_path`, and `absolutePath`, the file it named. A layout block in the agent's text
+ * names the item by either one.
+ */
+export const mediaItemSourceSchema = Type.Object({
+    path: Type.String({ minLength: 1, maxLength: 4096 }),
+    absolutePath: Type.String({ minLength: 1, maxLength: 4096 }),
+});
+
+/** Where an item came from on the agent's machine. */
+export type MediaItemSource = Static<typeof mediaItemSourceSchema>;
+
 /** A decoded picture: always measured, with a ThumbHash to show until its bytes load. */
 export const mediaImageItemSchema = Type.Object({
     kind: Type.Literal("image"),
@@ -186,6 +199,8 @@ export const mediaImageItemSchema = Type.Object({
      * 1. An image's natural size is its pixel size divided by this.
      */
     scale: Type.Optional(Type.Number({ exclusiveMinimum: 1, maximum: 4 })),
+    /** The file it was read, presented, or generated as; absent on older daemons. */
+    source: Type.Optional(mediaItemSourceSchema),
 });
 
 /** A decoded picture: always measured, with a ThumbHash to show until its bytes load. */
@@ -205,6 +220,8 @@ export const mediaFileItemSchema = Type.Object({
     height: Type.Optional(mediaItemDimensionSchema),
     /** Not currently supplied for these kinds; tolerated when present. */
     thumbhash: Type.Optional(mediaItemThumbhashSchema),
+    /** The file it was presented as; absent on older daemons. */
+    source: Type.Optional(mediaItemSourceSchema),
 });
 
 /** A video, a PDF document, or any other file; clients render an unknown kind as a file. */

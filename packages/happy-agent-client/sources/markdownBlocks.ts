@@ -14,7 +14,7 @@ const BLANK_LINE = /^[ \t\r]*$/;
 export function textBlocks(markdown: string): { start: number; end: number }[] {
     const blocks: { start: number; end: number }[] = [];
     let blockStart: number | undefined;
-    let fence: { marker: string; length: number } | undefined;
+    let fence: MarkdownFence | undefined;
     let lineStart = 0;
     while (lineStart < markdown.length) {
         const newline = markdown.indexOf("\n", lineStart);
@@ -23,13 +23,11 @@ export function textBlocks(markdown: string): { start: number; end: number }[] {
         if (fence !== undefined) {
             if (isFenceClose(line, fence)) fence = undefined;
         } else {
-            const open = FENCE_OPEN.exec(line);
-            const marker = open?.[1];
-            const info = open?.[2] ?? "";
-            if (marker !== undefined && !(marker.startsWith("`") && info.includes("`"))) {
+            const open = fenceOpening(line);
+            if (open !== undefined) {
                 if (blockStart !== undefined) blocks.push({ start: blockStart, end: lineStart });
                 blockStart = undefined;
-                fence = { marker: marker.charAt(0), length: marker.length };
+                fence = open;
             } else if (BLANK_LINE.test(line)) {
                 if (blockStart !== undefined) blocks.push({ start: blockStart, end: lineStart });
                 blockStart = undefined;
@@ -43,7 +41,23 @@ export function textBlocks(markdown: string): { start: number; end: number }[] {
     return blocks;
 }
 
-function isFenceClose(line: string, fence: { marker: string; length: number }): boolean {
+/** A fenced code block's opening run, when `line` opens one. */
+export interface MarkdownFence {
+    readonly marker: string;
+    readonly length: number;
+}
+
+/** The fence `line` opens, or `undefined` when it opens none. */
+export function fenceOpening(line: string): MarkdownFence | undefined {
+    const open = FENCE_OPEN.exec(line);
+    const marker = open?.[1];
+    const info = open?.[2] ?? "";
+    if (marker === undefined || (marker.startsWith("`") && info.includes("`"))) return undefined;
+    return { marker: marker.charAt(0), length: marker.length };
+}
+
+/** Whether `line` closes the open `fence`. */
+export function isFenceClose(line: string, fence: MarkdownFence): boolean {
     const close = /^[ \t]*(?:>[ \t]?)*[ \t]*(`+|~+)[ \t\r]*$/.exec(line)?.[1];
     return close !== undefined && close.charAt(0) === fence.marker && close.length >= fence.length;
 }

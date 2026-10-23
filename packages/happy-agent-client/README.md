@@ -513,7 +513,8 @@ from a closed subset of CSS; check every value with `mediaLayoutStyleValue(key, 
 any it refuses. Use the automatic layout when `layout` is absent or unrecognized, ignore unknown
 style fields, skip out-of-range or repeated item nodes, and show items a tree leaves out after it.
 An image without explicit sizing shows at its natural size, shrunk to fit and never enlarged, in
-every layout. Read an item's bytes with
+every layout. An item's optional `source`, `{ path, absolutePath }`, names the file it came
+from, so layout blocks in agent text can place it. Read an item's bytes with
 `getToolCallMedia(agentId, toolCallId, index)`, ranges and `ifNoneMatch` included, or hand
 `toolCallMediaUrl(agentId, toolCallId, index)` to an image, video, or document element through a
 transport that adds the bearer token. The URL's content never changes. `ArtifactPresentation`
@@ -564,6 +565,27 @@ the daemon agree on what is a tag:
 
 Show a resolved reference as a link whose text is the live title. Indicate a busy entity on the
 link. Show unknown kinds and unresolvable references as inert placeholder text.
+
+## Media layouts in text
+
+Agent text may arrange media already shown in the conversation with plain HTML blocks such as
+`<div style="display: grid; grid-template-columns: 1fr 1fr"><img src="a.png"><img src="b.png"></div>`,
+as API.md specifies under "Media layouts in text". This package holds the one splitter and parser:
+
+- `splitMediaLayoutBlocks(markdown)` splits text into `markdown` and `layout` segments that join
+  back to the input. A block starts at a line beginning with `<div`, `<section`, `<figure`, `<p`,
+  or `<img`, outside code, and runs until its root element closes, across blank lines. A block
+  without an `<img` stays Markdown. A block that never closes is the last segment, with
+  `complete: false`: hold it while the text streams, and show it as Markdown once it is final.
+- `parseMediaLayoutHtml(html, resolve)` reads one block, or `present_files`' layout, into
+  `MediaLayoutNode`s. `resolve(src)` returns an index into a list of items the caller builds, or
+  `undefined`; the result reports the indexes `placed`, what was `ignored`, and whether content
+  was `truncated` by a limit. Resolve each `src` to the most recent earlier media item for which
+  `mediaSourceMatches(item.source, src)` holds, and show the tree with those items as a `tree`
+  layout. Show the block as Markdown when nothing was placed or content was truncated.
+- `stripMediaLayoutBlocks(markdown)` is the fallback for surfaces that cannot show blocks.
+
+Never load a `src` yourself; show only the matched item's snapshot.
 
 ## File links
 

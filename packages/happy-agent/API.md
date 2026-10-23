@@ -6305,6 +6305,15 @@ tolerate their presence on any kind. Media types of non-images come from the fil
 `application/octet-stream` when it is unknown. The set of kinds may grow; a client renders an
 unknown kind as a `"file"`.
 
+Any item may carry `source`, `{ "path", "absolutePath" }`, naming the file the item came from on
+the agent's machine: `path` exactly as the agent wrote it, such as `Read`'s `file_path`,
+`view_image`'s or `ReadMediaFile`'s `path`, or one of `present_files`' `filepaths`, and
+`absolutePath`, the file that path resolved to. A generated image's `path` and `absolutePath` are
+both the absolute path the generation tool reported to the agent. Each is 1–4,096 characters. A
+layout block in the agent's text names the item by either one; see "Media layouts in text". The
+daemon omits `source` when a path is longer, and records made before it carry none. `source` is
+additive and does not increment the protocol version.
+
 The daemon never stores the bytes in history. It keeps a private, content-addressed copy taken
 when the call ran, so later edits to or deletion of the source file never change what the chat
 shows. The presentation is recorded in the conversation of the agent that ran the call only;
@@ -6396,7 +6405,7 @@ directory, an empty file, or a file over its limit fails the call.
 
 Without `layout` the presentation has no `layout`. `layout` is a fragment of HTML with inline
 `style` attributes, which the daemon parses with a standards-compliant HTML parser into the
-`tree` above. A layout never fails the call. The daemon keeps what it can use and ignores the
+`tree` above, using the same `parseMediaLayoutHtml` clients use for layout blocks in text. A layout never fails the call. The daemon keeps what it can use and ignores the
 rest, and the call's result tells the agent in a short sentence what it ignored:
 
 - Tags: the nine element tags above, `img`, and `br`, in any letter case. An unknown tag is
@@ -6593,6 +6602,77 @@ tag.
 Reference tags are additive and do not increment the protocol version. Request and response
 schemas are unchanged. A client that does not know about reference tags shows the tag text as
 written.
+
+#### Media layouts in text
+
+An agent may arrange media it already showed in the conversation by writing plain HTML in its
+Markdown reply, without another tool call:
+
+```markdown
+Side by side:
+
+<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px">
+  <img src="shots/before.png">
+  <img src="shots/after.png">
+</div>
+```
+
+The HTML is layout only, in the subset `present_files`' `layout` takes: the same tags, attributes,
+`style` grammar, and limits. The daemon stores and returns message text exactly as written; no
+route rewrites it, and the HTML never reaches a renderer as HTML.
+
+**Blocks.** A layout block starts at the start of a line indented at most three spaces, outside a
+fenced code block and outside a code span, with a start tag `<div`, `<section`, `<figure`, `<p`,
+or `<img` in any letter case, followed by whitespace, `>`, `/`, or the end of the line. It may
+interrupt a paragraph. It runs until its root element closes: only start and end tags of the root's
+own name count, comments and quoted attribute values are skipped, and an `img` root ends with its
+own tag. The block then takes the rest of the line its root closes on. Unlike a CommonMark HTML
+block, a blank line never ends it. A block holding no `<img` start tag is ordinary Markdown. A
+block whose root never closes, or that ends inside a tag or comment, runs to the end of the text
+and is incomplete. A last line without a newline that is only the start of such a tag, such as `<`,
+`<di`, or `<fig`, is incomplete as well.
+
+**Resolution.** Each `<img src>` names an earlier media item of the same conversation: the most
+recent item, in any earlier `media` presentation, whose `source.path` or `source.absolutePath`
+equals `src` exactly. An item without `source` is never named, and a `src` naming nothing is
+dropped. A client never loads `src` from disk or the network; it shows only the item's snapshot
+through its media route. Each item is placed at most once per block.
+
+**Rendering.** A client that renders layout blocks parses each complete block into the `tree` of
+a `media` presentation, whose item indexes refer to the items its `src`s resolved to, and shows it
+as it shows a `tree` layout. A block is shown as a layout only when at least one `img` resolves and
+no content was lost to a limit; otherwise it is shown as the Markdown it is, so nothing the agent
+wrote is ever hidden. While text streams, a client holds an incomplete last block rather than
+showing its HTML, and once the message is final, it shows an incomplete block as Markdown.
+
+**Fallback.** A surface that cannot show layout blocks drops each complete block, closing up the
+blank lines around it, and keeps an incomplete one as written. The daemon applies this to the
+text it relays to exported bots, which receive the media the run showed as attachments instead,
+and to the agent text it relays to the Happy mobile app, leaving out a text that was only layout.
+
+**One implementation.** `@slopus/happy-agent-client` exports the block splitter, parser, matcher,
+and fallback:
+
+```ts
+splitMediaLayoutBlocks(markdown: string):
+    ({ type: "markdown"; text: string } | { type: "layout"; html: string; complete: boolean })[];
+parseMediaLayoutHtml(html: string, resolve: (src: string) => number | undefined): {
+    root: MediaLayoutNode[]; // each item node's index is what resolve returned
+    placed: number[];        // the indexes placed, in order, each once
+    ignored: string[];       // short notes on what was left out
+    truncated: boolean;      // content was lost to a limit
+};
+mediaSourceMatches(source: MediaItemSource | undefined, src: string): boolean;
+stripMediaLayoutBlocks(markdown: string): string;
+```
+
+The segments' text joined in order is the input, and an incomplete `layout` segment is always the
+last. `MAX_MEDIA_LAYOUT_HTML_LENGTH` is the 32 KiB bound. Clients and the daemon use these rather
+than their own parsers, so every surface agrees on exactly what a block shows.
+
+Media layouts in text are additive and do not increment the protocol version. Request and response
+schemas are unchanged apart from the optional `source`. A client that does not render them shows
+the HTML as its Markdown renderer does.
 
 #### File links
 

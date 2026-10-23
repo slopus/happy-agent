@@ -35,6 +35,8 @@ export type { MessageDeltaApplication } from "./applyMessageDelta.js";
 export * from "./requestOptions.js";
 export * from "./happyFileLinks.js";
 export * from "./happyReferences.js";
+export * from "./mediaLayoutBlocks.js";
+export * from "./mediaLayoutHtml.js";
 export {
     artifactAddressPublic,
     artifactAddressLoopback,
