@@ -197,7 +197,7 @@ export function claudeSdkBuiltInToolNames(tools: readonly SessionTool[]): string
     return tools.flatMap((tool) => (tool.server === undefined ? [] : [tool.server.type]));
 }
 
-function hasClaudeToolSearch(tools: readonly SessionTool[]): boolean {
+export function hasClaudeToolSearch(tools: readonly SessionTool[]): boolean {
     return tools.some((tool) => tool.server?.type === "ToolSearch");
 }
 

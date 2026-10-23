@@ -2359,6 +2359,67 @@ describe("ClaudeSession", () => {
         expect(textFromSessionEvents(events)).toBe("CONTINUED");
     });
 
+    it("keeps a live query without serializing fields Claude is never sent", async () => {
+        const credential = await ClaudeAuthTokenCredential.tryLoad({ authToken: "test-token" });
+        if (credential === null) throw new Error("Expected test credential.");
+        const query = vi.fn<ClaudeSdkQuery>(() => fakeLiveToolLoopQuery("CONTINUED"));
+        // Agent tools reach the session with their return schema attached. An MCP tool's schema
+        // is megabytes once written out, so serializing it on every turn is the regression.
+        const agentTool = {
+            name: "Bash",
+            parameters: Type.Object({ command: Type.String() }),
+            returnType: {
+                toJSON() {
+                    throw new Error("A tool's return schema was serialized.");
+                },
+            },
+        };
+        const session = new ClaudeSession("unsent-tool-fields-session", {
+            instructions: "",
+            credential,
+            model: "sonnet[1m]",
+            query,
+            tools: [agentTool],
+        });
+        const prompt = {
+            role: "user" as const,
+            content: [{ type: "text" as const, text: "Run a command." }],
+        };
+
+        await collectSessionEvents(
+            session.run(testContext, { context: { instructions: "", messages: [prompt] } }),
+        );
+        const events = await collectSessionEvents(
+            session.run(testContext, {
+                context: {
+                    instructions: "",
+                    messages: [
+                        prompt,
+                        {
+                            role: "assistant",
+                            content: [
+                                {
+                                    type: "tool_call",
+                                    callId: "call-1",
+                                    name: "Bash",
+                                    arguments: '{"command":"echo done"}',
+                                },
+                            ],
+                        },
+                        {
+                            role: "tool",
+                            content: [{ type: "text" as const, text: "done" }],
+                            callId: "call-1",
+                        },
+                    ],
+                },
+            }),
+        );
+
+        expect(query).toHaveBeenCalledOnce();
+        expect(textFromSessionEvents(events)).toBe("CONTINUED");
+    });
+
     it("restarts when the caller edits the assistant message the query generated", async () => {
         const credential = await ClaudeAuthTokenCredential.tryLoad({ authToken: "test-token" });
         if (credential === null) throw new Error("Expected test credential.");

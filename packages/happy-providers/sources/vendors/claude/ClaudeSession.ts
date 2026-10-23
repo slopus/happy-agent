@@ -41,6 +41,7 @@ import {
     type ClaudeSessionReplay,
 } from "@/vendors/claude/impl/createClaudeSessionReplay.js";
 import { claudeMessageIdentity } from "@/vendors/claude/impl/claudeMessageIdentity.js";
+import { claudeQueryKey } from "@/vendors/claude/impl/claudeQueryKey.js";
 import { resolveClaudeLiveDelta } from "@/vendors/claude/impl/resolveClaudeLiveDelta.js";
 import {
     claudeSdkBuiltInToolNames,
@@ -416,13 +417,11 @@ export class ClaudeSession extends BaseSession {
                       instructions: modelConfiguration.instructions,
                       messages: options.context.messages,
                   };
-        const queryKey = JSON.stringify({
+        const queryKey = claudeQueryKey({
             compaction: options.compaction === true,
             effort: options.effort,
             model: options.model,
-            ...(options.structuredOutput === undefined
-                ? {}
-                : { structuredOutput: options.structuredOutput }),
+            structuredOutput: options.structuredOutput,
             systemPrompt,
             tools,
         });
