@@ -147,7 +147,19 @@ First restricted execution needs Happy's native sandbox provisioning. You can
 inspect it with `happy-agent sandbox status` and initialize it explicitly with
 `happy-agent sandbox setup`. Windows may request UAC for Happy's setup helper to
 create HappySandboxOffline, HappySandboxOnline and HappySandboxUsers and apply
-Happy-scoped ACL/network rules. A failed or cancelled attempt is retained; repeated
+Happy-scoped ACL/network rules. It also creates HappySandboxOfflineX,
+HappySandboxOnlineX and HappySandboxUsersExternal: workspaces outside the
+Windows profile run as these accounts, whose group is permanently denied the
+profile, so switching between inside and outside workspaces never rewrites the
+profile's ACL (see
+[EXTERNAL_SANDBOX_IDENTITY.md](../../happy-agent-supervisor/native/windows/EXTERNAL_SANDBOX_IDENTITY.md)).
+A new installation creates all four accounts at its one prompt. An existing
+installation that only works inside the Windows profile is never asked again; it
+is prompted once, the first time an agent runs a command in a workspace outside
+the profile. A declined or unavailable prompt makes only those outside
+workspaces fail, with a message naming `happy-agent sandbox setup`; nothing
+falls back to a weaker sandbox. Background Git scans never open the prompt.
+A failed or cancelled attempt is retained; repeated
 commands do not retry UAC. After addressing the reported error,
 `happy-agent sandbox setup --retry` deliberately permits one more attempt.
 
@@ -187,7 +199,8 @@ service or bundled Codex server.
 The initial Windows boundary follows that implementation rather than promising
 identical macOS/Linux policy capabilities. Workspace writes, protected paths,
 offline execution, interactive commands and process cleanup are supported.
-Protected paths may have Windows-only protected placeholders. Arbitrary independent
+Missing protected paths are never materialized; a restricted command that creates
+one has it removed, as on Linux. Arbitrary independent
 read-denial policies for simultaneous commands are not supported by the shared
 account/group ACL design. Destination allowlists, proxy enforcement and independent
 outbound-versus-listener restrictions are outside this Windows scope; unsupported
