@@ -4,7 +4,8 @@ A small native macOS app that puts the agents in the system menu bar. Its icon i
 same mark as the app icon, drawn as a 14-point transparent template glyph sized like the SF Symbols
 beside it: still while nothing is working, with a cell or two at a time softly
 flashing while something is, static with the middle cell dimmed when Reduce Motion is on, and
-greyed out while the daemon is not answering. Clicking it shows a compact, read-only menu:
+greyed out while the daemon is not answering. Clicking it shows a compact menu whose only
+actions are the two at the bottom:
 
 ```text
 7 working                    1.3M tokens in 24h
@@ -24,6 +25,9 @@ Fix the login redirect loop            14m 3s
 Draft the launch post                  22m 9s
 Investigate the flaky gym test          1h 5m
 +2 more
+──────────────────────────────────────────────
+Quit Happy
+Stop Happy Agent
 ```
 
 - The headline counts the working tasks and bots, and carries the last 24 hours of tokens as a quiet
@@ -49,6 +53,13 @@ Investigate the flaky gym test          1h 5m
   ring and the reset turn red.
 - When the lists would take more than 70% of the screen, they scroll below the headline instead
   of the menu growing.
+- "Quit Happy" appears only while the Happy desktop app (`com.slopus.happy`, or Happy Nightly as
+  `com.slopus.happy.nightly`) is running, and quits it the way Cmd+Q does, so it closes through
+  its own quit handling. It leaves the daemon running.
+- "Stop Happy Agent" stops the daemon the way `happy-agent stop` does, with `POST /v0/shutdown`.
+  The daemon stops the menu bar app on its way out, so the icon goes with it. The headline reads
+  "Stopping Happy Agent…" meanwhile, and "Happy Agent could not stop" the next time the menu opens
+  if the daemon refused. The item is disabled while the daemon is not answering.
 
 ```text
 MenuBarModule ──spawns──> happy-menu-bar (Swift, AppKit)
@@ -56,11 +67,12 @@ MenuBarModule ──spawns──> happy-menu-bar (Swift, AppKit)
       └── ConfigModule           └── GET /v0/bots, /v0/tasks, /v0/usage, /v0/config
           socketPath, tokenPath      GET /v0/agents/:id/messages (a running turn's start)
                                      GET /v0/events/stream
+                                     POST /v0/shutdown (Stop Happy Agent)
 ```
 
-The app is a reader. It speaks the ordinary Happy Agent HTTP API over the same private Unix socket
-every other client uses, with the same bearer token, so it can show nothing the person could not
-already see and can change nothing at all.
+The app is a reader with one control. It speaks the ordinary Happy Agent HTTP API over the same
+private Unix socket every other client uses, with the same bearer token, so it can show nothing the
+person could not already see, and the only thing it changes is asking the daemon to stop.
 
 The event stream is used only as a signal that something changed; the snapshots the menu draws are
 always re-read. `agent.*`, `task.*`, `bot.*`, and `run.*` events re-read the tasks and bots;
