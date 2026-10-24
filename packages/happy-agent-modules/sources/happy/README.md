@@ -168,16 +168,22 @@ contract each of them needs — `HappySessionOperations` for the session client,
 `HappySpawnOperations` for a phone starting something new — so the wire handling
 can be exercised without a daemon behind it.
 
-A phone message is always steering. Happy first writes its complete pending
-history row and offers the same message identity to Agent Base with `steer` in
-one transaction. History's committed-pending notification lets the API publish
-that row immediately, so an open desktop transcript shows the message while the
-active run is still reaching its steering boundary. Once accepted, the ordinary
-Agent Base event path promotes that exact row into the successor run. At that
+A phone message steers unless its `meta.delivery` is `"queue"`; any other value,
+or none, steers, which is what phones that predate queueing send. Happy first
+writes its complete pending history row with that delivery and offers the same
+message identity to Agent Base with `steer` or `send` in one transaction.
+History's committed-pending notification lets the API publish that row
+immediately, so an open desktop transcript shows the message while the active
+run is still reaching its boundary. Session metadata advertises
+`capabilities.queueing: true`, so a phone offers queueing only to a daemon that
+reads it. An abort leaves a queued phone message pending, exactly like a queued
+desktop message, until the next message asks for a turn. Once accepted, the
+ordinary Agent Base event path promotes that exact row into its run. At that
 same acceptance the session stream answers the phone with a content-free
-`user-message-accepted` receipt instead of an echo: it closes the interrupted
-turn and tells the client, by server message ID, where its own message entered
-the run order. An older app that cannot name the receipt drops it silently.
+`user-message-accepted` receipt instead of an echo: it closes any turn still
+open — as `steering` for a steered message, `completed` for a queued one — and
+tells the client, by server message ID, where its own message entered the run
+order. An older app that cannot name the receipt drops it silently.
 
 A permanently refused send returns `user-message-rejected` with the original relay
 message `ref` and a readable `reason`. The phone marks that bubble failed and stops

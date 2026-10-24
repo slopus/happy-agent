@@ -192,6 +192,22 @@ describe("Happy message mapping", () => {
         expect(messages[0]?.content.ev).toMatchObject({ reason: "steering", status: "completed" });
     });
 
+    it("closes a finished turn as completed, not steered, when a queued message is accepted", () => {
+        for (const viewer of [undefined, "user-1"]) {
+            const mapper = new HappyMessageMapper(viewer);
+            mapper.map(blockStart());
+            const messages = mapper.map(
+                accepted({ kind: "send" }),
+                historyMessage("queued from the phone", { remoteMessageId: "happy:remote-3" }),
+            );
+            expect(messages[0]?.content.ev).toMatchObject({
+                reason: "completed",
+                status: "completed",
+                t: "turn-end",
+            });
+        }
+    });
+
     it("receipts only the sender's phone and shows the message to another participant", () => {
         const sender = new HappyMessageMapper("user-2");
         const reader = new HappyMessageMapper("user-1");

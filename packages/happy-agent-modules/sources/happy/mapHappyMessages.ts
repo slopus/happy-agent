@@ -228,12 +228,14 @@ export class HappyMessageMapper {
         this.#rememberRunStart(accepted.runId, event.occurredAt);
         if (message?.recordId !== accepted.id) return [];
         if (message.hideFromUser === true) return [];
+        // A steered message cuts the open turn short; a queued one only arrives once it finished.
+        const closeReason = accepted.kind === "steering" ? "steering" : "completed";
         // Only the sending connection already has this message. Other participants use separate
         // relay streams: they need its text, not a receipt referring to a message they never got.
         if (message.remoteMessageId !== undefined && this.#isOwnMessage(message)) {
             if (message.role !== "user") return [];
             return [
-                ...this.#closeTurn(event, accepted.runId, "completed", "steering"),
+                ...this.#closeTurn(event, accepted.runId, "completed", closeReason),
                 this.#createMessage({
                     ev: {
                         id: accepted.id,
@@ -253,8 +255,8 @@ export class HappyMessageMapper {
             .trim();
         const content = richUserInput(message);
         if (text.length === 0 && content === undefined) return [];
-        // A message arriving mid-turn is the person interrupting; the turn ends here.
-        const interrupted = this.#closeTurn(event, accepted.runId, "completed", "steering");
+        // A message arriving mid-turn ends that turn here.
+        const interrupted = this.#closeTurn(event, accepted.runId, "completed", closeReason);
         if (message.role === "user") {
             return [
                 ...interrupted,
