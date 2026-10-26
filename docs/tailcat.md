@@ -233,6 +233,10 @@ See the Mobile connector section of `API.md` for the complete protocol.
   then disable and re-enable Tailcat to reconcile it immediately.
 - If port `24779` is already in use, choose another fixed `port` under `[feature.tailcat]`, restart
   the daemon, and use that same port in the remote-node configuration.
+- If linking a phone directly fails because port `24781` is already in use, another program holds
+  it, most often a second Happy Agent on the same computer, such as a development daemon, using the
+  same default. Quit it, or give one of them another `port` under `[feature.mobile_connector]` and
+  restart that daemon. Phones paired with a daemon whose port changes must pair again.
 - If `address` or `port` is missing, Tailcat is not currently open. Ask an active admin bot for the
   authoritative status rather than relying only on files.
 - Resolve `server.tailcat` through Tailcat. For a local SOCKS listener, use SOCKS5 hostname

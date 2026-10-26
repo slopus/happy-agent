@@ -20,7 +20,11 @@ import {
 import { ConfigModule } from "../config/index.js";
 import { DurableFunctionsModule } from "../durableFunctions/index.js";
 import { NodeModule } from "../node/index.js";
-import { TailcatModule, type TailcatNamedExposure } from "../tailcat/index.js";
+import {
+    TailcatModule,
+    TailcatPortInUseError,
+    type TailcatNamedExposure,
+} from "../tailcat/index.js";
 import { TeamAuthenticationError, TeamModule, teamUser } from "../team/index.js";
 import { createUuidV7Factory } from "../utils/createUuidV7.js";
 import { MobilePairing } from "./impl/MobilePairing.js";
@@ -495,7 +499,10 @@ export class MobileConnectorModule implements AgentModule {
                 } catch (error: unknown) {
                     await this.#closeSocket();
                     this.#status = "failed";
-                    this.#error = errorMessage(error);
+                    this.#error =
+                        error instanceof TailcatPortInUseError
+                            ? this.#portInUseMessage(error.port)
+                            : errorMessage(error);
                 }
             }
             return before === this.#status && this.#status !== "failed" ? undefined : deviceOwners;
@@ -514,6 +521,20 @@ export class MobileConnectorModule implements AgentModule {
             port: this.#config.mobileConnectorPort,
             target: transport,
         });
+    }
+
+    /**
+     * The port is fixed because paired phones keep it, so the person has to free it or choose
+     * another; most often it is a second Happy Agent on this computer with the same default.
+     */
+    #portInUseMessage(port: number): string {
+        const settings = this.#config.configuration.paths.globalConfigPath;
+        return (
+            `Another program on this computer is already using port ${String(port)}, which ` +
+            "direct phone connections need. It is often another Happy Agent. Quit that program, " +
+            `or set a different port under [feature.mobile_connector] in ${settings} and ` +
+            "restart Happy Agent."
+        );
     }
 
     async #closeSocket(): Promise<void> {

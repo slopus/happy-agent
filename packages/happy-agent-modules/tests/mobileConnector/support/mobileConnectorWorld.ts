@@ -1,4 +1,5 @@
 import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -35,7 +36,8 @@ export interface MobileConnectorWorld {
 }
 
 export interface MobileConnectorWorldOptions {
-    readonly port: number;
+    /** The configured socket port; one that is free right now when omitted. */
+    readonly port?: number;
     readonly enabled?: boolean;
     readonly team?: boolean;
     /** Restart over an earlier world's database and Happy home. */
@@ -59,6 +61,8 @@ export async function mobileConnectorWorld(
     options: MobileConnectorWorldOptions,
 ): Promise<MobileConnectorWorld> {
     const root = options.after?.root ?? (await mkdtemp(join(tmpdir(), "happy-mobile-connector-")));
+    // A daemon running on this machine may hold any fixed port, so each world takes a free one.
+    const port = options.port ?? (await freePort());
     const configDirectory = join(
         root,
         process.platform === "darwin" ? "Happy/Config" : "happy/config",
@@ -69,7 +73,7 @@ export async function mobileConnectorWorld(
         [
             "[feature.mobile_connector]",
             `enabled = ${String(options.enabled ?? true)}`,
-            `port = ${String(options.port)}`,
+            `port = ${String(port)}`,
         ].join("\n"),
     );
     const executable = join(root, "fake-tailcat");
@@ -142,7 +146,7 @@ setInterval(() => undefined, 1_000);
         database,
         events,
         mobile,
-        port: options.port,
+        port,
         root,
         tailcat,
         stop,
@@ -152,6 +156,18 @@ setInterval(() => undefined, 1_000);
             await rm(root, { force: true, recursive: true });
         },
     };
+}
+
+async function freePort(): Promise<number> {
+    const server = createServer();
+    await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(0, "127.0.0.1", resolve);
+    });
+    const address = server.address();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    if (address === null || typeof address === "string") throw new Error("No port is free.");
+    return address.port;
 }
 
 function team(enabled: boolean): TeamModule {

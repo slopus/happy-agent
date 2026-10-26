@@ -1,4 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
+import { createServer } from "node:net";
+import { join } from "node:path";
 
 import { agentDatabaseRows } from "@slopus/happy-agent-base";
 import { sql } from "drizzle-orm";
@@ -27,7 +29,6 @@ import {
     type MobileConnectorWorld,
 } from "./support/mobileConnectorWorld.js";
 
-const PORT = 24_791;
 const worlds: MobileConnectorWorld[] = [];
 const device = { name: "Test iPhone", platform: "ios" } as const;
 
@@ -38,7 +39,7 @@ afterEach(async () => {
 });
 
 async function world(options: Partial<Parameters<typeof mobileConnectorWorld>[0]> = {}) {
-    const created = await mobileConnectorWorld({ port: PORT, ...options });
+    const created = await mobileConnectorWorld(options);
     worlds.push(created);
     return created;
 }
@@ -90,7 +91,7 @@ describe("MobileConnectorModule", () => {
         expect(started.status).toBe("open");
         expect(started.pairing).toMatchObject({ status: "waiting", device: null, emoji: null });
         const qr = parseQr(started.pairing!.qr!);
-        expect(qr).toMatchObject({ v: 1, a: FAKE_TAILCAT_ADDRESS, p: PORT, n: "Test Mac" });
+        expect(qr).toMatchObject({ v: 1, a: FAKE_TAILCAT_ADDRESS, p: target.port, n: "Test Mac" });
         expect(qr.e).toBe(started.pairing!.expiresAt);
 
         const session = await startPhonePairing(started.pairing!.qr!, phone(target));
@@ -112,7 +113,7 @@ describe("MobileConnectorModule", () => {
         await target.mobile.confirmPairing(target.ctx, started.pairing!.id);
         const paired = await confirmed;
 
-        expect(paired).toMatchObject({ address: FAKE_TAILCAT_ADDRESS, port: PORT });
+        expect(paired).toMatchObject({ address: FAKE_TAILCAT_ADDRESS, port: target.port });
         const rows = await storedDevices(target);
         expect(rows).toEqual([
             {
@@ -137,7 +138,7 @@ describe("MobileConnectorModule", () => {
         const invocations = await import("node:fs/promises").then(({ readFile }) =>
             readFile(`${target.root}/tailcat-invocations`, "utf8"),
         );
-        expect(invocations).toContain("mobile.private.json serve 24791");
+        expect(invocations).toContain(`mobile.private.json serve ${String(target.port)}`);
         expect(invocations).not.toContain("default.private.json");
     });
 
@@ -437,7 +438,7 @@ describe("MobileConnectorModule", () => {
         await first.stop();
 
         const restarted = await mobileConnectorWorld({
-            port: PORT,
+            port: first.port,
             after: first,
             detached: true,
         });
@@ -461,6 +462,37 @@ describe("MobileConnectorModule", () => {
             qr: null,
             error: "The phone connection socket is not ready yet.",
         });
+    });
+
+    it("says how to free its port when another program holds it, and opens once it is free", async () => {
+        const target = await world();
+        const occupant = createServer();
+        await new Promise<void>((resolve, reject) => {
+            occupant.once("error", reject);
+            occupant.listen(target.port, "127.0.0.1", resolve);
+        });
+        let started: MobileConnectorSnapshot;
+        try {
+            started = await target.mobile.startPairing(target.ctx);
+        } finally {
+            await new Promise<void>((resolve) => occupant.close(() => resolve()));
+        }
+        const settings = join(
+            target.root,
+            process.platform === "darwin" ? "Happy/Config" : "happy/config",
+            "happy.toml",
+        );
+        const error =
+            `Another program on this computer is already using port ${String(target.port)}, ` +
+            "which direct phone connections need. It is often another Happy Agent. Quit that " +
+            `program, or set a different port under [feature.mobile_connector] in ${settings} ` +
+            "and restart Happy Agent.";
+        expect(started).toMatchObject({ status: "failed", error });
+        expect(started.pairing).toMatchObject({ status: "failed", qr: null, error });
+
+        const retried = await target.mobile.startPairing(target.ctx);
+        expect(retried).toMatchObject({ status: "open", error: null });
+        expect(retried.pairing).toMatchObject({ status: "waiting", qr: expect.any(String) });
     });
 
     it("announces each owner's snapshots with increasing versions", async () => {

@@ -54,7 +54,9 @@ is local and read-only. Happy Agent's own API authentication remains in force in
 Binding the loopback relay to port zero made the remote endpoint change on every daemon restart,
 even though the Tailcat identity was stable. Tailcat now binds the exact machine-configured port,
 which defaults to the IANA-unassigned `24779`. A collision is a startup failure, never permission
-to choose another port, because remote nodes may have stored the address and port together.
+to choose another port, because remote nodes may have stored the address and port together. It
+throws `TailcatPortInUseError` with the port, so a caller such as the mobile connector can tell the
+person which setting to change.
 
 ## Outbound carriers are persistent native sockets
 

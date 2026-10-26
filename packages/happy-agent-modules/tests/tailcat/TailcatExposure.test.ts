@@ -1,5 +1,6 @@
 import { chmod, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
+import { createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -21,7 +22,8 @@ describe("Tailcat exposure", () => {
         const fake = await fakeTailcat(root);
         const paths = tailcatPaths(root);
         const target = { host: "127.0.0.1", port: 9 } as const;
-        const port = 24_781;
+        // Not the mobile connector's default: a daemon on this machine may be holding it.
+        const port = await freePort();
 
         const first = await startTailcatExposure(
             createRootContext().named("tailcat-first"),
@@ -152,6 +154,18 @@ async function temporaryRoot(): Promise<string> {
     const root = await mkdtemp(join(tmpdir(), "happy-tailcat-"));
     roots.push(root);
     return root;
+}
+
+async function freePort(): Promise<number> {
+    const server = createNetServer();
+    await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(0, "127.0.0.1", resolve);
+    });
+    const address = server.address();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    if (address === null || typeof address === "string") throw new Error("No port is free.");
+    return address.port;
 }
 
 function tailcatPaths(root: string) {

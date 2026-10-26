@@ -12,6 +12,7 @@ export {
     type TailcatTransportTarget,
 } from "./Tailcat.js";
 export { TailcatModule } from "./TailcatModule.js";
+export { TailcatPortInUseError } from "./TailcatPortInUseError.js";
 export { getTailcatStatusTool } from "./tools/get_tailcat_status.js";
 export {
     setTailcatEnabledInputSchema,

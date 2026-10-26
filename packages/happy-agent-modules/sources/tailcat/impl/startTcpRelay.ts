@@ -1,5 +1,7 @@
 import { createServer, connect, type Server, type Socket } from "node:net";
 
+import { TailcatPortInUseError } from "../TailcatPortInUseError.js";
+
 export type TcpRelayTarget =
     | { readonly socketPath: string }
     | { readonly host: string; readonly port: number };
@@ -43,7 +45,7 @@ export async function startTcpRelay(target: TcpRelayTarget, port: number): Promi
     } catch (error) {
         await closeServer(server, sockets).catch(() => undefined);
         if (isAddressInUse(error)) {
-            throw new Error(`Tailcat port ${String(port)} is already in use.`, { cause: error });
+            throw new TailcatPortInUseError(port, { cause: error });
         }
         throw error;
     }
