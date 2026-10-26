@@ -459,3 +459,12 @@ after a restart then has no earlier version, so answering it with `agent.updated
 update has no prior resource version" and logged an error for every such agent. The restoration
 changes nothing a client reads and there is no version a client could hold, so the API now skips
 that update; a client reads the agent's current version when it next fetches it.
+
+## Hidden collaborators archive without an owner series
+
+`archive_agent` failed for every hidden collaborator with "The agent owner was not found.": writing
+`archivedAt` refreshes owner visibility, and a collaborator has no bot, task, chat, workspace, or
+project holding it, so the refresh threw and rolled the archival back. Any agent with a parent
+and no project now skips the refresh, as shared-filesystem subtasks already did; parentless roots
+without an owner still fail. Collaboration's unit tests replace the agent collection, so the
+regression test runs archival through the real runtime.
