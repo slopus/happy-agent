@@ -2930,6 +2930,68 @@ export class ConfigModule implements AgentModule {
         });
     }
 
+    /** Whether a provider is configured, or was added to runtime.toml and waits for a restart. */
+    hasProvider(providerId: string): boolean {
+        const runtime = this.#runtimeValues.providers as Record<string, unknown> | undefined;
+        return (
+            this.configuration.values.providers[providerId] !== undefined ||
+            runtime?.[providerId] !== undefined
+        );
+    }
+
+    /** The OpenAI-compatible provider, configured or waiting for a restart, at this base URL. */
+    openAICompatibleProviderAt(baseUrl: string): string | undefined {
+        const wanted = normalizeLocalBaseUrl(baseUrl);
+        for (const [id, provider] of Object.entries(this.configuration.values.providers)) {
+            if (
+                provider.type === "openai_compatible" &&
+                normalizeLocalBaseUrl(provider.baseUrl) === wanted
+            ) {
+                return id;
+            }
+        }
+        const runtime = (this.#runtimeValues.providers ?? {}) as Record<
+            string,
+            { readonly type?: unknown; readonly base_url?: unknown }
+        >;
+        for (const [id, provider] of Object.entries(runtime)) {
+            if (
+                provider.type === "openai_compatible" &&
+                typeof provider.base_url === "string" &&
+                normalizeLocalBaseUrl(provider.base_url) === wanted
+            ) {
+                return id;
+            }
+        }
+        return undefined;
+    }
+
+    /**
+     * Add one new, enabled provider to generated runtime.toml. Like every provider, it takes effect
+     * when the daemon next starts. A provider that already exists is never replaced.
+     */
+    async addRuntimeProvider(
+        ctx: Context,
+        providerId: string,
+        table: Readonly<Record<string, unknown>>,
+    ): Promise<void> {
+        await this.#runtimeLock.runInLock(ctx, async () => {
+            if (this.hasProvider(providerId)) {
+                throw new Error(`Provider "${providerId}" is already configured.`);
+            }
+            const next = structuredClone(this.#runtimeValues);
+            next.providers = {
+                ...(next.providers ?? {}),
+                [providerId]: { ...structuredClone(table), enabled: true },
+            } as NonNullable<PartialValues["providers"]>;
+            if (!Value.Check(partialValuesSchema, next)) {
+                throw new Error(`The configuration for provider "${providerId}" is invalid.`);
+            }
+            await writeRuntimeConfigurationFile(this.configuration.paths.runtimeConfigPath, next);
+            this.#runtimeValues = next;
+        });
+    }
+
     /** Atomically persist and publish the machine's live Tailcat enablement. */
     async updateRuntimeTailcatEnabled(ctx: Context, enabled: boolean): Promise<void> {
         await this.#runtimeLock.runInLock(ctx, async () => {
@@ -6238,4 +6300,12 @@ function deepFreeze<T>(value: T): T {
     Object.freeze(value);
     for (const child of Object.values(value as Record<string, unknown>)) deepFreeze(child);
     return value;
+}
+
+/** One spelling for a base URL: no trailing slash, and `localhost` as `127.0.0.1`. */
+function normalizeLocalBaseUrl(baseUrl: string): string {
+    return baseUrl
+        .trim()
+        .replace(/\/+$/u, "")
+        .replace(/^(https?:\/\/)localhost(?=[:/]|$)/u, "$1127.0.0.1");
 }
