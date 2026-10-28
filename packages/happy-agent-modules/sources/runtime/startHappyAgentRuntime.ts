@@ -761,7 +761,14 @@ export async function startHappyAgentRuntime(
             tasks,
         );
         const stickers = new StickersModule(config, team, stories);
-        const onboarding = new OnboardingModule(durableFunctions, history, bots, profile);
+        const onboarding = new OnboardingModule(
+            durableFunctions,
+            history,
+            bots,
+            profile,
+            providerClis,
+            providerRoutes,
+        );
         const apiModule = new ApiModule(
             abort,
             config,

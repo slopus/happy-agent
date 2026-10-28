@@ -46,7 +46,11 @@ import {
     providerCliSignInRequestSchema,
     type ProviderCliId,
 } from "../providerClis/index.js";
-import type { OnboardingModule } from "../onboarding/index.js";
+import {
+    OnboardingRequestError,
+    chatActionPressSchema,
+    type OnboardingModule,
+} from "../onboarding/index.js";
 import {
     ProviderRouteRequestError,
     ProviderRoutesModule,
@@ -4697,7 +4701,7 @@ export class ApiModule implements AgentModule {
             return true;
         }
         const action =
-            /^\/v0\/agents\/([a-z][a-z0-9]*)\/(send|messages|question|abort|compact|read|archive|unarchive|reorder|subtask-reorder|draft|usage|mode|bootstrap|activity)$/.exec(
+            /^\/v0\/agents\/([a-z][a-z0-9]*)\/(send|messages|question|abort|compact|read|archive|unarchive|reorder|subtask-reorder|draft|usage|mode|bootstrap|activity|chat-actions)$/.exec(
                 url.pathname,
             );
         if (action !== null) {
@@ -4709,6 +4713,14 @@ export class ApiModule implements AgentModule {
             }
             if (operation === "messages" && request.method === "GET") {
                 await this.#handleAgentMessages(ctx, response, url, agentId);
+                return true;
+            }
+            if (
+                operation === "chat-actions" &&
+                request.method === "POST" &&
+                this.#onboardingFlow !== undefined
+            ) {
+                await this.#handleChatAction(ctx, request, response, agentId, this.#onboardingFlow);
                 return true;
             }
             if (operation === "question" && request.method === "GET") {
@@ -9382,6 +9394,39 @@ export class ApiModule implements AgentModule {
         sendJson(response, 200, { flow });
     }
 
+    /** `POST /v0/agents/:agentId/chat-actions`: one press on an inline action control. */
+    async #handleChatAction(
+        ctx: Context,
+        request: IncomingMessage,
+        response: ServerResponse,
+        agentId: string,
+        onboarding: OnboardingModule,
+    ): Promise<void> {
+        if (this.#team.enabled) {
+            throw unsupported("Inline actions are unavailable in team mode.");
+        }
+        const body = await bodyAs(request, chatActionPressSchema, "inline action press");
+        let pressed;
+        try {
+            pressed = await this.#withMutationId(
+                body.mutationId,
+                async () => await onboarding.press(ctx, agentId, body),
+            );
+        } catch (error: unknown) {
+            if (!(error instanceof OnboardingRequestError)) throw error;
+            if (error.code === "not_found") throw notFound(error.message);
+            if (error.code === "conflict") throw new ApiError(409, "conflict", error.message);
+            throw invalidRequest(error.message);
+        }
+        const message = messageResource(pressed.message);
+        this.#journal.append("message.updated", {
+            agentId,
+            runId: pressed.message.runId ?? null,
+            message,
+        });
+        sendJson(response, 202, { message, result: pressed.result });
+    }
+
     /** The routes under `/v0/provider-routes`; see "Provider routes" in API.md. */
     async #handleProviderRoutes(
         ctx: Context,
@@ -10418,7 +10463,7 @@ export class ApiModule implements AgentModule {
                     : { providerRoutes: true }),
                 ...(this.#onboardingFlow === undefined || this.#team.enabled
                     ? {}
-                    : { onboarding: true }),
+                    : { onboarding: true, chatActions: true }),
                 ...(this.#bridges === undefined ? {} : { workspaceBridges: true }),
                 ...(this.#spaces === undefined || this.#tasks === undefined
                     ? {}

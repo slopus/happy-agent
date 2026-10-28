@@ -4,23 +4,41 @@ import {
     type AgentModule,
     type AgentModuleHooks,
 } from "@slopus/happy-agent-base";
-import { Type } from "@sinclair/typebox";
-import { afterCommit, detach, withLifetime, type Context } from "@steve.kite/stdlib";
+import { Type, type Static } from "@sinclair/typebox";
+import {
+    afterCommit,
+    asyncLock,
+    detach,
+    withLifetime,
+    type AsyncLock,
+    type Context,
+} from "@steve.kite/stdlib";
 
 import { BotsModule } from "../bots/index.js";
 import { DurableFunctionsModule } from "../durableFunctions/index.js";
-import { HistoryModule } from "../history/index.js";
+import { HistoryModule, type HistoryMessage } from "../history/index.js";
 import { ProfileModule } from "../profile/index.js";
+import { ProviderClisModule } from "../providerClis/index.js";
+import { ProviderRoutesModule } from "../providerRoutes/index.js";
 import { createUuidV7Factory } from "../utils/createUuidV7.js";
-import { openingMessage } from "./impl/onboardingCopy.js";
+import type { ChatAction } from "./impl/chatActions/chatAction.js";
+import { findPressedControl } from "./impl/findPressedControl.js";
+import {
+    machineWord,
+    openingMessage,
+    routeChoosable,
+    subscriptionsMessage,
+} from "./impl/onboardingCopy.js";
 import {
     ONBOARDING_VERSION,
+    type ChatActionPress,
     type OnboardingFlow,
     type OnboardingListener,
     type OnboardingState,
     type OnboardingSummary,
 } from "./OnboardingFlow.js";
 import { onboardingMigrations } from "./OnboardingMigrations.js";
+import { OnboardingRequestError } from "./OnboardingRequestError.js";
 import { queryOnboardingState } from "./persistence/queryOnboardingState.js";
 import { upsertOnboardingState } from "./persistence/upsertOnboardingState.js";
 
@@ -28,14 +46,39 @@ import { upsertOnboardingState } from "./persistence/upsertOnboardingState.js";
 const OWNER = "standalone";
 const SAY_FUNCTION = "onboarding.say";
 
+/** Actions that only open something in the client: a vendor's page or a sheet. */
+const CLIENT_ACTIONS = new Set([
+    "reply",
+    "onboarding.signInOpen",
+    "onboarding.subscribe",
+    "onboarding.apiKeyOpen",
+]);
+
+/** What Happy says: fixed words, or words written from what the daemon finds when it speaks. */
+const scriptSchema = Type.Union([
+    Type.Object(
+        { kind: Type.Literal("text"), text: Type.String({ minLength: 1, maxLength: 100_000 }) },
+        { additionalProperties: false },
+    ),
+    Type.Object({ kind: Type.Literal("subscriptions") }, { additionalProperties: false }),
+]);
+type Script = Static<typeof scriptSchema>;
+
 const sayArgumentsSchema = Type.Object(
     {
         messageId: Type.String({ minLength: 1, maxLength: 64 }),
         runId: Type.String({ minLength: 1, maxLength: 64 }),
-        text: Type.String({ minLength: 1, maxLength: 100_000 }),
+        script: scriptSchema,
     },
     { additionalProperties: false },
 );
+type SayArguments = Static<typeof sayArgumentsSchema>;
+
+/** What a press returns beside the message it chose in. */
+export interface ChatActionPressResult {
+    readonly message: HistoryMessage;
+    readonly result: unknown;
+}
 
 /**
  * Onboarding happens in Happy's own conversation, and this module runs it: the stored state and
@@ -54,7 +97,11 @@ export class OnboardingModule implements AgentModule {
     readonly #history: HistoryModule;
     readonly #bots: BotsModule;
     readonly #profile: ProfileModule;
+    readonly #providerClis: ProviderClisModule;
+    readonly #providerRoutes: ProviderRoutesModule;
     readonly #listeners = new Set<OnboardingListener>();
+    /** Presses are checked and recorded one at a time, so a block is chosen once. */
+    readonly #pressLock: AsyncLock = asyncLock({ reentry: "allow" });
     #versions = createUuidV7Factory();
     #ctx: Context | undefined;
 
@@ -63,11 +110,15 @@ export class OnboardingModule implements AgentModule {
         history: HistoryModule,
         bots: BotsModule,
         profile: ProfileModule,
+        providerClis: ProviderClisModule,
+        providerRoutes: ProviderRoutesModule,
     ) {
         this.#durable = durableFunctions;
         this.#history = history;
         this.#bots = bots;
         this.#profile = profile;
+        this.#providerClis = providerClis;
+        this.#providerRoutes = providerRoutes;
         durableFunctions.register({
             name: SAY_FUNCTION,
             argumentsSchema: sayArgumentsSchema,
@@ -113,10 +164,7 @@ export class OnboardingModule implements AgentModule {
     }
 
     async flow(ctx: Context): Promise<OnboardingFlow> {
-        return await this.#project(
-            ctx,
-            (await queryOnboardingState(ctx, OWNER)) ?? this.#initial(),
-        );
+        return await this.#project(ctx, await this.#state(ctx));
     }
 
     /**
@@ -125,7 +173,7 @@ export class OnboardingModule implements AgentModule {
      */
     async start(ctx: Context, mutationId?: string): Promise<OnboardingFlow> {
         return await ctx.inTx(async (txCtx) => {
-            const current = (await queryOnboardingState(txCtx, OWNER)) ?? this.#initial();
+            const current = await this.#state(txCtx);
             if (current.step !== "not_started" || current.completedVersion !== null) {
                 return await this.#project(txCtx, current);
             }
@@ -134,9 +182,93 @@ export class OnboardingModule implements AgentModule {
                 { ...current, step: "welcome", exampleSidebar: true },
                 mutationId,
             );
-            await this.#invokeSay(txCtx, openingMessage());
+            await this.#invokeSay(txCtx, { kind: "text", text: openingMessage() });
             return next;
         });
+    }
+
+    /**
+     * Press one inline action control in Happy's conversation. The control is read from the
+     * daemon's own copy of the message, the choice is recorded on it, and the action runs, all
+     * in one transaction; the work it starts continues after that commits.
+     */
+    async press(
+        ctx: Context,
+        agentId: string,
+        press: ChatActionPress,
+    ): Promise<ChatActionPressResult> {
+        if (CLIENT_ACTIONS.has(press.action.id)) {
+            throw new OnboardingRequestError("invalid", "That action runs in the app.");
+        }
+        const happy = await this.#bots.chiefOfStaff(ctx);
+        if (happy === undefined || happy.agentId !== agentId) {
+            throw new OnboardingRequestError(
+                "invalid",
+                "No inline action runs in this conversation.",
+            );
+        }
+        return await this.#pressLock.runInLock(
+            ctx,
+            async () =>
+                await ctx.inTx(async (txCtx) => {
+                    const message = await this.#history.message(txCtx, agentId, press.messageId);
+                    if (
+                        message === undefined ||
+                        (message.role !== "assistant" && message.role !== "agent") ||
+                        message.hideFromUser === true
+                    ) {
+                        throw new OnboardingRequestError("not_found", "No message has that ID.");
+                    }
+                    const found = findPressedControl(message, {
+                        blockIndex: press.blockIndex,
+                        action: press.action,
+                        values: press.values ?? [],
+                    });
+                    if (found.kind === "no_block") {
+                        throw new OnboardingRequestError(
+                            "not_found",
+                            "That message has no such block.",
+                        );
+                    }
+                    if (found.kind === "mismatch") {
+                        throw new OnboardingRequestError(
+                            "conflict",
+                            "That block has no such control.",
+                        );
+                    }
+                    const key = String(press.blockIndex);
+                    if (message.actionChoices?.[key] !== undefined) {
+                        throw new OnboardingRequestError("conflict", "That was already chosen.");
+                    }
+                    const result = await this.#run(txCtx, found.action, press.mutationId);
+                    const chosen: HistoryMessage = {
+                        ...message,
+                        actionChoices: { ...message.actionChoices, [key]: found.choice },
+                    };
+                    await this.#history.replace(txCtx, agentId, chosen);
+                    return { message: chosen, result };
+                }),
+        );
+    }
+
+    /** Do what one pressed action asks, inside the press's transaction. */
+    async #run(ctx: Context, action: ChatAction, mutationId: string | undefined): Promise<unknown> {
+        const state = await this.#state(ctx);
+        switch (action.id) {
+            case "onboarding.start": {
+                if (state.step !== "welcome") throw stepOver();
+                // The example goes: the sidebar is the person's own from here.
+                await this.#write(
+                    ctx,
+                    { ...state, step: "providers", exampleSidebar: false },
+                    mutationId,
+                );
+                await this.#invokeSay(ctx, { kind: "subscriptions" });
+                return null;
+            }
+            default:
+                throw new OnboardingRequestError("invalid", "Happy can't run that action yet.");
+        }
     }
 
     /** Record that the last requirement was met, in the transaction of whatever met it. */
@@ -151,12 +283,12 @@ export class OnboardingModule implements AgentModule {
         });
     }
 
-    /** Happy says `text`, after the current transaction commits, exactly once. */
-    async #invokeSay(ctx: Context, text: string): Promise<void> {
+    /** Happy says `script`, after the current transaction commits, exactly once. */
+    async #invokeSay(ctx: Context, script: Script): Promise<void> {
         const messageId = createId();
         await this.#durable.invoke(ctx, {
             function: SAY_FUNCTION,
-            arguments: { messageId, runId: createId(), text },
+            arguments: { messageId, runId: createId(), script },
             operationId: `onboarding.say.${messageId}`,
         });
     }
@@ -165,15 +297,14 @@ export class OnboardingModule implements AgentModule {
      * One message from Happy, as a finished run of its own with no provider or model: never model
      * input. A rerun after a restart finds the message already there.
      */
-    async #say(
-        ctx: Context,
-        say: { readonly messageId: string; readonly runId: string; readonly text: string },
-    ): Promise<void> {
+    async #say(ctx: Context, say: SayArguments): Promise<void> {
         const happy = await this.#bots.chiefOfStaff(ctx);
         if (happy === undefined) {
             ctx.log.warn("Onboarding has no Happy to speak as.");
             return;
         }
+        if ((await this.#history.message(ctx, happy.agentId, say.messageId)) !== undefined) return;
+        const text = await this.#render(ctx, say.script);
         await ctx.inTx(async (txCtx) => {
             if ((await this.#history.message(txCtx, happy.agentId, say.messageId)) !== undefined)
                 return;
@@ -183,7 +314,7 @@ export class OnboardingModule implements AgentModule {
                 role: "assistant",
                 recordId: say.messageId,
                 runId: say.runId,
-                blocks: [{ type: "text", text: say.text }],
+                blocks: [{ type: "text", text }],
                 at: now,
             });
             await this.#history.finishMaintenanceRun(
@@ -194,6 +325,32 @@ export class OnboardingModule implements AgentModule {
                 now,
             );
         });
+    }
+
+    /** The words of a script, from what the daemon finds now. */
+    async #render(ctx: Context, script: Script): Promise<string> {
+        switch (script.kind) {
+            case "text":
+                return script.text;
+            case "subscriptions": {
+                const [routes, clis] = await Promise.all([
+                    this.#providerRoutes.list(ctx).catch((error: unknown) => {
+                        ctx.log.warn("Onboarding could not list provider routes.", {}, error);
+                        return [];
+                    }),
+                    this.#providerClis.list(ctx),
+                ]);
+                return subscriptionsMessage(
+                    routes.filter(routeChoosable),
+                    clis.filter((cli) => cli.signIn.status === "signed_in"),
+                    machineWord(process.platform),
+                );
+            }
+        }
+    }
+
+    async #state(ctx: Context): Promise<OnboardingState> {
+        return (await queryOnboardingState(ctx, OWNER)) ?? this.#initial();
     }
 
     async #write(
@@ -262,4 +419,8 @@ export class OnboardingModule implements AgentModule {
         if (this.#ctx === undefined) throw new Error("The onboarding module has not started.");
         return this.#ctx;
     }
+}
+
+function stepOver(): OnboardingRequestError {
+    return new OnboardingRequestError("conflict", "That step of onboarding is over.");
 }

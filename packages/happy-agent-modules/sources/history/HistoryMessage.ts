@@ -508,6 +508,31 @@ export const historyBlockSchema = Type.Union([
 /** The TypeScript type inferred from {@link historyBlockSchema}. */
 export type HistoryBlock = Static<typeof historyBlockSchema>;
 
+/** What a person did with one inline action block of an agent message; never model input. */
+export const historyActionChoiceSchema = Type.Union([
+    Type.Object(
+        { kind: Type.Literal("button"), index: Type.Integer({ minimum: 0, maximum: 1_000 }) },
+        { additionalProperties: false },
+    ),
+    Type.Object(
+        {
+            kind: Type.Literal("checklist"),
+            values: Type.Array(Type.String({ minLength: 1, maxLength: 500 }), { maxItems: 200 }),
+        },
+        { additionalProperties: false },
+    ),
+    Type.Object({ kind: Type.Literal("submitted") }, { additionalProperties: false }),
+]);
+export type HistoryActionChoice = Static<typeof historyActionChoiceSchema>;
+
+/** Each chosen block's choice, by its block index as a decimal string. */
+export const historyActionChoicesSchema = Type.Record(
+    Type.String({ pattern: "^(0|[1-9][0-9]{0,3})$" }),
+    historyActionChoiceSchema,
+    { maxProperties: 200 },
+);
+export type HistoryActionChoices = Static<typeof historyActionChoicesSchema>;
+
 const historyMessageFields = {
     role: historyRoleSchema,
     /** Authenticated local team user captured when a person submitted this message. */
@@ -546,6 +571,8 @@ const historyMessageFields = {
     clientMetadata: Type.Optional(historyClientMetadataSchema),
     /** Keep this operational message out of person-facing transcript projection. */
     hideFromUser: Type.Optional(Type.Boolean()),
+    /** The person's choices on this agent message's inline action blocks. */
+    actionChoices: Type.Optional(historyActionChoicesSchema),
     /** Happy's source identity, used to suppress a remote message echo. */
     remoteMessageId: Type.Optional(historyRemoteMessageIdSchema),
     /** When it was recorded, in epoch milliseconds. */

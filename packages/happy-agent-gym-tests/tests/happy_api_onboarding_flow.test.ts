@@ -36,6 +36,7 @@ interface Message {
     id: string;
     role: string;
     content: { type: string; text?: string }[];
+    actionChoices?: Record<string, unknown>;
 }
 
 async function startOnboardingGym(): Promise<AgentGym> {
@@ -73,6 +74,7 @@ describe("Onboarding in Happy's conversation", () => {
                 capabilities: Record<string, unknown>;
             };
             expect(health.capabilities["onboarding"]).toBe(true);
+            expect(health.capabilities["chatActions"]).toBe(true);
 
             const before = (await gym.http.ok("GET", "/v0/onboarding/flow")) as { flow: Flow };
             expect(before.flow).toMatchObject({
@@ -124,6 +126,107 @@ describe("Onboarding in Happy's conversation", () => {
             const after = (await gym.http.ok("GET", "/v0/onboarding/flow")) as { flow: Flow };
             expect(after.flow).toMatchObject({ step: "welcome", version: started.flow.version });
             expect(await happyMessages(gym, happyAgentId)).toHaveLength(1);
+            expect(gym.errors).toEqual([]);
+        },
+        TEST_TIMEOUT_MS,
+    );
+
+    it(
+        "runs Start onboarding once from the daemon's own copy of the button",
+        async () => {
+            const gym = await startOnboardingGym();
+            const started = (await gym.http.ok("POST", "/v0/onboarding/flow/start", {})) as {
+                flow: Flow;
+            };
+            const happyAgentId = started.flow.happyAgentId;
+            if (happyAgentId === null) throw new Error("Happy was not seeded.");
+            const [opening] = await gym.waitUntil(async () => {
+                const messages = await happyMessages(gym, happyAgentId);
+                return messages.length > 0 ? messages : undefined;
+            }, "Happy's first message");
+            if (opening === undefined) throw new Error("Happy said nothing.");
+            const path = `/v0/agents/${happyAgentId}/chat-actions`;
+            const start = { id: "onboarding.start", params: {} };
+
+            // A block that is not there, a control the block does not hold, an action only the app
+            // runs, and a body that does not parse are each refused, and nothing is chosen.
+            const missing = await gym.http.request("POST", path, {
+                messageId: opening.id,
+                blockIndex: 1,
+                action: start,
+            });
+            expect(missing.status).toBe(404);
+            const unknownMessage = await gym.http.request("POST", path, {
+                messageId: "nosuchmessage",
+                blockIndex: 0,
+                action: start,
+            });
+            expect(unknownMessage.status).toBe(404);
+            const other = await gym.http.request("POST", path, {
+                messageId: opening.id,
+                blockIndex: 0,
+                action: { id: "onboarding.finish", params: {} },
+            });
+            expect(other.status).toBe(409);
+            const extra = await gym.http.request("POST", path, {
+                messageId: opening.id,
+                blockIndex: 0,
+                action: { id: "onboarding.start", params: { surprise: "1" } },
+            });
+            expect(extra.status).toBe(409);
+            const client = await gym.http.request("POST", path, {
+                messageId: opening.id,
+                blockIndex: 0,
+                action: { id: "onboarding.apiKeyOpen", params: {} },
+            });
+            expect(client.status).toBe(400);
+            const malformed = await gym.http.request("POST", path, { messageId: opening.id });
+            expect(malformed.status).toBe(400);
+
+            const pressed = await gym.http.request("POST", path, {
+                messageId: opening.id,
+                blockIndex: 0,
+                action: start,
+                mutationId: "press-start",
+            });
+            expect(pressed.status).toBe(202);
+            expect(pressed.body).toMatchObject({
+                message: { id: opening.id, actionChoices: { "0": { kind: "button", index: 0 } } },
+                result: null,
+            });
+            const updated = await gym.waitForEvent(
+                (event) =>
+                    event.type === "message.updated" &&
+                    (event.payload as { message: { id: string } }).message.id === opening.id,
+                "the chosen button to be announced",
+            );
+            expect(updated.payload).toMatchObject({
+                message: { actionChoices: { "0": { kind: "button", index: 0 } } },
+            });
+            const flow = (await gym.http.ok("GET", "/v0/onboarding/flow")) as { flow: Flow };
+            expect(flow.flow).toMatchObject({ step: "providers", exampleSidebar: false });
+
+            // Nothing is found on this empty home, so Happy asks which AI the person pays for.
+            const messages = await gym.waitUntil(async () => {
+                const all = await happyMessages(gym, happyAgentId);
+                return all.length > 1 ? all : undefined;
+            }, "Happy's question about subscriptions");
+            const asked = messages[1]?.content[0]?.text ?? "";
+            expect(asked).toContain("The first thing is to check which subscriptions");
+            expect(asked).toContain('data-action="onboarding.provider" data-provider="claude"');
+            expect(asked).toContain("Nothing is connected yet.");
+
+            // Pressing again is refused, and the choice outlives a restart.
+            const twice = await gym.http.request("POST", path, {
+                messageId: opening.id,
+                blockIndex: 0,
+                action: start,
+            });
+            expect(twice.status).toBe(409);
+            await gym.restart();
+            const after = await happyMessages(gym, happyAgentId);
+            expect(after).toHaveLength(2);
+            expect(after[0]?.actionChoices).toEqual({ "0": { kind: "button", index: 0 } });
             expect(gym.errors).toEqual([]);
         },
         TEST_TIMEOUT_MS,

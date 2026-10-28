@@ -99,6 +99,9 @@ export function messageResource(
         ...(role === "user" && message.clientMetadata !== undefined
             ? { clientMetadata: message.clientMetadata }
             : {}),
+        ...(role === "agent" && message.actionChoices !== undefined
+            ? { actionChoices: structuredClone(message.actionChoices) }
+            : {}),
         ...(role === "user"
             ? {
                   status: "accepted",
