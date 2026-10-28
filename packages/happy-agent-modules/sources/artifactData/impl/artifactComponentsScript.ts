@@ -497,7 +497,7 @@ export const ARTIFACT_COMPONENTS_SCRIPT = String.raw`/* Happy standard component
                     var removed = 0;
                     var rows = [];
                     hunks.forEach(function (hunk, index) {
-                        if (index > 0 || hunk.section) rows.push({ kind: "gap", text: index > 0 ? "⋯ " + hunk.section : hunk.section });
+                        if (index > 0) rows.push({ kind: "gap", text: "⋯" });
                         hunk.lines.forEach(function (line) {
                             if (line.kind === "add") added++;
                             if (line.kind === "del") removed++;

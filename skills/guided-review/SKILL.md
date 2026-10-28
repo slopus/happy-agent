@@ -40,14 +40,15 @@ Make the artifact first, then give it two files.
    ```
 
    For a committed range use `git diff <base> <head>` and nothing else. For an
-   explanation of code that did not change, skip the diff and quote the code
-   in `<pre><code>` exactly as it is in the file.
+   explanation of code that did not change, skip the diff and publish the real
+   source files with `update_artifact` and `files: [{ "fromPath": "src/app.ts",
+   "path": "src/app.ts" }]`. Quote their lines with `<happy-code>`.
 3. **`index.html`** — the review, written with `write_artifact_file`, in this
    order: the standard styles, your few lines of CSS, the HTML, and the
    components script last.
 
-Every component reads `changes.diff`, so a quote can never drift from the
-change.
+Diff components read `changes.diff`; code components read the published source
+files, so every quote comes from real code.
 
 **`<happy-files src="changes.diff">`** — the changed files as a tree under their
 folders, each with its status and `+N −M`. To show just some of them, give it a
@@ -59,10 +60,18 @@ JSON list instead:
 </script></happy-files>
 ```
 
-**`<happy-diff src="changes.diff" path="…" lines="40-52">`** — a few real lines
+**`<happy-diff src="changes.diff" path="…" lines="40-52" nowrap>`** — a few real lines
 of one file of the change, with the file's path, status, and whole-file counts
 in a header. `lines` are numbers in the file as it now stands; leave `lines` out
 only for a file that is short in full.
+
+**`<happy-code src="src/app.ts" path="src/app.ts" lines="40-47" nowrap>`** —
+syntax-highlighted source from a published file, with its path and original
+line numbers. Use this for unchanged code and subsystem explanations. The
+language comes from the filename; set `language` when the filename cannot name it.
+
+Give every `<happy-diff>` and `<happy-code>` a `nowrap` attribute. Code keeps
+its indentation and long lines scroll horizontally, as in the app's diff viewer.
 
 **`<happy-diagram>`** — the control flow, as a Mermaid sequence diagram in a
 `<script type="text/x-mermaid">` child. See "Drawing the flow" below.
@@ -138,12 +147,12 @@ sequenceDiagram
 <section class="chapter">
   <h2>1. The upload contract takes a crop</h2>
   <div class="words"><p><code>uploadPhoto</code> now takes a <code>crop</code>; callers pass the dialog's result.</p></div>
-  <happy-diff class="quote" src="changes.diff" path="packages/app/src/upload.ts" lines="12-19"></happy-diff>
+  <happy-diff class="quote" src="changes.diff" path="packages/app/src/upload.ts" lines="12-19" nowrap></happy-diff>
 </section>
 <section class="finding">
   <span class="severity medium">Medium</span>
   <h3>A failed lookup is never retried</h3>
-  <happy-diff src="changes.diff" path="packages/app/src/identities.ts" lines="118-124"></happy-diff>
+  <happy-diff src="changes.diff" path="packages/app/src/identities.ts" lines="118-124" nowrap></happy-diff>
   <p>The agent is marked as asked before the call and stays marked when it fails. Delete the entry on failure.</p>
 </section>
 
@@ -156,8 +165,8 @@ Copy that skeleton and keep its look: it is laid on the chat with no frame or
 background, hierarchy comes from type, spacing, and hairlines. Never put a
 chapter, finding, or verdict in a card or a tinted box, never give anything a
 coloured stripe down its left edge, never round corners for decoration, and
-never set a height or `overflow` on anything: the chat shows the whole page,
-and nothing scrolls inside it.
+never set a height or `overflow` on the page or its chapters: the chat shows
+the whole page. Standard code and diff components scroll long lines horizontally.
 
 A chapter is a `##`-level heading, one or two sentences in `.words`, and the
 **one** component that shows it in `.quote`. In a wide chat the quote sits
@@ -201,9 +210,9 @@ at the very end, and only when the reader asked what the change touches.
 The meta line names the commit you read (`git rev-parse --short HEAD`). One
 sentence on what is being explained, a flow diagram of its calls in order with
 no marks, then chapters on its contracts and the lines where the flow turns,
-each quoting the code in `<pre><code>` exactly as the file has it, with its
-path and line numbers in a `.meta` line above. There is no diff, no file list,
-and no verdict.
+each quoting the published source with `<happy-code src="…" path="…"
+lines="40-47" nowrap>`. Its header names the file and its gutter keeps the
+original line numbers. There is no diff, no file list, and no verdict.
 
 ## Short is the point
 
@@ -276,5 +285,7 @@ without an artifact.
 - Is every line range checked against the current file, and every statement
   visible in the diff?
 - Is the page flat on the chat: no cards, tinted boxes, left-edge stripes,
-  fixed heights, or inner scrolling?
+  fixed heights, or vertical scrolling inside chapters?
+- Does every code and diff quote use the standard component with `nowrap`,
+  so long lines scroll horizontally and the app supplies syntax highlighting?
 - Is the change visible? Then are there real before/after screenshots?

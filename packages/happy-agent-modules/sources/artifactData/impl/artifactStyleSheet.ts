@@ -216,9 +216,6 @@ export const ARTIFACT_STYLE_SHEET = String.raw`/* Happy standard styles, served 
 :where(happy-code) diffs-container {
     --diffs-light-bg: var(--happy-surface);
     --diffs-dark-bg: var(--happy-surface);
-    --diffs-font-size: 12.5px;
-    --diffs-gap-block: 8px;
-    --diffs-gap-inline: 16px;
 }
 :where(happy-code .happy-code-target) {
     overflow: hidden;
@@ -256,9 +253,6 @@ export const ARTIFACT_STYLE_SHEET = String.raw`/* Happy standard styles, served 
     font-family: var(--happy-mono);
     font-size: 12px;
     line-height: 20px;
-}
-:where(.happy-code-plain .happy-lines) {
-    font-size: 12.5px;
 }
 :where(.happy-lines td) {
     padding: 0;

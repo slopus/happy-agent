@@ -375,12 +375,17 @@ describe("standard files", () => {
         const diff = await draw("happy-diff", { path: "src/app.ts", lines: "43-44" }, CHANGES);
         const rows = diff.find("happy-lines")[0]!.children[0]!.children;
         expect(rows.map((row) => [row.className, row.children.map((cell) => cell.text)])).toEqual([
-            ["happy-line-gap", ["function g() {"]],
             ["happy-line-del", ["42", "", "−  return total;"]],
             ["happy-line-add", ["", "43", "+  log(total);"]],
             ["happy-line-add", ["", "44", "+  return total;"]],
         ]);
         expect(diff.find("happy-code-header")[0]!.text).toBe("src/app.ts+2 −1");
+
+        const fullDiff = await draw("happy-diff", { path: "src/app.ts" }, CHANGES);
+        const fullRows = fullDiff.find("happy-lines")[0]!.children[0]!.children;
+        expect(
+            fullRows.filter((row) => row.className === "happy-line-gap").map((row) => row.text),
+        ).toEqual(["⋯"]);
 
         const code = await draw("happy-code", {}, "\n    a = 1\n    b = 2\n", "text/plain");
         expect(

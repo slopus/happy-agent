@@ -108,3 +108,16 @@ elsewhere; a page's own `scrollbar-color` turns the pseudo-elements off in Chrom
 of restyling them works. Kirill also asked that the same page sit flush inline but inset beside the
 chat or on its own page: the body's padding is `--happy-page-inset`, which the host sets to its
 content inset there and to nothing inline, so one page fits every place it is shown.
+
+## Review quotes preserve source lines and leave highlighting to the host
+
+Kirill asked that guided reviews use the app's syntax highlighting for diffs and ordinary code,
+keep long lines on one row, and avoid a duplicate first line. The guided-review skill now quotes
+published source files with `happy-code` and gives both code and diff elements `nowrap`, preserving
+the components' public wrapping default. The host supplies its renderer at `code.js`; the daemon
+continues to provide the numbered fallback when that renderer is unavailable. That fallback no
+longer prints the hunk's section label as an extra code row: it starts with the actual source and
+uses an ellipsis only between separate hunks. Its table cells already have no borders, so review
+pages should leave their styling to the standard components. Code excerpts use the same 12px text,
+20px line height, and renderer spacing as the app, rather than larger text and wider code-only
+insets.
