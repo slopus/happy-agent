@@ -4,6 +4,8 @@
 
 <h3>The best of Pi, Codex, Claude Code, and Grok Build — unified in one coding-agent harness.</h3>
 
+<p><strong>Any model: Claude, Codex, Grok, Gemini, and more.</strong></p>
+
 <p>Part of <a href="https://happy.engineering/">Happy</a>. Main repository: <a href="https://github.com/slopus/happy">slopus/happy</a>.</p>
 
 <p>
@@ -40,6 +42,10 @@ parts of [Codex](https://github.com/openai/codex),
 [Grok Build](https://github.com/xai-org/grok-build) in one consistent local
 runtime: the right prompts and tools for each model, useful defaults, safe
 execution, durable sessions, subagents, MCP, and one stable API for every client.
+It can also hand the agent loop to another vendor's whole agent: Claude Code or
+Codex CLI themselves, Gemini through Google Antigravity, OpenCode, or any
+[Agent Client Protocol](https://agentclientprotocol.com) (ACP) agent. See
+[Other agents as harnesses](#other-agents-as-harnesses).
 
 Happy Agent is the headless daemon: it owns agents, tools, permissions, durable
 state, and the public API. The [Happy desktop app](https://happy.engineering/)
@@ -83,6 +89,9 @@ checks local credential presence when it starts without contacting provider
 servers. Restart the daemon after a new login so the provider enters the model
 catalog. Once enabled, Grok credential rotations are hot-reloaded from its
 local auth store without copying tokens into Happy Agent.
+
+Antigravity, OpenCode, and other ACP agents keep their own logins. Sign in with
+their own CLI, then enable them as [harnesses](#other-agents-as-harnesses).
 
 ### Step 3: Connect a client
 
@@ -152,6 +161,7 @@ runtime without flattening the important differences between models.
 | Claude Code       | Anthropic's official [Claude Agent SDK](https://code.claude.com/docs/en/agent-sdk/overview) for direct inference | Reimplemented Claude-facing prompts, tools, tasks, subagents, permissions, and session behavior                         |
 | Grok Build        | xAI's OpenAI-compatible Responses API and the credentials managed by the Grok CLI                                | Adapted [Grok Build](https://github.com/xai-org/grok-build) prompt, tools, token refresh, and request metadata          |
 | Other model paths | Pi inference adapters and selected generic Pi tool definitions                                                   | A useful fallback experience without pretending those models are Codex or Claude Code                                   |
+| Foreign harnesses | The vendor's whole agent: Claude Code, Codex CLI, Antigravity, OpenCode, or any ACP agent                        | The conversation record, Happy Agent tools over MCP, permission mode, steering, and stop                                |
 | External clients  | Happy Agent's local daemon, durable event stream, and protocol                                                   | One stable API for desktop, headless, mobile, web, or other interfaces                                                  |
 
 The Codex integration is implemented inside Happy Agent rather than wrapping the Codex
@@ -183,23 +193,62 @@ usage continues to draw from the user's subscription limits. Happy Agent follows
 local SDK path. It does not host a Claude login, relay credentials through a Happy Agent
 service, pool access, or bypass Anthropic's terms and limits.
 
+## Other agents as harnesses
+
+A provider is an account; a harness is who runs the agent loop on it. By default
+Happy Agent's own loop runs every model. A harness hands the loop to another
+vendor's whole agent instead, with its own prompt, tools, settings, and
+compaction:
+
+| Harness       | Runs                               | Accounts                          |
+| ------------- | ---------------------------------- | --------------------------------- |
+| `happy`       | Happy Agent's own loop (default)   | every configured provider         |
+| `claude_code` | Claude Code, through the Agent SDK | your `claude` accounts            |
+| `codex_cli`   | Codex, through `codex app-server`  | your `codex` accounts             |
+| `antigravity` | Google Antigravity, through ACP    | its own Google login (`agy`)      |
+| `opencode`    | OpenCode, through `opencode acp`   | its own login                     |
+| any, `acp`    | any ACP agent, from its `command`  | its own login or configured `env` |
+
+Each agent reports its own models, listed as `<harness type>/<model>`, such as
+`claude-code/opus`, `antigravity/gemini-3.8-flash`, or
+`antigravity/gemini-4-argon`. The conversation stays a Happy Agent conversation:
+its history is the record, Happy Agent's tools reach the agent over MCP, the
+session's permission mode maps onto the agent's own, a new message steers it, and
+Stop ends its turn. By default, sessions on Happy Agent's own loop can start
+subagents on Antigravity, so a Claude session can hand a task to Gemini.
+
+Turn one on with a `[harnesses.<id>]` table in the user `happy.toml`:
+
+```toml
+[harnesses.antigravity]
+
+[harnesses.goose]
+type = "acp"
+name = "Goose"
+command = "goose"
+args = ["acp"]
+```
+
+The [harnesses guide](docs/recipe/harnesses.md) covers requirements, model
+filters, and subagent routing.
+
 ## How Happy Agent compares
 
 Happy Agent is a unifying harness, not a replacement for every surface offered by Pi,
 Codex, or Claude Code. This table focuses on the local coding-agent experience.
 
-|                        | Happy Agent                                                           | [Pi](https://github.com/earendil-works/pi)                   | [Codex](https://github.com/openai/codex)  | [Claude Code](https://code.claude.com/docs/en/overview) |
-| ---------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------ | ----------------------------------------- | ------------------------------------------------------- |
-| Primary role           | Opinionated multi-model harness                                       | Minimal, highly extensible agent toolkit                     | OpenAI's native coding agent              | Anthropic's native coding agent                         |
-| Model access           | Codex, Claude Code, Grok Build, and optional Bedrock models           | Broad multi-provider catalog                                 | OpenAI models                             | Claude models, including supported cloud platforms      |
-| Authentication         | Reuses Codex, Claude Code, and Grok credentials                       | Pi logins or provider API keys                               | ChatGPT sign-in or API key                | Claude sign-in, API, or supported cloud provider        |
-| Tool behavior          | Switches between model-native Codex, Claude, and Grok toolsets        | Small generic core, replaceable with extensions              | Codex-native                              | Claude Code-native                                      |
-| Subagents              | Built in, with provider-aligned controls and saved transcripts        | Intentionally extension-driven                               | Built-in multi-agent tools                | Built-in subagents and agent teams                      |
-| Permissions            | Unified Auto, Workspace write, Read only, and Full access modes       | Intentionally extension- or container-driven                 | Native approvals and sandboxing           | Native permission modes                                 |
-| MCP                    | Built-in stdio and streamable HTTP                                    | Available through extensions                                 | Built in                                  | Built in                                                |
-| Long-running work      | Managed shells, workflows, persistent goals, and background subagents | Intentionally uses external tools such as tmux or extensions | Background commands and multi-agent work  | Background commands, tasks, and agents                  |
-| Headless and embedding | Daemon protocol, typed client, and durable events                     | Print, JSON, RPC, and a TypeScript SDK                       | Non-interactive mode, SDK, and app server | Print mode and Agent SDK                                |
-| Best fit               | One local harness across model families and client apps               | Building a deeply customized agent                           | The first-party OpenAI experience         | The first-party Anthropic experience                    |
+|                        | Happy Agent                                                                                                  | [Pi](https://github.com/earendil-works/pi)                   | [Codex](https://github.com/openai/codex)  | [Claude Code](https://code.claude.com/docs/en/overview) |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------ | ----------------------------------------- | ------------------------------------------------------- |
+| Primary role           | Opinionated multi-model harness                                                                              | Minimal, highly extensible agent toolkit                     | OpenAI's native coding agent              | Anthropic's native coding agent                         |
+| Model access           | Claude, Codex, Grok, Gemini through Antigravity, Bedrock, OpenAI-compatible endpoints, and ACP agents        | Broad multi-provider catalog                                 | OpenAI models                             | Claude models, including supported cloud platforms      |
+| Authentication         | Reuses Codex, Claude Code, and Grok credentials; Antigravity, OpenCode, and ACP agents keep their own logins | Pi logins or provider API keys                               | ChatGPT sign-in or API key                | Claude sign-in, API, or supported cloud provider        |
+| Tool behavior          | Switches between model-native Codex, Claude, and Grok toolsets, or runs the vendor's own agent as a harness  | Small generic core, replaceable with extensions              | Codex-native                              | Claude Code-native                                      |
+| Subagents              | Built in, with provider-aligned controls and saved transcripts                                               | Intentionally extension-driven                               | Built-in multi-agent tools                | Built-in subagents and agent teams                      |
+| Permissions            | Unified Auto, Workspace write, Read only, and Full access modes                                              | Intentionally extension- or container-driven                 | Native approvals and sandboxing           | Native permission modes                                 |
+| MCP                    | Built-in stdio and streamable HTTP                                                                           | Available through extensions                                 | Built in                                  | Built in                                                |
+| Long-running work      | Managed shells, workflows, persistent goals, and background subagents                                        | Intentionally uses external tools such as tmux or extensions | Background commands and multi-agent work  | Background commands, tasks, and agents                  |
+| Headless and embedding | Daemon protocol, typed client, and durable events                                                            | Print, JSON, RPC, and a TypeScript SDK                       | Non-interactive mode, SDK, and app server | Print mode and Agent SDK                                |
+| Best fit               | One local harness across model families and client apps                                                      | Building a deeply customized agent                           | The first-party OpenAI experience         | The first-party Anthropic experience                    |
 
 Happy Agent deliberately keeps Pi's strong foundations and extensibility, then chooses a
 cohesive built-in experience where Pi prefers a minimal core. From Codex and
@@ -322,17 +371,17 @@ accent = "cyan"
 The complete reference lives in
 [docs/configuration.md](docs/configuration.md). It covers file locations and
 environment variables, protected paths, managed workspace setup, managed
-network access, providers — Codex, Claude Code, Grok Build, and Amazon
-Bedrock — Docker-backed sessions, MCP servers, theme and display, heap
-snapshots, and workflows. The same reference ships inside Happy
+network access, providers — Codex, Claude Code, Grok Build, Amazon Bedrock,
+and OpenAI-compatible endpoints — harnesses, Docker-backed sessions, MCP
+servers, theme and display, heap snapshots, and workflows. The same reference ships inside Happy
 Agent's bundled documentation, so agents can read it at runtime.
 
 ## Scope
 
 Happy Agent aims for the best common coding-agent workflows, not exhaustive parity with
 every upstream option. It intentionally keeps planning in the normal agent flow,
-follows Codex skill semantics, and relies on the existing Codex, Claude Code, and Grok login
-flows.
+follows Codex skill semantics, and relies on the existing login flows of Codex, Claude Code,
+Grok, and the agents it runs as harnesses.
 
 Happy Agent provides the harness and its durable API; interfaces belong to the clients built on
 it.
