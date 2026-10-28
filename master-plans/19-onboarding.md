@@ -36,6 +36,24 @@ installing a provider CLI, and starting a provider sign-in, each streaming
 progress and, for sign-in, the URL and the final result. The supported
 assistants are Claude Code, Codex, Grok, and Antigravity (Gemini).
 
+## Discovering what the person already has
+
+Rig auto-discovers the setups most of our users already have, so onboarding can
+show what can be used right away and nothing else. Discovery is not invasive:
+it finds things, it does not run inference, and it never installs, starts, or
+signs in to anything on its own.
+
+It covers direct sign-ins, the vendors' desktop apps, more than one account for
+the same vendor, API keys, local proxies such as CLIProxyAPI and Claude Code
+Router, cloud profiles such as Bedrock, and local model servers. A proxy or
+router is shown only when it is detected; Happy never recommends or installs
+one. When two routes reach the same vendor, the direct one is preferred and the
+other starts unchecked.
+
+Choosing a detected route sets it up with the recommended configuration. For
+CLIProxyAPI that is an OpenAI-compatible provider pointing at the local proxy,
+with the proxy's own client key.
+
 ## Status surface
 
 Two related paths, as before.
@@ -89,6 +107,8 @@ satisfied.
   manual path.
 - An assistant's CLI or sign-in that already exists, including inside its
   desktop app, is discovered and reused.
+- Onboarding shows every common setup the person already has, found without
+  inference, and shows a proxy only when one is detected.
 - After connection, one detailed status names exactly one next step and carries
   the data to render it.
 - Provider verification shows progress and proves one configured provider can do
