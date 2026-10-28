@@ -6,8 +6,10 @@ import type { ProviderClisModule } from "../providerClis/index.js";
 import type { ProviderScanModule } from "../providerScan/index.js";
 import { ProviderRouteRequestError, type ProviderRoute } from "./ProviderRoute.js";
 import { assembleProviderRoutes } from "./impl/assembleProviderRoutes.js";
+import { cliProxyApiRoutes } from "./impl/cliProxyApiRoutes.js";
 import type { ConfiguredProviders, DetectedRoute } from "./impl/DetectedRoute.js";
 import { detectDirectRoutes } from "./impl/detectDirectRoutes.js";
+import type { RouteMachine } from "./impl/RouteMachine.js";
 
 /**
  * Finds every way this computer can already reach models, without inference, and sets a chosen
@@ -72,18 +74,43 @@ export class ProviderRoutesModule implements AgentModule {
     }
 
     async #detect(ctx: Context): Promise<DetectedRoute[]> {
-        const providerClis = await this.#providerClis.list(ctx);
-        const routes = [
-            ...detectDirectRoutes(providerClis, (providerId, vendor) =>
-                this.#models(providerId, vendor),
+        const machine = this.#machine();
+        const found = await Promise.all([
+            this.#detector(ctx, "provider CLIs", async () =>
+                detectDirectRoutes(await this.#providerClis.list(ctx), (providerId, vendor) =>
+                    this.#models(providerId, vendor),
+                ),
             ),
-        ];
+            this.#detector(ctx, "CLIProxyAPI", async () => await cliProxyApiRoutes(machine)),
+        ]);
         // A route is a configured provider only when this daemon actually runs that provider.
-        return routes.map((route) => {
+        return found.flat().map((route) => {
             if (route.providerId === undefined || this.#isProvider(route.providerId)) return route;
             const { providerId: _providerId, ...rest } = route;
             return rest;
         });
+    }
+
+    /** One detector's routes; a detector that fails hides only its own routes. */
+    async #detector(
+        ctx: Context,
+        name: string,
+        detect: () => Promise<DetectedRoute[]>,
+    ): Promise<DetectedRoute[]> {
+        try {
+            return await detect();
+        } catch (error: unknown) {
+            ctx.log.warn(`Detecting provider routes from ${name} failed.`, {}, error);
+            return [];
+        }
+    }
+
+    #machine(): RouteMachine {
+        return {
+            platform: process.platform,
+            env: this.#config.processEnvironment,
+            programDirectories: this.#config.programDirectories,
+        };
     }
 
     #isProvider(providerId: string): boolean {

@@ -2738,22 +2738,23 @@ provider scan.
 - `providerId` — the configured provider this route already is, or `null`. A provider that `use`
   added and that takes effect after a restart is reported here too.
 - `use` — `null` when the route is already configured and enabled, or cannot be set up
-  automatically, such as a route that is not `ready`. Otherwise it describes what
+  automatically, such as a route that is not `ready` or a local server that lists no models.
+  Otherwise it describes what
   `POST /v0/provider-routes/:routeId/use` does: `providerId` and `type` of the provider it enables
   or adds, a display `summary`, and `restartRequired`, `true` when the provider is new and the
   daemon must restart before using it.
 
 What choosing a route sets up, its recommended configuration:
 
-| Route                                                 | Configuration                                                                                                                                                      |
-| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `claude`, `codex`, `grok`, `bedrock`                  | Enables the built-in provider.                                                                                                                                     |
-| `cliproxyapi`                                         | An `openai_compatible` provider `cliproxyapi` with `base_url` at the local proxy, the proxy's own client key as `api_key`, and the models the proxy lists.         |
-| `lmstudio`, `ollama`                                  | An `openai_compatible` provider with `base_url` at the local server, no key, and the models it lists.                                                              |
-| `env:<VARIABLE>` for a known OpenAI-compatible vendor | An `openai_compatible` provider named after the vendor with its `base_url`, `api_key_env = "<VARIABLE>"`, and its models from the vendor's catalog in Happy Agent. |
-| `ccr:<provider>`                                      | An `openai_compatible` provider copying that upstream provider's `api_base_url`, models, and key, as `api_key`, from Claude Code Router's configuration.           |
-| `aws_profile:<profile>`                               | A `bedrock` provider with that `profile` and its `region`.                                                                                                         |
-| `claude_home:<folder>`, `codex_home:<folder>`         | A `claude` provider with that `config_dir`, or a `codex` provider with that folder's `auth.json` as `auth_file`.                                                   |
+| Route                                                 | Configuration                                                                                                                                                                                      |
+| ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `claude`, `codex`, `grok`, `bedrock`                  | Enables the built-in provider.                                                                                                                                                                     |
+| `cliproxyapi`                                         | An `openai_compatible` provider `cliproxyapi` with `base_url` at the local proxy, the proxy's own client key as `api_key` (`local` when the proxy has none), and up to 200 models the proxy lists. |
+| `lmstudio`, `ollama`                                  | An `openai_compatible` provider with `base_url` at the local server, the placeholder `api_key = "local"` because it needs none, and up to 200 models it lists.                                     |
+| `env:<VARIABLE>` for a known OpenAI-compatible vendor | An `openai_compatible` provider named after the vendor with its `base_url`, `api_key_env = "<VARIABLE>"`, and its models from the vendor's catalog in Happy Agent.                                 |
+| `ccr:<provider>`                                      | An `openai_compatible` provider copying that upstream provider's `api_base_url`, models, and key, as `api_key`, from Claude Code Router's configuration.                                           |
+| `aws_profile:<profile>`                               | A `bedrock` provider with that `profile` and its `region`.                                                                                                                                         |
+| `claude_home:<folder>`, `codex_home:<folder>`         | A `claude` provider with that `config_dir`, or a `codex` provider with that folder's `auth.json` as `auth_file`.                                                                                   |
 
 New providers are written to the daemon-owned runtime configuration. A key copied there is stored
 in plain text with the same exposure it had in the file it came from.
