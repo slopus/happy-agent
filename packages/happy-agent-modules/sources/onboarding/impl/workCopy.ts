@@ -69,3 +69,7 @@ export function nothingFoundMessage(assistant: string): string {
         "</menu>",
     ].join("\n");
 }
+
+export function phoneFailedMessage(reason: string): string {
+    return `I couldn't open a phone pairing: ${reason}`;
+}

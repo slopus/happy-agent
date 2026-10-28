@@ -180,7 +180,17 @@ setInterval(() => undefined, 1_000);
     vi.stubEnv("HAPPY_AGENT_TAILCAT_PATH", executable);
 }
 
-async function startGym(answers: Answers, options: { phone?: boolean } = {}) {
+async function startGym(
+    answers: Answers,
+    options: {
+        /** Pair a phone through the daemon's own connector, or turn phone connections off. */
+        phone?: "on" | "off";
+        /** What Focus proposes, one per request in order; the last one repeats. */
+        proposals?: readonly object[];
+    } = {},
+) {
+    const proposals = options.proposals ?? [PROPOSAL];
+    let proposed = 0;
     const root = await mkdtemp(join(tmpdir(), "onboarding-work-"));
     folders.add(root);
     const home = join(root, "home");
@@ -234,11 +244,13 @@ async function startGym(answers: Answers, options: { phone?: boolean } = {}) {
             .map((line) => JSON.stringify(line))
             .join("\n"),
     );
-    if (options.phone === true) await fakeTailcat(root);
+    if (options.phone === "on") await fakeTailcat(root);
     const gym = await createAgentGym({
-        ...(options.phone === true
+        ...(options.phone === "on"
             ? { config: `[feature.mobile_connector]\nport = ${String(PHONE_PORT)}\n` }
-            : {}),
+            : options.phone === "off"
+              ? { config: "[feature.mobile_connector]\nenabled = false\n" }
+              : {}),
         environment: {
             HOME: home,
             CODEX_HOME: join(home, ".codex"),
@@ -267,7 +279,9 @@ async function startGym(answers: Answers, options: { phone?: boolean } = {}) {
                 };
             }
             if (request.sessionId.startsWith("focus-proposal:")) {
-                return { content: [{ text: JSON.stringify(PROPOSAL), type: "text" }] };
+                const proposal = proposals[Math.min(proposed, proposals.length - 1)];
+                proposed += 1;
+                return { content: [{ text: JSON.stringify(proposal), type: "text" }] };
             }
             const answer = answers[eventIn(request) ?? ""] ?? answers["*"];
             if (answer === undefined) return { content: [{ text: "Done.", type: "text" }] };
@@ -587,7 +601,7 @@ describe("onboarding the person's work", () => {
                         ].join("\n"),
                     ),
                 },
-                { phone: true },
+                { phone: "on" },
             );
             const work = await reachWork(gym, happy);
             // Straight to New, as a person who would rather not say yet.
@@ -632,6 +646,150 @@ describe("onboarding the person's work", () => {
             });
             await press(gym, happy, done, { id: "onboarding.finish" });
             expect((await flowOf(gym)).step).toBe("finished");
+            expect(gym.errors).toEqual([]);
+        },
+        TEST_TIMEOUT_MS,
+    );
+
+    it(
+        "says why the phone could not pair when phone connections are off, and moves on",
+        async () => {
+            const { gym, happy } = await startGym(
+                {
+                    begin: say(PROFILE_STEP),
+                    profileSaved: say(WORK_STEP),
+                    workTellAsked: say(NEW_STEP),
+                    newChatSkipped: say(PHONE_STEP),
+                    phoneAnswered: say(
+                        [
+                            "You're ready, Ada.",
+                            "",
+                            "<menu>",
+                            '  <button data-action="onboarding.finish" data-emphasis>Done</button>',
+                            "</menu>",
+                        ].join("\n"),
+                    ),
+                },
+                { phone: "off" },
+            );
+            const work = await reachWork(gym, happy);
+            await press(gym, happy, work, { id: "onboarding.workTell" });
+            const newStep = await waitForText(gym, happy, "New opens a fresh chat.");
+            await press(gym, happy, newStep, { id: "onboarding.newChatSkip" });
+            const phone = await waitForText(gym, happy, "Want Happy on your phone too?");
+            await press(gym, happy, phone, {
+                id: "onboarding.phone",
+                params: { choice: "opened" },
+                block: 1,
+            });
+
+            // Happy says what stopped it, then the model hears the step ended as Later.
+            const failed = await waitForText(gym, happy, "I couldn't open a phone pairing");
+            expect(textOf(failed)).toContain("turned off on this computer");
+            await waitForText(gym, happy, "You're ready, Ada.");
+            expect(told(gym, "phoneAnswered")).toMatchObject({ choice: "later" });
+            const { mobileConnector } = (await gym.http.ok("GET", "/v0/mobile-connector")) as {
+                mobileConnector: { status: string; pairing: unknown };
+            };
+            expect(mobileConnector).toMatchObject({ status: "disabled", pairing: null });
+            expect(gym.errors).toEqual([]);
+        },
+        TEST_TIMEOUT_MS,
+    );
+
+    it(
+        "proposes again after Adjust, from the findings and the change, and only the new proposal starts",
+        async () => {
+            const revised = {
+                intro: "Here's the revised list.",
+                rows: [
+                    {
+                        title: "Onboarding copy",
+                        icon: "wip",
+                        topic: "Product",
+                        why: "You asked to split the redesign",
+                        firstMessage: "Plan: review the onboarding copy and wait for me.",
+                    },
+                ],
+            };
+            const { gym, happy, project } = await startGym(
+                {
+                    begin: say(PROFILE_STEP),
+                    profileSaved: say(WORK_STEP),
+                    workChangeAsked: say("What should I change?"),
+                    workAccepted: say(NEW_STEP),
+                    "*": (request) => {
+                        const last = JSON.stringify(request.messages.at(-1));
+                        if (last.includes("Happy shows the proposal right below your reply")) {
+                            return say("Here's the new version.")();
+                        }
+                        if (last.includes("Only the copy")) {
+                            return {
+                                content: [
+                                    {
+                                        type: "tool_call",
+                                        name: "propose_work",
+                                        arguments: {
+                                            about: "Keep only the onboarding work, as its copy review.",
+                                        },
+                                    },
+                                ],
+                            };
+                        }
+                        return say("Done.")();
+                    },
+                },
+                { proposals: [PROPOSAL, revised] },
+            );
+            const work = await reachWork(gym, happy);
+            await press(gym, happy, work, { id: "onboarding.discover" });
+            const first = await waitForText(gym, happy, PROPOSAL.intro);
+
+            // Adjust is the form's other button; the model hears the proposal that was shown.
+            await press(gym, happy, first, { id: "onboarding.workChange" });
+            await waitForText(gym, happy, "What should I change?");
+            expect(told(gym, "workChangeAsked")).toEqual({
+                kind: "workChangeAsked",
+                proposal: PROPOSAL.rows.map((row) => ({
+                    title: row.title,
+                    topic: row.topic,
+                    ongoing: row.ongoing === true,
+                    firstMessage: row.firstMessage,
+                })),
+            });
+            await gym.send("Only the copy, please.", {
+                wait: false,
+                sessionId: happy,
+                providerId: "codex",
+                modelId: "gym-codex",
+                effort: "medium",
+            });
+            const second = await waitForText(gym, happy, revised.intro);
+            expect(textOf(second)).toContain('value="work-1" checked>Onboarding copy');
+            expect(textOf(second)).not.toContain("Release check-in");
+            // The second proposal starts from what discovery found, plus the change.
+            const asked = gym.inference.requests.filter((request) =>
+                request.sessionId.startsWith("focus-proposal:"),
+            );
+            expect(asked).toHaveLength(2);
+            const findings = JSON.stringify(asked[1]?.messages);
+            expect(findings).toContain("Keep only the onboarding work, as its copy review.");
+            expect(findings).toContain(project);
+
+            // The first proposal's form is spent; only the new one starts its chat.
+            const stale = await gym.http.request("POST", `/v0/agents/${happy}/chat-actions`, {
+                messageId: first.id,
+                blockIndex: 0,
+                action: { id: "onboarding.workAccept", params: {} },
+                values: ["work-1"],
+            });
+            expect(stale.status).toBe(409);
+            await press(gym, happy, second, { id: "onboarding.workAccept" }, ["work-1"]);
+            await gym.waitUntil(async () => told(gym, "workAccepted"), "Looks right to finish");
+            expect(told(gym, "workAccepted")).toMatchObject({
+                started: [{ id: "work-1", title: "Onboarding copy", topic: "Product" }],
+                failed: [],
+            });
             expect(gym.errors).toEqual([]);
         },
         TEST_TIMEOUT_MS,

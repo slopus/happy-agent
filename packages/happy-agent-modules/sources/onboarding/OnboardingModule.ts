@@ -66,6 +66,7 @@ import { discoverWork } from "./impl/discoverWork.js";
 import {
     discoveringMessage,
     nothingFoundMessage,
+    phoneFailedMessage,
     proposalFailedMessage,
     proposalMessage,
     proposingMessage,
@@ -849,7 +850,7 @@ export class OnboardingModule implements AgentModule {
                         const pairingId = snapshot.pairing?.id ?? null;
                         await this.#update(ctx, (current) => ({ ...current, pairingId }));
                     } catch (error: unknown) {
-                        await say(`I couldn't open a phone pairing: ${errorText(error)}`);
+                        await say(phoneFailedMessage(errorText(error)));
                         choice = "later";
                     }
                 } else if (state.pairingId !== null) {
