@@ -7,6 +7,7 @@ import type { ProviderScanModule } from "../providerScan/index.js";
 import { ProviderRouteRequestError, type ProviderRoute } from "./ProviderRoute.js";
 import { assembleProviderRoutes } from "./impl/assembleProviderRoutes.js";
 import { cliProxyApiRoutes } from "./impl/cliProxyApiRoutes.js";
+import { awsProfileRoutes } from "./impl/awsProfileRoutes.js";
 import { localModelRoutes } from "./impl/localModelRoutes.js";
 import { claudeCodeRouterRoutes } from "./impl/claudeCodeRouterRoutes.js";
 import type { ConfiguredProviders, DetectedRoute } from "./impl/DetectedRoute.js";
@@ -87,6 +88,14 @@ export class ProviderRoutesModule implements AgentModule {
             this.#detector(ctx, "CLIProxyAPI", async () => await cliProxyApiRoutes(machine)),
             this.#detector(
                 ctx,
+                "AWS profiles",
+                async () =>
+                    await awsProfileRoutes(machine, await this.#bedrock(), (profile) =>
+                        this.#bedrockProviderFor(profile),
+                    ),
+            ),
+            this.#detector(
+                ctx,
                 "local model servers",
                 async () => await localModelRoutes(machine, this.#config.localModelServerPorts),
             ),
@@ -143,6 +152,25 @@ export class ProviderRoutesModule implements AgentModule {
         return ["apiKey", "authFile", "authToken", "configDir", "oauthToken"].every(
             (field) => provider?.[field] === undefined,
         );
+    }
+
+    /** The built-in Bedrock provider, when this daemon runs it, and whether AWS credentials are local. */
+    async #bedrock(): Promise<{ providerId: string; available: boolean } | null> {
+        if (!this.#isProvider("bedrock")) return null;
+        try {
+            const found = await this.#config.probeLocalProviderCredentials("bedrock");
+            return { providerId: "bedrock", available: found === "available" };
+        } catch {
+            return { providerId: "bedrock", available: false };
+        }
+    }
+
+    /** A configured Bedrock provider already using this AWS profile. */
+    #bedrockProviderFor(profile: string): string | undefined {
+        for (const [id, provider] of Object.entries(this.#config.configuration.values.providers)) {
+            if (provider.type === "bedrock" && provider.profile === profile) return id;
+        }
+        return undefined;
     }
 
     #isProvider(providerId: string): boolean {

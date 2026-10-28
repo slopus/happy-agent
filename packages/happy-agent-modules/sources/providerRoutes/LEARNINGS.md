@@ -11,9 +11,15 @@ so keys exported only in a shell profile are not seen.
 ## A proxy is shown only when it is detected
 
 CLIProxyAPI and Claude Code Router re-serve accounts in ways a vendor's terms may not allow. Happy
-never recommends or installs one; it shows one only when it is already on the computer. When a
-proxy overlaps a ready sign-in of the vendor's own, the proxy starts unchecked so the same plan is
-not spent through two routes by default.
+never recommends or installs one; it shows one only when it is already on the computer.
+
+## Each vendor is reached one way by default
+
+The initial selection reaches every vendor through one route, so the same plan is not spent
+through two routes by default. A ready vendor sign-in always starts checked. Any other ready route
+starts checked only when it brings a vendor nothing checked before it already serves: a proxy that
+re-serves Claude beside the Claude Code sign-in but also serves OpenAI starts checked, because
+otherwise OpenAI would be lost. Local model servers always start unchecked.
 
 ## A generated provider must load on the next start
 

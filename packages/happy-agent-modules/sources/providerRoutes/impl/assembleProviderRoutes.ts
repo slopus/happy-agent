@@ -5,8 +5,9 @@ const VENDOR_ROUTES: readonly ProviderRoute["kind"][] = ["direct", "desktop_app"
 
 /**
  * Order the detected routes, mark which reach the same vendor, suggest the initial selection, and
- * say what choosing each would set up. A route that overlaps a ready sign-in of the vendor's own
- * starts unselected, so the same plan is not spent through two routes by default.
+ * say what choosing each would set up. Every ready sign-in of a vendor's own starts selected; any
+ * other route starts selected only when it brings a vendor nothing before it already does, so the
+ * same vendor is not reached through two routes by default.
  */
 export function assembleProviderRoutes(
     detected: readonly DetectedRoute[],
@@ -24,13 +25,20 @@ export function assembleProviderRoutes(
                 other.id !== route.id &&
                 other.vendors.some((vendor) => route.vendors.includes(vendor)),
         );
-        const vendorRouteReady = others.some(
-            (other) => VENDOR_ROUTES.includes(other.kind) && other.status === "ready",
-        );
+        const index = sorted.indexOf(route);
+        // Another route already brings this vendor: the vendor's own sign-in, or an earlier route.
+        const served = (vendor: string) =>
+            others.some(
+                (other) =>
+                    other.vendors.includes(vendor) &&
+                    other.status === "ready" &&
+                    (VENDOR_ROUTES.includes(other.kind) ||
+                        (other.kind !== "local_models" && sorted.indexOf(other) < index)),
+            );
         const recommended =
             route.status === "ready" &&
             route.kind !== "local_models" &&
-            (VENDOR_ROUTES.includes(route.kind) || !vendorRouteReady);
+            (VENDOR_ROUTES.includes(route.kind) || route.vendors.some((vendor) => !served(vendor)));
         return {
             ...publicFields(route),
             overlaps: others.map((other) => other.id),

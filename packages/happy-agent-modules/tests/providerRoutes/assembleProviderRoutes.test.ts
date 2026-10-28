@@ -60,18 +60,23 @@ describe("assembling provider routes", () => {
                     vendors: ["Anthropic"],
                     providerId: "claude",
                 }),
+                detected({ id: "codex", name: "Codex", vendors: ["OpenAI"], providerId: "codex" }),
             ],
-            providers({ claude: { enabled: true, type: "claude" } }),
+            providers({
+                claude: { enabled: true, type: "claude" },
+                codex: { enabled: true, type: "codex" },
+            }),
         );
 
         expect(routes.map((route) => [route.id, route.overlaps, route.recommended])).toEqual([
             ["claude", ["cliproxyapi"], true],
-            ["cliproxyapi", ["claude"], false],
+            ["codex", ["cliproxyapi"], true],
+            ["cliproxyapi", ["claude", "codex"], false],
             ["ollama", [], false],
         ]);
         // The enabled built-in needs nothing; the proxy would be added for the next start.
         expect(routes[0]).toMatchObject({ providerId: "claude", use: null });
-        expect(routes[1]).toMatchObject({
+        expect(routes[2]).toMatchObject({
             providerId: null,
             use: {
                 providerId: "cliproxyapi",
@@ -82,7 +87,27 @@ describe("assembling provider routes", () => {
         });
         // What only the daemon may see, such as the proxy's key, never reaches the route.
         expect(JSON.stringify(routes)).not.toContain('"k"');
-        expect(routes[1]).not.toHaveProperty("provider");
+        expect(routes[2]).not.toHaveProperty("provider");
+    });
+
+    it("reaches each vendor one way by default: the first route that brings it", () => {
+        const key = detected({ id: "env:OPENAI_API_KEY", kind: "api_key", vendors: ["OpenAI"] });
+        const routes = assembleProviderRoutes(
+            [
+                PROXY,
+                key,
+                detected({ id: "aws_profile:a", kind: "cloud", vendors: ["Amazon Bedrock"] }),
+                detected({ id: "aws_profile:b", kind: "cloud", vendors: ["Amazon Bedrock"] }),
+            ],
+            providers({}),
+        );
+        expect(routes.map((route) => [route.id, route.recommended])).toEqual([
+            ["env:OPENAI_API_KEY", true],
+            // The key already brings OpenAI, but nothing else brings Anthropic.
+            ["cliproxyapi", true],
+            ["aws_profile:a", true],
+            ["aws_profile:b", false],
+        ]);
     });
 
     it("recommends a proxy that is the only way to a vendor, or whose sign-in is signed out", () => {

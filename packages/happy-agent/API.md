@@ -2729,9 +2729,10 @@ provider scan.
   without a vendor request.
 - `overlaps` — IDs of the other routes in this response that reach the same vendor. Using two
   overlapping routes spends the same vendor twice and leaves the choice between them to routing.
-- `recommended` — the suggested initial selection: `true` for a `ready` route that no `direct` or
-  `desktop_app` route overlaps, or for a `direct` or `desktop_app` route that is `ready`; `false`
-  for every `local_models` route and every other overlapping route.
+- `recommended` — the suggested initial selection: `true` for a `ready` `direct` or `desktop_app`
+  route. Any other `ready` route is `true` when at least one of its vendors is served by no ready
+  `direct` or `desktop_app` route and by no ready route before it in this order, so each vendor is
+  reached one way by default. Every `local_models` route is `false`.
 - `warning` — a display sentence when the route quietly changes what another route does, or
   `null`. For example, an `ANTHROPIC_API_KEY` in the daemon's environment takes precedence over
   the Claude Code sign-in, so Claude bills per token instead of using the plan.
@@ -2765,6 +2766,11 @@ The environment is read only for whether these variables are set: `CLAUDE_CODE_O
 and `XAI_API_KEY` take precedence over the vendor's CLI sign-in, so their route carries a `warning`
 when that sign-in is ready. A vendor without a curated model catalog in Happy Agent is shown with
 `models: null` and `use: null`.
+
+AWS profiles come from the AWS config file, `AWS_CONFIG_FILE` or `~/.aws/config`: only each
+profile's name, its `region`, and whether it uses single sign-on. The shared credentials file is
+never opened. The `default` profile is listed as `bedrock` when the built-in provider finds local
+AWS credentials, and as `aws_profile:default` only when the daemon has no built-in `bedrock`.
 
 New providers are written to the daemon-owned runtime configuration. A key copied there is stored
 in plain text with the same exposure it had in the file it came from.

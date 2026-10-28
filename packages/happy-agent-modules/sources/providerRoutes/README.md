@@ -29,8 +29,8 @@ lists overlaps by shared vendor, picks the initial selection, and works out `use
 A route that is a configured provider turns that provider on through the provider scan, which takes
 effect at once. A route that needs a new provider adds its table to runtime.toml with
 `ConfigModule.addRuntimeProvider`; providers are read at startup, so it takes effect after the
-daemon restarts. A provider already pointing at the same local base URL counts as that route being
-configured, whatever its ID.
+daemon restarts. A provider already pointing at the same local base URL, or a Bedrock provider
+already using the same AWS profile, counts as that route being configured, whatever its ID.
 
 A route counts as a configured provider only when this daemon actually runs that provider
 (`ConfigModule.providerIds`), not merely when configuration mentions it.
