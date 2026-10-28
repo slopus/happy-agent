@@ -6297,6 +6297,25 @@ Each node of a tree is one of:
 - `{ "type": "text", "text" }` — 1–8,000 characters of plain text, with entities already decoded
   and runs of whitespace collapsed to one space.
 - `{ "type": "break" }` — a line break.
+- `{ "type": "chart", "variant", "labels", "series", "unit"?, "style"? }` — a chart the client
+  draws natively. `variant` is `bar`, `hbar`, `line`, or `area`. `labels` is 1–100 category labels
+  of at most 200 characters each. `series` is 1–10 of `{ "name"?, "values" }`, where `name` is at
+  most 120 characters and `values` is 1–100 entries, each a finite number or `null` for a missing
+  point. `unit` is at most 24 characters, such as `ms` or `%`, written after each value.
+- `{ "type": "diagram", "source", "style"? }` — a diagram from 1–8,000 characters of Mermaid
+  `source`, carried verbatim. Rendering and validation are the client's; a source the client
+  cannot draw is shown as a plain code block, so nothing the agent wrote is hidden.
+- `{ "type": "codeQuote", "code", "language"?, "path"?, "style"? }` — 1–8,000 characters of
+  `code`, shown as the client shows code. `language` is at most 40 characters and `path`, a
+  display label, at most 512.
+- `{ "type": "files", "files", "style"? }` — a changed-files list of 1–200 rows of
+  `{ "path", "status"?, "added"?, "removed"? }`: `path` is 1–512 characters, `status` one of
+  `added`, `deleted`, `renamed`, or `modified`, and `added` and `removed` are line counts, integers
+  from 0 to 1,000,000. The rows are inline data only; nothing is read from the agent's machine.
+
+The last four are **widget nodes**: small standard components drawn natively by clients that know
+them. They are additive — a client skips a node whose `type` it does not recognize, as it always
+has, so an older client shows a tree without its widgets and still shows every item.
 
 `style` is an object whose optional fields are CSS properties under their camelCase names, each a
 normalized CSS value as a string, such as
@@ -6346,10 +6365,10 @@ An item without a `width` or `height`, or with `width: auto`, shows at its natur
 image's `width` and `height` divided by its `scale`. It shrinks to fit its container and never
 enlarges. `width: 100%` fills the container, enlarging if needed.
 
-The daemon guarantees that a tree nests elements at most 12 deep, holds at most 500 nodes and
-8,000 characters of text and `alt` together, and places every item exactly once. A client should
-still skip an item node whose index is out of range or repeated, and show any item a tree leaves
-out after it.
+The daemon guarantees that a tree nests elements at most 12 deep, holds at most 500 nodes, 8,000
+characters of text, `alt`, and widget body text together, and at most 16 widget nodes, and places
+every item exactly once. A client should still skip an item node whose index is out of range or
+repeated, and show any item a tree leaves out after it.
 
 Clients use their automatic layout for a `layout` whose `type` or `columns` they do not recognize.
 In every layout, including the automatic one and `columns`, an image item without explicit sizing
@@ -6368,15 +6387,27 @@ Without `layout` the presentation has no `layout`. `layout` is a fragment of HTM
 `tree` above, using the same `parseMediaLayoutHtml` clients use for layout blocks in text. A layout never fails the call. The daemon keeps what it can use and ignores the
 rest, and the call's result tells the agent in a short sentence what it ignored:
 
-- Tags: the nine element tags above, `img`, and `br`, in any letter case. An unknown tag is
-  unwrapped and its content kept. A tag that embeds, loads, or runs something — such as
-  `script`, `style`, `link`, `iframe`, `object`, `embed`, `svg`, `math`, `video`, `audio`,
-  `canvas`, `form` and its controls, `template`, and anything in `head` — is dropped with its
-  content. Comments are dropped.
-- Attributes: `style` on any tag except `br`, and `src` and `alt` on `img`. Every other attribute
-  is dropped. `src` must be exactly one of the call's `filepaths` and names that item; an `img`
-  without `src`, with any other `src`, or naming a file already placed is dropped. With a
-  non-empty `layout`, `filepaths` must not repeat a path; a repeated path fails the call.
+- Tags: the nine element tags above, `img`, `br`, and the four widget tags below, in any letter
+  case. An unknown tag is unwrapped and its content kept. A tag that embeds, loads, or runs
+  something — such as `script`, `style`, `link`, `iframe`, `object`, `embed`, `svg`, `math`,
+  `video`, `audio`, `canvas`, `form` and its controls, `template`, and anything in `head` — is
+  dropped with its content. Comments are dropped.
+- Widgets: `<happy-chart>`, `<happy-diagram>`, `<happy-code>`, and `<happy-files>` become the
+  `chart`, `diagram`, `codeQuote`, and `files` nodes above. A widget's body is the text of its
+  single `<script>` child — `type="application/json"` for a chart or file list, `text/x-mermaid`
+  or `text/plain` for a diagram or code — or, without one, the element's own text; either is taken
+  verbatim, not as layout content, and child elements other than that `<script>` are dropped and
+  noted. Code bodies are dedented: shared leading indentation and blank first and last lines are
+  removed. `<happy-chart>` takes `type` (`bar`, `hbar`, `line`, or `area`;
+  `bar` when absent) and `<happy-code>` takes `language` and `path`; all four take `style`. A
+  widget whose body is empty or not the JSON shape its node requires, whose `type` names no chart,
+  or that falls outside any bound of its node is dropped and noted, and counts as content lost to
+  a limit.
+- Attributes: `style` on any tag except `br`, `src` and `alt` on `img`, and the widget attributes
+  above. Every other attribute is dropped. `src` must be exactly one of the call's `filepaths` and
+  names that item; an `img` without `src`, with any other `src`, or naming a file already placed
+  is dropped. With a non-empty `layout`, `filepaths` must not repeat a path; a repeated path fails
+  the call.
 - `style`: each declaration whose property and value fall in the subset above is kept in
   normalized form; any other declaration is dropped on its own. A `style` attribute containing a
   backslash or a quote is dropped whole, so no escape, string, or `url()` reaches a client.
@@ -6385,10 +6416,12 @@ rest, and the call's result tells the agent in a short sentence what it ignored:
 - Limits: kept elements nested more than 12 deep are unwrapped. Every element of the HTML counts
   toward its nesting, whether it is kept, unwrapped, or dropped, and anything nested more than 32
   deep is dropped with its contents. Every element and text counts toward 500 nodes, and nodes
-  beyond 500 or text beyond 8,000 characters are dropped. A `layout` over 32 KiB is ignored whole.
-  The parser never fails, whatever the input.
+  beyond 500 or text beyond 8,000 characters are dropped. A widget's body text counts toward the
+  8,000 characters, and a widget it does not fit within, or beyond 16 in one tree, is dropped and
+  noted. A `layout` over 32 KiB is ignored whole. The parser never fails, whatever the input.
 - A file the layout leaves out is appended to the end of the tree, and the result says so. A
-  layout that places none of the files is ignored whole and the presentation has no `layout`.
+  layout that places none of the files and holds no widget is ignored whole and the presentation
+  has no `layout`.
 
 An image item may carry `scale`, a number above 1 and at most 4: the file's own pixel density
 as a multiple of a CSS pixel, so its natural size is `width / scale` by `height / scale`. The
@@ -6609,19 +6642,22 @@ Side by side:
 ```
 
 The HTML is layout only, in the subset `present_files`' `layout` takes: the same tags, attributes,
-`style` grammar, and limits. The daemon stores and returns message text exactly as written; no
-route rewrites it, and the HTML never reaches a renderer as HTML.
+`style` grammar, and limits, including the four widget tags, so a reply may also carry charts,
+diagrams, code quotes, and changed-files lists. The daemon stores and returns message text exactly
+as written; no route rewrites it, and the HTML never reaches a renderer as HTML.
 
 **Blocks.** A layout block starts at the start of a line indented at most three spaces, outside a
 fenced code block and outside a code span, with a start tag `<div`, `<section`, `<figure`, `<p`,
-or `<img` in any letter case, followed by whitespace, `>`, `/`, or the end of the line. It may
+`<img`, `<happy-chart`, `<happy-diagram`, `<happy-code`, or `<happy-files` in any letter case,
+followed by whitespace, `>`, `/`, or the end of the line. It may
 interrupt a paragraph. It runs until its root element closes: only start and end tags of the root's
 own name count, comments and quoted attribute values are skipped, and an `img` root ends with its
 own tag. The block then takes the rest of the line its root closes on. Unlike a CommonMark HTML
-block, a blank line never ends it. A block holding no `<img` start tag is ordinary Markdown. A
+block, a blank line never ends it. A block holding no `<img` start tag and no widget start tag is
+ordinary Markdown. A
 block whose root never closes, or that ends inside a tag or comment, runs to the end of the text
 and is incomplete. A last line without a newline that is only the start of such a tag, such as `<`,
-`<di`, or `<fig`, is incomplete as well.
+`<di`, or `<happy-ch`, is incomplete as well.
 
 **Resolution.** Each `<img src>` names an earlier media item of the same conversation: the most
 recent item, in any earlier `media` presentation, whose `source.path` or `source.absolutePath`
@@ -6631,8 +6667,9 @@ through its media route. Each item is placed at most once per block.
 
 **Rendering.** A client that renders layout blocks parses each complete block into the `tree` of
 a `media` presentation, whose item indexes refer to the items its `src`s resolved to, and shows it
-as it shows a `tree` layout. A block is shown as a layout only when at least one `img` resolves and
-no content was lost to a limit; otherwise it is shown as the Markdown it is, so nothing the agent
+as it shows a `tree` layout. A block is shown as a layout only when at least one `img` resolves or
+the tree holds a widget node, and no content was lost to a limit — a dropped widget counts as lost
+content; otherwise it is shown as the Markdown it is, so nothing the agent
 wrote is ever hidden. While text streams, a client holds an incomplete last block rather than
 showing its HTML, and once the message is final, it shows an incomplete block as Markdown.
 
@@ -6650,6 +6687,7 @@ splitMediaLayoutBlocks(markdown: string):
 parseMediaLayoutHtml(html: string, resolve: (src: string) => number | undefined): {
     root: MediaLayoutNode[]; // each item node's index is what resolve returned
     placed: number[];        // the indexes placed, in order, each once
+    widgets: number;         // the widget nodes the tree keeps
     ignored: string[];       // short notes on what was left out
     truncated: boolean;      // content was lost to a limit
 };
@@ -6663,7 +6701,9 @@ than their own parsers, so every surface agrees on exactly what a block shows.
 
 Media layouts in text are additive and do not increment the protocol version. Request and response
 schemas are unchanged apart from the optional `source`. A client that does not render them shows
-the HTML as its Markdown renderer does.
+the HTML as its Markdown renderer does. Widget nodes and tags are additive as well: a client built
+before them treats their blocks as the ordinary Markdown they are, and the fallback above drops a
+complete widget block like any other.
 
 #### File links
 

@@ -5,11 +5,17 @@
  * exactly what a layout means. No HTML ever reaches a renderer.
  */
 
+import { Value } from "@sinclair/typebox/value";
 import { html as htmlSpec, parse, type DefaultTreeAdapterTypes } from "parse5";
 
 import { parseMediaLayoutHtmlStyle } from "./mediaLayoutHtmlStyle.js";
 import type { MediaLayoutStyle } from "./protocol/mediaLayoutStyle.js";
-import type { MediaLayoutNode, MediaLayoutTag } from "./protocol/messages.js";
+import {
+    mediaLayoutNodeSchema,
+    type MediaLayoutChartVariant,
+    type MediaLayoutNode,
+    type MediaLayoutTag,
+} from "./protocol/messages.js";
 
 type ChildNode = DefaultTreeAdapterTypes.ChildNode;
 type Element = DefaultTreeAdapterTypes.Element;
@@ -25,6 +31,7 @@ const MAX_HTML_DEPTH = 32;
 const MAX_NODES = 500;
 const MAX_TEXT = 8000;
 const MAX_ALT = 1000;
+const MAX_WIDGETS = 16;
 
 const ELEMENT_TAGS: Readonly<Record<string, MediaLayoutTag>> = {
     div: "div",
@@ -38,6 +45,37 @@ const ELEMENT_TAGS: Readonly<Record<string, MediaLayoutTag>> = {
     code: "code",
 };
 const BLOCK_TAGS: ReadonlySet<string> = new Set(["div", "section", "figure", "figcaption", "p"]);
+
+/**
+ * The widget tags, each becoming one typed node drawn natively: a chart, a Mermaid diagram, a
+ * code quote, or a changed-files list. Their bodies are data, never layout content.
+ */
+export const MEDIA_LAYOUT_WIDGET_TAGS = [
+    "happy-chart",
+    "happy-diagram",
+    "happy-code",
+    "happy-files",
+] as const;
+
+/** A tag that becomes a widget node. */
+export type MediaLayoutWidgetTag = (typeof MEDIA_LAYOUT_WIDGET_TAGS)[number];
+
+const WIDGET_TAGS: ReadonlySet<string> = new Set(MEDIA_LAYOUT_WIDGET_TAGS);
+
+/** The `<script type>`s each widget reads its body from, mirroring the artifact components. */
+const WIDGET_SCRIPT_TYPES: Readonly<Record<MediaLayoutWidgetTag, readonly string[]>> = {
+    "happy-chart": ["application/json"],
+    "happy-diagram": ["text/x-mermaid", "text/plain"],
+    "happy-code": ["text/plain"],
+    "happy-files": ["application/json"],
+};
+
+const CHART_VARIANTS: ReadonlySet<string> = new Set<MediaLayoutChartVariant>([
+    "bar",
+    "hbar",
+    "line",
+    "area",
+]);
 
 /**
  * Tags left out together with everything inside them: they run code, load or embed something,
@@ -91,6 +129,8 @@ export interface ParsedMediaLayoutHtml {
     readonly root: MediaLayoutNode[];
     /** The indexes the tree places, in order, each once. */
     readonly placed: readonly number[];
+    /** How many widget nodes the tree keeps; a tree with one resolves like one with a picture. */
+    readonly widgets: number;
     /** Short descriptions of what was left out, such as `position on <div>`, for the agent. */
     readonly ignored: readonly string[];
     /**
@@ -107,6 +147,7 @@ interface LayoutWalk {
     readonly ignored: string[];
     nodes: number;
     text: number;
+    widgets: number;
     truncated: boolean;
 }
 
@@ -132,6 +173,7 @@ export function parseMediaLayoutHtml(
         return {
             root: [],
             placed: [],
+            widgets: 0,
             ignored: ["the whole layout, which could not be read"],
             truncated: true,
         };
@@ -143,6 +185,7 @@ function parseBounded(source: string, resolve: MediaLayoutSourceResolver): Parse
         return {
             root: [],
             placed: [],
+            widgets: 0,
             ignored: [
                 `the whole layout, which is longer than ${String(MAX_MEDIA_LAYOUT_HTML_LENGTH)} characters`,
             ],
@@ -156,6 +199,7 @@ function parseBounded(source: string, resolve: MediaLayoutSourceResolver): Parse
         ignored: [],
         nodes: 0,
         text: 0,
+        widgets: 0,
         truncated: false,
     };
     for (const node of document.childNodes) {
@@ -176,7 +220,13 @@ function parseBounded(source: string, resolve: MediaLayoutSourceResolver): Parse
         }
     }
     const root = body === undefined ? [] : children(body.childNodes, false, 0, 0, walk);
-    return { root, placed: walk.placed, ignored: walk.ignored, truncated: walk.truncated };
+    return {
+        root,
+        placed: walk.placed,
+        widgets: walk.widgets,
+        ignored: walk.ignored,
+        truncated: walk.truncated,
+    };
 }
 
 /**
@@ -242,6 +292,11 @@ function convert(
         into.push({ type: "break" });
         return;
     }
+    if (WIDGET_TAGS.has(tag)) {
+        const widget = widgetNode(element, tag as MediaLayoutWidgetTag, walk);
+        if (widget !== undefined) into.push(widget);
+        return;
+    }
     const elementTag = ELEMENT_TAGS[tag];
     if (elementTag === undefined || depth >= MAX_DEPTH) {
         if (elementTag === undefined) {
@@ -303,6 +358,199 @@ function imageItem(element: Element, walk: LayoutWalk): MediaLayoutNode | undefi
     };
 }
 
+const WIDGET_WORDS: Readonly<Record<MediaLayoutWidgetTag, string>> = {
+    "happy-chart": "chart",
+    "happy-diagram": "diagram",
+    "happy-code": "code quote",
+    "happy-files": "file list",
+};
+
+/**
+ * One widget element as its typed node. A widget's body is data, never layout content: the text
+ * of its first `<script>` child of a type the widget takes, or the element's own text. A widget
+ * that is empty, over a bound, or not the shape its node requires is dropped as content lost to a
+ * limit, so a reply block holding one stays the inert text it was written as.
+ */
+function widgetNode(
+    element: Element,
+    tag: MediaLayoutWidgetTag,
+    walk: LayoutWalk,
+): MediaLayoutNode | undefined {
+    if (walk.widgets >= MAX_WIDGETS) {
+        truncate(walk, `widgets beyond ${String(MAX_WIDGETS)}`);
+        return undefined;
+    }
+    const kept =
+        tag === "happy-chart" ? ["type"] : tag === "happy-code" ? ["language", "path"] : [];
+    const style = elementStyle(element, kept, walk);
+    const body = widgetBody(element, tag, walk);
+    if (body.trim() === "") {
+        truncate(walk, `a <${tag}> with an empty body`);
+        return undefined;
+    }
+    if (body.length > MAX_TEXT - walk.text) {
+        truncate(walk, `a <${tag}> whose body passes the ${String(MAX_TEXT)}-character budget`);
+        return undefined;
+    }
+    const node = widgetCandidate(element, tag, body, style, walk);
+    if (node === undefined) return undefined;
+    walk.text += body.length;
+    walk.widgets += 1;
+    return node;
+}
+
+/**
+ * The text a widget reads. A `<script>` child carries code and JSON through the HTML parser
+ * verbatim, so `<` never starts a tag inside it; any other child element is not layout content
+ * and is dropped and noted.
+ */
+function widgetBody(element: Element, tag: MediaLayoutWidgetTag, walk: LayoutWalk): string {
+    const types = WIDGET_SCRIPT_TYPES[tag];
+    let script: string | undefined;
+    let text = "";
+    for (const child of element.childNodes) {
+        if (child.nodeName === "#text" && "value" in child) {
+            text += child.value;
+            continue;
+        }
+        if (child.nodeName === "#comment") {
+            note(walk, "comments");
+            continue;
+        }
+        if (!("tagName" in child)) continue;
+        void count(walk);
+        if (child.tagName === "script" && script === undefined) {
+            const type =
+                child.attrs
+                    .find((attribute) => attribute.name === "type")
+                    ?.value.trim()
+                    .toLowerCase() ?? "";
+            if (types.includes(type)) {
+                let value = "";
+                for (const grandchild of child.childNodes) {
+                    if (grandchild.nodeName === "#text" && "value" in grandchild)
+                        value += grandchild.value;
+                }
+                script = value;
+                continue;
+            }
+        }
+        note(walk, `<${child.tagName}> inside <${tag}>`);
+    }
+    return script ?? text;
+}
+
+function widgetCandidate(
+    element: Element,
+    tag: MediaLayoutWidgetTag,
+    body: string,
+    style: MediaLayoutStyle | undefined,
+    walk: LayoutWalk,
+): MediaLayoutNode | undefined {
+    const withStyle = style === undefined ? {} : { style };
+    if (tag === "happy-diagram") {
+        const source = body.replace(/^\s*\n/u, "").replace(/\s+$/u, "");
+        return checked(walk, tag, { type: "diagram", source, ...withStyle });
+    }
+    if (tag === "happy-code") {
+        const language = attributeValue(element, "language");
+        const path = attributeValue(element, "path");
+        return checked(walk, tag, {
+            type: "codeQuote",
+            code: dedent(body),
+            ...(language === undefined ? {} : { language }),
+            ...(path === undefined ? {} : { path }),
+            ...withStyle,
+        });
+    }
+    let data: unknown;
+    try {
+        data = JSON.parse(body);
+    } catch {
+        truncate(walk, `a <${tag}> whose body is not valid JSON`);
+        return undefined;
+    }
+    if (tag === "happy-files") {
+        const node = checked(walk, tag, { type: "files", files: data, ...withStyle });
+        if (node?.type !== "files") return undefined;
+        /* Rebuilt field by field: nothing the JSON carried beyond the shape travels on. */
+        return {
+            type: "files",
+            files: node.files.map((file) => ({
+                path: file.path,
+                ...(file.status === undefined ? {} : { status: file.status }),
+                ...(file.added === undefined ? {} : { added: file.added }),
+                ...(file.removed === undefined ? {} : { removed: file.removed }),
+            })),
+            ...withStyle,
+        };
+    }
+    const written = attributeValue(element, "type");
+    const variant = (written ?? "bar").toLowerCase();
+    if (!CHART_VARIANTS.has(variant)) {
+        truncate(
+            walk,
+            `type=${quote(shorten(written ?? ""))} on <happy-chart>, which names no chart`,
+        );
+        return undefined;
+    }
+    if (typeof data !== "object" || data === null || Array.isArray(data)) {
+        truncate(walk, "a <happy-chart> whose body is not a chart object");
+        return undefined;
+    }
+    const record = data as Record<string, unknown>;
+    const node = checked(walk, tag, {
+        type: "chart",
+        variant,
+        labels: record.labels,
+        series: record.series,
+        ...(record.unit === undefined ? {} : { unit: record.unit }),
+        ...withStyle,
+    });
+    if (node?.type !== "chart") return undefined;
+    return {
+        type: "chart",
+        variant: node.variant,
+        labels: [...node.labels],
+        series: node.series.map((series) => ({
+            ...(series.name === undefined ? {} : { name: series.name }),
+            values: [...series.values],
+        })),
+        ...(node.unit === undefined ? {} : { unit: node.unit }),
+        ...withStyle,
+    };
+}
+
+/** The candidate against the published schema; a widget that fails it is dropped as lost content. */
+function checked(
+    walk: LayoutWalk,
+    tag: MediaLayoutWidgetTag,
+    candidate: unknown,
+): MediaLayoutNode | undefined {
+    if (Value.Check(mediaLayoutNodeSchema, candidate)) return candidate;
+    truncate(walk, `a <${tag}> outside what a ${WIDGET_WORDS[tag]} may hold`);
+    return undefined;
+}
+
+function attributeValue(element: Element, name: string): string | undefined {
+    const value = element.attrs.find((attribute) => attribute.name === name)?.value;
+    return value === undefined || value === "" ? undefined : value;
+}
+
+/** Code as written inside the element, without the blank lines and shared indent around it. */
+function dedent(text: string): string {
+    const lines = text.replace(/\r\n?/gu, "\n").split("\n");
+    while (lines.length > 0 && lines[0]?.trim() === "") lines.shift();
+    while (lines.length > 0 && lines[lines.length - 1]?.trim() === "") lines.pop();
+    let indent: number | undefined;
+    for (const line of lines) {
+        if (line.trim() === "") continue;
+        const width = (/^[ \t]*/u.exec(line) as RegExpExecArray)[0].length;
+        if (indent === undefined || width < indent) indent = width;
+    }
+    return lines.map((line) => line.slice(indent ?? 0)).join("\n");
+}
+
 /** The element's parsed style; every other attribute but `kept` is noted and left out. */
 function elementStyle(
     element: Element,
@@ -355,7 +603,14 @@ function tidyWhitespace(nodes: MediaLayoutNode[], ignoresWhitespace: boolean): M
 }
 
 function isBlock(node: MediaLayoutNode | undefined): boolean {
-    return node?.type === "element" && BLOCK_TAGS.has(node.tag);
+    if (node === undefined) return false;
+    if (node.type === "element") return BLOCK_TAGS.has(node.tag);
+    return (
+        node.type === "chart" ||
+        node.type === "diagram" ||
+        node.type === "codeQuote" ||
+        node.type === "files"
+    );
 }
 
 /** Count one more node, or say there is no room for it. */
