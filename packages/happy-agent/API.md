@@ -2812,8 +2812,9 @@ provider scan.
 - `providerId` — the configured provider this route already is, or `null`. A provider that `use`
   added and that takes effect after a restart is reported here too.
 - `use` — `null` when the route is already configured and enabled, or cannot be set up
-  automatically, such as a route that is not `ready` or a local server that lists no models.
-  Otherwise it describes what
+  automatically: a route whose `status` is `needs_sign_in`, `not_running`, or `unauthorized`, or a
+  local server that lists no models. A route whose `status` is `unknown` can still be set up,
+  because setting it up only writes configuration. Otherwise it describes what
   `POST /v0/provider-routes/:routeId/use` does: `providerId` and `type` of the provider it enables
   or adds, a display `summary`, and `restartRequired`, `true` when the provider is new and the
   daemon must restart before using it.
@@ -2844,6 +2845,14 @@ AWS profiles come from the AWS config file, `AWS_CONFIG_FILE` or `~/.aws/config`
 profile's name, its `region`, and whether it uses single sign-on. The shared credentials file is
 never opened. The `default` profile is listed as `bedrock` when the built-in provider finds local
 AWS credentials, and as `aws_profile:default` only when the daemon has no built-in `bedrock`.
+
+Other accounts' home folders are folders directly in the person's home directory named
+`.claude-<name>` or `.codex-<name>` (or with `_` or `.` after the vendor), other than the one
+`CLAUDE_CONFIG_DIR` or `CODEX_HOME` selects. A Claude folder holding a login in
+`.credentials.json` is `ready`. One whose `.claude.json` only records a signed-in account is
+`unknown`, because the macOS keychain keeps that login and is never read. A Codex folder is listed
+when its `auth.json` holds a ChatGPT sign-in, billed as `subscription`, or an API key, billed as
+`pay_per_token`. A provider already configured with the same folder is that route's provider.
 
 New providers are written to the daemon-owned runtime configuration. A key copied there is stored
 in plain text with the same exposure it had in the file it came from.

@@ -131,6 +131,28 @@ describe("assembling provider routes", () => {
         });
     });
 
+    it("lets a route detection cannot vouch for be chosen, without starting it checked", () => {
+        const routes = assembleProviderRoutes(
+            [
+                detected({
+                    id: "claude_home:.claude-work",
+                    vendors: ["Anthropic"],
+                    status: "unknown",
+                    provider: {
+                        id: "claude_work",
+                        table: { type: "claude", config_dir: "/home/ada/.claude-work" },
+                        summary: "Adds Claude Code with the account in ~/.claude-work.",
+                    },
+                }),
+            ],
+            providers({}),
+        );
+        expect(routes[0]).toMatchObject({
+            recommended: false,
+            use: { providerId: "claude_work", type: "claude", restartRequired: true },
+        });
+    });
+
     it("turns on a ready built-in that is off, and finds a provider already at the same address", () => {
         const routes = assembleProviderRoutes(
             [

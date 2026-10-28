@@ -185,7 +185,7 @@ describe("Provider routes API", () => {
     );
 
     it(
-        "finds a running CLIProxyAPI, starts it unchecked beside the Claude sign-in, and adds it for the next start",
+        "finds a running CLIProxyAPI, checks it for the vendor only it brings, and adds it for the next start",
         async () => {
             const proxy = await localServer((request) =>
                 request.headers.authorization === "Bearer sk-proxy-client"
@@ -364,6 +364,51 @@ describe("Provider routes API", () => {
                 providerId: "bedrock_work_bedrock",
                 use: null,
             });
+            expect(gym.errors).toEqual([]);
+        },
+        TEST_TIMEOUT_MS,
+    );
+
+    it(
+        "adds another Codex account from its own home folder, showing the account but not its tokens",
+        async () => {
+            const claims = Buffer.from(
+                JSON.stringify({
+                    email: "ada@home.example",
+                    "https://api.openai.com/auth": { chatgpt_plan_type: "plus" },
+                }),
+            ).toString("base64url");
+            const { gym } = await startRoutesGym(async (home) => {
+                await mkdir(join(home, ".codex-personal"), { recursive: true });
+                await writeFile(
+                    join(home, ".codex-personal", "auth.json"),
+                    JSON.stringify({
+                        tokens: { id_token: `e30.${claims}.sig`, access_token: "codex-secret" },
+                    }),
+                );
+            });
+            const listed = (await gym.http.ok("GET", "/v0/provider-routes")) as { routes: Route[] };
+            expect(
+                listed.routes.find((route) => route.id === "codex_home:.codex-personal"),
+            ).toMatchObject({
+                kind: "direct",
+                name: "Codex (~/.codex-personal)",
+                billing: "subscription",
+                account: { email: "ada@home.example", plan: "Plus" },
+                status: "ready",
+                use: { providerId: "codex_personal", type: "codex", restartRequired: true },
+            });
+            expect(JSON.stringify(listed)).not.toContain("codex-secret");
+            await gym.http.ok(
+                "POST",
+                `/v0/provider-routes/${encodeURIComponent("codex_home:.codex-personal")}/use`,
+                {},
+            );
+            await gym.restart();
+            const after = (await gym.http.ok("GET", "/v0/provider-routes")) as { routes: Route[] };
+            expect(
+                after.routes.find((route) => route.id === "codex_home:.codex-personal"),
+            ).toMatchObject({ providerId: "codex_personal", use: null });
             expect(gym.errors).toEqual([]);
         },
         TEST_TIMEOUT_MS,
