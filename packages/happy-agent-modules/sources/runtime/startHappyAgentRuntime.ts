@@ -76,6 +76,7 @@ import { ProjectsModule } from "../projects/index.js";
 import { ProviderUsageModule } from "../providerUsage/index.js";
 import { ProviderScanModule } from "../providerScan/index.js";
 import { ProviderClisModule } from "../providerClis/index.js";
+import { ProviderRoutesModule } from "../providerRoutes/index.js";
 import { SchedulingModule } from "../scheduling/index.js";
 import { SearchModule } from "../search/index.js";
 import { SecretsModule } from "../secrets/index.js";
@@ -201,6 +202,7 @@ export interface HappyAgentRuntimeModules {
     readonly providerUsage: ProviderUsageModule;
     readonly providerScan: ProviderScanModule;
     readonly providerClis: ProviderClisModule;
+    readonly providerRoutes: ProviderRoutesModule;
     readonly scheduling: SchedulingModule;
     readonly search: SearchModule;
     readonly secrets: SecretsModule;
@@ -467,6 +469,7 @@ export async function startHappyAgentRuntime(
                   );
         const durableFunctions = new DurableFunctionsModule();
         const providerClis = new ProviderClisModule(config, providerScan, durableFunctions);
+        const providerRoutes = new ProviderRoutesModule(config, providerClis, providerScan);
         const globalSkills = new GlobalSkillsModule(config, durableFunctions);
         const compute = createComputeModules(computeModule, globalSkills, config);
         registerShutdown("global-skills", async () => await globalSkills.close());
@@ -800,6 +803,7 @@ export async function startHappyAgentRuntime(
             stories,
             stickers,
             providerClis,
+            providerRoutes,
         );
         api = apiModule;
 
@@ -849,6 +853,7 @@ export async function startHappyAgentRuntime(
             projects,
             providerScan,
             providerClis,
+            providerRoutes,
             providerUsage,
             scheduling,
             search,
@@ -886,6 +891,7 @@ export async function startHappyAgentRuntime(
             runners,
             providerScan,
             providerClis,
+            providerRoutes,
             observation,
             systemPrompt,
             toolDiscovery,

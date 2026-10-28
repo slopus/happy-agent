@@ -1,0 +1,110 @@
+import type { AgentModule } from "@slopus/happy-agent-base";
+import type { Context } from "@steve.kite/stdlib";
+
+import type { ConfigModule } from "../config/index.js";
+import type { ProviderClisModule } from "../providerClis/index.js";
+import type { ProviderScanModule } from "../providerScan/index.js";
+import { ProviderRouteRequestError, type ProviderRoute } from "./ProviderRoute.js";
+import { assembleProviderRoutes } from "./impl/assembleProviderRoutes.js";
+import type { ConfiguredProviders, DetectedRoute } from "./impl/DetectedRoute.js";
+import { detectDirectRoutes } from "./impl/detectDirectRoutes.js";
+
+/**
+ * Finds every way this computer can already reach models, without inference, and sets a chosen
+ * route up with its recommended configuration. See "Provider routes" in API.md.
+ */
+export class ProviderRoutesModule implements AgentModule {
+    readonly name = "provider-routes";
+    readonly #config: ConfigModule;
+    readonly #providerClis: ProviderClisModule;
+    readonly #providerScan: ProviderScanModule;
+
+    constructor(
+        config: ConfigModule,
+        providerClis: ProviderClisModule,
+        providerScan: ProviderScanModule,
+    ) {
+        this.#config = config;
+        this.#providerClis = providerClis;
+        this.#providerScan = providerScan;
+    }
+
+    /** Detect every route again. */
+    async list(ctx: Context): Promise<ProviderRoute[]> {
+        return assembleProviderRoutes(await this.#detect(ctx), this.#providers());
+    }
+
+    /**
+     * Set one route up as its `use` says: turn a configured provider on, or add the new provider
+     * to runtime.toml for the next start.
+     */
+    async use(
+        ctx: Context,
+        routeId: string,
+    ): Promise<{ readonly route: ProviderRoute; readonly restartRequired: boolean }> {
+        const detected = await this.#detect(ctx);
+        const routes = assembleProviderRoutes(detected, this.#providers());
+        const route = routes.find((candidate) => candidate.id === routeId);
+        const found = detected.find((candidate) => candidate.id === routeId);
+        if (route === undefined || found === undefined) {
+            throw new ProviderRouteRequestError("not_found", "Route not found.", null);
+        }
+        if (route.use === null) {
+            throw new ProviderRouteRequestError(
+                "conflict",
+                route.providerId === null
+                    ? `${route.name} can't be set up automatically right now.`
+                    : `${route.name} is already set up.`,
+                route,
+            );
+        }
+        if (route.use.restartRequired && found.provider !== undefined) {
+            await this.#config.addRuntimeProvider(ctx, found.provider.id, found.provider.table);
+        } else {
+            await this.#providerScan.setOverrides(ctx, {
+                [route.use.providerId]: { enabled: true },
+            });
+        }
+        const after = assembleProviderRoutes(detected, this.#providers()).find(
+            (candidate) => candidate.id === routeId,
+        );
+        return { route: after ?? route, restartRequired: route.use.restartRequired };
+    }
+
+    async #detect(ctx: Context): Promise<DetectedRoute[]> {
+        const providerClis = await this.#providerClis.list(ctx);
+        const routes = [
+            ...detectDirectRoutes(providerClis, (providerId, vendor) =>
+                this.#models(providerId, vendor),
+            ),
+        ];
+        // A route is a configured provider only when this daemon actually runs that provider.
+        return routes.map((route) => {
+            if (route.providerId === undefined || this.#isProvider(route.providerId)) return route;
+            const { providerId: _providerId, ...rest } = route;
+            return rest;
+        });
+    }
+
+    #isProvider(providerId: string): boolean {
+        return this.#config.providerIds.includes(providerId);
+    }
+
+    #models(providerId: string, vendor: string | null): ProviderRoute["models"] {
+        if (!this.#isProvider(providerId)) return null;
+        return this.#config.offeredModels
+            .filter((model) => model.providerId === providerId)
+            .slice(0, 500)
+            .map((model) => ({ id: model.id, vendor }));
+    }
+
+    #providers(): ConfiguredProviders {
+        const config = this.#config;
+        return {
+            has: (providerId) => config.hasProvider(providerId),
+            isEnabled: (providerId) => config.isProviderEnabled(providerId),
+            typeOf: (providerId) => config.providerType(providerId),
+            at: (baseUrl) => config.openAICompatibleProviderAt(baseUrl),
+        };
+    }
+}

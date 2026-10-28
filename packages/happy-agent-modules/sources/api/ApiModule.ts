@@ -47,6 +47,12 @@ import {
     type ProviderCliId,
 } from "../providerClis/index.js";
 import {
+    ProviderRouteRequestError,
+    ProviderRoutesModule,
+    providerRouteIdSchema,
+    providerRouteUseRequestSchema,
+} from "../providerRoutes/index.js";
+import {
     StoriesModule,
     StoryConflictError,
     StoryForbiddenError,
@@ -633,6 +639,7 @@ export class ApiModule implements AgentModule {
     readonly #stories: StoriesModule | undefined;
     readonly #stickers: StickersModule | undefined;
     readonly #providerClis: ProviderClisModule | undefined;
+    readonly #providerRoutes: ProviderRoutesModule | undefined;
     /** The revocation signals each mobile connection already closes on. */
     readonly #mobileConnections = new WeakMap<MobileConnection, Set<AbortSignal>>();
     readonly #mobileClosers = new WeakMap<MobileConnection, () => void>();
@@ -797,6 +804,7 @@ export class ApiModule implements AgentModule {
         stories?: StoriesModule,
         stickers?: StickersModule,
         providerClis?: ProviderClisModule,
+        providerRoutes?: ProviderRoutesModule,
     ) {
         this.#abort = abort;
         this.#config = config;
@@ -844,6 +852,7 @@ export class ApiModule implements AgentModule {
         this.#stories = stories;
         this.#stickers = stickers;
         this.#providerClis = providerClis;
+        this.#providerRoutes = providerRoutes;
     }
 
     readonly beforeStart = async (
@@ -1460,6 +1469,14 @@ export class ApiModule implements AgentModule {
                     url.pathname.startsWith("/v0/provider-clis/"))
             ) {
                 await this.#handleProviderClis(ctx, request, response, url, this.#providerClis);
+                return;
+            }
+            if (
+                this.#providerRoutes !== undefined &&
+                (url.pathname === "/v0/provider-routes" ||
+                    url.pathname.startsWith("/v0/provider-routes/"))
+            ) {
+                await this.#handleProviderRoutes(ctx, request, response, url, this.#providerRoutes);
                 return;
             }
             if (request.method === "GET" && url.pathname === "/v0/config/instructions") {
@@ -9311,6 +9328,51 @@ export class ApiModule implements AgentModule {
         }
     }
 
+    /** The routes under `/v0/provider-routes`; see "Provider routes" in API.md. */
+    async #handleProviderRoutes(
+        ctx: Context,
+        request: IncomingMessage,
+        response: ServerResponse,
+        url: URL,
+        providerRoutes: ProviderRoutesModule,
+    ): Promise<void> {
+        if (this.#team.enabled) {
+            throw unsupported("Finding provider routes is unavailable in team mode.");
+        }
+        if (url.pathname === "/v0/provider-routes") {
+            if (request.method !== "GET") throw notFound("Route not found.");
+            sendJson(response, 200, {
+                routes: await providerRoutes.list(ctx),
+                detectedAt: Date.now(),
+            });
+            return;
+        }
+        const match = /^\/v0\/provider-routes\/([^/]+)\/use$/u.exec(url.pathname);
+        if (match === null || request.method !== "POST") throw notFound("Route not found.");
+        const routeId = decodePathSegment(match[1]!, "route ID");
+        if (!Value.Check(providerRouteIdSchema, routeId)) throw notFound("Route not found.");
+        const body = await optionalBodyAs(
+            request,
+            providerRouteUseRequestSchema,
+            "provider route request",
+            2 * 1_024,
+        );
+        try {
+            const result = await this.#withMutationId(body.mutationId, async () => {
+                const used = await providerRoutes.use(ctx, routeId);
+                this.#journal.append("config.updated", {});
+                return used;
+            });
+            sendJson(response, 200, result);
+        } catch (error: unknown) {
+            if (error instanceof ProviderRouteRequestError) {
+                if (error.code === "not_found") throw notFound(error.message);
+                throw new ApiError(409, "conflict", error.message, { route: error.route });
+            }
+            throw error;
+        }
+    }
+
     async #withMutationId<Value>(
         mutationId: string | undefined,
         operation: () => Promise<Value>,
@@ -10284,6 +10346,9 @@ export class ApiModule implements AgentModule {
                 ...(this.#providerClis === undefined || this.#team.enabled
                     ? {}
                     : { providerClis: true }),
+                ...(this.#providerRoutes === undefined || this.#team.enabled
+                    ? {}
+                    : { providerRoutes: true }),
                 ...(this.#bridges === undefined ? {} : { workspaceBridges: true }),
                 ...(this.#spaces === undefined || this.#tasks === undefined
                     ? {}
