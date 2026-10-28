@@ -33,3 +33,20 @@ it("remembers sign-in and usage failures until a response completes or fifteen m
     now = 15 * 60_000 + 1;
     expect(failures.has("spent")).toBe(false);
 });
+
+it("reports what each terminal event proved about the account's sign-in", () => {
+    const reported: [string, string][] = [];
+    const failures = new ProviderAccountFailures(Date.now, (providerId, signIn) => {
+        reported.push([providerId, signIn]);
+    });
+    failures.observe("throttled", failure("rate_limit"));
+    failures.observe("cancelled", { type: "done", state: "cancelled" });
+    failures.observe("signed-out", failure("authentication"));
+    failures.observe("spent", failure("out_of_tokens"));
+    failures.observe("working", { type: "done", state: "normal", tokens: { input: 1, output: 1 } });
+    expect(reported).toEqual([
+        ["signed-out", "signed_out"],
+        ["spent", "signed_in"],
+        ["working", "signed_in"],
+    ]);
+});

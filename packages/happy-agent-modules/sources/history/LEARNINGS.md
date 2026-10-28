@@ -255,7 +255,9 @@ reached a provider, gets `provider_disabled`. A smart route gets `no_account_ava
 it is spent: its last account ran out of usage, or every account is turned off. A pool that ended on
 a rejected sign-in is not spent, because the person has to sign in rather than wait; an early
 version called every failed-over pool spent and hid sign-in problems. Its `resetsAt` is the
-earliest reset among the spent accounts. A retry reopens the smart route the way a sent message
+earliest reset among the spent accounts. Its `members` list each account the pool set aside, in
+configured order, from Config's `routeFailedAccounts`. Each member's `command` and `resetsAt` come
+from the same sources its own `signin_missing` or `usage_limit` would use. A retry reopens the smart route the way a sent message
 does, so its accounts are tried again.
 
 The failed attempt is the one the route reports, not always the last one. An exhausted pool

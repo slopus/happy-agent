@@ -30,9 +30,14 @@ export class ProviderCredentialFailures {
         { message: string; failure: UnavailableCredentialFailure; at: number }
     >();
 
-    constructor(readonly now: () => number = Date.now) {}
+    constructor(
+        readonly now: () => number = Date.now,
+        /** Told each time a provider is found to have no credential at all. */
+        readonly onMissing?: (providerId: string) => void,
+    ) {}
 
     record(error: ProviderCredentialsUnavailableError): void {
+        this.onMissing?.(error.providerId);
         this.#entries.set(error.providerId, {
             message: error.message,
             failure: {

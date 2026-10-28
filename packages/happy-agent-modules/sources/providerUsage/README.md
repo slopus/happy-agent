@@ -33,6 +33,9 @@ Each entry separates the last success from the last attempt:
   next success. `error` keeps its older meaning: why no reading is available at all.
 - `retryAt` — the vendor's own retry deadline. No read is attempted before it.
 - `refreshing` — a read is in flight.
+- `signIn` — `signed_in`, `signed_out`, or `unknown`, from the latest evidence that could tell: a
+  reading, Config's `onProviderSignIn`, or a local credential probe after a read returned nothing.
+  Smart-provider entries omit it, and an unchanged value emits no change.
 
 ## Choosing Claude's method
 

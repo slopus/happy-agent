@@ -1,4 +1,8 @@
-import type { MessageFailure, MessageFailureProvider } from "@slopus/happy-agent-client";
+import type {
+    MessageFailure,
+    MessageFailureProvider,
+    PoolMemberFailure,
+} from "@slopus/happy-agent-client";
 
 import type { ProviderExecutionAttempt, UnavailableCredentialFailure } from "../../config/index.js";
 
@@ -24,8 +28,17 @@ export function messageFailure(input: {
     readonly provider: MessageFailureProvider;
     /** The chat's own route is turned off. */
     readonly disabled: boolean;
-    /** The chat's smart route ran out of usable accounts, and when its first one resets. */
-    readonly spentPool: { readonly name: string; readonly resetsAt: number | null } | undefined;
+    /**
+     * The chat's smart route ran out of usable accounts, when its first one resets, and what
+     * happened to each account it set aside.
+     */
+    readonly spentPool:
+        | {
+              readonly name: string;
+              readonly resetsAt: number | null;
+              readonly members?: readonly PoolMemberFailure[];
+          }
+        | undefined;
     /** The attempted account's own fresh usage reading says it is spent, and when it resets. */
     readonly spentAccount?: { readonly resetsAt: number | null } | undefined;
     readonly now: number;
@@ -83,6 +96,7 @@ export function messageFailure(input: {
             }`,
             poolName: pool.name,
             resetsAt: pool.resetsAt,
+            ...(pool.members === undefined ? {} : { members: [...pool.members] }),
         };
     }
     const spent = input.spentAccount;

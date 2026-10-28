@@ -40,6 +40,8 @@ export {
 } from "./ExecutionConfig.js";
 export { VoiceCredentialPoolError } from "./VoiceCredentialPoolError.js";
 export type { UnavailableCredentialFailure } from "./impl/ProviderCredentialFailures.js";
+export type { RoundRobinAccountFailure as SmartRouteAccountFailure } from "./impl/RoundRobinRouterProvider.js";
+export type { ProviderSignInObservation } from "./impl/ProviderAccountFailures.js";
 export type { ProviderSignIn } from "./impl/ProviderCredentialsUnavailableError.js";
 export type {
     CurrentProviderExecutionAttempt,

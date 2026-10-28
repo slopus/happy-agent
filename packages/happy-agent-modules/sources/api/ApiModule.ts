@@ -2733,6 +2733,7 @@ export class ApiModule implements AgentModule {
                     refreshError: entry.refreshError,
                     retryAt: entry.retryAt,
                     refreshing: entry.refreshing,
+                    ...(entry.signIn === undefined ? {} : { signIn: entry.signIn }),
                 });
             }),
             this.#connections.onUpdated((_eventCtx, snapshot, mutationId) => {
@@ -9672,6 +9673,8 @@ export class ApiModule implements AgentModule {
                     refreshError: account?.refreshError ?? null,
                     retryAt: account?.retryAt ?? null,
                     refreshing: account?.refreshing ?? false,
+                    ...(account?.signIn === undefined ? {} : { signIn: account.signIn }),
+                    ...(provider.pool === undefined ? {} : { pool: provider.pool }),
                 };
             },
         );
@@ -10048,12 +10051,16 @@ export class ApiModule implements AgentModule {
 
         const providers: Record<string, ApiProviderDefinition> = {};
         for (const providerId of Object.keys(this.#config.configuration.values.providers)) {
+            const pool = this.#config.smartProviderPool(providerId);
             providers[providerId] = {
                 name: this.#config.providerName(providerId),
                 type: this.#config.providerType(providerId) ?? "codex",
                 enabled: this.#config.isProviderEnabled(providerId),
                 hidden: this.#config.isProviderHidden(providerId),
                 models: [],
+                ...(pool === undefined
+                    ? {}
+                    : { pool: { strategy: pool.strategy, members: [...pool.members] } }),
             };
         }
         for (const route of routes) {
@@ -10684,6 +10691,8 @@ interface ApiProviderDefinition {
     readonly enabled: boolean;
     readonly hidden: boolean;
     readonly models: ApiProviderModelReference[];
+    /** Only a smart provider has one. */
+    readonly pool?: { readonly strategy: string; readonly members: string[] };
 }
 
 interface ApiProviderModelReference {

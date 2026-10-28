@@ -128,6 +128,66 @@ describe("RoundRobinRouterProvider", () => {
         expect(provider.spent("agent-a")).toBe(false);
     });
 
+    it("lists the accounts an exhausted pool set aside in configured order", async () => {
+        const resetAt = 1_755_832_000_000;
+        const accounts = {
+            first: scriptedAccount([
+                [
+                    {
+                        type: "done",
+                        state: "error",
+                        kind: "billing_error",
+                        message: "first quota spent",
+                        providerError: { type: "out_of_tokens", resetAt },
+                    },
+                ],
+            ]),
+            second: scriptedAccount([outOfTokens("second quota spent")]),
+        };
+        // Starting on the second account still lists the first one first.
+        const provider = routedProvider(accounts, 0.9);
+        const session = await provider.session("agent-a", sessionOptions());
+        try {
+            await eventsOf(session.run(createRootContext(), request));
+            expect(accounts.first.runs).toBe(1);
+            expect(accounts.second.runs).toBe(1);
+            expect(provider.failedAccounts("agent-a")).toEqual([
+                {
+                    providerId: "first",
+                    reason: "usage_limit",
+                    resetsAt: resetAt,
+                    message: "first quota spent",
+                },
+                {
+                    providerId: "second",
+                    reason: "usage_limit",
+                    resetsAt: null,
+                    message: "second quota spent",
+                },
+            ]);
+            expect(provider.failedAccounts("agent-b")).toEqual([]);
+            provider.acceptUserMessage("agent-a", "retry");
+            expect(provider.failedAccounts("agent-a")).toEqual([]);
+        } finally {
+            await session.destroy();
+        }
+    });
+
+    it("lists nothing while the pool still has an account", async () => {
+        const accounts = {
+            first: scriptedAccount([outOfTokens("quota spent")]),
+            second: scriptedAccount([normal("working")]),
+        };
+        const provider = routedProvider(accounts, 0);
+        const session = await provider.session("agent-a", sessionOptions());
+        try {
+            expect(await textOf(session.run(createRootContext(), request))).toBe("working");
+            expect(provider.failedAccounts("agent-a")).toEqual([]);
+        } finally {
+            await session.destroy();
+        }
+    });
+
     it("reports a rejected sign-in over a spent account whichever was tried last", async () => {
         for (const random of [0, 0.9]) {
             const accounts = {

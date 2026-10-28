@@ -388,8 +388,16 @@ the other spent, the same chat said "no account, resets in 5 days" on one turn a
 in" on the next, depending only on rotation order, and the first hid the fix that works now. When
 every account has failed and any of them rejected its sign-in, the route now reports that sign-in
 failure and names its account (`failedAccount`), so History describes that account's attempt. A
-pool ending on a sign-in is not spent; only an all-spent pool waits for a reset. A failure card
-naming each member's state would need an API.md change.
+pool ending on a sign-in is not spent; only an all-spent pool waits for a reset.
+
+A client could not tell which account of a pool was broken: `GET /v0/config` gave a smart
+provider only its members' type. Kirill approved three additive API fields. `smartProviderPool`
+gives each smart entry its `pool`, with the strategy and the routable members in configured order,
+hidden and disabled ones included. The router keeps each set-aside account's failure, so
+`routeFailedAccounts` lists them in configured order for a spent pool's `members`, leaving out
+accounts turned off since. Every concrete account's sign-in evidence also reaches
+`onProviderSignIn`: a missing credential at construction, a typed authentication failure, or a
+completed or usage-spent response. ProviderUsage turns that into the account's `signIn`.
 
 ## Subagent filters do not change ordinary availability
 

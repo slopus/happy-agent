@@ -15,7 +15,7 @@ import {
     type Context,
 } from "@steve.kite/stdlib";
 
-import { ConfigModule } from "../config/index.js";
+import { ConfigModule, type ProviderSignInObservation } from "../config/index.js";
 
 /** A spent-usage refusal older than this no longer says the account is spent. */
 const SPENT_READING_MAX_AGE_MS = 15 * 60_000;
@@ -37,6 +37,11 @@ export const PROVIDER_USAGE_RESET_RECHECK_BACKOFF_MS: readonly number[] = [
 export const PROVIDER_USAGE_RESET_RECHECK_ATTEMPTS = 6;
 
 const NOT_REPORTED = "The provider did not report account usage.";
+/** How long a read that returned nothing may spend looking for the account's credential locally. */
+const CREDENTIAL_PROBE_TIMEOUT_MS = 10_000;
+
+/** An account's sign-in as the daemon last learned it; `unknown` until something tells. */
+export type ProviderAccountSignIn = ProviderSignInObservation | "unknown";
 
 export interface ProviderUsageEntry {
     readonly providerId: string;
@@ -53,6 +58,8 @@ export interface ProviderUsageEntry {
     readonly retryAt: number | null;
     /** Whether a read of this account is in flight. */
     readonly refreshing: boolean;
+    /** The account's sign-in; absent for a smart provider, which is not an account. */
+    readonly signIn?: ProviderAccountSignIn;
 }
 
 export interface ProviderUsageRefreshOptions {
@@ -97,7 +104,7 @@ export class ProviderUsageModule implements AgentModule {
     readonly #refusedAt = new Map<string, number>();
     readonly #closing = new AbortController();
     #backgroundContext: Context | undefined;
-    #unsubscribe: (() => void) | undefined;
+    readonly #unsubscribe: (() => void)[] = [];
     #started = false;
     #closed = false;
 
@@ -116,6 +123,9 @@ export class ProviderUsageModule implements AgentModule {
                     refreshError: null,
                     retryAt: null,
                     refreshing: false,
+                    ...(config.configuration.values.providers[providerId]?.type === "smart"
+                        ? {}
+                        : { signIn: "unknown" as const }),
                 },
             ]),
         );
@@ -129,9 +139,16 @@ export class ProviderUsageModule implements AgentModule {
         // A vendor that measures the account on every response is the better source: the reading
         // is current, it costs nothing, and it cannot be rate limited. Polling remains for the
         // cold start and for vendors that only answer when asked.
-        this.#unsubscribe = this.#config.onProviderAccountUsage((usage) => {
-            this.#observe(usage);
-        });
+        this.#unsubscribe.push(
+            this.#config.onProviderAccountUsage((usage) => {
+                this.#observe(usage);
+            }),
+            // Inference and credential discovery say whether the vendor accepts an account, which
+            // no usage reading may arrive to prove.
+            this.#config.onProviderSignIn((providerId, signIn) => {
+                this.#observeSignIn(providerId, signIn);
+            }),
+        );
         // The loops end with the runtime or with this module, whichever closes first.
         const loopCtx = withLifetime(ctx, this.#lifetime(ctx));
         for (const providerId of this.#entries.keys()) {
@@ -259,8 +276,40 @@ export class ProviderUsageModule implements AgentModule {
             // Only a measured window is a successful reading; a report about credits or a refusal
             // alone must not make the windows it carried forward look freshly measured.
             ...(measured ? { checkedAt: now, refreshedAt: now, refreshError: null } : {}),
+            ...signedIn(previous, "signed_in"),
             error: null,
         });
+    }
+
+    /** Record what inference or credential discovery proved; an unchanged sign-in announces nothing. */
+    #observeSignIn(providerId: string, signIn: ProviderSignInObservation): void {
+        const previous = this.#entries.get(providerId);
+        if (previous?.signIn === undefined || previous.signIn === signIn) return;
+        this.#set({ ...previous, signIn });
+    }
+
+    /**
+     * A read that returned nothing cannot say whether the vendor still accepts the account, but a
+     * credential that is not there at all is signed out. Anything else leaves the sign-in alone.
+     */
+    async #signInWithoutReading(
+        providerId: string,
+    ): Promise<ProviderSignInObservation | undefined> {
+        let timeout: ReturnType<typeof setTimeout> | undefined;
+        try {
+            const credentials = await Promise.race([
+                this.#config.probeLocalProviderCredentials(providerId),
+                new Promise<undefined>((resolve) => {
+                    timeout = setTimeout(() => resolve(undefined), CREDENTIAL_PROBE_TIMEOUT_MS);
+                    timeout.unref?.();
+                }),
+            ]);
+            return credentials === "missing" ? "signed_out" : undefined;
+        } catch {
+            return undefined;
+        } finally {
+            clearTimeout(timeout);
+        }
     }
 
     /** Ask one provider now; concurrent scheduled and direct reads remain serialized per account. */
@@ -320,6 +369,10 @@ export class ProviderUsageModule implements AgentModule {
                     this.#recordEndpointRefusal(providerId, refusal);
                 },
             });
+            const missing =
+                usage === null && !probeDeferred
+                    ? await this.#signInWithoutReading(providerId)
+                    : undefined;
             const current = this.#current(providerId);
             const now = Date.now();
             if (usage === null) {
@@ -331,6 +384,7 @@ export class ProviderUsageModule implements AgentModule {
                     error: current.usage === null ? NOT_REPORTED : null,
                     refreshError: NOT_REPORTED,
                     refreshing: false,
+                    ...(missing === undefined ? {} : signedIn(current, missing)),
                 });
             }
             // A poll answers about every window it can, so it supersedes the partial readings that
@@ -348,6 +402,7 @@ export class ProviderUsageModule implements AgentModule {
                 refreshError: null,
                 retryAt: null,
                 refreshing: false,
+                ...signedIn(current, "signed_in"),
             });
         } catch (error: unknown) {
             const current = this.#current(providerId);
@@ -386,8 +441,7 @@ export class ProviderUsageModule implements AgentModule {
     /** Stop every polling loop, recheck, and background read, and wait for them to finish. */
     async close(): Promise<void> {
         this.#closed = true;
-        this.#unsubscribe?.();
-        this.#unsubscribe = undefined;
+        for (const unsubscribe of this.#unsubscribe.splice(0)) unsubscribe();
         for (const recheck of this.#rechecks.values()) clearTimeout(recheck.timer);
         this.#rechecks.clear();
         this.#closing.abort(new Error("Provider usage is shutting down."));
@@ -532,6 +586,14 @@ export class ProviderUsageModule implements AgentModule {
             ] ?? PROVIDER_USAGE_POLL_INTERVAL_MS;
         this.#scheduleRecheck(providerId, resetAt, attempt, Date.now() + backoff);
     }
+}
+
+/** The sign-in an account entry takes; a smart provider's entry carries none. */
+function signedIn(
+    entry: ProviderUsageEntry,
+    signIn: ProviderSignInObservation,
+): { readonly signIn?: ProviderAccountSignIn } {
+    return entry.signIn === undefined ? {} : { signIn };
 }
 
 function isStale(entry: ProviderUsageEntry, olderThanMs: number, now: number): boolean {

@@ -219,6 +219,28 @@ describe("a failed turn's typed failure", () => {
         });
     });
 
+    it("lists what happened to each account of a spent pool", () => {
+        const members = [
+            { provider, reason: "usage_limit", command: null, resetsAt: now + 60 * 60_000 },
+            {
+                provider: { ...provider, id: "claude_work", label: "Work" },
+                reason: "usage_limit",
+                command: null,
+                resetsAt: null,
+            },
+        ];
+        const failure = build({ spentPool: { name: "claude-pool", resetsAt: null, members } });
+        expect(failure).toMatchObject({ kind: "no_account_available", members });
+        expect(isKnownMessageFailure(failure)).toBe(true);
+        // A pool with every account turned off has none to list.
+        expect(
+            build({ spentPool: { name: "claude-pool", resetsAt: null, members: [] } }),
+        ).toMatchObject({ kind: "no_account_available", members: [] });
+        expect(build({ spentPool: { name: "claude-pool", resetsAt: null } })).not.toHaveProperty(
+            "members",
+        );
+    });
+
     it("keeps a sign-in or overload ahead of a spent pool", () => {
         const spentPool = { name: "claude-pool", resetsAt: null };
         expect(

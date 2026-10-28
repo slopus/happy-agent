@@ -29,6 +29,7 @@ import {
     type AgentSpawnPresentation,
     type MessageFailure,
     type MessageMode,
+    type PoolMemberFailure,
 } from "@slopus/happy-agent-client";
 import { afterCommit, withLogContext, type Context } from "@steve.kite/stdlib";
 import {
@@ -158,6 +159,8 @@ const EXECUTION_BASELINE_KEY = "execution_baseline";
 const EXECUTION_ANCHOR_KEY = "execution_anchor";
 /** Set once a run has overflowed its context and Agent Base reset it to retry. */
 const CONTEXT_RESET_KEY = "context_reset";
+/** API.md bounds a spent pool's member list. */
+const MAX_POOL_MEMBER_FAILURES = 64;
 const TOOL_NAME_KEY = "tool_name";
 /** Prefix of the history-store key holding one call's presentation until its result is recorded. */
 const TOOL_PRESENTATION_KEY = "tool_presentation";
@@ -1911,6 +1914,46 @@ export class HistoryModule implements AgentModule {
     }
 
     /**
+     * What happened to each account a spent pool set aside, in configured order. A member's
+     * sign-in command and reset mean exactly what they would on its own failure.
+     */
+    async #poolMembers(
+        scope: AgentModuleScope,
+        attempts: readonly ProviderExecutionAttempt[] | undefined,
+    ): Promise<PoolMemberFailure[]> {
+        const config = this.#config;
+        if (config === undefined) return [];
+        const { id: agentId, provider: routeId, model } = scope.agent;
+        const failed = await config.routeFailedAccounts(agentId, routeId, model);
+        return failed.slice(0, MAX_POOL_MEMBER_FAILURES).map((account) => {
+            const { providerId } = account;
+            const tried = attempts?.findLast((attempt) => attempt.mode.providerId === providerId);
+            if (account.reason === "signin_missing") {
+                const signIn =
+                    tried?.signIn ??
+                    config.unavailableCredentialFailure(account.message, providerId)?.signIn;
+                return {
+                    provider: config.failureProvider(providerId),
+                    reason: account.reason,
+                    command: signIn?.command ?? null,
+                    resetsAt: null,
+                };
+            }
+            return {
+                provider: config.failureProvider(providerId),
+                reason: account.reason,
+                command: null,
+                resetsAt:
+                    account.resetsAt ??
+                    tried?.resetsAt ??
+                    this.#providerUsage?.spentAccount(providerId)?.resetsAt ??
+                    this.#providerUsage?.firstBlockedReset([providerId]) ??
+                    null,
+            };
+        });
+    }
+
+    /**
      * The typed failure for a failed turn. It names what failed, never the alternatives: clients
      * read those live from the same catalog and usage as their model picker. Without
      * configuration there is no provider to describe, so the row keeps only its text.
@@ -1926,7 +1969,9 @@ export class HistoryModule implements AgentModule {
         const attempt = await this.#failedAttempt(scope, attempts);
         const { id: agentId, provider: routeId, model } = scope.agent;
         const providerId = unavailable?.providerId ?? attempt?.mode.providerId ?? routeId;
-        let spentPool: { name: string; resetsAt: number | null } | undefined;
+        let spentPool:
+            | { name: string; resetsAt: number | null; members: PoolMemberFailure[] }
+            | undefined;
         if (await config.routeSpent(agentId, routeId, model)) {
             // The pool has an account again as soon as any one of its spent accounts resets.
             const resets = [
@@ -1938,6 +1983,7 @@ export class HistoryModule implements AgentModule {
             spentPool = {
                 name: config.failureProvider(routeId).label,
                 resetsAt: resets.length === 0 ? null : Math.min(...resets),
+                members: await this.#poolMembers(scope, attempts),
             };
         }
         return messageFailure({

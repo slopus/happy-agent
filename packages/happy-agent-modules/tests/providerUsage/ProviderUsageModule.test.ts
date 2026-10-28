@@ -10,7 +10,7 @@ import {
 import { createRootContext, type Context } from "@steve.kite/stdlib";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ConfigModule } from "../../sources/config/index.js";
+import { ConfigModule, type ProviderSignInObservation } from "../../sources/config/index.js";
 import {
     PROVIDER_USAGE_RESET_RECHECK_DELAY_MS,
     PROVIDER_USAGE_POLL_INTERVAL_MS,
@@ -64,6 +64,17 @@ async function createHarness(options: { sources?: readonly string[]; start?: boo
         observe = listener;
         return () => undefined;
     });
+    let observeSignIn:
+        | ((providerId: string, signIn: ProviderSignInObservation) => void)
+        | undefined;
+    vi.spyOn(config, "onProviderSignIn").mockImplementation((listener) => {
+        observeSignIn = listener;
+        return () => undefined;
+    });
+    let credentials: "available" | "missing" = "available";
+    const probe = vi
+        .spyOn(config, "probeLocalProviderCredentials")
+        .mockImplementation(async () => credentials);
     const module = new ProviderUsageModule(config);
     const events: ProviderUsageEntry[] = [];
     module.onChanged((entry) => events.push(entry));
@@ -80,6 +91,7 @@ async function createHarness(options: { sources?: readonly string[]; start?: boo
         events,
         load,
         module,
+        probe,
         reads,
         entry: (providerId: string) =>
             module.list().find((entry) => entry.providerId === providerId),
@@ -94,6 +106,13 @@ async function createHarness(options: { sources?: readonly string[]; start?: boo
         observe: (usage: ProviderUsage) => {
             if (observe === undefined) throw new Error("Expected an in-band usage subscription");
             observe(usage);
+        },
+        observeSignIn: (providerId: string, signIn: ProviderSignInObservation) => {
+            if (observeSignIn === undefined) throw new Error("Expected a sign-in subscription");
+            observeSignIn(providerId, signIn);
+        },
+        credentials: (next: "available" | "missing") => {
+            credentials = next;
         },
     };
 }
@@ -522,6 +541,65 @@ describe("ProviderUsageModule", () => {
             "codex",
             "grok",
         ]);
+    });
+
+    describe("account sign-in", () => {
+        it("is unknown until a check tells, and a check that cannot tell keeps it", async () => {
+            const harness = await createHarness({ start: true });
+            // A read that returns nothing with the credential still there proves nothing.
+            await vi.waitFor(() => expect(harness.entry("claude")?.checkedAt).not.toBeNull());
+            expect(harness.probe).toHaveBeenCalledWith("claude");
+            expect(harness.entry("claude")?.signIn).toBe("unknown");
+
+            harness.answer(async () => reading());
+            await harness.module.refresh(harness.ctx, "claude");
+            expect(harness.entry("claude")?.signIn).toBe("signed_in");
+
+            harness.answer(async () => {
+                throw new ProviderUsageRequestError("Claude usage returned HTTP 500.", {
+                    status: 500,
+                });
+            });
+            await harness.module.refresh(harness.ctx, "claude");
+            harness.answer(async () => null);
+            await harness.module.refresh(harness.ctx, "claude");
+            expect(harness.entry("claude")?.signIn).toBe("signed_in");
+        });
+
+        it("is signed out when a read finds no credential, and signed in after signing back in", async () => {
+            const harness = await createHarness();
+            harness.credentials("missing");
+            await harness.module.refresh(harness.ctx, "claude");
+            expect(harness.entry("claude")?.signIn).toBe("signed_out");
+
+            harness.credentials("available");
+            harness.answer(async () => reading());
+            await harness.module.refresh(harness.ctx, "claude");
+            expect(harness.entry("claude")?.signIn).toBe("signed_in");
+        });
+
+        it("follows inference and announces each change once", async () => {
+            const harness = await createHarness({ start: true });
+            await vi.waitFor(() => expect(harness.entry("codex")?.checkedAt).not.toBeNull());
+            harness.events.splice(0);
+
+            harness.observeSignIn("codex", "signed_out");
+            harness.observeSignIn("codex", "signed_out");
+            expect(harness.events.map((entry) => [entry.providerId, entry.signIn])).toEqual([
+                ["codex", "signed_out"],
+            ]);
+            // An in-band reading means the vendor accepted the account again.
+            harness.observe(reading({ providerId: "codex", vendor: "codex" }));
+            expect(harness.entry("codex")?.signIn).toBe("signed_in");
+            harness.observeSignIn("codex", "signed_in");
+            expect(harness.events.map((entry) => entry.signIn)).toEqual([
+                "signed_out",
+                "signed_in",
+            ]);
+            // Accounts this installation does not have configured are not ours.
+            harness.observeSignIn("elsewhere", "signed_out");
+            expect(harness.entry("elsewhere")).toBeUndefined();
+        });
     });
 
     describe("rechecking a blocked account after its reset", () => {

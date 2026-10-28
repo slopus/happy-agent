@@ -30,6 +30,18 @@ override master plans 11 and 12, which still describe polling clients and a fift
 In-band readings carry an account in use;
 `POST /v0/usage/refresh` lets a client ask for fresher readings without waiting.
 
+## Sign-in keeps the latest answer that could tell
+
+A pool member that signs out needs a visible badge, and a usage read cannot always say why it
+failed: a Codex read answers nothing on a revoked token, and a refresh when the picker opens would
+have flipped `signed_out` back to `unknown` at once. Each account entry now carries `signIn`. It is
+set only by evidence: a reading arriving or Config's `onProviderSignIn` (a completed or
+usage-spent response means `signed_in`, a typed authentication failure or a missing credential
+means `signed_out`). A read that returns nothing triggers a bounded local credential probe, and only
+a missing credential changes the value. Errors, throttling, and null reads with a credential leave
+it alone. Smart-provider entries carry no `signIn`. An unchanged value announces nothing, so
+ordinary inference does not flood `provider.usage.updated`.
+
 ## Read a blocked account again as soon as it can work
 
 The human asked that an account blocked by a window be read again just after that window resets,

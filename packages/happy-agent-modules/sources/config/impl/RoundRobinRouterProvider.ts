@@ -28,7 +28,8 @@ export interface RoundRobinRouterProviderOptions {
 
 interface AgentRouteState {
     current: number;
-    readonly failed: Set<number>;
+    /** The accounts set aside since the last accepted message, by candidate index. */
+    readonly failed: Map<number, RoutedFailure>;
     acceptedMessageId?: string;
     /** An excluded account whose sign-in was rejected: what the person can fix right away. */
     signInFailure?: RoutedFailure;
@@ -38,6 +39,17 @@ interface AgentRouteState {
 interface RoutedFailure {
     readonly providerId: string;
     readonly event: Extract<SessionEvent, { type: "done"; state: "error" }>;
+}
+
+/** One account an exhausted pool set aside, and why. */
+export interface RoundRobinAccountFailure {
+    readonly providerId: string;
+    /** A rejected or missing sign-in, or spent usage: the only failures a pool moves past. */
+    readonly reason: "signin_missing" | "usage_limit";
+    /** When the spent usage resets, if the vendor said; null for a sign-in. */
+    readonly resetsAt: number | null;
+    /** The account's own failure text, which names a missing credential exactly. */
+    readonly message: string;
 }
 
 interface RoundRobinRouting {
@@ -124,12 +136,35 @@ export class RoundRobinRouterProvider extends BaseProvider {
         return this.#agents.get(id)?.terminal?.providerId;
     }
 
+    /**
+     * Every account this agent's exhausted pool set aside, in configured order, leaving out
+     * accounts turned off since. Empty while the pool is not exhausted.
+     */
+    failedAccounts(id: string): readonly RoundRobinAccountFailure[] {
+        const state = this.#agents.get(id);
+        if (state?.terminal === undefined) return [];
+        return [...state.failed.entries()]
+            .sort(([left], [right]) => left - right)
+            .filter(([, failure]) => this.#isEnabled(failure.providerId))
+            .map(([, { providerId, event }]) => {
+                const signIn = isSignInFailure(event);
+                const error = event.providerError;
+                return {
+                    providerId,
+                    reason: signIn ? "signin_missing" : "usage_limit",
+                    resetsAt:
+                        !signIn && error?.type === "out_of_tokens" ? (error.resetAt ?? null) : null,
+                    message: event.message,
+                };
+            });
+    }
+
     #stateFor(id: string): AgentRouteState {
         let state = this.#agents.get(id);
         if (state === undefined) {
             state = {
                 current: randomIndex(this.#candidates.length, this.#random()),
-                failed: new Set<number>(),
+                failed: new Map<number, RoutedFailure>(),
             };
             this.#agents.set(id, state);
         }
@@ -338,8 +373,8 @@ class RoundRobinRouterSession extends BaseSession {
         index: number,
         event: Extract<SessionEvent, { type: "done"; state: "error" }>,
     ): Promise<boolean> {
-        this.#state.failed.add(index);
         const failure = { providerId: this.#routing.candidates[index]!.providerId, event };
+        this.#state.failed.set(index, failure);
         if (isSignInFailure(event)) this.#state.signInFailure = failure;
         const session = this.#sessions.get(index);
         this.#sessions.delete(index);

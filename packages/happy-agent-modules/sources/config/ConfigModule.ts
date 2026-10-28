@@ -81,12 +81,18 @@ import {
 } from "./impl/loadConfiguredProviderUsage.js";
 import { ProviderEnablement, providerRegistryUntil } from "./impl/providerRegistryUntil.js";
 import { ProviderServiceTiers } from "./impl/ProviderServiceTiers.js";
-import { RoundRobinRouterProvider } from "./impl/RoundRobinRouterProvider.js";
+import {
+    RoundRobinRouterProvider,
+    type RoundRobinAccountFailure as SmartRouteAccountFailure,
+} from "./impl/RoundRobinRouterProvider.js";
 import {
     ProviderCredentialFailures,
     type UnavailableCredentialFailure,
 } from "./impl/ProviderCredentialFailures.js";
-import { ProviderAccountFailures } from "./impl/ProviderAccountFailures.js";
+import {
+    ProviderAccountFailures,
+    type ProviderSignInObservation,
+} from "./impl/ProviderAccountFailures.js";
 import { ProviderCredentialsUnavailableError } from "./impl/ProviderCredentialsUnavailableError.js";
 import {
     ProviderExecutionObservations,
@@ -1663,8 +1669,15 @@ const VENDOR_NAMES: Readonly<Record<string, string>> = {
 export class ConfigModule implements AgentModule {
     readonly migrations = nativeAccountIdentityMigrations;
     readonly #executionObservations = new ProviderExecutionObservations();
-    readonly #credentialFailures = new ProviderCredentialFailures();
-    readonly #accountFailures = new ProviderAccountFailures();
+    readonly #credentialFailures = new ProviderCredentialFailures(Date.now, (providerId) => {
+        this.#reportSignIn(providerId, "signed_out");
+    });
+    readonly #accountFailures = new ProviderAccountFailures(Date.now, (providerId, signIn) => {
+        this.#reportSignIn(providerId, signIn);
+    });
+    readonly #signInListeners = new Set<
+        (providerId: string, signIn: ProviderSignInObservation) => void
+    >();
 
     /**
      * The typed details of a failure configuration raised because a provider had no credential,
@@ -1739,11 +1752,43 @@ export class ConfigModule implements AgentModule {
             : undefined;
     }
 
+    /**
+     * Every account this agent's exhausted smart route set aside, in configured order, without
+     * accounts turned off since. Empty for any other provider or a route that is not exhausted.
+     */
+    async routeFailedAccounts(
+        agentId: string,
+        providerId: string,
+        model: string | undefined,
+    ): Promise<readonly SmartRouteAccountFailure[]> {
+        if (this.configuration.values.providers[providerId]?.type !== "smart") return [];
+        if (!this.isProviderEnabled(providerId)) return [];
+        // Describing a failure must never fail it again; a route that cannot open says nothing.
+        const provider = await this.providers.resolve(providerId, model).catch(() => null);
+        return provider instanceof RoundRobinRouterProvider ? provider.failedAccounts(agentId) : [];
+    }
+
     /** The accounts a smart route sends to, or null when the provider is not a smart route. */
     smartRouteAccounts(providerId: string): readonly string[] | null {
         const route = smartProviderRoute(this.configuration, providerId);
         if (route === undefined) return null;
         return [...new Set(route.models.flatMap((model) => model.candidates))];
+    }
+
+    /**
+     * A smart provider's strategy and the accounts it can route to, in configured failover order,
+     * hidden and disabled accounts included. Undefined for any other provider.
+     */
+    smartProviderPool(
+        providerId: string,
+    ): { readonly strategy: string; readonly members: readonly string[] } | undefined {
+        const configured = this.configuration.values.providers[providerId];
+        if (configured?.type !== "smart") return undefined;
+        const routed = new Set(this.smartRouteAccounts(providerId) ?? []);
+        return {
+            strategy: configured.strategy,
+            members: configured.providers.filter((id) => routed.has(id)),
+        };
     }
 
     /** Whether this provider's last construction found no credential to sign in with. */
@@ -3009,6 +3054,29 @@ export class ConfigModule implements AgentModule {
     onProviderAccountUsage(listener: (usage: ProviderUsage) => void): () => void {
         this.#accountUsageListeners.add(listener);
         return () => this.#accountUsageListeners.delete(listener);
+    }
+
+    /**
+     * Watch what ordinary work proves about each concrete account's sign-in: a provider found with
+     * no credential, a vendor rejecting the credential after its own renewal failed, or a vendor
+     * accepting it. Returns the function that ends the subscription.
+     */
+    onProviderSignIn(
+        listener: (providerId: string, signIn: ProviderSignInObservation) => void,
+    ): () => void {
+        this.#signInListeners.add(listener);
+        return () => this.#signInListeners.delete(listener);
+    }
+
+    /** Sign-in state is bookkeeping too; a listener that throws never breaks inference. */
+    #reportSignIn(providerId: string, signIn: ProviderSignInObservation): void {
+        for (const listener of this.#signInListeners) {
+            try {
+                listener(providerId, signIn);
+            } catch {
+                // A sign-in listener never decides whether inference continues.
+            }
+        }
     }
 
     /** Usage is bookkeeping beside the run, so a listener that throws never breaks inference. */
