@@ -520,6 +520,15 @@ Provider routes are additive and do not increment the protocol version. A daemon
 `capabilities.providerRoutes: true` from health. Older daemons omit it and answer the routes with
 `404`.
 
+Onboarding and inline actions are additive and do not increment the protocol version. A daemon
+that runs onboarding in Happy's conversation reports `capabilities.onboarding: true`, serves
+`GET /v0/onboarding/flow` and `POST /v0/onboarding/flow/start`, adds `onboardingVersion` and
+`completedVersion` to `GET /v0/onboarding`, and emits `onboarding.flow.updated`. A daemon that
+accepts inline action presses reports `capabilities.chatActions: true`, serves
+`POST /v0/agents/:agentId/chat-actions`, and may include `actionChoices` on agent messages. Older
+daemons omit both and answer the routes with `404`; clients then run onboarding themselves and keep
+inline action choices locally.
+
 Drain intent is additive and does not increment the protocol version. A daemon that supports it
 accepts the optional `POST /v0/drain` body and includes `drain` in the drain response, health, the
 `hello` frame, and the `daemon.draining` event, as described under Daemon lifecycle. Older
@@ -1208,7 +1217,7 @@ Fields:
   attached under rows and the `attach_to_my_row` tool, described under Spaces.
   `sidebarProposals: true` advertises sidebar proposals and Prioritizing's own row, described
   under Spaces. `sidebarSeparatorPins: true` advertises `pin` on sidebar separators, described
-  under Spaces. `agentStories: true` advertises agents' stories, story rings, and agent status lines, described under Stories. `providerClis: true` advertises the routes under `/v0/provider-clis` and the `provider_cli.updated` event, described under Provider CLIs. `providerRoutes: true` advertises the routes under `/v0/provider-routes`, described under Provider routes.
+  under Spaces. `agentStories: true` advertises agents' stories, story rings, and agent status lines, described under Stories. `providerClis: true` advertises the routes under `/v0/provider-clis` and the `provider_cli.updated` event, described under Provider CLIs. `providerRoutes: true` advertises the routes under `/v0/provider-routes`, described under Provider routes. `onboarding: true` advertises onboarding in Happy's conversation, `/v0/onboarding/flow`, and the `onboarding.flow.updated` event, described under Onboarding. `chatActions: true` advertises `POST /v0/agents/:agentId/chat-actions` and `actionChoices`, described under Inline actions.
 - `ready` — `false` while starting, `true` once the agent system is loaded.
 - `status` — `"starting"` or `"ready"`; the human-readable form of `ready`.
 - `version` — one identity object. `protocol` is the wire protocol number, the client's
@@ -2460,6 +2469,131 @@ complete onboarding for another member who lacks a profile. Idempotent. Response
 `{ "completed": true }` and a
 `config.updated` nudge is **not** emitted — clients that care watch their own flow; others
 read the flag on next bootstrap.
+
+### Onboarding in Happy's conversation
+
+A daemon that reports `capabilities.onboarding: true` runs onboarding itself, in Happy's own
+conversation: the built-in bot with system key `chief_of_staff`. Clients render that conversation
+as they render any other, draw its inline actions, and post presses through
+`POST /v0/agents/:agentId/chat-actions`. They do not script, sequence, or word any of it. Older
+daemons omit the capability and answer the routes below with `404`; clients then run their own
+onboarding against `GET /v0/onboarding` and `POST /v0/onboarding/complete`.
+
+Before a provider is connected, the daemon writes Happy's messages itself. They are ordinary agent
+messages, each in a finished run of its own with no provider or model, and they are never model
+input. The daemon stores each one whole and announces it at about reading speed: `run.started`, a
+short pause while the run has no text, `message.created` with empty text, `message.delta` events
+at about 300 words a minute, then `message.updated` with the whole message and `run.finished`. A
+client that reads history or reconnects sees the finished message. Once a provider is connected,
+Happy's model writes every message, following onboarding instructions in its private context. App
+events reach it as hidden context entries that no client, transcript, or history page shows.
+
+Onboarding proves each requirement once. Version 1 is complete when a provider has answered a real
+request and the profile has a name and an email. Discovering the person's work, the first chats,
+New, and the phone are offered after that and never hold completion back. A provider that fails
+later does not reopen onboarding. A newer version that adds a requirement returns a completed
+installation to onboarding for that requirement alone.
+
+On such a daemon `GET /v0/onboarding` also includes `onboardingVersion`, the version it runs, and
+`completedVersion`, the newest version whose requirements were all met or `null`. `completed` is
+then `true` when `completedVersion` is at least `onboardingVersion` or the completion marker is
+set. Both read only the daemon's stored record: no provider, network, or model work. That is the
+fast path a client checks on every start.
+
+Onboarding in Happy's conversation belongs to the daemon's machine and its operating-system user.
+In team mode the routes below return `501` with code `unsupported` before parsing a request body,
+and members keep the onboarding described above.
+
+#### The onboarding flow object
+
+```json
+{
+    "version": "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e",
+    "onboardingVersion": 1,
+    "completedVersion": null,
+    "step": "providers",
+    "happyAgentId": "a9b8c7d6e5f4g3h2i1j0k9l8",
+    "composer": "disabled",
+    "exampleSidebar": false,
+    "restartRequired": false,
+    "requirements": { "provider": false, "profile": false }
+}
+```
+
+- `version` — UUIDv7, advanced on every change; clients keep the object with the greater one.
+- `onboardingVersion`, `completedVersion` — as in `GET /v0/onboarding`.
+- `step` — where onboarding stands:
+    - `"not_started"` — onboarding has not begun.
+    - `"welcome"` — Happy introduced itself and offered Start onboarding.
+    - `"providers"` — Happy is asking which AI to use.
+    - `"connecting"` — a provider CLI is being installed or signed in to.
+    - `"verifying"` — Happy's model is answering its first onboarding request on the chosen
+      provider; its success is the real request onboarding requires. If it fails, Happy says what
+      failed and offers the fix, and `step` returns to `"providers"`.
+    - `"guided"` — Happy's model is leading onboarding.
+    - `"finished"` — onboarding is over, and Happy continues as an ordinary conversation.
+
+    Clients treat an unknown step as `"guided"`.
+
+- `happyAgentId` — Happy's agent, or `null` before Happy exists.
+- `composer` — `"disabled"` until a provider answers, then `"enabled"`. Clients disable the
+  message composer in Happy's conversation while it is `"disabled"`.
+- `exampleSidebar` — `true` while clients show the example sidebar, from Happy's first message
+  until Start onboarding.
+- `restartRequired` — `true` when a provider chosen during onboarding takes effect only after the
+  daemon restarts; clients restart it through the ordinary drain and restart.
+- `requirements` — which requirements of `onboardingVersion` are met.
+
+#### `GET /v0/onboarding/flow`
+
+Response — `200`: `{ "flow": { "...": "the onboarding flow object" } }`.
+
+#### `POST /v0/onboarding/flow/start`
+
+Begins onboarding when it has not begun: Happy writes its first message and `step` becomes
+`"welcome"`. Once onboarding has begun, or when it is complete, it changes nothing. Request body,
+optional: `{ "mutationId": "optional-client-value" }`.
+
+Response — `200`: `{ "flow": { "...": "the onboarding flow object" } }`. Clients call it once they
+have connected to a compatible daemon and the fast path is not complete, then open Happy's
+conversation.
+
+#### Onboarding actions
+
+These are the inline actions Happy's onboarding messages use, posted through
+`POST /v0/agents/:agentId/chat-actions` on Happy's conversation. The daemon answers each with
+Happy's next message.
+
+| Action                                               | Parameters                                                         | What the daemon does                                                                                                                                                      |
+| ---------------------------------------------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `onboarding.start`                                   |                                                                    | Hides the example sidebar and shows which subscriptions this computer already uses.                                                                                       |
+| `onboarding.provider`                                | `provider`: `claude`, `chatgpt`, `grok`, `gemini`, `none`, `other` | Discloses how that assistant is connected, what to subscribe to, or how to add a key.                                                                                     |
+| `onboarding.connect`                                 | `provider`: `claude`, `codex`, `grok`, `antigravity`               | Installs the provider CLI when it is missing and starts its sign-in, as under Provider CLIs, with its steps updated in place.                                             |
+| `onboarding.manual`                                  | `provider`                                                         | Shows the exact commands, and continues when discovery finds the sign-in.                                                                                                 |
+| `onboarding.connectCancel`                           | `provider`                                                         | Cancels the install or sign-in.                                                                                                                                           |
+| `onboarding.codeEntry`                               | `provider`; `values`: the code                                     | Gives the vendor's sign-in its code.                                                                                                                                      |
+| `onboarding.providersUse`                            | `values`: provider CLI IDs                                         | Turns on those signed-in assistants.                                                                                                                                      |
+| `onboarding.routesUse`                               | `values`: provider route IDs                                       | Uses those routes as `POST /v0/provider-routes/:routeId/use` does.                                                                                                        |
+| `onboarding.connectAnother`, `onboarding.accountAdd` | `provider`, optional on `accountAdd`                               | Offers another AI, or another account of one.                                                                                                                             |
+| `onboarding.profileConfirm`                          |                                                                    | Stores the name and email Happy showed.                                                                                                                                   |
+| `onboarding.profileChange`                           |                                                                    | Happy asks the person to type them.                                                                                                                                       |
+| `onboarding.discover`                                |                                                                    | Reads, read-only, exactly the places Happy disclosed, and Focus proposes the person's work.                                                                               |
+| `onboarding.workTell`, `onboarding.workChange`       |                                                                    | Happy asks the person to say what they work on, or what to change.                                                                                                        |
+| `onboarding.workAccept`                              | `values`: proposal row values                                      | Opens a chat for each ticked row, adds its topics and places each row in one sidebar change of the person's own, then sends each chat its first message exactly as shown. |
+| `onboarding.newChat`                                 |                                                                    | Opens a new chat as New does; `result` names it.                                                                                                                          |
+| `onboarding.newChatSkip`                             |                                                                    | Moves on.                                                                                                                                                                 |
+| `onboarding.phone`                                   | `choice`: `opened` or `later`                                      | `opened` starts a phone pairing, shown by a `data-phone-pair` figure; `later` moves on.                                                                                   |
+| `onboarding.workOpen`                                | `item`: a proposal row value                                       | Finishes onboarding; the client opens that row's chat.                                                                                                                    |
+| `onboarding.finish`                                  |                                                                    | Finishes onboarding.                                                                                                                                                      |
+
+`onboarding.signInOpen`, `onboarding.subscribe`, and `onboarding.apiKeyOpen` open a vendor page or
+a client sheet; clients run them without posting them.
+
+Discovering the person's work reads only what Happy disclosed before the press: the projects in the
+connected assistant's own session history (`~/.codex/sessions` for Codex, `~/.claude/projects` for
+Claude Code), the first request of their recent sessions, and the last 30 days of commit subjects
+and branch names in those projects. It writes nothing. What it reads goes to the connected
+assistant's model, which proposes the work.
 
 ## Provider CLIs
 
@@ -6116,6 +6250,68 @@ See `send` for its context-reset semantics.
 - `service` — typed operational records the model never saw: compaction, aborts, and similar
   housekeeping. Human-readable text never carries compaction lifecycle meaning.
 
+#### Inline actions
+
+An agent message's text may hold inline action blocks: a small, closed subset of HTML, without
+scripts or styles, that clients draw as controls where it was written. Happy's onboarding is
+written in it, and so is anything else an agent wants the person to answer with a click instead of
+typing. A daemon that accepts presses reports `capabilities.chatActions: true` from health.
+
+A block is recognized only when it starts a line, with at most three spaces of indentation,
+outside a code fence. It ends on the line where its root element closes. A block still open at the
+end of the text is not drawn while the message streams, and stays inert text afterwards. Its root
+is one of:
+
+- `<menu>` — buttons, each `<button data-action="ID" …>Label</button>`.
+- `<form data-action="ID" [data-table]>` — a checklist: `<label>` rows, each holding one
+  `<input type="checkbox" value="V" [checked] [disabled]>`, its label, and optional `<small>`
+  details. Then exactly one `<button type="submit">` and optional
+  `<button type="button" data-action="ID">` others, such as Adjust.
+- `<form data-action="ID">` with exactly one `<input type="text" placeholder="…">` and one
+  submit — a code field. What is typed goes to the action only and is never written into the chat.
+- `<ol data-steps>` — steps, each
+  `<li data-status="pending|running|done|failed">Label <small>detail</small></li>`.
+- `<output data-status="info|running|done|failed">Text <small>detail</small></output>` — one
+  status line.
+- `<ul data-tree>` — places, drawn as a file tree from nested `<li>name<ul>…</ul></li>`.
+- `<figure data-phone-app></figure>` — the codes that download Happy's phone app.
+- `<figure data-phone-pair></figure>` — the caller's current phone pairing from
+  `GET /v0/mobile-connector`, drawn live. The block itself carries no address or token.
+
+The only elements are `menu`, `form`, `output`, `ol`, `ul`, `figure`, `li`, `button`, `label`,
+`input`, `small`, and `br`. The only entities are `amp`, `lt`, `gt`, `quot`, `apos`, `nbsp`,
+`middot`, `hellip`, `mdash`, `ndash`, and numeric references. Optional presentation attributes are
+`data-emphasis` (the first one in a block counts; at most one control is emphasized),
+`data-mark` (`claude`, `openai`, `grok`, or `gemini`), `data-connected`, `data-icon` (a clay icon
+slug), and `data-ongoing`. A block with any other element, any `on*` or `style` attribute,
+mismatched nesting, stray text between elements, or more than one root is not a block; it is drawn
+as the inert text it was written as.
+
+Every other `data-X` attribute of a control (or of its form) is the action's parameter `X`. An
+action ID a client or the daemon does not know, or one whose parameters do not check, is drawn but
+cannot be pressed; nothing is inferred from a label. A checklist's ticked values and a code field's
+text are the action's `values` and cannot come from an attribute. A `data-table` checklist is
+drawn as a table whose column headings belong to its action ID, not to the markup:
+`onboarding.providersUse` (Use, AI, Account, Route), `onboarding.routesUse` (Use, AI, How,
+Account), and `onboarding.workAccept` (Keep, Work, Topic, First message).
+
+Blocks are numbered by `blockIndex`: the zero-based position of a valid action block among the
+valid action blocks of the message's text, in order. Steps, status lines, trees, and figures are
+blocks too, so they count.
+
+`actionChoices` — optional on an agent message; present once a person has pressed one of its
+controls. It maps a `blockIndex`, as a string, to that block's one choice:
+
+- `{ "kind": "button", "index": 1 }` — the button pressed, by its zero-based position among the
+  block's buttons; a checklist's other buttons count after its submit, which is `0`.
+- `{ "kind": "checklist", "values": ["t1", "t3"] }` — a checklist submitted with these values.
+- `{ "kind": "submitted" }` — a code field submitted. What was typed is never stored.
+
+A block with a choice is locked: clients draw the chosen control as pressed, emphasize nothing
+else, and accept no further press. A press records its choice and is announced as
+`message.updated` with the whole message, so every client and every reload draws the same
+choice. Choices are never model input.
+
 #### Configuration history
 
 A configuration record is an ordinary durable `service` message with one `configuration` block:
@@ -7446,6 +7642,47 @@ Response — `202`: the durable message as it now stands, plus the event cursor 
   the `runId` it brings is the handle for `abort`.
 - `cursor` — the event cursor at send; streaming from it replays everything this message
   causes, from its acceptance through its run's completion.
+
+### `POST /v0/agents/:agentId/chat-actions`
+
+Presses one inline action control. A press is the person's own action: it is never written as a
+person message, and the person's words are never invented for it.
+
+Request:
+
+```json
+{
+    "messageId": "tz4a98xxat96iws9zmbrgj3a",
+    "blockIndex": 2,
+    "action": { "id": "onboarding.discover", "params": {} },
+    "values": [],
+    "mutationId": "optional-client-value"
+}
+```
+
+- `action.params` — the control's parameters as written, every value a string.
+- `values` — a checklist's ticked values or a code field's one text; omitted or empty otherwise.
+
+The daemon reads the block from its own copy of the message and checks that the block exists, that
+it holds a control with exactly that action ID and those parameters, that every value is one of the
+checklist's own enabled values, and that the block has no choice yet. It records the choice and
+runs the action in one transaction, and the action's work continues after it commits.
+
+Response — `202`:
+
+```json
+{ "message": { "...": "the message, with its new choice" }, "result": null }
+```
+
+`result` is `null` unless the action says otherwise; `onboarding.newChat` returns the new chat's
+`{ "agentId": "…", "spaceId": "…" }` for the client to open.
+
+Errors: `404` `not_found` for an unknown message or block; `409` `conflict` when the block already
+has a choice or no longer matches the request; `400` `invalid_request` for a malformed body, a
+value the checklist does not offer, or an action the daemon does not run. Actions that only open
+something in the client, such as a vendor's page (`onboarding.signInOpen`, `onboarding.subscribe`)
+or a client sheet (`onboarding.apiKeyOpen`), are run by the client and never posted. `reply` sends
+its `text` as the person's own message through `send`. Team mode answers `501` `unsupported`.
 
 ### `GET /v0/agents/:agentId/messages`
 
@@ -14321,6 +14558,14 @@ version rules. Snapshot-to-stream cursor and version-gap recovery rules remain u
     - `providerCli` (the complete provider CLI object).
     - `mutationId` — echoed when the API request that started or changed the operation supplied
       one.
+
+**Onboarding**
+
+- `onboarding.flow.updated` — the onboarding flow object changed. This is a complete
+  replacement rather than a version-chain diff; clients keep the object with the greater
+  `version`. Absent on older daemons and in team mode.
+    - `flow` (the complete onboarding flow object).
+    - `mutationId` — echoed when the API request that caused the change supplied one.
 
 **Provider-account usage**
 
