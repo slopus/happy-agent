@@ -81,11 +81,12 @@ In either mode it:
 - owns the SQLite database and the domain modules for sessions, projects, Git,
   users and profiles, the model catalog, file search, MCP, Happy sync, and scheduling.
 
-An explicit machine-only Tailcat feature can wrap either transport. A private loopback TCP relay
-adapts the Unix socket and keeps the same path for the team listener. The daemon generates one
-fixed-region Tailcat key, supervises the bundled v0.7.0 process for its whole lifetime, and closes
-the tunnel before its underlying API transport. Tailcat supplies connectivity and WireGuard
-encryption only; the API's bearer or WorkOS authentication remains the authority boundary.
+An explicit machine-only Tailcat feature can wrap either transport. Tailcat's exec service runs a
+small pipe for each connection that joins it to the Unix socket or the team listener, so no local
+port is bound for it. The daemon generates one fixed-region Tailcat key, supervises the bundled
+v0.7.0 process for its whole lifetime, and closes the tunnel before its underlying API transport.
+Tailcat supplies connectivity and WireGuard encryption only; the API's bearer or WorkOS
+authentication remains the authority boundary.
 
 The daemon holds the agent loop, tool execution, and the sandbox. Clients hold no agent logic;
 if one disconnects, the session keeps running.

@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { chmod, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { createServer as createNetServer } from "node:net";
@@ -8,7 +9,7 @@ import { createRootContext, withLogger, type Logger } from "@steve.kite/stdlib";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { startTailcatExposure } from "../../sources/tailcat/impl/startTailcatExposure.js";
-import { startTcpRelay } from "../../sources/tailcat/impl/startTcpRelay.js";
+import { tailcatPipeCommand } from "../../sources/tailcat/impl/tailcatPipeCommand.js";
 
 const roots: string[] = [];
 
@@ -22,8 +23,7 @@ describe("Tailcat exposure", () => {
         const fake = await fakeTailcat(root);
         const paths = tailcatPaths(root);
         const target = { host: "127.0.0.1", port: 9 } as const;
-        // Not the mobile connector's default: a daemon on this machine may be holding it.
-        const port = await freePort();
+        const port = 24_790;
 
         const first = await startTailcatExposure(
             createRootContext().named("tailcat-first"),
@@ -106,66 +106,145 @@ describe("Tailcat exposure logging", () => {
     });
 });
 
-describe("Tailcat TCP relay", () => {
-    it("forwards HTTP bytes to a Unix-socket daemon", async () => {
+describe("Tailcat exposure ports", () => {
+    it("opens on a port another program holds, because it binds no local port", async () => {
+        const root = await temporaryRoot();
+        const fake = await fakeTailcat(root);
+        const occupant = createNetServer();
+        await new Promise<void>((resolve, reject) => {
+            occupant.once("error", reject);
+            occupant.listen(0, "127.0.0.1", resolve);
+        });
+        const address = occupant.address();
+        if (address === null || typeof address === "string") throw new Error("No port is held.");
+        try {
+            const exposure = await startTailcatExposure(
+                createRootContext().named("tailcat-held-port"),
+                { socketPath: join(root, "api.sock") },
+                tailcatPaths(root),
+                address.port,
+                { executable: fake, restartDelayMs: 10, startupTimeoutMs: 5_000, stopGraceMs: 50 },
+            );
+            expect(exposure.port).toBe(address.port);
+            await exposure.close();
+        } finally {
+            await new Promise<void>((resolve) => occupant.close(() => resolve()));
+        }
+        const invocations = await readFile(join(root, "tailcat-invocations"), "utf8");
+        expect(invocations).toContain(
+            `--key=${tailcatPaths(root).keyPath} serve exec -- ${process.execPath} -e `,
+        );
+        expect(invocations).not.toContain(`serve ${String(address.port)}`);
+    });
+});
+
+describe("Tailcat connection pipe", () => {
+    it("carries HTTP, streamed as it arrives, to a Unix-socket daemon and exits after", async () => {
         const root = await temporaryRoot();
         const socketPath = join(root, "server.sock");
-        const server = createServer((_request, response) => response.end("through socket"));
-        await new Promise<void>((resolve, reject) => {
-            server.once("error", reject);
-            server.listen(socketPath, resolve);
+        let finishStream: (() => void) | undefined;
+        const server = createServer((request, response) => {
+            if (request.url === "/stream") {
+                response.writeHead(200, { "content-type": "text/event-stream" });
+                response.write("data: first\n\n");
+                finishStream = () => response.end("data: last\n\n");
+                return;
+            }
+            response.end("through socket");
         });
-        const relay = await startTcpRelay({ socketPath }, 24_783);
+        await listenOn(server, socketPath);
         try {
-            expect(relay.port).toBe(24_783);
-            const response = await fetch(`http://127.0.0.1:${String(relay.port)}/test`);
-            await expect(response.text()).resolves.toBe("through socket");
+            const plain = pipeConnection(tailcatPipeCommand({ socketPath }));
+            plain.write("GET /test HTTP/1.1\r\nhost: tailcat\r\nconnection: close\r\n\r\n");
+            await expect(plain.exited).resolves.toBe(0);
+            expect(plain.output()).toMatch(/^HTTP\/1\.1 200 OK\r\n[\s\S]*\r\n\r\nthrough socket$/u);
+
+            // The first event reaches the peer while the response is still open.
+            const stream = pipeConnection(tailcatPipeCommand({ socketPath }));
+            stream.write("GET /stream HTTP/1.1\r\nhost: tailcat\r\n\r\n");
+            await waitFor(async () => stream.output().includes("data: first"));
+            expect(stream.output()).not.toContain("data: last");
+            finishStream?.();
+            await waitFor(async () => stream.output().includes("data: last"));
+            stream.end();
+            await expect(stream.exited).resolves.toBe(0);
         } finally {
-            await relay.close();
-            await new Promise<void>((resolve, reject) => {
-                server.close((error) => (error === undefined ? resolve() : reject(error)));
-            });
+            await new Promise<void>((resolve) => server.close(() => resolve()));
         }
     });
 
-    it("fails instead of selecting another port when the configured port is occupied", async () => {
-        const occupied = createServer();
-        await new Promise<void>((resolve, reject) => {
-            occupied.once("error", reject);
-            occupied.listen({ host: "127.0.0.1", port: 0 }, resolve);
-        });
-        const address = occupied.address();
-        if (address === null || typeof address === "string") {
-            throw new Error("The occupied test server has no TCP port.");
-        }
+    it("reaches a TCP daemon listening on every address, and exits when the peer leaves", async () => {
+        const server = createServer((_request, response) => response.end("through tcp"));
+        await listenOn(server, { host: "0.0.0.0", port: 0 });
+        const address = server.address();
+        if (address === null || typeof address === "string") throw new Error("No TCP port.");
         try {
-            await expect(
-                startTcpRelay({ host: "127.0.0.1", port: 9 }, address.port),
-            ).rejects.toThrow(`Tailcat port ${String(address.port)} is already in use.`);
+            const pipe = tailcatPipeCommand({ host: "0.0.0.0", port: address.port });
+            const answered = pipeConnection(pipe);
+            answered.write("GET / HTTP/1.1\r\nhost: tailcat\r\n\r\n");
+            await waitFor(async () => answered.output().endsWith("through tcp"));
+            // The peer closes a kept-alive connection; the daemon never would.
+            answered.end();
+            await expect(answered.exited).resolves.toBe(0);
         } finally {
-            await new Promise<void>((resolve, reject) => {
-                occupied.close((error) => (error === undefined ? resolve() : reject(error)));
-            });
+            server.closeAllConnections();
+            await new Promise<void>((resolve) => server.close(() => resolve()));
         }
     });
+
+    it("exits at once when nothing listens at the target", async () => {
+        const root = await temporaryRoot();
+        const pipe = pipeConnection(tailcatPipeCommand({ socketPath: join(root, "none") }));
+        await expect(pipe.exited).resolves.toBe(0);
+        expect(pipe.output()).toBe("");
+    });
 });
+
+interface PipeConnection {
+    readonly exited: Promise<number | null>;
+    output(): string;
+    write(text: string): void;
+    end(): void;
+}
+
+/** Run the pipe as Tailcat's exec service does, with one connection as its stdin and stdout. */
+function pipeConnection(pipe: ReturnType<typeof tailcatPipeCommand>): PipeConnection {
+    const [command, ...args] = pipe.command;
+    const child = spawn(command!, args, {
+        env: { ...process.env, ...pipe.environment },
+        stdio: ["pipe", "pipe", "inherit"],
+    });
+    let output = "";
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+        output += chunk;
+    });
+    const exited = new Promise<number | null>((resolve) => child.once("exit", resolve));
+    // A pipe that already exited takes no input.
+    child.stdin.on("error", () => undefined);
+    return {
+        exited,
+        output: () => output,
+        write: (text: string) => child.stdin.write(text),
+        end: () => child.stdin.end(),
+    };
+}
+
+async function listenOn(
+    server: ReturnType<typeof createServer>,
+    at: string | { host: string; port: number },
+): Promise<void> {
+    await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        if (typeof at === "string") server.listen(at, resolve);
+        else server.listen(at.port, at.host, resolve);
+    });
+}
 
 async function temporaryRoot(): Promise<string> {
     const root = await mkdtemp(join(tmpdir(), "happy-tailcat-"));
     roots.push(root);
     return root;
-}
-
-async function freePort(): Promise<number> {
-    const server = createNetServer();
-    await new Promise<void>((resolve, reject) => {
-        server.once("error", reject);
-        server.listen(0, "127.0.0.1", resolve);
-    });
-    const address = server.address();
-    await new Promise<void>((resolve) => server.close(() => resolve()));
-    if (address === null || typeof address === "string") throw new Error("No port is free.");
-    return address.port;
 }
 
 function tailcatPaths(root: string) {

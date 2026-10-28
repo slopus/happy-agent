@@ -133,10 +133,10 @@ The bundled Tailcat generates a fixed-region identity key on first start. The ke
 While open, the same directory contains `address` and `port`; shutdown removes those two live-state
 files and keeps the key. An unexpected Tailcat exit is supervised and restarted.
 
-The forwarded port defaults to the fixed, IANA-unassigned port `24779`. Set `port` to another
-nonzero TCP port in the same machine-wide section when needed. Happy Agent binds that exact
-loopback port on every start and never falls back to a random port. If another local process owns
-it, Tailcat fails to open until the conflict is removed or the setting is changed.
+The port defaults to the fixed, IANA-unassigned port `24779`. Set `port` to another nonzero TCP
+port in the same machine-wide section when needed. It is the port Happy Agent reports for remote
+endpoints and never changes on its own. Happy Agent binds no local port for Tailcat, so another
+local process using the same number does not conflict.
 
 Tailcat itself has no account login or client allowlist here. Happy API authentication is unchanged:
 the standalone socket still requires its local bearer token and team mode still verifies WorkOS.

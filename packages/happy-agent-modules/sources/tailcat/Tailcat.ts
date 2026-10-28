@@ -63,7 +63,7 @@ export type TailcatNamedExposureRequest = Static<typeof tailcatNamedExposureRequ
 
 /**
  * One open named exposure. Its address carries the identity's pre-shared key, so it is a secret.
- * Closing stops the supervised process and the relay; the identity key stays for the next open.
+ * Closing stops the supervised process; the identity key stays for the next open.
  */
 export interface TailcatNamedExposure {
     readonly address: string;

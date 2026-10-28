@@ -203,9 +203,9 @@ The daemon generates one fixed-region Tailcat key on first start and keeps it at
 `~/.happy/agent/tailcat/default.private.json`. The resulting connection address is stable across
 restarts. While the tunnel is open, `address` and `port` files in that directory identify the live
 endpoint; both disappear on clean shutdown while the key remains. Tailcat is supervised and
-reopened after an unexpected exit. The forwarded port defaults to the fixed, IANA-unassigned port
-`24779`; the machine-wide setting can choose another nonzero port. Tailcat fails clearly when that
-exact port is occupied and never falls back to a random port.
+reopened after an unexpected exit. The port defaults to the fixed, IANA-unassigned port
+`24779`; the machine-wide setting can choose another nonzero port. Happy Agent binds no local port
+for Tailcat, so the number cannot collide with another program on the machine.
 
 Tailcat can wrap either the standalone Unix socket or the team HTTP listener. It is a dedicated,
 account-free transport and applies no Tailcat client allowlist, but it does not bypass Happy Agent

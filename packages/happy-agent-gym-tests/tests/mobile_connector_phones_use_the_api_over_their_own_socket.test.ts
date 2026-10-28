@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { request as httpRequest } from "node:http";
-import type { Socket } from "node:net";
+import { createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -20,9 +20,14 @@ import {
     type PairedPhone,
 } from "../../happy-agent-modules/tests/mobileConnector/support/fakePhone.js";
 
-/** Where the connector's relay listens: `server.tailcat:<port>` as the phone would dial it. */
+/** The connector's configured port, which its QR code carries and the daemon never binds. */
 const PORT = 24_871;
-const PHONE = `http://127.0.0.1:${String(PORT)}`;
+/**
+ * Where the fake Tailcat accepts connections, standing in for `server.tailcat:<port>` as a phone
+ * dials it. Tailcat's exec service answers on every port, so the fake answers on one of its own.
+ */
+const TAILNET_PORT = 24_872;
+const PHONE = `http://127.0.0.1:${String(TAILNET_PORT)}`;
 const HANDSHAKE = "/v0/mobile-connector/handshake";
 const FAKE_ADDRESS = "tcGymMobileConnectorAddress";
 
@@ -30,22 +35,36 @@ const running = new Set<AgentGym>();
 let fakeTailcatRoot: string | undefined;
 
 beforeEach(async () => {
-    // Only the Tailcat binary is fake: it publishes an address and stays up. The relay, the
-    // loopback listener, and everything behind them are the daemon's own.
+    // Only the Tailcat binary is fake. Like `serve exec -- <command>`, it runs the command for
+    // each connection with the connection as its stdin and stdout, and publishes an address once
+    // it accepts them. The command, the loopback listener, and everything behind them are the
+    // daemon's own.
     fakeTailcatRoot = await mkdtemp(join(tmpdir(), "happy-gym-tailcat-"));
     const executable = join(fakeTailcatRoot, "tailcat");
     await writeFile(
         executable,
         `#!/usr/bin/env node
+import { spawn } from "node:child_process";
 import { writeFileSync } from "node:fs";
+import { createServer } from "node:net";
 const args = process.argv.slice(2);
 if (args[0] === "genkey") {
     writeFileSync(args.find((value) => value.startsWith("--key=")).slice(6), "key\\n", { mode: 0o600 });
     process.exit(0);
 }
-writeFileSync(process.env.TAILCAT_ADDR_FILE, ${JSON.stringify(`${FAKE_ADDRESS}\n`)}, { mode: 0o600 });
+if (args.slice(1, 4).join(" ") !== "serve exec --") process.exit(2);
+const [command, ...commandArguments] = args.slice(4);
+const server = createServer((connection) => {
+    const child = spawn(command, commandArguments, { stdio: ["pipe", "pipe", "inherit"] });
+    connection.pipe(child.stdin);
+    child.stdout.pipe(connection);
+    connection.on("error", () => child.kill());
+    child.stdin.on("error", () => connection.destroy());
+});
+server.listen(${String(TAILNET_PORT)}, "127.0.0.1", () => {
+    writeFileSync(process.env.TAILCAT_ADDR_FILE, ${JSON.stringify(`${FAKE_ADDRESS}\n`)}, { mode: 0o600 });
+});
 process.on("SIGTERM", () => process.exit(0));
-setInterval(() => undefined, 1_000);
 `,
     );
     await chmod(executable, 0o755);
@@ -126,7 +145,7 @@ const received = new WeakMap<WebSocket, string[]>();
 /** Open a WebSocket on the connector's socket, or report the status that refused it. */
 async function phoneWebSocket(path: string, credential: string): Promise<WebSocket | number> {
     return await new Promise((resolve, reject) => {
-        const webSocket = new WebSocket(`ws://127.0.0.1:${String(PORT)}${path}`, {
+        const webSocket = new WebSocket(`ws://127.0.0.1:${String(TAILNET_PORT)}${path}`, {
             headers: { authorization: `Bearer ${credential}` },
             perMessageDeflate: false,
         });
@@ -148,7 +167,7 @@ async function phoneConnect(path: string, credential: string): Promise<Socket | 
     return await new Promise((resolve, reject) => {
         const request = httpRequest({
             host: "127.0.0.1",
-            port: PORT,
+            port: TAILNET_PORT,
             method: "CONNECT",
             path,
             headers: { authorization: `Bearer ${credential}` },
@@ -409,5 +428,34 @@ describe("phones use the Happy Agent API over the mobile connector's own socket"
         });
         keptSocket.terminate();
         expect(gym.errors).toEqual([]);
+    }, 60_000);
+
+    it("pairs and reconnects after a restart while another program holds its port", async () => {
+        // Another Happy Agent on this computer with the same default port, say.
+        const occupant = createServer();
+        await new Promise<void>((resolve, reject) => {
+            occupant.once("error", reject);
+            occupant.listen(PORT, "127.0.0.1", resolve);
+        });
+        try {
+            const gym = await mobileGym();
+            const paired = await pairPhone(gym);
+            expect(paired).toMatchObject({ address: FAKE_ADDRESS, port: PORT });
+
+            await gym.restart();
+            await gym.waitUntil(async () => {
+                const current = await gym.http.ok<{ mobileConnector: MobileConnector }>(
+                    "GET",
+                    "/v0/mobile-connector",
+                );
+                return current.mobileConnector.status === "open" ? current : undefined;
+            }, "the socket to reopen for the paired phone");
+            await expect(phoneHttp("GET", "/v0/health", paired.deviceToken)).resolves.toMatchObject(
+                { status: 200 },
+            );
+            expect(gym.errors).toEqual([]);
+        } finally {
+            await new Promise<void>((resolve) => occupant.close(() => resolve()));
+        }
     }, 60_000);
 });

@@ -31,10 +31,12 @@ The configuration file is `~/Happy/Config/happy.toml` on macOS and
 `~/happy/config/happy.toml` on Linux unless the configuration directory was overridden. A
 repository's `happy.toml` cannot enable Tailcat.
 
-`port` defaults to the fixed, IANA-unassigned port `24779`. Override it with any nonzero TCP port
-when the default conflicts with another local service. Happy Agent binds the configured loopback
-port exactly and never substitutes a random one, so both the Tailcat address and port remain stable
-for another node's configuration. Changing the port requires
+`port` defaults to the fixed, IANA-unassigned port `24779`. It is the port Happy Agent reports and
+that other nodes put in their endpoint, so the Tailcat address and port stay stable for another
+node's configuration. Happy Agent does not bind it, or any other local port: Tailcat hands each
+incoming connection to a small pipe that Happy Agent starts for that connection, which joins it to
+the API. Another program using the same port on this computer, such as a second Happy Agent, does
+not conflict. Changing the port requires
 [reloading the daemon](configuration.md#applying-configuration-changes).
 
 To change it while the daemon is running, ask the active admin bot—initially the built-in Chief of
@@ -43,7 +45,7 @@ Staff—to enable or disable Tailcat. Admin bots receive these tools:
 - `set_tailcat_enabled` persists the requested state and opens or closes the connection
   immediately.
 - `get_tailcat_status` reports `disabled`, `starting`, `open`, `stopping`, or `failed`; an open
-  result includes the address and forwarded port.
+  result includes the address and port.
 
 The tools are intentionally absent from ordinary bots, archived admin bots, human-owned root
 agents, and subagents. Changing the setting through the admin tool writes the daemon-owned
@@ -62,7 +64,8 @@ across those cycles too. Do not copy or share the private key.
 
 Happy Agent starts Tailcat after its local API transport has bound and keeps Tailcat open until it
 is disabled or the daemon stops. If the Tailcat process exits unexpectedly, Happy Agent supervises
-and restarts it with the same identity.
+and restarts it with the same identity. Each incoming connection runs through its own small pipe
+process, which exits when the connection closes or Tailcat stops.
 
 An unexpected failure changes its status to `failed` and includes a human-readable error. It does
 not silently turn off the persisted setting.
@@ -104,7 +107,7 @@ or the Node-compatible npm package instead resolves `tailcat` from `PATH`; devel
 In standalone mode, securely transfer these three values to the intended client:
 
 - the Tailcat `address`;
-- the fixed forwarded `port`;
+- the fixed `port`;
 - the local Happy Agent bearer token from `~/.happy/agent/token`.
 
 Never publish the token or store it in a shared shell history. A one-command health request through
@@ -164,7 +167,7 @@ owner_workos_user_id = "user_01EXAMPLE"
 enabled = true
 ```
 
-Happy Agent relays Tailcat traffic to the loopback listener without exposing the team server on a
+Happy Agent pipes Tailcat traffic to the loopback listener without exposing the team server on a
 LAN interface. Tailcat supplies only the transport; every API request, including health, still
 passes through team mode's WorkOS authentication and onboarding rules.
 
@@ -178,9 +181,9 @@ printf 'tailcat://%s:%s\n' "$TAILCAT_ADDRESS" "$TAILCAT_PORT"
 ```
 
 Pass that value as `endpoint` to `create_happy_team`, or use `update_happy_team` with an existing
-`team_id`. Both values survive restarts. If the default port conflicts during initial deployment,
-override `[feature.tailcat].port` before registering the team; changing it after registration
-requires publishing the new endpoint with `update_happy_team`. See [team-mode.md](team-mode.md) for
+`team_id`. Both values survive restarts. To publish a port other than the default, override
+`[feature.tailcat].port` before registering the team; changing it after registration requires
+publishing the new endpoint with `update_happy_team`. See [team-mode.md](team-mode.md) for
 the complete binary deployment and organization bootstrap sequence.
 
 ## Disable Tailcat
@@ -199,7 +202,8 @@ running.
 The mobile connector uses a second Tailcat exposure of its own so a phone can reach this daemon
 directly. It is separate from `[feature.tailcat]`: it has its own identity key,
 `~/.happy/agent/tailcat/mobile.private.json`, its own fixed port, and it is open only while it is
-needed, whether or not the main exposure is enabled.
+needed, whether or not the main exposure is enabled. Like the main exposure, it binds no local
+port, so several Happy Agents on one computer can all keep the default.
 
 ```toml
 [feature.mobile_connector]
@@ -231,12 +235,6 @@ See the Mobile connector section of `API.md` for the complete protocol.
   again after the daemon is ready.
 - If the status is `failed`, read the returned error and `~/.happy/agent/daemon.log`. Fix the cause,
   then disable and re-enable Tailcat to reconcile it immediately.
-- If port `24779` is already in use, choose another fixed `port` under `[feature.tailcat]`, restart
-  the daemon, and use that same port in the remote-node configuration.
-- If linking a phone directly fails because port `24781` is already in use, another program holds
-  it, most often a second Happy Agent on the same computer, such as a development daemon, using the
-  same default. Quit it, or give one of them another `port` under `[feature.mobile_connector]` and
-  restart that daemon. Phones paired with a daemon whose port changes must pair again.
 - If `address` or `port` is missing, Tailcat is not currently open. Ask an active admin bot for the
   authoritative status rather than relying only on files.
 - Resolve `server.tailcat` through Tailcat. For a local SOCKS listener, use SOCKS5 hostname

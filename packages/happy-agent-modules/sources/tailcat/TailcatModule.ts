@@ -63,7 +63,7 @@ export class TailcatModule implements AgentModule {
 
     /**
      * Open an additional, independently supervised exposure with its own stable identity key,
-     * fixed loopback port, and relay target. It does not depend on `[feature.tailcat]` and never
+     * advertised port, and API target. It does not depend on `[feature.tailcat]` and never
      * touches the default exposure. One name has at most one open exposure at a time.
      */
     async openExposure(

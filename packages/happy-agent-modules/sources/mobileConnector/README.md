@@ -7,9 +7,9 @@ desktop and handshake routes; this module owns the pairing state machine, the de
 the exposure.
 
 ```text
-phone ── Tailcat (own identity, mobile.private.json) ── relay 127.0.0.1:24781
-                                                            │
-                                                            ▼
+phone ── server.tailcat:24781 ── Tailcat (own identity, mobile.private.json, binds no port)
+                                      │ serve exec: one pipe process per connection
+                                      ▼
                          the API's mobile listener (127.0.0.1:ephemeral, flagged as mobile)
                            every request, upgrade, and CONNECT: authenticate() first
                              ├── device token        → the ordinary API as its owner, minus

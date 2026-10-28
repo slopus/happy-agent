@@ -47,8 +47,8 @@ export interface MobileConnectorWorldOptions {
 }
 
 /**
- * Where the exposure forwards. The relay dials it only for a connection, and these tests reach
- * the module directly instead, so nothing listens there.
+ * Where the exposure forwards. Only a connection's pipe would dial it, and these tests reach the
+ * module directly instead, so nothing listens there.
  */
 export const UNUSED_TRANSPORT = { host: "127.0.0.1", port: 9 } as const;
 
@@ -61,7 +61,7 @@ export async function mobileConnectorWorld(
     options: MobileConnectorWorldOptions,
 ): Promise<MobileConnectorWorld> {
     const root = options.after?.root ?? (await mkdtemp(join(tmpdir(), "happy-mobile-connector-")));
-    // A daemon running on this machine may hold any fixed port, so each world takes a free one.
+    // Free right now, so a test can hold it the way another program on this machine would.
     const port = options.port ?? (await freePort());
     const configDirectory = join(
         root,

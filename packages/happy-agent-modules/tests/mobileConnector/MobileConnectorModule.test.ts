@@ -1,6 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
 import { createServer } from "node:net";
-import { join } from "node:path";
 
 import { agentDatabaseRows } from "@slopus/happy-agent-base";
 import { sql } from "drizzle-orm";
@@ -138,7 +137,7 @@ describe("MobileConnectorModule", () => {
         const invocations = await import("node:fs/promises").then(({ readFile }) =>
             readFile(`${target.root}/tailcat-invocations`, "utf8"),
         );
-        expect(invocations).toContain(`mobile.private.json serve ${String(target.port)}`);
+        expect(invocations).toContain("mobile.private.json serve exec -- ");
         expect(invocations).not.toContain("default.private.json");
     });
 
@@ -464,35 +463,21 @@ describe("MobileConnectorModule", () => {
         });
     });
 
-    it("says how to free its port when another program holds it, and opens once it is free", async () => {
+    it("opens its socket and shows its port while another program holds that port", async () => {
         const target = await world();
+        // Every Happy Agent on a computer shares the default, so another one may hold it.
         const occupant = createServer();
         await new Promise<void>((resolve, reject) => {
             occupant.once("error", reject);
             occupant.listen(target.port, "127.0.0.1", resolve);
         });
-        let started: MobileConnectorSnapshot;
         try {
-            started = await target.mobile.startPairing(target.ctx);
+            const started = await target.mobile.startPairing(target.ctx);
+            expect(started).toMatchObject({ status: "open", error: null });
+            expect(parseQr(started.pairing!.qr!)).toMatchObject({ p: target.port });
         } finally {
             await new Promise<void>((resolve) => occupant.close(() => resolve()));
         }
-        const settings = join(
-            target.root,
-            process.platform === "darwin" ? "Happy/Config" : "happy/config",
-            "happy.toml",
-        );
-        const error =
-            `Another program on this computer is already using port ${String(target.port)}, ` +
-            "which direct phone connections need. It is often another Happy Agent. Quit that " +
-            `program, or set a different port under [feature.mobile_connector] in ${settings} ` +
-            "and restart Happy Agent.";
-        expect(started).toMatchObject({ status: "failed", error });
-        expect(started.pairing).toMatchObject({ status: "failed", qr: null, error });
-
-        const retried = await target.mobile.startPairing(target.ctx);
-        expect(retried).toMatchObject({ status: "open", error: null });
-        expect(retried.pairing).toMatchObject({ status: "waiting", qr: expect.any(String) });
     });
 
     it("announces each owner's snapshots with increasing versions", async () => {

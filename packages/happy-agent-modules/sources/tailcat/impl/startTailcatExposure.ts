@@ -6,8 +6,8 @@ import { Value } from "@sinclair/typebox/value";
 import type { Context } from "@steve.kite/stdlib";
 
 import { resolveTailcatExecutable } from "./resolveTailcatExecutable.js";
-import { startTcpRelay, type TcpRelay, type TcpRelayTarget } from "./startTcpRelay.js";
-import { tailcatAddressSchema } from "../Tailcat.js";
+import { tailcatPipeCommand, type TailcatPipeCommand } from "./tailcatPipeCommand.js";
+import { tailcatAddressSchema, type TailcatTransportTarget } from "../Tailcat.js";
 
 const MAX_PROCESS_OUTPUT_BYTES = 8_192;
 
@@ -34,7 +34,7 @@ export interface TailcatExposure {
 /** Open and supervise an account-free Tailcat transport around the authenticated Happy API. */
 export async function startTailcatExposure(
     ctx: Context,
-    target: TcpRelayTarget,
+    target: TailcatTransportTarget,
     paths: TailcatExposurePaths,
     port: number,
     options: TailcatExposureOptions = {},
@@ -43,8 +43,14 @@ export async function startTailcatExposure(
     await chmod(paths.home, 0o700);
     const executable = options.executable ?? resolveTailcatExecutable();
     await ensureTailcatKey(executable, paths, options.startupTimeoutMs ?? 60_000);
-    const relay = await startTcpRelay(target, port);
-    const exposure = new SupervisedTailcatExposure(ctx, executable, paths, relay, options);
+    const exposure = new SupervisedTailcatExposure(
+        ctx,
+        executable,
+        paths,
+        port,
+        tailcatPipeCommand(target),
+        options,
+    );
     try {
         return await exposure.open();
     } catch (error) {
@@ -57,7 +63,8 @@ class SupervisedTailcatExposure implements TailcatExposure {
     readonly #ctx: Context;
     readonly #executable: string;
     readonly #paths: TailcatExposurePaths;
-    readonly #relay: TcpRelay;
+    readonly #pipe: TailcatPipeCommand;
+    readonly #port: number;
     readonly #restartDelayMs: number;
     readonly #startupTimeoutMs: number;
     readonly #stopGraceMs: number;
@@ -73,13 +80,15 @@ class SupervisedTailcatExposure implements TailcatExposure {
         ctx: Context,
         executable: string,
         paths: TailcatExposurePaths,
-        relay: TcpRelay,
+        port: number,
+        pipe: TailcatPipeCommand,
         options: TailcatExposureOptions,
     ) {
         this.#ctx = ctx;
         this.#executable = executable;
         this.#paths = paths;
-        this.#relay = relay;
+        this.#pipe = pipe;
+        this.#port = port;
         this.#restartDelayMs = options.restartDelayMs ?? 1_000;
         this.#startupTimeoutMs = options.startupTimeoutMs ?? 60_000;
         this.#stopGraceMs = options.stopGraceMs ?? 2_000;
@@ -90,7 +99,7 @@ class SupervisedTailcatExposure implements TailcatExposure {
     }
 
     get port(): number {
-        return this.#relay.port;
+        return this.#port;
     }
 
     async open(): Promise<this> {
@@ -98,7 +107,7 @@ class SupervisedTailcatExposure implements TailcatExposure {
             this.#executable,
             this.#paths.keyPath,
             this.#paths.addressPath,
-            this.#relay.port,
+            this.#pipe,
         );
         this.#address = await waitForTailcatAddress(
             this.#current,
@@ -106,10 +115,10 @@ class SupervisedTailcatExposure implements TailcatExposure {
             this.#startupTimeoutMs,
         );
         await chmod(this.#paths.addressPath, 0o600);
-        await writeFile(this.#paths.portPath, `${String(this.#relay.port)}\n`, { mode: 0o600 });
+        await writeFile(this.#paths.portPath, `${String(this.#port)}\n`, { mode: 0o600 });
         await chmod(this.#paths.portPath, 0o600);
         this.#ctx.log.info(
-            `tailcat:open port=${String(this.#relay.port)} pid=${String(this.#current.child.pid ?? 0)}`,
+            `tailcat:open port=${String(this.#port)} pid=${String(this.#current.child.pid ?? 0)}`,
         );
         this.#supervision = this.#supervise();
         return this;
@@ -121,7 +130,6 @@ class SupervisedTailcatExposure implements TailcatExposure {
             this.#resumeRestart?.();
             await stopTailcat(this.#current, this.#stopGraceMs);
             await this.#supervision;
-            await this.#relay.close();
             await Promise.all([
                 rm(this.#paths.addressPath, { force: true }),
                 rm(this.#paths.portPath, { force: true }),
@@ -149,7 +157,7 @@ class SupervisedTailcatExposure implements TailcatExposure {
                     this.#executable,
                     this.#paths.keyPath,
                     this.#paths.addressPath,
-                    this.#relay.port,
+                    this.#pipe,
                 );
                 this.#current = restarted;
                 this.#address = await waitForTailcatAddress(
@@ -159,7 +167,7 @@ class SupervisedTailcatExposure implements TailcatExposure {
                 );
                 await chmod(this.#paths.addressPath, 0o600);
                 this.#ctx.log.info(
-                    `tailcat:reopened port=${String(this.#relay.port)} pid=${String(restarted.child.pid ?? 0)}`,
+                    `tailcat:reopened port=${String(this.#port)} pid=${String(restarted.child.pid ?? 0)}`,
                 );
             } catch (error: unknown) {
                 this.#ctx.log.warn(
@@ -241,15 +249,21 @@ async function ensureTailcatKey(
     }
 }
 
+/**
+ * Serve every port through the exec service, which runs the pipe once per connection. Proxying a
+ * port would need a local listener on it, and another program holding that port, such as a second
+ * Happy Agent with the same default, would keep the exposure from opening.
+ */
 async function spawnTailcat(
     executable: string,
     keyPath: string,
     addressPath: string,
-    port: number,
+    pipe: TailcatPipeCommand,
 ): Promise<TailcatRun> {
     await rm(addressPath, { force: true });
-    return spawnCommand(executable, [`--key=${keyPath}`, "serve", String(port)], {
+    return spawnCommand(executable, [`--key=${keyPath}`, "serve", "exec", "--", ...pipe.command], {
         ...process.env,
+        ...pipe.environment,
         TAILCAT_ADDR_FILE: addressPath,
     });
 }

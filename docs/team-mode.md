@@ -152,11 +152,10 @@ connection address and the fixed configured port. Both remain stable across daem
 team can be registered once after this initial deployment. Treat the endpoint as private discovery
 information.
 
-Tailcat defaults to the fixed, IANA-unassigned port `24779`. A conflict should be unusual. If the
-service nevertheless reports that the port is already in use, override `port` under
-`[feature.tailcat]` with another nonzero TCP port and restart while this deployment is still being
-bootstrapped. Settle on that port before registering the team; changing it later changes the
-published endpoint.
+Tailcat defaults to the fixed, IANA-unassigned port `24779`. Happy Agent binds no local port for it,
+so it cannot conflict with another service on the server. To publish a different number, override
+`port` under `[feature.tailcat]` and restart while this deployment is still being bootstrapped.
+Settle on that port before registering the team; changing it later changes the published endpoint.
 
 ## 3. Create the Happy team and register its endpoint
 

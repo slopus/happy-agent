@@ -18,7 +18,8 @@ import {
 /**
  * The mobile connector's socket through the real daemon on Bun's native transports, in both
  * deployment modes: the same API stack as the main listener, flagged as mobile. Only Tailcat is a
- * fake, which publishes an address and stays up; the daemon's own relay carries the phone.
+ * fake: like `serve exec`, it runs the daemon's own pipe for each connection, on the port named by
+ * `FAKE_TAILCAT_TAILNET_PORT` in place of `server.tailcat:<port>`, and publishes an address.
  */
 const FAKE_ADDRESS = "tcBunMobileConnectorAddress";
 let tailcatRoot;
@@ -29,15 +30,27 @@ beforeAll(async () => {
     await writeFile(
         executable,
         `#!/usr/bin/env node
+import { spawn } from "node:child_process";
 import { writeFileSync } from "node:fs";
+import { createServer } from "node:net";
 const args = process.argv.slice(2);
 if (args[0] === "genkey") {
     writeFileSync(args.find((value) => value.startsWith("--key=")).slice(6), "key\\n", { mode: 0o600 });
     process.exit(0);
 }
-writeFileSync(process.env.TAILCAT_ADDR_FILE, ${JSON.stringify(`${FAKE_ADDRESS}\n`)}, { mode: 0o600 });
+if (args.slice(1, 4).join(" ") !== "serve exec --") process.exit(2);
+const [command, ...commandArguments] = args.slice(4);
+const server = createServer((connection) => {
+    const child = spawn(command, commandArguments, { stdio: ["pipe", "pipe", "inherit"] });
+    connection.pipe(child.stdin);
+    child.stdout.pipe(connection);
+    connection.on("error", () => child.kill());
+    child.stdin.on("error", () => connection.destroy());
+});
+server.listen(Number(process.env.FAKE_TAILCAT_TAILNET_PORT), "127.0.0.1", () => {
+    writeFileSync(process.env.TAILCAT_ADDR_FILE, ${JSON.stringify(`${FAKE_ADDRESS}\n`)}, { mode: 0o600 });
+});
 process.on("SIGTERM", () => process.exit(0));
-setInterval(() => undefined, 1_000);
 `,
     );
     await chmod(executable, 0o755);
@@ -46,6 +59,7 @@ setInterval(() => undefined, 1_000);
 
 afterAll(async () => {
     delete process.env.HAPPY_AGENT_TAILCAT_PATH;
+    delete process.env.FAKE_TAILCAT_TAILNET_PORT;
     if (tailcatRoot !== undefined) await rm(tailcatRoot, { force: true, recursive: true });
 });
 
@@ -89,7 +103,9 @@ ${pem}"""
 for (const mode of ["standalone", "team"]) {
     describe(`the mobile transport on Bun (${mode})`, () => {
         const port = mode === "standalone" ? 24_881 : 24_882;
-        const phone = `http://127.0.0.1:${String(port)}`;
+        // The configured port is only the number in the QR code; the fake Tailcat answers here.
+        const tailnetPort = port + 100;
+        const phone = `http://127.0.0.1:${String(tailnetPort)}`;
         let gym;
         let paired;
         let workspaceId;
@@ -123,6 +139,7 @@ for (const mode of ["standalone", "team"]) {
 
         beforeAll(async () => {
             const team = mode === "team" ? teamConfig() : undefined;
+            process.env.FAKE_TAILCAT_TAILNET_PORT = String(tailnetPort);
             gym = await createAgentGym({
                 config: `[feature.mobile_connector]\nport = ${String(port)}\n${team?.config ?? ""}`,
                 timeoutMs: 20_000,
@@ -150,7 +167,7 @@ for (const mode of ["standalone", "team"]) {
 
         const webSocket = (path, credential) =>
             new Promise((resolve, reject) => {
-                const socket = new WebSocket(`ws://127.0.0.1:${String(port)}${path}`, {
+                const socket = new WebSocket(`ws://127.0.0.1:${String(tailnetPort)}${path}`, {
                     headers: { authorization: `Bearer ${credential}` },
                     perMessageDeflate: false,
                 });
@@ -170,7 +187,7 @@ for (const mode of ["standalone", "team"]) {
             new Promise((resolve, reject) => {
                 const request = httpRequest({
                     host: "127.0.0.1",
-                    port,
+                    port: tailnetPort,
                     method: "CONNECT",
                     path: `/v0/workspaces/${workspaceId}/proxy`,
                     headers: { authorization: `Bearer ${credential}` },

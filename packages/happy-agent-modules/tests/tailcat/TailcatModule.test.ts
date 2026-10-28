@@ -115,9 +115,11 @@ describe("TailcatModule named exposures", () => {
                 name: "mobile",
                 port: 24_786,
             });
-            await expect((await fetch("http://127.0.0.1:24786/anything")).text()).resolves.toBe(
-                "mobile listener",
-            );
+            // The fake Tailcat runs the exposure's pipe for each connection on its own port.
+            const tailnetPort = (await readFile(`${mobilePaths.address}.tailnet`, "utf8")).trim();
+            await expect(
+                (await fetch(`http://127.0.0.1:${tailnetPort}/anything`)).text(),
+            ).resolves.toBe("mobile listener");
             expect((await stat(mobilePaths.key)).mode & 0o777).toBe(0o600);
             await expect(readFile(mobilePaths.port, "utf8")).resolves.toBe("24786\n");
             await expect(readFile(fixture.paths.keyPath, "utf8")).rejects.toMatchObject({
@@ -182,7 +184,9 @@ async function createFixture() {
     await writeFile(
         executable,
         `#!/usr/bin/env node
+import { spawn } from "node:child_process";
 import { writeFileSync } from "node:fs";
+import { createServer } from "node:net";
 const args = process.argv.slice(2);
 if (args[0] === "genkey") {
     const key = args.find((argument) => argument.startsWith("--key="))?.slice(6);
@@ -192,9 +196,20 @@ if (args[0] === "genkey") {
 }
 const key = args.find((argument) => argument.startsWith("--key="))?.slice(6) ?? "";
 const address = key.endsWith("mobile.private.json") ? "tcMobileTailcatAddress456" : "tcStableTailcatAddress123";
-writeFileSync(process.env.TAILCAT_ADDR_FILE, address + "\\n", { mode: 0o600 });
+// Like "serve exec -- <command>": each connection runs the command as its stdin and stdout.
+const [command, ...commandArguments] = args.slice(args.indexOf("--") + 1);
+const server = createServer((connection) => {
+    const child = spawn(command, commandArguments, { stdio: ["pipe", "pipe", "inherit"] });
+    connection.pipe(child.stdin);
+    child.stdout.pipe(connection);
+    connection.on("error", () => child.kill());
+    child.stdin.on("error", () => connection.destroy());
+});
+server.listen(0, "127.0.0.1", () => {
+    writeFileSync(process.env.TAILCAT_ADDR_FILE + ".tailnet", String(server.address().port));
+    writeFileSync(process.env.TAILCAT_ADDR_FILE, address + "\\n", { mode: 0o600 });
+});
 process.on("SIGTERM", () => process.exit(0));
-setInterval(() => undefined, 1_000);
 `,
     );
     await chmod(executable, 0o755);

@@ -32,16 +32,15 @@ answers `403`; the pairing and handshake credentials reach only their own `/v0` 
 which exist only there. Revocation is an AbortSignal on the device credential, so the API closes
 connections on every transport path, Bun's native WebSockets and tunnels included.
 
-## A taken port says how to free it
+## The socket's port is not a local port
 
-The socket binds a fixed port, default `24781`, because paired phones keep the address and port
-they dialed. Every installation on a computer shares that default, so a second Happy Agent, such
-as a development daemon, can take it first, and the desktop then showed only "Tailcat port 24781
-is already in use." Tailcat now throws `TailcatPortInUseError`, and the connector turns it into a
-message that names the port, says it is often another Happy Agent, and points at
-`[feature.mobile_connector]` in the machine `happy.toml`. The next pairing retries the open, so
-freeing the port is enough. The tests take a free port for each world instead of a fixed one,
-because a daemon on the developer's machine can hold any fixed port.
+The socket has a fixed port, default `24781`, because paired phones keep the address and port
+they dialed. It used to be bound on loopback, and every installation on a computer shares that
+default, so a second Happy Agent, such as a development daemon, could take it first and keep
+phones from connecting. A clearer "port in use" message was tried first and did not fix it.
+Tailcat now runs a pipe per connection through its exec service and binds nothing, so the port is
+only the number in the QR code and the socket opens whatever else holds that port. The QR format
+and the setting are unchanged, so phones paired before keep working.
 
 ## The exposure waits for its transport
 
