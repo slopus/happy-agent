@@ -46,6 +46,7 @@ import {
     providerCliSignInRequestSchema,
     type ProviderCliId,
 } from "../providerClis/index.js";
+import type { OnboardingModule } from "../onboarding/index.js";
 import {
     ProviderRouteRequestError,
     ProviderRoutesModule,
@@ -640,6 +641,7 @@ export class ApiModule implements AgentModule {
     readonly #stickers: StickersModule | undefined;
     readonly #providerClis: ProviderClisModule | undefined;
     readonly #providerRoutes: ProviderRoutesModule | undefined;
+    readonly #onboardingFlow: OnboardingModule | undefined;
     /** The revocation signals each mobile connection already closes on. */
     readonly #mobileConnections = new WeakMap<MobileConnection, Set<AbortSignal>>();
     readonly #mobileClosers = new WeakMap<MobileConnection, () => void>();
@@ -805,6 +807,7 @@ export class ApiModule implements AgentModule {
         stickers?: StickersModule,
         providerClis?: ProviderClisModule,
         providerRoutes?: ProviderRoutesModule,
+        onboarding?: OnboardingModule,
     ) {
         this.#abort = abort;
         this.#config = config;
@@ -853,6 +856,7 @@ export class ApiModule implements AgentModule {
         this.#stickers = stickers;
         this.#providerClis = providerClis;
         this.#providerRoutes = providerRoutes;
+        this.#onboardingFlow = onboarding;
     }
 
     readonly beforeStart = async (
@@ -1514,6 +1518,14 @@ export class ApiModule implements AgentModule {
                     this.#journal.append("config.updated", {});
                 });
                 sendJson(response, 200, { policy: body.policy });
+                return;
+            }
+            if (
+                this.#onboardingFlow !== undefined &&
+                (url.pathname === "/v0/onboarding/flow" ||
+                    url.pathname === "/v0/onboarding/flow/start")
+            ) {
+                await this.#handleOnboardingFlow(ctx, request, response, url, this.#onboardingFlow);
                 return;
             }
             if (request.method === "GET" && url.pathname === "/v0/onboarding") {
@@ -2852,6 +2864,18 @@ export class ApiModule implements AgentModule {
                                   event.userId,
                               ),
                           );
+                      }),
+                  ]),
+            ...(this.#onboardingFlow === undefined
+                ? []
+                : [
+                      this.#onboardingFlow.onChange((flow, mutationId) => {
+                          this.#mutationIds.exit(() => {
+                              this.#journal.append("onboarding.flow.updated", {
+                                  flow,
+                                  ...(mutationId === undefined ? {} : { mutationId }),
+                              });
+                          });
                       }),
                   ]),
             ...(this.#providerClis === undefined
@@ -9328,6 +9352,36 @@ export class ApiModule implements AgentModule {
         }
     }
 
+    /** `/v0/onboarding/flow`; see "Onboarding in Happy's conversation" in API.md. */
+    async #handleOnboardingFlow(
+        ctx: Context,
+        request: IncomingMessage,
+        response: ServerResponse,
+        url: URL,
+        onboarding: OnboardingModule,
+    ): Promise<void> {
+        if (this.#team.enabled) {
+            throw unsupported("Onboarding in Happy's conversation is unavailable in team mode.");
+        }
+        if (url.pathname === "/v0/onboarding/flow") {
+            if (request.method !== "GET") throw notFound("Route not found.");
+            sendJson(response, 200, { flow: await onboarding.flow(ctx) });
+            return;
+        }
+        if (request.method !== "POST") throw notFound("Route not found.");
+        const body = await optionalBodyAs(
+            request,
+            emptyMutationBodySchema,
+            "onboarding start",
+            2 * 1_024,
+        );
+        const flow = await this.#withMutationId(
+            body.mutationId,
+            async () => await onboarding.start(ctx, body.mutationId),
+        );
+        sendJson(response, 200, { flow });
+    }
+
     /** The routes under `/v0/provider-routes`; see "Provider routes" in API.md. */
     async #handleProviderRoutes(
         ctx: Context,
@@ -9963,10 +10017,23 @@ export class ApiModule implements AgentModule {
             }),
         ]);
         const signedIn = [...new Set(this.#config.models.map((model) => model.providerId))];
-        const installationCompleted = marker !== undefined;
+        // A daemon running onboarding itself also completes it by meeting the requirements.
+        const summary =
+            this.#onboardingFlow === undefined || this.#team.enabled
+                ? undefined
+                : await this.#onboardingFlow.summary(ctx);
+        const installationCompleted =
+            marker !== undefined ||
+            (summary !== undefined && (summary.completedVersion ?? 0) >= summary.onboardingVersion);
         const userCompleted = !this.#team.enabled || profileDone;
         return {
             completed: installationCompleted && userCompleted,
+            ...(summary === undefined
+                ? {}
+                : {
+                      onboardingVersion: summary.onboardingVersion,
+                      completedVersion: summary.completedVersion,
+                  }),
             steps: {
                 providers: { done: signedIn.length > 0, signedIn },
                 profile: { done: profileDone },
@@ -10349,6 +10416,9 @@ export class ApiModule implements AgentModule {
                 ...(this.#providerRoutes === undefined || this.#team.enabled
                     ? {}
                     : { providerRoutes: true }),
+                ...(this.#onboardingFlow === undefined || this.#team.enabled
+                    ? {}
+                    : { onboarding: true }),
                 ...(this.#bridges === undefined ? {} : { workspaceBridges: true }),
                 ...(this.#spaces === undefined || this.#tasks === undefined
                     ? {}
