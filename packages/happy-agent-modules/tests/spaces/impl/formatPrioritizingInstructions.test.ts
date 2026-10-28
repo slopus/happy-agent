@@ -18,7 +18,7 @@ const REVISIONS: readonly { readonly revision: number; readonly sha256: string }
     { revision: 5, sha256: "c87cbae3a88dc77de349217f7b9f8e51d5f1389546dfc46c2909572d0f4476c5" },
     { revision: 6, sha256: "cf9d747ef58f3502258b761c14f9498a86983c28dd2c0b81d08d09df6eb5c759" },
     { revision: 7, sha256: "1294100c86d9f140be3ed18b792b27d21fe71c72f0fe67aa97b3aefd2a5af3e8" },
-    { revision: 8, sha256: "6bab89b75e08becbd3ef4b237ea320a12d9d700ea6341309a0a336c822ada982" },
+    { revision: 8, sha256: "496b1a5d3eb7a90727057e47673140ca78c402608a361621e4f9783223149d59" },
 ];
 
 it("offers the voice icons", () => {
@@ -75,6 +75,8 @@ it("cleans up aggressively, archiving by itself only what explicitly shipped", (
         "Everything else that qualifies is archived only when the person accepts a proposal.",
     );
     expect(text).not.toContain("You never archive anything yourself");
+    // A teammate's mention reaches the sidebar only through the person's own Focus.
+    expect(text).toContain("Add it with join_task only when it concerns what they do or follow");
     // A proposal that sits undecided shrinks rather than grows.
     expect(text).toContain("revise it down to a smaller one");
     // Sessions show only while they wait on the person, bulk-shown ones included.

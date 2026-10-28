@@ -564,7 +564,6 @@ export async function startHappyAgentRuntime(
         registerShutdown("team", async () => team.close());
         const userSettings = new UserSettingsModule(team);
         const taskAutoJoin = new TaskAutoJoinModule(tasks, team, userSettings, durableFunctions);
-        const teammates = new TeammatesModule(tasks, team);
         const surfaces = new SurfacesModule(
             durableFunctions,
             team,
@@ -723,6 +722,7 @@ export async function startHappyAgentRuntime(
             artifacts,
         );
         registerShutdown("spaces", async () => await spaces.close());
+        const teammates = new TeammatesModule(tasks, team, spaces);
         const live = new LiveModule(config, durableFunctions, bots, subtasks, spaces);
         const stories = new StoriesModule(
             team,

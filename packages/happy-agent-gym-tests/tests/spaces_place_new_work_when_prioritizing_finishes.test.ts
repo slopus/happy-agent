@@ -67,8 +67,10 @@ ${node}</nav>`,
             .tools.map((tool) => tool.name)
             .sort();
         expect(tools).toEqual([
+            "archive_shipped_task",
             "edit_sidebar",
             "get_sidebar_styles",
+            "join_task",
             "list_sidebar",
             "propose_sidebar",
             "read_artifact",

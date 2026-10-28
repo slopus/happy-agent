@@ -3067,6 +3067,80 @@ export class SpacesModule implements AgentModule {
         });
     }
 
+    /**
+     * Tell a teammate's Prioritizing that another person's agent thinks a task concerns them.
+     * Their Prioritizing decides whether to add it; nothing joins here. A teammate without Stem
+     * Cells has no Prioritizing to tell, which the caller hears as `false`.
+     */
+    async forwardMention(
+        ctx: Context,
+        input: {
+            readonly userId: string;
+            readonly taskId: string;
+            readonly reason: string;
+            readonly fromName?: string;
+        },
+    ): Promise<boolean> {
+        return await ctx.inTx(async (txCtx) => {
+            const user = this.#team.enabled
+                ? await this.#team.getUser(txCtx, input.userId)
+                : undefined;
+            if (user === undefined || user.authentication === "guest") return false;
+            if (!(await this.#stemCellsEnabled(txCtx, user.id))) return false;
+            const task = await this.#tasks.get(txCtx, input.taskId);
+            if (task === undefined) return false;
+            await this.#ensureOwner(txCtx, user.id);
+            await this.#ensurePrioritizing(txCtx, user.id);
+            if (this.#artifacts !== undefined) await this.#ensureSidebar(txCtx, user.id);
+            const member = await this.#tasks.membership(txCtx, task.id, user.id);
+            const about = [
+                user.role === undefined ? undefined : `The person's role: ${user.role}.`,
+                user.follows === undefined ? undefined : `They follow: ${user.follows}.`,
+            ]
+                .filter((line) => line !== undefined)
+                .join(" ");
+            await this.#queueSidebarBrief(
+                txCtx,
+                user.id,
+                [
+                    `${input.fromName === undefined ? "A teammate's agent" : `${input.fromName}'s agent`} mentioned the person in task ${task.id} ${JSON.stringify(task.name.slice(0, 200))}${member === undefined ? "" : ", which they are already in"}: ${input.reason}`,
+                    about,
+                    "If it concerns what they do or follow, add it with join_task; otherwise leave it.",
+                ]
+                    .filter((line) => line !== "")
+                    .join(" "),
+                { wake: true },
+            );
+            return true;
+        });
+    }
+
+    /**
+     * Join the person to a task and mark it new for them on every device. Only Prioritizing calls
+     * this, after a teammate's agent mentioned them; whether it concerns them is its judgement.
+     */
+    async joinTask(
+        ctx: Context,
+        ownerUserId: SpaceOwnerId,
+        agentId: string,
+        taskId: string,
+        note: string,
+    ): Promise<string> {
+        if (!this.#team.enabled) {
+            throw new SpaceConflictError("Only a team member is added to someone else's task.");
+        }
+        return await ctx.inTx(async (txCtx) => {
+            await this.#requirePrioritizingEnabled(txCtx, ownerUserId);
+            const { joined } = await this.#tasks.loopIn(txCtx, taskId, ownerUserId, {
+                agentId,
+                note,
+            });
+            return joined
+                ? "Joined the person to the task and marked it new for them. Its row arrives as new work; place it."
+                : "The person was already in the task; it is marked new for them again.";
+        });
+    }
+
     /** Set an icon now. Only Prioritizing calls this. */
     async setIcon(
         ctx: Context,

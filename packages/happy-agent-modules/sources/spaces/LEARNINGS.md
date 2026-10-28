@@ -43,6 +43,16 @@ shipped. The judgement is the prompt's: shipped means on main or released, or th
 done, with nothing still waiting; approval, a passing test, or a quiet chat is not shipping. Every
 other archive still goes through a proposal's Archive block.
 
+## A teammate's mention goes through their own Focus (revision 8)
+
+Kirill: "For mentions, we can just forward this message to their focus agent — everyone has their
+own focus agent." Another person's agent never joins someone to its task. `notify_teammate`
+(Teammates) calls `forwardMention`, which queues a waking notice for that member's Prioritizing.
+The notice names the task and the reason, plus the member's role and follows. That Prioritizing
+decides, and `join_task` joins its own person and marks the task new for them. The row then arrives
+as ordinary new work to place. Only a person's own Prioritizing changes their sidebar, and declining
+means doing nothing.
+
 ## Focus cleans up aggressively (revision 5)
 
 Kirill: "10 things on screen - rest is beyond human capacity to understand", subtasks "tend to

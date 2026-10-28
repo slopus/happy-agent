@@ -1,5 +1,6 @@
 import { cuid2Schema, defineAgentTool, type AnyAgentTool } from "@slopus/happy-agent-base";
 import { Type, type Static } from "@sinclair/typebox";
+import { taskLoopInReasonSchema } from "../../tasks/index.js";
 import { SIDEBAR_STYLES } from "../impl/sidebarStyles.js";
 import { spaceIconSlugSchema } from "../Space.js";
 import type { SpacesModule } from "../SpacesModule.js";
@@ -54,6 +55,10 @@ const archiveShippedSchema = Type.Object(
         spaceId: cuid2Schema,
         shipped: Type.String({ minLength: 1, maxLength: 500 }),
     },
+    { additionalProperties: false },
+);
+const joinTaskSchema = Type.Object(
+    { taskId: cuid2Schema, note: taskLoopInReasonSchema },
     { additionalProperties: false },
 );
 const iconSchema = Type.Object(
@@ -128,6 +133,21 @@ export function prioritizingTools(
             shouldReviewInAutoMode: () => false,
             execute: async (ctx, input: Static<typeof archiveShippedSchema>) => ({
                 text: await spaces.archiveShippedTask(ctx, ownerUserId, input.spaceId),
+            }),
+            toLLM,
+        }),
+        defineAgentTool({
+            name: "join_task",
+            defer: false,
+            capabilities: ["Add a task a teammate's agent mentioned the person in to their list."],
+            description:
+                "Join the person to a task a teammate's agent mentioned them in, by its task ID from the notice, and mark it new for them on every device. note says why it concerns them, in one sentence they read. Its row then arrives as new work for you to place.",
+            parameters: joinTaskSchema,
+            returnType: resultSchema,
+            durable: true,
+            shouldReviewInAutoMode: () => false,
+            execute: async (ctx, input: Static<typeof joinTaskSchema>) => ({
+                text: await spaces.joinTask(ctx, ownerUserId, agentId, input.taskId, input.note),
             }),
             toLLM,
         }),
