@@ -225,7 +225,7 @@ describe("Provider routes API", () => {
                     { id: "gpt-6.1-sol", vendor: "OpenAI" },
                 ],
                 overlaps: ["claude"],
-                recommended: false,
+                recommended: true,
                 warning: null,
                 providerId: null,
                 use: {
@@ -328,6 +328,42 @@ describe("Provider routes API", () => {
                 use: null,
             });
             expect(lmStudio.requests.every((request) => request.url === "/v1/models")).toBe(true);
+            expect(gym.errors).toEqual([]);
+        },
+        TEST_TIMEOUT_MS,
+    );
+
+    it(
+        "adds Bedrock for a named AWS profile, read from the AWS config file alone",
+        async () => {
+            const { gym } = await startRoutesGym(async (home) => {
+                await mkdir(join(home, ".aws"), { recursive: true });
+                await writeFile(
+                    join(home, ".aws", "config"),
+                    "[profile work-bedrock]\nregion = us-west-2\n",
+                );
+            });
+            const listed = (await gym.http.ok("GET", "/v0/provider-routes")) as { routes: Route[] };
+            expect(
+                listed.routes.find((route) => route.id === "aws_profile:work-bedrock"),
+            ).toMatchObject({
+                kind: "cloud",
+                status: "ready",
+                use: { providerId: "bedrock_work_bedrock", type: "bedrock", restartRequired: true },
+            });
+            await gym.http.ok(
+                "POST",
+                `/v0/provider-routes/${encodeURIComponent("aws_profile:work-bedrock")}/use`,
+                {},
+            );
+            await gym.restart();
+            const after = (await gym.http.ok("GET", "/v0/provider-routes")) as { routes: Route[] };
+            expect(
+                after.routes.find((route) => route.id === "aws_profile:work-bedrock"),
+            ).toMatchObject({
+                providerId: "bedrock_work_bedrock",
+                use: null,
+            });
             expect(gym.errors).toEqual([]);
         },
         TEST_TIMEOUT_MS,
