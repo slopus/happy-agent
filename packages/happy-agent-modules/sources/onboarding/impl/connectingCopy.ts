@@ -339,3 +339,23 @@ export function useFailedMessage(app: string, reason: string): string {
 export function restartMessage(names: readonly string[]): string {
     return `I set up ${listOf(names)}. Happy restarts to start using ${names.length === 1 ? "it" : "them"}; I'll carry on right after.`;
 }
+
+/** Happy's first answer on the AI the person chose failed: what failed, and the way to fix it. */
+export function verifyFailedMessage(
+    app: string,
+    error: string,
+    cli: ChatProviderId | undefined,
+): string {
+    return [
+        `I couldn't get an answer from ${app}. ${/[.!?]$/u.test(error) ? error : `${error}.`}`,
+        "",
+        menu(
+            ...(cli === undefined
+                ? []
+                : [
+                      `<button data-action="onboarding.connect" data-provider="${cli}" data-mark="${MARK_OF[cli]}" data-emphasis>${chatActionEscape(`Sign in to ${APP_OF[cli]} again`)}</button>`,
+                  ]),
+            `<button data-action="onboarding.connectAnother"${cli === undefined ? " data-emphasis" : ""}>Choose another AI</button>`,
+        ),
+    ].join("\n");
+}

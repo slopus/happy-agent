@@ -1,10 +1,12 @@
 import { createId } from "@paralleldrive/cuid2";
+import { homedir } from "node:os";
 import {
     DEFAULT_AGENT_PERMISSION_MODE,
     withAgentDatabase,
     type AgentKV,
     type AgentModule,
     type AgentModuleHooks,
+    type AgentModuleScope,
     type AgentSystemRef,
 } from "@slopus/happy-agent-base";
 import { messageModeSchema } from "@slopus/happy-agent-client";
@@ -45,9 +47,17 @@ import {
     restartMessage,
     signInOfferMessage,
     useFailedMessage,
+    verifyFailedMessage,
     type OnboardingConnection,
 } from "./impl/connectingCopy.js";
 import { findPressedControl } from "./impl/findPressedControl.js";
+import {
+    ONBOARDING_GUIDE,
+    onboardingEventText,
+    onboardingPlaces,
+    type OnboardingEvent,
+} from "./impl/onboardingGuide.js";
+import { readGitIdentity } from "./impl/readGitIdentity.js";
 import {
     APP_OF,
     PROVIDER_OF,
@@ -74,6 +84,7 @@ import { onboardingMigrations } from "./OnboardingMigrations.js";
 import { OnboardingRequestError } from "./OnboardingRequestError.js";
 import { queryOnboardingState } from "./persistence/queryOnboardingState.js";
 import { upsertOnboardingState } from "./persistence/upsertOnboardingState.js";
+import { saveProfileTool } from "./tools/save_profile.js";
 
 /** Onboarding runs on the daemon's machine for its one person; team members keep their own. */
 const OWNER = "standalone";
@@ -87,6 +98,9 @@ const CLIENT_ACTIONS = new Set([
     "onboarding.subscribe",
     "onboarding.apiKeyOpen",
 ]);
+
+/** The steps in which Happy's model leads, with the guide in its instructions. */
+const GUIDED_STEPS = new Set<OnboardingState["step"]>(["verifying", "guided"]);
 
 /** The steps in which choosing and connecting an AI is answered. */
 const CONNECT_STEPS = new Set<OnboardingState["step"]>([
@@ -245,6 +259,47 @@ export class OnboardingModule implements AgentModule {
         return {
             afterStart: async (startCtx: Context) => {
                 await this.#resumeAfterRestart(startCtx);
+            },
+            instructions: async (hookCtx, scope) =>
+                (await this.#guiding(hookCtx, scope)) ? ONBOARDING_GUIDE : "",
+            tools: async (hookCtx, scope) =>
+                (await this.#guiding(hookCtx, scope)) ? [saveProfileTool(this)] : [],
+            // Happy's first answer on the chosen provider is the real request onboarding requires.
+            afterInferenceTransact: async (hookCtx, scope, inference) => {
+                if (
+                    inference.state === undefined ||
+                    inference.state === "error" ||
+                    inference.state === "cancelled" ||
+                    scope.agent.model === undefined
+                ) {
+                    return;
+                }
+                const state = await queryOnboardingState(hookCtx, OWNER);
+                if (state?.step !== "verifying") return;
+                const happy = await this.#bots.chiefOfStaff(hookCtx);
+                if (happy?.agentId !== scope.agent.id) return;
+                await this.#write(hookCtx, {
+                    ...state,
+                    step: "guided",
+                    verified: {
+                        providerId: scope.agent.provider,
+                        modelId: scope.agent.model,
+                        at: Date.now(),
+                    },
+                });
+                await this.#reconcileCompletion(hookCtx);
+            },
+            // A run that ended while still verifying never answered: Happy says what failed.
+            afterAgentSettled: async (hookCtx, scope, settlement) => {
+                const state = await queryOnboardingState(hookCtx, OWNER);
+                if (state?.step !== "verifying") return;
+                const happy = await this.#bots.chiefOfStaff(hookCtx);
+                if (happy?.agentId !== scope.agent.id) return;
+                const moduleCtx = this.#context();
+                await this.#lock.runInLock(
+                    moduleCtx,
+                    async () => await this.#verifyFailed(moduleCtx, settlement.error),
+                );
             },
         };
     };
@@ -418,6 +473,15 @@ export class OnboardingModule implements AgentModule {
             case "onboarding.codeEntry":
                 if (state.connecting?.provider !== action.provider) throw stepOver();
                 return null;
+            case "onboarding.profileConfirm":
+            case "onboarding.profileChange": {
+                if (!GUIDED_STEPS.has(state.step)) throw stepOver();
+                await this.#durable.invoke(ctx, {
+                    function: STEP_FUNCTION,
+                    arguments: { action: actionArguments(action) },
+                });
+                return null;
+            }
             default:
                 throw new OnboardingRequestError("invalid", "Happy can't run that action yet.");
         }
@@ -550,9 +614,145 @@ export class OnboardingModule implements AgentModule {
                 );
                 return;
             }
+            case "onboarding.profileConfirm": {
+                const prefill = (await this.#state(ctx)).profilePrefill;
+                if (prefill === null) {
+                    await this.#tell(ctx, { kind: "profileChangeAsked" });
+                    return;
+                }
+                try {
+                    await this.#tell(
+                        ctx,
+                        await this.#saveProfile(ctx, prefill.name, prefill.email),
+                    );
+                } catch (error: unknown) {
+                    await say(`I couldn't save that: ${errorText(error)}`);
+                    await this.#tell(ctx, { kind: "profileChangeAsked" });
+                }
+                return;
+            }
+            case "onboarding.profileChange":
+                await this.#tell(ctx, { kind: "profileChangeAsked" });
+                return;
             default:
                 return;
         }
+    }
+
+    /**
+     * Save the name and email the person typed, for Happy's save_profile tool, and answer with
+     * what the profileSaved event carries.
+     */
+    async saveTypedProfile(ctx: Context, name: string, email: string): Promise<string> {
+        const saved = await this.#saveProfile(ctx, name.trim(), email.trim());
+        return `Saved.\n\n${onboardingEventText(saved)}`;
+    }
+
+    async #saveProfile(
+        ctx: Context,
+        name: string,
+        email: string,
+    ): Promise<Extract<OnboardingEvent, { kind: "profileSaved" }>> {
+        const profile = await this.#profile.ensure(ctx);
+        await this.#profile.update(ctx, profile.id, { name, email });
+        const places = onboardingPlaces((await this.#state(ctx)).connections[0]?.cli);
+        return { kind: "profileSaved", name, email, ...(places ? { places } : {}) };
+    }
+
+    /** Whether this is Happy, while its model leads onboarding. */
+    async #guiding(ctx: Context, scope: AgentModuleScope): Promise<boolean> {
+        const state = await queryOnboardingState(ctx, OWNER);
+        if (state === undefined || !GUIDED_STEPS.has(state.step)) return false;
+        return (await this.#bots.chiefOfStaff(ctx))?.agentId === scope.agent.id;
+    }
+
+    /**
+     * Tell Happy's model one thing that happened, as a hidden system message on the model
+     * onboarding chose. It starts Happy's turn when Happy is idle.
+     */
+    async #tell(ctx: Context, event: OnboardingEvent): Promise<void> {
+        const happy = await this.#bots.chiefOfStaff(ctx);
+        const agents = this.#agents;
+        const chosen = (await this.#state(ctx)).model;
+        if (happy === undefined || agents === undefined || chosen === null) return;
+        const model = this.#config.models.find(
+            (candidate) =>
+                candidate.providerId === chosen.providerId && candidate.id === chosen.modelId,
+        );
+        const config = await agents.config(ctx, happy.agentId);
+        const last: unknown = config?.metadata?.["lastMode"];
+        await agents.send(
+            ctx,
+            happy.agentId,
+            { role: "system", content: [{ type: "text", text: onboardingEventText(event) }] },
+            {
+                id: createId(),
+                metadata: { hideFromUser: true, onboarding: { event: event.kind } },
+                provider: chosen.providerId,
+                model: chosen.modelId,
+                ...(model === undefined ? {} : { effort: model.defaultEffort }),
+                permissionMode: Value.Check(messageModeSchema, last)
+                    ? last.permissionMode
+                    : DEFAULT_AGENT_PERMISSION_MODE,
+            },
+        );
+    }
+
+    /** Happy's model starts leading: what was connected, and the name and email Happy found. */
+    async #begin(ctx: Context): Promise<void> {
+        const prefill = await this.#prefill(ctx);
+        const state = await this.#state(ctx);
+        await this.#update(ctx, (current) => ({ ...current, profilePrefill: prefill ?? null }));
+        await this.#tell(ctx, {
+            kind: "begin",
+            platform:
+                process.platform === "darwin"
+                    ? "mac"
+                    : process.platform === "win32"
+                      ? "windows"
+                      : "linux",
+            connected: state.connections.map(({ app, account }) => ({
+                app,
+                ...(account === undefined ? {} : { account }),
+            })),
+            ...(prefill === undefined ? {} : { profile: prefill }),
+        });
+    }
+
+    /** The profile this Happy already holds, or the person's global Git identity. */
+    async #prefill(
+        ctx: Context,
+    ): Promise<{ name: string; email: string; source: "git" | "profile" } | undefined> {
+        const profile = await this.#profile.get(ctx).catch(() => undefined);
+        if (profile?.name && profile.email) {
+            return { name: profile.name, email: profile.email, source: "profile" };
+        }
+        const home = this.#config.processEnvironment["HOME"]?.trim() || homedir();
+        const git = await readGitIdentity(home).catch(() => undefined);
+        return git === undefined ? undefined : { ...git, source: "git" };
+    }
+
+    /**
+     * Happy's first answer on the chosen provider failed: Happy says exactly what failed and
+     * offers the fix, and onboarding goes back to choosing an AI.
+     */
+    async #verifyFailed(ctx: Context, error: string | undefined): Promise<void> {
+        const state = await this.#state(ctx);
+        if (state.step !== "verifying") return;
+        const first = state.connections[0];
+        await this.#update(ctx, (current) => ({
+            ...current,
+            step: "providers",
+            connections: [],
+            model: null,
+        }));
+        await this.#sayer(ctx)(
+            verifyFailedMessage(
+                first?.app ?? "the AI you connected",
+                error ?? "It stopped before it answered.",
+                first?.cli,
+            ),
+        );
     }
 
     /**
@@ -747,6 +947,9 @@ export class OnboardingModule implements AgentModule {
                 awaitingSignIn: false,
                 connections: [...current.connections, ...connections],
             }));
+            for (const connection of connections) {
+                await this.#tell(ctx, { kind: "providerAdded", app: connection.app });
+            }
             return;
         }
         const model = this.#config.models.find((candidate) =>
@@ -766,6 +969,7 @@ export class OnboardingModule implements AgentModule {
         }));
         await this.#useModel(ctx, model.providerId, model.id, model.defaultEffort);
         await say(connectedMessage(connections));
+        await this.#begin(ctx);
     }
 
     async #useFailed(
@@ -1073,6 +1277,7 @@ export class OnboardingModule implements AgentModule {
             awaitingSignIn: false,
             connections: [],
             model: null,
+            profilePrefill: null,
             pending: null,
             version: this.#nextVersion(undefined),
             updatedAt: Date.now(),

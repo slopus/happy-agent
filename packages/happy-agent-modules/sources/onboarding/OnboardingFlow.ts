@@ -90,6 +90,18 @@ export const onboardingStateSchema = Type.Object(
             ),
             Type.Null(),
         ]),
+        /** The name and email Happy showed at begin, which That's me saves. */
+        profilePrefill: Type.Union([
+            Type.Object(
+                {
+                    name: Type.String({ minLength: 1, maxLength: 200 }),
+                    email: Type.String({ minLength: 1, maxLength: 320 }),
+                    source: Type.Union([Type.Literal("git"), Type.Literal("profile")]),
+                },
+                { additionalProperties: false },
+            ),
+            Type.Null(),
+        ]),
         /** Routes chosen that run only after the restart onboarding waits for. */
         pending: Type.Union([
             Type.Object(
