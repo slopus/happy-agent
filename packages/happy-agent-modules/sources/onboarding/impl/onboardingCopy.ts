@@ -1,7 +1,11 @@
 import type { ProviderCli } from "../../providerClis/index.js";
 import type { ProviderRoute } from "../../providerRoutes/index.js";
 import type { ChatProviderChoice, ChatProviderId } from "./chatActions/chatAction.js";
-import { chatActionEscape, type ChatActionMark } from "./chatActions/chatActionBlocks.js";
+import {
+    chatActionEscape,
+    chatActionSegments,
+    type ChatActionMark,
+} from "./chatActions/chatActionBlocks.js";
 
 /**
  * Happy's own words before a provider is connected, in the inline action grammar. The desktop's
@@ -210,4 +214,14 @@ function routeAccountLabel(route: ProviderRoute): string | undefined {
             ? `${named} + ${String(account.count - 1)} more`
             : `${String(account.count)} accounts`;
     return named;
+}
+
+/** How much of a message is prose, typed out before its first action block lays down whole. */
+export function proseLength(text: string): number {
+    let length = 0;
+    for (const segment of chatActionSegments(text)) {
+        if (segment.type === "actions") break;
+        length += segment.text.length;
+    }
+    return text.slice(0, length).trimEnd().length;
 }

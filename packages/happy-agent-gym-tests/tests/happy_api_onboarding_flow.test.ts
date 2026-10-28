@@ -34,6 +34,7 @@ interface Flow {
 
 interface Message {
     id: string;
+    runId?: string;
     role: string;
     content: { type: string; text?: string }[];
     actionChoices?: Record<string, unknown>;
@@ -60,9 +61,11 @@ async function startOnboardingGym(): Promise<AgentGym> {
 
 async function happyMessages(gym: AgentGym, agentId: string): Promise<Message[]> {
     const page = (await gym.http.ok("GET", `/v0/agents/${agentId}/messages`)) as {
-        runs: { messages: Message[] }[];
+        runs: { id: string; messages: Message[] }[];
     };
-    return page.runs.flatMap((run) => run.messages);
+    return page.runs.flatMap((run) =>
+        run.messages.map((message) => ({ ...message, runId: run.id })),
+    );
 }
 
 describe("Onboarding in Happy's conversation", () => {
@@ -115,6 +118,41 @@ describe("Onboarding in Happy's conversation", () => {
             expect(text).toContain("Hi, I'm Happy, your main agent.");
             expect(text).toContain(
                 '<button data-action="onboarding.start" data-emphasis>Start onboarding</button>',
+            );
+
+            // It is stored whole and announced at reading speed: the run starts, its prose
+            // arrives in small deltas, then the whole message with its button, then the run ends.
+            await gym.waitForEvent(
+                (event) =>
+                    event.type === "run.finished" &&
+                    (event.payload as { run: { id: string } }).run.id === opening[0]?.runId,
+                "the opening to finish typing",
+            );
+            const typed = (await gym.events())
+                .map(
+                    (event) =>
+                        event as unknown as { type: string; payload: Record<string, unknown> },
+                )
+                .filter(
+                    (event) =>
+                        (event.payload["message"] as { id?: string } | undefined)?.id ===
+                            opening[0]?.id ||
+                        event.payload["messageId"] === opening[0]?.id ||
+                        (event.payload["run"] as { id?: string } | undefined)?.id ===
+                            opening[0]?.runId,
+                );
+            const kinds = typed.map((event) => event.type);
+            expect(kinds[0]).toBe("run.started");
+            expect(typed[0]?.payload["run"]).toMatchObject({ status: "running" });
+            expect(kinds[1]).toBe("message.created");
+            expect(kinds.filter((kind) => kind === "message.delta").length).toBeGreaterThan(20);
+            expect(kinds.slice(-2)).toEqual(["message.updated", "run.finished"]);
+            const deltas = typed
+                .filter((event) => event.type === "message.delta")
+                .map((event) => event.payload["append"] as string)
+                .join("");
+            expect(deltas).toBe(
+                "Hi, I'm Happy, your main agent. I help you get things done with agents of your own. The sidebar shows an example of what that looks like.",
             );
 
             // Starting again, or after a restart, says nothing more.
@@ -197,7 +235,9 @@ describe("Onboarding in Happy's conversation", () => {
             const updated = await gym.waitForEvent(
                 (event) =>
                     event.type === "message.updated" &&
-                    (event.payload as { message: { id: string } }).message.id === opening.id,
+                    (event.payload as { message: { id: string } }).message.id === opening.id &&
+                    (event.payload as { message: { actionChoices?: unknown } }).message
+                        .actionChoices !== undefined,
                 "the chosen button to be announced",
             );
             expect(updated.payload).toMatchObject({

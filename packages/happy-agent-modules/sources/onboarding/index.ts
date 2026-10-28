@@ -2,6 +2,7 @@ export {
     OnboardingModule,
     type ChatActionPressResult,
     type OnboardingMessageListener,
+    type OnboardingSpeechListener,
 } from "./OnboardingModule.js";
 export { OnboardingRequestError } from "./OnboardingRequestError.js";
 export {

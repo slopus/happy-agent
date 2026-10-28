@@ -620,6 +620,11 @@ interface ApiAdmittedMutation {
  * It is an agent module so it can subscribe before any other module starts emitting. It does not
  * own a listener or a socket: the executable binds the Unix socket and forwards requests here.
  */
+/** Happy's scripted onboarding messages: a moment of thinking, then ~300 words a minute. */
+const PACED_THINK_MS = 650;
+const PACED_FRAME_MS = 66;
+const PACED_FRAME_CHARS = 2;
+
 export class ApiModule implements AgentModule {
     readonly name = "api";
     readonly migrations = [teamDraftMigration];
@@ -763,6 +768,8 @@ export class ApiModule implements AgentModule {
           }
         | undefined;
     #closed = false;
+    /** Paced onboarding messages changed in place while typing, which stop typing. */
+    readonly #pacingSuperseded = new Set<string>();
     #token: string | undefined;
     #preparePromise: Promise<void> | undefined;
 
@@ -2883,7 +2890,22 @@ export class ApiModule implements AgentModule {
                       }),
                       // A press's choice and a connecting message's progress change a message in
                       // place.
+                      this.#onboardingFlow.onSpoken((agentId, message, proseLength) => {
+                          void this.#queueAgentWork(
+                              ctx,
+                              agentId,
+                              undefined,
+                              async () =>
+                                  await this.#announcePaced(ctx, agentId, message, proseLength),
+                          ).catch(() => {
+                              ctx.log.warn("The API could not announce Happy's message.", {
+                                  agentId,
+                              });
+                          });
+                      }),
                       this.#onboardingFlow.onMessageUpdated((agentId, message) => {
+                          // A change in place ends the typing: the next update is the whole.
+                          this.#pacingSuperseded.add(message.recordId);
                           this.#appendForAgent(agentId, "message.updated", {
                               agentId,
                               runId: message.runId ?? null,
@@ -2963,7 +2985,9 @@ export class ApiModule implements AgentModule {
                             message.role === "user" ||
                             message.senderAgentId !== undefined ||
                             message.provider !== undefined ||
-                            message.model !== undefined
+                            message.model !== undefined ||
+                            // Happy's scripted onboarding messages are announced paced instead.
+                            this.#onboardingFlow?.paces(message.recordId) === true
                         ),
                 );
                 if (eligible.length === 0) return;
@@ -9494,6 +9518,85 @@ export class ApiModule implements AgentModule {
         const chain = this.#mutationIds.getStore();
         if (chain !== undefined && !chain.inLoop) return chain.mutationId;
         return agentId === undefined ? undefined : this.#runMutations.mutationId(agentId);
+    }
+
+    /**
+     * Announce one of Happy's scripted onboarding messages at about reading speed, though it is
+     * stored whole: its run starts, Happy thinks for a moment, its prose arrives in small deltas
+     * at about 300 words a minute, then the whole message, action blocks included, and the run's
+     * end. See "Onboarding in Happy's conversation" in API.md.
+     */
+    async #announcePaced(
+        ctx: Context,
+        agentId: string,
+        message: HistoryMessage,
+        proseLength: number,
+    ): Promise<void> {
+        const run =
+            message.runId === undefined
+                ? undefined
+                : await this.#history.run(ctx, agentId, message.runId);
+        const runId = message.runId ?? null;
+        const block = message.blocks[0];
+        const text = block?.type === "text" ? block.text.slice(0, proseLength) : "";
+        this.#pacingSuperseded.delete(message.recordId);
+        try {
+            if (run !== undefined) {
+                const finished = await this.#runResource(ctx, run);
+                this.#appendForAgent(agentId, "run.started", {
+                    agentId,
+                    run: { ...finished, status: "running", reason: null, endedAt: null },
+                    acceptedMessageIds: [],
+                });
+                await this.#pause(PACED_THINK_MS);
+            }
+            if (text.length > 0 && !this.#closed) {
+                this.#appendForAgent(agentId, "message.created", {
+                    agentId,
+                    runId,
+                    message: messageResource({
+                        ...message,
+                        blocks: [{ type: "text", text: "" }],
+                    }),
+                });
+                for (let offset = 0; offset < text.length; offset += PACED_FRAME_CHARS) {
+                    if (this.#closed || this.#pacingSuperseded.has(message.recordId)) break;
+                    this.#appendForAgent(agentId, "message.delta", {
+                        agentId,
+                        runId,
+                        messageId: message.recordId,
+                        blockIndex: 0,
+                        offset,
+                        append: text.slice(offset, offset + PACED_FRAME_CHARS),
+                    });
+                    await this.#pause(PACED_FRAME_MS);
+                }
+            }
+        } finally {
+            this.#pacingSuperseded.delete(message.recordId);
+            // The message as it stands now: a press or a redraw may have changed it meanwhile.
+            const current =
+                (await this.#history.message(ctx, agentId, message.recordId)) ?? message;
+            this.#appendForAgent(agentId, text.length > 0 ? "message.updated" : "message.created", {
+                agentId,
+                runId,
+                message: messageResource(current),
+            });
+            if (run !== undefined) {
+                boundedAdd(this.#announcedTerminalRuns, run.id, MAX_ANNOUNCED_TERMINAL_RUNS);
+                this.#appendForAgent(agentId, "run.finished", {
+                    agentId,
+                    run: await this.#runResource(ctx, run),
+                });
+            }
+        }
+    }
+
+    async #pause(ms: number): Promise<void> {
+        if (this.#closed) return;
+        await new Promise<void>((resolve) => {
+            setTimeout(resolve, ms).unref();
+        });
     }
 
     #appendForAgent(agentId: string, type: string, payload: unknown, occurredAt?: number): void {

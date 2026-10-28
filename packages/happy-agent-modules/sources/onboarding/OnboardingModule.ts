@@ -66,6 +66,7 @@ import {
     listOf,
     machineWord,
     openingMessage,
+    proseLength,
     providerMenu,
     providersTable,
     routeChoosable,
@@ -158,6 +159,19 @@ export interface ChatActionPressResult {
 export type OnboardingMessageListener = (agentId: string, message: HistoryMessage) => void;
 
 /**
+ * Called after one of Happy's scripted messages committed, for the API to announce at reading
+ * speed: `proseLength` is how much of its text is typed out before its action blocks.
+ */
+export type OnboardingSpeechListener = (
+    agentId: string,
+    message: HistoryMessage,
+    proseLength: number,
+) => void;
+
+/** How many scripted message IDs are remembered as paced; far more than are ever in flight. */
+const MAX_PACED = 256;
+
+/**
  * Onboarding happens in Happy's own conversation, and this module runs it: the stored state and
  * its versioned completion, the messages Happy writes before a provider is connected, the presses
  * on their inline actions, and the work each press asks for. Clients only draw the conversation.
@@ -182,6 +196,9 @@ export class OnboardingModule implements AgentModule {
     readonly #providerScan: ProviderScanModule;
     readonly #listeners = new Set<OnboardingListener>();
     readonly #messageListeners = new Set<OnboardingMessageListener>();
+    readonly #speechListeners = new Set<OnboardingSpeechListener>();
+    /** Scripted messages the API announces at reading speed rather than at once. */
+    readonly #paced = new Set<string>();
     /** Presses and the work they start read and change the state one at a time. */
     readonly #lock: AsyncLock = asyncLock({ reentry: "allow" });
     #versions = createUuidV7Factory();
@@ -318,6 +335,19 @@ export class OnboardingModule implements AgentModule {
         return () => {
             this.#messageListeners.delete(listener);
         };
+    }
+
+    /** Hear every scripted message Happy says, after it committed, to announce it paced. */
+    onSpoken(listener: OnboardingSpeechListener): () => void {
+        this.#speechListeners.add(listener);
+        return () => {
+            this.#speechListeners.delete(listener);
+        };
+    }
+
+    /** Whether a message is one of Happy's scripted ones, which `onSpoken` announces instead. */
+    paces(recordId: string): boolean {
+        return this.#paced.has(recordId);
     }
 
     /** The fast path: the stored record alone, with no provider, network, or model work. */
@@ -1129,6 +1159,11 @@ export class OnboardingModule implements AgentModule {
             if ((await this.#history.message(txCtx, happy.agentId, messageId)) !== undefined)
                 return;
             const now = Date.now();
+            // Marked before it is recorded, so the API never announces it whole.
+            this.#paced.add(messageId);
+            if (this.#paced.size > MAX_PACED) {
+                this.#paced.delete(this.#paced.values().next().value!);
+            }
             await this.#history.beginMaintenanceRun(txCtx, happy.agentId, runId, now);
             await this.#history.record(txCtx, happy.agentId, {
                 role: "assistant",
@@ -1138,6 +1173,18 @@ export class OnboardingModule implements AgentModule {
                 at: now,
             });
             await this.#history.finishMaintenanceRun(txCtx, happy.agentId, runId, "completed", now);
+            const message = await this.#history.message(txCtx, happy.agentId, messageId);
+            if (message === undefined) return;
+            const prose = proseLength(text);
+            afterCommit(txCtx, () => {
+                for (const listener of this.#speechListeners) {
+                    try {
+                        listener(happy.agentId, structuredClone(message), prose);
+                    } catch (error: unknown) {
+                        txCtx.log.warn("An onboarding speech listener failed.", {}, error);
+                    }
+                }
+            });
         });
     }
 
