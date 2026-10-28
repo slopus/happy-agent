@@ -41,7 +41,7 @@ function formatOne(exportedBot: ExportedBotStatus): string {
     }
     lines.push(
         exportedBot.unknownSenders === "ask"
-            ? "People not on the allowlist are asked about: their first message is held while the Chief of Staff asks whether to let them in."
+            ? "People not on the allowlist are asked about: their first message is held while Happy asks whether to let them in."
             : "People not on the allowlist are ignored.",
     );
     for (const request of exportedBot.accessRequests) {

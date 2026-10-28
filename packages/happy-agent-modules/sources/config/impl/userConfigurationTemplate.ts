@@ -231,7 +231,7 @@ export const HAPPY_TOML_TEMPLATE = `# Happy configuration for Happy Agent.
 # [gemini]
 # api_key = "your-gemini-api-key"
 
-# The Chief of Staff exports bots to Telegram and keeps each export in the database. Set
+# Happy exports bots to Telegram and keeps each export in the database. Set
 # api_url only to send every exported bot's requests to a self-hosted Bot API server.
 # [telegram]
 # api_url = "https://api.telegram.org"

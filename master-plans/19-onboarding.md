@@ -2,98 +2,99 @@
 
 ## Big picture
 
-Happy must be able to determine whether the local Rig is ready to use and, when
-it is not, show the one onboarding action required next. Rig owns the durable
-onboarding state, and `rig-connect` exposes the resulting status to the desktop
-application.
+Happy must be able to tell whether the local Rig is ready to use and, when it is
+not, carry out the one onboarding action required next — from inside Happy's
+chat, driven by the person clicking inline actions, not a separate wizard. Rig
+owns the durable onboarding state and the work that completes each step;
+`rig-connect` exposes the status and the actions to the desktop application.
 
-Onboarding proves that each requirement worked once. It is not continuous
-health monitoring. In particular, provider inference is verified with a real
-request during onboarding and the success is remembered. If that provider
-breaks later, Rig remains onboarded.
+Onboarding proves each requirement worked once. It is not continuous health
+monitoring. Provider inference is verified with a real request during
+onboarding and the success is remembered; if a provider breaks later, Rig stays
+onboarded and the person asks Happy to fix it.
 
 The required profile is the same human profile used for P2P message identity,
-not a separate account or Rig login. It has a stable identity, a required name
-and email, and an optional avatar.
+with a stable identity, a required name and email, and an optional avatar.
+
+## Getting a provider ready without a terminal
+
+Onboarding must be able to make a provider usable on a fresh machine without the
+person opening a terminal, on macOS and on Windows. Rig can:
+
+- Discover an assistant's CLI wherever it already lives, including inside the
+  vendor's desktop application, and reuse an existing sign-in.
+- Install a missing CLI from the vendor's official source. Before installing,
+  Rig exposes exactly what it will download and from where, and the exact
+  command, so the application can disclose it and offer to let the person do it
+  themselves instead.
+- Start the vendor's sign-in and report progress, including the URL to open for
+  a browser sign-in, and detect success or failure. Where a CLI needs a
+  terminal, Rig drives it itself rather than asking the person to.
+
+These are additive, backward-compatible API capabilities (protocol 22 onward):
+installing a provider CLI, and starting a provider sign-in, each streaming
+progress and, for sign-in, the URL and the final result. The supported
+assistants are Claude Code, Codex, Grok, and Antigravity (Gemini).
 
 ## Status surface
 
-There are two related paths.
+Two related paths, as before.
 
 The fast path answers whether onboarding is complete for the current onboarding
-version. After the desktop application has connected to the local daemon, this
-path reads only durable local state. It performs no provider requests and no
-other network work. When the current version is marked complete, the application
-can become ready immediately.
+version, reading only durable local state once the application has connected to
+the daemon — no provider or network work.
 
 When the fast path is not complete, the detailed path returns one current
-onboarding state as an enum with the data needed to render and complete that
-step. The states cover:
-
-- Rig is unavailable, including whether it is not installed, not running, or
-  cannot be connected to.
-- Happy and Rig are incompatible, including which one must be upgraded.
-- No provider is configured.
-- Providers are being verified, including visible progress and status for the
-  providers being tried.
-- A profile is required.
-- Onboarding is complete.
-
-The connection and compatibility states exist before daemon-owned onboarding
-state can be read. Once a compatible connection exists, Rig is authoritative
-for every remaining state.
+onboarding state with the data needed to render and complete it. The states
+cover: Rig unavailable (not installed, not running, or unreachable); Happy and
+Rig incompatible (which must upgrade); no provider configured, with the choices
+and, per provider, whether its CLI is present, installable, or already signed
+in; providers being verified, with visible progress; a required profile; and
+complete. The connection and compatibility states exist before daemon-owned
+state can be read; once a compatible connection exists, Rig is authoritative.
 
 ## Ordered flow
 
-First, determine whether Rig is installed, running, and reachable. If it is not,
-return the appropriate availability state instead of attempting later checks.
-
-Second, establish a compatible connection. If the Rig and Happy versions do not
-work together, return a version-mismatch state that says whether Rig or Happy
-must be upgraded.
-
-Third, check whether any providers are configured. If none are available,
-onboarding stops at provider setup.
-
-Fourth, verify provider inference with a real request and show progress while
-the configured providers are being tried. Onboarding may continue as soon as at
-least one provider has successfully performed inference. That successful
-verification is persisted and is not repeated during ordinary startup.
-
-Fifth, require the person to complete their profile with a name and email. An
-avatar may be added but is optional. The profile step cannot be skipped.
-
-Finally, mark onboarding complete for the current onboarding version.
+1. Determine whether Rig is installed, running, and reachable; if not, return the
+   availability state. Rig ships inside the desktop download, so first run does
+   not require a separate install; it keeps updating itself afterwards.
+2. Establish a compatible connection, returning a version-mismatch state that
+   says which side must upgrade.
+3. Check whether any provider is configured. If none, onboarding stops at
+   provider setup, where the person chooses an assistant and Rig installs the
+   CLI and starts sign-in as above.
+4. Verify provider inference with a real request, showing progress. Onboarding
+   continues as soon as one provider verifies; the success is persisted and not
+   repeated on ordinary startup.
+5. Require a profile with a name and email; an avatar is optional. This step
+   cannot be skipped.
+6. Mark onboarding complete for the current version.
 
 ## State and versioning
 
 Rig persists the facts that cannot be derived cheaply, including successful
-provider verification. Profile completion is derived from the stored profile.
-A versioned completion marker provides the fast startup path.
-
-The onboarding process has a version. Adding or changing a required onboarding
-step advances that version and makes the previous completion marker insufficient.
-On the next application start, the detailed status path evaluates the current
-requirements and presents any newly missing screens. Once every requirement for
-the new version is satisfied, Rig records that version as complete.
-
-A completed marker for the current version means the application skips the
-entire detailed onboarding flow after connecting to the local daemon. No
-provider or internet check belongs on that startup path.
+provider verification and which install or sign-in steps completed. Profile
+completion is derived from the stored profile. A versioned completion marker
+gives the fast path. Adding or changing a required step advances the version and
+returns an existing installation to the flow only for the requirements not yet
+satisfied.
 
 ## What done looks like
 
 - Happy can show whether Rig must be installed, started, connected, or upgraded,
-  and a version mismatch identifies which application needs the upgrade.
-- After connection, one detailed status identifies exactly one next onboarding
-  step and carries the data needed to render it.
-- Provider verification shows progress and proves that at least one configured
-  provider can perform real inference.
-- A successful provider verification is durable; later provider failure does
-  not reopen onboarding.
-- Onboarding cannot complete without a stored profile containing a name and
-  email; the avatar remains optional.
-- A completed onboarding version is read locally and quickly, without internet
-  access or repeated inference.
-- A future onboarding-version change returns an existing installation to the
-  flow only for requirements that are not yet satisfied.
+  and a mismatch says which side upgrades.
+- On a fresh macOS or Windows machine with no CLIs, onboarding can install the
+  chosen assistant's CLI and complete its sign-in without the person opening a
+  terminal, after disclosing what is downloaded and from where, and offering the
+  manual path.
+- An assistant's CLI or sign-in that already exists, including inside its
+  desktop app, is discovered and reused.
+- After connection, one detailed status names exactly one next step and carries
+  the data to render it.
+- Provider verification shows progress and proves one configured provider can do
+  real inference; the success is durable and later failure does not reopen
+  onboarding.
+- Onboarding cannot complete without a stored name and email; the avatar is
+  optional.
+- A completed version is read locally and quickly, with no internet or repeated
+  inference, and a future version change returns only unmet requirements.

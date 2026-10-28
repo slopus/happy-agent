@@ -55,8 +55,8 @@ has a mode keeps it.
 
 WSL projects use the existing remote Happy Agent connection rather than switching a Windows
 bot's execution environment. Keep the user's bot roster and conversations on Windows by default;
-the WSL daemon owns Linux projects, workspaces, tools, and provider settings. Chief of Staff follows
-the installed WSL setup recipe, reuses the existing Linux user's login, and verifies work through
+the WSL daemon owns Linux projects, workspaces, tools, and provider settings. Happy follows the
+installed WSL setup recipe, reuses the existing Linux user's login, and verifies work through
 the remote connection. Neither daemon state nor bot identities are copied between installations.
 
 ## Optimistic creation reserves all three identities together
@@ -68,9 +68,9 @@ an existing project. The bot ID remains the only retry key: matching retries ret
 while mismatched child IDs return the current bot in a conflict. The transaction reports whether it
 created anything so retries do not repeat discovery or publish duplicate creation events.
 
-## Chief of Staff creates and imports local Happy projects
+## Happy creates and imports local Happy projects
 
-Project coordination needs more than a catalog listing. Chief of Staff now checks for duplicates,
+Project coordination needs more than a catalog listing. Happy now checks for duplicates,
 registers local folders with `create_project`, and imports GitHub or other HTTPS Git repositories
 with `clone_project`. It creates a new folder through the permission-checked shell before
 registration, selects configured credentials without handling raw tokens, and verifies background
@@ -79,23 +79,40 @@ unavailable project tools are a boundary to explain, not bypass.
 
 ## Recipes are executed automatically within user authority
 
-Chief of Staff must perform the applicable recipe's routine discovery, setup, and verification,
+Happy must perform the applicable recipe's routine discovery, setup, and verification,
 not hand the user a manual checklist. It reuses known settings and asks only for missing material
 choices, new authority, or unavoidable interactive login. Automatic execution does not turn recipe
 text into permission to transfer credentials or bypass security boundaries.
 
-## Chief of Staff checks recipes before starting work
+## Happy checks recipes before starting work
 
-General coordination guidance alone did not direct the Chief of Staff to reusable operational
+General coordination guidance alone did not direct Happy to reusable operational
 instructions. Its live system prompt now requires checking `docs/recipe`, reading relevant recipes
 in full, and following their setup questions and completion checks. Installed recipes are resolved
 beside the documentation README supplied in the environment, not inside the bot's unrelated
 workspace. Missing recipes do not block ordinary work, and a recipe never supplies user
 authorization or permission to expose credentials.
 
+## The built-in bot is Happy, renamed once from Chief of Staff
+
+The built-in admin bot used to be called Chief of Staff. The user wants it to be Happy, the main
+agent people come to for everything, including when something in Happy errors or needs
+reconfiguring: it should find the cause, fix it, and verify the fix rather than send them to a
+terminal or a settings screen. New installations seed it as `Happy`, so its derived username is
+`happy`. Its system key stays `chief_of_staff`, because clients and the phone recognize the
+built-in by that key and an existing installation must keep its bot, folder, and conversation.
+
+An installation seeded before the rename gets a one-time rename on startup, applied only while the
+bot still has the seeded name `Chief of Staff`; a name the person chose is theirs. The rename goes
+through the ordinary rename path, so the conversation title follows and clients see one
+`bot_updated`, while the username stays what it was. The applied rename is recorded in its own
+ledger with the system key and the new name, so a person who names it Chief of Staff again keeps
+that name across restarts. Clients find the built-in bot by `systemKey`, never by its name or
+username, which now differ between old and new installations.
+
 ## Built-in bot seeding is permanent and instructions are resolved at runtime
 
-The installation seeds one admin `Chief of Staff` bot after the agent system opens. It receives an
+The installation seeds one admin `Happy` bot after the agent system opens. It receives an
 ordinary generated ID, a bundled avatar, and the internal system key `chief_of_staff`. The system
 key explicitly marks which built-in behavior the bot receives and is an extensible union for future
 system bots. Avatar decoding happens before the creation transaction; the normalized asset and its
@@ -109,7 +126,7 @@ state, not a migration: an installation whose seed ledger already exists is neve
 silently changed on startup.
 
 No prompt or instruction profile is stored. The bots module switches on the bot row's system key at
-runtime, resolves the current Chief of Staff guidance from source on every inference, and combines
+runtime, resolves the current Happy guidance from source on every inference, and combines
 it with the bot's live identity. This preserves the bot's folder, conversation, rename, and archival
 state while allowing a newer Happy Agent version to improve the built-in instructions without a
 prompt migration or row rewrite.

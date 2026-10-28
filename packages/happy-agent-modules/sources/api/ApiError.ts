@@ -40,6 +40,10 @@ export const apiErrorCodeSchema = Type.Union([
     Type.Literal("port_unavailable"),
     Type.Literal("unsupported_protocol"),
     Type.Literal("exported_bot_unavailable"),
+    Type.Literal("already_installed"),
+    Type.Literal("busy"),
+    Type.Literal("no_installer"),
+    Type.Literal("not_installed"),
 ]);
 
 export type ApiErrorCode = Static<typeof apiErrorCodeSchema>;

@@ -8,9 +8,9 @@ service. Telegram is built in and has [its own recipe](exported-bot-telegram.md)
 [bridge protocol](../exported-bot-protocol.md) is the bridge's specification, and
 [Configuration](../configuration.md#exported-bots) is the reference.
 
-## A separate bot, not the Chief of Staff
+## A separate bot, not Happy
 
-Export a bot of its own, made for the job, and never the Chief of Staff, which is you. Everyone
+Export a bot of its own, made for the job, and never Happy, which is you. Everyone
 who talks to the bot through the bridge gets a conversation that works in that bot's folder with
 what it can reach, so the bot they reach should have only the folder and purpose the user chose
 for them.

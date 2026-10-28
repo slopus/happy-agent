@@ -19,7 +19,7 @@ GROK      Plan                 Week    Month  Resets
 Current CLI  SuperGrok Heavy  80% ◕    55% ◑  Nov 9
 ──────────────────────────────────────────────
 Release 0.42 preview                       5s
-Chief of Staff                          1m 44s
+Happy                                   1m 44s
 Fix the login redirect loop            14m 3s
 Draft the launch post                  22m 9s
 Investigate the flaky gym test          1h 5m

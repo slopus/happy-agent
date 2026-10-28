@@ -21,17 +21,21 @@ conversation title follows, automatic naming ends, and the username stays. Both 
 `bot_updated` and advance the version. `list_bots` shows whether each bot has an avatar and accepts
 optional `hasAvatar` to filter the roster (`false` finds bots without pictures).
 
-On first startup, the module creates one admin bot named `Chief of Staff` with an ordinary generated
-ID, the bundled Chief of Staff avatar, and the internal system key `chief_of_staff`. The bot row,
+On first startup, the module creates one admin bot named `Happy` with an ordinary generated ID,
+the bundled avatar, and the internal system key `chief_of_staff`. The bot row,
 normalized avatar asset, agent, workspace, folder, and creation event are one initial creation, so
-clients never observe a newly seeded Chief of Staff without its picture. A separate seed ledger
+clients never observe a newly seeded Happy bot without its picture. A separate seed ledger
 records that this system bot was created and deliberately survives deletion, so neither archival
 nor deletion causes startup to replace it or backfill a picture. No instruction is stored in the
 database. The bots module uses the system key to inject the current source guidance on every
 inference, so an upgrade updates its built-in instructions while preserving its identity and
 conversation. Future built-in bots receive their own system keys and seed-ledger entries through
 the same path.
-`chiefOfStaff(ctx)` returns the Chief of Staff by that key, whatever it is named now, so other
+The bot was named `Chief of Staff` before it became Happy, and the system key keeps that history.
+When the seed ledger already exists, startup renames the bot to `Happy` once, only while it still
+has the old seeded name, through the ordinary rename path. A rename ledger records that it ran, so
+a person's later choice of name, including `Chief of Staff`, is never overwritten.
+`chiefOfStaff(ctx)` returns the Happy bot by that key, whatever it is named now, so other
 modules can address it; the exported bots module sends it access requests.
 
 A bot's one agent is born with its conversation title set to the bot's display name, and renaming
@@ -94,5 +98,5 @@ report to.
 ## Runners
 
 While runners are configured, a new bot's folder is created on the default runner, recorded as the
-bot's `runnerId`, and its agent runs there. The Chief of Staff waits for the default runner to
+bot's `runnerId`, and its agent runs there. The Happy bot waits for the default runner to
 connect for the first time before it is seeded, because its folder has nowhere else to go.

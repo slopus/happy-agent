@@ -462,7 +462,7 @@ Wait up to 90 seconds for the remote's private `.happy/agent/tailcat/address` an
 files. Both must be present and the service must remain healthy. Securely transfer the address,
 port, and daemon token to the primary machine. Never copy the Tailcat private identity key.
 
-On the primary, have the active Chief of Staff/admin bot register these exact values with
+On the primary, have the active Happy/admin bot register these exact values with
 `set_remote_connection`. Its input shape is:
 
 ```json

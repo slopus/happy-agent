@@ -1,6 +1,6 @@
 # Set up WSL projects from Windows
 
-Use this recipe when a Windows 11 user wants Linux projects in Happy Desktop. Chief of Staff
+Use this recipe when a Windows 11 user wants Linux projects in Happy Desktop. Happy
 performs the setup and verification within the user's authorization, reusing existing choices.
 Ask only for a missing material choice, new authority, or an unavoidable login or restart.
 
@@ -19,13 +19,13 @@ server account. Consult the installed `API.md` for exact request shapes.
 - The Desktop uses its existing connection view to access the WSL Agent. Creating a project while
   connected to WSL registers a Linux path on that Agent; Windows projects stay on Windows.
 - Never share `.happy`, databases, bot identities, Tailcat private keys, or `runtime.toml` between
-  Windows and Linux. A fresh remote seeds its own administrative Chief of Staff; that is a separate
+  Windows and Linux. A fresh remote seeds its own administrative Happy bot; that is a separate
   bot, not a copy of the user's Windows bot. Leave it unused for ordinary work unless requested.
 
 The control flow is:
 
 ```text
-Windows Chief of Staff -- wsl.exe bootstrap --> Linux Happy Agent
+Windows Happy bot -- wsl.exe bootstrap --> Linux Happy Agent
 Windows Happy Desktop --> Windows Happy Agent
                          --> existing authenticated Tailcat connection
                              --> Linux Happy Agent --> Linux project and tools
@@ -73,7 +73,7 @@ Linux user, never root. Install Git and the actual project's required tools insi
 
 Reuse an existing Linux Happy home and preserve its identity. With defaults, private state lives
 at `~/.happy`, global configuration at `~/happy/config/happy.toml`, and installed instructions at
-`~/.happy/docs`. Set the remote profile from the Windows Chief of Staff's `get_local_profile`
+`~/.happy/docs`. Set the remote profile from the Windows Happy bot's `get_local_profile`
 result, using the remote recipe's config bootstrap. Reuse known Git name/email separately.
 Ensure the Linux user owns the public `~/happy` parent as well as its `config` directory; creating
 only the nested directory as root can leave Happy unable to create its bot and project folders.

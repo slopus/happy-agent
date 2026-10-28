@@ -5,6 +5,7 @@ import type { Context } from "@steve.kite/stdlib";
 export const BOTS_TABLE = "happy_agent_module_bots";
 export const BOT_AVATARS_TABLE = "happy_agent_module_bot_avatars";
 export const BOT_SYSTEM_SEEDS_TABLE = "happy_agent_module_bot_system_seeds";
+export const BOT_SYSTEM_RENAMES_TABLE = "happy_agent_module_bot_system_renames";
 
 export const botMigrations = [
     [
@@ -124,6 +125,20 @@ export const botMigrations = [
             await agentDatabaseRun(
                 database,
                 sql`ALTER TABLE ${sql.raw(BOTS_TABLE)} ADD COLUMN runner_id TEXT`,
+            );
+        },
+    ],
+    [
+        "007-bot-system-renames",
+        /** Built-in renames applied once, so a person's later choice of name is never undone. */
+        async (_ctx: Context, database: AgentDatabase): Promise<void> => {
+            await agentDatabaseRun(
+                database,
+                sql`CREATE TABLE ${sql.raw(BOT_SYSTEM_RENAMES_TABLE)} (
+                    system_key TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    PRIMARY KEY (system_key, name)
+                )`,
             );
         },
     ],

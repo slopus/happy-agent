@@ -177,7 +177,7 @@ const MAX_TYPING_MS = 60 * 60_000;
  */
 export const ACCESS_REQUEST_NOTICE =
     "Thanks for your message. This bot only talks to people its owner has approved, so your request was sent to them. If they approve it, the bot will answer the message you just sent.";
-/** What the Chief of Staff is told about the people who ask to talk to any exported bot. */
+/** What Happy is told about the people who ask to talk to any exported bot. */
 const ACCESS_REQUEST_INSTRUCTIONS = [
     "# Exported bot access requests",
     "",
@@ -1206,7 +1206,7 @@ export class ExportedBotsModule implements AgentModule {
             },
             MAX_DENIED_SENDERS,
         );
-        // Every request goes to the Chief of Staff, whichever bot it is for. Without an active
+        // Every request goes to Happy, whichever bot it is for. Without an active
         // one the request is still kept, for an admin bot to find in the export's status.
         const chief = await this.#bots.chiefOfStaff(ctx);
         if (chief?.status === "active") {

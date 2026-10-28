@@ -7,7 +7,7 @@ working under it — its subtasks, their collaborators, its exported-bot convers
 opens — and the modules that own each capability enforce them. They are not instructions the model
 can talk its way around.
 
-Only an active admin bot, such as the Chief of Staff, reads and changes bot settings, through
+Only an active admin bot, such as Happy, reads and changes bot settings, through
 `get_bot_settings` and `update_bot_settings`. There is no HTTP route for them yet. Execute the
 recipe end to end, as the [recipe rules](README.md) describe; ask only for choices that are still
 missing.

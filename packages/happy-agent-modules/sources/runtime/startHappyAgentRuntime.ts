@@ -73,6 +73,7 @@ import { ProfileModule } from "../profile/index.js";
 import { ProjectsModule } from "../projects/index.js";
 import { ProviderUsageModule } from "../providerUsage/index.js";
 import { ProviderScanModule } from "../providerScan/index.js";
+import { ProviderClisModule } from "../providerClis/index.js";
 import { SchedulingModule } from "../scheduling/index.js";
 import { SearchModule } from "../search/index.js";
 import { SecretsModule } from "../secrets/index.js";
@@ -194,6 +195,7 @@ export interface HappyAgentRuntimeModules {
     readonly projects: ProjectsModule;
     readonly providerUsage: ProviderUsageModule;
     readonly providerScan: ProviderScanModule;
+    readonly providerClis: ProviderClisModule;
     readonly scheduling: SchedulingModule;
     readonly search: SearchModule;
     readonly secrets: SecretsModule;
@@ -458,6 +460,7 @@ export async function startHappyAgentRuntime(
                       chatMedia,
                   );
         const durableFunctions = new DurableFunctionsModule();
+        const providerClis = new ProviderClisModule(config, providerScan, durableFunctions);
         const globalSkills = new GlobalSkillsModule(config, durableFunctions);
         const compute = createComputeModules(computeModule, globalSkills, config);
         registerShutdown("global-skills", async () => await globalSkills.close());
@@ -773,6 +776,7 @@ export async function startHappyAgentRuntime(
             spaces,
             stories,
             stickers,
+            providerClis,
         );
         api = apiModule;
 
@@ -819,6 +823,7 @@ export async function startHappyAgentRuntime(
             profile,
             projects,
             providerScan,
+            providerClis,
             providerUsage,
             scheduling,
             search,
@@ -854,6 +859,7 @@ export async function startHappyAgentRuntime(
             config,
             runners,
             providerScan,
+            providerClis,
             observation,
             systemPrompt,
             toolDiscovery,
