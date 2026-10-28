@@ -78,3 +78,19 @@ version. Reads expose that same version so delayed snapshots and duplicate event
 newer client state. Only public changes advance the version; rotating private credentials or
 transport addresses does not. Reconciliation restores the projection from machine configuration
 after interruption or offline edits, and notifications are published only after the snapshot commits.
+
+## Slow proxied requests are logged with their token wait
+
+Neither the daemon nor the desktop recorded proxy latency, so a slow Happy Core sidebar left no
+timing trace. A proxied request slower than one second now logs `connections:forward:slow` at info
+level with the connection ID, method, path with query names but no values, status, total, response
+header, and token-wait milliseconds. Event streams, upgrades, and tunnels stay open for their
+lifetime, so only their wait for response headers counts. Headers, credentials, and query values
+are never logged.
+
+## Enabled team remotes keep their tokens fresh
+
+Connections tells Cloud which organizations its enabled team remotes mint for whenever the roster
+is reconciled, changed, or closed. Cloud refreshes those cached tokens ahead of expiry so the first
+request after an idle stretch does not wait on WorkOS. Team deployments forward the caller's token
+and name none.

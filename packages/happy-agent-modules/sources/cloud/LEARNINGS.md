@@ -31,8 +31,8 @@
 ## Rotation and verification
 
 - On-demand refresh alone allowed an otherwise connected installation to reach WorkOS's inactivity
-  timeout. Cloud now owns one durable hourly refresh for the main session, never organization-scoped
-  token warming. It uses the same credential lock, saves rotated credentials before verification,
+  timeout. Cloud now owns one durable hourly refresh for the main session, which never enumerates
+  organizations or fills their token caches. It uses the same credential lock, saves rotated credentials before verification,
   and discards the access token. The next deadline is checkpointed before the external attempt so
   restart cannot repeatedly run an overdue refresh. Sign-out and credential rejection cancel the
   schedule in their transaction; rollback preserves it. This only prevents inactivity while the
@@ -76,7 +76,21 @@
 - A valid cached token never waits for the credential lock, even while another organization is
   refreshing. A request near expiry starts a background refresh and immediately uses the existing
   token. Only a missing or expired token waits. Background failure preserves the still-valid token
-  and briefly backs off further background attempts; expiry never permits serving a stale token.
+  and backs off further background attempts (5 s doubling to 30 s); expiry never permits serving a
+  stale token.
+- Refreshing ahead only when a request happened to arrive meant that after an idle stretch the
+  first team request waited on WorkOS refresh and Cloud verification (15 s timeouts each), and
+  the desktop's sidebar reads queued behind it. Connections now names the organizations of its
+  enabled team remotes; Cloud arms a timer at each cached token's refresh deadline and retries with
+  the bounded backoff while that token is valid. It refreshes only tokens a request already
+  minted, never warms an organization on its own, and drops the timer with the cache entry on
+  removal, sign-out, account change, eviction, or shutdown.
+- Verification used to run inside the credential lock, so one slow Happy Cloud `/v0/hello` held
+  every other organization's rotation. Organization minting now releases the lock once the rotated
+  refresh token is durably stored and verifies afterwards; the lock still serializes the WorkOS
+  refresh and its persistence because refresh tokens are single-use. A changed user from that
+  refresh is published under the lock only while its refresh token is still the stored one, so a
+  superseded rotation never writes back a consumed credential.
 - Cache only after durable refresh rotation, Cloud verification, and matching user, organization,
   client, issuer, and current JWT lifetime checks. Keep access tokens out of durable storage and
   public snapshots. Sign-out, account changes, and credential rejection invalidate the cache only

@@ -7,8 +7,11 @@ import {
 } from "node:http";
 import { connect, type Socket } from "node:net";
 import { once } from "node:events";
-import { afterEach, describe, expect, it } from "vitest";
-import { RemoteProxyConnection } from "../../sources/connections/impl/RemoteProxyConnection.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+    RemoteProxyConnection,
+    type RemoteProxyExchange,
+} from "../../sources/connections/impl/RemoteProxyConnection.js";
 
 const cleanup: (() => Promise<void> | void)[] = [];
 afterEach(async () => {
@@ -41,11 +44,13 @@ async function fixture(handler: (request: IncomingMessage, response: ServerRespo
         return connect({ host: "127.0.0.1", port });
     });
     cleanup.push(() => pool.close());
+    const exchanges: RemoteProxyExchange[] = [];
     const gateway = createServer((req, res) => {
         // The API applies this default before handing requests to the proxy.
         res.setHeader("cache-control", "no-store");
         void pool
             .forward(req, res, req.url!, async () => "remote-token")
+            .then((exchange) => exchanges.push(exchange))
             .catch((error) => {
                 res.writeHead(error.status ?? 500, { "content-type": "application/json" });
                 res.end(JSON.stringify({ code: error.code }));
@@ -65,6 +70,7 @@ async function fixture(handler: (request: IncomingMessage, response: ServerRespo
         url: `http://127.0.0.1:${gatewayPort}`,
         opened: () => opened,
         gatewayPort,
+        exchanges,
     };
 }
 
@@ -304,6 +310,11 @@ describe("remote HTTP proxy", () => {
         abort.abort();
         await closed;
         await reader.cancel().catch(() => undefined);
+        await vi.waitFor(() =>
+            expect(f.exchanges).toEqual([
+                { status: 200, respondedAt: expect.any(Number), streaming: true },
+            ]),
+        );
     });
 
     it("terminates a broken streamed response instead of reporting successful EOF", async () => {
@@ -328,6 +339,11 @@ describe("remote HTTP proxy", () => {
             res.end();
         });
         const response = await fetch(f.url, { redirect: "manual" });
+        await vi.waitFor(() =>
+            expect(f.exchanges).toEqual([
+                { status: 302, respondedAt: expect.any(Number), streaming: false },
+            ]),
+        );
         expect(response.status).toBe(302);
         expect(calls).toBe(1);
     });

@@ -95,12 +95,20 @@ const SESSION_REFRESH_STORAGE_RETRY_MS = 5_000;
 const ORGANIZATION_TOKEN_CACHE_LIMIT = 100;
 const ORGANIZATION_TOKEN_REFRESH_AHEAD_MS = 60_000;
 const ORGANIZATION_TOKEN_REFRESH_RETRY_MS = 5_000;
+const ORGANIZATION_TOKEN_REFRESH_RETRY_LIMIT_MS = 30_000;
 
 interface OrganizationCredential {
     token?: OrganizationAccessToken;
     pending?: Promise<string>;
     refreshAfter: number;
+    failures: number;
+    timer?: ReturnType<typeof setTimeout>;
     readonly waiters: Set<AbortSignal | undefined>;
+}
+
+interface RotatedCloudCredential {
+    readonly authenticated: CloudAuthentication;
+    readonly session: CloudSession;
 }
 
 interface CloudAttempt {
@@ -171,6 +179,7 @@ export class CloudModule implements AgentModule {
     readonly #lock: AsyncLock = asyncLock({ reentry: "allow" });
     readonly #clients = new Map<CloudEnvironment, CloudWorkOS>();
     readonly #organizationCredentials = new Map<string, OrganizationCredential>();
+    #refreshedAhead: ReadonlySet<string> = new Set();
     #attempt: CloudAttempt | undefined;
     #cloud: Cloud;
     #context: Context | undefined;
@@ -227,13 +236,13 @@ export class CloudModule implements AgentModule {
         if (ctx === undefined) {
             this.#stopping = true;
             this.#attempt = undefined;
-            this.#organizationCredentials.clear();
+            this.#forgetOrganizationCredentials();
             return;
         }
         await this.#lock.runInLock(ctx, async () => {
             this.#stopping = true;
             this.#attempt = undefined;
-            this.#organizationCredentials.clear();
+            this.#forgetOrganizationCredentials();
         });
     }
 
@@ -482,7 +491,7 @@ export class CloudModule implements AgentModule {
             // Bound both retained tokens and queued refreshes. Never evict work in flight.
             for (const [id, entry] of this.#organizationCredentials) {
                 if (entry.pending === undefined && (entry.token?.expiresAt ?? 0) <= now) {
-                    this.#organizationCredentials.delete(id);
+                    this.#forgetOrganizationCredential(id);
                 }
             }
             if (this.#organizationCredentials.size >= ORGANIZATION_TOKEN_CACHE_LIMIT) {
@@ -492,9 +501,9 @@ export class CloudModule implements AgentModule {
                 if (oldest === undefined) {
                     throw this.#error(503, "cloud_unavailable", "Cloud authentication is busy.");
                 }
-                this.#organizationCredentials.delete(oldest[0]);
+                this.#forgetOrganizationCredential(oldest[0]);
             }
-            credential = { refreshAfter: 0, waiters: new Set() };
+            credential = { failures: 0, refreshAfter: 0, waiters: new Set() };
         }
         this.#organizationCredentials.delete(organizationId);
         this.#organizationCredentials.set(organizationId, credential);
@@ -521,37 +530,63 @@ export class CloudModule implements AgentModule {
         background: boolean,
     ): Promise<string> {
         try {
-            return await this.#lock.runInLock(ctx, async () => {
+            // Only rotating the shared refresh token needs the credential lock. Verification waits
+            // on Happy Cloud, so it runs after the rotated token is stored and the lock released.
+            const rotated = await this.#lock.runInLock(ctx, async () => {
                 this.#assertOrganizationCredential(organizationId, credential);
                 if (!background && [...credential.waiters].every((signal) => signal?.aborted)) {
                     throw new DOMException("The token request was cancelled.", "AbortError");
                 }
-                const minted = await this.#mintInLock(ctx, true, organizationId);
-                this.#assertOrganizationCredential(organizationId, credential);
-                const token = organizationAccessToken(
-                    minted.accessToken,
-                    organizationId,
-                    minted.authenticated.user.id,
-                    this.#client(minted.cloud.environment).workosClientId,
-                );
-                if (token === undefined) {
-                    throw this.#error(
-                        503,
-                        "cloud_unavailable",
-                        "Cloud returned an invalid team access token.",
-                    );
-                }
-                credential.token = token;
-                credential.refreshAfter =
-                    token.expiresAt -
-                    Math.min(
-                        ORGANIZATION_TOKEN_REFRESH_AHEAD_MS,
-                        (token.expiresAt - token.issuedAt) / 5,
-                    );
-                return token.accessToken;
+                return await this.#rotateInLock(ctx, organizationId);
             });
+            await this.#verifyRotated(ctx, rotated);
+            if (!sameUser(rotated.session.user, rotated.authenticated.user)) {
+                await this.#lock.runInLock(ctx, async () => {
+                    this.#assertOrganizationCredential(organizationId, credential);
+                    // A later rotation stored a newer refresh token and publishes its own user.
+                    // Writing this one back would restore a credential WorkOS already consumed.
+                    const stored = await this.#readOwned(ctx);
+                    if (stored?.session?.refreshToken !== rotated.authenticated.refreshToken) {
+                        return;
+                    }
+                    await this.#publishUserChange(ctx, {
+                        ...rotated,
+                        accessToken: rotated.authenticated.accessToken,
+                        cloud: connected(this.#cloud),
+                    });
+                });
+            }
+            this.#assertOrganizationCredential(organizationId, credential);
+            const token = organizationAccessToken(
+                rotated.authenticated.accessToken,
+                organizationId,
+                rotated.authenticated.user.id,
+                this.#client(rotated.session.environment).workosClientId,
+            );
+            if (token === undefined) {
+                throw this.#error(
+                    503,
+                    "cloud_unavailable",
+                    "Cloud returned an invalid team access token.",
+                );
+            }
+            credential.token = token;
+            credential.failures = 0;
+            credential.refreshAfter =
+                token.expiresAt -
+                Math.min(
+                    ORGANIZATION_TOKEN_REFRESH_AHEAD_MS,
+                    (token.expiresAt - token.issuedAt) / 5,
+                );
+            return token.accessToken;
         } catch (error: unknown) {
-            credential.refreshAfter = Date.now() + ORGANIZATION_TOKEN_REFRESH_RETRY_MS;
+            credential.failures += 1;
+            credential.refreshAfter =
+                Date.now() +
+                Math.min(
+                    ORGANIZATION_TOKEN_REFRESH_RETRY_MS * 2 ** (credential.failures - 1),
+                    ORGANIZATION_TOKEN_REFRESH_RETRY_LIMIT_MS,
+                );
             throw error;
         } finally {
             delete credential.pending;
@@ -560,9 +595,84 @@ export class CloudModule implements AgentModule {
                 credential.token === undefined &&
                 this.#organizationCredentials.get(organizationId) === credential
             ) {
-                this.#organizationCredentials.delete(organizationId);
+                this.#forgetOrganizationCredential(organizationId);
             }
+            this.#scheduleOrganizationRefresh(organizationId, credential);
         }
+    }
+
+    /**
+     * Refresh exactly these organizations' cached team tokens before they expire, replacing the
+     * previous set. Only a token a request already minted is kept fresh; this never mints one.
+     */
+    refreshOrganizationsAhead(organizationIds: Iterable<string>): void {
+        this.#refreshedAhead = new Set(organizationIds);
+        for (const [organizationId, credential] of this.#organizationCredentials) {
+            this.#scheduleOrganizationRefresh(organizationId, credential);
+        }
+    }
+
+    /** Arm one timer at the refresh deadline while the current token can still be replaced. */
+    #scheduleOrganizationRefresh(organizationId: string, credential: OrganizationCredential): void {
+        clearTimeout(credential.timer);
+        delete credential.timer;
+        const token = credential.token;
+        if (
+            this.#stopping ||
+            !this.#refreshedAhead.has(organizationId) ||
+            this.#organizationCredentials.get(organizationId) !== credential ||
+            credential.pending !== undefined ||
+            token === undefined ||
+            credential.refreshAfter >= token.expiresAt
+        ) {
+            return;
+        }
+        const timer = setTimeout(
+            () => {
+                if (credential.timer === timer) delete credential.timer;
+                this.#refreshOrganizationAhead(organizationId, credential);
+            },
+            Math.max(0, credential.refreshAfter - Date.now()),
+        );
+        timer.unref?.();
+        credential.timer = timer;
+    }
+
+    #refreshOrganizationAhead(organizationId: string, credential: OrganizationCredential): void {
+        const ctx = this.#context;
+        const token = credential.token;
+        const now = Date.now();
+        if (
+            ctx === undefined ||
+            this.#stopping ||
+            this.#cloud.status !== "connected" ||
+            !this.#refreshedAhead.has(organizationId) ||
+            this.#organizationCredentials.get(organizationId) !== credential ||
+            credential.pending !== undefined ||
+            token === undefined ||
+            now >= token.expiresAt
+        ) {
+            return;
+        }
+        if (now < credential.refreshAfter) {
+            this.#scheduleOrganizationRefresh(organizationId, credential);
+            return;
+        }
+        credential.pending = this.#refreshOrganization(ctx, organizationId, credential, true);
+        // The mint boundary logs failures, and the refresh schedules its own retry.
+        void credential.pending.catch(() => {});
+    }
+
+    #forgetOrganizationCredential(organizationId: string): void {
+        clearTimeout(this.#organizationCredentials.get(organizationId)?.timer);
+        this.#organizationCredentials.delete(organizationId);
+    }
+
+    #forgetOrganizationCredentials(): void {
+        for (const credential of this.#organizationCredentials.values()) {
+            clearTimeout(credential.timer);
+        }
+        this.#organizationCredentials.clear();
     }
 
     #assertOrganizationCredential(
@@ -939,6 +1049,20 @@ export class CloudModule implements AgentModule {
         publishUserChange: boolean,
         organizationId?: string,
     ): Promise<MintedCloudCredential> {
+        const rotated = await this.#rotateInLock(ctx, organizationId);
+        await this.#verifyRotated(ctx, rotated);
+        const minted = {
+            accessToken: rotated.authenticated.accessToken,
+            authenticated: rotated.authenticated,
+            cloud: connected(this.#cloud),
+            session: rotated.session,
+        };
+        if (publishUserChange) await this.#publishUserChange(ctx, minted);
+        return { ...minted, cloud: connected(this.#cloud) };
+    }
+
+    /** Refresh and durably store the rotated WorkOS credential. The caller holds the lock. */
+    async #rotateInLock(ctx: Context, organizationId?: string): Promise<RotatedCloudCredential> {
         const stored = await this.#readOwned(ctx);
         const session = stored?.session;
         if (session === null || session === undefined || this.#cloud.status !== "connected") {
@@ -991,6 +1115,11 @@ export class CloudModule implements AgentModule {
             );
             throw this.#error(503, "cloud_unavailable", "Cloud returned an unexpected account.");
         }
+        return { authenticated, session };
+    }
+
+    async #verifyRotated(ctx: Context, rotated: RotatedCloudCredential): Promise<void> {
+        const { authenticated, session } = rotated;
         try {
             await this.#client(session.environment).verify(
                 authenticated.accessToken,
@@ -1006,15 +1135,6 @@ export class CloudModule implements AgentModule {
             }
             throw this.#error(503, "cloud_unavailable", "Cloud could not verify the access token.");
         }
-
-        const minted = {
-            accessToken: authenticated.accessToken,
-            authenticated,
-            cloud: connected(this.#cloud),
-            session,
-        };
-        if (publishUserChange) await this.#publishUserChange(ctx, minted);
-        return { ...minted, cloud: connected(this.#cloud) };
     }
 
     async #publishUserChange(ctx: Context, minted: MintedCloudCredential): Promise<void> {
@@ -1114,7 +1234,7 @@ export class CloudModule implements AgentModule {
             const attempt: CloudAttempt = { ...draft, version: stored.version };
             const cloud = project(stored, attempt);
             afterCommit(txCtx, (postCommitCtx) => {
-                this.#organizationCredentials.clear();
+                this.#forgetOrganizationCredentials();
                 this.#attempt = attempt;
                 this.#cloud = cloud;
                 for (const listener of this.#listeners) listener(postCommitCtx, cloud);
@@ -1151,7 +1271,7 @@ export class CloudModule implements AgentModule {
                     cloud.environment !== this.#cloud.environment ||
                     cloud.user.id !== this.#cloud.user.id
                 ) {
-                    this.#organizationCredentials.clear();
+                    this.#forgetOrganizationCredentials();
                 }
                 options.onCommit?.();
                 this.#cloud = cloud;

@@ -53,10 +53,11 @@ async function fixture() {
     const durable = { register: vi.fn(), invoke: vi.fn() };
     const closeTransport = vi.fn(async () => undefined);
     const tailcat = { openRemote: vi.fn(() => ({ close: closeTransport })) };
+    const cloud = { refreshOrganizationsAhead: vi.fn() };
     const module = new ConnectionsModule(
         config,
         bots,
-        {} as CloudModule,
+        cloud as unknown as CloudModule,
         tailcat as unknown as TailcatModule,
         durable as unknown as DurableFunctionsModule,
     );
@@ -75,6 +76,7 @@ async function fixture() {
         hooks,
         durable,
         tailcat,
+        cloud,
         closeTransport,
         revoke: () => {
             active = false;
@@ -263,7 +265,7 @@ describe("configured remote roster", () => {
         const restarted = new ConnectionsModule(
             await ConfigModule.load(f.home),
             {} as BotsModule,
-            {} as CloudModule,
+            { refreshOrganizationsAhead: () => undefined } as unknown as CloudModule,
             {} as TailcatModule,
             f.durable as unknown as DurableFunctionsModule,
         );
@@ -281,7 +283,7 @@ describe("configured remote roster", () => {
         const edited = new ConnectionsModule(
             await ConfigModule.load(f.home),
             {} as BotsModule,
-            {} as CloudModule,
+            { refreshOrganizationsAhead: () => undefined } as unknown as CloudModule,
             {} as TailcatModule,
             f.durable as unknown as DurableFunctionsModule,
         );
@@ -362,6 +364,32 @@ describe("configured remote roster", () => {
             await readFile(f.config.configuration.paths.runtimeConfigPath, "utf8"),
         ).not.toContain(token);
         expect(f.durable.invoke).toHaveBeenCalledTimes(2);
+    });
+
+    it("asks Cloud to refresh ahead only the organizations of enabled team remotes", async () => {
+        const f = await fixture();
+        const reconcile = f.durable.register.mock.calls[0]![0].executor;
+        const refreshedAhead = () =>
+            [...(f.cloud.refreshOrganizationsAhead.mock.calls.at(-1)?.[0] ?? [])] as string[];
+        await f.hooks.afterStart!(f.context, {} as never);
+        expect(refreshedAhead()).toEqual([]);
+        await f.module.set(f.context, "admin", "team", {
+            name: "Team",
+            address: "tcTeam",
+            workos_organization_id: "org_team",
+        });
+        expect(refreshedAhead()).toEqual(["org_team"]);
+        await f.config.updateRuntimeConnection(ctx, "other", {
+            name: "Other team",
+            address: "tcOther",
+            workos_organization_id: "org_other",
+        });
+        await reconcile(f.context);
+        expect(refreshedAhead()).toEqual(["org_team", "org_other"]);
+        await f.module.set(f.context, "admin", "team", { enabled: false });
+        expect(refreshedAhead()).toEqual(["org_other"]);
+        await f.module.close(f.context);
+        expect(refreshedAhead()).toEqual([]);
     });
 
     it("exposes tools only to an active admin and rechecks stale tool authority", async () => {

@@ -50,8 +50,14 @@ This internal path retains at most 100 verified tokens in a process-local, organ
 cache. Valid cached reads bypass the rotation lock entirely. Requests within the final fifth of a
 token's lifetime (at most 60 seconds) trigger a shared background refresh and immediately use the
 current token; only missing or expired tokens wait. Failed background refreshes retain valid tokens
-and back off for five seconds, without delaying an expired-token request. Every actual refresh
-still serializes rotation and persistence before verification. JWT identity, organization, client,
+and back off from five seconds, doubling up to 30 seconds, without delaying an expired-token
+request. `ConnectionsModule` names the organizations of its enabled team remotes through
+`refreshOrganizationsAhead`; for those, a timer starts the background refresh at the refresh
+deadline even when no request arrives, and retries with the same backoff only while the current
+token is still valid. It never mints a token that no request has asked for, and removal, sign-out,
+account changes, eviction, and shutdown cancel the timer with the cached token. Every actual
+refresh serializes rotation and persistence under the credential lock; organization minting then
+verifies the stored token with Happy Cloud after releasing it. JWT identity, organization, client,
 issuer, and lifetime are checked before caching. Committed sign-out or account changes, definitive
 credential rejection, and shutdown discard cached credentials and fence off old queued work.
 Public `mint` and short-lived direct-access minting do not use this cache.

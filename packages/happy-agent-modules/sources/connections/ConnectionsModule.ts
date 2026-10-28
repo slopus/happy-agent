@@ -14,7 +14,7 @@ import { Value } from "@sinclair/typebox/value";
 import { afterCommit, asyncLock, detach, withLifetime, type Context } from "@steve.kite/stdlib";
 
 import { BotsModule } from "../bots/index.js";
-import { CloudModule } from "../cloud/index.js";
+import { CloudModule, CloudOperationError } from "../cloud/index.js";
 import {
     ConfigModule,
     type RemoteConnectionConfig,
@@ -23,7 +23,8 @@ import {
 import { DurableFunctionsModule } from "../durableFunctions/index.js";
 import { TailcatModule } from "../tailcat/index.js";
 import { RemoteConnectionError } from "./RemoteConnectionError.js";
-import { RemoteProxyConnection } from "./impl/RemoteProxyConnection.js";
+import { RemoteProxyConnection, type RemoteProxyExchange } from "./impl/RemoteProxyConnection.js";
+import { logSlowRemoteRequest } from "./impl/logSlowRemoteRequest.js";
 import { connectionOrderKeyBetween } from "./impl/connectionOrderKey.js";
 import {
     listConnectionsTool,
@@ -100,6 +101,7 @@ export class ConnectionsModule implements AgentModule {
     };
 
     readonly afterStart = async (ctx: Context): Promise<void> => {
+        this.#refreshTeamTokensAhead();
         await this.getSnapshot(ctx);
         await this.#durable.invoke(ctx, {
             function: "connections-reconcile",
@@ -302,6 +304,7 @@ export class ConnectionsModule implements AgentModule {
             )
                 return await this.list(ctx);
             await this.#config.updateRuntimeConnection(ctx, id, entry);
+            this.#refreshTeamTokensAhead();
             await this.#reconcilePool(id, entry);
             await this.#durable.invoke(ctx, {
                 function: "connections-reconcile",
@@ -320,28 +323,73 @@ export class ConnectionsModule implements AgentModule {
         path: string,
         head?: Buffer,
     ): Promise<void> {
-        const record = await this.#getRecord(ctx, id);
-        await record.pool.forward(
-            request,
-            output,
-            path,
-            async (signal) => {
-                if ("token" in record.config) return record.config.token;
-                if (this.#config.configuration.values.feature.team.enabled) {
-                    // ApiModule has authenticated this exact request, including local onboarding.
-                    const authorization = request.headers.authorization;
-                    if (authorization === undefined)
-                        throw new RemoteConnectionError(401, "unauthorized", "Unauthorized");
-                    return authorization.slice("Bearer ".length);
-                }
-                return await this.#cloud.mintForOrganization(
-                    ctx,
-                    record.config.workos_organization_id,
-                    signal,
-                );
-            },
-            head,
-        );
+        const startedAt = performance.now();
+        let tokenMs = 0;
+        let exchange: RemoteProxyExchange | undefined;
+        let status = 500;
+        try {
+            const record = await this.#getRecord(ctx, id);
+            exchange = await record.pool.forward(
+                request,
+                output,
+                path,
+                async (signal) => {
+                    const tokenStartedAt = performance.now();
+                    try {
+                        return await this.#authorize(ctx, request, record.config, signal);
+                    } finally {
+                        tokenMs = performance.now() - tokenStartedAt;
+                    }
+                },
+                head,
+            );
+            status = exchange.status ?? 502;
+        } catch (error) {
+            if (error instanceof RemoteConnectionError || error instanceof CloudOperationError)
+                status = error.status;
+            throw error;
+        } finally {
+            logSlowRemoteRequest(ctx, {
+                connectionId: id,
+                method: request.method,
+                path,
+                status,
+                startedAt,
+                finishedAt: performance.now(),
+                tokenMs,
+                exchange,
+            });
+        }
+    }
+
+    async #authorize(
+        ctx: Context,
+        request: IncomingMessage,
+        config: RemoteConnectionConfig,
+        signal: AbortSignal,
+    ): Promise<string> {
+        if ("token" in config) return config.token;
+        if (this.#config.configuration.values.feature.team.enabled) {
+            // ApiModule has authenticated this exact request, including local onboarding.
+            const authorization = request.headers.authorization;
+            if (authorization === undefined)
+                throw new RemoteConnectionError(401, "unauthorized", "Unauthorized");
+            return authorization.slice("Bearer ".length);
+        }
+        return await this.#cloud.mintForOrganization(ctx, config.workos_organization_id, signal);
+    }
+
+    /** Cloud refreshes ahead only the team tokens an enabled remote mints for. */
+    #refreshTeamTokensAhead(): void {
+        const organizationIds =
+            this.#closed || this.#config.configuration.values.feature.team.enabled
+                ? []
+                : Object.values(this.#config.connections).flatMap((entry) =>
+                      entry.enabled !== false && "workos_organization_id" in entry
+                          ? [entry.workos_organization_id]
+                          : [],
+                  );
+        this.#cloud.refreshOrganizationsAhead(organizationIds);
     }
 
     async checkHealth(ctx: Context, agentId: string, id: string): Promise<ConnectionHealth> {
@@ -414,6 +462,7 @@ export class ConnectionsModule implements AgentModule {
     async close(ctx: Context): Promise<void> {
         await this.#lock.runInLock(ctx, async () => {
             this.#closed = true;
+            this.#refreshTeamTokensAhead();
             await Promise.all([...this.#pools.values()].map(({ pool }) => pool.close()));
             this.#pools.clear();
         });
@@ -422,6 +471,7 @@ export class ConnectionsModule implements AgentModule {
     async #reconcile(ctx: Context): Promise<void> {
         await this.#lock.runInLock(this.#ctx ?? ctx, async () => {
             const configured = this.#config.connections;
+            this.#refreshTeamTokensAhead();
             for (const id of this.#pools.keys()) await this.#reconcilePool(id, configured[id]);
             await this.getSnapshot(ctx);
         });

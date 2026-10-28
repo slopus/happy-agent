@@ -178,6 +178,21 @@ function deferred<T>() {
     return { promise, resolve, reject };
 }
 
+/** Let real database I/O settle without advancing faked clocks or timers. */
+async function flush(): Promise<void> {
+    for (let turn = 0; turn < 20; turn += 1) {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+}
+
+async function eventually(condition: () => boolean | Promise<boolean>): Promise<void> {
+    const deadline = performance.now() + 5_000;
+    while (!(await condition())) {
+        if (performance.now() > deadline) throw new Error("The condition was never met.");
+        await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+}
+
 describe("CloudModule", () => {
     it("refreshes only the main session every hour without exposing tokens or changing the snapshot", async () => {
         vi.useFakeTimers();
@@ -865,6 +880,199 @@ describe("CloudModule", () => {
         expect(workos.refresh).toHaveBeenCalledTimes(101);
         await module.mintForOrganization(database.context, "org_1");
         expect(workos.refresh).toHaveBeenCalledTimes(102);
+    });
+
+    it("refreshes a connected organization's token ahead of expiry without waiting for a request", async () => {
+        vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+        vi.setSystemTime(1_000_000);
+        const { database, module } = await fixture("cloud-team-refresh-ahead");
+        await connect(module, database);
+        workos.refresh.mockImplementation(
+            async ({ organizationId }: { organizationId: string }) => ({
+                accessToken: teamToken(organizationId),
+                refreshToken: `rotated-${String(Date.now())}`,
+                user,
+            }),
+        );
+        module.refreshOrganizationsAhead(["org_target", "org_never_requested"]);
+        const first = await module.mintForOrganization(database.context, "org_target");
+        await module.mintForOrganization(database.context, "org_unconnected");
+        expect(workos.refresh).toHaveBeenCalledTimes(2);
+
+        // The token lasts 300 seconds; refresh-ahead starts 60 seconds before expiry.
+        await vi.advanceTimersByTimeAsync(239_999);
+        expect(workos.refresh).toHaveBeenCalledTimes(2);
+        await vi.advanceTimersByTimeAsync(1);
+        await eventually(() => workos.refresh.mock.calls.length === 3);
+        expect(workos.refresh).toHaveBeenLastCalledWith({
+            organizationId: "org_target",
+            refreshToken: "rotated-1000000",
+        });
+        let second = first;
+        await eventually(async () => {
+            second = await module.mintForOrganization(database.context, "org_target");
+            return second !== first;
+        });
+        expect(second).toBe(teamToken("org_target"));
+
+        // The next deadline is armed by the refresh itself, so it keeps going while idle.
+        await vi.advanceTimersByTimeAsync(240_000);
+        await eventually(() => workos.refresh.mock.calls.length === 4);
+        expect(
+            workos.refresh.mock.calls.map(([options]) => options.organizationId as string),
+        ).toEqual(["org_target", "org_unconnected", "org_target", "org_target"]);
+    });
+
+    it("retries a failed refresh-ahead with bounded backoff only while the current token is valid", async () => {
+        vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+        vi.setSystemTime(1_000_000);
+        const logs: CloudLogRecord[] = [];
+        const { database, module } = await fixture("cloud-team-refresh-ahead-retry", logs);
+        await connect(module, database);
+        module.refreshOrganizationsAhead(["org_target"]);
+        const first = teamToken("org_target");
+        workos.refresh.mockResolvedValueOnce({ accessToken: first, refreshToken: "rotated", user });
+        await module.mintForOrganization(database.context, "org_target");
+        workos.refresh.mockRejectedValue(new Error("offline"));
+
+        // Attempts at 240 s, then after 5, 10, and 20 seconds of backoff. The next 30-second
+        // retry would land after the token's expiry at 300 s, so the timer stops.
+        for (const [advance, calls] of [
+            [240_000, 2],
+            [5_000, 3],
+            [10_000, 4],
+            [20_000, 5],
+        ] as const) {
+            await vi.advanceTimersByTimeAsync(advance - 1);
+            await flush();
+            expect(workos.refresh).toHaveBeenCalledTimes(calls - 1);
+            await vi.advanceTimersByTimeAsync(1);
+            await eventually(() => workos.refresh.mock.calls.length === calls);
+            await flush();
+            // The still-valid token is served during the outage without another refresh.
+            await expect(module.mintForOrganization(database.context, "org_target")).resolves.toBe(
+                first,
+            );
+        }
+        await vi.advanceTimersByTimeAsync(300_000);
+        await flush();
+        expect(workos.refresh).toHaveBeenCalledTimes(5);
+        expect(
+            logs.filter((record) => record.message.includes("phase=workos-refresh")),
+        ).toHaveLength(4);
+        expect(JSON.stringify(logs)).not.toContain(first);
+
+        // A request after expiry mints in the foreground, and the schedule resumes.
+        workos.refresh.mockImplementation(async () => ({
+            accessToken: teamToken("org_target"),
+            refreshToken: "recovered",
+            user,
+        }));
+        await expect(module.mintForOrganization(database.context, "org_target")).resolves.toBe(
+            teamToken("org_target"),
+        );
+        expect(workos.refresh).toHaveBeenCalledTimes(6);
+        await vi.advanceTimersByTimeAsync(240_000);
+        await eventually(() => workos.refresh.mock.calls.length === 7);
+    });
+
+    it.each(["removal", "sign-out", "shutdown"] as const)(
+        "stops refreshing ahead after %s",
+        async (ending) => {
+            vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+            vi.setSystemTime(1_000_000);
+            const { database, module } = await fixture(`cloud-team-refresh-ahead-${ending}`);
+            await connect(module, database);
+            module.refreshOrganizationsAhead(["org_target"]);
+            workos.refresh.mockImplementation(async () => ({
+                accessToken: teamToken("org_target"),
+                refreshToken: "rotated",
+                user,
+            }));
+            await module.mintForOrganization(database.context, "org_target");
+            expect(workos.refresh).toHaveBeenCalledOnce();
+            if (ending === "removal") module.refreshOrganizationsAhead([]);
+            else if (ending === "sign-out") await module.disconnect(database.context);
+            else await module.stop();
+            await vi.advanceTimersByTimeAsync(600_000);
+            await flush();
+            expect(workos.refresh).toHaveBeenCalledOnce();
+        },
+    );
+
+    it("verifies a rotated organization token without holding the credential lock", async () => {
+        const { database, module } = await fixture("cloud-team-verify-outside-lock");
+        await connect(module, database);
+        const issued = new Map<string, string>();
+        workos.refresh.mockImplementation(
+            async ({ organizationId }: { organizationId: string }) => {
+                issued.set(organizationId, teamToken(organizationId));
+                return {
+                    accessToken: issued.get(organizationId),
+                    refreshToken: `rotated-${organizationId}`,
+                    user,
+                };
+            },
+        );
+        const hello = deferred<Response>();
+        vi.mocked(fetch).mockImplementationOnce(() => hello.promise);
+        const slow = module.mintForOrganization(database.context, "org_slow");
+        await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+        try {
+            // The second organization rotates the stored refresh token while the first waits on
+            // Happy Cloud verification.
+            const other = await module.mintForOrganization(database.context, "org_other");
+            expect(other).toBe(issued.get("org_other"));
+            expect(workos.refresh).toHaveBeenLastCalledWith({
+                organizationId: "org_other",
+                refreshToken: "rotated-org_slow",
+            });
+        } finally {
+            hello.resolve(Response.json({ message: "hello", userId: user.id }));
+        }
+        await expect(slow).resolves.toBe(issued.get("org_slow"));
+        expect((await createCloudDatabase().read(database.context))?.session?.refreshToken).toBe(
+            "rotated-org_other",
+        );
+    });
+
+    it("publishes a changed user from an organization refresh only if its rotation is still current", async () => {
+        const { database, module } = await fixture("cloud-team-user-change");
+        await connect(module, database);
+        workos.refresh.mockResolvedValueOnce({
+            accessToken: teamToken("org_target"),
+            refreshToken: "rotated",
+            user: { ...user, firstName: "Augusta" },
+        });
+        await module.mintForOrganization(database.context, "org_target");
+        expect(module.status(database.context)).toMatchObject({ user: { firstName: "Augusta" } });
+        expect((await createCloudDatabase().read(database.context))?.session?.refreshToken).toBe(
+            "rotated",
+        );
+
+        // A superseded rotation must not write its consumed refresh token back with its user.
+        workos.refresh.mockResolvedValueOnce({
+            accessToken: teamToken("org_stale"),
+            refreshToken: "stale",
+            user: { ...user, firstName: "Grace" },
+        });
+        const hello = deferred<Response>();
+        vi.mocked(fetch).mockImplementationOnce(() => hello.promise);
+        const stale = module.mintForOrganization(database.context, "org_stale");
+        await vi.waitFor(() => expect(workos.refresh).toHaveBeenCalledTimes(2));
+        workos.refresh.mockResolvedValueOnce({
+            accessToken: teamToken("org_current"),
+            refreshToken: "current",
+            user: { ...user, firstName: "Augusta" },
+        });
+        await module.mintForOrganization(database.context, "org_current");
+        hello.resolve(Response.json({ message: "hello", userId: user.id }));
+        await expect(stale).resolves.toBe(teamToken("org_stale"));
+        expect(module.status(database.context)).toMatchObject({ user: { firstName: "Augusta" } });
+        expect((await createCloudDatabase().read(database.context))?.session).toMatchObject({
+            refreshToken: "current",
+            user: { firstName: "Augusta" },
+        });
     });
 
     it("validates invitations before refresh and uses one rotated, verified credential without leaking links", async () => {

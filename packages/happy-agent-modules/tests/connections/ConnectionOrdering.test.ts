@@ -42,7 +42,7 @@ async function fixture() {
     const module = new ConnectionsModule(
         config,
         {} as BotsModule,
-        {} as CloudModule,
+        { refreshOrganizationsAhead: () => undefined } as unknown as CloudModule,
         {} as TailcatModule,
         { register: vi.fn() } as unknown as DurableFunctionsModule,
     );

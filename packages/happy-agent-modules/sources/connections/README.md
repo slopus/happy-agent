@@ -17,6 +17,9 @@ stream at once, and idle streams stay warm until they time out. Display-name cha
 pool, carrier, and active requests. Endpoint or authentication changes and removal close active work
 without deleting any remote data. Durable Functions reconcile persisted configuration after restart; no request or
 mutation is replayed by the proxy. SSE, upgrades, and CONNECT remain remote-owned streams.
+Requests slower than one second log `connections:forward:slow` with safe timing fields, including
+the time spent waiting for the remote's token. Standalone mains ask Cloud to refresh the team
+tokens of enabled WorkOS remotes ahead of expiry.
 
 The public roster is also a single bounded persisted snapshot. `getSnapshot(ctx)` reconciles it
 with configuration in the caller's transaction, retains its version for unchanged public data,

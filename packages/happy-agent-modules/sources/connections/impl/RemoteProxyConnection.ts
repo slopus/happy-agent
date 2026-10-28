@@ -24,6 +24,16 @@ const HOP_HEADERS = [
     "upgrade",
 ];
 
+/** How far a forwarded exchange got, for timing diagnostics. */
+export interface RemoteProxyExchange {
+    /** The remote's status, once its response or upgrade began. */
+    status?: number;
+    /** `performance.now()` when the remote's response headers arrived. */
+    respondedAt?: number;
+    /** An event stream, upgrade, or tunnel, whose total duration is its open lifetime. */
+    streaming: boolean;
+}
+
 /**
  * One reusable HTTP pool. Every request and attachment gets its own carrier stream at once, so a
  * burst never waits behind another request or an open event stream. A failed exchange is never
@@ -169,11 +179,12 @@ export class RemoteProxyConnection {
         path: string,
         authorize: (signal: AbortSignal) => Promise<string>,
         head?: Buffer,
-    ): Promise<void> {
+    ): Promise<RemoteProxyExchange> {
         if (this.#closed) throw unavailable();
         const controller = new AbortController();
         this.#active.add(controller);
         const signal = controller.signal;
+        const exchange: RemoteProxyExchange = { streaming: head !== undefined };
         const abort = () => controller.abort(unavailable());
         const timer = setTimeout(
             () =>
@@ -232,6 +243,11 @@ export class RemoteProxyConnection {
                     clearTimeout(timer);
                     response.socket.setTimeout(0);
                     responseStarted = true;
+                    exchange.status = response.statusCode ?? 502;
+                    exchange.respondedAt = performance.now();
+                    exchange.streaming ||= (response.headers["content-type"] ?? "")
+                        .toLowerCase()
+                        .startsWith("text/event-stream");
                     remote = response;
                     const responseHeaders = proxyHeaders(response.headers);
                     if (upgraded) {
@@ -260,6 +276,8 @@ export class RemoteProxyConnection {
                     }
                     const output = destination as Duplex;
                     responseStarted = true;
+                    exchange.status = response.statusCode ?? 502;
+                    exchange.respondedAt = performance.now();
                     const responseHeaders = proxyHeaders(response.headers);
                     if (response.statusCode === 101) {
                         responseHeaders.connection = "Upgrade";
@@ -291,6 +309,7 @@ export class RemoteProxyConnection {
             request.removeListener("aborted", abort);
             this.#active.delete(controller);
         }
+        return exchange;
     }
 }
 

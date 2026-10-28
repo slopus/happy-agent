@@ -41,7 +41,7 @@ it.each([
                 },
             } as never,
             {} as never,
-            { mintForOrganization } as never,
+            { mintForOrganization, refreshOrganizationsAhead: () => undefined } as never,
             {
                 openRemote: () => ({
                     connect: () => connect({ host: "127.0.0.1", port: address.port }),
