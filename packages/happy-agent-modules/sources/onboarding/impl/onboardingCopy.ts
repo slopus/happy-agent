@@ -30,7 +30,7 @@ export const APP_OF: Record<ChatProviderId, string> = {
     antigravity: "Gemini",
 };
 
-const PROVIDER_BUTTONS: readonly {
+export const PROVIDER_BUTTONS: readonly {
     readonly choice: ChatProviderChoice;
     readonly label: string;
     readonly mark?: ChatActionMark;

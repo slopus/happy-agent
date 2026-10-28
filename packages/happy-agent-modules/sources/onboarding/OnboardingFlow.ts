@@ -30,6 +30,27 @@ export const onboardingVerificationSchema = Type.Object(
 );
 export type OnboardingVerification = Static<typeof onboardingVerificationSchema>;
 
+/** One AI the person connected, as Happy names it to them and to its model. */
+export const onboardingConnectionSchema = Type.Object(
+    {
+        app: Type.String({ minLength: 1, maxLength: 200 }),
+        account: Type.Optional(Type.String({ maxLength: 500 })),
+        cli: Type.Optional(
+            Type.Union([
+                Type.Literal("claude"),
+                Type.Literal("codex"),
+                Type.Literal("grok"),
+                Type.Literal("antigravity"),
+            ]),
+        ),
+    },
+    { additionalProperties: false },
+);
+
+const providerIdsSchema = Type.Array(Type.String({ minLength: 1, maxLength: 200 }), {
+    maxItems: 32,
+});
+
 /** What the daemon stores for one owner: everything that cannot be derived cheaply. */
 export const onboardingStateSchema = Type.Object(
     {
@@ -38,6 +59,48 @@ export const onboardingStateSchema = Type.Object(
         verified: Type.Union([onboardingVerificationSchema, Type.Null()]),
         exampleSidebar: Type.Boolean(),
         restartRequired: Type.Boolean(),
+        /** The assistant being installed or signed in to, and the message that shows its steps. */
+        connecting: Type.Union([
+            Type.Object(
+                {
+                    provider: Type.Union([
+                        Type.Literal("claude"),
+                        Type.Literal("codex"),
+                        Type.Literal("grok"),
+                        Type.Literal("antigravity"),
+                    ]),
+                    messageId: Type.String({ minLength: 1, maxLength: 64 }),
+                },
+                { additionalProperties: false },
+            ),
+            Type.Null(),
+        ]),
+        /** An AI was chosen whose sign-in is not done yet: any sign-in found carries on. */
+        awaitingSignIn: Type.Boolean(),
+        /** The AIs connected, the first one Happy's. */
+        connections: Type.Array(onboardingConnectionSchema, { maxItems: 32 }),
+        /** The model Happy runs on from the first connection. */
+        model: Type.Union([
+            Type.Object(
+                {
+                    providerId: Type.String({ minLength: 1, maxLength: 200 }),
+                    modelId: Type.String({ minLength: 1, maxLength: 500 }),
+                },
+                { additionalProperties: false },
+            ),
+            Type.Null(),
+        ]),
+        /** Routes chosen that run only after the restart onboarding waits for. */
+        pending: Type.Union([
+            Type.Object(
+                {
+                    connections: Type.Array(onboardingConnectionSchema, { maxItems: 32 }),
+                    providerIds: providerIdsSchema,
+                },
+                { additionalProperties: false },
+            ),
+            Type.Null(),
+        ]),
         version: Type.String({ minLength: 1 }),
         updatedAt: Type.Integer({ minimum: 0 }),
     },

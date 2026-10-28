@@ -762,12 +762,14 @@ export async function startHappyAgentRuntime(
         );
         const stickers = new StickersModule(config, team, stories);
         const onboarding = new OnboardingModule(
+            config,
             durableFunctions,
             history,
             bots,
             profile,
             providerClis,
             providerRoutes,
+            providerScan,
         );
         const apiModule = new ApiModule(
             abort,

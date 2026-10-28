@@ -1,4 +1,8 @@
-export { OnboardingModule, type ChatActionPressResult } from "./OnboardingModule.js";
+export {
+    OnboardingModule,
+    type ChatActionPressResult,
+    type OnboardingMessageListener,
+} from "./OnboardingModule.js";
 export { OnboardingRequestError } from "./OnboardingRequestError.js";
 export {
     ONBOARDING_VERSION,

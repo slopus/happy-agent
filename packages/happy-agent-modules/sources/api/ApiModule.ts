@@ -2881,6 +2881,15 @@ export class ApiModule implements AgentModule {
                               });
                           });
                       }),
+                      // A press's choice and a connecting message's progress change a message in
+                      // place.
+                      this.#onboardingFlow.onMessageUpdated((agentId, message) => {
+                          this.#appendForAgent(agentId, "message.updated", {
+                              agentId,
+                              runId: message.runId ?? null,
+                              message: messageResource(message),
+                          });
+                      }),
                   ]),
             ...(this.#providerClis === undefined
                 ? []
@@ -9418,13 +9427,10 @@ export class ApiModule implements AgentModule {
             if (error.code === "conflict") throw new ApiError(409, "conflict", error.message);
             throw invalidRequest(error.message);
         }
-        const message = messageResource(pressed.message);
-        this.#journal.append("message.updated", {
-            agentId,
-            runId: pressed.message.runId ?? null,
-            message,
+        sendJson(response, 202, {
+            message: messageResource(pressed.message),
+            result: pressed.result,
         });
-        sendJson(response, 202, { message, result: pressed.result });
     }
 
     /** The routes under `/v0/provider-routes`; see "Provider routes" in API.md. */
