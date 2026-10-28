@@ -2718,8 +2718,8 @@ provider scan.
 - `account` — `null` when nothing is known. Otherwise `label` is display text, `email` and `plan`
   are set when a local file reveals them, and `count` is the number of accounts behind the route
   when it is more than one, such as a Grok sign-in holding several accounts.
-- `endpoint` — the local server's base URL, always on `127.0.0.1`, for `local_proxy`, `router`,
-  and `local_models` routes; otherwise `null`.
+- `endpoint` — the base URL of the server the route uses when that server runs on this computer;
+  otherwise `null`.
 - `status` — `ready` when it can be used now; `needs_sign_in` when its program is installed but
   signed out; `not_running` when a local server is installed but does not answer; `unauthorized`
   when a local server refused the key its configuration names; or `unknown` when detection cannot
@@ -2746,15 +2746,15 @@ provider scan.
 
 What choosing a route sets up, its recommended configuration:
 
-| Route                                                 | Configuration                                                                                                                                                                                      |
-| ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `claude`, `codex`, `grok`, `bedrock`                  | Enables the built-in provider.                                                                                                                                                                     |
-| `cliproxyapi`                                         | An `openai_compatible` provider `cliproxyapi` with `base_url` at the local proxy, the proxy's own client key as `api_key` (`local` when the proxy has none), and up to 200 models the proxy lists. |
-| `lmstudio`, `ollama`                                  | An `openai_compatible` provider with `base_url` at the local server, the placeholder `api_key = "local"` because it needs none, and up to 200 models it lists.                                     |
-| `env:<VARIABLE>` for a known OpenAI-compatible vendor | An `openai_compatible` provider named after the vendor with its `base_url`, `api_key_env = "<VARIABLE>"`, and its models from the vendor's catalog in Happy Agent.                                 |
-| `ccr:<provider>`                                      | An `openai_compatible` provider copying that upstream provider's `api_base_url`, models, and key, as `api_key`, from Claude Code Router's configuration.                                           |
-| `aws_profile:<profile>`                               | A `bedrock` provider with that `profile` and its `region`.                                                                                                                                         |
-| `claude_home:<folder>`, `codex_home:<folder>`         | A `claude` provider with that `config_dir`, or a `codex` provider with that folder's `auth.json` as `auth_file`.                                                                                   |
+| Route                                                 | Configuration                                                                                                                                                                                                                                                                                                                                 |
+| ----------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `claude`, `codex`, `grok`, `bedrock`                  | Enables the built-in provider.                                                                                                                                                                                                                                                                                                                |
+| `cliproxyapi`                                         | An `openai_compatible` provider `cliproxyapi` with `base_url` at the local proxy, the proxy's own client key as `api_key` (`local` when the proxy has none), and up to 200 models the proxy lists.                                                                                                                                            |
+| `lmstudio`, `ollama`                                  | An `openai_compatible` provider with `base_url` at the local server, the placeholder `api_key = "local"` because it needs none, and up to 200 models it lists.                                                                                                                                                                                |
+| `env:<VARIABLE>` for a known OpenAI-compatible vendor | An `openai_compatible` provider named after the vendor with its `base_url`, `api_key_env = "<VARIABLE>"`, and its models from the vendor's catalog in Happy Agent.                                                                                                                                                                            |
+| `ccr:<provider>`                                      | An `openai_compatible` provider talking to that upstream directly, with its base URL, up to 200 of its models, and its key from Claude Code Router's `config.json`: copied as `api_key`, or as `api_key_env` when the router reads it from a variable the daemon also has. Only upstreams whose URL ends in `/chat/completions` can be added. |
+| `aws_profile:<profile>`                               | A `bedrock` provider with that `profile` and its `region`.                                                                                                                                                                                                                                                                                    |
+| `claude_home:<folder>`, `codex_home:<folder>`         | A `claude` provider with that `config_dir`, or a `codex` provider with that folder's `auth.json` as `auth_file`.                                                                                                                                                                                                                              |
 
 The environment is read only for whether these variables are set: `CLAUDE_CODE_OAUTH_TOKEN`,
 `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, and `XAI_API_KEY`, which the built-in `claude`, `codex`, and

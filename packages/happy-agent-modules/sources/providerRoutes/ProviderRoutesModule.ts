@@ -7,6 +7,7 @@ import type { ProviderScanModule } from "../providerScan/index.js";
 import { ProviderRouteRequestError, type ProviderRoute } from "./ProviderRoute.js";
 import { assembleProviderRoutes } from "./impl/assembleProviderRoutes.js";
 import { cliProxyApiRoutes } from "./impl/cliProxyApiRoutes.js";
+import { claudeCodeRouterRoutes } from "./impl/claudeCodeRouterRoutes.js";
 import type { ConfiguredProviders, DetectedRoute } from "./impl/DetectedRoute.js";
 import { detectDirectRoutes } from "./impl/detectDirectRoutes.js";
 import { envKeyRoutes } from "./impl/envKeyRoutes.js";
@@ -83,6 +84,11 @@ export class ProviderRoutesModule implements AgentModule {
                 ),
             ),
             this.#detector(ctx, "CLIProxyAPI", async () => await cliProxyApiRoutes(machine)),
+            this.#detector(
+                ctx,
+                "Claude Code Router",
+                async () => await claudeCodeRouterRoutes(machine),
+            ),
         ]);
         const keys = await this.#detector(ctx, "the environment", async () =>
             envKeyRoutes(
