@@ -515,6 +515,11 @@ routes under `/v0/provider-clis` and the `provider_cli.updated` event reports
 `capabilities.providerClis: true` from health. Older daemons omit it and answer the routes with
 `404`; clients then offer only the manual terminal path for installing and signing in.
 
+Provider routes are additive and do not increment the protocol version. A daemon that serves
+`GET /v0/provider-routes` and `POST /v0/provider-routes/:routeId/use` reports
+`capabilities.providerRoutes: true` from health. Older daemons omit it and answer the routes with
+`404`.
+
 Drain intent is additive and does not increment the protocol version. A daemon that supports it
 accepts the optional `POST /v0/drain` body and includes `drain` in the drain response, health, the
 `hello` frame, and the `daemon.draining` event, as described under Daemon lifecycle. Older
@@ -1203,9 +1208,7 @@ Fields:
   attached under rows and the `attach_to_my_row` tool, described under Spaces.
   `sidebarProposals: true` advertises sidebar proposals and Prioritizing's own row, described
   under Spaces. `sidebarSeparatorPins: true` advertises `pin` on sidebar separators, described
-  under Spaces. `agentStories: true` advertises agents' stories, story rings, and agent status
-  lines, described under Stories. `providerClis: true` advertises the routes under `/v0/provider-clis` and the
-  `provider_cli.updated` event, described under Provider CLIs.
+  under Spaces. `agentStories: true` advertises agents' stories, story rings, and agent status lines, described under Stories. `providerClis: true` advertises the routes under `/v0/provider-clis` and the `provider_cli.updated` event, described under Provider CLIs. `providerRoutes: true` advertises the routes under `/v0/provider-routes`, described under Provider routes.
 - `ready` — `false` while starting, `true` once the agent system is loaded.
 - `status` — `"starting"` or `"ready"`; the human-readable form of `ready`.
 - `version` — one identity object. `protocol` is the wire protocol number, the client's
@@ -2718,6 +2721,148 @@ Cancels the running install or sign-in and stops the vendor's program. Request b
 `{ "mutationId": "..." }`. Response — `200`: `{ "providerCli": { ... } }` whose operation is
 `"cancelled"`. With no running operation, the object is returned unchanged. A cancelled install
 may leave a partly installed program; the next discovery reports what is there.
+
+## Provider routes
+
+A provider route is one way the daemon's machine can already reach models: a vendor's own sign-in,
+a sign-in inside a vendor's desktop app, an API key, a local proxy such as CLIProxyAPI, a router
+such as Claude Code Router, an AWS profile for Bedrock, or a local model server such as LM Studio.
+Provider routes let onboarding show what a person can use right away, and nothing else, and set a
+chosen route up with its recommended configuration.
+
+Detection only discovers. It never runs inference, never calls a vendor's or a cloud's API, and
+never installs, starts, or signs in to anything. It reads local files and the daemon's own process
+environment and reuses the checks described under Provider CLIs. It never runs a shell or any other
+program to find more, and the daemon never reads the macOS keychain. Its only network requests are `GET /v1/models` to a model server on `127.0.0.1`, each
+bounded to 1.5 seconds: at the port a detected program's configuration names, and at the default
+ports of LM Studio (`1234`) and Ollama (`11434`). A local proxy's own client key from its
+configuration is sent only there. Responses never include a key, a token, or a credential file's
+contents.
+
+Routes belong to the daemon's machine and its operating-system user, so these routes are
+unavailable in team mode: every route returns `501` with code `unsupported` before parsing a
+request body. A daemon that serves them reports `capabilities.providerRoutes: true` from health.
+Older daemons omit it and answer with `404`; clients then rely on `GET /v0/provider-clis` and the
+provider scan.
+
+### The provider route object
+
+```json
+{
+    "id": "cliproxyapi",
+    "kind": "local_proxy",
+    "name": "CLIProxyAPI",
+    "vendors": ["Anthropic", "OpenAI"],
+    "billing": "subscription",
+    "account": { "label": null, "email": null, "plan": null, "count": null },
+    "endpoint": "http://127.0.0.1:8317/v1",
+    "status": "ready",
+    "models": [{ "id": "claude-opus-5-5", "vendor": "Anthropic" }],
+    "overlaps": ["claude", "codex"],
+    "recommended": false,
+    "warning": null,
+    "providerId": null,
+    "use": {
+        "providerId": "cliproxyapi",
+        "type": "openai_compatible",
+        "summary": "Adds CLIProxyAPI on this computer with 12 models.",
+        "restartRequired": true
+    }
+}
+```
+
+- `id` — stable for the same route across reads, 1–200 printable characters. Clients
+  percent-encode it in paths. Current IDs are the built-in provider IDs `claude`, `codex`, `grok`,
+  and `bedrock` for their default sign-in or credentials; `cliproxyapi`; `lmstudio`; `ollama`;
+  `env:<VARIABLE>` for an API key in the daemon's environment; `ccr:<provider>` for one upstream
+  provider of Claude Code Router; `aws_profile:<profile>` for an AWS profile; and
+  `claude_home:<folder>` and `codex_home:<folder>` for another account's home folder in the
+  person's home directory. Clients treat IDs as opaque.
+- `kind` — `direct` (the vendor's own sign-in), `desktop_app` (a sign-in found through a vendor's
+  desktop app), `api_key`, `local_proxy`, `router`, `cloud`, or `local_models`. Clients show
+  unknown kinds as generic routes.
+- `name` — display name, such as `"Claude Code"`, `"OpenRouter API key"`, or
+  `"AWS profile work-bedrock"`.
+- `vendors` — display names of whose models the route serves, sorted, possibly empty when the
+  route does not say.
+- `billing` — `subscription` when it spends a plan the person already pays for,
+  `pay_per_token` for an API key or a cloud account billed by use, `local` for models running on
+  this computer, or `unknown`.
+- `account` — `null` when nothing is known. Otherwise `label` is display text, `email` and `plan`
+  are set when a local file reveals them, and `count` is the number of accounts behind the route
+  when it is more than one, such as a Grok sign-in holding several accounts.
+- `endpoint` — the local server's base URL, always on `127.0.0.1`, for `local_proxy`, `router`,
+  and `local_models` routes; otherwise `null`.
+- `status` — `ready` when it can be used now; `needs_sign_in` when its program is installed but
+  signed out; `not_running` when a local server is installed but does not answer; `unauthorized`
+  when a local server refused the key its configuration names; or `unknown` when detection cannot
+  tell without a request it does not make, such as an AWS single-sign-on profile.
+- `models` — models usable through the route now, at most 500: the server's own list for local
+  routes, and the curated catalog for routes that are configured providers. `null` when unknown
+  without a vendor request.
+- `overlaps` — IDs of the other routes in this response that reach the same vendor. Using two
+  overlapping routes spends the same vendor twice and leaves the choice between them to routing.
+- `recommended` — the suggested initial selection: `true` for a `ready` route that no `direct` or
+  `desktop_app` route overlaps, or for a `direct` or `desktop_app` route that is `ready`; `false`
+  for every `local_models` route and every other overlapping route.
+- `warning` — a display sentence when the route quietly changes what another route does, or
+  `null`. For example, an `ANTHROPIC_API_KEY` in the daemon's environment takes precedence over
+  the Claude Code sign-in, so Claude bills per token instead of using the plan.
+- `providerId` — the configured provider this route already is, or `null`. A provider that `use`
+  added and that takes effect after a restart is reported here too.
+- `use` — `null` when the route is already configured and enabled, or cannot be set up
+  automatically, such as a route that is not `ready`. Otherwise it describes what
+  `POST /v0/provider-routes/:routeId/use` does: `providerId` and `type` of the provider it enables
+  or adds, a display `summary`, and `restartRequired`, `true` when the provider is new and the
+  daemon must restart before using it.
+
+What choosing a route sets up, its recommended configuration:
+
+| Route                                                 | Configuration                                                                                                                                                      |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `claude`, `codex`, `grok`, `bedrock`                  | Enables the built-in provider.                                                                                                                                     |
+| `cliproxyapi`                                         | An `openai_compatible` provider `cliproxyapi` with `base_url` at the local proxy, the proxy's own client key as `api_key`, and the models the proxy lists.         |
+| `lmstudio`, `ollama`                                  | An `openai_compatible` provider with `base_url` at the local server, no key, and the models it lists.                                                              |
+| `env:<VARIABLE>` for a known OpenAI-compatible vendor | An `openai_compatible` provider named after the vendor with its `base_url`, `api_key_env = "<VARIABLE>"`, and its models from the vendor's catalog in Happy Agent. |
+| `ccr:<provider>`                                      | An `openai_compatible` provider copying that upstream provider's `api_base_url`, models, and key, as `api_key`, from Claude Code Router's configuration.           |
+| `aws_profile:<profile>`                               | A `bedrock` provider with that `profile` and its `region`.                                                                                                         |
+| `claude_home:<folder>`, `codex_home:<folder>`         | A `claude` provider with that `config_dir`, or a `codex` provider with that folder's `auth.json` as `auth_file`.                                                   |
+
+New providers are written to the daemon-owned runtime configuration. A key copied there is stored
+in plain text with the same exposure it had in the file it came from.
+
+### `GET /v0/provider-routes`
+
+Response — `200`:
+
+```json
+{ "routes": [{ "...": "provider route objects" }], "detectedAt": 1755400000000 }
+```
+
+Routes are ordered by `kind` in the order listed above, then by `name`. Each read detects again,
+joining a provider CLI refresh already in progress.
+
+### `POST /v0/provider-routes/:routeId/use`
+
+Sets the route up as its `use` describes. Request body, optional:
+
+```json
+{ "mutationId": "optional-client-value" }
+```
+
+Response — `200`:
+
+```json
+{ "route": { "...": "the provider route object" }, "restartRequired": true }
+```
+
+The returned route has `providerId` set and `use` `null`. Enabling a built-in provider takes effect
+at once. A new provider takes effect after the daemon restarts; until then `restartRequired` is
+`true` and clients restart the daemon through the ordinary drain and restart. The change emits
+`config.updated`.
+
+- An unknown route returns `404`.
+- `409` with code `conflict` and the current `route` when its `use` is `null`.
 
 ## Cloud
 

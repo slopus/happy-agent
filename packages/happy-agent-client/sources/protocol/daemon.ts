@@ -171,6 +171,13 @@ export const healthResponseSchema = Type.Object({
             /** True when a sidebar separator may be pinned with `pin="top"` or `pin="bottom"`. */
             sidebarSeparatorPins: Type.Optional(Type.Boolean()),
             /**
+             * True when the daemon serves `/v0/provider-clis` and the `provider_cli.updated`
+             * event, described under Provider CLIs.
+             */
+            providerClis: Type.Optional(Type.Boolean()),
+            /** True when the daemon serves `/v0/provider-routes`, described under Provider routes. */
+            providerRoutes: Type.Optional(Type.Boolean()),
+            /**
              * True when the daemon serves `/v0/stories`, the `story` artifact type, `draft_story`,
              * and `story.*` events. A person with Stories off still receives `404` from them.
              */

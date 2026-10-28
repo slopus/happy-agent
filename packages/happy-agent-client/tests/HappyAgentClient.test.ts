@@ -182,6 +182,52 @@ describe("HappyAgentClient", () => {
         expect(requests[0]?.body).toBeNull();
     });
 
+    it("lists provider routes and uses one by its percent-encoded ID", async () => {
+        const route = {
+            id: "env:OPENROUTER_API_KEY",
+            kind: "api_key",
+            name: "OpenRouter API key",
+            vendors: ["OpenRouter"],
+            billing: "pay_per_token",
+            account: null,
+            endpoint: null,
+            status: "ready",
+            models: [{ id: "deepseek/deepseek-v4.1-flash-1017", vendor: "OpenRouter" }],
+            overlaps: [],
+            recommended: true,
+            warning: null,
+            providerId: null,
+            use: {
+                providerId: "openrouter",
+                type: "openai_compatible",
+                summary: "Adds OpenRouter with your OPENROUTER_API_KEY.",
+                restartRequired: true,
+            },
+        };
+        const { fetch, requests } = stubFetch((request) =>
+            request.method === "GET"
+                ? json({ routes: [route], detectedAt: 1_755_400_000_000 })
+                : json({
+                      route: { ...route, providerId: "openrouter", use: null },
+                      restartRequired: true,
+                  }),
+        );
+        const client = new HappyAgentClient({ endpoint: "http://agent.local", token: "t", fetch });
+
+        await expect(client.listProviderRoutes()).resolves.toEqual({
+            routes: [route],
+            detectedAt: 1_755_400_000_000,
+        });
+        await expect(
+            client.useProviderRoute(route.id, { mutationId: "use-openrouter" }),
+        ).resolves.toMatchObject({ restartRequired: true, route: { providerId: "openrouter" } });
+        expect(requests.map((request) => [request.method, request.url])).toEqual([
+            ["GET", "http://agent.local/v0/provider-routes"],
+            ["POST", "http://agent.local/v0/provider-routes/env%3AOPENROUTER_API_KEY/use"],
+        ]);
+        expect(requests[1]?.body).toBe('{"mutationId":"use-openrouter"}');
+    });
+
     it("manages Cloud authentication and mints verified access tokens", async () => {
         const cloud = {
             authorization: null,
