@@ -263,4 +263,40 @@ describe("Provider routes API", () => {
         },
         TEST_TIMEOUT_MS,
     );
+
+    it(
+        "offers an OpenRouter key from the daemon's environment by its variable, never its value",
+        async () => {
+            const { gym } = await startRoutesGym(undefined, {
+                OPENROUTER_API_KEY: "sk-or-gym-fake",
+            });
+            const listed = (await gym.http.ok("GET", "/v0/provider-routes")) as { routes: Route[] };
+            expect(
+                listed.routes.find((route) => route.id === "env:OPENROUTER_API_KEY"),
+            ).toMatchObject({
+                kind: "api_key",
+                billing: "pay_per_token",
+                status: "ready",
+                recommended: true,
+                use: { providerId: "openrouter", type: "openai_compatible", restartRequired: true },
+            });
+            await gym.http.ok(
+                "POST",
+                `/v0/provider-routes/${encodeURIComponent("env:OPENROUTER_API_KEY")}/use`,
+                {},
+            );
+            await gym.restart();
+            const after = (await gym.http.ok("GET", "/v0/provider-routes")) as { routes: Route[] };
+            expect(
+                after.routes.find((route) => route.id === "env:OPENROUTER_API_KEY"),
+            ).toMatchObject({
+                providerId: "openrouter",
+                use: null,
+            });
+            const config = await gym.http.request("GET", "/v0/config");
+            expect(JSON.stringify([listed, after, config.body])).not.toContain("sk-or-gym-fake");
+            expect(gym.errors).toEqual([]);
+        },
+        TEST_TIMEOUT_MS,
+    );
 });

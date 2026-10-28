@@ -2829,6 +2829,16 @@ What choosing a route sets up, its recommended configuration:
 | `aws_profile:<profile>`                               | A `bedrock` provider with that `profile` and its `region`.                                                                                                                                         |
 | `claude_home:<folder>`, `codex_home:<folder>`         | A `claude` provider with that `config_dir`, or a `codex` provider with that folder's `auth.json` as `auth_file`.                                                                                   |
 
+The environment is read only for whether these variables are set: `CLAUDE_CODE_OAUTH_TOKEN`,
+`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, and `XAI_API_KEY`, which the built-in `claude`, `codex`, and
+`grok` providers read when their configuration names no credentials; and `OPENROUTER_API_KEY`,
+`DEEPSEEK_API_KEY`, `MISTRAL_API_KEY`, `GROQ_API_KEY`, `TOGETHER_API_KEY`, `FIREWORKS_API_KEY`, and
+`MOONSHOT_API_KEY` for OpenAI-compatible vendors. A built-in key's route has that provider as
+`providerId` only when the provider actually reads it. `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`,
+and `XAI_API_KEY` take precedence over the vendor's CLI sign-in, so their route carries a `warning`
+when that sign-in is ready. A vendor without a curated model catalog in Happy Agent is shown with
+`models: null` and `use: null`.
+
 New providers are written to the daemon-owned runtime configuration. A key copied there is stored
 in plain text with the same exposure it had in the file it came from.
 

@@ -9,6 +9,7 @@ import { assembleProviderRoutes } from "./impl/assembleProviderRoutes.js";
 import { cliProxyApiRoutes } from "./impl/cliProxyApiRoutes.js";
 import type { ConfiguredProviders, DetectedRoute } from "./impl/DetectedRoute.js";
 import { detectDirectRoutes } from "./impl/detectDirectRoutes.js";
+import { envKeyRoutes } from "./impl/envKeyRoutes.js";
 import type { RouteMachine } from "./impl/RouteMachine.js";
 
 /**
@@ -75,7 +76,7 @@ export class ProviderRoutesModule implements AgentModule {
 
     async #detect(ctx: Context): Promise<DetectedRoute[]> {
         const machine = this.#machine();
-        const found = await Promise.all([
+        const [direct, ...found] = await Promise.all([
             this.#detector(ctx, "provider CLIs", async () =>
                 detectDirectRoutes(await this.#providerClis.list(ctx), (providerId, vendor) =>
                     this.#models(providerId, vendor),
@@ -83,8 +84,16 @@ export class ProviderRoutesModule implements AgentModule {
             ),
             this.#detector(ctx, "CLIProxyAPI", async () => await cliProxyApiRoutes(machine)),
         ]);
+        const keys = await this.#detector(ctx, "the environment", async () =>
+            envKeyRoutes(
+                machine,
+                (providerId) => this.#usesAmbientCredentials(providerId),
+                (providerId) =>
+                    direct.some((route) => route.id === providerId && route.status === "ready"),
+            ),
+        );
         // A route is a configured provider only when this daemon actually runs that provider.
-        return found.flat().map((route) => {
+        return [direct, keys, ...found].flat().map((route) => {
             if (route.providerId === undefined || this.#isProvider(route.providerId)) return route;
             const { providerId: _providerId, ...rest } = route;
             return rest;
@@ -111,6 +120,17 @@ export class ProviderRoutesModule implements AgentModule {
             env: this.#config.processEnvironment,
             programDirectories: this.#config.programDirectories,
         };
+    }
+
+    /** A built-in provider reads keys from the environment unless its configuration names one. */
+    #usesAmbientCredentials(providerId: string): boolean {
+        if (!this.#isProvider(providerId)) return false;
+        const provider = this.#config.configuration.values.providers[providerId] as
+            | Readonly<Record<string, unknown>>
+            | undefined;
+        return ["apiKey", "authFile", "authToken", "configDir", "oauthToken"].every(
+            (field) => provider?.[field] === undefined,
+        );
     }
 
     #isProvider(providerId: string): boolean {
