@@ -2290,6 +2290,7 @@ export class ConfigModule implements AgentModule {
                     autoCompactWindow: modelContext?.autoCompactWindow ?? null,
                     contextWindow: modelContext?.contextWindow ?? null,
                     enabled: this.#isModelSelectable(model),
+                    hidden: false,
                 };
                 catalog.push(entry);
             }
@@ -2742,6 +2743,24 @@ export class ConfigModule implements AgentModule {
         return this.configuration.values.providers[providerId]?.hidden === true;
     }
 
+    /**
+     * Display-only, like a hidden provider: an opt-in model the account's `include_models` does not
+     * name stays routable for existing sessions but out of pickers and new-subagent choices.
+     */
+    isModelHidden(providerId: string, modelId: string): boolean {
+        return this.#hiddenModelRoutes().has(modelRouteKey(providerId, modelId));
+    }
+
+    /** Scripted providers own their complete catalog, so none of their routes is opt-in. */
+    #hiddenModelRoutes(): ReadonlySet<string> {
+        const scripted = new Set(this.#scriptedModels()?.map((model) => model.providerId) ?? []);
+        return new Set(
+            agentModelCatalog(this.configuration)
+                .filter((route) => route.hidden && !scripted.has(route.providerId))
+                .map((route) => modelRouteKey(route.providerId, route.id)),
+        );
+    }
+
     /** Friendly account label, independent of credentials, provider type, and routing identity. */
     providerName(providerId: string): string {
         return (
@@ -2799,9 +2818,14 @@ export class ConfigModule implements AgentModule {
         return harnessAllowsSubagents(this.configuration.values.harnesses, creatorId, targetId);
     }
 
-    /** The enabled models a picker offers, which leaves out hidden providers. */
+    /** The enabled models a picker offers, which leaves out hidden providers and models. */
     get visibleModels(): readonly AgentModel[] {
-        return this.models.filter((model) => !this.isProviderHidden(model.providerId));
+        const hidden = this.#hiddenModelRoutes();
+        return this.models.filter(
+            (model) =>
+                !this.isProviderHidden(model.providerId) &&
+                !hidden.has(modelRouteKey(model.providerId, model.id)),
+        );
     }
 
     /**
@@ -2831,12 +2855,16 @@ export class ConfigModule implements AgentModule {
         );
     }
 
-    /** Whether one otherwise available provider/model route may be chosen for a new subagent. */
+    /**
+     * Whether one otherwise available provider/model route may be chosen for a new subagent. A
+     * hidden model is allowed only when `include_subagent_models` names it.
+     */
     isSubagentModelAllowed(providerId: string, modelId: string): boolean {
         const provider = this.configuration.values.providers[providerId];
         return (
             !this.isProviderHidden(providerId) &&
-            provider?.includeSubagentModels?.includes(modelId) !== false &&
+            (provider?.includeSubagentModels?.includes(modelId) ??
+                !this.isModelHidden(providerId, modelId)) &&
             provider?.excludeSubagentModels?.includes(modelId) !== true
         );
     }
@@ -3837,6 +3865,11 @@ async function writeMcpConfigurationFile(
     } finally {
         await rm(temporary, { force: true }).catch(() => undefined);
     }
+}
+
+/** One provider/model route as a set key. */
+function modelRouteKey(providerId: string, modelId: string): string {
+    return `${providerId}\u0000${modelId}`;
 }
 
 /** The canonical TOML for an MCP catalog, bounded like every configuration file. */

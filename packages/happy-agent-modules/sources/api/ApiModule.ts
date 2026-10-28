@@ -10082,6 +10082,7 @@ export class ApiModule implements AgentModule {
             provider.models.push({
                 id: route.id,
                 enabled: route.enabled,
+                hidden: route.hidden,
                 serviceTierOptions: [...route.serviceTierOptions],
                 ...(sameStrings(efforts, definition.efforts) ? {} : { efforts }),
                 ...(route.defaultEffort === definition.defaultEffort
@@ -10698,6 +10699,8 @@ interface ApiProviderDefinition {
 interface ApiProviderModelReference {
     readonly id: string;
     readonly enabled: boolean;
+    /** Served for agents already on it, but left out of pickers and new-subagent choices. */
+    readonly hidden: boolean;
     readonly efforts?: string[];
     readonly defaultEffort?: string;
     readonly name?: string;

@@ -61,6 +61,9 @@ export interface AgentModelContext {
 
 type CatalogAgentModel = AgentModel & AgentModelContext;
 
+/** A curated row, which may be servable without being offered by default. */
+type CuratedAgentModel = CatalogAgentModel & { readonly optIn?: true };
+
 export interface SmartProviderModelRoute {
     readonly candidates: readonly string[];
     readonly model: CatalogAgentModel;
@@ -72,11 +75,17 @@ export interface SmartProviderRoute {
     readonly type: ProviderModelCompatibilityType;
 }
 
-/** One provider/model route in the complete catalog, whether or not configuration enables it. */
+/**
+ * One provider/model route in the complete catalog, whether or not configuration enables it.
+ *
+ * `hidden` is display-only, like a hidden provider: the route stays routable for conversations
+ * already on it, but pickers, the default stand-in, and new-subagent choices leave it out.
+ */
 export type ConfiguredAgentModel = AgentModel & {
     readonly autoCompactWindow: number | null;
     readonly contextWindow: number | null;
     readonly enabled: boolean;
+    readonly hidden: boolean;
 };
 
 /**
@@ -195,14 +204,18 @@ const ALL_BUT_OFF: AgentModel["effortLevels"] = ["low", "medium", "high", "xhigh
 /**
  * The curated catalog. Happy Agent never asks a vendor which models exist; the list is source, and a
  * configured provider entry decides which of these its own key serves.
+ *
+ * An opt-in row is servable but hidden unless the provider's `include_models` names it, so
+ * conversations already on a superseded model keep working while new choices go to its successor.
  */
-const CATALOG: readonly CatalogAgentModel[] = [
+const CATALOG: readonly CuratedAgentModel[] = [
     model("codex", "openai/gpt-6.1-sol", "GPT-6.1 Sol", ALL_BUT_OFF, "high", ["priority"]),
     // Same source as MODEL_CONTEXTS: low by default, Fast=priority (1.5x speed).
     // Like Sol, omit upstream's automatic-delegation "ultra" from Happy's effort surface.
     model("codex", "openai/gpt-6.1-terra", "GPT-6.1 Terra", ALL_BUT_OFF, "low", ["priority"]),
     model("codex", "openai/gpt-6-astra", "GPT-6 Astra", ALL_BUT_OFF, "high", ["priority"]),
-    model("codex", "openai/gpt-6-sol", "GPT-6 Sol", ALL_BUT_OFF, "high", ["priority"]),
+    // GPT-6.1 Sol replaces it.
+    optIn(model("codex", "openai/gpt-6-sol", "GPT-6 Sol", ALL_BUT_OFF, "high", ["priority"])),
     model("codex", "openai/gpt-6-luna", "GPT-6 Luna", ALL_BUT_OFF, "medium", ["priority"]),
     // Opus 5.5 and Sonnet 5.5 always think: the API rejects disabled thinking, so "off" is not
     // offered.
@@ -238,11 +251,14 @@ const BEDROCK_RESOLD_MODEL_IDS: ReadonlySet<string> = new Set([
     "anthropic/opus-4-8",
 ]);
 
-/** Bedrock resells a documented subset and adds models supported only through AWS. */
-const BEDROCK_CATALOG: readonly CatalogAgentModel[] = [
+/**
+ * Bedrock resells a documented subset and adds models supported only through AWS. Opt-in follows a
+ * native successor Bedrock may not serve, as with GPT-6.1 Sol, so resold rows are always offered.
+ */
+const BEDROCK_CATALOG: readonly CuratedAgentModel[] = [
     ...CATALOG.filter((candidate) => BEDROCK_RESOLD_MODEL_IDS.has(candidate.id)).map(
         (candidate) => {
-            const { serviceTiers: _unsupported, ...rest } = candidate;
+            const { serviceTiers: _unsupported, optIn: _nativeOnly, ...rest } = candidate;
             return { ...rest, providerId: "bedrock" };
         },
     ),
@@ -266,16 +282,19 @@ export function agentModels(
     isAccountEnabled?: (id: string) => boolean,
 ): readonly CatalogAgentModel[] {
     const values = configuration.values;
-    const hidden = (candidate: { providerId: string }) =>
+    const hiddenProvider = (candidate: { providerId: string }) =>
         values.providers[candidate.providerId]?.hidden === true;
-    const enabled = agentModelCatalog(configuration, isProviderEnabled, isAccountEnabled)
-        .filter((candidate) => candidate.enabled)
-        .map(({ enabled: _enabled, ...candidate }) => candidate as CatalogAgentModel);
-    // Hidden routes stay valid for existing sessions but never stand in as the default.
+    const enabled = agentModelCatalog(configuration, isProviderEnabled, isAccountEnabled).filter(
+        (candidate) => candidate.enabled,
+    );
+    // Hidden accounts and models stay valid for existing sessions but never stand in as the
+    // default. A default the configuration names explicitly is still honored.
+    const shown = (candidate: ConfiguredAgentModel) =>
+        !candidate.hidden && !hiddenProvider(candidate);
     const available = [
-        ...enabled.filter((candidate) => !hidden(candidate)),
-        ...enabled.filter(hidden),
-    ];
+        ...enabled.filter(shown),
+        ...enabled.filter((candidate) => !shown(candidate)),
+    ].map(({ enabled: _enabled, hidden: _hidden, ...candidate }) => candidate as CatalogAgentModel);
     const wantedModel = values.defaults.modelId;
     const wantedProvider = values.defaults.providerId;
     const chosen =
@@ -283,7 +302,7 @@ export function agentModels(
             (candidate) =>
                 candidate.id === wantedModel &&
                 (wantedProvider === undefined
-                    ? !hidden(candidate)
+                    ? !hiddenProvider(candidate)
                     : candidate.providerId === wantedProvider),
         ) ?? undefined;
     if (chosen === undefined) {
@@ -333,7 +352,7 @@ export function agentModelCatalog(
                 isProviderEnabled(id) &&
                 provider.includeModels?.includes(candidate.id) !== false &&
                 provider.excludeModels?.includes(candidate.id) !== true;
-            concreteModels.push({ ...candidate, enabled, providerId: id });
+            concreteModels.push(configuredRoute(id, provider, candidate, enabled));
         }
     }
     const models = [...concreteModels];
@@ -347,7 +366,16 @@ export function agentModelCatalog(
                 provider.includeModels?.includes(routed.model.id) !== false &&
                 provider.excludeModels?.includes(routed.model.id) !== true &&
                 routed.candidates.some((candidate) => isAccountEnabled(candidate));
-            models.push({ ...routed.model, enabled, providerId: id });
+            // A pool offers an opt-in model when it names the model itself or a member offers it.
+            const hidden =
+                provider.includeModels?.includes(routed.model.id) !== true &&
+                !concreteModels.some(
+                    (member) =>
+                        member.id === routed.model.id &&
+                        !member.hidden &&
+                        routed.candidates.includes(member.providerId),
+                );
+            models.push({ ...routed.model, enabled, hidden, providerId: id });
         }
     }
     return models;
@@ -410,7 +438,7 @@ export function smartProviderRoute(
                     ? bedrockModelRegion(configuration, candidateId, entry.id)
                     : undefined;
             if (route === undefined) {
-                const { enabled: _enabled, ...model } = entry;
+                const { enabled: _enabled, hidden: _hidden, ...model } = entry;
                 route = {
                     candidates: [],
                     model: model as CatalogAgentModel,
@@ -460,7 +488,7 @@ function providerCatalog(
     configuration: HappyAgentConfiguration,
     id: string,
     provider: ConcreteConfiguredProvider,
-): readonly CatalogAgentModel[] {
+): readonly CuratedAgentModel[] {
     const native = !happyHarnessAccepts(configuration, id, provider)
         ? []
         : provider.type === "bedrock"
@@ -689,7 +717,7 @@ function concreteAgentModelCatalog(
         if (provider.type === "smart") continue;
         for (const candidate of providerCatalog(configuration, id, provider)) {
             if (!modelAvailableOnProvider(provider, candidate.id)) continue;
-            models.push({ ...candidate, enabled: true, providerId: id });
+            models.push(configuredRoute(id, provider, candidate, true));
         }
     }
     return models;
@@ -1218,6 +1246,23 @@ function required<T>(
         throw new ProviderCredentialsUnavailableError(id, vendor, defaultNativeLogin);
     }
     return credential;
+}
+
+/** One curated row as a route on a concrete account, hidden while it stays opt-in there. */
+function configuredRoute(
+    id: string,
+    provider: ConcreteConfiguredProvider,
+    candidate: CuratedAgentModel,
+    enabled: boolean,
+): ConfiguredAgentModel {
+    const { optIn, ...route } = candidate;
+    const hidden = optIn === true && provider.includeModels?.includes(candidate.id) !== true;
+    return { ...route, enabled, hidden, providerId: id };
+}
+
+/** Keep a superseded model servable while new choices go to its successor. */
+function optIn(candidate: CatalogAgentModel): CuratedAgentModel {
+    return { ...candidate, optIn: true };
 }
 
 function model(

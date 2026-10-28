@@ -644,8 +644,17 @@ exclusions win when a model appears in both matching lists. `include_models` and
 control ordinary availability everywhere, including the model picker. The subagent-specific pair
 only narrows which otherwise available model/provider routes agents may choose when creating new
 subagents, including through workflows; it does not remove those models from ordinary sessions.
-Omitting both subagent fields allows every ordinarily available model. Codex instances also accept
-`auth_file`, `base_url`, and `transport`.
+Omitting both subagent fields allows every ordinarily available model.
+
+GPT-6 Sol on Codex is opt-in now that GPT-6.1 Sol replaces it. It stays enabled, so sessions
+already on it keep running turns and compaction, but it is hidden: it never stands in as the
+default and is not offered to the phone or for new subagents. Naming it in a Codex account's
+`include_models`, beside every other model that account should offer, offers it again there; a
+pool offers it when the pool or one of its members names it. A `[defaults]` model or
+`include_subagent_models` entry naming it is honored as written. Bedrock keeps offering it
+because Bedrock does not serve GPT-6.1 Sol.
+
+Codex instances also accept `auth_file`, `base_url`, and `transport`.
 Claude Code instances accept `config_dir`, `executable`, and `oauth_token`.
 Run `claude setup-token` while signed in to the additional Claude account to
 create the long-lived token used by `oauth_token`. The token applies only to

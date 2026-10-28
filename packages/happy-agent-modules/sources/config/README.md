@@ -170,6 +170,15 @@ account never becomes the default by accident. Smart routing, account-quota poll
 verification are unchanged. Hiding is file-only configuration and takes effect on daemon restart;
 there is no API mutation for it.
 
+A curated model can be hidden the same way. An opt-in row, today GPT-6 Sol on Codex now that
+GPT-6.1 Sol replaces it, is served but hidden on each account whose `include_models` does not name
+it; a smart route is hidden unless the pool or one of its members names it. The catalog reports
+`hidden` beside `enabled`, and `isModelHidden` answers it per route. Like a hidden provider, a
+hidden model stays in `models` for existing sessions, never stands in as the default unless
+`[defaults]` names it, and is left out of `visibleModels` and new-subagent choices unless
+`include_subagent_models` names it. Bedrock keeps offering GPT-6 Sol because it does not serve
+GPT-6.1 Sol.
+
 A provider may independently narrow delegation with `include_subagent_models` and
 `exclude_subagent_models`. These use the same exact model IDs and exclusion precedence as
 `include_models` and `exclude_models`, but they do not change the ordinary catalog or model picker.

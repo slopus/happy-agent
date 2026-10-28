@@ -17,6 +17,17 @@ exclude GPT-5.6. Reported Codex CLI models follow the same rule before a person'
 `include_models` order is applied. Provider support and context metadata for historical GPT-5.6
 conversations remain available; retirement changes current choices and defaults.
 
+## Superseded models are opt-in, not removed
+
+The user asked to drop GPT-6 Sol from the models Happy offers once GPT-6.1 Sol replaced it, unless
+a person overrides that in their settings. Deleting the catalog row, as GPT-5.6 was retired, or
+excluding it would disable the route, and conversations already on it would stop working. The
+Codex row is now opt-in: it stays enabled and routable but is `hidden`, like a hidden provider, so
+pickers, the default stand-in, and new-subagent choices skip it. Naming it in the account's
+`include_models` offers it again; an explicit `[defaults]` model or `include_subagent_models` entry
+is honored as the person's own choice. Bedrock keeps offering GPT-6 Sol because it does not serve
+GPT-6.1 Sol, so opt-in applies only where the successor exists.
+
 ## Credential selectors must leave provider diagnostics before shared consumers see them
 
 Credential-source paths, configuration keys, environment variable names, and host labels used to

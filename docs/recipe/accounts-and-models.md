@@ -119,6 +119,12 @@ enabled = true
 | `provider`, `model`                                  | `[defaults]`       | Default provider ID and model ID for new sessions.               |
 
 - Filters take exact Happy Agent model IDs, such as `openai/gpt-5.6-sol`. Exclusion wins.
+- GPT-6 Sol on Codex is opt-in now that GPT-6.1 Sol replaces it. Sessions already on it keep
+  working, but it never becomes the default and is not offered to the phone or new subagents.
+  To offer it again, list it in that account's `include_models` beside every other model it
+  should offer, such as
+  `include_models = ["openai/gpt-6.1-sol", "openai/gpt-6.1-terra", "openai/gpt-6-astra", "openai/gpt-6-sol", "openai/gpt-6-luna"]`.
+  A pool offers it when the pool or one of its members lists it. Bedrock still offers it.
 - Pools respect member filters: a model only some members offer routes only to those.
 - `defaults.provider` may name a pool.
 
