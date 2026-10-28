@@ -1500,6 +1500,16 @@ Field groups:
   daemons supply the complete menu on every provider model reference, independently of shared
   definition inheritance, and keep its non-null IDs identical to the effective `serviceTiers`;
   eligibility changes use the existing configuration-change notification.
+  A reference also carries `hidden`, `true` when the account serves the model without offering
+  it. The curated catalog makes a model opt-in when a successor replaces it, such as GPT-6 Sol
+  after GPT-6.1 Sol; it is hidden unless the account's `include_models` names it, and a smart
+  provider's copy is hidden unless the pool names it or a member offers it unhidden. Like a
+  hidden provider it is display-only: clients leave hidden models out of model pickers unless
+  the current selection already uses one, the daemon leaves them out of new-subagent choices and
+  never picks one as the default stand-in, and messages, turns, and compaction for an agent
+  already on one are accepted as usual. A default model the configuration names explicitly is
+  still honored. `enabled` never includes `hidden`. `hidden` is additive and does not increment
+  the protocol version; older daemons omit it, and clients treat a missing value as `false`.
 
     A provider entry also carries `hidden`, `true` when the machine configuration sets
     `hidden = true` for that provider. It is display-only: clients omit hidden providers and their
@@ -2102,6 +2112,14 @@ Response — `200`: `{ "users": [ ... ] }`. Each user contains:
 - `canLogIn` — optional boolean, `false` for a guest and `true` for a member. A guest has no
   credentials: they cannot sign in, call this API, or open any app, and nothing turns a guest
   into a member. Clients treat a missing `canLogIn` as `true`.
+- `role` — optional: what the member does, such as `"Billing engineer"`, 1–64 characters, or
+  `null` when unset. Guests have none.
+- `follows` — optional: what the member follows, such as `"Stripe webhooks"`, 1–500
+  characters, or `null` when unset. Agents read `role` and `follows` to decide whom a piece of
+  work concerns (see Tasks, "Mentioning a teammate").
+
+`role` and `follows` are additive and do not increment the protocol version; older daemons omit
+them, and clients treat a missing value as `null`.
 
 A guest is created when an admin bot approves a person on an exported bot, or when someone an
 admin bot put on an export's allowlist first writes. Its `name` is the display name the chat
@@ -2138,6 +2156,9 @@ profile. The first `PATCH` must set a non-null `name` and creates the durable us
 whitespace-delimited token is stored as `firstName`; the trimmed remainder is stored as
 `lastName`, or `null` when there is no remainder. Later profile and photo mutations update that
 same user. The configured owner WorkOS user ID determines `isOwner`; the client cannot set it.
+A member the machine configuration lists under `[feature.team.members]` already has a user, with
+the name, email, role, and follows configured there, before they first sign in; startup fills only
+the fields such a member has not set and never overwrites their own edits.
 
 ### The profile object
 
@@ -2163,6 +2184,9 @@ same user. The configured owner WorkOS user ID determines `isOwner`; the client 
 - `photo` — `null`, or an object with the photo's ThumbHash placeholder; the image itself is
   fetched from `GET /v0/profile/photo`, exactly like a project avatar.
 - `version` — the UUIDv7 resource version for `If-Match` and event chaining, as in the basics.
+- `role`, `follows` — team mode only: the member's own role and what they follow, each a string or
+  `null`, as described for `GET /v0/users`. Before the member has a user both are `null`.
+  Standalone mode, where the installation is one person, omits them, as do older daemons.
 
 Every profile representation uses this same shape, including profile and photo mutation
 responses, version-conflict responses, and `GET /v0/bootstrap/desktop`'s `profile`. In team mode
@@ -2177,8 +2201,10 @@ field `null`.
 
 ### `PATCH /v0/profile`
 
-Partial update. Any subset of `name` and `email`; a field set to `null` is cleared. Honors
-`If-Match` with the usual `409`. Accepts `mutationId`.
+Partial update. Any subset of `name` and `email`, and in team mode `role` (1–64 characters) and
+`follows` (1–500 characters), each nonblank without control characters; a field set to `null` is
+cleared. Standalone mode answers `400 invalid_request` to `role` or `follows`. Honors `If-Match`
+with the usual `409`. Accepts `mutationId`.
 
 In team mode, `name` cannot be cleared because every durable user has a first name. Before the
 authenticated member has a durable user, the first update must include a non-null `name`.
@@ -6550,9 +6576,11 @@ agent shows the syntax itself.
 | `workspace` | a workspace                                                   | `GET /v0/workspaces/:workspaceId`                                       | `name`                                                           | `initialization.status` is `"initializing"`, or `status` is `"archiving"` |
 | `project`   | a project                                                     | `GET /v0/projects/:projectId`                                           | `name`                                                           | `initialization.status` is `"initializing"`                               |
 | `surface`   | a Surface of any type, such as a todo list, document, or chat | `GET /v0/surfaces`, the instance whose `id` matches                     | `name`, following `surface.updated`                              | never                                                                     |
+| `user`      | a person, by their Happy user ID                              | `GET /v0/users?ids=…`                                                   | `name`, following `profile.updated`                              | never                                                                     |
 
 A Surface has no route of its own, so it resolves
-from the catalog, and it is inert when the catalog has no instance with its `id`. Other attributes have no meaning for kinds that do not list
+from the catalog, and it is inert when the catalog has no instance with its `id`. A `user` is
+inert in standalone mode, where `GET /v0/users` resolves only guests, and for an unknown ID. Other attributes have no meaning for kinds that do not list
 them and are ignored. Files have no tag: agents keep referring to them as `path:line`. The kind set
 may grow.
 
@@ -7317,7 +7345,9 @@ a stale indefinitely-running block.
 
 ### `POST /v0/agents/:agentId/read`
 
-Marks the agent read: clears `unread`. The body is `{}`, optionally with a `mutationId`.
+Marks the agent read: clears `unread`. The body is `{}`, optionally with a `mutationId`. On a
+task's agent it also clears the caller's own task membership `unread`, as
+`POST /v0/tasks/:taskId/read` does, with its `task.membership.updated` event.
 
 Response — `200`: `{ "agent": { ... }, "profiles": [ ... ], "slashCommands": [ ... ] }` with `unread` `null`.
 
@@ -9408,6 +9438,24 @@ eligible again for members who have not explicitly left it. Leaving a task befor
 records the suppression without emitting a membership event. Absences before this behavior was
 introduced are not recorded leaves and are eligible for automatic joining.
 
+**Mentioning a teammate.** In team mode a task's agent reads the team through its
+`list_teammates` tool (each member's user ID, name, `role`, and `follows`; guests left out) and
+mentions someone with `notify_teammate`, giving one sentence on why the task concerns them. The
+mention never adds them to the task. It goes to that member's own Prioritizing as a waking notice
+(see Spaces, "Notices"), which decides from what they do and follow whether the task belongs in
+their sidebar; when it does, its `join_task` tool joins its person to the task. Such a join ignores
+`tasks.autoJoin`, clears an explicit leave like a manual join, and marks the membership `unread`
+with Prioritizing's reason; joining a task the member is already in keeps its place and marks it
+unread again. A member without Stem Cells has no Prioritizing, so the mention adds nothing for
+them. Agents write a person as `<happy-user id="…"/>` (see "Reference tags").
+
+**Unread.** A membership's `unread` says what its member has not looked at yet, today only that
+their Prioritizing added the task for them after a teammate's agent mentioned them. It is the
+member's own: it travels on their membership in task responses, `GET /v0/tasks`, the desktop
+bootstrap's `taskMemberships`, and their `task.joined` and `task.membership.updated` events, on
+every connection that member uses, a paired phone included. `POST /v0/tasks/:taskId/read` clears
+it, and so does `POST /v0/agents/:agentId/read` on the task's agent.
+
 **Archival permission.** In standalone mode the installation's one person may archive and
 unarchive every task. In team mode the task's owner and the team owner may; any other member
 receives `403` with `code: "forbidden"`. A task without an owner can be archived only by the team
@@ -9500,7 +9548,13 @@ Fields:
     "taskId": "t4k8m2q9w1e5r7y3u6i0o2p4",
     "userId": "u1x2y3z4a5b6c7d8e9f0g1h2",
     "orderKey": "5",
-    "joinedAt": 1755300000000
+    "joinedAt": 1755300000000,
+    "unread": {
+        "reason": "looped_in",
+        "since": 1755400000000,
+        "agentId": "f2g3h4j5k6l7m8n9p0q1r2s3",
+        "note": "Refunds go through Stripe, which Steve follows."
+    }
 }
 ```
 
@@ -9509,6 +9563,11 @@ Fields:
 - `orderKey` — an opaque sort key within this member's list; clients order the member's tasks by
   comparing these strings.
 - `joinedAt` — when the member joined.
+- `unread` — `null`, or what the member has not looked at yet: `reason` (`"looped_in"` today; the
+  set may grow, and clients treat an unknown reason as plain unread), `since` (when it was marked),
+  and optionally `agentId` (the agent that marked it, the member's Prioritizing) and `note` (its
+  one-sentence reason, 1–500 characters, shown to the member). Additive: older daemons omit it, and
+  clients treat a missing value as `null`.
 
 Every task route answers only with the caller's own memberships. In team mode one member never
 sees another member's memberships.
@@ -9617,6 +9676,16 @@ keeps its place, and emits no event.
 
 Response — `200`: `{ "task": { ... }, "membership": { ... } }`. A new membership emits
 `task.joined` after commit, echoing `mutationId`. `404` when no such task exists.
+
+### `POST /v0/tasks/:taskId/read`
+
+Marks the task read for the caller: clears their membership's `unread`. The body is `{}` or
+`{ "mutationId": "..." }`. Idempotent: a task with nothing unread for the caller, or one they have
+not joined, changes nothing and emits no event.
+
+Response — `200`: `{ "task": { ... }, "membership": { ... } }`, the membership being the caller's
+or `null`. A cleared mark emits `task.membership.updated` after commit, echoing `mutationId`.
+`404` when no such task exists. Additive: older compatible daemons return `404`.
 
 ### `POST /v0/tasks/:taskId/leave`
 
@@ -10276,13 +10345,22 @@ decisions on the person's last proposals.
 document, and only there, `<happy-section id="archive" label="Archive"/>` heads the rows offered
 for archiving: the rows of its block, up to the next section or separator. Only top-level task rows
 may stand in that block; any other row there is refused like any other document rule. Which tasks
-to offer is Prioritizing's judgement, and nothing is archived unless the person accepts. The person
+to offer is Prioritizing's judgement, and nothing in the block is archived unless the person accepts. The person
 keeps a row by dragging it
 out of the block in the proposal, or offers one by dragging it in. Accepting archives each task in
 the block as `POST /v0/tasks/:taskId/archive` archives it, as the person and with the person's
 archive authority; a task the person may not archive, or one that is already archived, is
 skipped and stays in the sidebar. The block's heading is never applied to the sidebar, and archived
 rows leave it as archived work always does.
+
+**Shipped work.** Prioritizing may archive one task by itself, at once, with
+`archive_shipped_task {spaceId, shipped}`, only once its work has explicitly shipped or finished:
+it is on the main branch or released, or the person said it is done, and nothing in it still
+waits. `shipped` names what shipped in one sentence. Whether work shipped is Prioritizing's
+judgement; the daemon checks only that the row is one of the person's own top-level task rows and
+that the person may archive the task, and archives it as `POST /v0/tasks/:taskId/archive` does,
+with the person's archive authority. Its row leaves as archived work always does, and the person
+can unarchive it. Everything else that looks finished is offered through a proposal.
 
 A client shows a `sidebar_proposal` inline as a sidebar drawn from its document with the same
 components as the sidebar, never as raw HTML. While it is open, the client follows its latest
@@ -10405,9 +10483,14 @@ conversation. These events **wake** it:
   (shortened to 1,500 characters), and every later message the person writes in it while it still
   waits for its first placement, since that message may make its subject clear;
 - the person's edit of a proposal, and their accepting or declining it;
-- another agent's `request_space_placement`, "Tidy now", and the person's own messages to it.
+- another agent's `request_space_placement`, "Tidy now", and the person's own messages to it;
+- in team mode, a teammate's message in one of the person's rows or a session under one, named as
+  that teammate's rather than the person's, with the agent's last text reply before it;
+- in team mode, a teammate's agent mentioning the person through `notify_teammate`, with the task,
+  the agent's reason, and the person's own `role` and `follows` (see Tasks, "Mentioning a
+  teammate").
 
-Other notices wait for the next wake without causing one: every later message the person writes in
+Other notices wait for the next wake without causing one: every later message the person themselves writes in
 placed new work, or in a session under it, with the agent's last text reply before it (both shortened,
 without tool calls, and only the latest three notices per row kept); a session under such work
 that stops, with its last reply; work that finished or paused, left, or was renamed; and the
@@ -13157,6 +13240,10 @@ event is idempotent by attachment ID.
     - `membership` (full membership object with its new `orderKey`).
 - `task.left` — the member left a task. In team mode it reaches only that member's connections.
     - `membership` (the removed membership object).
+- `task.membership.updated` — the member's membership changed in place: marked `unread` again, or
+  read. In team mode it reaches only that member's connections. Additive; older daemons never
+  emit it.
+    - `membership` (full membership object).
 
 **Spaces**
 

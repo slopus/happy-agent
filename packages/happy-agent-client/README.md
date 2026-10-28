@@ -173,6 +173,9 @@ guest is someone who reaches an exported bot from an outside chat service: `kind
 `canLogIn` is `false`, and a guest has no photo. Older daemons omit both fields, so treat a missing
 `kind` as `"member"` and a missing `canLogIn` as `true`; older daemons also answer `404` in
 standalone mode.
+In team mode a user and the profile also carry the member's `role` and what they `follows`,
+each a string or `null`; `updateProfile()` sets them. Agents mention a person as
+`<happy-user id="…"/>`, a `user` reference resolved through `getUsers()`.
 
 User settings are the caller's own opaque key-value preferences, kept on the daemon so they follow
 the person across devices: the authenticated member's in team mode, the installation's one person's
@@ -348,7 +351,10 @@ caller's own list. Leaving never archives. `archiveTask()` and `unarchiveTask()`
 through `getUsers()` and `getUserPhoto()`. `createTask()` creates a task the caller owns, named or
 left to name itself from its first message, and `renameTask()` renames it. A task's
 `workspaceId` works with every workspace route, files, terminals, and Git included. Follow `task.created` and `task.updated` for the tasks, and `task.joined`,
-`task.reordered`, and `task.left` for the caller's memberships.
+`task.reordered`, `task.left`, and `task.membership.updated` for the caller's memberships. A
+membership's `unread` is set when the caller's Prioritizing added the task for them after a
+teammate's agent mentioned them; `markTaskRead()`, or `markAgentRead()` on the task's agent,
+clears it. Older daemons omit `unread`.
 
 Spaces, the sidebar, are additive without a protocol bump. Detect support through `listSpaces()`:
 `404` means the daemon has no Spaces. It returns the caller's rows, sections, and the event cursor

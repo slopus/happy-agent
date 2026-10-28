@@ -14,6 +14,10 @@ export const profileSchema = Type.Object({
     email: Nullable(Type.String()),
     name: Nullable(Type.String()),
     photo: Nullable(profilePhotoSchema),
+    /** Team mode: what the member does. Standalone and older daemons omit it. */
+    role: Type.Optional(Nullable(Type.String())),
+    /** Team mode: what the member follows. Standalone and older daemons omit it. */
+    follows: Type.Optional(Nullable(Type.String())),
     /** Local authenticated team user ID, or null outside onboarded team mode. Absent on older daemons. */
     userId: Type.Optional(Nullable(userIdSchema)),
     updatedAt: timestampSchema,
@@ -31,5 +35,9 @@ export const profileUpdateRequestSchema = Type.Object({
     /** Echoed verbatim in the events this mutation produces. */
     mutationId: Type.Optional(mutationIdSchema),
     name: Type.Optional(Nullable(Type.String())),
+    /** Team mode only; a standalone daemon refuses it. */
+    role: Type.Optional(Nullable(Type.String({ minLength: 1, maxLength: 64 }))),
+    /** Team mode only; a standalone daemon refuses it. */
+    follows: Type.Optional(Nullable(Type.String({ minLength: 1, maxLength: 500 }))),
 });
 export type ProfileUpdateRequest = Static<typeof profileUpdateRequestSchema>;

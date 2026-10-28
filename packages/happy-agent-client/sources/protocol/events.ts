@@ -220,8 +220,9 @@ export const taskUpdatedPayloadSchema = Type.Object({
 export type TaskUpdatedPayload = Static<typeof taskUpdatedPayloadSchema>;
 
 /**
- * The caller joined, moved, or left a task in their own list. In team mode these reach only that
- * member's connections. `task.left` carries the removed membership.
+ * The caller joined, moved, or left a task in their own list, or a membership changed in place,
+ * such as being marked read. In team mode these reach only that member's connections.
+ * `task.left` carries the removed membership.
  */
 export const taskMembershipPayloadSchema = Type.Object({
     membership: taskMembershipSchema,
@@ -678,6 +679,7 @@ export type HappyAgentEvent =
     | EventEnvelope<"task.joined", TaskMembershipPayload>
     | EventEnvelope<"task.reordered", TaskMembershipPayload>
     | EventEnvelope<"task.left", TaskMembershipPayload>
+    | EventEnvelope<"task.membership.updated", TaskMembershipPayload>
     | EventEnvelope<"space.created", SpacePayload>
     | EventEnvelope<"space.updated", SpacePayload>
     | EventEnvelope<"space.removed", SpaceRemovedPayload>

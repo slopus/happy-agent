@@ -5,6 +5,7 @@ import {
     configResponseSchema,
     daemonConfigSchema,
     providerConfigSchema,
+    providerModelReferenceSchema,
 } from "../sources/index.js";
 
 const provider = {
@@ -35,5 +36,21 @@ describe("provider hidden flag", () => {
 
     it("rejects a non-boolean hidden value", () => {
         expect(Value.Check(providerConfigSchema, { ...provider, hidden: "yes" })).toBe(false);
+    });
+});
+
+describe("model hidden flag", () => {
+    const reference = { id: "openai/gpt-6-sol", enabled: true };
+
+    it.each([true, false])("accepts an explicit hidden value %#", (hidden) => {
+        expect(Value.Check(providerModelReferenceSchema, { ...reference, hidden })).toBe(true);
+    });
+
+    it("accepts an older daemon's reference without hidden", () => {
+        expect(Value.Check(providerModelReferenceSchema, reference)).toBe(true);
+    });
+
+    it("rejects a non-boolean hidden value", () => {
+        expect(Value.Check(providerModelReferenceSchema, { ...reference, hidden: 1 })).toBe(false);
     });
 });

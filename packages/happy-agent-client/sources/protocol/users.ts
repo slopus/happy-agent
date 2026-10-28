@@ -28,6 +28,10 @@ export const userSchema = Type.Object({
     kind: Type.Optional(userKindSchema),
     /** `false` for a guest, who cannot sign in. Older daemons omit it; treat it as `true`. */
     canLogIn: Type.Optional(Type.Boolean()),
+    /** What the member does, such as "designer"; `null` when unset. Older daemons omit it. */
+    role: Type.Optional(Nullable(Type.String({ minLength: 1, maxLength: 64 }))),
+    /** What the member follows, such as "all voice features"; `null` when unset. */
+    follows: Type.Optional(Nullable(Type.String({ minLength: 1, maxLength: 500 }))),
 });
 export type User = Static<typeof userSchema>;
 

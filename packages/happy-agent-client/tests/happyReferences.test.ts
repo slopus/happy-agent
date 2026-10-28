@@ -16,7 +16,15 @@ const ID = "rg799k2m9q4w1e5t8y3u6i0o";
 
 describe("parseHappyReferenceTag", () => {
     it("parses the canonical tag of every kind", () => {
-        for (const kind of ["artifact", "agent", "workspace", "project", "service", "surface"]) {
+        for (const kind of [
+            "artifact",
+            "agent",
+            "workspace",
+            "project",
+            "service",
+            "surface",
+            "user",
+        ]) {
             expect(parseHappyReferenceTag(`<happy-${kind} id="${ID}"/>`)).toEqual({ kind, id: ID });
             expect(isKnownHappyReferenceKind(kind)).toBe(true);
         }

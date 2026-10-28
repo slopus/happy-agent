@@ -388,6 +388,11 @@ export const providerModelReferenceSchema = Type.Object({
     defaultEffort: Type.Optional(effortSchema),
     efforts: Type.Optional(Type.Array(effortSchema)),
     enabled: Type.Boolean(),
+    /**
+     * Display-only: the account still serves the model, for agents already on it, but pickers and
+     * new-subagent choices leave it out. Older daemons omit it; treat a missing value as `false`.
+     */
+    hidden: Type.Optional(Type.Boolean()),
     id: Type.String(),
     name: Type.Optional(Type.String()),
     /** Replaces the shared speed menu with this account/model's eligible choices. */

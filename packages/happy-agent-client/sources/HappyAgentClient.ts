@@ -1875,6 +1875,19 @@ export class HappyAgentClient {
         });
     }
 
+    /** `POST /v0/tasks/:taskId/read` — clears the caller's `unread`; already read changes nothing. */
+    async markTaskRead(
+        taskId: Cuid2,
+        options: RequestOptions & JoinTaskRequest = {},
+    ): Promise<TaskResponse> {
+        return await this.#json({
+            method: "POST",
+            path: `v0/tasks/${encodeURIComponent(taskId)}/read`,
+            json: bodyOf(options),
+            signal: options.signal,
+        });
+    }
+
     /** `POST /v0/tasks/:taskId/leave` — idempotent; the task and its owner are unchanged. */
     async leaveTask(
         taskId: Cuid2,

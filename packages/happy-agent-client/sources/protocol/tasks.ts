@@ -58,9 +58,25 @@ export const taskSchema = Type.Object({
 });
 export type Task = Static<typeof taskSchema>;
 
+/**
+ * What the member has not looked at in a task: today only that an agent looped them in. The
+ * reason set may grow; clients treat an unknown reason as plain unread.
+ */
+export const taskMembershipUnreadSchema = Type.Object({
+    reason: Type.String({ minLength: 1, maxLength: 64 }),
+    since: timestampSchema,
+    /** The agent that looped the member in. */
+    agentId: Type.Optional(cuid2Schema),
+    /** The agent's one-sentence reason, shown to the member. */
+    note: Type.Optional(Type.String({ minLength: 1, maxLength: 500 })),
+});
+export type TaskMembershipUnread = Static<typeof taskMembershipUnreadSchema>;
+
 /** One person's place in one task: joining puts the task in their own ordered list. */
 export const taskMembershipSchema = Type.Object({
     joinedAt: timestampSchema,
+    /** Set until the member reads the task; `null` when nothing is unread. Older daemons omit it. */
+    unread: Type.Optional(Nullable(taskMembershipUnreadSchema)),
     /** An opaque sort key within this member's own list. */
     orderKey: Type.String(),
     taskId: cuid2Schema,
