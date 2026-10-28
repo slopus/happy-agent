@@ -68,6 +68,10 @@ it gets something wrong, fix the prompt. Code enforces only what a direct user a
 such as the person moving something in the sidebar, and real integrity rules, such as valid
 documents, unique IDs, and permissions.
 
+Before hardcoding any product behavior an agent can affect, ask: **could this just be a prompt?**
+If so, write the prompt. Layouts, section names, ordering, and "X always sits at the top" are
+guidance the agent follows and the person can override, never rules the code enforces.
+
 ## Deliberate non-goals
 
 Do not implement a dedicated Plan mode, Vim or other modal editing modes, Jupyter notebook parsing or editing, durable command allow/deny history, dedicated IDE integrations, a separate Rig login flow, or niche compatibility features whose primary value is exhaustive upstream parity. Rig uses the credentials managed by the system Codex and Claude Code installations, so users should sign in through those assistants instead. Planning should remain part of the normal agent workflow. Auto permissions should review the current action and user authorization without learning a persistent command-execution policy. Skills should follow Codex behavior and scope, not Claude Code's expanded skill runtime. Only reconsider these boundaries when the user explicitly changes the product direction.
