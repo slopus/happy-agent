@@ -2,16 +2,11 @@ import { accessSync, constants, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { delimiter, dirname, join } from "node:path";
 
-import { Type } from "@sinclair/typebox";
-import { Value } from "@sinclair/typebox/value";
-
+import { listLocalModels } from "./listLocalModels.js";
 import { homeOf, type RouteMachine } from "./RouteMachine.js";
 
 const DEFAULT_PORT = 8317;
-const PROBE_TIMEOUT_MS = 1_500;
 const MAX_CONFIG_BYTES = 1_000_000;
-const MAX_RESPONSE_BYTES = 2_000_000;
-const MAX_MODELS = 500;
 
 /** Who serves the models CLIProxyAPI lists, by its `owned_by` value. */
 const VENDOR_NAMES: Readonly<Record<string, string>> = {
@@ -25,15 +20,6 @@ const VENDOR_NAMES: Readonly<Record<string, string>> = {
     gemini: "Google",
     antigravity: "Google",
 };
-
-const modelListSchema = Type.Object({
-    data: Type.Array(
-        Type.Object({
-            id: Type.String({ minLength: 1, maxLength: 512 }),
-            owned_by: Type.Optional(Type.String({ maxLength: 256 })),
-        }),
-    ),
-});
 
 export interface CliProxyApiModel {
     readonly id: string;
@@ -144,41 +130,18 @@ async function listModels(
     port: number,
     apiKey: string | null,
 ): Promise<Pick<CliProxyApiDetection, "status" | "models" | "vendors">> {
-    const stopped = { status: "stopped" as const, models: [], vendors: [] };
-    let response: Response;
-    try {
-        response = await fetch(`http://127.0.0.1:${String(port)}/v1/models`, {
-            headers: apiKey === null ? {} : { authorization: `Bearer ${apiKey}` },
-            redirect: "error",
-            signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
-        });
-    } catch {
-        return stopped;
-    }
-    if (response.status === 401 || response.status === 403) {
-        await response.body?.cancel();
-        return { status: "unauthorized", models: [], vendors: [] };
-    }
-    let body: unknown;
-    try {
-        const text = await response.text();
-        body = response.ok && text.length <= MAX_RESPONSE_BYTES ? JSON.parse(text) : undefined;
-    } catch {
-        body = undefined;
-    }
-    // Something else answers on that port: it is not a CLIProxyAPI we can use.
-    if (!Value.Check(modelListSchema, body)) return stopped;
-    const models = body.data.slice(0, MAX_MODELS).map((model) => ({
+    const listed = await listLocalModels(port, apiKey);
+    const models = listed.models.map((model) => ({
         id: model.id,
         vendor:
-            model.owned_by === undefined
+            model.ownedBy === null
                 ? null
-                : (VENDOR_NAMES[model.owned_by.toLowerCase()] ?? model.owned_by),
+                : (VENDOR_NAMES[model.ownedBy.toLowerCase()] ?? model.ownedBy),
     }));
     const vendors = [
         ...new Set(models.flatMap((model) => (model.vendor === null ? [] : [model.vendor]))),
     ].sort();
-    return { status: "running", models, vendors };
+    return { status: listed.status, models, vendors };
 }
 
 function findProgram(machine: RouteMachine): string | null {
