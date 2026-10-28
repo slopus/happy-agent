@@ -1,5 +1,5 @@
 import { Type, type Static } from "@sinclair/typebox";
-import { defineAgentTool } from "@slopus/happy-agent-base";
+import { defineAgentTool, type AgentPermissionMode } from "@slopus/happy-agent-base";
 
 import { workflowIdSchema, workflowRunSchema } from "../Workflow.js";
 import type { WorkflowsModule } from "../WorkflowsModule.js";
@@ -11,7 +11,12 @@ const resumeWorkflowParametersSchema = Type.Object(
 
 type ResumeWorkflowParameters = Static<typeof resumeWorkflowParametersSchema>;
 
-export function resumeWorkflowTool(module: WorkflowsModule, agentId: string) {
+/** The agents a resumed run starts run in `ownerPermissionMode`, the owner's persistent mode now. */
+export function resumeWorkflowTool(
+    module: WorkflowsModule,
+    agentId: string,
+    ownerPermissionMode: AgentPermissionMode,
+) {
     return defineAgentTool({
         name: "resume_workflow",
         defer: true,
@@ -24,7 +29,7 @@ export function resumeWorkflowTool(module: WorkflowsModule, agentId: string) {
         durable: false,
         shouldReviewInAutoMode: () => false,
         execute: async (ctx, { id }: ResumeWorkflowParameters) =>
-            await module.resume(ctx, agentId, id),
+            await module.resume(ctx, agentId, id, ownerPermissionMode),
         toLLM: (run) => [{ type: "text", text: module.formatRunForModel(run) }],
     });
 }

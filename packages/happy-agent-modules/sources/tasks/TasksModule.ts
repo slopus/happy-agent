@@ -281,6 +281,7 @@ export class TasksModule implements AgentModule {
                     scope.agent.id,
                     scope.kv,
                     creator,
+                    scope.agent.permissionMode,
                     await this.#collaboration.shownAgentOptions(ctx, scope.kv, creator),
                 ),
                 listTasksTool(this, scope.kv),

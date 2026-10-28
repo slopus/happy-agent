@@ -3,6 +3,7 @@ import { sql } from "drizzle-orm";
 import {
     agentDatabase,
     agentDatabaseRun,
+    DEFAULT_AGENT_PERMISSION_MODE,
     withAgentDatabase,
     type AgentBasePersistedEvent,
     type AgentBaseSettlement,
@@ -11,6 +12,7 @@ import {
     type AgentModuleHooks,
     type AgentModuleMigration,
     type AgentModuleScope,
+    type AgentPermissionMode,
     type AnyAgentTool,
 } from "@slopus/happy-agent-base";
 import { isSessionErrorDone, type SessionEvent } from "@slopus/happy-providers";
@@ -303,11 +305,19 @@ export class WorkflowsModule implements AgentModule {
             // where the tools are built rather than at every call.
             const compute = await this.#compute.resolve(ctx, scope.agent.id);
             return [
-                runWorkflowTool(this, scope.agent.id, this.#compute, compute),
+                // The owner's own persistent mode, never the Full access an Auto review may lend
+                // run_workflow to read a script outside the workspace.
+                runWorkflowTool(
+                    this,
+                    scope.agent.id,
+                    scope.agent.permissionMode,
+                    this.#compute,
+                    compute,
+                ),
                 listWorkflowsTool(this, scope.agent.id),
                 workflowStatusTool(this, scope.agent.id),
                 cancelWorkflowTool(this, scope.agent.id),
-                resumeWorkflowTool(this, scope.agent.id),
+                resumeWorkflowTool(this, scope.agent.id, scope.agent.permissionMode),
                 waitWorkflowTool(this, scope.agent.id),
                 workflowLogsTool(this, scope.agent.id),
             ];
@@ -403,13 +413,16 @@ export class WorkflowsModule implements AgentModule {
 
     /**
      * Start one workflow and return as soon as it is recorded as running. The script itself runs
-     * on the module's own lifetime, so it outlives the tool call that asked for it.
+     * on the module's own lifetime, so it outlives the tool call that asked for it. Its agents run
+     * in `ownerPermissionMode`, the owner's persistent mode, recorded with the launch because the
+     * run's own context names no agent.
      */
     async launch(
         ctx: Context,
         agentId: string,
         input: WorkflowLaunchInput,
         id: string,
+        ownerPermissionMode: AgentPermissionMode = DEFAULT_AGENT_PERMISSION_MODE,
     ): Promise<WorkflowRun> {
         this.#assertEnabled();
         if (!Value.Check(workflowAgentIdSchema, agentId) || !Value.Check(workflowIdSchema, id)) {
@@ -426,6 +439,7 @@ export class WorkflowsModule implements AgentModule {
         const request: WorkflowLaunchRequest = {
             ...(await this.#resolveLaunch(ctx, agentId, input, id)),
             ...(mutationId === undefined ? {} : { mutationId }),
+            permissionMode: ownerPermissionMode,
         };
         const at = this.#now();
         const run: WorkflowRun = {
@@ -522,18 +536,30 @@ export class WorkflowsModule implements AgentModule {
         return cancelled;
     }
 
-    /** Continue a paused run from its last checkpoint, reusing every agent that already answered. */
-    async resume(ctx: Context, agentId: string, id: string): Promise<WorkflowRun> {
+    /**
+     * Continue a paused run from its last checkpoint, reusing every agent that already answered.
+     * The agents it starts from now on run in `ownerPermissionMode`, the owner's mode now.
+     */
+    async resume(
+        ctx: Context,
+        agentId: string,
+        id: string,
+        ownerPermissionMode: AgentPermissionMode = DEFAULT_AGENT_PERMISSION_MODE,
+    ): Promise<WorkflowRun> {
         this.#assertEnabled();
         const run = await this.#require(ctx, agentId, id);
         if (run.status === "running") return run;
         if (run.status !== "paused") {
             throw new Error(`Workflow run "${id}" is ${describeWorkflowStatus(run.status)}.`);
         }
-        const request = await this.#storedRequest(ctx, agentId, run);
+        const request: WorkflowLaunchRequest = {
+            ...(await this.#storedRequest(ctx, agentId, run)),
+            permissionMode: ownerPermissionMode,
+        };
         const at = this.#now();
         const resumed: WorkflowRun = { ...baseOf(run), status: "running", updatedAt: at };
         await ctx.inTx(async (txCtx) => {
+            await writeWorkflowLaunch(txCtx, agentId, request);
             await this.#store(txCtx, resumed);
             await this.#publish(txCtx, "workflow_updated", resumed);
         });
@@ -735,8 +761,7 @@ export class WorkflowsModule implements AgentModule {
                   ]);
         const runner = new WorkflowScriptRunner({
             args: request.args ?? null,
-            startAgent: (start, signal) =>
-                this.#startAgent(ctx, agentId, request.id, start, request.mutationId, signal),
+            startAgent: (start, signal) => this.#startAgent(ctx, agentId, request, start, signal),
             onAgentResult: async (callIndex, result) => {
                 await this.#rememberAgentResult(ctx, agentId, request.id, callIndex, result);
             },
@@ -778,11 +803,11 @@ export class WorkflowsModule implements AgentModule {
     async #startAgent(
         ctx: Context,
         agentId: string,
-        runId: string,
+        request: WorkflowLaunchRequest,
         start: WorkflowAgentStart,
-        mutationId: string | undefined,
         signal: AbortSignal,
     ): Promise<string> {
+        const { id: runId, mutationId } = request;
         const existing = await readWorkflowAgentCall(ctx, agentId, runId, start.callIndex);
         if (existing?.signature === start.signature) {
             return await this.#awaitRestoredAgentCall(
@@ -831,6 +856,10 @@ export class WorkflowsModule implements AgentModule {
                         metadata: { workflow: { runId, callIndex: start.callIndex } },
                         // The owner may be on another run by now; the agent answers the launch's.
                         mutationId: mutationId ?? null,
+                        // The run's context names no agent, so the owner's mode comes from the
+                        // launch; one recorded before modes were kept gets the product default.
+                        creatorPermissionMode:
+                            request.permissionMode ?? DEFAULT_AGENT_PERMISSION_MODE,
                     },
                 );
             });

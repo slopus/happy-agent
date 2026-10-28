@@ -1,4 +1,5 @@
 import { Type, type Static, type TSchema } from "@sinclair/typebox";
+import { agentPermissionModeSchema } from "@slopus/happy-agent-base";
 
 /*
  * Run identities are shown verbatim to the model. Keep their individual bounds small enough
@@ -230,6 +231,11 @@ export const workflowLaunchRequestSchema = Type.Object(
         resumeFromRunId: Type.Optional(workflowIdSchema),
         /** The client mutation the launching run answered; every agent the run starts answers it. */
         mutationId: Type.Optional(Type.String({ minLength: 1, maxLength: 512 })),
+        /**
+         * The owner's persistent permission mode when it launched or last resumed the run. Every
+         * agent the run starts runs in it, and never in a mode the owner did not have.
+         */
+        permissionMode: Type.Optional(agentPermissionModeSchema),
     },
     { additionalProperties: false },
 );

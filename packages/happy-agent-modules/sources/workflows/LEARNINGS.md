@@ -34,3 +34,11 @@ each agent started. The owner may have settled and started another run by then, 
 answered that run's `mutationId`. The launch now records the launching run's mutation, from
 History's `runMutationId`, and passes it to every `createAgent` call, `null` when there was none,
 so a restored run keeps it too.
+
+## A run's agents run in the owner's permission mode
+
+Workflow agents always started in Auto, because a run's context names no agent. The launch now
+records the owner's persistent mode, read from the module scope `run_workflow` is built with
+rather than the call's context, which an Auto review elevates to read a script off disk. Every
+agent the run starts uses it, including after a restart; `resume_workflow` records the owner's
+mode at the time of the resume.

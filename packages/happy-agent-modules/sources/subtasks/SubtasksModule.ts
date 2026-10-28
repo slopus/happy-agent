@@ -1,9 +1,11 @@
 import {
     currentAgentEnvironment,
+    DEFAULT_AGENT_PERMISSION_MODE,
     type AgentConfig,
     type AgentModule,
     type AgentModuleAgent,
     type AgentModuleHooks,
+    type AgentPermissionMode,
     type AgentSystemRef,
 } from "@slopus/happy-agent-base";
 import { Type } from "@sinclair/typebox";
@@ -16,6 +18,7 @@ import type { BotSettingsModule } from "../botSettings/index.js";
 import { CollaborationModule, type CollaborationCreator } from "../collaboration/index.js";
 import { ComputeModule } from "../compute/index.js";
 import { DurableFunctionsModule } from "../durableFunctions/index.js";
+import { delegatedPermissionMode } from "../impl/delegatedPermissionMode.js";
 import { TasksModule } from "../tasks/index.js";
 import { WorkspacesModule } from "../workspaces/index.js";
 import {
@@ -269,6 +272,10 @@ export class SubtasksModule implements AgentModule {
     /**
      * Create a subtask and send its opening task. `unreported` is for a calling module that tells
      * the coordinator about the subtask's work itself, so its replies are not reported again.
+     * `creatorPermissionMode` is the coordinator's persistent mode when an agent asks: the subtask
+     * runs in it unless the input sets `read_only`, or `full_mode`, which requires the coordinator to
+     * be in Full access. A module creating a subtask of its own omits it and gets the product
+     * default.
      */
     async create(
         ctx: Context,
@@ -277,7 +284,10 @@ export class SubtasksModule implements AgentModule {
         agentId: string,
         workspaceId?: string,
         creator?: CollaborationCreator,
-        options: { readonly unreported?: boolean } = {},
+        options: {
+            readonly unreported?: boolean;
+            readonly creatorPermissionMode?: AgentPermissionMode;
+        } = {},
     ): Promise<SubtaskResult> {
         if (
             !Value.Check(createSubtaskInputSchema, input) ||
@@ -291,7 +301,19 @@ export class SubtasksModule implements AgentModule {
             throw new Error("A workspace-bound subtask needs its own workspace identity.");
         }
         const { workspace: requestedWorkspace, ...task } = input;
-        const { title: _title, text: _text, ...choice } = task;
+        const {
+            title: _title,
+            text: _text,
+            read_only: _readOnly,
+            full_mode: _fullMode,
+            ...choice
+        } = task;
+        // Settled now, while the coordinator's own mode is known; the opening task is delivered
+        // later, from a context that names no agent.
+        const permissionMode = delegatedPermissionMode(
+            options.creatorPermissionMode ?? DEFAULT_AGENT_PERMISSION_MODE,
+            input,
+        );
         const agents = this.#requireAgents();
         return await ctx.inTx(async (txCtx) => {
             const existing = await agents.config(txCtx, agentId);
@@ -394,6 +416,7 @@ export class SubtasksModule implements AgentModule {
                     agentId,
                     parentAgentId,
                     input: resolvedInput,
+                    permissionMode,
                     ...(workspaceId === undefined ? {} : { workspaceId }),
                 },
                 operationId: `subtask-start:${agentId}`,
@@ -589,6 +612,8 @@ export class SubtasksModule implements AgentModule {
                         this,
                         scope.agent.id,
                         creator,
+                        // The agent's own persistent mode, never one an Auto review lent a call.
+                        scope.agent.permissionMode,
                         await this.#collaboration.shownAgentOptions(toolCtx, scope.kv, creator),
                     ),
                     archiveSubtaskTool(this, scope.agent.id),
@@ -704,12 +729,21 @@ export class SubtasksModule implements AgentModule {
                 (await this.#workspaces.get(txCtx, request.workspaceId))?.status !== "ready"
             )
                 return;
-            const { workspace: _workspace, ...task } = request.input;
+            // Creation already settled the mode against the coordinator's own and recorded it, so
+            // the opening task runs in exactly that mode; a start written before modes were
+            // recorded keeps the product default.
+            const {
+                workspace: _workspace,
+                read_only: _readOnly,
+                full_mode: _fullMode,
+                ...task
+            } = request.input;
             await this.#collaboration.createAgent(
                 txCtx,
                 request.parentAgentId,
                 task,
                 request.agentId,
+                { creatorPermissionMode: request.permissionMode ?? DEFAULT_AGENT_PERMISSION_MODE },
             );
         });
     }

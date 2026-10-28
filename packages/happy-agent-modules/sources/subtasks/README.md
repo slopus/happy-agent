@@ -27,6 +27,10 @@ Another module may create a conversation subtask with `createConversation`: it s
 folder, has no opening task, is marked `subtaskConversation`, and does not report its runs to the
 parent, because that module delivers its messages itself. The exported bots module holds each
 guest's chat this way.
+A subtask runs in its coordinator's persistent permission mode unless `read_only` hands it less or
+`full_mode`, from a coordinator in Full access, asks for Full access. Creation settles the mode and
+records it with the durable start, because the start runs on a context that names no agent.
+Modules creating subtasks of their own, such as Voice and Prioritizing, get the product default.
 Archival is final: a subtask is never restored. Durable Functions owns post-commit compute
 cleanup. Agent Base remains unchanged.
 Coordinators are told to mention a subtask as `<happy-agent id="…"/>` with its agent ID, and

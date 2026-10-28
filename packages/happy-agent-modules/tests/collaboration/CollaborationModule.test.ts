@@ -1,12 +1,16 @@
 import {
     withAgentConfig,
+    withAgentContext,
+    withAgentPermissionMode,
     type AgentConfig,
     type AgentMessageAcceptance,
     type AgentMetadata,
     type AgentModel,
     type AgentModuleHooks,
+    type AgentPermissionMode,
     type AgentSystemRef,
 } from "@slopus/happy-agent-base";
+import { Value } from "@sinclair/typebox/value";
 import { parseHappyFileLink } from "@slopus/happy-agent-client";
 import { createRootContext, type Context } from "@steve.kite/stdlib";
 import { mkdtemp, writeFile } from "node:fs/promises";
@@ -28,6 +32,10 @@ import {
     interruptAgentTool,
     sendMessageTool,
 } from "../../sources/collaboration/index.js";
+import {
+    collaborationCreateInputSchema,
+    collaborationSendToolInputSchema,
+} from "../../sources/collaboration/CollaborationAgent.js";
 import { ComputeModule } from "../../sources/compute/index.js";
 import { SecretsModule } from "../../sources/secrets/index.js";
 import { HistoryModule } from "../../sources/history/index.js";
@@ -1703,6 +1711,7 @@ describe("collaboration", () => {
             module,
             "parent",
             { provider: "codex", model: undefined },
+            "auto",
             "OPTIONS-LISTING",
             5,
             3,
@@ -1729,6 +1738,7 @@ describe("collaboration", () => {
             module,
             "parent",
             { provider: "codex", model: undefined },
+            "auto",
             "OPTIONS-LISTING",
             5,
             3,
@@ -1757,6 +1767,7 @@ describe("collaboration", () => {
             module,
             "parent",
             { provider: "codex", model: undefined },
+            "auto",
             "OPTIONS-LISTING",
             5,
             3,
@@ -2169,5 +2180,177 @@ describe("sub-agent harnesses", () => {
         expect(listed.text).toContain("antigravity/gemini-3.8-flash");
         expect(listed.text).not.toContain("Usage");
         expect(await hooks.beforeTurn!(ctx, scope, TURN)).toBeUndefined();
+    });
+});
+
+const PERMISSION_MODES: readonly AgentPermissionMode[] = [
+    "read_only",
+    "workspace_write",
+    "auto",
+    "full_access",
+];
+
+describe("collaborator permission modes", () => {
+    /** create_agent as Agent Base builds it for an agent whose persistent mode is `mode`. */
+    async function createToolIn(mode: AgentPermissionMode) {
+        const collection = new Collection();
+        collection.seed("parent", null);
+        const started_ = await started(collection);
+        const tools = await started_.hooks.tools!(started_.ctx, {
+            agent: { id: "parent", provider: "codex", permissionMode: mode },
+        } as never);
+        const create = tools.find((tool) => tool.name === "create_agent");
+        if (create === undefined) throw new Error("The create_agent tool was not offered.");
+        return { ...started_, collection, create };
+    }
+
+    it.each(PERMISSION_MODES)("runs a collaborator in its creator's %s mode", async (mode) => {
+        const { collection, create, ctx } = await createToolIn(mode);
+
+        await create.execute(ctx, TASK, toolCall("child"));
+
+        expect(collection.delivered[0]!.options).toMatchObject({
+            permissionMode: mode,
+            metadata: expect.objectContaining({
+                mode: expect.objectContaining({ permissionMode: mode }),
+            }),
+        });
+        expect(collection.configs.get("child")?.metadata?.["lastMode"]).toMatchObject({
+            permissionMode: mode,
+        });
+    });
+
+    it.each(PERMISSION_MODES)("lets a %s creator hand a collaborator Read only", async (mode) => {
+        const { collection, create, ctx } = await createToolIn(mode);
+
+        await create.execute(ctx, { ...TASK, read_only: true }, toolCall("child"));
+
+        expect(collection.delivered[0]!.options.permissionMode).toBe("read_only");
+    });
+
+    it("lets a Full access creator ask for Full access", async () => {
+        const { collection, create, ctx } = await createToolIn("full_access");
+
+        await create.execute(ctx, { ...TASK, full_mode: true }, toolCall("child"));
+
+        expect(collection.delivered[0]!.options.permissionMode).toBe("full_access");
+    });
+
+    it.each(["read_only", "workspace_write", "auto"] as const)(
+        "refuses full_mode from a %s creator before anything is created",
+        async (mode) => {
+            const { collection, create, ctx, history } = await createToolIn(mode);
+
+            await expect(
+                create.execute(ctx, { ...TASK, full_mode: true }, toolCall("child")),
+            ).rejects.toThrow("full_mode is allowed only while you are in Full access yourself");
+
+            expect(collection.created).toEqual([]);
+            expect(collection.delivered).toEqual([]);
+            expect(history.recordToolSpawnPresentation).not.toHaveBeenCalled();
+        },
+    );
+
+    it("accepts no other name for full_mode", () => {
+        expect(Value.Check(collaborationCreateInputSchema, { ...TASK, full_mode: true })).toBe(
+            true,
+        );
+        expect(Value.Check(collaborationCreateInputSchema, { ...TASK, full: true })).toBe(false);
+    });
+
+    it("refuses read_only and full_mode together", async () => {
+        const { collection, create, ctx } = await createToolIn("full_access");
+
+        await expect(
+            create.execute(ctx, { ...TASK, read_only: true, full_mode: true }, toolCall("child")),
+        ).rejects.toThrow("Set read_only or full_mode, not both.");
+        expect(collection.created).toEqual([]);
+    });
+
+    it("does not count Full access an Auto review lent the call as the creator's mode", async () => {
+        const { collection, create, ctx } = await createToolIn("auto");
+        // The context one reviewed call may run on after an Auto review elevates it.
+        const elevated = withAgentPermissionMode(
+            withAgentContext(ctx, { id: "parent", provider: "codex", permissionMode: "auto" }),
+            "full_access",
+        );
+
+        await expect(
+            create.execute(elevated, { ...TASK, full_mode: true }, toolCall("refused")),
+        ).rejects.toThrow("you are in Auto");
+        await create.execute(elevated, TASK, toolCall("child"));
+
+        expect(collection.created).toEqual([{ id: "child", parent: "parent" }]);
+        expect(collection.delivered[0]!.options.permissionMode).toBe("auto");
+    });
+
+    it("holds direct module creation to the creator mode it is given", async () => {
+        const collection = new Collection();
+        const { module, ctx } = await started(collection);
+
+        await module.createAgent(ctx, "parent", TASK, "child", {
+            creatorPermissionMode: "workspace_write",
+        });
+        await expect(
+            module.createAgent(ctx, "parent", { ...TASK, full_mode: true }, "second", {
+                creatorPermissionMode: "workspace_write",
+            }),
+        ).rejects.toThrow("you are in Workspace write");
+        // Code creating an agent on no agent's behalf gets the product default.
+        await module.createAgent(ctx, "parent", TASK, "third");
+
+        expect(collection.delivered.map(({ options }) => options.permissionMode)).toEqual([
+            "workspace_write",
+            "auto",
+        ]);
+        expect(collection.created.map(({ id }) => id)).toEqual(["child", "third"]);
+    });
+
+    it("gives follow-up messages no way to change a collaborator's mode", async () => {
+        const { collection, create, ctx, module } = await createToolIn("read_only");
+        await create.execute(ctx, TASK, toolCall("child"));
+
+        expect(
+            Value.Check(collaborationSendToolInputSchema, {
+                toAgentId: "child",
+                explanation: "Widen it",
+                text: "Carry on.",
+                full_mode: true,
+            }),
+        ).toBe(false);
+        await module.sendMessage(ctx, "parent", { toAgentId: "child", text: "Carry on." }, "m1");
+
+        expect(collection.delivered[1]!.options).not.toHaveProperty("permissionMode");
+        expect(collection.configs.get("child")?.metadata?.["lastMode"]).toMatchObject({
+            permissionMode: "read_only",
+        });
+    });
+
+    it("starts a never-run conversation no wider than the sender's own mode", async () => {
+        const collection = new Collection();
+        collection.seed("parent", null);
+        // A mode chosen when the conversation was created, from the installation's catalog.
+        const initialMode = {
+            providerId: "codex",
+            modelId: "openai/gpt-6.1-sol",
+            effort: "high",
+            serviceTier: null,
+            permissionMode: "full_access",
+        };
+        collection.seed("child", "parent", { metadata: { initialMode } });
+        const { module, ctx } = await started(collection);
+        const sender = withAgentContext(ctx, {
+            id: "parent",
+            provider: "codex",
+            model: "openai/gpt-6.1-sol",
+            permissionMode: "workspace_write",
+        });
+
+        await module.sendMessage(sender, "parent", { toAgentId: "child", text: "Start." }, "m1");
+
+        expect(collection.delivered[0]!.options.permissionMode).toBe("workspace_write");
+        expect(collection.configs.get("child")?.metadata?.["lastMode"]).toMatchObject({
+            permissionMode: "workspace_write",
+        });
     });
 });

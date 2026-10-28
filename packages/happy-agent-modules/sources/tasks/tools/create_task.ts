@@ -3,6 +3,7 @@ import {
     DEFAULT_AGENT_PERMISSION_MODE,
     defineAgentTool,
     type AgentKV,
+    type AgentPermissionMode,
 } from "@slopus/happy-agent-base";
 import { Type, type Static } from "@sinclair/typebox";
 import { formatHappyReferenceTag, type MessageMode } from "@slopus/happy-agent-client";
@@ -13,6 +14,7 @@ import {
     type CollaborationCreator,
     type CollaborationModule,
 } from "../../collaboration/index.js";
+import { narrowerPermissionMode } from "../../impl/delegatedPermissionMode.js";
 import { TaskInputError, taskNameSchema, taskRecordSchema } from "../Task.js";
 import type { TasksModule } from "../TasksModule.js";
 
@@ -30,13 +32,18 @@ const createTaskToolInputSchema = Type.Object(
 );
 type CreateTaskToolInput = Static<typeof createTaskToolInputSchema>;
 
-/** Create one persistent task: its folder, its one conversation, and its owner. */
+/**
+ * Create one persistent task: its folder, its one conversation, and its owner. A task an agent
+ * opens runs in the product default mode, narrowed to `creatorPermissionMode`, the creating
+ * agent's persistent mode, so delegating to a task never widens what the work may touch.
+ */
 export function createTaskTool(
     tasks: TasksModule,
     collaboration: CollaborationModule,
     actingAgentId: string,
     kv: AgentKV,
     creator: CollaborationCreator,
+    creatorPermissionMode: AgentPermissionMode,
     options: string,
 ) {
     return defineAgentTool({
@@ -83,7 +90,10 @@ export function createTaskTool(
                     modelId: selection.model,
                     effort: selection.effort,
                     serviceTier: selection.serviceTier ?? null,
-                    permissionMode: DEFAULT_AGENT_PERMISSION_MODE,
+                    permissionMode: narrowerPermissionMode(
+                        DEFAULT_AGENT_PERMISSION_MODE,
+                        creatorPermissionMode,
+                    ),
                 };
             } else if (
                 input.effort !== undefined ||

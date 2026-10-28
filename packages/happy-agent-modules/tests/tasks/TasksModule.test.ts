@@ -12,6 +12,7 @@ import {
     type AgentKV,
     type AgentModel,
     type AgentModuleScope,
+    type AgentPermissionMode,
     type AgentQueuedMessage,
     type AgentSystemRef,
     type AnyAgentTool,
@@ -1042,6 +1043,55 @@ describe("TasksModule", () => {
         }
     });
 
+    it("never opens a task an agent creates in a mode wider than that agent's own", async () => {
+        const fixture = await started("tasks-create-permission-cap");
+        try {
+            const ctx = fixture.database.context;
+            const bot = await fixture.bots.create(ctx, { name: "Creator" });
+            const running = (permissionMode: AgentPermissionMode) => {
+                fixture.scopeModes.set(bot.agentId, permissionMode);
+                return withAgentContext(ctx, {
+                    id: bot.agentId,
+                    provider: "scripted",
+                    model: "scripted/deep",
+                    effort: "high",
+                    permissionMode,
+                });
+            };
+            const opened = async (
+                name: string,
+                permissionMode: AgentPermissionMode,
+                model?: string,
+            ) => {
+                const task = await fixture.executeCreate(
+                    bot.agentId,
+                    {
+                        name,
+                        text: "Start.",
+                        ...(model === undefined ? {} : { model, effort: "high" }),
+                    },
+                    new Map(),
+                    running(permissionMode),
+                );
+                return fixture.agents.options.get(task.agentId)?.permissionMode;
+            };
+
+            // Chosen model or inherited one, a narrower creator narrows the task.
+            expect(await opened("Read only chosen", "read_only", "scripted/deep")).toBe(
+                "read_only",
+            );
+            expect(await opened("Read only inherited", "read_only")).toBe("read_only");
+            expect(await opened("Workspace chosen", "workspace_write", "scripted/deep")).toBe(
+                "workspace_write",
+            );
+            // A wider creator does not widen a task past the product default.
+            expect(await opened("Full chosen", "full_access", "scripted/deep")).toBe("auto");
+            expect(await opened("Full inherited", "full_access")).toBe("auto");
+        } finally {
+            await fixture.close();
+        }
+    });
+
     it("creates an idle task with model selection, seeding draft and initialMode while keeping lastMode null", async () => {
         const fixture = await started("tasks-create-idle-model");
         try {
@@ -1755,11 +1805,18 @@ async function started(
         events.push(event);
     });
     const kvs = new Map<string, AgentKV>();
+    // The persistent mode each agent runs in, as Agent Base puts it on every module scope.
+    const scopeModes = new Map<string, AgentPermissionMode>();
     const scopeFor = (agentId: string): AgentModuleScope => {
         const kv = kvs.get(agentId) ?? sharedKV();
         kvs.set(agentId, kv);
         return {
-            agent: { id: agentId, provider: "scripted", model: "scripted/default" },
+            agent: {
+                id: agentId,
+                provider: "scripted",
+                model: "scripted/default",
+                permissionMode: scopeModes.get(agentId) ?? "auto",
+            },
             kv,
         } as AgentModuleScope;
     };
@@ -1776,6 +1833,7 @@ async function started(
         agents,
         bots,
         collaboration,
+        scopeModes,
         config,
         database,
         durable,

@@ -1,15 +1,20 @@
 import { createId } from "@paralleldrive/cuid2";
-import { defineAgentTool } from "@slopus/happy-agent-base";
+import { defineAgentTool, type AgentPermissionMode } from "@slopus/happy-agent-base";
 import { formatHappyReferenceTag } from "@slopus/happy-agent-client";
 
 import { createSubtaskInputSchema, subtaskResultSchema } from "../Subtask.js";
 import type { CollaborationCreator } from "../../collaboration/index.js";
 import type { SubtasksModule } from "../SubtasksModule.js";
 
+/**
+ * `creatorPermissionMode` is the coordinator's persistent mode, which the subtask runs in unless
+ * the call sets read_only or full_mode.
+ */
 export function createSubtaskTool(
     subtasks: SubtasksModule,
     agentId: string,
     creator: CollaborationCreator,
+    creatorPermissionMode: AgentPermissionMode,
     options: string,
 ) {
     return defineAgentTool({
@@ -24,6 +29,7 @@ export function createSubtaskTool(
             "Reserve subtasks for substantial, distinct workstreams, such as changes across projects; handle small steps inline. Usually create second-level subtasks only on explicit user request. Honor explicit subtask requests; use create_agent for internal research.",
             "Sidebar title: prefer 2–3 words; 4 at most, as a last resort. Put details in text.",
             "Omit workspace to share your filesystem, or supply workspace with projectId and a short name for a new workspace. Work starts after setup.",
+            "The subtask runs in your current permission mode. Set read_only to run it in Read only. Set full_mode to run it in Full access, which is allowed only while you are in Full access yourself.",
             "Returns the agent ID without waiting. Coordinate via send_agent_message and archive direct subtasks with archive_subtask. Users can message or archive them. There is no wait tool.",
             "Keep delegated work in the subtask. Ask its agent through send_agent_message for progress, findings, diffs, verification, or follow-up changes. Do not directly inspect or modify its files or run commands in its workspace. Direct access to another workspace often requires elevated permissions and review by the reviewer model; talking to its agent avoids unnecessary permission reviews.",
             `Choose a model and effort; harness and provider default to yours when they serve the model.\n\n${options}\n\nCall agent_options for the current list.`,
@@ -42,6 +48,7 @@ export function createSubtaskTool(
                     ? undefined
                     : await call.kv.getOrCreate(ctx, "workspaceId", () => createId()),
                 creator,
+                { creatorPermissionMode },
             ),
         toLLM: (result) => [
             {

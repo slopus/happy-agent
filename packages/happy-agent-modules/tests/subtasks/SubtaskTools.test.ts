@@ -11,6 +11,7 @@ describe("subtask creation tool", () => {
         {} as unknown as SubtasksModule,
         "parent",
         { provider: "codex", model: undefined },
+        "auto",
         "OPTIONS-LISTING",
     );
 
@@ -81,6 +82,7 @@ describe("subtask creation result", () => {
             {} as unknown as SubtasksModule,
             "parent",
             { provider: "codex", model: undefined },
+            "auto",
             "OPTIONS-LISTING",
         );
         expect(tool.toLLM({ agentId: "subtaskagent1" })).toEqual([

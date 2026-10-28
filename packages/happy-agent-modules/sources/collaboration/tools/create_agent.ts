@@ -1,4 +1,8 @@
-import { defineAgentTool, type AgentModel } from "@slopus/happy-agent-base";
+import {
+    defineAgentTool,
+    type AgentModel,
+    type AgentPermissionMode,
+} from "@slopus/happy-agent-base";
 
 import type { CollaborationModule } from "../CollaborationModule.js";
 import {
@@ -8,11 +12,15 @@ import {
     type CollaborationCreator,
 } from "../CollaborationAgent.js";
 
-/** Create a collaborator and hand it its opening task. */
+/**
+ * Create a collaborator and hand it its opening task. `creatorPermissionMode` is the creating
+ * agent's persistent mode, which the collaborator runs in unless the call sets read_only or full_mode.
+ */
 export function createAgentTool(
     collaboration: CollaborationModule,
     thisAgentId: string,
     creator: CollaborationCreator,
+    creatorPermissionMode: AgentPermissionMode,
     options: string,
     maxCollaborators: number,
     maxCollaborationDepth: number,
@@ -34,6 +42,7 @@ export function createAgentTool(
                 withCurrentProvider(input, creator.provider, collaboration.availableModels()),
                 call.id,
                 creator,
+                creatorPermissionMode,
             ),
         toLLM: ({ agentId }) => [
             {
@@ -72,6 +81,7 @@ function createAgentDescription(
         "The collaborator works on its own. This call returns as soon as the task is delivered, and anything the collaborator has to say arrives later as a message — nothing here waits for it.",
         `One root agent tree may contain at most ${maxCollaborators} ordinary collaborators. Reuse one with send_agent_message after reaching the limit, or archive one that can no longer work (for example, its provider fails) with archive_agent to free its place. The maximum depth is ${maxCollaborationDepth} agents including the root. Subtasks belong to the tree but count toward neither limit; collaborators they create do count.`,
         "Choose an exact model and effort; harness and provider default to yours when they serve the model. They cannot be changed afterwards.",
+        "The collaborator runs in your current permission mode. Set read_only to run it in Read only. Set full_mode to run it in Full access, which is allowed only while you are in Full access yourself.",
         "",
         options,
         "",

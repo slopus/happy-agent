@@ -1,5 +1,7 @@
-import { agentMetadataSchema } from "@slopus/happy-agent-base";
+import { agentMetadataSchema, agentPermissionModeSchema } from "@slopus/happy-agent-base";
 import { Type, type Static } from "@sinclair/typebox";
+
+import { delegatedPermissionFlagSchemas } from "../impl/delegatedPermissionMode.js";
 
 export const subtaskIdSchema = Type.String({
     minLength: 2,
@@ -25,6 +27,8 @@ export const createSubtaskInputSchema = Type.Object(
         harness: Type.Optional(Type.String({ minLength: 1, maxLength: 256 })),
         provider: Type.Optional(Type.String({ minLength: 1, maxLength: 256 })),
         serviceTier: Type.Optional(Type.Literal("priority")),
+        /** The subtask runs in its coordinator's own mode unless one of these says otherwise. */
+        ...delegatedPermissionFlagSchemas,
         workspace: Type.Optional(
             Type.Object(
                 {
@@ -69,6 +73,11 @@ export const subtaskStartSchema = Type.Object(
         parentAgentId: subtaskIdSchema,
         workspaceId: Type.Optional(subtaskIdSchema),
         input: createSubtaskInputSchema,
+        /**
+         * The mode creation settled while the coordinator's own was known; the start runs on a
+         * context that names no agent. A start recorded before modes were kept has none.
+         */
+        permissionMode: Type.Optional(agentPermissionModeSchema),
     },
     { additionalProperties: false },
 );

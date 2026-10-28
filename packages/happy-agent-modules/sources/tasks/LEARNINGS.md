@@ -170,3 +170,11 @@ storage contains an invalid membership". A key at an open end of a list now step
 neighbour, so a list taking work at the top grows keys with the logarithm of its length.
 `006-task-order-keys-renumbered` gives a list that already holds a key past half the bound fresh,
 short keys in its existing order; nothing else changes, and only those lists are read.
+
+## A task an agent opens never runs wider than that agent
+
+`create_task` and an agent's first message to a never-run task always gave the task Auto, so a
+Read only agent could start Auto work through a task, and a mode a person chose at creation was
+ignored. Both now use the mode chosen at creation, or else Auto, narrowed to the creating or
+sending agent's mode. A task is a person's own root rather than the agent's child, so a Full
+access agent does not pass Full access on; the person picks the mode once they open it.

@@ -138,3 +138,15 @@ with one wording shared by every agent-messaging tool. A created collaborator's 
 which no model explains, uses the creation's title when it fits on one explanation line, so
 `create_agent`, `create_subtask`, and workflow agents all open with a row that says what they are
 for.
+
+## A collaborator runs in its creator's permission mode
+
+Every collaborator started in Auto, whatever its creator ran in, because the opening task always
+sent the product default. A Read only or Workspace write agent could hand work to an Auto child,
+and a Full access agent's children were sandboxed. The opening task now carries the creator's
+persistent mode. `read_only: true` is the one way to hand on less, and `full_mode: true` asks for Full
+access, accepted only from a creator already in Full access; both together are refused. The
+creator's mode is read from the module scope the tool is built with, never from the call's
+context, because an Auto review may lend that call Full access for one action. The check throws
+before the spawn presentation or the child exists. A first message to a conversation that never
+ran starts it no wider than the sender's mode, since that message is the one that sets it.

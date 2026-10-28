@@ -162,9 +162,18 @@ it when `features.cross_workspace` is off.
 Chosen once, on the message that starts it working, and never again.
 
 `create_agent` creates the agent and sends its opening task in one call, because that first message
-is the only place a model, effort, provider, and service tier can be expressed — `AgentCreateOptions`
-carries no selection. Every later message carries none of them, so an agent that can talk to a
-collaborator cannot turn it into a different model, make it think harder, or widen its permissions.
+is the only place a model, effort, provider, service tier, and permission mode can be expressed —
+`AgentCreateOptions` carries no selection. Every later message carries none of them, so an agent
+that can talk to a collaborator cannot turn it into a different model, make it think harder, or
+widen its permissions.
+
+The permission mode is the creator's own persistent mode, read from the module scope the tool is
+built with, so Full access an Auto review lends one call never counts. `read_only: true` hands the
+collaborator Read only; `full_mode: true` asks for Full access and is refused unless the creator is in
+Full access; both together are refused. The check runs before the spawn presentation is recorded
+or anything is created. Direct module callers pass `creatorPermissionMode`; without it they get
+the product default. A first message to a conversation that has never run, such as a task seeded
+with an initial mode, starts it no wider than the sender's mode.
 
 The requested selection is validated against the live `AgentSystemRef.models` filtered by each
 provider's `include_subagent_models` and `exclude_subagent_models` before anything is created, so a

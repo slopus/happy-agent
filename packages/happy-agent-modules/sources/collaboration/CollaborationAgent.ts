@@ -1,6 +1,7 @@
-import { agentMetadataSchema } from "@slopus/happy-agent-base";
+import { agentMetadataSchema, agentPermissionModeSchema } from "@slopus/happy-agent-base";
 import { Type, type Static } from "@sinclair/typebox";
 
+import { delegatedPermissionFlagSchemas } from "../impl/delegatedPermissionMode.js";
 import {
     senderAgentExplanationArgumentSchema,
     senderAgentExplanationSchemaOf,
@@ -47,7 +48,9 @@ export const collaborationMessageTextSchema = Type.String({
  *
  * `title` is written to the agent's real metadata, so whatever shows a person their agents names
  * this one the same way it names every other. A collaborator otherwise inherits its creator's
- * configuration, so the machine it works on is not part of this input.
+ * configuration, so the machine it works on is not part of this input. It runs in the creator's own
+ * permission mode unless `read_only` hands it less or `full_mode`, from a creator in Full access, asks
+ * for Full access.
  */
 export const collaborationCreateInputSchema = Type.Object(
     {
@@ -58,6 +61,7 @@ export const collaborationCreateInputSchema = Type.Object(
         harness: Type.Optional(Type.String({ minLength: 1, maxLength: 256 })),
         provider: Type.Optional(Type.String({ minLength: 1, maxLength: 256 })),
         serviceTier: Type.Optional(collaborationServiceTierSchema),
+        ...delegatedPermissionFlagSchemas,
         text: collaborationMessageTextSchema,
     },
     { additionalProperties: false },
@@ -114,6 +118,12 @@ export const collaborationCreateOptionsSchema = Type.Object(
         mutationId: Type.Optional(
             Type.Union([Type.String({ minLength: 1, maxLength: 512 }), Type.Null()]),
         ),
+        /**
+         * The creating agent's own persistent mode. The collaborator runs in it unless the input's
+         * `read_only` or `full_mode` says otherwise, and `full_mode` requires it to be Full access. Omitted,
+         * it is the product default, for code that creates an agent on no agent's behalf.
+         */
+        creatorPermissionMode: Type.Optional(agentPermissionModeSchema),
     },
     { additionalProperties: false },
 );

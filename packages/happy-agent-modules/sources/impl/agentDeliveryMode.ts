@@ -1,6 +1,7 @@
 import {
     agentEffort,
     agentModel,
+    agentPermissionMode,
     agentProvider,
     agentServiceTier,
     DEFAULT_AGENT_PERMISSION_MODE,
@@ -13,6 +14,8 @@ import { messageModeSchema, type MessageMode } from "@slopus/happy-agent-client"
 import { Value } from "@sinclair/typebox/value";
 import type { Context } from "@steve.kite/stdlib";
 
+import { narrowerPermissionMode } from "./delegatedPermissionMode.js";
+
 /**
  * The mode one agent's message gives a conversation that has never been given one.
  *
@@ -23,10 +26,14 @@ import type { Context } from "@steve.kite/stdlib";
  * selection while this installation still offers it, and otherwise on the installation's default model.
  * If an explicitly chosen creation model or its chosen effort/tier is no longer offered by the installation,
  * an actionable error is thrown. A conversation that already has a lastMode keeps it, so a later
- * message never overrides an accepted choice. The permission mode is the one Agent Base gives a new
- * agent, sent explicitly so the recorded mode is what the conversation actually runs with.
+ * message never overrides an accepted choice. The permission mode is the one chosen at creation,
+ * or else the one Agent Base gives a new agent, never wider than the sender's own: an agent that
+ * starts a conversation must not hand it more than it has. It is sent explicitly so the recorded
+ * mode is what the conversation actually runs with.
  *
- * `ctx` is the sender's: its agent context carries the selection the sender is running on.
+ * `ctx` is the sender's: its agent context carries the selection the sender is running on. The
+ * agent-messaging tools that reach here are never lent Full access by an Auto review, so the mode
+ * it carries is the sender's own; a context naming no agent carries the product default.
  */
 export async function agentDeliveryMode(
     ctx: Context,
@@ -38,6 +45,7 @@ export async function agentDeliveryMode(
     if (Value.Check(messageModeSchema, config?.metadata?.["lastMode"])) {
         return undefined;
     }
+    const senderPermissionMode = agentPermissionMode(ctx);
     const initialModeRaw = config?.metadata?.["initialMode"];
     if (Value.Check(messageModeSchema, initialModeRaw)) {
         const initialMode = initialModeRaw as MessageMode;
@@ -68,20 +76,24 @@ export async function agentDeliveryMode(
             );
         }
         const serviceTier = requestedTier ?? null;
+        const permissionMode = narrowerPermissionMode(
+            initialMode.permissionMode,
+            senderPermissionMode,
+        );
         return {
             mode: {
                 providerId: model.providerId,
                 modelId: model.id,
                 effort: requestedEffort,
                 serviceTier,
-                permissionMode: DEFAULT_AGENT_PERMISSION_MODE,
+                permissionMode,
             },
             options: {
                 provider: model.providerId,
                 model: model.id,
                 effort: requestedEffort,
                 serviceTier,
-                permissionMode: DEFAULT_AGENT_PERMISSION_MODE,
+                permissionMode,
             },
         };
     }
@@ -104,20 +116,24 @@ export async function agentDeliveryMode(
         model.serviceTiers?.includes(requestedTier) === true
             ? requestedTier
             : null;
+    const permissionMode = narrowerPermissionMode(
+        DEFAULT_AGENT_PERMISSION_MODE,
+        senderPermissionMode,
+    );
     return {
         mode: {
             providerId: model.providerId,
             modelId: model.id,
             effort,
             serviceTier,
-            permissionMode: DEFAULT_AGENT_PERMISSION_MODE,
+            permissionMode,
         },
         options: {
             provider: model.providerId,
             model: model.id,
             effort,
             serviceTier,
-            permissionMode: DEFAULT_AGENT_PERMISSION_MODE,
+            permissionMode,
         },
     };
 }

@@ -13,6 +13,7 @@ import {
     type AgentModuleAction,
     type AgentModuleHooks,
     type AgentModuleScope,
+    type AgentPermissionMode,
     type AgentSystemRef,
     type AnyAgentTool,
 } from "@slopus/happy-agent-base";
@@ -27,6 +28,7 @@ import type { ComputeModule } from "../compute/index.js";
 import { HistoryModule } from "../history/index.js";
 import type { ConfigModule } from "../config/index.js";
 import { agentDeliveryMode } from "../impl/agentDeliveryMode.js";
+import { delegatedPermissionMode } from "../impl/delegatedPermissionMode.js";
 import {
     senderAgentExplanationFromTitle,
     senderAgentExplanationMetadata,
@@ -79,7 +81,8 @@ import { sendMessageTool } from "./tools/send_message.js";
  * that wants to keep working while a collaborator thinks just keeps working.
  *
  * What a collaborator runs on is settled once, on the message that starts it, and no later message
- * carries a model, an effort, or a permission mode.
+ * carries a model, an effort, or a permission mode. Its permission mode is its creator's own unless
+ * `read_only` hands it less; `full_mode` asks for Full access, which only a creator in Full access has.
  */
 export class CollaborationModule implements AgentModule {
     readonly name = "collaboration";
@@ -205,7 +208,13 @@ export class CollaborationModule implements AgentModule {
         creator?: CollaborationCreator,
     ): CollaborationAgentSelection & { readonly provider: string } {
         this.#assert(collaborationCreateInputSchema, input, "create agent");
-        const { title: _title, text: _text, ...choice } = input;
+        const {
+            title: _title,
+            text: _text,
+            read_only: _readOnly,
+            full_mode: _fullMode,
+            ...choice
+        } = input;
         return this.selectAgentModel(choice, creator);
     }
 
@@ -259,8 +268,15 @@ export class CollaborationModule implements AgentModule {
         this.#assert(collaborationCreateInputSchema, input, "create agent");
         this.#assert(collaborationCreateOptionsSchema, options, "create agent options");
         const selection = this.selectModel(input);
+        const permissionMode = delegatedPermissionMode(
+            options.creatorPermissionMode ?? DEFAULT_AGENT_PERMISSION_MODE,
+            input,
+        );
 
-        return await this.#createAgent(ctx, actingAgentId, input, agentId, options, selection);
+        return await this.#createAgent(ctx, actingAgentId, input, agentId, options, {
+            ...selection,
+            permissionMode,
+        });
     }
 
     /**
@@ -268,6 +284,8 @@ export class CollaborationModule implements AgentModule {
      *
      * The tool owns the Happy-settings budget. Other modules use `createAgent` directly and own
      * their own bounds, so whether an answer is reported to the creator never changes capacity.
+     * `creatorPermissionMode` is the creating agent's persistent mode, which bounds the
+     * collaborator's; omitted, it is the product default.
      */
     async createToolAgent(
         ctx: Context,
@@ -275,10 +293,12 @@ export class CollaborationModule implements AgentModule {
         input: CollaborationCreateInput,
         agentId: string,
         creator?: CollaborationCreator,
+        creatorPermissionMode: AgentPermissionMode = DEFAULT_AGENT_PERMISSION_MODE,
     ): Promise<CollaborationCreateResult> {
         this.#assert(collaborationAgentIdSchema, actingAgentId, "acting agent ID");
         this.#assert(collaborationAgentIdSchema, agentId, "collaborator ID");
         this.#assert(collaborationCreateInputSchema, input, "create agent");
+        const permissionMode = delegatedPermissionMode(creatorPermissionMode, input);
         const agents = this.#requireAgents();
         const retained = await this.#history.toolSpawnPresentation(ctx, actingAgentId, agentId);
         if (retained?.model !== undefined && retained.model.modelId !== input.model) {
@@ -324,7 +344,7 @@ export class CollaborationModule implements AgentModule {
                 input,
                 agentId,
                 {},
-                { ...selection, provider: model.providerId },
+                { ...selection, provider: model.providerId, permissionMode },
             );
             await this.#history.recordToolSpawnPresentation(ctx, actingAgentId, agentId, {
                 ...presentation,
@@ -340,7 +360,7 @@ export class CollaborationModule implements AgentModule {
         input: CollaborationCreateInput,
         agentId: string,
         options: CollaborationCreateOptions,
-        selection: CollaborationAgentSelection & { readonly provider: string },
+        selection: OpeningSelection,
     ): Promise<CollaborationCreateResult> {
         const agents = this.#requireAgents();
         const existing = await agents.config(ctx, agentId);
@@ -616,6 +636,8 @@ export class CollaborationModule implements AgentModule {
                     this,
                     scope.agent.id,
                     creator,
+                    // The agent's own persistent mode, never one an Auto review lent a single call.
+                    scope.agent.permissionMode,
                     shown,
                     settings.maxCollaborators,
                     settings.maxCollaborationDepth,
@@ -728,7 +750,7 @@ export class CollaborationModule implements AgentModule {
         text: string,
         messageId: string,
         delivery: "send" | "steer",
-        selection: (CollaborationAgentSelection & { readonly provider: string }) | undefined,
+        selection: OpeningSelection | undefined,
         mutationId: string | undefined,
         explanation?: string,
     ): Promise<void> {
@@ -761,15 +783,15 @@ export class CollaborationModule implements AgentModule {
             // the collaborator runs with. It is stamped on the message the way an API message
             // carries its mode, and recorded as the agent's last mode, so a person who joins a
             // user-visible collaborator composes on top of the coordinator's choice instead of the
-            // daemon defaults. The permission mode is the one Agent Base gives a new agent, sent
-            // explicitly so the recorded mode is what the collaborator actually runs with.
+            // daemon defaults. The permission mode is the one creation settled, sent explicitly so
+            // the recorded mode is what the collaborator actually runs with.
             const mode =
                 selection === undefined
                     ? fallback?.mode
                     : {
                           effort: selection.effort,
                           modelId: selection.model,
-                          permissionMode: DEFAULT_AGENT_PERMISSION_MODE,
+                          permissionMode: selection.permissionMode,
                           providerId: selection.provider,
                           serviceTier: selection.serviceTier ?? null,
                       };
@@ -789,7 +811,7 @@ export class CollaborationModule implements AgentModule {
                     : {
                           model: selection.model,
                           effort: selection.effort,
-                          permissionMode: DEFAULT_AGENT_PERMISSION_MODE,
+                          permissionMode: selection.permissionMode,
                           provider: selection.provider,
                           ...(selection.serviceTier === undefined
                               ? {}
@@ -1095,6 +1117,12 @@ function vendorUsageWindows(usage: ProviderUsage | null): AgentOptionsUsageWindo
               ],
     );
 }
+
+/** What a collaborator's opening task runs on: its model selection and its permission mode. */
+type OpeningSelection = CollaborationAgentSelection & {
+    readonly provider: string;
+    readonly permissionMode: AgentPermissionMode;
+};
 
 /** Points a model that chose wrong at the one place listing what it can choose. */
 const OPTIONS_HINT = "Call agent_options for the harnesses, providers, and models you can use.";

@@ -79,9 +79,27 @@ name; a foreground spawn (`run_in_background: false`) blocks and returns the
 child's final output. Choose foreground only when you cannot continue without the
 result.
 
-**Permissions**: `read_only: true` runs the child in Read only; omitting it means
-the child inherits the parent's permission mode. The same flag on `SendMessage`
-and `agent_send` can tighten or restore a child's mode later.
+**Permissions**: every agent an agent creates runs in its creator's current
+permission mode — a `create_agent` collaborator, a `create_subtask` subtask, and
+every agent a workflow starts. Two flags on `create_agent` and `create_subtask`
+change that:
+
+- `read_only: true` runs the child in Read only. It is the only way to hand a
+  child less.
+- `full_mode: true` runs the child in Full access, and is accepted only while the
+  creator is in Full access itself.
+
+Setting both is refused, and so is `full_mode` from any other mode; the daemon checks
+this when the child is created, before anything exists. "The creator's mode" is
+always its persistent mode: Full access that an Auto review lent one action does
+not count. A child's mode is settled by the message that starts it, and
+follow-up messages carry no mode, so nothing an agent sends later can widen it.
+A person can still choose any mode for a user-visible subtask from its own
+conversation.
+
+A task an agent opens with `create_task`, and a bot or task whose first message
+comes from an agent, runs in Auto narrowed to that agent's mode: a Read only
+agent cannot start anything that runs wider than Read only.
 
 **Service tier**: `service_tier: "priority"` requests priority service when the
 selected provider supports it.
@@ -166,8 +184,7 @@ The handshake is three steps:
 
 The receiver is told who sent the message — the sender's agent ID and title, and
 the sender's folder when the disks are shared — so it can answer through the same
-handshake. `agent_send` also accepts `read_only` for a child this agent started:
-`true` restricts it to Read only, `false` restores the sender's current mode.
+handshake. A message never changes the recipient's permission mode.
 
 ## Tasks
 

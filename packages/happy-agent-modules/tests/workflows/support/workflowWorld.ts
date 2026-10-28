@@ -6,6 +6,7 @@ import {
     ensureAgentDatabaseConnection,
     type AgentModuleHooks,
     type AgentModuleScope,
+    type AgentPermissionMode,
     type AnyAgentTool,
 } from "@slopus/happy-agent-base";
 import type { Context } from "@steve.kite/stdlib";
@@ -40,6 +41,7 @@ export interface StartedCollaborator {
         readonly reportToCreator?: boolean;
         readonly metadata?: Record<string, unknown>;
         readonly mutationId?: string | null;
+        readonly creatorPermissionMode?: AgentPermissionMode;
     };
 }
 
@@ -119,8 +121,8 @@ export interface WorkflowWorld {
     readonly ctx: Context;
     readonly collaborators: Collaborators;
     readonly runMutations: RunMutations;
-    /** The tools this module offers the agent that owns the runs. */
-    tools(): Promise<readonly AnyAgentTool[]>;
+    /** The tools this module offers the agent that owns the runs, in its persistent mode. */
+    tools(permissionMode?: AgentPermissionMode): Promise<readonly AnyAgentTool[]>;
     /** Say what a collaborator finally said, exactly as Agent Base settles it. */
     answer(collaborator: StartedCollaborator, text: string): Promise<void>;
     /** Stop a collaborator without an answer, the way a failed session ends. */
@@ -196,8 +198,9 @@ async function buildWorld(
         ctx: database.context,
         collaborators,
         runMutations,
-        tools: async () =>
-            (await hooks.tools?.(database.context, ownerScope())) ?? ([] as AnyAgentTool[]),
+        tools: async (permissionMode = "auto") =>
+            (await hooks.tools?.(database.context, ownerScope(permissionMode))) ??
+            ([] as AnyAgentTool[]),
         answer: async (collaborator, text) => {
             const scope = scopeOf(collaborator);
             await hooks.onEventTransact?.(database.context, scope, textEnd(text));
@@ -239,8 +242,8 @@ function collaboratorScope(collaborator: StartedCollaborator): AgentModuleScope 
 }
 
 /** The scope of the agent that owns the workflows, which is what the tools are built for. */
-function ownerScope(): AgentModuleScope {
-    return { agent: { id: WORKFLOW_OWNER } } as never;
+function ownerScope(permissionMode: AgentPermissionMode): AgentModuleScope {
+    return { agent: { id: WORKFLOW_OWNER, permissionMode } } as never;
 }
 
 function textEnd(text: string) {

@@ -117,3 +117,12 @@ reported a one-line reply into Happy's chat beside the sidebar's own batch note,
 got narration and duplicates. `create` takes `unreported`, which stores the same "do not report to
 the creator" collaboration flag `createConversation` uses; the subtask is otherwise identical, and
 the calling module writes the one message its coordinator should see.
+
+## A subtask runs in its coordinator's permission mode
+
+Subtasks always started in Auto. `create_subtask` now settles the mode from the coordinator's
+persistent mode, with the same `read_only` and `full_mode` rules as `create_agent`, when the tool runs,
+and records it with the durable start: the start runs later on a context that names no agent, so
+it cannot read the coordinator's mode itself. A start recorded before modes were kept uses the
+product default. Module-owned subtasks (Voice, Prioritizing) and exported-bot conversations keep
+their own modes. A person may still pick any mode in a subtask's own conversation.

@@ -1,5 +1,5 @@
 import { Type, type Static } from "@sinclair/typebox";
-import { defineAgentTool } from "@slopus/happy-agent-base";
+import { defineAgentTool, type AgentPermissionMode } from "@slopus/happy-agent-base";
 import type { Context } from "@steve.kite/stdlib";
 
 import type { Compute, ComputeModule } from "../../compute/index.js";
@@ -51,9 +51,11 @@ verified = pipeline(
 
 Runs are capped at 1,000 agents. The tool returns as soon as the run has started. When the user asks you to wait for the result, call wait_workflow once; it waits for any duration, so do not poll workflow_status. Pass resumeFromRunId to continue unchanged code from an earlier run's latest checkpoint and reuse the agent calls it already paid for.`;
 
+/** `ownerPermissionMode` is the owner's persistent mode, which every agent of the run runs in. */
 export function runWorkflowTool(
     module: WorkflowsModule,
     agentId: string,
+    ownerPermissionMode: AgentPermissionMode,
     computeModule: ComputeModule | undefined,
     compute: Compute | undefined,
 ) {
@@ -88,7 +90,7 @@ export function runWorkflowTool(
         shouldRunInFullAccessInAutoMode: async ({ input }: RunWorkflowToolParameters, ctx) =>
             await reviewsScriptPath(computeModule, compute, input, ctx),
         execute: async (ctx, { input }: RunWorkflowToolParameters, call) =>
-            await module.launch(ctx, agentId, input, call.id),
+            await module.launch(ctx, agentId, input, call.id, ownerPermissionMode),
         toLLM: (run) => [{ type: "text", text: module.formatRunForModel(run) }],
     });
 }
