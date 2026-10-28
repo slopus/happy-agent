@@ -489,6 +489,7 @@ export class SpacesModule implements AgentModule {
                 .trim();
             const now = Date.now();
             let agentText: { readonly text: string | undefined } | undefined;
+            let writer: { readonly name: string | undefined } | undefined;
             for (const row of rows) {
                 if (row.role === "focus" || text.length === 0) continue;
                 // New work is told to Prioritizing with its first message, whoever wrote it:
@@ -520,6 +521,13 @@ export class SpacesModule implements AgentModule {
                 // placement, the message may make its subject clear, so it wakes.
                 if (!(await this.#stemCellsEnabled(ctx, row.ownerUserId))) continue;
                 agentText ??= { text: await this.#lastAgentText(ctx, scope.agent.id) };
+                // In a team, someone else writing in the person's work is news to them, so it
+                // wakes their Prioritizing under that teammate's name.
+                writer ??= { name: await this.#teammateName(ctx, accepted.metadata?.userId) };
+                const teammate =
+                    writer.name !== undefined && accepted.metadata?.userId !== row.ownerUserId
+                        ? writer.name
+                        : undefined;
                 const unplaced =
                     own.length > 0 &&
                     row.placement === "pending" &&
@@ -534,8 +542,12 @@ export class SpacesModule implements AgentModule {
                         ...(own.length > 0 ? {} : { sessionId: scope.agent.id }),
                         agentText: agentText.text,
                         personText: text,
+                        ...(teammate === undefined ? {} : { teammate }),
                     }),
-                    { replaces: conversationBriefPrefix(row.id), wake: unplaced },
+                    {
+                        replaces: conversationBriefPrefix(row.id),
+                        wake: unplaced || teammate !== undefined,
+                    },
                 );
             }
         },
@@ -3139,6 +3151,14 @@ export class SpacesModule implements AgentModule {
                 ? "Joined the person to the task and marked it new for them. Its row arrives as new work; place it."
                 : "The person was already in the task; it is marked new for them again.";
         });
+    }
+
+    /** The display name of the team member who wrote a message, if one is identified. */
+    async #teammateName(ctx: Context, userId: unknown): Promise<string | undefined> {
+        if (!this.#team.enabled || !Value.Check(cuid2Schema, userId)) return undefined;
+        const user = await this.#team.getUser(ctx, userId);
+        if (user === undefined) return undefined;
+        return user.lastName === null ? user.firstName : `${user.firstName} ${user.lastName}`;
     }
 
     /** Set an icon now. Only Prioritizing calls this. */

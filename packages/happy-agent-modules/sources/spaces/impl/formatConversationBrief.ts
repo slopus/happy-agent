@@ -19,6 +19,8 @@ export function formatConversationBrief(input: {
     readonly agentText: string | undefined;
     /** What the person wrote; absent when a session stopped without them. */
     readonly personText?: string;
+    /** A teammate's name, when someone other than the person wrote it. */
+    readonly teammate?: string;
 }): string {
     const where =
         input.sessionId === undefined
@@ -28,10 +30,13 @@ export function formatConversationBrief(input: {
         input.agentText === undefined ? undefined : excerpt(input.agentText, AGENT_EXCERPT);
     if (input.personText === undefined)
         return `${conversationBriefPrefix(input.rowId)}: ${where} stopped. Its last reply: ${agent ?? "(nothing)"}`;
+    const writer = input.teammate === undefined ? undefined : excerpt(input.teammate, 64);
     return [
-        `${conversationBriefPrefix(input.rowId)}: the person wrote in ${where}.`,
+        writer === undefined
+            ? `${conversationBriefPrefix(input.rowId)}: the person wrote in ${where}.`
+            : `${conversationBriefPrefix(input.rowId)}: their teammate ${writer} wrote in ${where}, not the person.`,
         ...(agent === undefined ? [] : [`Agent before it: ${agent}`]),
-        `Person: ${excerpt(input.personText, PERSON_EXCERPT)}`,
+        `${writer ?? "Person"}: ${excerpt(input.personText, PERSON_EXCERPT)}`,
     ].join("\n");
 }
 

@@ -37,7 +37,7 @@ function row(id: string, agentId: string, fresh = false): SpaceRecord {
 }
 
 /** Spaces with every collaborator stubbed except the database it keeps its own state in. */
-async function setup() {
+async function setup(team: unknown = { enabled: false }) {
     const database = moduleDatabase(spaceMigrations, "conversation-briefs");
     await database.ready;
     const invoked: { arguments: { text: string } }[] = [];
@@ -67,7 +67,7 @@ async function setup() {
             },
         } as unknown as Params[6],
         {} as Params[7],
-        { enabled: false } as unknown as Params[8],
+        team as unknown as Params[8],
         { get: async () => ({ value: true }) } as unknown as Params[9],
         {
             // Only work started as a stem cell, and what runs under it, is named by subject.
@@ -86,7 +86,7 @@ async function setup() {
     });
     await insertSpace(database.context, row("spacestemaaaaaaaaaaaaaaa", STEM));
     await insertSpace(database.context, row("spaceplainaaaaaaaaaaaaaa", PLAIN));
-    const send = async (agentId: string, text: string, origin = "user") =>
+    const send = async (agentId: string, text: string, origin = "user", userId?: string) =>
         await hooks.messageAcceptedTransact!(
             database.context,
             { agent: { id: agentId } } as Parameters<
@@ -94,7 +94,7 @@ async function setup() {
             >[1],
             {
                 message: { role: "user", content: [{ type: "text", text }] },
-                metadata: { messageOrigin: origin },
+                metadata: { messageOrigin: origin, ...(userId === undefined ? {} : { userId }) },
             } as unknown as Accepted,
         );
     const briefs = async () => (await queryOwnerState(database.context, OWNER))?.sidebarBrief ?? [];
@@ -143,6 +143,45 @@ it("forwards the person's messages in every conversation with the agent's reply 
         // its subject clear; the brief itself follows after the commit, so nothing was sent yet.
         expect(await h.wakeAt()).toBeTypeOf("number");
         expect(h.invoked).toEqual([]);
+    } finally {
+        await h.spaces.close();
+        h.database.close();
+    }
+});
+
+it("wakes Prioritizing under a teammate's name when someone else writes in the person's work", async () => {
+    const steve = "steveuseraaaaaaaaaaaaaaa";
+    const users = new Map([
+        [OWNER, { id: OWNER, authentication: "jwt", firstName: "Kirill", lastName: null }],
+        [steve, { id: steve, authentication: "jwt", firstName: "Steve", lastName: null }],
+    ]);
+    const h = await setup({
+        enabled: true,
+        getUser: async (_ctx: unknown, id: string) => users.get(id),
+        connectionContext: (ctx: unknown) => ctx,
+    });
+    try {
+        // The work has been placed, so the person's own messages in it no longer wake anything.
+        const state = (await queryOwnerState(h.database.context, OWNER))!;
+        await writeOwnerState(h.database.context, {
+            ...state,
+            sidebarPlacedIds: ["spaceplainaaaaaaaaaaaaaa"],
+        });
+        h.replies.set(PLAIN, ["Shipped: the waveform is on main."]);
+        // The person's own message in placed work waits for the next brief.
+        await h.send(PLAIN, "Nice.", "user", OWNER);
+        expect((await h.briefs()).at(-1)).toContain("the person wrote in row");
+        expect(await h.wakeAt()).toBeUndefined();
+        // A teammate's is news to the person: it names them and wakes Prioritizing.
+        await h.send(PLAIN, "Great!", "user", steve);
+        expect((await h.briefs()).at(-1)).toBe(
+            [
+                "Conversation in spaceplainaaaaaaaaaaaaaa: their teammate Steve wrote in row spaceplainaaaaaaaaaaaaaa, not the person.",
+                "Agent before it: Shipped: the waveform is on main.",
+                "Steve: Great!",
+            ].join("\n"),
+        );
+        expect(await h.wakeAt()).toBeTypeOf("number");
     } finally {
         await h.spaces.close();
         h.database.close();

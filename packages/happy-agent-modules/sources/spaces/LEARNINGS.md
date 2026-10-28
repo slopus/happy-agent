@@ -53,6 +53,12 @@ decides, and `join_task` joins its own person and marks the task new for them. T
 as ordinary new work to place. Only a person's own Prioritizing changes their sidebar, and declining
 means doing nothing.
 
+A teammate writing in the person's work used to be briefed as "the person wrote", which was wrong,
+and it woke nothing once the row was placed. A turn that ends wakes nothing either, so the person's
+Focus never heard about it. The brief now names the teammate ("their teammate Steve wrote in row …,
+not the person") and wakes Prioritizing, because someone else's message is news to the person. The
+person's own messages still wait for the next brief.
+
 ## Focus cleans up aggressively (revision 5)
 
 Kirill: "10 things on screen - rest is beyond human capacity to understand", subtasks "tend to
