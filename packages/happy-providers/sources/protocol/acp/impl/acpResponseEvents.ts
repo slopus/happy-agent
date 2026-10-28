@@ -127,7 +127,8 @@ export class AcpResponseEvents {
             type: "toolcall_end",
             callId: id,
             arguments: JSON.stringify({
-                ...(call.title === undefined ? {} : { title: call.title }),
+                // ACP titles describe the invocation; history uses description for that text.
+                ...(call.title === undefined ? {} : { title: call.title, description: call.title }),
                 ...(call.input === undefined ? {} : { input: call.input }),
                 ...(call.paths === undefined ? {} : { paths: call.paths }),
             }),
