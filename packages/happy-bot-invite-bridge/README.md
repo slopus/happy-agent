@@ -125,7 +125,8 @@ A quick tunnel changes hostname on restart. It is suitable for a temporary previ
 domain or named tunnel and matching native associated-domain/host configuration are needed for
 continuity. AASA and the web card alone do not register an App Clip experience with Apple. The
 current Preview 25 host is pinned in the native build; changing it requires a new build. See
-[the continuation plan](../../master-plans/28-app-clip-guests.md).
+[the continuation plan](../../master-plans/28-app-clip-guests.md). To run the whole preview on one
+computer against a throwaway daemon instead of the owner's, see [the isolated demo](demo/README.md).
 
 ## Client contract
 
