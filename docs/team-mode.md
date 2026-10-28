@@ -335,8 +335,9 @@ them. Invalid, expired, wrong-client, and wrong-organization tokens all receive 
 
 ## Users and onboarding
 
-Team mode stores one durable Happy Agent user per WorkOS identity. Startup never prepopulates users,
-including the configured owner. A valid organization member who does not have a local user can
+Team mode stores one durable Happy Agent user per WorkOS identity. Startup prepopulates only the
+members listed under `[feature.team.members]` (see below), the configured owner included when
+listed. A valid organization member who does not have a local user can
 access only:
 
 - `GET /v0/health`;
@@ -386,6 +387,36 @@ Each stored user has:
 
 These storage details do not change the current-profile HTTP representation. Profile reads and
 writes still return `name`, `email`, `photo`, `version`, and `updatedAt`.
+
+### Teammates and looping someone in
+
+Each member may also carry a `role` (at most 64 characters) and what they `follow` (at most 500
+characters), set with `PATCH /v0/profile` (`null` clears either) and shown on `GET /v0/profile`
+and `GET /v0/users`. Standalone installations refuse both fields.
+
+A machine can list its people before they first sign in, keyed by the identity's subject (the JWT
+`user_id_claim` value, or the WorkOS user ID):
+
+```toml
+[feature.team.members."steve"]
+name = "Steve"
+email = "steve@acme.example"
+role = "Billing engineer"
+follows = "Billing, invoices, and Stripe webhooks"
+auto_join_tasks = false
+```
+
+Startup creates each listed member who has no user yet and fills only the email, role, and follows
+an existing member has not set; a member's own edits are never overwritten. `auto_join_tasks =
+false` starts the member with `tasks.autoJoin` off, through the same setting they can change.
+
+A task's agent sees the team through `list_teammates` and adds someone with
+`loop_in_teammate`: they join the task whatever their automatic joining says, and their membership
+carries `unread: { reason: "looped_in", since, agentId, note }`. The mark appears on their own task
+reads, joined lists, desktop bootstrap, and `task.joined` / `task.membership.updated` events, on
+every connection that member uses, the paired phone included. `POST /v0/tasks/:taskId/read` or
+`POST /v0/agents/:taskAgentId/read` clears it. Agents mention people as `<happy-user id="…"/>`
+with the Happy user ID; clients resolve the name with `GET /v0/users?ids=`.
 
 ## Shared profile updates
 

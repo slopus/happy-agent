@@ -90,6 +90,7 @@ import { UsageModule } from "../usage/index.js";
 import { UserInputModule } from "../userInput/index.js";
 import { UserSettingsModule } from "../userSettings/index.js";
 import { TaskAutoJoinModule } from "../taskAutoJoin/index.js";
+import { TeammatesModule } from "../teammates/index.js";
 import { SurfaceAutoJoinModule } from "../surfaceAutoJoin/index.js";
 import { SpacesModule } from "../spaces/index.js";
 import { StickersModule } from "../stickers/index.js";
@@ -206,6 +207,7 @@ export interface HappyAgentRuntimeModules {
     readonly mobileConnector: MobileConnectorModule;
     readonly tasks: TasksModule;
     readonly team: TeamModule<LibSQLDatabase>;
+    readonly teammates: TeammatesModule;
     readonly terminals: TerminalsModule;
     readonly titles: TitlesModule;
     readonly toolDiscovery: ToolDiscoveryModule;
@@ -562,6 +564,7 @@ export async function startHappyAgentRuntime(
         registerShutdown("team", async () => team.close());
         const userSettings = new UserSettingsModule(team);
         const taskAutoJoin = new TaskAutoJoinModule(tasks, team, userSettings, durableFunctions);
+        const teammates = new TeammatesModule(tasks, team);
         const surfaces = new SurfacesModule(
             durableFunctions,
             team,
@@ -832,6 +835,7 @@ export async function startHappyAgentRuntime(
             mobileConnector,
             tasks,
             team,
+            teammates,
             terminals,
             titles,
             toolDiscovery,
@@ -876,6 +880,7 @@ export async function startHappyAgentRuntime(
             git,
             durableFunctions,
             taskAutoJoin,
+            teammates,
             surfaces,
             surfaceAutoJoin,
             botSettings,

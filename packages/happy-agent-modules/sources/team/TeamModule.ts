@@ -16,7 +16,7 @@ import { Value } from "@sinclair/typebox/value";
 import { afterCommit, detach, withLifetime, type Context } from "@steve.kite/stdlib";
 import { sql } from "drizzle-orm";
 
-import type { ConfigModule } from "../config/index.js";
+import type { ConfigModule, TeamMemberConfig } from "../config/index.js";
 import type { ProfileModule, ProfilePhotoContentType } from "../profile/index.js";
 import type { TasksModule } from "../tasks/index.js";
 import { createTeamUserVersion } from "./createTeamUserVersion.js";
@@ -55,6 +55,7 @@ export const TEAM_USER_PROFILE_FIELDS_MIGRATION_KEY = "003-profile-fields";
 export const TEAM_DRAFTS_MIGRATION_KEY = "004-drafts";
 export const TEAM_USER_IDENTITIES_MIGRATION_KEY = "005-identities";
 export const TEAM_GUESTS_MIGRATION_KEY = "006-guests";
+export const TEAM_USER_DESCRIPTIONS_MIGRATION_KEY = "007-roles-and-follows";
 /** Stable optimistic version exposed before an organization member has a durable local user. */
 export const TEAM_ONBOARDING_PROFILE_VERSION = "00000000-0000-7000-8000-00000020eab6";
 
@@ -135,8 +136,9 @@ export class TeamModule<Database extends AgentDatabase = AgentDatabase> implemen
         return {
             systemNotificationsTransact: (ctx, scope, boundary) =>
                 teamSenderNotifications(ctx, this, scope, boundary),
-            afterStart: (ctx) => {
+            afterStart: async (ctx) => {
                 this.#startJwksRefresh(ctx);
+                await this.#seedMembers(ctx);
             },
         };
     };
@@ -364,6 +366,20 @@ export class TeamModule<Database extends AgentDatabase = AgentDatabase> implemen
                 await run(sql`DROP TABLE happy_agent_team_users_previous`);
             },
         ],
+        [
+            // What a member does and what they follow, so agents know whom to loop in.
+            TEAM_USER_DESCRIPTIONS_MIGRATION_KEY,
+            async (_ctx, database) => {
+                await agentDatabaseRun(
+                    database,
+                    sql`ALTER TABLE ${sql.raw(USERS_TABLE)} ADD COLUMN role TEXT`,
+                );
+                await agentDatabaseRun(
+                    database,
+                    sql`ALTER TABLE ${sql.raw(USERS_TABLE)} ADD COLUMN follows TEXT`,
+                );
+            },
+        ],
     ] as readonly AgentModuleMigration<Database>[];
 
     readonly #config: ConfigModule;
@@ -474,6 +490,62 @@ export class TeamModule<Database extends AgentDatabase = AgentDatabase> implemen
         void jwks.run(owner).catch((error: unknown) => {
             if (!lifetime.aborted) owner.log.warn("Background JWT key refresh stopped.", {}, error);
         });
+    }
+
+    /**
+     * Create the members machine configuration lists before they first sign in, and fill fields
+     * they have not set yet. A member's own edits and photo are never overwritten.
+     */
+    async #seedMembers(ctx: Context): Promise<void> {
+        const team = this.#config.configuration.values.feature.team;
+        if (!team.enabled || team.members === undefined) return;
+        for (const [subject, member] of Object.entries(team.members)) {
+            await ctx.inTx(async (txCtx) => {
+                const identity = { authentication: this.#authentication, subject };
+                const current = await this.findUserByIdentity(txCtx, identity);
+                if (current === undefined) {
+                    await this.createUser(txCtx, {
+                        ...identity,
+                        ...splitProfileName(member.name),
+                        ...(member.email === undefined ? {} : { email: member.email }),
+                        ...(member.role === undefined ? {} : { role: member.role }),
+                        ...(member.follows === undefined ? {} : { follows: member.follows }),
+                    });
+                    return;
+                }
+                const filled: TeamUser = {
+                    ...current,
+                    ...(current.email !== null || member.email === undefined
+                        ? {}
+                        : { email: member.email }),
+                    ...(current.role !== undefined || member.role === undefined
+                        ? {}
+                        : { role: member.role }),
+                    ...(current.follows !== undefined || member.follows === undefined
+                        ? {}
+                        : { follows: member.follows }),
+                };
+                if (
+                    filled.email === current.email &&
+                    filled.role === current.role &&
+                    filled.follows === current.follows
+                )
+                    return;
+                const updated: TeamUser = {
+                    ...filled,
+                    updatedAt: Date.now(),
+                    version: createTeamUserVersion(current.version),
+                };
+                await this.#writeUser(txCtx, updated);
+                await this.#publish(txCtx, { previousVersion: current.version, user: updated });
+            });
+        }
+    }
+
+    /** The machine configuration's seed for this member, when it lists them. */
+    seededMember(user: TeamUser): TeamMemberConfig | undefined {
+        if (user.authentication !== this.#authentication) return undefined;
+        return this.#config.configuration.values.feature.team.members?.[user.subject];
     }
 
     get enabled(): boolean {
@@ -588,6 +660,8 @@ export class TeamModule<Database extends AgentDatabase = AgentDatabase> implemen
             version: createTeamUserVersion(),
             authentication: input.authentication,
             subject: input.subject,
+            ...(input.role === undefined ? {} : { role: input.role }),
+            ...(input.follows === undefined ? {} : { follows: input.follows }),
         };
         return await ctx.inTx(async (txCtx) => {
             await this.#insertUser(txCtx, user);
@@ -695,6 +769,8 @@ export class TeamModule<Database extends AgentDatabase = AgentDatabase> implemen
                     version: createTeamUserVersion(),
                     authentication: identity.authentication,
                     subject: identity.subject,
+                    ...(input.role == null ? {} : { role: input.role }),
+                    ...(input.follows == null ? {} : { follows: input.follows }),
                 };
                 await this.#insertUser(txCtx, created);
                 await this.#publish(txCtx, { previousVersion: null, user: created });
@@ -702,15 +778,18 @@ export class TeamModule<Database extends AgentDatabase = AgentDatabase> implemen
             }
             this.#assertExpectedVersion(current, expectedVersion);
             const parsed = name === undefined ? undefined : splitProfileName(name);
-            const updated: TeamUser = {
-                ...current,
-                ...(input.email === undefined ? {} : { email: input.email }),
-                ...(parsed === undefined
-                    ? {}
-                    : { firstName: parsed.firstName, lastName: parsed.lastName }),
-                updatedAt: Date.now(),
-                version: createTeamUserVersion(current.version),
-            };
+            const updated: TeamUser = withDescriptions(
+                {
+                    ...current,
+                    ...(input.email === undefined ? {} : { email: input.email }),
+                    ...(parsed === undefined
+                        ? {}
+                        : { firstName: parsed.firstName, lastName: parsed.lastName }),
+                    updatedAt: Date.now(),
+                    version: createTeamUserVersion(current.version),
+                },
+                input,
+            );
             await this.#writeUser(txCtx, updated);
             await this.#publish(txCtx, { previousVersion: current.version, user: updated });
             return updated;
@@ -937,7 +1016,7 @@ export class TeamModule<Database extends AgentDatabase = AgentDatabase> implemen
             ctx.db,
             sql`INSERT INTO ${sql.raw(USERS_TABLE)}
                 (id, authentication, subject, first_name, last_name, is_owner, email,
-                    profile_version, created_at, updated_at)
+                    profile_version, created_at, updated_at, role, follows)
                 VALUES (
                     ${user.id},
                     ${user.authentication},
@@ -948,7 +1027,9 @@ export class TeamModule<Database extends AgentDatabase = AgentDatabase> implemen
                     ${user.email},
                     ${user.version},
                     ${user.createdAt},
-                    ${user.updatedAt}
+                    ${user.updatedAt},
+                    ${user.role ?? null},
+                    ${user.follows ?? null}
                 )`,
         );
     }
@@ -961,6 +1042,8 @@ export class TeamModule<Database extends AgentDatabase = AgentDatabase> implemen
                 SET first_name = ${user.firstName},
                     last_name = ${user.lastName},
                     email = ${user.email},
+                    role = ${user.role ?? null},
+                    follows = ${user.follows ?? null},
                     profile_version = ${user.version},
                     updated_at = ${user.updatedAt}
                 WHERE id = ${user.id}`,
@@ -1076,6 +1159,21 @@ function truncateName(name: string): string {
         result += character;
     }
     return result.trim();
+}
+
+/** Apply a role or follows change; `null` clears the field. */
+function withDescriptions(
+    user: TeamUser,
+    input: { readonly role?: string | null; readonly follows?: string | null },
+): TeamUser {
+    const { role, follows, ...rest } = user;
+    const nextRole = input.role === undefined ? role : (input.role ?? undefined);
+    const nextFollows = input.follows === undefined ? follows : (input.follows ?? undefined);
+    return {
+        ...rest,
+        ...(nextRole === undefined ? {} : { role: nextRole }),
+        ...(nextFollows === undefined ? {} : { follows: nextFollows }),
+    };
 }
 
 function deepFreeze<Value>(value: Value): Value {

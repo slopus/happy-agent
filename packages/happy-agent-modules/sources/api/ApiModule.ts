@@ -1230,6 +1230,8 @@ export class ApiModule implements AgentModule {
                         updatedAt: user.updatedAt,
                         kind: isTeamGuest(user) ? "guest" : "member",
                         canLogIn: !isTeamGuest(user),
+                        role: user.role ?? null,
+                        follows: user.follows ?? null,
                     })),
                 });
                 return;
@@ -3270,14 +3272,17 @@ export class ApiModule implements AgentModule {
         if (
             event.type === "task_joined" ||
             event.type === "task_reordered" ||
-            event.type === "task_left"
+            event.type === "task_left" ||
+            event.type === "task_membership_updated"
         ) {
             const type =
                 event.type === "task_joined"
                     ? "task.joined"
                     : event.type === "task_reordered"
                       ? "task.reordered"
-                      : "task.left";
+                      : event.type === "task_left"
+                        ? "task.left"
+                        : "task.membership.updated";
             // A person's list is private: in team mode only the member sees their own changes.
             const memberId = event.membership.memberId;
             this.#journal.append(
@@ -4595,10 +4600,14 @@ export class ApiModule implements AgentModule {
             if (operation === "read" && request.method === "POST") {
                 await this.#assertUserControlledAgent(ctx, agentId);
                 const body = await bodyAs(request, emptyMutationBodySchema, "read marker");
-                await this.#withMutationId(
-                    body.mutationId,
-                    async () => await this.#updateAgentMetadata(ctx, agentId, { unread: null }),
-                );
+                await this.#withMutationId(body.mutationId, async () => {
+                    await this.#updateAgentMetadata(ctx, agentId, { unread: null });
+                    // Opening a task's chat is reading it: a loop-in mark for this person clears too.
+                    const task = await this.#tasks?.forAgent(ctx, agentId);
+                    if (task !== undefined) {
+                        await this.#tasks!.markRead(ctx, task.id, this.#taskMember(ctx));
+                    }
+                });
                 sendJson(response, 200, await this.#focusedAgentResponse(ctx, agentId));
                 return true;
             }
@@ -6938,15 +6947,28 @@ export class ApiModule implements AgentModule {
             return true;
         }
         const action =
-            /^\/v0\/tasks\/([a-z][a-z0-9]*)\/(join|leave|reorder|archive|unarchive)$/.exec(
+            /^\/v0\/tasks\/([a-z][a-z0-9]*)\/(join|leave|read|reorder|archive|unarchive)$/.exec(
                 url.pathname,
             );
         if (action === null || request.method !== "POST") return false;
         const taskId = action[1] as string;
-        const operation = action[2] as "join" | "leave" | "reorder" | "archive" | "unarchive";
+        const operation = action[2] as
+            | "join"
+            | "leave"
+            | "read"
+            | "reorder"
+            | "archive"
+            | "unarchive";
         const member = this.#taskMember(ctx);
         try {
-            if (operation === "join" || operation === "leave") {
+            if (operation === "read") {
+                // The same empty body as a join: only an optional mutation ID.
+                const body = await bodyAs(request, joinTaskRequestSchema, "task read");
+                await this.#withMutationId(
+                    body.mutationId,
+                    async () => await tasks.markRead(ctx, taskId, member),
+                );
+            } else if (operation === "join" || operation === "leave") {
                 const body = await bodyAs(
                     request,
                     operation === "join" ? joinTaskRequestSchema : leaveTaskRequestSchema,
@@ -9259,6 +9281,11 @@ export class ApiModule implements AgentModule {
         response: ServerResponse,
     ): Promise<void> {
         const body = await bodyAs(request, profilePatchBodySchema, "profile update");
+        if (body.role !== undefined || body.follows !== undefined) {
+            throw invalidRequest(
+                "A role and what someone follows describe a teammate, and this installation has no team.",
+            );
+        }
         if (body.name === undefined && body.email === undefined) {
             throw invalidRequest("A profile update must change a name or email address.");
         }
@@ -9291,8 +9318,15 @@ export class ApiModule implements AgentModule {
         response: ServerResponse,
     ): Promise<void> {
         const body = await bodyAs(request, profilePatchBodySchema, "profile update");
-        if (body.name === undefined && body.email === undefined) {
-            throw invalidRequest("A profile update must change a name or email address.");
+        if (
+            body.name === undefined &&
+            body.email === undefined &&
+            body.role === undefined &&
+            body.follows === undefined
+        ) {
+            throw invalidRequest(
+                "A profile update must change a name, email address, role, or what you follow.",
+            );
         }
         const current = await this.#team.currentUser(ctx);
         const resource = teamProfileResource(current);
@@ -9308,6 +9342,8 @@ export class ApiModule implements AgentModule {
                     {
                         ...(body.name === undefined ? {} : { name: body.name }),
                         ...(body.email === undefined ? {} : { email: body.email }),
+                        ...(body.role === undefined ? {} : { role: body.role }),
+                        ...(body.follows === undefined ? {} : { follows: body.follows }),
                     },
                     expectedVersion,
                 ),
@@ -10442,6 +10478,8 @@ function teamProfileResource(user: TeamUser | undefined): Record<string, unknown
             userId: null,
             name: null,
             email: null,
+            role: null,
+            follows: null,
             photo: null,
             version: TEAM_ONBOARDING_PROFILE_VERSION,
             updatedAt: 0,
@@ -10451,6 +10489,8 @@ function teamProfileResource(user: TeamUser | undefined): Record<string, unknown
         userId: user.id,
         name: user.lastName === null ? user.firstName : `${user.firstName} ${user.lastName}`,
         email: user.email,
+        role: user.role ?? null,
+        follows: user.follows ?? null,
         photo: user.photo === null ? null : { thumbhash: user.photo.thumbhash },
         version: user.version,
         updatedAt: user.updatedAt,

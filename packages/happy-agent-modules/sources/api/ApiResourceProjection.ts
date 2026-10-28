@@ -322,6 +322,7 @@ export function taskMembershipResource(membership: TaskMembership): Record<strin
         userId: membership.memberId === STANDALONE_TASK_MEMBER ? null : membership.memberId,
         orderKey: membership.orderKey,
         joinedAt: membership.joinedAt,
+        unread: membership.unread ?? null,
     };
 }
 

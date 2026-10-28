@@ -49,6 +49,13 @@ const proposalResultSchema = Type.Object(
     { text: Type.String(), presentation: Type.Optional(proposalPresentationSchema) },
     { additionalProperties: false },
 );
+const archiveShippedSchema = Type.Object(
+    {
+        spaceId: cuid2Schema,
+        shipped: Type.String({ minLength: 1, maxLength: 500 }),
+    },
+    { additionalProperties: false },
+);
 const iconSchema = Type.Object(
     { spaceId: cuid2Schema, slug: spaceIconSlugSchema },
     { additionalProperties: false },
@@ -109,6 +116,21 @@ export function prioritizingTools(
             toLLM,
         }),
         sidebarStylesTool(),
+        defineAgentTool({
+            name: "archive_shipped_task",
+            defer: false,
+            capabilities: ["Archive a task whose work has shipped."],
+            description:
+                "Archive the task behind a row (its space ID) now, because its work explicitly shipped or finished. shipped says what shipped, in one sentence. Only task rows the person may archive; its conversation and folder are kept and the person can restore it. Anything that has not shipped goes in a proposal's Archive block instead.",
+            parameters: archiveShippedSchema,
+            returnType: resultSchema,
+            durable: true,
+            shouldReviewInAutoMode: () => false,
+            execute: async (ctx, input: Static<typeof archiveShippedSchema>) => ({
+                text: await spaces.archiveShippedTask(ctx, ownerUserId, input.spaceId),
+            }),
+            toLLM,
+        }),
         defineAgentTool({
             name: "set_space_icon",
             defer: false,

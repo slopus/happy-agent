@@ -18,6 +18,7 @@ const REVISIONS: readonly { readonly revision: number; readonly sha256: string }
     { revision: 5, sha256: "c87cbae3a88dc77de349217f7b9f8e51d5f1389546dfc46c2909572d0f4476c5" },
     { revision: 6, sha256: "cf9d747ef58f3502258b761c14f9498a86983c28dd2c0b81d08d09df6eb5c759" },
     { revision: 7, sha256: "1294100c86d9f140be3ed18b792b27d21fe71c72f0fe67aa97b3aefd2a5af3e8" },
+    { revision: 8, sha256: "6bab89b75e08becbd3ef4b237ea320a12d9d700ea6341309a0a336c822ada982" },
 ];
 
 it("offers the voice icons", () => {
@@ -57,16 +58,23 @@ it("arranges by the person's own priorities into the Focus layout within the bud
     expect(text).toContain("make one bold proposal that brings the sidebar to this layout");
 });
 
-it("cleans up aggressively, offering archives only through proposals", () => {
+it("cleans up aggressively, archiving by itself only what explicitly shipped", () => {
     const text = formatPrioritizingInstructions();
     expect(text).toContain("is a real target, not a guideline: fold everything else");
-    // Every proposal offers what qualifies, and Focus never archives by itself.
+    // Every proposal offers what qualifies; Focus archives by itself only what explicitly shipped.
     expect(text).toContain(
         'Every proposal carries an <happy-section id="archive" label="Archive"/> block',
     );
     for (const reason of ["shipped:", "idle for over 48 hours", "greeting-only", "superseded:"])
         expect(text).toContain(reason);
-    expect(text).toContain("You never archive anything yourself");
+    expect(text).toContain(
+        "with archive_shipped_task only once its work has explicitly shipped or finished",
+    );
+    expect(text).toContain("Approval, a passing test, or a quiet conversation is not shipping.");
+    expect(text).toContain(
+        "Everything else that qualifies is archived only when the person accepts a proposal.",
+    );
+    expect(text).not.toContain("You never archive anything yourself");
     // A proposal that sits undecided shrinks rather than grows.
     expect(text).toContain("revise it down to a smaller one");
     // Sessions show only while they wait on the person, bulk-shown ones included.

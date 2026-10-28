@@ -3036,6 +3036,37 @@ export class SpacesModule implements AgentModule {
         return undefined;
     }
 
+    /**
+     * Archive the task behind one of the person's rows now, because its work shipped. Only
+     * Prioritizing calls this; whether the work shipped is its judgement. The daemon checks only
+     * that the row is the person's task and that the person may archive it.
+     */
+    async archiveShippedTask(
+        ctx: Context,
+        ownerUserId: SpaceOwnerId,
+        spaceId: string,
+    ): Promise<string> {
+        return await ctx.inTx(async (txCtx) => {
+            await this.#requirePrioritizingEnabled(txCtx, ownerUserId);
+            const space = await this.#ownedSpace(txCtx, ownerUserId, spaceId);
+            const primary = space.contents[0];
+            if (space.role !== "item" || primary?.kind !== "task") {
+                throw new SpaceConflictError("Only task rows can be archived.");
+            }
+            const task = await this.#tasks.get(txCtx, primary.taskId);
+            if (task === undefined || task.status === "archived") {
+                return "That task is already archived.";
+            }
+            if (!(await this.#mayArchive(txCtx, ownerUserId, task))) {
+                throw new SpaceConflictError(
+                    "Only the task's owner or the team owner can archive this task; offer it in a proposal instead.",
+                );
+            }
+            await this.#tasks.archive(txCtx, task.id, task.version);
+            return `Archived ${JSON.stringify(task.name)}. Its row leaves the sidebar; the person can restore it.`;
+        });
+    }
+
     /** Set an icon now. Only Prioritizing calls this. */
     async setIcon(
         ctx: Context,

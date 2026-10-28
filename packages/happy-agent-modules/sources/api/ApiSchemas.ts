@@ -293,6 +293,12 @@ export const profilePatchBodySchema = Type.Object(
         name: Type.Optional(
             Type.Union([Type.Null(), Type.String({ minLength: 1, maxLength: 128 })]),
         ),
+        role: Type.Optional(
+            Type.Union([Type.Null(), Type.String({ minLength: 1, maxLength: 64 })]),
+        ),
+        follows: Type.Optional(
+            Type.Union([Type.Null(), Type.String({ minLength: 1, maxLength: 500 })]),
+        ),
     },
     { additionalProperties: false, minProperties: 1 },
 );

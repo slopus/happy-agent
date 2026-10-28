@@ -46,6 +46,7 @@ import {
     createTaskInputSchema,
     STANDALONE_TASK_MEMBER,
     taskMemberIdSchema,
+    taskMembershipUnreadSchema,
     taskNameSchema,
     taskRecordSchema,
     TASK_ARCHIVE_FUNCTION,
@@ -57,6 +58,7 @@ import {
     type TaskCreation,
     type TaskMemberId,
     type TaskMembership,
+    type TaskMembershipUnread,
     type TaskRecord,
 } from "./Task.js";
 import {
@@ -78,6 +80,7 @@ import {
     readTaskByWorkspace,
     readTasks,
     updateMembershipOrder,
+    updateMembershipUnread,
     updateTask,
 } from "./TaskStore.js";
 import { deriveTaskFolderName } from "./impl/deriveTaskFolderName.js";
@@ -401,6 +404,78 @@ export class TasksModule implements AgentModule {
             if (existing !== undefined) return { membership: existing, joined: false };
             return { membership: await this.#join(txCtx, taskId, memberId), joined: true };
         });
+    }
+
+    /**
+     * An agent looped this member into an active task: they join it, whatever their automatic
+     * joining says, and it is marked unread for them with the agent's reason. A member already in
+     * the task keeps their place and is marked unread again.
+     */
+    async loopIn(
+        ctx: Context,
+        taskId: string,
+        memberId: TaskMemberId,
+        input: { readonly agentId: string; readonly note: string },
+    ): Promise<{ readonly membership: TaskMembership; readonly joined: boolean }> {
+        this.#assertMember(memberId);
+        const unread: TaskMembershipUnread = {
+            reason: "looped_in",
+            since: Date.now(),
+            agentId: input.agentId,
+            note: input.note,
+        };
+        if (!Value.Check(taskMembershipUnreadSchema, unread)) {
+            throw new TaskInputError("The reason for looping someone in is invalid.");
+        }
+        return await ctx.inTx(async (txCtx) => {
+            const task = await this.#required(txCtx, taskId);
+            if (task.status !== "active") {
+                throw new TaskConflictError("Archived tasks cannot take new people.", task);
+            }
+            await clearTaskLeave(txCtx, memberId, taskId);
+            const existing = await readMembership(txCtx, taskId, memberId);
+            if (existing === undefined) {
+                return {
+                    membership: await this.#join(txCtx, taskId, memberId, unread),
+                    joined: true,
+                };
+            }
+            return { membership: await this.#updateUnread(txCtx, existing, unread), joined: false };
+        });
+    }
+
+    /** The member looked at the task: clear what was unread. Already read changes nothing. */
+    async markRead(
+        ctx: Context,
+        taskId: string,
+        memberId: TaskMemberId,
+    ): Promise<TaskMembership | undefined> {
+        this.#assertMember(memberId);
+        return await ctx.inTx(async (txCtx) => {
+            await this.#required(txCtx, taskId);
+            const existing = await readMembership(txCtx, taskId, memberId);
+            if (existing === undefined || existing.unread === undefined) {
+                return structuredClone(existing);
+            }
+            return await this.#updateUnread(txCtx, existing, undefined);
+        });
+    }
+
+    async #updateUnread(
+        ctx: Context,
+        membership: TaskMembership,
+        unread: TaskMembershipUnread | undefined,
+    ): Promise<TaskMembership> {
+        const { unread: _previous, ...rest } = membership;
+        const updated: TaskMembership = unread === undefined ? rest : { ...rest, unread };
+        await updateMembershipUnread(ctx, updated);
+        await this.#publish(ctx, {
+            eventId: globalThis.crypto.randomUUID(),
+            at: Date.now(),
+            type: "task_membership_updated",
+            membership: updated,
+        });
+        return structuredClone(updated);
     }
 
     /** Join a bounded batch of eligible tasks without undoing explicit leaves or reordering. */
@@ -819,13 +894,19 @@ export class TasksModule implements AgentModule {
         }));
     }
 
-    async #join(ctx: Context, taskId: string, memberId: TaskMemberId): Promise<TaskMembership> {
+    async #join(
+        ctx: Context,
+        taskId: string,
+        memberId: TaskMemberId,
+        unread?: TaskMembershipUnread,
+    ): Promise<TaskMembership> {
         const firstOrderKey = await queryFirstTaskOrderKey(ctx, memberId);
         const membership: TaskMembership = {
             taskId,
             memberId,
             orderKey: taskOrderKeyBetween(null, firstOrderKey ?? null),
             joinedAt: Date.now(),
+            ...(unread === undefined ? {} : { unread }),
         };
         await insertMembership(ctx, membership);
         await this.#publish(ctx, {

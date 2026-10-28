@@ -39,6 +39,7 @@ export * from "./botSettings/index.js";
 // Tasks: persistent owned conversations with dedicated folders, roots of their own subtasks.
 export * from "./tasks/index.js";
 export * from "./taskAutoJoin/index.js";
+export * from "./teammates/index.js";
 export * from "./surfaceAutoJoin/index.js";
 export * from "./surfaces/index.js";
 

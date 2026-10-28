@@ -890,6 +890,81 @@ describe("TasksModule", () => {
         }
     });
 
+    it("loops a member into a task as unread, keeps their place if already in, and clears it when read", async () => {
+        const fixture = await started("tasks-loop-in", { team: true });
+        try {
+            const ctx = fixture.database.context;
+            const task = await fixture.tasks.create(ctx, { name: "Shared", ownerUserId: OWNER });
+            // An explicit leave does not keep someone out once an agent loops them back in.
+            await fixture.tasks.join(ctx, task.id, OTHER_OWNER);
+            await fixture.tasks.leave(ctx, task.id, OTHER_OWNER);
+            fixture.events.length = 0;
+
+            const looped = await fixture.tasks.loopIn(ctx, task.id, OTHER_OWNER, {
+                agentId: "loopingagent1",
+                note: "Steve owns the billing service this touches.",
+            });
+            expect(looped).toMatchObject({
+                joined: true,
+                membership: {
+                    taskId: task.id,
+                    memberId: OTHER_OWNER,
+                    unread: {
+                        reason: "looped_in",
+                        agentId: "loopingagent1",
+                        note: "Steve owns the billing service this touches.",
+                    },
+                },
+            });
+            await expect(fixture.tasks.membership(ctx, task.id, OTHER_OWNER)).resolves.toEqual(
+                looped.membership,
+            );
+
+            // Looping in again re-marks the task without moving it in their list.
+            const again = await fixture.tasks.loopIn(ctx, task.id, OTHER_OWNER, {
+                agentId: "loopingagent1",
+                note: "The migration needs a second look.",
+            });
+            expect(again.joined).toBe(false);
+            expect(again.membership.orderKey).toBe(looped.membership.orderKey);
+            expect(again.membership.unread?.note).toBe("The migration needs a second look.");
+
+            const read = await fixture.tasks.markRead(ctx, task.id, OTHER_OWNER);
+            expect(read).toEqual({ ...looped.membership, unread: undefined });
+            expect(read).not.toHaveProperty("unread");
+            await expect(fixture.tasks.markRead(ctx, task.id, OTHER_OWNER)).resolves.toEqual(read);
+            await expect(fixture.tasks.markRead(ctx, task.id, OWNER)).resolves.not.toHaveProperty(
+                "unread",
+            );
+            expect(fixture.events.map((event) => event.type)).toEqual([
+                "task_joined",
+                "task_membership_updated",
+                "task_membership_updated",
+            ]);
+
+            // A blank or oversized reason, and archived tasks, are refused.
+            await expect(
+                fixture.tasks.loopIn(ctx, task.id, OWNER, { agentId: "loopingagent1", note: " " }),
+            ).rejects.toBeInstanceOf(TaskInputError);
+            await expect(
+                fixture.tasks.loopIn(ctx, task.id, OWNER, {
+                    agentId: "loopingagent1",
+                    note: "x".repeat(501),
+                }),
+            ).rejects.toBeInstanceOf(TaskInputError);
+            const current = (await fixture.tasks.get(ctx, task.id))!;
+            await fixture.tasks.archive(ctx, task.id, current.version);
+            await expect(
+                fixture.tasks.loopIn(ctx, task.id, OTHER_OWNER, {
+                    agentId: "loopingagent1",
+                    note: "Too late.",
+                }),
+            ).rejects.toBeInstanceOf(TaskConflictError);
+        } finally {
+            await fixture.close();
+        }
+    });
+
     it("reorders one member's list without moving anyone else's", async () => {
         const fixture = await started("tasks-member-order", { team: true });
         try {
@@ -1698,6 +1773,7 @@ describe("TasksModule", () => {
                 "004-task-naming",
                 "005-task-explicit-leaves",
                 "006-task-order-keys-renumbered",
+                "007-task-member-unread",
             ]);
         } finally {
             database.close();

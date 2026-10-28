@@ -34,6 +34,15 @@ export const taskEventSchema = Type.Union([
         { ...envelope, type: Type.Literal("task_left"), membership: taskMembershipSchema },
         { additionalProperties: false },
     ),
+    /** A membership the member already held changed in place, such as being marked read. */
+    Type.Object(
+        {
+            ...envelope,
+            type: Type.Literal("task_membership_updated"),
+            membership: taskMembershipSchema,
+        },
+        { additionalProperties: false },
+    ),
 ]);
 
 export type TaskEvent = Static<typeof taskEventSchema>;

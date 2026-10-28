@@ -277,6 +277,9 @@ describe("team identity migration", () => {
             );
 
             await team.migrations[index]![1](database.context, database.database);
+            // Later migrations run too, so the current queries find the columns they read.
+            for (const [, migrate] of team.migrations.slice(index + 1))
+                await migrate(database.context, database.database);
 
             const [user] = await team.listUsers(database.context);
             expect(user).toMatchObject({

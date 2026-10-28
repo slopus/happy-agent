@@ -71,6 +71,28 @@ export const STANDALONE_TASK_MEMBER = "standalone";
 /** Who a membership belongs to: a team user's ID, or the standalone installation's one person. */
 export const taskMemberIdSchema = Type.Union([cuid2Schema, Type.Literal(STANDALONE_TASK_MEMBER)]);
 
+/** Why an agent looped someone into a task, in its own words. */
+export const taskLoopInReasonSchema = Type.String({
+    minLength: 1,
+    maxLength: 500,
+    pattern: "^(?=.*\\S)[^\\x00-\\x08\\x0b-\\x1f\\x7f]+$",
+});
+
+/**
+ * What a member has not looked at yet in a task. Today the only reason is that an agent looped
+ * them in; the reason set may grow.
+ */
+export const taskMembershipUnreadSchema = Type.Object(
+    {
+        reason: Type.Literal("looped_in"),
+        since: taskTimestampSchema,
+        /** The agent that looped the member in. */
+        agentId: cuid2Schema,
+        note: taskLoopInReasonSchema,
+    },
+    { additionalProperties: false },
+);
+
 /**
  * One person's place in one task. Joining puts a task in that person's list; the order key
  * places it there and belongs to that person alone, so reordering never moves anyone else's list.
@@ -81,6 +103,7 @@ export const taskMembershipSchema = Type.Object(
         memberId: taskMemberIdSchema,
         orderKey: taskOrderKeySchema,
         joinedAt: taskTimestampSchema,
+        unread: Type.Optional(taskMembershipUnreadSchema),
     },
     { additionalProperties: false },
 );
@@ -106,6 +129,7 @@ export const createTaskInputSchema = Type.Object(
 export type TaskRecord = Static<typeof taskRecordSchema>;
 export type TaskMemberId = Static<typeof taskMemberIdSchema>;
 export type TaskMembership = Static<typeof taskMembershipSchema>;
+export type TaskMembershipUnread = Static<typeof taskMembershipUnreadSchema>;
 export type TaskStatus = Static<typeof taskStatusSchema>;
 export type CreateTaskInput = Static<typeof createTaskInputSchema>;
 export const taskCreationSchema = Type.Object({ task: taskRecordSchema, created: Type.Boolean() });

@@ -142,6 +142,11 @@ import {
     teamOwnerUserIdSchema,
 } from "./TeamJwtConfig.js";
 import {
+    resolveTeamMembersConfig,
+    teamMembersConfigSchema,
+    teamMembersTomlSchema,
+} from "./TeamMembersConfig.js";
+import {
     connectionIdSchema,
     nodeNameSchema,
     type LiveCredential,
@@ -716,6 +721,7 @@ const partialValuesSchema = Type.Object(
                                     }),
                                 ),
                                 jwt: Type.Optional(teamJwtTomlSchema),
+                                members: Type.Optional(teamMembersTomlSchema),
                                 owner_user_id: Type.Optional(teamOwnerUserIdSchema),
                                 port: Type.Optional(Type.Integer({ maximum: 65_535, minimum: 0 })),
                                 workos_client_id: Type.Optional(
@@ -1144,6 +1150,7 @@ const resolvedValuesSchema = Type.Object(
                             enabled: Type.Literal(false),
                             host: Type.String({ maxLength: 255, minLength: 1 }),
                             jwt: Type.Optional(teamJwtConfigSchema),
+                            members: Type.Optional(teamMembersConfigSchema),
                             ownerUserId: Type.Optional(teamOwnerUserIdSchema),
                             ownerWorkOSUserId: Type.Optional(
                                 Type.String({
@@ -1173,6 +1180,7 @@ const resolvedValuesSchema = Type.Object(
                             authentication: Type.Literal("workos"),
                             enabled: Type.Literal(true),
                             host: Type.String({ maxLength: 255, minLength: 1 }),
+                            members: Type.Optional(teamMembersConfigSchema),
                             ownerWorkOSUserId: Type.String({
                                 maxLength: 160,
                                 minLength: 7,
@@ -1198,6 +1206,7 @@ const resolvedValuesSchema = Type.Object(
                             enabled: Type.Literal(true),
                             host: Type.String({ maxLength: 255, minLength: 1 }),
                             jwt: teamJwtConfigSchema,
+                            members: Type.Optional(teamMembersConfigSchema),
                             ownerUserId: teamOwnerUserIdSchema,
                             port: Type.Integer({ maximum: 65_535, minimum: 0 }),
                             workosClientId: Type.String({
@@ -4503,6 +4512,9 @@ function normalizeTeam(
         ...(value.enabled === undefined ? {} : { enabled: value.enabled }),
         ...(value.host === undefined ? {} : { host: value.host }),
         ...(value.jwt === undefined ? {} : { jwt: resolveTeamJwtConfig(value.jwt) }),
+        ...(value.members === undefined
+            ? {}
+            : { members: resolveTeamMembersConfig(value.members) }),
         ...(value.owner_user_id === undefined ? {} : { ownerUserId: value.owner_user_id }),
         ...(value.owner_workos_user_id === undefined
             ? {}
@@ -5261,6 +5273,9 @@ function calculateProvenance(...sources: readonly PartialValues[]): Record<strin
                     if (feature.team.jwt !== undefined) {
                         result["feature.team.jwt"] = name;
                     }
+                    if (feature.team.members !== undefined) {
+                        result["feature.team.members"] = name;
+                    }
                     if (feature.team.owner_user_id !== undefined) {
                         result["feature.team.ownerUserId"] = name;
                     }
@@ -5406,6 +5421,7 @@ function readFeature(
                     teamKey !== "enabled" &&
                     teamKey !== "host" &&
                     teamKey !== "jwt" &&
+                    teamKey !== "members" &&
                     teamKey !== "owner_user_id" &&
                     teamKey !== "owner_workos_user_id" &&
                     teamKey !== "port" &&

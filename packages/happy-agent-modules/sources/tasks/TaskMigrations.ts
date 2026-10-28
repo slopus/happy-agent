@@ -131,4 +131,14 @@ export const taskMigrations = [
             });
         },
     ],
+    [
+        // A member an agent looped in has not looked at the task yet; the JSON is that mark.
+        "007-task-member-unread",
+        async (_ctx: Context, database: AgentDatabaseFacade<AgentDatabase>): Promise<void> => {
+            await agentDatabaseRun(
+                database,
+                sql`ALTER TABLE ${sql.raw(TASK_MEMBERS_TABLE)} ADD COLUMN unread TEXT`,
+            );
+        },
+    ],
 ] as const;

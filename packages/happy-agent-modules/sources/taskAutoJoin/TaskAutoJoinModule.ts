@@ -70,6 +70,15 @@ export class TaskAutoJoinModule implements AgentModule {
         team.onProfileUpdatedTransactional(async (ctx, event) => {
             if (!team.enabled || event.previousVersion !== null) return;
             if (event.user.authentication === "guest") return;
+            // A member machine configuration lists with auto_join_tasks = false starts opted out,
+            // through the same setting they can change later.
+            if (team.seededMember(event.user)?.autoJoinTasks === false) {
+                const userCtx = team.connectionContext(ctx, event.user);
+                const current = await settings.get(userCtx, TASK_AUTO_JOIN_SETTING);
+                if (current.updatedAt === null) {
+                    await settings.save(userCtx, TASK_AUTO_JOIN_SETTING, { value: false });
+                }
+            }
             await this.#joinAll(ctx, event.user);
         });
 

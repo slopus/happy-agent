@@ -31,6 +31,8 @@ const storedUserRowSchema = Type.Object(
         width: Type.Union([Type.Integer(), Type.Null()]),
         authentication: teamUserAuthenticationSchema,
         subject: Type.String(),
+        role: Type.Union([Type.String(), Type.Null()]),
+        follows: Type.Union([Type.String(), Type.Null()]),
     },
     { additionalProperties: false },
 );
@@ -58,7 +60,7 @@ export async function queryTeamUsers(
         ctx.db,
         sql`
         SELECT u.id, u.authentication, u.subject, u.first_name, u.last_name, u.is_owner, u.email,
-            u.profile_version, u.created_at, u.updated_at,
+            u.profile_version, u.created_at, u.updated_at, u.role, u.follows,
             p.content_hash, p.thumbhash, p.width, p.height
         FROM happy_agent_team_users u
         LEFT JOIN happy_agent_team_user_photos p ON p.user_id = u.id
@@ -93,6 +95,8 @@ export async function queryTeamUsers(
             version: value.profile_version,
             authentication: value.authentication,
             subject: value.subject,
+            ...(value.role === null ? {} : { role: value.role }),
+            ...(value.follows === null ? {} : { follows: value.follows }),
         };
         if (!Value.Check(teamUserSchema, user)) throw new Error("A stored team user is invalid.");
         return user;

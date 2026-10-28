@@ -385,6 +385,28 @@ secret lets the daemon mint tokens itself, so prefer asymmetric keys. Every URL 
 or plain `http` only on a loopback host. Clients discover the method without a token through
 `GET /v0/authentication` and from the `authentication` field of any `401`.
 
+With either authentication method, `[feature.team.members]` may list people before they first
+sign in, keyed by their user ID (the `user_id_claim` value, or the WorkOS user ID). Startup creates
+each one who has no user yet and fills only the fields an existing user has not set; at most 256
+entries.
+
+```toml
+[feature.team.members."steve"]
+name = "Steve"
+email = "steve@acme.example"
+role = "Billing engineer"
+follows = "Billing, invoices, and Stripe webhooks"
+auto_join_tasks = false
+```
+
+| Setting           | Default  | Meaning                                                                  |
+| ----------------- | -------- | ------------------------------------------------------------------------ |
+| `name`            | required | Display name, split like a profile name.                                 |
+| `email`           | none     | Email address.                                                           |
+| `role`            | none     | What the person does, at most 64 characters, shown to agents.            |
+| `follows`         | none     | What the person follows, at most 500 characters, shown to agents.        |
+| `auto_join_tasks` | `true`   | `false` starts the person with `tasks.autoJoin` off; they can change it. |
+
 Run a team deployment with `happy-agent run` under a process supervisor. Local socket-based daemon
 management and the macOS menu bar integration are disabled. The listener serves plain HTTP, so put
 it behind TLS-capable ingress before exposing it outside a trusted network. See

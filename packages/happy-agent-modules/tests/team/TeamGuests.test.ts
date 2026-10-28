@@ -226,7 +226,6 @@ describe("team guest migration", () => {
     it("keeps existing members and photos while allowing guests that are never owners", async () => {
         const team = createTeam(true);
         const index = team.migrations.findIndex(([key]) => key === TEAM_GUESTS_MIGRATION_KEY);
-        expect(index).toBe(team.migrations.length - 1);
         const database = moduleDatabase(team.migrations.slice(0, index), "team-guest-migration");
         await database.ready;
         try {
@@ -259,6 +258,9 @@ describe("team guest migration", () => {
             await expect(insertGuest("guestzero", 0)).rejects.toThrow();
 
             await team.migrations[index]![1](database.context, database.database);
+            // Later migrations run too, so the current queries find the columns they read.
+            for (const [, migrate] of team.migrations.slice(index + 1))
+                await migrate(database.context, database.database);
 
             const [member] = await team.listUsers(database.context);
             expect(member).toMatchObject({

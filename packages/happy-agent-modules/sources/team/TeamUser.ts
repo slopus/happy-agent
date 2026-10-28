@@ -48,6 +48,23 @@ export const teamUserEmailSchema = Type.Union([
     Type.Null(),
 ]);
 
+const teamDescriptionPattern =
+    "^(?=.*\\S)[^\\u0000-\\u001f\\u007f-\\u009f\\u061c\\u200b\\u200e\\u200f\\u202a-\\u202e\\u2060-\\u2064\\u2066-\\u206f]+$";
+
+/** What a member does on the team, in their words, such as "designer". */
+export const teamUserRoleSchema = Type.String({
+    maxLength: 64,
+    minLength: 1,
+    pattern: teamDescriptionPattern,
+});
+
+/** The work a member wants to hear about, in their words, such as "all voice features". */
+export const teamUserFollowsSchema = Type.String({
+    maxLength: 500,
+    minLength: 1,
+    pattern: teamDescriptionPattern,
+});
+
 export const teamUserVersionSchema = Type.String({
     pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
 });
@@ -76,6 +93,10 @@ export const teamUserSchema = Type.Object(
         version: teamUserVersionSchema,
         authentication: teamUserAuthenticationSchema,
         subject: teamSubjectSchema,
+        /** Absent until the member says what they do. */
+        role: Type.Optional(teamUserRoleSchema),
+        /** Absent until the member says what they follow. */
+        follows: Type.Optional(teamUserFollowsSchema),
     },
     exact,
 );
@@ -100,6 +121,8 @@ export const createTeamUserInputSchema = Type.Object(
         lastName: Type.Optional(Type.Union([teamUserNameSchema, Type.Null()])),
         authentication: teamAuthenticationSchema,
         subject: teamSubjectSchema,
+        role: Type.Optional(teamUserRoleSchema),
+        follows: Type.Optional(teamUserFollowsSchema),
     },
     exact,
 );
@@ -109,6 +132,8 @@ export const updateTeamProfileInputSchema = Type.Object(
     {
         email: Type.Optional(teamUserEmailSchema),
         name: Type.Optional(Type.Union([teamUserNameSchema, Type.Null()])),
+        role: Type.Optional(Type.Union([teamUserRoleSchema, Type.Null()])),
+        follows: Type.Optional(Type.Union([teamUserFollowsSchema, Type.Null()])),
     },
     { ...exact, minProperties: 1 },
 );

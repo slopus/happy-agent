@@ -114,6 +114,7 @@ interface MembershipRow {
     readonly member_id: string;
     readonly order_key: string;
     readonly joined_at: number | string;
+    readonly unread: string | null;
 }
 
 export async function readMembership(
@@ -146,10 +147,28 @@ export async function insertMembership(ctx: Context, membership: TaskMembership)
     assertMembership(membership);
     await agentDatabaseRun(
         ctx.db,
-        sql`INSERT INTO ${sql.raw(TASK_MEMBERS_TABLE)} (task_id, member_id, order_key, joined_at)
+        sql`INSERT INTO ${sql.raw(TASK_MEMBERS_TABLE)}
+                (task_id, member_id, order_key, joined_at, unread)
             VALUES (${membership.taskId}, ${membership.memberId}, ${membership.orderKey},
-                ${membership.joinedAt})`,
+                ${membership.joinedAt}, ${unreadColumn(membership)})`,
     );
+}
+
+/** Store or clear a member's unread mark without touching their place in the list. */
+export async function updateMembershipUnread(
+    ctx: Context,
+    membership: TaskMembership,
+): Promise<void> {
+    assertMembership(membership);
+    await agentDatabaseRun(
+        ctx.db,
+        sql`UPDATE ${sql.raw(TASK_MEMBERS_TABLE)} SET unread = ${unreadColumn(membership)}
+            WHERE task_id = ${membership.taskId} AND member_id = ${membership.memberId}`,
+    );
+}
+
+function unreadColumn(membership: TaskMembership): string | null {
+    return membership.unread === undefined ? null : JSON.stringify(membership.unread);
 }
 
 export async function updateMembershipOrder(
@@ -182,6 +201,7 @@ function membershipFromRow(row: MembershipRow): TaskMembership {
         memberId: row.member_id,
         orderKey: row.order_key,
         joinedAt: Number(row.joined_at),
+        ...(row.unread === null ? {} : { unread: JSON.parse(row.unread) as never }),
     };
     assertMembership(membership);
     return membership;

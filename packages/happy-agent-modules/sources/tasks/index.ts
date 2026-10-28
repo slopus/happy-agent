@@ -3,7 +3,9 @@ export {
     STANDALONE_TASK_MEMBER,
     taskFolderNameSchema,
     taskMemberIdSchema,
+    taskLoopInReasonSchema,
     taskMembershipSchema,
+    taskMembershipUnreadSchema,
     taskNameSchema,
     taskOrderKeySchema,
     taskPathSchema,
@@ -18,6 +20,7 @@ export {
     type TaskCreation,
     type TaskMemberId,
     type TaskMembership,
+    type TaskMembershipUnread,
     type TaskRecord,
     type TaskStatus,
 } from "./Task.js";

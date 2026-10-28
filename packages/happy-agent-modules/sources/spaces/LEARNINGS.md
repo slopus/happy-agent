@@ -34,6 +34,15 @@ rows, or a session under one, is now briefed with the agent's last text before i
 hundred characters each and batched as before. Agents' messages, lifecycle, and status from other
 sessions are still not forwarded.
 
+## Focus archives shipped work itself (revision 8)
+
+Kirill asked that Focus archive a task itself once it has explicitly shipped or finished, kept
+narrow; revision 5's "never archives by itself" otherwise stands. `archive_shipped_task` archives
+the task behind one of the person's own task rows, with their archive authority, and names what
+shipped. The judgement is the prompt's: shipped means on main or released, or the person said it is
+done, with nothing still waiting; approval, a passing test, or a quiet chat is not shipping. Every
+other archive still goes through a proposal's Archive block.
+
 ## Focus cleans up aggressively (revision 5)
 
 Kirill: "10 things on screen - rest is beyond human capacity to understand", subtasks "tend to

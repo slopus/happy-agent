@@ -18,6 +18,7 @@ export {
     type TailcatExposurePaths,
 } from "./ConfigModule.js";
 export { DEFAULT_TELEGRAM_API_URL } from "./TelegramConfig.js";
+export type { TeamMemberConfig } from "./TeamMembersConfig.js";
 export {
     remoteConnectionConfigSchema,
     remoteConnectionEntrySchema,
