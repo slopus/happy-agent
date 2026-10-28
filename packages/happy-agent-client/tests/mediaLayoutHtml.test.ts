@@ -316,6 +316,7 @@ describe("parseMediaLayoutHtml", () => {
         expect(long).toEqual({
             root: [],
             placed: [],
+            widgets: 0,
             ignored: ["the whole layout, which is longer than 32768 characters"],
             truncated: true,
         });
@@ -439,6 +440,7 @@ describe("parseMediaLayoutHtml", () => {
         ).toEqual({
             root: [],
             placed: [],
+            widgets: 0,
             ignored: ["the whole layout, which could not be read"],
             truncated: true,
         });

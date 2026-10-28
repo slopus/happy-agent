@@ -67,7 +67,10 @@ what a layout means. It parses with parse5, so tags, attributes, and entities me
 would make of them, and keeps only what the protocol can carry. A layout never fails the
 call; whatever is dropped is listed in `ignored` so `present_files` can tell the model in one
 sentence. The kept tags are `div`, `section`, `figure`, `figcaption`, `p`, `span`, `strong`, `em`,
-and `code`, plus `img` as an item and `br` as a break. An unknown tag is unwrapped and its text
+and `code`, plus `img` as an item, `br` as a break, and the widget tags `happy-chart`,
+`happy-diagram`, `happy-code`, and `happy-files`, each becoming one typed widget node whose body is
+data read from its `<script>` child or own text, never layout content. A layout that places no
+file but holds a widget is still used. An unknown tag is unwrapped and its text
 kept; a tag that embeds, loads, or runs something, such as `script`, `style`, `iframe`, `svg`, or
 a form control, is dropped with its contents, as is anything parse5 puts in `head`. The
 attributes are `style` everywhere but `br`, and `src` and `alt` on `img`. Each `img src` must equal

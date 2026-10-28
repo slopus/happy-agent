@@ -43,6 +43,32 @@ describe("parseMediaLayout", () => {
         expect(result.appended).toEqual(["out/overview.png", "out/after.png"]);
     });
 
+    it("keeps a layout that places no file but holds a widget, appending every file", () => {
+        const result = parseMediaLayout(
+            '<happy-files><script type="application/json">[{ "path": "src/a.ts", "added": 2 }]</script></happy-files>',
+            ["out/overview.png"],
+        );
+        expect(result.layout).toEqual({
+            type: "tree",
+            root: [
+                { type: "files", files: [{ path: "src/a.ts", added: 2 }] },
+                { type: "item", index: 0 },
+            ],
+        });
+        expect(Value.Check(mediaLayoutSchema, result.layout)).toBe(true);
+        expect(result.ignored).toEqual([]);
+        expect(result.appended).toEqual(["out/overview.png"]);
+    });
+
+    it("reports a dropped widget and uses no layout when nothing else resolves", () => {
+        const result = parseMediaLayout("<happy-chart>not json</happy-chart>", FILES);
+        expect(result.layout).toBeUndefined();
+        expect(result.ignored).toEqual([
+            "a <happy-chart> whose body is not valid JSON",
+            "the whole layout, which placed none of the files",
+        ]);
+    });
+
     it("uses no layout when it places none of the files, or is too long", () => {
         const none = parseMediaLayout("<p>Just a caption</p><table></table>", FILES);
         expect(none.layout).toBeUndefined();

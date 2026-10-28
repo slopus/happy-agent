@@ -17,15 +17,15 @@ export interface ParsedMediaLayout {
  * Turn layout HTML an agent wrote for `present_files` into the typed tree a client renders, with
  * the shared parser clients use for layout blocks in an agent's text. An `<img src>` names the
  * file it is exactly one of `filepaths` as written. Files the layout did not place are added after
- * it. A layout that places none of the files is not used, so the client's automatic layout
- * applies. Everything left out is reported for the model.
+ * it. A layout that places none of the files and holds no widget is not used, so the client's
+ * automatic layout applies. Everything left out is reported for the model.
  */
 export function parseMediaLayout(source: string, filepaths: readonly string[]): ParsedMediaLayout {
     const parsed = parseMediaLayoutHtml(source, (src) => {
         const index = filepaths.indexOf(src);
         return index < 0 ? undefined : index;
     });
-    if (parsed.placed.length === 0) {
+    if (parsed.placed.length === 0 && parsed.widgets === 0) {
         return {
             layout: undefined,
             ignored:

@@ -124,13 +124,23 @@ describe("splitMediaLayoutBlocks", () => {
     });
 
     it("holds a trailing partial start tag, and only that", () => {
-        for (const tail of ["<", "<d", "<di", "  <fig", "<IM", "<p", "<section"]) {
+        for (const tail of [
+            "<",
+            "<d",
+            "<di",
+            "  <fig",
+            "<IM",
+            "<p",
+            "<section",
+            "<h",
+            "<happy-ch",
+        ]) {
             expect(split(`Text\n${tail}`)).toEqual([
                 { type: "markdown", text: "Text\n" },
                 { type: "layout", html: tail, complete: false },
             ]);
         }
-        for (const tail of ["<h", "<span", "<happy-arti", "<d\n"]) {
+        for (const tail of ["<x", "<span", "<happy-arti", "<d\n"]) {
             expect(split(`Text\n${tail}`)).toEqual([{ type: "markdown", text: `Text\n${tail}` }]);
         }
     });

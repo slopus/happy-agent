@@ -249,6 +249,44 @@ export const mediaLayoutTagSchema = Type.Union([
 /** The tags a media layout element may have. */
 export type MediaLayoutTag = Static<typeof mediaLayoutTagSchema>;
 
+/** The chart a `chart` widget node draws: vertical or horizontal bars, a line, or an area. */
+export const mediaLayoutChartVariantSchema = Type.Union([
+    Type.Literal("bar"),
+    Type.Literal("hbar"),
+    Type.Literal("line"),
+    Type.Literal("area"),
+]);
+
+/** The chart a `chart` widget node draws. */
+export type MediaLayoutChartVariant = Static<typeof mediaLayoutChartVariantSchema>;
+
+/** One series of a `chart` widget node; `null` is a missing point. */
+export const mediaLayoutChartSeriesSchema = Type.Object({
+    name: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
+    values: Type.Array(Type.Union([Type.Number(), Type.Null()]), {
+        minItems: 1,
+        maxItems: 100,
+    }),
+});
+
+/** One row of a `files` widget node: a changed file, as inline data only. */
+export const mediaLayoutFileRowSchema = Type.Object({
+    path: Type.String({ minLength: 1, maxLength: 512 }),
+    status: Type.Optional(
+        Type.Union([
+            Type.Literal("added"),
+            Type.Literal("deleted"),
+            Type.Literal("renamed"),
+            Type.Literal("modified"),
+        ]),
+    ),
+    added: Type.Optional(Type.Integer({ minimum: 0, maximum: 1_000_000 })),
+    removed: Type.Optional(Type.Integer({ minimum: 0, maximum: 1_000_000 })),
+});
+
+/** One row of a `files` widget node. */
+export type MediaLayoutFileRow = Static<typeof mediaLayoutFileRowSchema>;
+
 /**
  * One node of an agent-authored media layout: an element with children, a presented item placed
  * by its index in `items`, plain text, or a line break. Never HTML. An item without a `width`
@@ -274,6 +312,34 @@ export const mediaLayoutNodeSchema = Type.Recursive((node) =>
             text: Type.String({ minLength: 1, maxLength: 8000 }),
         }),
         Type.Object({ type: Type.Literal("break") }),
+        Type.Object({
+            type: Type.Literal("chart"),
+            variant: mediaLayoutChartVariantSchema,
+            labels: Type.Array(Type.String({ maxLength: 200 }), { minItems: 1, maxItems: 100 }),
+            series: Type.Array(mediaLayoutChartSeriesSchema, { minItems: 1, maxItems: 10 }),
+            /** Written after each value, such as `ms` or `%`. */
+            unit: Type.Optional(Type.String({ minLength: 1, maxLength: 24 })),
+            style: Type.Optional(mediaLayoutStyleSchema),
+        }),
+        Type.Object({
+            type: Type.Literal("diagram"),
+            /** Mermaid, carried verbatim; rendering and validation are the client's. */
+            source: Type.String({ minLength: 1, maxLength: 8000 }),
+            style: Type.Optional(mediaLayoutStyleSchema),
+        }),
+        Type.Object({
+            type: Type.Literal("codeQuote"),
+            code: Type.String({ minLength: 1, maxLength: 8000 }),
+            language: Type.Optional(Type.String({ minLength: 1, maxLength: 40 })),
+            /** A display label, not a file that is read. */
+            path: Type.Optional(Type.String({ minLength: 1, maxLength: 512 })),
+            style: Type.Optional(mediaLayoutStyleSchema),
+        }),
+        Type.Object({
+            type: Type.Literal("files"),
+            files: Type.Array(mediaLayoutFileRowSchema, { minItems: 1, maxItems: 200 }),
+            style: Type.Optional(mediaLayoutStyleSchema),
+        }),
     ]),
 );
 

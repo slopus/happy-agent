@@ -110,4 +110,15 @@ describe("syncHappyAgentSkills", () => {
             readFile(join(happyHome, "skills", "guided-review", "SKILL.md"), "utf8"),
         ).resolves.toMatch(/^---\nname: guided-review\n/u);
     });
+
+    it("ships the rich-replies skill from the repository", async () => {
+        const root = await temporaryDirectory("happy-agent-skills-rich-replies-");
+        const happyHome = join(root, ".happy");
+
+        await syncHappyAgentSkills(happyHome);
+
+        await expect(
+            readFile(join(happyHome, "skills", "rich-replies", "SKILL.md"), "utf8"),
+        ).resolves.toMatch(/^---\nname: rich-replies\n/u);
+    });
 });

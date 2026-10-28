@@ -7,9 +7,10 @@
  * `src`.
  *
  * A block starts at the start of a line, indented at most three spaces, with `<div`, `<section`,
- * `<figure`, `<p`, or `<img`, outside fenced code and outside a code span. It runs until its root
- * element closes, counting only that tag, so blank lines inside it never end it, and then takes
- * the rest of the line it closes on. A block holding no `<img>` is ordinary Markdown.
+ * `<figure`, `<p`, `<img`, or a widget tag — `<happy-chart`, `<happy-diagram`, `<happy-code`, or
+ * `<happy-files` — outside fenced code and outside a code span. It runs until its root element
+ * closes, counting only that tag, so blank lines inside it never end it, and then takes the rest
+ * of the line it closes on. A block holding no `<img>` and no widget tag is ordinary Markdown.
  */
 
 import { fenceOpening, isFenceClose, type MarkdownFence } from "./markdownBlocks.js";
@@ -24,9 +25,11 @@ export type MediaLayoutBlockSegment =
     | { type: "markdown"; text: string }
     | { type: "layout"; html: string; complete: boolean };
 
-const BLOCK_TAGS = ["div", "section", "figure", "p", "img"] as const;
-const BLOCK_START = /^ {0,3}<(div|section|figure|p|img)(?=[\t\n\f\r />]|$)/iu;
-const PARTIAL_START = /^ {0,3}<([a-z]*)$/iu;
+const WIDGET_TAGS = ["happy-chart", "happy-diagram", "happy-code", "happy-files"] as const;
+const BLOCK_TAGS = ["div", "section", "figure", "p", "img", ...WIDGET_TAGS] as const;
+const BLOCK_START =
+    /^ {0,3}<(div|section|figure|p|img|happy-chart|happy-diagram|happy-code|happy-files)(?=[\t\n\f\r />]|$)/iu;
+const PARTIAL_START = /^ {0,3}<([a-z][a-z-]*|)$/iu;
 const BLANK_LINE = /^[ \t\r]*$/u;
 const TAG_NAME = /[A-Za-z][A-Za-z0-9-]*/uy;
 
@@ -79,7 +82,7 @@ export function splitMediaLayoutBlocks(markdown: string): MediaLayoutBlockSegmen
                     segments.push({ type: "layout", html, complete: false });
                     return segments;
                 }
-                if (block.image) segments.push({ type: "layout", html, complete: true });
+                if (block.resolving) segments.push({ type: "layout", html, complete: true });
                 else pushMarkdown(html);
                 markdownStart = block.end;
                 lineStart = block.end;
@@ -172,16 +175,17 @@ function isPartialStart(line: string): boolean {
 /**
  * Where the block whose root `tag` opens at `start` ends: after the line its root element closes
  * on. Comments and quoted attribute values are skipped. Incomplete when the root never closes, or
- * a tag or comment is cut off.
+ * a tag or comment is cut off. `resolving` says whether the block holds an `<img>` or a widget
+ * tag; one that holds neither is ordinary Markdown.
  */
 function scanBlock(
     markdown: string,
     start: number,
     tag: string,
-): { end: number; complete: boolean; image: boolean } {
-    const incomplete = { end: markdown.length, complete: false, image: false };
+): { end: number; complete: boolean; resolving: boolean } {
+    const incomplete = { end: markdown.length, complete: false, resolving: false };
     let depth = 0;
-    let image = false;
+    let resolving = false;
     let index = start;
     while (index < markdown.length) {
         if (markdown[index] !== "<") {
@@ -206,13 +210,14 @@ function scanBlock(
             : openTagEnd(markdown, TAG_NAME.lastIndex);
         if (tagEnd === -1) return incomplete;
         index = tagEnd + 1;
-        if (!closing && name === "img") image = true;
+        if (!closing && (name === "img" || (WIDGET_TAGS as readonly string[]).includes(name)))
+            resolving = true;
         if (name !== tag) continue;
         if (closing) depth -= 1;
         else if (tag !== "img") depth += 1;
         if (depth > 0) continue;
         const newline = markdown.indexOf("\n", index);
-        return { end: newline === -1 ? markdown.length : newline + 1, complete: true, image };
+        return { end: newline === -1 ? markdown.length : newline + 1, complete: true, resolving };
     }
     return incomplete;
 }

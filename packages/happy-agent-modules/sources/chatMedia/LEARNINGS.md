@@ -95,6 +95,18 @@ security line did not move: nothing that loads a resource, positions outside the
 colour, animates, or escapes is ever kept. Only a repeated path in `filepaths` stays an error,
 because it makes an `img src` ambiguous.
 
+## Widgets in replies grow the layout subset, not a fence catalog
+
+Kirill wanted an agent to put a chart, a Mermaid diagram, a code quote, or a changed-files list
+directly into its reply with zero tool calls, as "rung 1" below inline artifacts — explicitly not
+as special Markdown fences, which an earlier guided-review attempt showed cap what a model can
+express. The widgets are four tags in the same media-layout HTML subset, parsed by the same shared
+client parser into typed nodes, so daemon and clients still cannot disagree. The always-on prompt
+grew by one clause; the authoring detail lives in the `rich-replies` native skill, keeping the
+token cost off every turn. An invalid widget degrades the block to the inert text it was written
+as — nothing is hidden, nothing half-drawn. `<happy-choices>` (answer-back buttons) was explicitly
+left out of this phase.
+
 ## Images show at their natural size
 
 An image without explicit sizing shows at its natural size and only shrinks to fit; `width: 100%`
