@@ -31,7 +31,7 @@ describe; ask only for the choices below that are still missing.
 ## 1. Resolve the choices
 
 - Which node, and whether it is a fresh installation. Apply this **before the daemon first
-  starts**. The home project, the Chief of Staff's folder, and every bot, task, project, and
+  starts**. The home project, the Happy bot's folder, and every bot, task, project, and
   workspace folder are placed under the workload user's home. On an existing node, folders
   already created under the service user's home stay there, out of the workload user's reach,
   and their agents fail with `Permission denied`; tell the user, and plan to register their

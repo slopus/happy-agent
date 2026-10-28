@@ -249,7 +249,7 @@ Then check:
    credential relationship are unchanged; do not publish a new endpoint to mask lost identity.
 2. Existing project, workspace, agent, and bot IDs still resolve, and earlier conversation content
    is visible. Profile, onboarding, default model, permission mode, and enabled providers remain
-   as configured. Upgrade alone must not require a new Chief of Staff or fresh provider logins.
+   as configured. Upgrade alone must not require a new Happy bot or fresh provider logins.
 3. Provider verification with `POST /v0/providers/:providerId/verify` and
    `{ "level": "inference" }` reports `status: "passed"` for each provider the user relies on.
    These small requests may incur charges. Do not treat an HTTP 200 failure result as success or

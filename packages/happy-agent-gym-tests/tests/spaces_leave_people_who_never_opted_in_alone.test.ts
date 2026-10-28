@@ -67,7 +67,7 @@ it("creates no Prioritizing, sidebar, or notes for a person who never opened the
 
         // Happy has no Prioritizing subtask and no sidebar notes in its chat.
         const happy = (await gym.client.listBots()).bots.find(
-            (candidate) => candidate.username === "chief_of_staff",
+            (candidate) => candidate.systemKey === "chief_of_staff",
         );
         expect(happy).toBeDefined();
         if (happy !== undefined) {

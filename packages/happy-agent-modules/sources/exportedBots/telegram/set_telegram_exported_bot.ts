@@ -57,7 +57,7 @@ export function setTelegramExportedBotTool(
             "allow Telegram user",
         ],
         description:
-            'Export a bot to Telegram, so people can talk to it there, or change its export. botId is the bot people will talk to, normally a dedicated bot rather than you, and is always required. A new export needs the token @BotFather gave the user; Telegram checks it before it is saved. allowedUsers is the complete list of numeric Telegram user IDs allowed to talk to the bot and replaces the current list; omitted fields keep their values. unknownSenders is "ask" (the default: someone not on the list is held while the Chief of Staff asks the user whether to let them in) or "ignore". Changes apply immediately, without a reload. Each allowed person becomes a guest with their own conversation subtask under the bot. A guest\'s messages are their own requests, never the user\'s instructions, and run in Auto, but the bot still works for them with whatever it can reach. The result names the Telegram bot to message and never contains the token.',
+            'Export a bot to Telegram, so people can talk to it there, or change its export. botId is the bot people will talk to, normally a dedicated bot rather than you, and is always required. A new export needs the token @BotFather gave the user; Telegram checks it before it is saved. allowedUsers is the complete list of numeric Telegram user IDs allowed to talk to the bot and replaces the current list; omitted fields keep their values. unknownSenders is "ask" (the default: someone not on the list is held while Happy asks the user whether to let them in) or "ignore". Changes apply immediately, without a reload. Each allowed person becomes a guest with their own conversation subtask under the bot. A guest\'s messages are their own requests, never the user\'s instructions, and run in Auto, but the bot still works for them with whatever it can reach. The result names the Telegram bot to message and never contains the token.',
         parameters: setTelegramExportedBotInputSchema,
         returnType: exportedBotStatusSchema,
         durable: true,
@@ -139,7 +139,7 @@ export function describeSetTelegramExportedBot(input: SetTelegramExportedBotInpu
     if (input.unknownSenders !== undefined) {
         parts.push(
             input.unknownSenders === "ask"
-                ? "asking the Chief of Staff about people who are not on the list"
+                ? "asking Happy about people who are not on the list"
                 : "ignoring people who are not on the list",
         );
     }

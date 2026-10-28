@@ -38,6 +38,15 @@ import {
 } from "@slopus/happy-agent-client";
 import { StickerNotFoundError, StickersModule } from "../stickers/index.js";
 import {
+    ProviderCliRequestError,
+    ProviderClisModule,
+    providerCliIdSchema,
+    providerCliMutationRequestSchema,
+    providerCliSignInCodeRequestSchema,
+    providerCliSignInRequestSchema,
+    type ProviderCliId,
+} from "../providerClis/index.js";
+import {
     StoriesModule,
     StoryConflictError,
     StoryForbiddenError,
@@ -623,6 +632,7 @@ export class ApiModule implements AgentModule {
     readonly #spaces: SpacesModule | undefined;
     readonly #stories: StoriesModule | undefined;
     readonly #stickers: StickersModule | undefined;
+    readonly #providerClis: ProviderClisModule | undefined;
     /** The revocation signals each mobile connection already closes on. */
     readonly #mobileConnections = new WeakMap<MobileConnection, Set<AbortSignal>>();
     readonly #mobileClosers = new WeakMap<MobileConnection, () => void>();
@@ -786,6 +796,7 @@ export class ApiModule implements AgentModule {
         spaces?: SpacesModule,
         stories?: StoriesModule,
         stickers?: StickersModule,
+        providerClis?: ProviderClisModule,
     ) {
         this.#abort = abort;
         this.#config = config;
@@ -832,6 +843,7 @@ export class ApiModule implements AgentModule {
         this.#spaces = spaces;
         this.#stories = stories;
         this.#stickers = stickers;
+        this.#providerClis = providerClis;
     }
 
     readonly beforeStart = async (
@@ -1440,6 +1452,14 @@ export class ApiModule implements AgentModule {
                     if (error instanceof ProviderNotFoundError) throw notFound(error.message);
                     throw error;
                 }
+                return;
+            }
+            if (
+                this.#providerClis !== undefined &&
+                (url.pathname === "/v0/provider-clis" ||
+                    url.pathname.startsWith("/v0/provider-clis/"))
+            ) {
+                await this.#handleProviderClis(ctx, request, response, url, this.#providerClis);
                 return;
             }
             if (request.method === "GET" && url.pathname === "/v0/config/instructions") {
@@ -2815,6 +2835,29 @@ export class ApiModule implements AgentModule {
                                   event.userId,
                               ),
                           );
+                      }),
+                  ]),
+            ...(this.#providerClis === undefined
+                ? []
+                : [
+                      this.#providerClis.onUpdated((providerCli, mutationId) => {
+                          this.#mutationIds.exit(() => {
+                              this.#journal.append(
+                                  "provider_cli.updated",
+                                  {
+                                      providerCli,
+                                      ...(mutationId === undefined ? {} : { mutationId }),
+                                  },
+                                  providerCli.updatedAt,
+                              );
+                              // A finished install or sign-in has rerun the provider scan.
+                              if (
+                                  providerCli.operation?.status === "succeeded" &&
+                                  providerCli.operation.finishedAt === providerCli.updatedAt
+                              ) {
+                                  this.#journal.append("config.updated", {});
+                              }
+                          });
                       }),
                   ]),
             this.#terminals.onEvent(async (event) => {
@@ -9182,6 +9225,92 @@ export class ApiModule implements AgentModule {
         return pending === undefined ? undefined : pendingMessageResource(pending);
     }
 
+    /** The routes under `/v0/provider-clis`; see "Provider CLIs" in API.md. */
+    async #handleProviderClis(
+        ctx: Context,
+        request: IncomingMessage,
+        response: ServerResponse,
+        url: URL,
+        providerClis: ProviderClisModule,
+    ): Promise<void> {
+        if (this.#team.enabled) {
+            throw unsupported("Installing and signing in assistants is unavailable in team mode.");
+        }
+        if (url.pathname === "/v0/provider-clis") {
+            if (request.method !== "GET") throw notFound("Route not found.");
+            sendJson(response, 200, { providerClis: await providerClis.list(ctx) });
+            return;
+        }
+        const match =
+            /^\/v0\/provider-clis\/([^/]+)(\/install|\/sign-in|\/sign-in\/code|\/cancel)?$/u.exec(
+                url.pathname,
+            );
+        if (match === null) throw notFound("Route not found.");
+        const cliId = decodePathSegment(match[1]!, "assistant ID");
+        if (!Value.Check(providerCliIdSchema, cliId)) throw notFound("Assistant not found.");
+        const id: ProviderCliId = cliId;
+        const action = match[2];
+        try {
+            if (action === undefined && request.method === "GET") {
+                sendJson(response, 200, { providerCli: await providerClis.get(ctx, id) });
+                return;
+            }
+            if (request.method !== "POST" || action === undefined) {
+                throw notFound("Route not found.");
+            }
+            if (action === "/install" || action === "/cancel") {
+                const body = await optionalBodyAs(
+                    request,
+                    providerCliMutationRequestSchema,
+                    "provider CLI request",
+                    2 * 1_024,
+                );
+                const providerCli = await this.#withMutationId(body.mutationId, async () =>
+                    action === "/install"
+                        ? await providerClis.install(ctx, id, body.mutationId)
+                        : await providerClis.cancel(ctx, id, body.mutationId),
+                );
+                sendJson(response, 200, { providerCli });
+                return;
+            }
+            if (action === "/sign-in") {
+                const body = await optionalBodyAs(
+                    request,
+                    providerCliSignInRequestSchema,
+                    "provider CLI sign-in request",
+                    2 * 1_024,
+                );
+                const providerCli = await this.#withMutationId(
+                    body.mutationId,
+                    async () => await providerClis.signIn(ctx, id, body.method, body.mutationId),
+                );
+                sendJson(response, 200, { providerCli });
+                return;
+            }
+            const body = await bodyAs(
+                request,
+                providerCliSignInCodeRequestSchema,
+                "provider CLI sign-in code",
+                4 * 1_024,
+            );
+            const providerCli = await this.#withMutationId(
+                body.mutationId,
+                async () => await providerClis.submitCode(ctx, id, body.code, body.mutationId),
+            );
+            sendJson(response, 200, { providerCli });
+        } catch (error: unknown) {
+            if (error instanceof ProviderCliRequestError) {
+                throw new ApiError(
+                    error.code === "invalid_request" ? 400 : 409,
+                    error.code,
+                    error.message,
+                    { providerCli: error.providerCli },
+                );
+            }
+            throw error;
+        }
+    }
+
     async #withMutationId<Value>(
         mutationId: string | undefined,
         operation: () => Promise<Value>,
@@ -10152,6 +10281,9 @@ export class ApiModule implements AgentModule {
                 desktopLiveControl: this.#live !== undefined,
                 ...(this.#stories === undefined ? {} : { stories: true, agentStories: true }),
                 ...(this.#stickers === undefined ? {} : { stickers: true }),
+                ...(this.#providerClis === undefined || this.#team.enabled
+                    ? {}
+                    : { providerClis: true }),
                 ...(this.#bridges === undefined ? {} : { workspaceBridges: true }),
                 ...(this.#spaces === undefined || this.#tasks === undefined
                     ? {}

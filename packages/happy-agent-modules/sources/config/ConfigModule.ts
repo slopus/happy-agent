@@ -10,7 +10,7 @@ import {
 import { randomUUID } from "node:crypto";
 import { chmod, mkdir, open, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { delimiter, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import type {
     AgentModel,
@@ -3487,6 +3487,45 @@ export class ConfigModule implements AgentModule {
         const value = this.#environmentValue("GIT_CEILING_DIRECTORIES")?.trim();
         if (value === undefined || value.length === 0) return undefined;
         return value.length > MAX_CONFIG_STRING_LENGTH ? undefined : value;
+    }
+
+    /**
+     * The environment programs started on the daemon's own behalf run with: the process
+     * environment under this installation's overrides, so a test installation's `HOME` and `PATH`
+     * replace the person's real ones.
+     */
+    get processEnvironment(): Readonly<NodeJS.ProcessEnv> {
+        return { ...process.env, ...this.#environment };
+    }
+
+    /**
+     * The folders desktop applications are installed in on this machine. `/Applications` and
+     * `~/Applications` on macOS; none elsewhere, where vendors ship no application bundles a
+     * program can be found in. `HAPPY_AGENT_APPLICATIONS_DIRECTORY` replaces them with its
+     * `PATH`-style list, which keeps a test installation away from the real applications.
+     */
+    get applicationsDirectories(): readonly string[] {
+        const configured = this.#environmentValue("HAPPY_AGENT_APPLICATIONS_DIRECTORY");
+        if (configured !== undefined) {
+            return configured.split(delimiter).filter((directory) => isAbsolute(directory));
+        }
+        if (process.platform !== "darwin") return [];
+        const home = this.#environmentValue("HOME")?.trim() || homedir();
+        return ["/Applications", join(home, "Applications")];
+    }
+
+    /**
+     * Package-manager folders programs are found in even when they are not on this process's
+     * `PATH`, as for a daemon started from the desktop with launchd's short `PATH`: Homebrew's on
+     * macOS and Linux, none on Windows. `HAPPY_AGENT_PROGRAM_DIRECTORIES` replaces them with its
+     * `PATH`-style list, which keeps a test installation away from the real programs.
+     */
+    get programDirectories(): readonly string[] {
+        const configured = this.#environmentValue("HAPPY_AGENT_PROGRAM_DIRECTORIES");
+        if (configured !== undefined) {
+            return configured.split(delimiter).filter((directory) => isAbsolute(directory));
+        }
+        return process.platform === "win32" ? [] : ["/opt/homebrew/bin", "/usr/local/bin"];
     }
 
     /** Private data root for a locally onboarded member's mobile connection. */

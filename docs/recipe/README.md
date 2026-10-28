@@ -47,7 +47,7 @@ send them test messages or run test commands in them.
 ## Peer messaging
 
 Read [Connect two Happy Agents over one WebSocket](peer-messaging.md) when agents on
-two installations need to exchange text using known Agent IDs. The Chief of Staff
+two installations need to exchange text using known Agent IDs. Happy
 configures both ends over existing administration access, then checks the
 same authenticated session in both directions. The desktop initiates outbound;
 only the reachable installation listens.
@@ -70,7 +70,7 @@ copy the Windows daemon database or run Windows project tools against a Linux pr
 
 Read [Accounts, models, effort, and service tier](accounts-and-models.md) when the user wants to add
 or pool provider accounts, limit models, change default model, effort, or service tier, or move
-sessions to another provider. The Chief of Staff edits and validates `happy.toml`; applying the
+sessions to another provider. Happy edits and validates `happy.toml`; applying the
 change follows the configuration reload section.
 
 ## Exported bots
@@ -78,7 +78,7 @@ change follows the configuration reload section.
 Read [Export a bot to Telegram](exported-bot-telegram.md) when the user wants people to reach a
 bot from Telegram, and [Export a bot to any chat service](exported-bot-bridge.md) for any other
 service, through a bridge program; read either one to change who may. Export a bot of its own,
-never the Chief of Staff. The Chief of Staff only exports that bot, and approves or denies the
+never Happy. Happy only exports that bot, and approves or denies the
 people whose access requests reach it. Changes apply at once, without a reload. Everyone let in is
 a guest whose messages never count as the user's instructions, but the bot works for them with
 whatever it can reach, so let each one in only once the user says so.

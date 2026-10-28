@@ -510,6 +510,11 @@ Last activity is additive and does not increment the protocol version. Current d
 agent's `lastActivityAt` on every full agent object and in `agent.updated` changes when it moves.
 Older daemons omit it; clients then fall back to what they used before, such as `updatedAt`.
 
+Provider CLIs are additive and do not increment the protocol version. A daemon that serves the
+routes under `/v0/provider-clis` and the `provider_cli.updated` event reports
+`capabilities.providerClis: true` from health. Older daemons omit it and answer the routes with
+`404`; clients then offer only the manual terminal path for installing and signing in.
+
 Drain intent is additive and does not increment the protocol version. A daemon that supports it
 accepts the optional `POST /v0/drain` body and includes `drain` in the drain response, health, the
 `hello` frame, and the `daemon.draining` event, as described under Daemon lifecycle. Older
@@ -1199,7 +1204,8 @@ Fields:
   `sidebarProposals: true` advertises sidebar proposals and Prioritizing's own row, described
   under Spaces. `sidebarSeparatorPins: true` advertises `pin` on sidebar separators, described
   under Spaces. `agentStories: true` advertises agents' stories, story rings, and agent status
-  lines, described under Stories.
+  lines, described under Stories. `providerClis: true` advertises the routes under `/v0/provider-clis` and the
+  `provider_cli.updated` event, described under Provider CLIs.
 - `ready` — `false` while starting, `true` once the agent system is loaded.
 - `status` — `"starting"` or `"ready"`; the human-readable form of `ready`.
 - `version` — one identity object. `protocol` is the wire protocol number, the client's
@@ -2430,8 +2436,9 @@ Response — `200`:
   complete. Neither another member's profile nor their Happy Cloud account completes this step.
 - `steps` — what the daemon observes, each with a `done` it derives itself:
     - `providers` — at least one provider has working credentials; `signedIn` lists the
-      provider keys that do. Signing in happens through the system Codex and Claude Code
-      installations, not through this API.
+      provider keys that do. Signing in happens through the assistants' own programs, never
+      through a separate Rig login. Provider CLIs describes how a client finds, installs, and
+      starts signing in those programs without a terminal.
     - `profile` — the profile has a name; in team mode this is the authenticated member's
       local profile.
     - `project` — at least one project exists.
@@ -2450,6 +2457,267 @@ complete onboarding for another member who lacks a profile. Idempotent. Response
 `{ "completed": true }` and a
 `config.updated` nudge is **not** emitted — clients that care watch their own flow; others
 read the flag on next bootstrap.
+
+## Provider CLIs
+
+Rig uses the credentials of the assistants installed on the daemon's machine: Claude Code, Codex,
+Grok, and Antigravity. Provider CLIs let a client get one of them ready without the person opening
+a terminal. The daemon finds each assistant's command-line program wherever it already lives,
+including inside the vendor's desktop application. It reports whether that program is signed in,
+can install a missing one from the vendor's official installer, and can start the vendor's own
+sign-in. Before anything is downloaded, the daemon says exactly what it will run and where the
+download comes from, so a client can disclose it and offer the manual path instead.
+
+Installing and signing in are long-running operations. A request starts one and answers at once.
+Progress, the sign-in URL to open, and the final result arrive as `provider_cli.updated` events
+on the ordinary event stream. The daemon never stores, returns, or logs a credential, an
+authorization code, or a token. It reports only whether the program is signed in, and the
+account's email and plan when the vendor's program reveals them.
+
+The CLIs belong to the daemon's machine and its operating-system user, so these routes are
+unavailable in team mode: every route returns `501` with code `unsupported` before parsing a
+request body. A daemon that serves them reports `capabilities.providerClis: true` from health.
+Older daemons omit it and answer the routes with `404`; clients then show the manual terminal
+instructions they showed before.
+
+### The provider CLI object
+
+```json
+{
+    "id": "claude",
+    "name": "Claude Code",
+    "vendor": "Anthropic",
+    "website": "https://claude.com/product/claude-code",
+    "providerId": "claude",
+    "installation": {
+        "status": "installed",
+        "path": "/Users/ada/.local/bin/claude",
+        "version": "2.1.312",
+        "source": "standalone",
+        "desktopApp": null
+    },
+    "installer": {
+        "command": "curl -fsSL https://claude.ai/install.sh | bash",
+        "sourceUrl": "https://claude.ai/install.sh",
+        "sourceHost": "claude.ai",
+        "vendorSite": "https://claude.com"
+    },
+    "commands": { "run": "claude", "signIn": "claude auth login" },
+    "signIn": {
+        "status": "signed_in",
+        "account": { "email": "ada@example.com", "plan": "Max" },
+        "methods": ["browser"]
+    },
+    "operation": null,
+    "version": "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e",
+    "updatedAt": 1755400000000
+}
+```
+
+- `id` — the stable assistant key: `"claude"`, `"codex"`, `"grok"`, or `"antigravity"`. The set
+  may grow; clients skip IDs they do not recognize.
+- `name`, `vendor` — human-readable display names.
+- `website` — the vendor's official page for the assistant.
+- `providerId` — the built-in provider account this assistant's sign-in serves, as it appears in
+  `GET /v0/config`, or `null` when no such account is configured.
+- `installation` — where the program was found:
+    - `status` — `"installed"` or `"missing"`.
+    - `path` — the absolute path of the program the daemon uses, or `null` when missing.
+    - `version` — the version the program reports, or `null` when missing or unknown.
+    - `source` — how it was installed, or `null` when missing: `"standalone"` (the vendor's
+      own installer), `"desktop_app"` (shipped inside the vendor's desktop application),
+      `"package_manager"` (Homebrew, npm, or a version manager), or `"other"` (found on `PATH`
+      or elsewhere). The set may grow; clients treat an unknown value as `"other"`.
+    - `desktopApp` — the desktop application's display name, such as `"ChatGPT"` or `"Codex"`,
+      when `source` is `"desktop_app"`; otherwise `null`.
+- `installer` — what installing would do on this machine, or `null` when the vendor offers no
+  installer for its operating system. It is present even when the program is already installed.
+    - `command` — the exact command the daemon runs, which is also what a person would paste
+      into a terminal to do it themselves. On macOS and Linux it is a POSIX shell pipeline; on
+      Windows it is a PowerShell command.
+    - `sourceUrl` — the HTTPS URL of the vendor's installer script that the command downloads.
+      The script itself downloads the program from the vendor's own servers.
+    - `sourceHost` — the host of `sourceUrl`, for the disclosure ("from claude.ai").
+    - `vendorSite` — the vendor's official site.
+- `commands` — what a person types to use the assistant in their own terminal: `run` starts it
+  and `signIn` signs it in. When the program is installed somewhere that is not on the person's
+  `PATH`, these may still name the bare program; clients present them as guidance, not as
+  something the daemon runs.
+- `signIn` — the sign-in as the program last reported it:
+    - `status` — `"signed_in"`, `"signed_out"`, or `"unknown"`. `"unknown"` means the daemon
+      could not tell, for example because the program is missing or its check timed out. On
+      macOS, Claude Code keeps its sign-in in the keychain, which only the person's desktop
+      session can read; a daemon running outside that session reports Claude Code as
+      `"unknown"` rather than `"signed_out"`, so a client does not ask a signed-in person to sign
+      in again.
+    - `account` — `{ "email", "plan" }` while signed in, each a string or `null` when the vendor
+      does not reveal it; `null` otherwise. `plan` is human-readable, such as `"Pro"` or `"Max"`.
+    - `methods` — the sign-in methods the program supports, in the order the daemon prefers them:
+      `"browser"` (a web page on this computer completes the sign-in by itself) and `"device"` (a
+      web page on any device, confirmed with a short code). Empty when the program is missing.
+- `operation` — the current or most recent install or sign-in, or `null` when there has been
+  none. It is described below.
+- `version` — a UUIDv7 minted whenever any field changes. Events carry the complete object, so
+  a client reconciling a snapshot with an event keeps the greater version.
+- `updatedAt` — when any field last changed, in epoch milliseconds.
+
+Discovery checks the program on `PATH` and every place the vendor's installers, desktop
+applications, and common package managers put it, and prefers the most specific: an installation
+from the vendor's own installer, then one inside the vendor's desktop application, then one from
+a package manager, then anything else on `PATH`. Inside desktop applications it checks, among
+others, `/Applications/Codex.app/Contents/Resources/codex` and
+`/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex`, and the Claude Code the
+Claude desktop app keeps. Discovery and the sign-in check read the programs' own sign-in files
+and run only their version and status commands, each bounded to ten seconds; the daemon makes
+no network request of its own for them.
+
+### The operation object
+
+```json
+{
+    "id": "q7x0v2m9k3c1a8b4d6e5f0g1",
+    "kind": "sign_in",
+    "status": "waiting",
+    "message": "Waiting for you to finish signing in to Claude in your browser.",
+    "authorization": {
+        "method": "browser",
+        "url": "https://claude.com/cai/oauth/authorize?...",
+        "userCode": null,
+        "openedByProgram": false,
+        "acceptsCode": true,
+        "expiresAt": 1755400600000
+    },
+    "output": ["Opening browser to sign in…"],
+    "error": null,
+    "startedAt": 1755400000000,
+    "finishedAt": null
+}
+```
+
+- `id` — a CUID2 naming this operation.
+- `kind` — `"install"` or `"sign_in"`.
+- `status` — one of:
+    - `"running"` — the daemon is working: downloading, installing, or starting the sign-in.
+    - `"waiting"` — a sign-in is waiting for the person to finish it; `authorization` is present.
+    - `"succeeded"`, `"failed"`, `"cancelled"` — terminal. `error` is present only on
+      `"failed"`.
+- `message` — one human-readable English sentence describing the current step or the outcome,
+  suitable to show as is.
+- `authorization` — present while a sign-in is `"waiting"`, otherwise `null`:
+    - `method` — `"browser"` or `"device"`.
+    - `url` — the vendor's page to open. A client opens it in the person's browser unless
+      `openedByProgram` is `true`, and keeps it available to open again. A `"browser"` sign-in
+      completes through a page served on this computer, so the browser must run on the daemon's
+      machine. A `"device"` sign-in may be completed on any device.
+    - `userCode` — the code the person confirms on a `"device"` page, or `null`.
+    - `openedByProgram` — `true` when the vendor's program has already opened the system
+      browser on the daemon's machine itself.
+    - `acceptsCode` — `true` when the vendor's page may instead show a code for the person to
+      paste back, which a client submits with `POST /v0/provider-clis/:cliId/sign-in/code`.
+    - `expiresAt` — when the daemon gives up waiting, in epoch milliseconds. A sign-in waits at
+      most ten minutes.
+- `output` — the last lines the vendor's program printed, at most 20 lines of at most 500
+  characters each, with terminal control sequences removed. URLs and codes the program prints are
+  kept; credentials never appear there because the programs do not print them. It is held only
+  in memory and is empty after the daemon restarts.
+- `error` — `{ "code", "message" }` on a failed operation, otherwise `null`. `message` is
+  human-readable English. Known codes are `install_failed` (the installer exited with an
+  error), `not_found` (the installer finished but the program cannot be found), `sign_in_failed`
+  (the vendor's program reported a failed sign-in), `expired` (the person did not finish in
+  time), `interrupted` (the daemon restarted while it ran), and `unavailable` (the program could
+  not be started). The set grows; clients tolerate unknown codes.
+- `startedAt`, `finishedAt` — epoch milliseconds; `finishedAt` is `null` until terminal.
+
+A provider CLI has at most one operation at a time. Its result stays on the object until the
+next operation starts. Operations are durable: an install interrupted by a daemon restart runs
+again when the daemon starts, because the vendors' installers are safe to repeat. A sign-in
+cannot survive a restart, since the vendor's waiting program ended with the daemon, so it
+becomes `"failed"` with code `interrupted`, and the person starts it again.
+
+A successful install or sign-in runs the provider scan (see `POST /v0/providers/scan`), so the
+newly usable account is discovered and enabled under the ordinary scan rules, and then emits
+`config.updated`.
+
+### `GET /v0/provider-clis`
+
+Response — `200`: `{ "providerClis": [ { ... } ] }`, one provider CLI object for every supported
+assistant in display order: Claude Code, Codex, Grok, Antigravity.
+
+The read refreshes discovery and the sign-in check for every assistant without a running
+operation, joining a refresh already in progress. A changed object emits `provider_cli.updated`.
+
+### `GET /v0/provider-clis/:cliId`
+
+Response — `200`: `{ "providerCli": { ... } }` after refreshing that one assistant as above.
+An unknown ID returns `404`.
+
+### `POST /v0/provider-clis/:cliId/install`
+
+Starts installing the assistant with exactly the `installer.command` the object reports, from
+the vendor's official installer. Request body, optional:
+
+```json
+{ "mutationId": "optional-client-value" }
+```
+
+The installer runs as the daemon's operating-system user, with no visible terminal or console
+window, and with no prompt for input. Vendor installers put the program in the user's own
+directories and need no administrator rights.
+
+Response — `200`: `{ "providerCli": { ... } }` with the new `"running"` install operation. Each
+step, each output line, and the final result emit `provider_cli.updated`. The install succeeds
+only when the program is then found and reports its version.
+
+- Starting while an install of the same assistant is running joins it and returns it unchanged.
+- `409` with code `already_installed` and the current `providerCli` when the program is already
+  installed and no install is running.
+- `409` with code `busy` and the current `providerCli` while a sign-in is running.
+- `409` with code `no_installer` and the current `providerCli` when `installer` is `null`.
+
+### `POST /v0/provider-clis/:cliId/sign-in`
+
+Starts the vendor's own sign-in with the installed program. Request body, every field optional:
+
+```json
+{ "method": "device", "mutationId": "optional-client-value" }
+```
+
+- `method` — one of the object's `signIn.methods`. Omitted, the daemon uses the first.
+
+Response — `200`: `{ "providerCli": { ... } }` with the new `"running"` sign-in operation. It
+becomes `"waiting"` with its `authorization` as soon as the vendor's program provides the page to
+open, normally within seconds, and then `"succeeded"`, `"failed"`, or `"cancelled"`. Success is
+decided by the program's own sign-in check, not by its exit alone. The successful object reports
+`signIn.status: "signed_in"` and the account and plan when known.
+
+Signing in while already signed in starts a new sign-in, which a person may use to change
+accounts. Clients that only need a working sign-in check `signIn.status` first.
+
+- Starting while a sign-in of the same assistant is running joins it and returns it unchanged.
+- `400` with code `invalid_request` when `method` is not one of `signIn.methods`.
+- `409` with code `not_installed` and the current `providerCli` when the program is missing.
+- `409` with code `busy` and the current `providerCli` while an install is running.
+
+### `POST /v0/provider-clis/:cliId/sign-in/code`
+
+Hands the code the vendor's page showed to the waiting sign-in, for an `authorization` whose
+`acceptsCode` is `true`. Request:
+
+```json
+{ "code": "the-code-from-the-page", "mutationId": "optional-client-value" }
+```
+
+`code` is 1–2,048 printable characters. The daemon writes it to the vendor's program and never
+stores, returns, or logs it. Response — `200`: `{ "providerCli": { ... } }`. The outcome arrives
+as for any sign-in. `409` with code `conflict` and the current `providerCli` when no sign-in is
+waiting or it does not accept a code.
+
+### `POST /v0/provider-clis/:cliId/cancel`
+
+Cancels the running install or sign-in and stops the vendor's program. Request body, optional:
+`{ "mutationId": "..." }`. Response — `200`: `{ "providerCli": { ... } }` whose operation is
+`"cancelled"`. With no running operation, the object is returned unchanged. A cancelled install
+may leave a partly installed program; the next discovery reports what is there.
 
 ## Cloud
 
@@ -13871,6 +14139,17 @@ version rules. Snapshot-to-stream cursor and version-gap recovery rules remain u
   reconciling snapshots for the same owner. Team clients never receive another owner's event or
   an unowned installation-wide integration event.
     - `integration` (full Happy integration object).
+
+**Provider CLIs**
+
+- `provider_cli.updated` — one assistant's provider CLI object changed: discovery found a
+  different installation or sign-in, or an install or sign-in made progress, printed output, or
+  finished. This is a complete replacement rather than a version-chain diff; clients keep the
+  object with the greater `version` for its `id`. Output lines may be coalesced, at most a few
+  events per second for one assistant. Absent on older daemons and in team mode.
+    - `providerCli` (the complete provider CLI object).
+    - `mutationId` — echoed when the API request that started or changed the operation supplied
+      one.
 
 **Provider-account usage**
 

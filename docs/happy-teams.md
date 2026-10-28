@@ -25,7 +25,7 @@ Do this on the local, standalone installation that will manage the team. Happy S
 authentication is separate from the Codex, Claude Code, or other provider credentials used to run
 models. The team server still needs its own authorized provider access.
 
-An active local admin bot, such as the Chief of Staff, can guide the whole workflow. Team creation
+An active local admin bot, such as Happy, can guide the whole workflow. Team creation
 and listing also work for human-owned root agents, but WorkOS configuration lookup, local connection
 management, and email invitations require an active admin bot. Subagents and ordinary bots cannot
 take over those administrative steps. The connected user must also be a team administrator in

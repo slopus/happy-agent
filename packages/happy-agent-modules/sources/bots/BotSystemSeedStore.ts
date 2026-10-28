@@ -3,7 +3,7 @@ import { Value } from "@sinclair/typebox/value";
 import { sql } from "drizzle-orm";
 import type { Context } from "@steve.kite/stdlib";
 
-import { BOT_SYSTEM_SEEDS_TABLE } from "./BotMigrations.js";
+import { BOT_SYSTEM_RENAMES_TABLE, BOT_SYSTEM_SEEDS_TABLE } from "./BotMigrations.js";
 import type { BotSystemKey } from "./BotSystemKey.js";
 
 /** Read the permanent record that a system bot has already been seeded. */
@@ -35,5 +35,32 @@ export async function insertSystemBotSeed(
         ctx.db,
         sql`INSERT INTO ${sql.raw(BOT_SYSTEM_SEEDS_TABLE)} (system_key, bot_id)
             VALUES (${systemKey}, ${botId})`,
+    );
+}
+
+/** Whether the built-in rename of a system bot to `name` has already been applied. */
+export async function hasSystemBotRename(
+    ctx: Context,
+    systemKey: BotSystemKey,
+    name: string,
+): Promise<boolean> {
+    const rows = await agentDatabaseRows<{ readonly name: unknown }>(
+        ctx.db,
+        sql`SELECT name FROM ${sql.raw(BOT_SYSTEM_RENAMES_TABLE)}
+            WHERE system_key = ${systemKey} AND name = ${name} LIMIT 1`,
+    );
+    return rows.length > 0;
+}
+
+/** Record that the built-in rename was applied, whether or not it changed the bot. */
+export async function insertSystemBotRename(
+    ctx: Context,
+    systemKey: BotSystemKey,
+    name: string,
+): Promise<void> {
+    await agentDatabaseRun(
+        ctx.db,
+        sql`INSERT OR IGNORE INTO ${sql.raw(BOT_SYSTEM_RENAMES_TABLE)} (system_key, name)
+            VALUES (${systemKey}, ${name})`,
     );
 }

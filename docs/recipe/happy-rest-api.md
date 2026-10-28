@@ -390,7 +390,7 @@ See Surfaces, Document Surfaces, and Calendar Surfaces in `API.md`.
 ## What has no REST route
 
 Some things agents do have no HTTP route. Ask an agent to do them in a message instead, usually
-the Chief of Staff:
+Happy:
 
 - scheduling messages, durable waits, and multi-agent workflows;
 - creating subtasks, and messaging between agents;
