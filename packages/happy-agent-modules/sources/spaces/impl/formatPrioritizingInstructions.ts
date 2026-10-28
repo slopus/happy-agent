@@ -6,7 +6,7 @@ import { SPACE_ICON_SLUGS } from "./spaceIconSlugs.js";
  * Prioritizing is told once on the next start to check the sidebar against them; a test pins it to
  * the instructions' text.
  */
-export const PRIORITIZING_REVISION = 6;
+export const PRIORITIZING_REVISION = 7;
 
 /**
  * The whole system prompt of Prioritizing. It is a subtask of Happy with one job, so it hears

@@ -139,4 +139,7 @@ export const SPACE_ICON_SLUGS = [
     "typo",
     "formatting",
     "lint",
+    "waveform",
+    "microphone",
+    "headphones",
 ] as const;
