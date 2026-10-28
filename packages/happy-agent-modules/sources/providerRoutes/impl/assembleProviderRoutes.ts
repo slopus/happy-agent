@@ -75,7 +75,7 @@ function configuration(
         return {
             providerId: route.providerId,
             use:
-                enabled || route.status !== "ready"
+                enabled || !usable(route)
                     ? null
                     : {
                           providerId: route.providerId,
@@ -95,14 +95,21 @@ function configuration(
     if (existing !== undefined) return { providerId: existing, use: null };
     return {
         providerId: null,
-        use:
-            route.status === "ready"
-                ? {
-                      providerId: route.provider.id,
-                      type: route.provider.table.type,
-                      summary: route.provider.summary,
-                      restartRequired: true,
-                  }
-                : null,
+        use: usable(route)
+            ? {
+                  providerId: route.provider.id,
+                  type: route.provider.table.type,
+                  summary: route.provider.summary,
+                  restartRequired: true,
+              }
+            : null,
     };
+}
+
+/**
+ * Whether choosing the route can set it up. A route detection cannot vouch for, such as a sign-in
+ * kept in the keychain, may still be chosen: setting it up only writes configuration.
+ */
+function usable(route: DetectedRoute): boolean {
+    return route.status === "ready" || route.status === "unknown";
 }

@@ -28,3 +28,15 @@ Providers are read at startup, and a runtime.toml the daemon cannot load stops i
 writing it, and refuses an ID that already exists. OpenAI-compatible providers need a key and at
 least one model, so a local server without client keys gets the placeholder key `local`, and a
 server that lists no models cannot be used automatically.
+
+## A route detection cannot vouch for can still be chosen
+
+On macOS, Claude Code keeps its login in the keychain, which Happy never reads, and an AWS
+single-sign-on session can only be checked by asking AWS. Such routes are `unknown`: shown, never
+checked by default, but still offered for setup, because setting one up only writes configuration.
+Hiding them would hide the extra Claude accounts of most Mac users.
+
+## Grok scopes are not extra accounts
+
+Grok's `auth.json` keeps one record per sign-in client. Happy's Grok provider reads only its own,
+so the other records are not accounts Happy could use, and routes do not count them.

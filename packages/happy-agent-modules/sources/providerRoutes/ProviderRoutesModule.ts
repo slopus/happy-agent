@@ -1,3 +1,5 @@
+import { dirname, join, resolve } from "node:path";
+
 import type { AgentModule } from "@slopus/happy-agent-base";
 import type { Context } from "@steve.kite/stdlib";
 
@@ -5,6 +7,7 @@ import type { ConfigModule } from "../config/index.js";
 import type { ProviderClisModule } from "../providerClis/index.js";
 import type { ProviderScanModule } from "../providerScan/index.js";
 import { ProviderRouteRequestError, type ProviderRoute } from "./ProviderRoute.js";
+import { accountHomeRoutes } from "./impl/accountHomeRoutes.js";
 import { assembleProviderRoutes } from "./impl/assembleProviderRoutes.js";
 import { cliProxyApiRoutes } from "./impl/cliProxyApiRoutes.js";
 import { awsProfileRoutes } from "./impl/awsProfileRoutes.js";
@@ -13,7 +16,7 @@ import { claudeCodeRouterRoutes } from "./impl/claudeCodeRouterRoutes.js";
 import type { ConfiguredProviders, DetectedRoute } from "./impl/DetectedRoute.js";
 import { detectDirectRoutes } from "./impl/detectDirectRoutes.js";
 import { envKeyRoutes } from "./impl/envKeyRoutes.js";
-import type { RouteMachine } from "./impl/RouteMachine.js";
+import { homeOf, type RouteMachine } from "./impl/RouteMachine.js";
 
 /**
  * Finds every way this computer can already reach models, without inference, and sets a chosen
@@ -84,6 +87,16 @@ export class ProviderRoutesModule implements AgentModule {
                 detectDirectRoutes(await this.#providerClis.list(ctx), (providerId, vendor) =>
                     this.#models(providerId, vendor),
                 ),
+            ),
+            this.#detector(
+                ctx,
+                "other account folders",
+                async () =>
+                    await accountHomeRoutes(
+                        machine,
+                        (type) => this.#models(type, type === "claude" ? "Anthropic" : "OpenAI"),
+                        (type, folder) => this.#providerUsingFolder(type, folder),
+                    ),
             ),
             this.#detector(ctx, "CLIProxyAPI", async () => await cliProxyApiRoutes(machine)),
             this.#detector(
@@ -169,6 +182,23 @@ export class ProviderRoutesModule implements AgentModule {
     #bedrockProviderFor(profile: string): string | undefined {
         for (const [id, provider] of Object.entries(this.#config.configuration.values.providers)) {
             if (provider.type === "bedrock" && provider.profile === profile) return id;
+        }
+        return undefined;
+    }
+
+    /** A configured Claude provider with this config folder, or Codex provider with its auth file. */
+    #providerUsingFolder(type: "claude" | "codex", folder: string): string | undefined {
+        const home = homeOf(this.#machine());
+        const expand = (path: string) =>
+            resolve(path.startsWith("~/") ? join(home, path.slice(2)) : path);
+        for (const [id, provider] of Object.entries(this.#config.configuration.values.providers)) {
+            const path =
+                type === "claude" && provider.type === "claude"
+                    ? provider.configDir
+                    : type === "codex" && provider.type === "codex" && provider.authFile
+                      ? dirname(expand(provider.authFile))
+                      : undefined;
+            if (path !== undefined && expand(path) === folder) return id;
         }
         return undefined;
     }
