@@ -1,6 +1,7 @@
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { AgentProviders, type AgentModel } from "@slopus/happy-agent-base";
+import type { ProviderModelCompatibilityType } from "@slopus/happy-providers";
 import {
     BaseProvider,
     BaseSession,
@@ -170,6 +171,7 @@ export interface ScriptedInferenceOptions {
     readonly compaction?: GymCompactionHandler;
     readonly models?: readonly AgentModel[];
     readonly providerIds?: readonly string[];
+    readonly providerTypes?: Readonly<Record<string, ProviderModelCompatibilityType>>;
 }
 
 export interface ScriptedInference {
@@ -239,7 +241,11 @@ export function createScriptedInference(options: ScriptedInferenceOptions = {}):
     const createProviders = (): AgentProviders => {
         const providers = new AgentProviders();
         for (const provider of providerStates) {
-            providers.add(provider.providerId, new GymProvider(provider), "gym");
+            providers.add(
+                provider.providerId,
+                new GymProvider(provider),
+                options.providerTypes?.[provider.providerId] ?? "gym",
+            );
         }
         return providers;
     };

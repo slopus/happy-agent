@@ -3,6 +3,7 @@ import { join, relative, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import type { AgentModel, AgentPermissionMode } from "@slopus/happy-agent-base";
+import type { ProviderModelCompatibilityType } from "@slopus/happy-providers";
 import {
     HappyAgentClient,
     type Agent,
@@ -45,6 +46,11 @@ export interface AgentGymOptions extends GymHomeOptions {
     readonly routeConfiguredProviders?: boolean;
     /** Concrete scripted provider instances. Defaults to the single gym provider. */
     readonly providerIds?: readonly string[];
+    /**
+     * The kind each scripted provider registers as, by ID; `"gym"` when absent. A scripted
+     * `claude` registered as `"claude"` is the account a signed-in Claude Code serves.
+     */
+    readonly providerTypes?: Readonly<Record<string, ProviderModelCompatibilityType>>;
     /**
      * Configured providers that keep their real implementation and serve live inference, next to
      * the scripted ones. Only opt-in live scenarios name any, because these reach real accounts.
@@ -259,6 +265,9 @@ class AgentGymInstance implements AgentGym {
             ...(options.inference === undefined ? {} : { inference: options.inference }),
             ...(options.models === undefined ? {} : { models: options.models }),
             ...(options.providerIds === undefined ? {} : { providerIds: options.providerIds }),
+            ...(options.providerTypes === undefined
+                ? {}
+                : { providerTypes: options.providerTypes }),
         });
     }
 
