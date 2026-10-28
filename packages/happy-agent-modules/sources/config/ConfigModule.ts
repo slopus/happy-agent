@@ -3024,6 +3024,11 @@ export class ConfigModule implements AgentModule {
             if (!Value.Check(partialValuesSchema, next)) {
                 throw new Error(`The configuration for provider "${providerId}" is invalid.`);
             }
+            // The next start reads this table; prove now that it would load rather than let a
+            // generated file stop the daemon from starting. Its ID is new, so it merges alone.
+            mergeValues({
+                providers: { [providerId]: next.providers[providerId] },
+            } as PartialValues);
             await writeRuntimeConfigurationFile(this.configuration.paths.runtimeConfigPath, next);
             this.#runtimeValues = next;
         });

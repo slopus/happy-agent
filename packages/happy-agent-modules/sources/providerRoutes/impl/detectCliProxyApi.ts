@@ -5,7 +5,7 @@ import { delimiter, dirname, join } from "node:path";
 import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 
-import { homeOf, type ProviderCliMachine } from "./providerCliCatalog.js";
+import { homeOf, type RouteMachine } from "./RouteMachine.js";
 
 const DEFAULT_PORT = 8317;
 const PROBE_TIMEOUT_MS = 1_500;
@@ -70,7 +70,7 @@ interface CliProxyApiConfig {
  * is on this computer.
  */
 export async function detectCliProxyApi(
-    machine: ProviderCliMachine,
+    machine: RouteMachine,
 ): Promise<CliProxyApiDetection | null> {
     const program = findProgram(machine);
     const configPath = await findConfig(machine, program);
@@ -181,7 +181,7 @@ async function listModels(
     return { status: "running", models, vendors };
 }
 
-function findProgram(machine: ProviderCliMachine): string | null {
+function findProgram(machine: RouteMachine): string | null {
     const names = ["cliproxyapi", "cli-proxy-api"].map((name) =>
         machine.platform === "win32" ? `${name}.exe` : name,
     );
@@ -204,10 +204,7 @@ function findProgram(machine: ProviderCliMachine): string | null {
  * the Linux installer's folder, Homebrew's `etc/cliproxyapi.conf` beside each package-manager
  * `bin`, and `config.yaml` beside the program, its default when run from a download.
  */
-async function findConfig(
-    machine: ProviderCliMachine,
-    program: string | null,
-): Promise<string | null> {
+async function findConfig(machine: RouteMachine, program: string | null): Promise<string | null> {
     const home = homeOf(machine);
     const candidates = [
         join(home, ".cli-proxy-api", "config.yaml"),

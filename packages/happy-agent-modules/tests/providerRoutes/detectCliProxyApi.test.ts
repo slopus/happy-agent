@@ -9,8 +9,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
     detectCliProxyApi,
     parseCliProxyApiConfig,
-} from "../../sources/providerClis/impl/detectCliProxyApi.js";
-import type { ProviderCliMachine } from "../../sources/providerClis/impl/providerCliCatalog.js";
+} from "../../sources/providerRoutes/impl/detectCliProxyApi.js";
+import type { RouteMachine } from "../../sources/providerRoutes/impl/RouteMachine.js";
 
 const cleanups: (() => Promise<void>)[] = [];
 
@@ -19,7 +19,7 @@ afterEach(async () => {
 });
 
 /** An empty home and empty program folders, so nothing of the real computer is read. */
-async function machine(): Promise<{ home: string; machine: ProviderCliMachine }> {
+async function machine(): Promise<{ home: string; machine: RouteMachine }> {
     const home = await mkdtemp(join(tmpdir(), "cliproxyapi-"));
     cleanups.push(async () => await rm(home, { recursive: true, force: true }));
     return {
@@ -27,7 +27,6 @@ async function machine(): Promise<{ home: string; machine: ProviderCliMachine }>
         machine: {
             platform: process.platform,
             env: { HOME: home, PATH: "" },
-            applications: [],
             programDirectories: [],
         },
     };
