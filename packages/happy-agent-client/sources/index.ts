@@ -72,6 +72,7 @@ export * from "./protocol/cloud.js";
 export * from "./protocol/common.js";
 export * from "./protocol/connections.js";
 export * from "./protocol/daemon.js";
+export * from "./protocol/providerRoutes.js";
 export * from "./protocol/events.js";
 export * from "./protocol/files.js";
 export * from "./protocol/git.js";

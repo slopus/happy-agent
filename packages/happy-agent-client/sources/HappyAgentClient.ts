@@ -177,6 +177,11 @@ import type {
     ShutdownResponse,
 } from "./protocol/daemon.js";
 import type {
+    ProviderRouteUseRequest,
+    ProviderRouteUseResponse,
+    ProviderRoutesResponse,
+} from "./protocol/providerRoutes.js";
+import type {
     EventPageQuery,
     EventPageResponse,
     EventStreamFrame,
@@ -537,6 +542,29 @@ export class HappyAgentClient {
         return await this.#json({
             method: "POST",
             path: `v0/providers/${encodeURIComponent(providerId)}/verify`,
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /** `GET /v0/provider-routes` — detects every way this machine can already reach models. */
+    async listProviderRoutes(options: RequestOptions = {}): Promise<ProviderRoutesResponse> {
+        return await this.#json({
+            method: "GET",
+            path: "v0/provider-routes",
+            signal: options.signal,
+        });
+    }
+
+    /** `POST /v0/provider-routes/:routeId/use` — sets one route up as its `use` describes. */
+    async useProviderRoute(
+        routeId: string,
+        request: ProviderRouteUseRequest = {},
+        options: RequestOptions = {},
+    ): Promise<ProviderRouteUseResponse> {
+        return await this.#json({
+            method: "POST",
+            path: `v0/provider-routes/${encodeURIComponent(routeId)}/use`,
             json: request,
             signal: options.signal,
         });
