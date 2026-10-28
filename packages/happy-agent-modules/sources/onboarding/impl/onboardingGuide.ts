@@ -22,6 +22,22 @@ export interface OnboardingTreeNode {
     readonly children: readonly OnboardingTreeNode[];
 }
 
+/** A chat Looks right opened, as Happy's model hears of it; `id` is its proposal row's value. */
+export interface OnboardingStartedChat {
+    readonly id: string;
+    readonly title: string;
+    readonly topic: string;
+    readonly ongoing: boolean;
+}
+
+/** What the last steps need: the person's first name source, and the chats onboarding opened. */
+interface OnboardingClosing {
+    readonly name: string;
+    readonly started: readonly OnboardingStartedChat[];
+    /** Whether their topics were added and the chats placed under them. */
+    readonly placed: boolean;
+}
+
 export type OnboardingEvent =
     /** An AI is connected: onboarding is Happy's from here. */
     | {
@@ -45,7 +61,35 @@ export type OnboardingEvent =
           readonly email: string;
           /** Where Happy can look for their work; absent when it knows none for this assistant. */
           readonly places?: OnboardingPlaces;
-      };
+      }
+    /** The person will say what they work on, or Happy found nothing it could read. */
+    | { readonly kind: "workTellAsked" }
+    /** The person wants to change the proposal they were shown; they type the change next. */
+    | {
+          readonly kind: "workChangeAsked";
+          readonly proposal: readonly {
+              readonly title: string;
+              readonly topic: string;
+              readonly ongoing: boolean;
+              readonly firstMessage: string;
+          }[];
+      }
+    /** Looks right: these chats opened and got their first messages. */
+    | {
+          readonly kind: "workAccepted";
+          readonly started: readonly OnboardingStartedChat[];
+          /** Titles of the ticked rows whose chat could not open or start. */
+          readonly failed: readonly string[];
+          /** Why the topics could not be added, when they could not. */
+          readonly topicsError?: string;
+      }
+    /** The person pressed Try New; their app opened the new chat. */
+    | { readonly kind: "newChatOpened" }
+    | { readonly kind: "newChatSkipped" }
+    /** The person answered the phone step: the pairing is open, or later. */
+    | ({ readonly kind: "phoneAnswered"; readonly choice: "opened" | "later" } & OnboardingClosing)
+    /** A phone paired through the pairing onboarding opened. */
+    | ({ readonly kind: "phonePaired"; readonly device?: string } & OnboardingClosing);
 
 const EVENT_OPEN = "<happy-onboarding-event>";
 const EVENT_CLOSE = "</happy-onboarding-event>";
@@ -117,4 +161,13 @@ The steps, in order:
    providerAdded (at any step) → Say in a sentence that this AI is connected too, then ask again what you were still waiting on, with the same actions, so the step to answer is the newest message.
 2. profileSaved → Your work. Thank them by first name. Offer to organize their existing work and beyond, and to help them prioritize. Say exactly where you will look, using only the event's places and reads, and show the places as a data-tree. Say that what you read goes to the AI they connected, and that you change nothing. Offer onboarding.discover "Discover what I've been working on" (primary) and onboarding.workTell "I'll tell you instead". With no places, there is no history of theirs you can read, but still offer: ask what they're working on and which projects, and say that you'd look only at the recent Git history of the projects they name (commit messages and branch names), read-only. Offer onboarding.workTell "I'll tell you" (primary).
 
-Stay read-only for all of onboarding. Never invent places, accounts, or results the events did not give you.`;
+3. workTellAsked → Ask in one sentence what they are working on and what matters most right now; a sentence or two is enough, and it does not have to be code.
+   When they answer, call the propose_work tool with what they said, in their words, with the projects and priorities they named. Happy writes the proposal table right after your reply, so reply with one short sentence that introduces it and nothing else. If they asked something else instead, answer it, then ask again.
+   The proposal is Happy's message, not yours: a table of chats they can tick, with Looks right and Adjust. Never write a proposal table yourself.
+   workChangeAsked → The event carries the proposal they were shown. Ask in one sentence what to change. When they answer, call propose_work with their change and the rows from that proposal they want to keep, then reply with one short sentence, as above.
+4. workAccepted → Say the chats that started, by title, are making a read-only plan and will wait for them before changing anything. If placed, say Focus put them under their topics in the sidebar; with a topicsError, say the topics couldn't be added and why, in plain words. Name any failed rows and say they can ask you to try again. Then introduce New in two sentences: New opens a fresh chat that names itself as they talk, and ⌘N does it too (Ctrl+N on Windows). Offer onboarding.newChat "Try New" (primary) and onboarding.newChatSkip "Maybe later". With nothing started, offer the same two to make their first chat.
+5. newChatOpened or newChatSkipped → Their new chat is open in the app, or they skipped it. Say in a sentence that you are Happy, their main agent, and they can come back here to coordinate their work, change settings, or get help. Then offer the phone: they can follow their agents and reply from anywhere. Show <figure data-phone-app></figure> and offer onboarding.phone with data-choice="opened" "I have the app" (primary) and onboarding.phone with data-choice="later" "Later".
+6. phoneAnswered with choice opened → Ask them to open Happy on their phone and scan this computer's code, then approve it there. Show <figure data-phone-pair></figure> and nothing else.
+   phoneAnswered with choice later, or phonePaired → Done. Say they're ready, using their first name, and in one sentence how daily use works: New for a fresh chat, related work under its topic, and you here. For phonePaired, say their phone is connected first. Offer one onboarding.workOpen button with data-item set to the chat's id for each started chat, labelled with its title, the first one primary, then onboarding.finish "Stay here". With no started chats, offer onboarding.finish "Done" (primary).
+
+Stay read-only for all of onboarding. Never invent places, accounts, chats, or results the events did not give you.`;

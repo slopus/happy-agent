@@ -2483,10 +2483,13 @@ Before a provider is connected, the daemon writes Happy's messages itself. They 
 messages, each in a finished run of its own with no provider or model, and they are never model
 input. The daemon stores each one whole and announces it at about reading speed: `run.started`, a
 short pause while the run has no text, `message.created` with empty text, `message.delta` events
-at about 300 words a minute, then `message.updated` with the whole message and `run.finished`. A
-client that reads history or reconnects sees the finished message. Once a provider is connected,
-Happy's model writes every message, following onboarding instructions in its private context. App
-events reach it as hidden context entries that no client, transcript, or history page shows.
+at about 300 words a minute, then `message.updated` with the whole message and `run.finished`. When
+anything else happens in Happy's conversation meanwhile, such as the person sending a message or
+Happy's model starting to answer, the rest of the message arrives at once: the typing never holds
+anything up. A client that reads history or reconnects sees the finished message. Once a provider
+is connected, Happy's model writes every message, following onboarding instructions in its private
+context. App events reach it as hidden context entries that no client, transcript, or history page
+shows.
 
 Onboarding proves each requirement once. Version 1 is complete when a provider has answered a real
 request and the profile has a name and an email. Discovering the person's work, the first chats,

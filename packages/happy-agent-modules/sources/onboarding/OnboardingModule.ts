@@ -29,6 +29,10 @@ import { ProfileModule } from "../profile/index.js";
 import { ProviderClisModule, type ProviderCli } from "../providerClis/index.js";
 import { ProviderRoutesModule, type ProviderRoute } from "../providerRoutes/index.js";
 import { ProviderScanModule } from "../providerScan/index.js";
+import { USER_MESSAGE_ORIGIN_METADATA } from "../impl/messageOrigin.js";
+import { MobileConnectorModule } from "../mobileConnector/index.js";
+import { SPACE_STANDALONE_OWNER, SpacesModule } from "../spaces/index.js";
+import { TasksModule } from "../tasks/index.js";
 import { createUuidV7Factory } from "../utils/createUuidV7.js";
 import { chatActionParse, type ChatAction } from "./impl/chatActions/chatAction.js";
 import {
@@ -58,6 +62,14 @@ import {
     type OnboardingEvent,
 } from "./impl/onboardingGuide.js";
 import { readGitIdentity } from "./impl/readGitIdentity.js";
+import { discoverWork } from "./impl/discoverWork.js";
+import {
+    discoveringMessage,
+    nothingFoundMessage,
+    proposalFailedMessage,
+    proposalMessage,
+    proposingMessage,
+} from "./impl/workCopy.js";
 import {
     APP_OF,
     PROVIDER_OF,
@@ -78,19 +90,23 @@ import {
     type ChatActionPress,
     type OnboardingFlow,
     type OnboardingListener,
+    type OnboardingStarted,
     type OnboardingState,
     type OnboardingSummary,
+    type OnboardingWorkRow,
 } from "./OnboardingFlow.js";
 import { onboardingMigrations } from "./OnboardingMigrations.js";
 import { OnboardingRequestError } from "./OnboardingRequestError.js";
 import { queryOnboardingState } from "./persistence/queryOnboardingState.js";
 import { upsertOnboardingState } from "./persistence/upsertOnboardingState.js";
+import { proposeWorkTool } from "./tools/propose_work.js";
 import { saveProfileTool } from "./tools/save_profile.js";
 
 /** Onboarding runs on the daemon's machine for its one person; team members keep their own. */
 const OWNER = "standalone";
 const SAY_FUNCTION = "onboarding.say";
 const STEP_FUNCTION = "onboarding.step";
+const PROPOSE_FUNCTION = "onboarding.propose";
 
 /** Actions that only open something in the client: a vendor's page or a sheet. */
 const CLIENT_ACTIONS = new Set([
@@ -194,6 +210,9 @@ export class OnboardingModule implements AgentModule {
     readonly #providerClis: ProviderClisModule;
     readonly #providerRoutes: ProviderRoutesModule;
     readonly #providerScan: ProviderScanModule;
+    readonly #tasks: TasksModule;
+    readonly #spaces: SpacesModule;
+    readonly #mobileConnector: MobileConnectorModule;
     readonly #listeners = new Set<OnboardingListener>();
     readonly #messageListeners = new Set<OnboardingMessageListener>();
     readonly #speechListeners = new Set<OnboardingSpeechListener>();
@@ -216,7 +235,13 @@ export class OnboardingModule implements AgentModule {
         providerClis: ProviderClisModule,
         providerRoutes: ProviderRoutesModule,
         providerScan: ProviderScanModule,
+        tasks: TasksModule,
+        spaces: SpacesModule,
+        mobileConnector: MobileConnectorModule,
     ) {
+        this.#tasks = tasks;
+        this.#spaces = spaces;
+        this.#mobileConnector = mobileConnector;
         this.#config = config;
         this.#durable = durableFunctions;
         this.#history = history;
@@ -235,6 +260,30 @@ export class OnboardingModule implements AgentModule {
             },
         });
         durableFunctions.register({
+            name: PROPOSE_FUNCTION,
+            argumentsSchema: Type.Object(
+                { about: Type.String({ minLength: 1, maxLength: 4_000 }) },
+                { additionalProperties: false },
+            ),
+            resultSchema: Type.Null(),
+            executor: async (ctx, call) => {
+                const say = this.#sayer(ctx, call.kv);
+                await this.#lock.runInLock(ctx, async () => {
+                    const findings = (await this.#state(ctx)).findings;
+                    const messageId = await say(proposingMessage());
+                    await this.#propose(
+                        ctx,
+                        messageId,
+                        [
+                            `What the person said they work on:\n${call.arguments.about}`,
+                            ...(findings === null ? [] : [findings]),
+                        ].join("\n\n"),
+                    );
+                });
+                return null;
+            },
+        });
+        durableFunctions.register({
             name: STEP_FUNCTION,
             argumentsSchema: stepArgumentsSchema,
             resultSchema: Type.Null(),
@@ -244,7 +293,7 @@ export class OnboardingModule implements AgentModule {
                 if (action === undefined) return null;
                 await this.#lock.runInLock(
                     ctx,
-                    async () => await this.#work(ctx, action, this.#sayer(ctx, call.kv)),
+                    async () => await this.#work(ctx, action, this.#sayer(ctx, call.kv), call.kv),
                 );
                 return null;
             },
@@ -265,6 +314,28 @@ export class OnboardingModule implements AgentModule {
                 );
             });
         });
+        this.#mobileConnector.onEvent((_eventCtx, event) => {
+            const pairing = event.mobileConnector.pairing;
+            if (pairing?.status !== "completed") return;
+            const moduleCtx = this.#context();
+            void this.#lock
+                .runInLock(moduleCtx, async () => {
+                    const state = await this.#state(moduleCtx);
+                    if (state.pairingId !== pairing.id || state.phonePaired) return;
+                    await this.#update(moduleCtx, (current) => ({
+                        ...current,
+                        phonePaired: true,
+                    }));
+                    await this.#tell(moduleCtx, {
+                        kind: "phonePaired",
+                        ...(pairing.device === null ? {} : { device: pairing.device.name }),
+                        ...(await this.#closing(moduleCtx)),
+                    });
+                })
+                .catch((error: unknown) => {
+                    moduleCtx.log.warn("Onboarding could not follow the phone pairing.", {}, error);
+                });
+        });
         this.#providerClis.onUpdated((cli) => {
             const moduleCtx = this.#context();
             void this.#lock
@@ -280,7 +351,9 @@ export class OnboardingModule implements AgentModule {
             instructions: async (hookCtx, scope) =>
                 (await this.#guiding(hookCtx, scope)) ? ONBOARDING_GUIDE : "",
             tools: async (hookCtx, scope) =>
-                (await this.#guiding(hookCtx, scope)) ? [saveProfileTool(this)] : [],
+                (await this.#guiding(hookCtx, scope))
+                    ? [saveProfileTool(this), proposeWorkTool(this)]
+                    : [],
             // Happy's first answer on the chosen provider is the real request onboarding requires.
             afterInferenceTransact: async (hookCtx, scope, inference) => {
                 if (
@@ -307,16 +380,29 @@ export class OnboardingModule implements AgentModule {
                 await this.#reconcileCompletion(hookCtx);
             },
             // A run that ended while still verifying never answered: Happy says what failed.
+            // A proposal Happy asked for is written once its reply is.
             afterAgentSettled: async (hookCtx, scope, settlement) => {
                 const state = await queryOnboardingState(hookCtx, OWNER);
-                if (state?.step !== "verifying") return;
+                if (state === undefined) return;
+                if (state.step !== "verifying" && state.proposeAbout === null) return;
                 const happy = await this.#bots.chiefOfStaff(hookCtx);
                 if (happy?.agentId !== scope.agent.id) return;
                 const moduleCtx = this.#context();
-                await this.#lock.runInLock(
-                    moduleCtx,
-                    async () => await this.#verifyFailed(moduleCtx, settlement.error),
-                );
+                await this.#lock.runInLock(moduleCtx, async () => {
+                    if (state.step === "verifying") {
+                        await this.#verifyFailed(moduleCtx, settlement.error);
+                        return;
+                    }
+                    await moduleCtx.inTx(async (txCtx) => {
+                        const current = await this.#state(txCtx);
+                        if (current.proposeAbout === null) return;
+                        await this.#write(txCtx, { ...current, proposeAbout: null });
+                        await this.#durable.invoke(txCtx, {
+                            function: PROPOSE_FUNCTION,
+                            arguments: { about: current.proposeAbout },
+                        });
+                    });
+                });
             },
         };
     };
@@ -503,6 +589,68 @@ export class OnboardingModule implements AgentModule {
             case "onboarding.codeEntry":
                 if (state.connecting?.provider !== action.provider) throw stepOver();
                 return null;
+            case "onboarding.workTell":
+            case "onboarding.workChange":
+            case "onboarding.newChatSkip": {
+                if (state.step !== "guided") throw stepOver();
+                await this.#tell(
+                    ctx,
+                    action.id === "onboarding.workChange"
+                        ? {
+                              kind: "workChangeAsked",
+                              proposal: (state.proposal ?? []).map((row) => ({
+                                  title: row.title,
+                                  topic: row.topic,
+                                  ongoing: row.ongoing,
+                                  firstMessage: row.firstMessage,
+                              })),
+                          }
+                        : {
+                              kind:
+                                  action.id === "onboarding.workTell"
+                                      ? "workTellAsked"
+                                      : "newChatSkipped",
+                          },
+                );
+                return null;
+            }
+            case "onboarding.newChat": {
+                if (state.step !== "guided") throw stepOver();
+                const opened = await this.#openChat(ctx, {
+                    spaceId: createId(),
+                    taskId: createId(),
+                });
+                await this.#tell(ctx, { kind: "newChatOpened" });
+                return opened;
+            }
+            case "onboarding.workOpen":
+            case "onboarding.finish": {
+                if (state.step !== "guided") throw stepOver();
+                const open =
+                    action.id === "onboarding.workOpen"
+                        ? state.started.find((row) => row.id === action.item)
+                        : undefined;
+                if (action.id === "onboarding.workOpen" && open === undefined) {
+                    throw new OnboardingRequestError("invalid", "That chat was not opened.");
+                }
+                if (state.pairingId !== null && !state.phonePaired) {
+                    await this.#mobileConnector
+                        .cancelPairing(ctx, state.pairingId)
+                        .catch(() => undefined);
+                }
+                await this.#write(ctx, { ...state, step: "finished" }, mutationId);
+                return open === undefined ? null : { agentId: open.agentId, spaceId: open.spaceId };
+            }
+            case "onboarding.discover":
+            case "onboarding.workAccept":
+            case "onboarding.phone": {
+                if (state.step !== "guided") throw stepOver();
+                await this.#durable.invoke(ctx, {
+                    function: STEP_FUNCTION,
+                    arguments: { action: actionArguments(action) },
+                });
+                return null;
+            }
             case "onboarding.profileConfirm":
             case "onboarding.profileChange": {
                 if (!GUIDED_STEPS.has(state.step)) throw stepOver();
@@ -518,7 +666,7 @@ export class OnboardingModule implements AgentModule {
     }
 
     /** The work one pressed action asks for, after its press committed. */
-    async #work(ctx: Context, action: ChatAction, say: Say): Promise<void> {
+    async #work(ctx: Context, action: ChatAction, say: Say, kv: AgentKV): Promise<void> {
         switch (action.id) {
             case "onboarding.provider": {
                 if (action.provider === "none") {
@@ -664,9 +812,285 @@ export class OnboardingModule implements AgentModule {
             case "onboarding.profileChange":
                 await this.#tell(ctx, { kind: "profileChangeAsked" });
                 return;
+            case "onboarding.discover": {
+                const cli = (await this.#state(ctx)).connections[0]?.cli;
+                const places = onboardingPlaces(cli);
+                if (cli === undefined || places === undefined) {
+                    await this.#tell(ctx, { kind: "workTellAsked" });
+                    return;
+                }
+                const messageId = await say(discoveringMessage(places.assistant));
+                const home = this.#config.processEnvironment["HOME"]?.trim() || homedir();
+                let findings: string | undefined;
+                try {
+                    findings = await discoverWork(home, cli);
+                } catch (error: unknown) {
+                    await this.#rewrite(ctx, messageId, proposalFailedMessage(errorText(error)));
+                    return;
+                }
+                if (findings === undefined) {
+                    await this.#rewrite(ctx, messageId, nothingFoundMessage(places.assistant));
+                    return;
+                }
+                await this.#update(ctx, (state) => ({ ...state, findings }));
+                await this.#propose(ctx, messageId, findings);
+                return;
+            }
+            case "onboarding.workAccept":
+                await this.#accept(ctx, kv, action.values);
+                return;
+            case "onboarding.phone": {
+                const state = await this.#state(ctx);
+                if (state.phonePaired) return;
+                let choice = action.choice;
+                if (choice === "opened") {
+                    try {
+                        const snapshot = await this.#mobileConnector.startPairing(ctx);
+                        const pairingId = snapshot.pairing?.id ?? null;
+                        await this.#update(ctx, (current) => ({ ...current, pairingId }));
+                    } catch (error: unknown) {
+                        await say(`I couldn't open a phone pairing: ${errorText(error)}`);
+                        choice = "later";
+                    }
+                } else if (state.pairingId !== null) {
+                    await this.#mobileConnector
+                        .cancelPairing(ctx, state.pairingId)
+                        .catch(() => undefined);
+                }
+                await this.#tell(ctx, {
+                    kind: "phoneAnswered",
+                    choice,
+                    ...(await this.#closing(ctx)),
+                });
+                return;
+            }
             default:
                 return;
         }
+    }
+
+    /**
+     * Happy's model asked for a proposal from what the person said: it is written once Happy's
+     * reply is, and the model hears nothing more until the person answers it.
+     */
+    async requestProposal(ctx: Context, about: string): Promise<string> {
+        await this.#update(ctx, (state) => ({ ...state, proposeAbout: about.trim() }));
+        return "Happy shows the proposal right below your reply. Reply with one short sentence that introduces it, and nothing else.";
+    }
+
+    /**
+     * Focus proposes the person's work from `findings`, and the message `messageId` becomes the
+     * proposal table, or says why there is none.
+     */
+    async #propose(ctx: Context, messageId: string, findings: string): Promise<void> {
+        const state = await this.#state(ctx);
+        const chosen = state.model;
+        const model = this.#config.models.find(
+            (candidate) =>
+                candidate.providerId === chosen?.providerId && candidate.id === chosen.modelId,
+        );
+        if (model === undefined) {
+            await this.#rewrite(
+                ctx,
+                messageId,
+                proposalFailedMessage("the AI you connected is no longer available."),
+            );
+            return;
+        }
+        try {
+            const proposal = await this.#spaces.proposeWork(
+                ctx,
+                { providerId: model.providerId, model: model.id, effort: model.defaultEffort },
+                findings,
+            );
+            const rows: OnboardingWorkRow[] = proposal.rows.map((row, index) => ({
+                id: `work-${String(index + 1)}`,
+                title: row.title,
+                icon: row.icon,
+                topic: row.topic,
+                why: row.why,
+                firstMessage: row.firstMessage,
+                ongoing: row.ongoing === true,
+            }));
+            const replaces = await this.#spaces
+                .emptyDefaultHeadings(ctx, SPACE_STANDALONE_OWNER)
+                .catch(() => []);
+            await this.#update(ctx, (current) => ({ ...current, proposal: rows }));
+            await this.#rewrite(ctx, messageId, proposalMessage(proposal.intro, rows, replaces));
+        } catch (error: unknown) {
+            await this.#rewrite(ctx, messageId, proposalFailedMessage(errorText(error)));
+        }
+    }
+
+    /**
+     * Looks right: a chat for each ticked row, its topics added and each row placed in one
+     * sidebar change of the person's own, and only then each chat's first message, exactly as
+     * shown, run read-only. Happy's model hears what started.
+     */
+    async #accept(ctx: Context, kv: AgentKV, values: readonly string[]): Promise<void> {
+        const state = await this.#state(ctx);
+        const rows = (state.proposal ?? []).filter((row) => values.includes(row.id));
+        // Nothing ticked starts nothing, and onboarding moves on to New.
+        if (rows.length === 0) {
+            await this.#update(ctx, (current) => ({ ...current, proposal: null }));
+            await this.#tell(ctx, { kind: "workAccepted", started: [], failed: [] });
+            return;
+        }
+        const started: OnboardingStarted[] = [];
+        const failed: string[] = [];
+        for (const row of rows) {
+            try {
+                // Fixed once, so a rerun after a restart finds the chat it already opened.
+                const ids = await kv.getOrCreate(ctx, `ids.${row.id}`, () => ({
+                    spaceId: createId(),
+                    taskId: createId(),
+                }));
+                started.push({
+                    id: row.id,
+                    title: row.title,
+                    topic: row.topic,
+                    ongoing: row.ongoing,
+                    ...(await this.#openChat(ctx, ids)),
+                });
+            } catch (error: unknown) {
+                ctx.log.warn("Onboarding could not open a proposed chat.", {}, error);
+                failed.push(row.title);
+            }
+        }
+        let topicsError: string | undefined;
+        try {
+            await this.#spaces.placeWork(
+                ctx,
+                SPACE_STANDALONE_OWNER,
+                started.map((row) => ({ spaceId: row.spaceId, topic: row.topic })),
+            );
+        } catch (error: unknown) {
+            topicsError = errorText(error);
+        }
+        const sent: OnboardingStarted[] = [];
+        for (const row of started) {
+            const firstMessage = rows.find((each) => each.id === row.id)?.firstMessage;
+            try {
+                if (firstMessage !== undefined) {
+                    const messageId = await kv.getOrCreate(ctx, `first.${row.id}`, () =>
+                        createId(),
+                    );
+                    await this.#sendFirst(ctx, row, messageId, firstMessage);
+                }
+                sent.push(row);
+            } catch (error: unknown) {
+                ctx.log.warn("Onboarding could not start a proposed chat.", {}, error);
+                failed.push(row.title);
+            }
+        }
+        await this.#update(ctx, (current) => ({
+            ...current,
+            proposal: null,
+            started: [...current.started, ...sent],
+            placed: topicsError === undefined && sent.length > 0,
+        }));
+        await this.#tell(ctx, {
+            kind: "workAccepted",
+            started: sent.map(startedOf),
+            failed,
+            ...(topicsError === undefined ? {} : { topicsError }),
+        });
+    }
+
+    /** A new chat as New makes it, on the model onboarding chose. */
+    async #openChat(
+        ctx: Context,
+        ids: { readonly spaceId: string; readonly taskId: string },
+    ): Promise<{ readonly agentId: string; readonly spaceId: string }> {
+        return await ctx.inTx(async (txCtx) => {
+            const existing = await this.#spaces.get(txCtx, ids.spaceId);
+            const content = existing?.contents[0];
+            if (content?.kind === "task") return { agentId: content.agentId, spaceId: ids.spaceId };
+            const creation = await this.#tasks.createWithResult(txCtx, { id: ids.taskId });
+            await this.#spaces.createStemCell(txCtx, SPACE_STANDALONE_OWNER, {
+                spaceId: ids.spaceId,
+                task: creation.task,
+            });
+            const chosen = (await this.#state(txCtx)).model;
+            const model = this.#config.models.find(
+                (candidate) =>
+                    candidate.providerId === chosen?.providerId && candidate.id === chosen.modelId,
+            );
+            if (model !== undefined) {
+                await this.#useModel(
+                    txCtx,
+                    creation.task.agentId,
+                    model.providerId,
+                    model.id,
+                    model.defaultEffort,
+                );
+            }
+            return { agentId: creation.task.agentId, spaceId: ids.spaceId };
+        });
+    }
+
+    /** The first message the proposal showed, as the person approved it, run read-only. */
+    async #sendFirst(
+        ctx: Context,
+        row: OnboardingStarted,
+        messageId: string,
+        text: string,
+    ): Promise<void> {
+        const agents = this.#agents;
+        const chosen = (await this.#state(ctx)).model;
+        if (agents === undefined || chosen === null) return;
+        if ((await this.#history.message(ctx, row.agentId, messageId)) !== undefined) return;
+        const model = this.#config.models.find(
+            (candidate) =>
+                candidate.providerId === chosen.providerId && candidate.id === chosen.modelId,
+        );
+        const effort = model?.defaultEffort ?? "medium";
+        const mode = {
+            providerId: chosen.providerId,
+            modelId: chosen.modelId,
+            effort,
+            serviceTier: null,
+            permissionMode: "read_only" as const,
+        };
+        await ctx.inTx(async (txCtx) => {
+            await agents.send(
+                txCtx,
+                row.agentId,
+                { role: "user", content: [{ type: "text", text }] },
+                {
+                    id: messageId,
+                    metadata: { ...USER_MESSAGE_ORIGIN_METADATA, mode },
+                    provider: chosen.providerId,
+                    model: chosen.modelId,
+                    effort,
+                    serviceTier: null,
+                    permissionMode: "read_only",
+                },
+            );
+            await this.#useModel(
+                txCtx,
+                row.agentId,
+                chosen.providerId,
+                chosen.modelId,
+                effort,
+                "read_only",
+            );
+        });
+    }
+
+    /** What the last steps need: the person's name, the chats opened, and whether they are placed. */
+    async #closing(ctx: Context): Promise<{
+        name: string;
+        started: ReturnType<typeof startedOf>[];
+        placed: boolean;
+    }> {
+        const state = await this.#state(ctx);
+        const profile = await this.#profile.get(ctx).catch(() => undefined);
+        return {
+            name: profile?.name ?? "",
+            started: state.started.map(startedOf),
+            placed: state.placed,
+        };
     }
 
     /**
@@ -997,7 +1421,16 @@ export class OnboardingModule implements AgentModule {
             connections: [...connections],
             model: { providerId: model.providerId, modelId: model.id },
         }));
-        await this.#useModel(ctx, model.providerId, model.id, model.defaultEffort);
+        const happy = await this.#bots.chiefOfStaff(ctx);
+        if (happy !== undefined) {
+            await this.#useModel(
+                ctx,
+                happy.agentId,
+                model.providerId,
+                model.id,
+                model.defaultEffort,
+            );
+        }
         await say(connectedMessage(connections));
         await this.#begin(ctx);
     }
@@ -1016,25 +1449,28 @@ export class OnboardingModule implements AgentModule {
         await say(useFailedMessage(connections[0]?.app ?? "it", reason));
     }
 
-    /** Happy's conversation shows, and runs on, the model onboarding chose. */
+    /** A conversation shows, and runs on, the model onboarding chose. */
     async #useModel(
         ctx: Context,
+        agentId: string,
         providerId: string,
         modelId: string,
         effort: string,
+        permission?: "read_only",
     ): Promise<void> {
-        const happy = await this.#bots.chiefOfStaff(ctx);
         const agents = this.#agents;
-        if (happy === undefined || agents === undefined) return;
-        const config = await agents.config(ctx, happy.agentId);
+        if (agents === undefined) return;
+        const config = await agents.config(ctx, agentId);
         if (config === undefined) return;
         const last: unknown = config.metadata?.["lastMode"];
-        const permissionMode = Value.Check(messageModeSchema, last)
-            ? last.permissionMode
-            : DEFAULT_AGENT_PERMISSION_MODE;
+        const permissionMode =
+            permission ??
+            (Value.Check(messageModeSchema, last)
+                ? last.permissionMode
+                : DEFAULT_AGENT_PERMISSION_MODE);
         const version =
             typeof config.metadata?.["version"] === "number" ? config.metadata["version"] + 1 : 1;
-        await agents.updateMetadata(ctx, happy.agentId, {
+        await agents.updateMetadata(ctx, agentId, {
             lastMode: { providerId, modelId, effort, serviceTier: null, permissionMode },
             updatedAt: Date.now(),
             version,
@@ -1325,6 +1761,13 @@ export class OnboardingModule implements AgentModule {
             connections: [],
             model: null,
             profilePrefill: null,
+            findings: null,
+            proposal: null,
+            proposeAbout: null,
+            started: [],
+            placed: false,
+            pairingId: null,
+            phonePaired: false,
             pending: null,
             version: this.#nextVersion(undefined),
             updatedAt: Date.now(),
@@ -1406,4 +1849,14 @@ function routeConnection(route: ProviderRoute): OnboardingConnection {
 
 function errorText(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
+}
+
+/** A started row, as Happy's model hears of it. */
+function startedOf(row: OnboardingStarted): {
+    id: string;
+    title: string;
+    topic: string;
+    ongoing: boolean;
+} {
+    return { id: row.id, title: row.title, topic: row.topic, ongoing: row.ongoing };
 }

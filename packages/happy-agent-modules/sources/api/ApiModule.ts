@@ -770,6 +770,8 @@ export class ApiModule implements AgentModule {
     #closed = false;
     /** Paced onboarding messages changed in place while typing, which stop typing. */
     readonly #pacingSuperseded = new Set<string>();
+    /** How much work other than paced typing waits in each agent's queue. */
+    readonly #agentWorkWaiting = new Map<string, number>();
     #token: string | undefined;
     #preparePromise: Promise<void> | undefined;
 
@@ -2897,6 +2899,7 @@ export class ApiModule implements AgentModule {
                               undefined,
                               async () =>
                                   await this.#announcePaced(ctx, agentId, message, proseLength),
+                              true,
                           ).catch(() => {
                               ctx.log.warn("The API could not announce Happy's message.", {
                                   agentId,
@@ -3646,11 +3649,20 @@ export class ApiModule implements AgentModule {
         key: string,
         mutationId: string | undefined,
         work: () => Promise<void>,
+        paced = false,
     ): Promise<void> {
+        // Typing a paced message never holds anything up: other work waiting behind it ends the
+        // typing (`#announcePaced`), so a send or the agent's own events follow at once.
+        if (!paced) this.#agentWorkWaiting.set(key, (this.#agentWorkWaiting.get(key) ?? 0) + 1);
         const previous = this.#agentEventChains.get(key) ?? Promise.resolve();
         const result = previous.then(
             async () =>
                 await this.#backgroundScope.runInAsyncScope(async () => {
+                    if (!paced) {
+                        const waiting = (this.#agentWorkWaiting.get(key) ?? 1) - 1;
+                        if (waiting > 0) this.#agentWorkWaiting.set(key, waiting);
+                        else this.#agentWorkWaiting.delete(key);
+                    }
                     if (mutationId === undefined) {
                         await work();
                     } else {
@@ -9540,6 +9552,12 @@ export class ApiModule implements AgentModule {
         const block = message.blocks[0];
         const text = block?.type === "text" ? block.text.slice(0, proseLength) : "";
         this.#pacingSuperseded.delete(message.recordId);
+        // Other work waiting for this conversation, or a change in place, ends the typing.
+        const hurried = () =>
+            this.#closed ||
+            this.#pacingSuperseded.has(message.recordId) ||
+            this.#agentWorkWaiting.has(agentId);
+        let typing = false;
         try {
             if (run !== undefined) {
                 const finished = await this.#runResource(ctx, run);
@@ -9548,9 +9566,10 @@ export class ApiModule implements AgentModule {
                     run: { ...finished, status: "running", reason: null, endedAt: null },
                     acceptedMessageIds: [],
                 });
-                await this.#pause(PACED_THINK_MS);
+                if (!hurried()) await this.#pause(PACED_THINK_MS);
             }
-            if (text.length > 0 && !this.#closed) {
+            if (text.length > 0 && !hurried()) {
+                typing = true;
                 this.#appendForAgent(agentId, "message.created", {
                     agentId,
                     runId,
@@ -9560,7 +9579,7 @@ export class ApiModule implements AgentModule {
                     }),
                 });
                 for (let offset = 0; offset < text.length; offset += PACED_FRAME_CHARS) {
-                    if (this.#closed || this.#pacingSuperseded.has(message.recordId)) break;
+                    if (hurried()) break;
                     this.#appendForAgent(agentId, "message.delta", {
                         agentId,
                         runId,
@@ -9577,7 +9596,7 @@ export class ApiModule implements AgentModule {
             // The message as it stands now: a press or a redraw may have changed it meanwhile.
             const current =
                 (await this.#history.message(ctx, agentId, message.recordId)) ?? message;
-            this.#appendForAgent(agentId, text.length > 0 ? "message.updated" : "message.created", {
+            this.#appendForAgent(agentId, typing ? "message.updated" : "message.created", {
                 agentId,
                 runId,
                 message: messageResource(current),

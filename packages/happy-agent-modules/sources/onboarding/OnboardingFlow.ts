@@ -51,6 +51,35 @@ const providerIdsSchema = Type.Array(Type.String({ minLength: 1, maxLength: 200 
     maxItems: 32,
 });
 
+/** One row of Focus's proposal of the person's work, by the value its checkbox carries. */
+export const onboardingWorkRowSchema = Type.Object(
+    {
+        id: Type.String({ minLength: 1, maxLength: 64 }),
+        title: Type.String({ minLength: 1, maxLength: 80 }),
+        icon: Type.String({ minLength: 1, maxLength: 64 }),
+        topic: Type.String({ minLength: 1, maxLength: 60 }),
+        why: Type.String({ minLength: 1, maxLength: 160 }),
+        firstMessage: Type.String({ minLength: 1, maxLength: 600 }),
+        ongoing: Type.Boolean(),
+    },
+    { additionalProperties: false },
+);
+export type OnboardingWorkRow = Static<typeof onboardingWorkRowSchema>;
+
+/** A proposal row Looks right opened, with the chat and row it became. */
+export const onboardingStartedSchema = Type.Object(
+    {
+        id: Type.String({ minLength: 1, maxLength: 64 }),
+        title: Type.String({ minLength: 1, maxLength: 80 }),
+        topic: Type.String({ minLength: 1, maxLength: 60 }),
+        ongoing: Type.Boolean(),
+        agentId: Type.String({ minLength: 1, maxLength: 64 }),
+        spaceId: Type.String({ minLength: 1, maxLength: 64 }),
+    },
+    { additionalProperties: false },
+);
+export type OnboardingStarted = Static<typeof onboardingStartedSchema>;
+
 /** What the daemon stores for one owner: everything that cannot be derived cheaply. */
 export const onboardingStateSchema = Type.Object(
     {
@@ -102,6 +131,18 @@ export const onboardingStateSchema = Type.Object(
             ),
             Type.Null(),
         ]),
+        /** What discovery found, kept so a revised proposal starts from it too. */
+        findings: Type.Union([Type.String({ maxLength: 20_000 }), Type.Null()]),
+        /** The rows of the newest proposal, which Looks right opens. */
+        proposal: Type.Union([Type.Array(onboardingWorkRowSchema, { maxItems: 8 }), Type.Null()]),
+        /** What the person said they work on, for a proposal once Happy's turn ends. */
+        proposeAbout: Type.Union([Type.String({ maxLength: 4_000 }), Type.Null()]),
+        /** The rows Looks right opened, and whether their topics were placed. */
+        started: Type.Array(onboardingStartedSchema, { maxItems: 8 }),
+        placed: Type.Boolean(),
+        /** The phone pairing onboarding opened, and whether a phone paired through it. */
+        pairingId: Type.Union([Type.String({ minLength: 1, maxLength: 64 }), Type.Null()]),
+        phonePaired: Type.Boolean(),
         /** Routes chosen that run only after the restart onboarding waits for. */
         pending: Type.Union([
             Type.Object(

@@ -55,6 +55,7 @@ import { TeamModule } from "../team/index.js";
 import { TitlesModule } from "../titles/index.js";
 import { UserSettingsModule } from "../userSettings/index.js";
 import { AGENT_MESSAGE_ORIGIN_METADATA, isUserOriginMetadata } from "../impl/messageOrigin.js";
+import { proposeWork, type SpaceWorkProposal } from "./impl/proposeWork.js";
 
 import {
     SPACE_STANDALONE_OWNER,
@@ -2680,6 +2681,96 @@ export class SpacesModule implements AgentModule {
     }
 
     /**
+     * Focus's proposal of the person's work during onboarding: its own instructions and placement
+     * rules, run once on `route` as a bounded side inference with no conversation of its own.
+     */
+    async proposeWork(
+        ctx: Context,
+        route: {
+            readonly providerId: string;
+            readonly model: string;
+            readonly effort: SessionReasoningEffort;
+        },
+        findings: string,
+    ): Promise<SpaceWorkProposal> {
+        return await proposeWork(ctx, this.#config.providers, route, findings);
+    }
+
+    /** The empty default headings, such as Tasks and Bots, that `placeWork` takes out. */
+    async emptyDefaultHeadings(ctx: Context, ownerUserId: SpaceOwnerId): Promise<string[]> {
+        const sidebar = await this.sidebar(ctx, ownerUserId);
+        return emptyDefaultHeadings(readSidebarDocument(sidebar.html).items).map(
+            (item) => item.label,
+        );
+    }
+
+    /**
+     * Looks right in onboarding, as the person's one sidebar edit: each accepted topic becomes a
+     * section after the divider, in the order accepted, with its rows under it in order; a topic
+     * that is already a section takes its rows at its top. The empty default headings give way.
+     */
+    async placeWork(
+        ctx: Context,
+        ownerUserId: SpaceOwnerId,
+        rows: readonly { readonly spaceId: string; readonly topic?: string }[],
+    ): Promise<void> {
+        const sidebar = await this.sidebar(ctx, ownerUserId);
+        const items = readSidebarDocument(sidebar.html).items;
+        const sections = new Map(
+            items.flatMap((item) =>
+                item.type === "section" ? [[item.label.toLowerCase(), item.id] as const] : [],
+            ),
+        );
+        const ids = new Set(items.map((item) => item.id));
+        let after: string | undefined = items.some(
+            (item) => item.type === "separator" && item.id === "divider",
+        )
+            ? "divider"
+            : items.at(-1)?.id;
+        const topics = [...new Set(rows.flatMap((row) => (row.topic ? [row.topic] : [])))];
+        const operations: SpaceSidebarOperation[] = [];
+        for (const topic of topics) {
+            let anchor = sections.get(topic.toLowerCase());
+            const added = anchor === undefined;
+            if (anchor === undefined) {
+                const base = `topic-${
+                    topic
+                        .toLowerCase()
+                        .replace(/[^a-z0-9]+/gu, "-")
+                        .replace(/^-|-$/gu, "") || "work"
+                }`;
+                let id = base;
+                for (let suffix = 2; ids.has(id); suffix += 1) id = `${base}-${String(suffix)}`;
+                ids.add(id);
+                anchor = id;
+                operations.push({
+                    type: "insert",
+                    node: { type: "section", id, label: topic },
+                    to: after === undefined ? { parent: null } : { after },
+                });
+            }
+            for (const row of rows) {
+                if (row.topic !== topic) continue;
+                operations.push({ type: "move", id: row.spaceId, to: { after: anchor } });
+                anchor = row.spaceId;
+            }
+            if (added) after = anchor;
+        }
+        const wanted = new Set(topics.map((topic) => topic.toLowerCase()));
+        for (const item of emptyDefaultHeadings(items)) {
+            if (!wanted.has(item.label.toLowerCase())) {
+                operations.push({ type: "remove", id: item.id });
+            }
+        }
+        if (operations.length === 0) return;
+        await this.applySidebarOperations(ctx, ownerUserId, {
+            mutationId: createId(),
+            baseVersion: sidebar.version,
+            operations,
+        });
+    }
+
+    /**
      * Wrap a freshly created task in a stem-cell row. Without a section it waits under Happy for
      * Prioritizing; with one, the person already chose where it goes, so it is settled at the top.
      */
@@ -4731,4 +4822,17 @@ function surfaceNeedsContent(type: NonNullable<ReturnType<typeof surfaceTypeOf>>
 /** Rows by key; Happy leads because it holds the first key. */
 function sortForDisplay(spaces: readonly SpaceRecord[]): SpaceRecord[] {
     return [...spaces].sort(compareRows);
+}
+
+/** The default Bots and Tasks headings a fresh sidebar starts with, while nothing is under them. */
+function emptyDefaultHeadings(
+    items: SpaceSidebarDocument["items"],
+): Extract<SpaceSidebarDocument["items"][number], { type: "section" }>[] {
+    return items.flatMap((item, index) =>
+        item.type === "section" &&
+        (item.id === "bots" || item.id === "tasks") &&
+        items[index + 1]?.type !== "space"
+            ? [item]
+            : [],
+    );
 }

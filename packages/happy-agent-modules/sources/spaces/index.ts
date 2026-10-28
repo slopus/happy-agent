@@ -28,4 +28,5 @@ export type {
 export { spaceMigrations, SPACES_TABLE, SPACE_SECTIONS_TABLE } from "./SpaceMigrations.js";
 export { SpacesModule } from "./SpacesModule.js";
 export { SPACE_ICON_SLUGS } from "./impl/spaceIconSlugs.js";
+export type { SpaceWorkProposal } from "./impl/proposeWork.js";
 export { SidebarConflictError } from "./impl/sidebarLayout.js";
