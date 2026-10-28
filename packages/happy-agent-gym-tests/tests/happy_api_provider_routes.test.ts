@@ -86,6 +86,8 @@ async function startRoutesGym(
             GROK_HOME: join(home, ".grok"),
             HAPPY_AGENT_APPLICATIONS_DIRECTORY: join(root, "Applications"),
             HAPPY_AGENT_PROGRAM_DIRECTORIES: "",
+            // No probe reaches an LM Studio or Ollama running on the real computer.
+            HAPPY_AGENT_LOCAL_MODEL_PORTS: "",
             HOME: home,
             PATH: `${stubs}:/usr/bin:/bin`,
             ...environment,
@@ -295,6 +297,37 @@ describe("Provider routes API", () => {
             });
             const config = await gym.http.request("GET", "/v0/config");
             expect(JSON.stringify([listed, after, config.body])).not.toContain("sk-or-gym-fake");
+            expect(gym.errors).toEqual([]);
+        },
+        TEST_TIMEOUT_MS,
+    );
+
+    it(
+        "lists LM Studio's models unchecked and adds it for the next start when chosen",
+        async () => {
+            const lmStudio = await localServer(() => ({
+                status: 200,
+                body: { object: "list", data: [{ id: "qwen3-coder-30b", object: "model" }] },
+            }));
+            const { gym } = await startRoutesGym(undefined, {
+                HAPPY_AGENT_LOCAL_MODEL_PORTS: `lmstudio=${String(lmStudio.port)}`,
+            });
+            const listed = (await gym.http.ok("GET", "/v0/provider-routes")) as { routes: Route[] };
+            expect(listed.routes.find((route) => route.id === "lmstudio")).toMatchObject({
+                kind: "local_models",
+                billing: "local",
+                status: "ready",
+                recommended: false,
+                use: { providerId: "lmstudio", restartRequired: true },
+            });
+            await gym.http.ok("POST", "/v0/provider-routes/lmstudio/use", {});
+            await gym.restart();
+            const after = (await gym.http.ok("GET", "/v0/provider-routes")) as { routes: Route[] };
+            expect(after.routes.find((route) => route.id === "lmstudio")).toMatchObject({
+                providerId: "lmstudio",
+                use: null,
+            });
+            expect(lmStudio.requests.every((request) => request.url === "/v1/models")).toBe(true);
             expect(gym.errors).toEqual([]);
         },
         TEST_TIMEOUT_MS,

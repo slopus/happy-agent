@@ -3595,6 +3595,26 @@ export class ConfigModule implements AgentModule {
         return process.platform === "win32" ? [] : ["/opt/homebrew/bin", "/usr/local/bin"];
     }
 
+    /**
+     * The local model servers' ports route detection may ask for their model list: LM Studio's and
+     * Ollama's defaults. `HAPPY_AGENT_LOCAL_MODEL_PORTS` replaces them with a list such as
+     * `lmstudio=1234,ollama=11434`, and an empty value asks none, which keeps a test installation
+     * away from servers running on the real computer.
+     */
+    get localModelServerPorts(): Readonly<Partial<Record<"lmstudio" | "ollama", number>>> {
+        const configured = this.#environmentValue("HAPPY_AGENT_LOCAL_MODEL_PORTS");
+        if (configured === undefined) return { lmstudio: 1234, ollama: 11434 };
+        const ports: Partial<Record<"lmstudio" | "ollama", number>> = {};
+        for (const entry of configured.split(",")) {
+            const [server, port] = entry.split("=").map((part) => part.trim());
+            const value = Number(port);
+            if ((server === "lmstudio" || server === "ollama") && Number.isInteger(value)) {
+                if (value > 0 && value < 65_536) ports[server] = value;
+            }
+        }
+        return ports;
+    }
+
     /** Private data root for a locally onboarded member's mobile connection. */
     happyMobileDataDirectory(userId: string): string {
         if (!Value.Check(Type.String({ pattern: "^[a-z][a-z0-9]{1,31}$" }), userId)) {
