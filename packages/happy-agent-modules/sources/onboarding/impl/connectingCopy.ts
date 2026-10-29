@@ -284,7 +284,9 @@ export function codeFailedMessage(reason: string): string {
 
 /**
  * Connected, and what else can be: the AIs not connected yet first, the connected ones at the
- * far end, then another account of a connected one. None of it has to be answered.
+ * far end with their check, then another account of a connected one, which carries no check:
+ * a second account is welcome, and a check there read as if it were already added. None of it has
+ * to be answered.
  */
 export function connectedMessage(connections: readonly OnboardingConnection[]): string {
     const first = connections[0]!;
@@ -323,7 +325,7 @@ export function connectedMessage(connections: readonly OnboardingConnection[]): 
                   menu(
                       ...[...connectedIds].map(
                           (id) =>
-                              `<button data-action="onboarding.accountAdd" data-provider="${id}" data-mark="${MARK_OF[id]}" data-connected>${chatActionEscape(`Add another ${APP_OF[id]} account`)}</button>`,
+                              `<button data-action="onboarding.accountAdd" data-provider="${id}" data-mark="${MARK_OF[id]}">${chatActionEscape(`Add another ${APP_OF[id]} account`)}</button>`,
                       ),
                   ),
               ]),

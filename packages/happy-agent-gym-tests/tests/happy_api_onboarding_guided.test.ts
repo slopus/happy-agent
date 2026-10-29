@@ -206,7 +206,10 @@ describe("Happy's model leading onboarding", () => {
                 profileSaved: () => ({ content: [{ text: WORK_STEP, type: "text" }] }),
             });
             await connectCodex(gym, happy);
-            await waitForText(gym, happy, "Connected to ChatGPT");
+            const connected = textOf(await waitForText(gym, happy, "Connected to ChatGPT"));
+            // The connected AI carries its check; another account of it does not.
+            expect(connected).toMatch(/data-provider="codex"[^>]*data-connected>ChatGPT</u);
+            expect(connected).toMatch(/data-mark="openai">Add another ChatGPT account</u);
             const profileStep = await waitForText(gym, happy, "**Ada Lovelace** · ada@example.com");
             const verified = await gym.waitUntil(async () => {
                 const flow = await flowOf(gym);
