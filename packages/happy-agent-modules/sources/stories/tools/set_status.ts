@@ -1,13 +1,8 @@
-import {
-    agentPermissionMode,
-    defineAgentTool,
-    type AgentModuleScope,
-} from "@slopus/happy-agent-base";
+import { defineAgentTool, type AgentModuleScope } from "@slopus/happy-agent-base";
 import { MAX_AGENT_STATUS_LINE_LENGTH } from "@slopus/happy-agent-client";
 import { Type, type Static } from "@sinclair/typebox";
 
 import type { StoriesModule } from "../StoriesModule.js";
-import { StoryInputError } from "../StoryErrors.js";
 
 const setStatusToolInputSchema = Type.Object(
     {
@@ -54,12 +49,10 @@ export function setStatusTool(stories: StoriesModule, scope: AgentModuleScope) {
         parameters: setStatusToolInputSchema,
         returnType: setStatusResultSchema,
         durable: true,
-        // It only changes how the person's own sidebar describes this conversation.
+        // It only changes how the person's own sidebar describes this conversation, so it needs
+        // no review in Auto and works in Read only, where a planning chat still says where it is.
         shouldReviewInAutoMode: () => false,
         execute: async (ctx, input: SetStatusToolInput, call) => {
-            if (agentPermissionMode(ctx) === "read_only") {
-                throw new StoryInputError("Read only mode cannot set the status line.");
-            }
             await stories.setStatus(ctx, {
                 agentId: scope.agent.id,
                 toolCallId: call.id,

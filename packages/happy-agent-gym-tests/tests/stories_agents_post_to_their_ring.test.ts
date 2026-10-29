@@ -247,6 +247,13 @@ describe("agents post stories to their own ring", () => {
         // Read only posts nothing.
         const blocked = await call(agentId, "post_story", { caption: "No" }, "read_only");
         expect(blocked.text).toContain("Read only mode cannot post a story.");
+        // ...but it still sets the status, which only the person's own sidebar shows.
+        const planning = await call(agentId, "set_status", { text: "Planning" }, "read_only");
+        expect(planning.text).toBe("The sidebar now reads: Planning");
+        await gym.waitUntil(
+            async () => (await gym.client.getAgent(agentId)).agent.statusLine?.text === "Planning",
+            "the read-only status",
+        );
 
         // Archiving the bot ends what is left in its ring.
         const third = storyIdIn((await call(agentId, "post_story", { caption: "Last one" })).text);
