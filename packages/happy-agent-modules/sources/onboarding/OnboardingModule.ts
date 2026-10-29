@@ -1446,7 +1446,45 @@ export class OnboardingModule implements AgentModule {
                 first?.app ?? "the AI you connected",
                 error ?? "It stopped before it answered.",
                 first?.cli,
+                await this.#othersTable(ctx, first, state.connections.slice(1)),
             ),
+        );
+    }
+
+    /**
+     * The other AIs already found, as the table to choose from again: the one that failed
+     * unticked, the rest the person chose still ticked. Nothing when no other AI was found.
+     */
+    async #othersTable(
+        ctx: Context,
+        failed: OnboardingConnection | undefined,
+        chosen: readonly OnboardingConnection[],
+    ): Promise<string | undefined> {
+        const routes = (
+            await this.#providerRoutes.list(ctx).catch((error: unknown) => {
+                ctx.log.warn("Onboarding could not list provider routes.", {}, error);
+                return [];
+            })
+        ).filter(routeChoosable);
+        if (routes.length > 0) {
+            const isFailed = (route: ProviderRoute) =>
+                (failed?.cli !== undefined && route.id === failed.cli) ||
+                routeConnection(route).app === failed?.app;
+            const others = routes.filter((route) => !isFailed(route));
+            if (others.length === 0) return undefined;
+            const apps = new Set(chosen.map((connection) => connection.app));
+            const kept = others.filter((route) => apps.has(routeConnection(route).app));
+            const ticked = (
+                kept.length > 0 ? kept : others.filter((route) => route.recommended)
+            ).map((route) => route.id);
+            return routesTable(routes, ticked);
+        }
+        const signedIn = await this.#signedIn(ctx);
+        const others = signedIn.filter((cli) => cli.id !== failed?.cli);
+        if (others.length === 0) return undefined;
+        return providersTable(
+            signedIn,
+            others.map((cli) => cli.id),
         );
     }
 
@@ -1637,9 +1675,12 @@ export class OnboardingModule implements AgentModule {
             }
             return;
         }
-        const model = this.#config.models.find((candidate) =>
-            providerIds.includes(candidate.providerId),
-        );
+        // In the order chosen, so the AI Happy names when its first answer fails is the one it ran on.
+        const model = providerIds
+            .flatMap(
+                (id) => this.#config.models.find((candidate) => candidate.providerId === id) ?? [],
+            )
+            .at(0);
         if (model === undefined) {
             await this.#useFailed(ctx, say, connections, "It offers no model I can use yet.");
             return;

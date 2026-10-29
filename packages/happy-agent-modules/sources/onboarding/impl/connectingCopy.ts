@@ -195,21 +195,38 @@ export function restartMessage(names: readonly string[]): string {
     return `${listOf(names)} ${names.length === 1 ? "is" : "are"} set up. I'm restarting now to switch over and will pick right back up.`;
 }
 
-/** Happy's first answer on the AI the person chose failed: what failed, and the way to fix it. */
+/**
+ * Happy's first answer on the AI the person chose failed: what failed, and the way to fix it.
+ * `others` is the table of the other AIs already found, to choose from instead, when there are any.
+ */
 export function verifyFailedMessage(
     app: string,
     error: string,
     cli: ChatProviderId | undefined,
+    others?: string,
 ): string {
+    const again =
+        cli === undefined
+            ? []
+            : [
+                  `<button data-action="onboarding.connect" data-provider="${cli}" data-mark="${MARK_OF[cli]}" data-emphasis>${chatActionEscape(`Sign in to ${APP_OF[cli]} again`)}</button>`,
+              ];
+    const reason = `I couldn't get an answer from ${app}. ${/[.!?]$/u.test(error) ? error : `${error}.`}`;
+    if (others !== undefined) {
+        return [
+            reason,
+            ...(again.length === 0 ? [] : ["", menu(...again)]),
+            "",
+            "Or use another AI I found:",
+            "",
+            others,
+        ].join("\n");
+    }
     return [
-        `I couldn't get an answer from ${app}. ${/[.!?]$/u.test(error) ? error : `${error}.`}`,
+        reason,
         "",
         menu(
-            ...(cli === undefined
-                ? []
-                : [
-                      `<button data-action="onboarding.connect" data-provider="${cli}" data-mark="${MARK_OF[cli]}" data-emphasis>${chatActionEscape(`Sign in to ${APP_OF[cli]} again`)}</button>`,
-                  ]),
+            ...again,
             `<button data-action="onboarding.connectAnother"${cli === undefined ? " data-emphasis" : ""}>Choose another AI</button>`,
         ),
     ].join("\n");

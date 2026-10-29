@@ -38,6 +38,15 @@ case "$*" in
 esac
 `;
 
+/** A stand-in Claude Code, signed in as Ada on Max. */
+const CLAUDE = `#!/bin/sh
+case "$*" in
+  "--version") echo "2.1.312 (Claude Code)" ;;
+  "auth status --json") echo '{"loggedIn":true,"authMethod":"claude.ai","email":"ada@example.com","subscriptionType":"max"}' ;;
+  *) exit 2 ;;
+esac
+`;
+
 const PROFILE_STEP = [
     "What should I call you? I found this in your Git settings:",
     "",
@@ -83,10 +92,18 @@ function eventIn(request: GymInferenceRequest): string | undefined {
     return /\\"kind\\":\\"(\w+)\\"/u.exec(text)?.[1];
 }
 
-async function startGym(answers: Record<string, (request: GymInferenceRequest) => GymTurn>) {
+async function startGym(
+    answers: Record<string, (request: GymInferenceRequest) => GymTurn>,
+    options: { /** Claude Code signed in too, beside Codex. */ claude?: boolean } = {},
+) {
     const root = await mkdtemp(join(tmpdir(), "onboarding-guided-"));
     folders.add(root);
     const home = join(root, "home");
+    if (options.claude === true) {
+        await mkdir(join(home, ".local", "bin"), { recursive: true });
+        await writeFile(join(home, ".local", "bin", "claude"), CLAUDE);
+        await chmod(join(home, ".local", "bin", "claude"), 0o755);
+    }
     const applications = join(root, "Applications");
     const codex = join(applications, "ChatGPT.app", "Contents", "Resources", "codex-cli", "bin");
     await mkdir(codex, { recursive: true });
@@ -118,8 +135,9 @@ async function startGym(answers: Record<string, (request: GymInferenceRequest) =
             HAPPY_AGENT_LOCAL_MODEL_PORTS: "",
             PATH: "/usr/bin:/bin",
         },
-        providerIds: ["gym", "codex"],
-        providerTypes: { codex: "codex" },
+        providerIds: options.claude === true ? ["gym", "codex", "claude"] : ["gym", "codex"],
+        providerTypes:
+            options.claude === true ? { codex: "codex", claude: "claude" } : { codex: "codex" },
         models: [
             ...GYM_MODELS,
             {
@@ -129,6 +147,17 @@ async function startGym(answers: Record<string, (request: GymInferenceRequest) =
                 name: "Gym Codex",
                 providerId: "codex",
             },
+            ...(options.claude === true
+                ? [
+                      {
+                          defaultEffort: "medium" as const,
+                          effortLevels: ["low" as const, "medium" as const, "high" as const],
+                          id: "gym-claude",
+                          name: "Gym Claude",
+                          providerId: "claude",
+                      },
+                  ]
+                : []),
         ],
         inference: (request) => {
             if (request.sessionId.startsWith("naming:")) {
@@ -319,6 +348,57 @@ describe("Happy's model leading onboarding", () => {
                 values: ["codex"],
             });
             await waitForText(gym, happy, "**Ada Lovelace** · ada@example.com");
+            expect(gym.errors).toEqual([]);
+        },
+        TEST_TIMEOUT_MS,
+    );
+
+    it(
+        "offers the other AIs already found when the first one fails to answer",
+        async () => {
+            let attempts = 0;
+            const { gym, happy } = await startGym(
+                {
+                    begin: () => {
+                        attempts += 1;
+                        if (attempts === 1) throw new Error("The account is out of credit.");
+                        return { content: [{ text: PROFILE_STEP, type: "text" }] };
+                    },
+                },
+                { claude: true },
+            );
+            const opening = await waitForText(gym, happy, "Hi, I'm Happy");
+            await press(gym, happy, {
+                messageId: opening.id,
+                blockIndex: 0,
+                action: { id: "onboarding.start", params: {} },
+            });
+            const routes = await waitForText(gym, happy, "I found these on this");
+            expect(textOf(routes)).toContain('value="claude" checked');
+            expect(textOf(routes)).toContain('value="codex" checked');
+            await press(gym, happy, {
+                messageId: routes.id,
+                blockIndex: 0,
+                action: { id: "onboarding.routesUse", params: {} },
+                values: ["claude", "codex"],
+            });
+            const failed = await waitForText(gym, happy, "I couldn't get an answer from Claude.");
+            // The AI that failed starts unticked; the other one found is still there, ticked.
+            expect(textOf(failed)).toContain('value="claude">');
+            expect(textOf(failed)).toContain('value="codex" checked');
+            expect(textOf(failed)).toContain(
+                'data-action="onboarding.connect" data-provider="claude"',
+            );
+
+            await press(gym, happy, {
+                messageId: failed.id,
+                blockIndex: 1,
+                action: { id: "onboarding.routesUse", params: {} },
+                values: ["codex"],
+            });
+            await waitForText(gym, happy, "**Ada Lovelace** · ada@example.com");
+            const begins = gym.inference.requests.filter((request) => eventIn(request) === "begin");
+            expect(begins.map((request) => request.providerId)).toEqual(["claude", "codex"]);
             expect(gym.errors).toEqual([]);
         },
         TEST_TIMEOUT_MS,

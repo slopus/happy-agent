@@ -92,6 +92,14 @@ fresh table that re-ticked every recommendation, undoing the person's choice and
 the message. The retry table now ticks exactly what the person submitted, so it asks again from
 where they left it.
 
+## A failed first answer offers the other AIs found
+
+With two AIs chosen, Happy ran on whichever came first in the model catalog but named the first
+one chosen when the answer failed, and its "Choose another AI" menu hid every AI already signed
+in, so the person could not fall back to the other one they had found. Happy now runs on the first
+AI in the order chosen, and the failure repeats the table of AIs found with the failed one
+unticked and the others still ticked, beside "Sign in again" for the one that failed.
+
 ## Onboarding proves each requirement once
 
 Completion is a verified provider and a profile with a name and an email, stored as a versioned
