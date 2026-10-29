@@ -2646,7 +2646,7 @@ export class SpacesModule implements AgentModule {
                 const title = config?.metadata?.["title"];
                 const happy = await this.#bots.chiefOfStaff(ctx);
                 return await this.#agentDescription(ctx, space, {
-                    title: typeof title === "string" ? title : "Focus",
+                    title: typeof title === "string" ? title : "Focus Agent",
                     named: true,
                     target: {
                         kind: "agent",
@@ -3499,8 +3499,8 @@ export class SpacesModule implements AgentModule {
                 return "Nothing organises that sidebar yet; the person can move the row themselves.";
             }
             return input.personAsked
-                ? "Focus will make the change shortly."
-                : "Focus has the request and decides shortly.";
+                ? "The Focus Agent will make the change shortly."
+                : "The Focus Agent has the request and decides shortly.";
         });
     }
 
@@ -4017,7 +4017,7 @@ export class SpacesModule implements AgentModule {
             ctx,
             happyAgentId,
             {
-                title: "Focus",
+                title: "Focus Agent",
                 text: PRIORITIZING_OPENING,
                 provider: route.providerId,
                 model: route.model,

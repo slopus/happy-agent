@@ -86,16 +86,16 @@ async function setup(title?: string) {
     return { database, spaces, created, titles };
 }
 
-it("creates a helper named Focus, serves that name, and never puts a row of its own in the sidebar", async () => {
+it("creates a helper named Focus Agent, serves that name, and never inserts a row of its own itself", async () => {
     const h = await setup();
     try {
         const sidebar = await h.spaces.sidebar(h.database.context, "standalone");
-        expect(h.created).toMatchObject([{ title: "Focus" }]);
+        expect(h.created).toMatchObject([{ title: "Focus Agent" }]);
         const focus = sidebar.spaces.find((row) => row.role === "focus")!;
-        // The person opens Focus by unfolding Happy; the daemon never adds it at the top level.
+        // Where the Focus Agent's row stands is its prompt's; the daemon never inserts it.
         expect(sidebar.html).not.toContain(focus.id);
         expect(await h.spaces.describe(h.database.context, focus)).toMatchObject({
-            title: "Focus",
+            title: "Focus Agent",
             target: { kind: "agent" },
         });
         // An absent metadata title uses the new default without writing a stored title.
@@ -103,7 +103,7 @@ it("creates a helper named Focus, serves that name, and never puts a row of its 
         if (primary.kind !== "agent") throw new Error("Expected Focus's agent row");
         const agentId = primary.agentId;
         h.titles.set(agentId, undefined);
-        expect((await h.spaces.describe(h.database.context, focus)).title).toBe("Focus");
+        expect((await h.spaces.describe(h.database.context, focus)).title).toBe("Focus Agent");
         expect(h.titles.get(agentId)).toBeUndefined();
     } finally {
         await h.spaces.close();

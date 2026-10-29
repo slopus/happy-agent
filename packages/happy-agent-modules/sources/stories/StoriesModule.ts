@@ -1,3 +1,4 @@
+import { AsyncResource } from "node:async_hooks";
 import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
 
@@ -9,13 +10,21 @@ import {
     type AgentModule,
     type AgentModuleHooks,
     type AgentModuleScope,
+    type AgentSystemRef,
     type AnyAgentTool,
 } from "@slopus/happy-agent-base";
 import {
+    agentStatusLineSchema,
+    MAX_STORY_ARTIFACT_OVERLAYS,
     MAX_STORY_FRAMES,
+    MAX_STORY_ROUND_VIDEO_BYTES,
     STORIES_SETTING_KEY,
     STORY_LIFETIME_MS,
     type CreateStoryRequest,
+    type RepostStoryRequest,
+    type StoryEndReason,
+    type StoryOverlayInput,
+    type StoryRing,
     type Story,
     type StoryAsset,
     type StoryBackground,
@@ -30,6 +39,7 @@ import {
     type StoryViewer,
     type UpdateStoryRequest,
 } from "@slopus/happy-agent-client";
+import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import { afterCommit, detach, type Context } from "@steve.kite/stdlib";
 
@@ -41,6 +51,7 @@ import {
     type ArtifactSource,
 } from "../artifacts/index.js";
 import { ChatMediaModule, type MeasuredChatImage } from "../chatMedia/index.js";
+import { DurableFunctionsModule } from "../durableFunctions/index.js";
 import { createUuidV7Factory } from "../events/index.js";
 import { HistoryModule, type HistoryPresentedResult } from "../history/index.js";
 import { mediaTypeForPath } from "../impl/mediaTypeForPath.js";
@@ -66,6 +77,7 @@ import {
 } from "./StoryErrors.js";
 import { storyMigrations } from "./StoryMigrations.js";
 import {
+    ringMarkKey,
     STANDALONE_STORY_PERSON,
     storyContentSchema,
     type StoredStoryFrame,
@@ -88,13 +100,17 @@ import {
     queryParticipation,
     queryPostedSince,
     queryReactionCounts,
+    queryConversationPerson,
     queryReactions,
+    queryRingStories,
+    queryRingStoriesFor,
     querySeenMarks,
     queryStory,
     queryStoryBySource,
     queryViewerReactions,
     queryViewers,
     recordParticipation,
+    saveConversationPerson,
     saveReaction,
     updateStory,
 } from "./StoryStore.js";
@@ -103,11 +119,29 @@ import {
     type DraftStoryToolInput,
     type DraftStoryToolOverlay,
 } from "./tools/draft_story.js";
+import { listStoriesTool } from "./tools/list_stories.js";
+import {
+    postStoryTool,
+    type PostStoryToolInput,
+    type PostStoryToolOverlay,
+} from "./tools/post_story.js";
+import { setStatusTool } from "./tools/set_status.js";
+import { withdrawStoryTool } from "./tools/withdraw_story.js";
 
 const MIB = 1024 * 1024;
 const MAX_IMAGE_BYTES = 32 * MIB;
 const MAX_VIDEO_BYTES = 256 * MIB;
 const MAX_REACTION_OVERLAYS = 5;
+/** Artifact types a story may not show live: other stories, and the sidebar's own documents. */
+const UNSHOWABLE_ARTIFACT_TYPES = new Set(["story", "sidebar", "sidebar_proposal"]);
+/** The default artifact window: a little taller than wide. */
+const DEFAULT_ARTIFACT_ASPECT_RATIO = 0.8;
+const SET_STATUS_FUNCTION = "stories.set-status";
+const setStatusArgumentsSchema = Type.Object({
+    agentId: cuid2Schema,
+    statusLine: Type.Union([agentStatusLineSchema, Type.Null()]),
+});
+const subtaskMetadataSchema = Type.Object({ subtask: Type.Literal(true) });
 /** Raster images a story frame may show, by served type, with the extension it is kept under. */
 const IMAGE_EXTENSIONS: Readonly<Record<string, string>> = {
     "image/png": "png",
@@ -130,7 +164,7 @@ const MEASUREMENT_CACHE_SIZE = 512;
 
 /** What a frame's media is, measured, before it is placed on the canvas. */
 interface ResolvedMedia {
-    readonly kind: "image" | "video";
+    readonly kind: "image" | "video" | "artifact";
     readonly asset: StoryAsset;
     readonly width: number | null;
     readonly height: number | null;
@@ -174,6 +208,10 @@ export class StoriesModule implements AgentModule {
     readonly #artifacts: ArtifactsModule;
     readonly #chatMedia: ChatMediaModule;
     readonly #history: HistoryModule;
+    readonly #durableFunctions: DurableFunctionsModule;
+    /** Status lines are written from outside the agent loop that asked for them. */
+    readonly #backgroundScope = new AsyncResource("happy-agent-story-status");
+    #agents: AgentSystemRef | undefined;
     readonly #createVersion = createUuidV7Factory();
     readonly #listeners = new Set<StoryEventListener>();
     readonly #postedListeners = new Set<StoryPostedListener>();
@@ -188,6 +226,7 @@ export class StoriesModule implements AgentModule {
         artifacts: ArtifactsModule,
         chatMedia: ChatMediaModule,
         history: HistoryModule,
+        durableFunctions: DurableFunctionsModule,
     ) {
         this.#team = team;
         this.#profile = profile;
@@ -195,6 +234,27 @@ export class StoriesModule implements AgentModule {
         this.#artifacts = artifacts;
         this.#chatMedia = chatMedia;
         this.#history = history;
+        this.#durableFunctions = durableFunctions;
+        // A status line is agent metadata, which an agent cannot change from inside its own turn;
+        // the write follows the tool call's commit and survives a restart in between.
+        durableFunctions.register({
+            name: SET_STATUS_FUNCTION,
+            argumentsSchema: setStatusArgumentsSchema,
+            resultSchema: Type.Null(),
+            executor: (ctx, call) =>
+                this.#backgroundScope.runInAsyncScope(async () => {
+                    const agents = this.#requireAgents();
+                    const config = await agents.config(ctx, call.arguments.agentId);
+                    if (config === undefined) return null;
+                    const version = config.metadata?.["version"];
+                    await agents.updateMetadata(ctx, call.arguments.agentId, {
+                        statusLine: call.arguments.statusLine,
+                        updatedAt: Date.now(),
+                        version: typeof version === "number" ? version + 1 : 1,
+                    });
+                    return null;
+                }),
+        });
     }
 
     readonly #hooks: AgentModuleHooks = {
@@ -214,14 +274,40 @@ export class StoriesModule implements AgentModule {
                     : null
                 : STANDALONE_STORY_PERSON;
             await scope.kv.write(ctx, PERSON_KEY, person);
+            await saveConversationPerson(ctx, scope.agent.id, person);
             if (person !== null) {
                 await recordParticipation(ctx, scope.agent.id, person, Date.now());
             }
         },
         tools: async (ctx: Context, scope: AgentModuleScope): Promise<readonly AnyAgentTool[]> => {
+            const tools: AnyAgentTool[] = [];
             const person = await this.#conversationPerson(ctx, scope);
-            if (person === undefined || !(await this.enabledFor(ctx, person))) return [];
-            return [draftStoryTool(this, scope)];
+            if (person !== undefined && (await this.enabledFor(ctx, person))) {
+                tools.push(draftStoryTool(this, scope));
+            }
+            // A task's or bot's own agent and its subtasks post to their ring; hidden helpers do
+            // not, and neither does anyone whose person has Stories off.
+            const agents = this.#requireAgents();
+            const eligible =
+                (await agents.parentOf(ctx, scope.agent.id)) === null ||
+                Value.Check(subtaskMetadataSchema, scope.agent.metadata);
+            if (!eligible) return tools;
+            const poster = await this.postingPerson(ctx, scope.agent.id);
+            if (poster === undefined || !(await this.enabledFor(ctx, poster))) return tools;
+            return [
+                ...tools,
+                postStoryTool(this, scope),
+                withdrawStoryTool(this, scope),
+                listStoriesTool(this, scope),
+                setStatusTool(this, scope),
+            ];
+        },
+        // Archiving a task or bot ends every story in its ring; a subtask's archival ends nothing.
+        metadataChangedTransact: async (ctx, scope, change) => {
+            if (typeof change.update["archivedAt"] !== "number") return;
+            const live = await queryRingStories(ctx, scope.agent.id);
+            if (live.length === 0) return;
+            await this.#end(ctx, live, "archived", Date.now());
         },
     };
 
@@ -229,7 +315,8 @@ export class StoriesModule implements AgentModule {
      * Story events are worked out after their change commits, in a lifetime of their own that
      * outlives the request or tool call that made the change.
      */
-    readonly beforeStart = (ctx: Context): AgentModuleHooks => {
+    readonly beforeStart = (ctx: Context, agents: AgentSystemRef): AgentModuleHooks => {
+        this.#agents = agents;
         const database = agentDatabase(ctx);
         const detached = detach(ctx).named("stories-events");
         this.#eventsCtx = database === undefined ? detached : withAgentDatabase(detached, database);
@@ -373,8 +460,13 @@ export class StoriesModule implements AgentModule {
     ): Promise<Story> {
         const viewer = await this.#caller(ctx);
         const record = await this.#requireReadable(ctx, viewer, storyId);
-        if (record.author !== viewer)
-            throw new StoryForbiddenError("Only its author can edit a story.");
+        if (record.author !== viewer || record.agentAuthor !== null) {
+            throw new StoryForbiddenError(
+                record.agentAuthor === null
+                    ? "Only its author can edit a story."
+                    : "An agent's story cannot be edited. Repost it to make it your own.",
+            );
+        }
         if (record.status === "deleted") {
             throw new StoryConflictError(
                 "The story was deleted, so it cannot change.",
@@ -537,7 +629,10 @@ export class StoriesModule implements AgentModule {
                 await this.#view(ctx, record, viewer),
             );
         }
-        if (record.status === "posted" && record.author !== viewer) {
+        if (
+            record.status === "posted" &&
+            (record.author !== viewer || record.agentAuthor !== null)
+        ) {
             await ctx.inTx(async (txCtx) => {
                 await this.#advanceSeen(txCtx, viewer, record);
             });
@@ -592,7 +687,7 @@ export class StoriesModule implements AgentModule {
     ): Promise<{ readonly viewers: StoryViewer[]; readonly nextCursor: string | null }> {
         const viewer = await this.#caller(ctx);
         const record = await this.#requireReadable(ctx, viewer, storyId);
-        if (record.author !== viewer) throw new StoryNotFoundError();
+        if (record.author !== viewer || record.agentAuthor !== null) throw new StoryNotFoundError();
         const offset = query.cursor === undefined ? 0 : decodeOffsetCursor(query.cursor);
         if (offset === undefined) throw new StoryInputError("The page cursor is not recognized.");
         if (record.status !== "posted" || record.postedAt === null) {
@@ -647,6 +742,9 @@ export class StoriesModule implements AgentModule {
         if (record.status === "deleted") throw new StoryNotFoundError("The story was deleted.");
         const frame = record.content.frames.find((candidate) => candidate.id === frameId);
         if (frame === undefined) throw new StoryNotFoundError("The story has no such frame.");
+        if (frame.asset.type === "artifact") {
+            throw new StoryNotFoundError("A live page is read through the artifact routes.");
+        }
         const file = await this.#assetFile(ctx, frame.asset);
         if (file === undefined)
             throw new StoryNotFoundError("The frame's media is no longer available.");
@@ -705,9 +803,11 @@ export class StoriesModule implements AgentModule {
     }
 
     /** The stories row for the caller: their own circle first, then everyone else's, ranked. */
-    async feed(
-        ctx: Context,
-    ): Promise<{ readonly authors: StoryFeedAuthor[]; readonly stories: Record<string, Story> }> {
+    async feed(ctx: Context): Promise<{
+        readonly authors: StoryFeedAuthor[];
+        readonly rings: StoryRing[];
+        readonly stories: Record<string, Story>;
+    }> {
         const viewer = await this.#caller(ctx);
         const now = Date.now();
         const enabled = new Map<StoryPerson, boolean>([[viewer, true]]);
@@ -766,6 +866,7 @@ export class StoriesModule implements AgentModule {
             authorConversations: participation,
             interest,
         });
+        const rings = await this.#rings(ctx, viewer, stories);
         const profiles = await this.#profiles(ctx, [viewer, ...people]);
         const own = byAuthor.get(viewer) ?? [];
         const circle = (
@@ -797,8 +898,352 @@ export class StoriesModule implements AgentModule {
                     circle(author.person, byAuthor.get(author.person) ?? [], false, null),
                 ),
             ],
+            rings,
             stories,
         };
+    }
+
+    /** The caller's rings with a live story, newest first, adding their stories to `stories`. */
+    async #rings(
+        ctx: Context,
+        viewer: StoryPerson,
+        stories: Record<string, Story>,
+    ): Promise<StoryRing[]> {
+        const records = await queryRingStoriesFor(ctx, viewer);
+        const views = await this.#views(ctx, records, viewer);
+        const byRing = new Map<string, Story[]>();
+        for (const story of views) {
+            if (story.ringAgentId == null || !story.frames.some((frame) => frame.available)) {
+                continue;
+            }
+            stories[story.id] = story;
+            const list = byRing.get(story.ringAgentId) ?? [];
+            list.push(story);
+            byRing.set(story.ringAgentId, list);
+        }
+        return [...byRing.entries()]
+            .map(([agentId, list]) => ({
+                agentId,
+                storyIds: list.map((story) => story.id),
+                unseenCount: list.filter((story) => !story.seen).length,
+                latestPostedAt: Math.max(...list.map((story) => story.postedAt ?? 0)),
+            }))
+            .sort(
+                (left, right) =>
+                    right.latestPostedAt - left.latestPostedAt ||
+                    left.agentId.localeCompare(right.agentId),
+            );
+    }
+
+    /** The bytes of one round video, for a reader of a story that is not deleted. */
+    async overlayMedia(ctx: Context, storyId: string, overlayId: string): Promise<StoryFrameFile> {
+        const viewer = await this.#caller(ctx);
+        const record = await this.#requireReadable(ctx, viewer, storyId);
+        if (record.status === "deleted") throw new StoryNotFoundError("The story was deleted.");
+        for (const frame of record.content.frames) {
+            for (const overlay of frame.overlays) {
+                if (overlay.id !== overlayId || overlay.type !== "round_video") continue;
+                const file = await this.#assetFile(ctx, overlay.media);
+                if (file === undefined) {
+                    throw new StoryNotFoundError("The round video is no longer available.");
+                }
+                return file;
+            }
+        }
+        throw new StoryNotFoundError("The story has no such round video.");
+    }
+
+    /**
+     * Start the caller's own draft from an agent's story posted for them: the same frames and
+     * overlays under new IDs, naming the same media, with `repostOf` pointing back at it.
+     */
+    async repost(ctx: Context, storyId: string, request: RepostStoryRequest): Promise<Story> {
+        const viewer = await this.#caller(ctx);
+        const original = await this.#requireReadable(ctx, viewer, storyId);
+        if (original.agentAuthor === null) {
+            throw new StoryConflictError(
+                "Only an agent's story can be reposted.",
+                await this.#view(ctx, original, viewer),
+            );
+        }
+        if (original.status === "deleted") throw new StoryNotFoundError();
+        if (request.id !== undefined) {
+            const existing = await queryStory(ctx, request.id);
+            if (existing !== undefined) {
+                if (existing.author !== viewer || existing.repostOf?.storyId !== original.id) {
+                    throw new StoryInputError("That story ID is already taken.");
+                }
+                return await this.#view(ctx, existing, viewer);
+            }
+            if ((await this.#artifacts.get(ctx, request.id)) !== undefined) {
+                throw new StoryInputError("That story ID is already taken.");
+            }
+        }
+        const title = (await this.#requireAgents().config(ctx, original.agentAuthor))?.metadata?.[
+            "title"
+        ];
+        const record = await this.#insert(ctx, {
+            id: request.id ?? createId(),
+            author: viewer,
+            createdBy: { kind: "user", userId: personUserId(viewer) },
+            source: null,
+            content: {
+                caption: original.content.caption,
+                frames: original.content.frames.map((frame) => ({
+                    ...frame,
+                    id: createId(),
+                    overlays: frame.overlays.map((overlay) => ({ ...overlay, id: createId() })),
+                })),
+            },
+            placements: [],
+            actor: { author: artifactUser(viewer) },
+            mutationId: request.mutationId,
+            repostOf: {
+                storyId: original.id,
+                agentId: original.agentAuthor,
+                title: typeof title === "string" && title.length > 0 ? title : null,
+            },
+        });
+        return await this.#view(ctx, record, viewer);
+    }
+
+    /**
+     * Where feedback on an agent's story goes and the line that quotes it. The caller's route
+     * sends the message, as a person's message to that agent.
+     */
+    async feedbackTarget(
+        ctx: Context,
+        storyId: string,
+        frameId: string | undefined,
+    ): Promise<{ readonly agentId: string; readonly quote: string }> {
+        const viewer = await this.#caller(ctx);
+        const record = await this.#requireReadable(ctx, viewer, storyId);
+        if (record.agentAuthor === null || record.status === "deleted") {
+            throw new StoryConflictError(
+                "Feedback goes only to an agent's story.",
+                await this.#view(ctx, record, viewer),
+            );
+        }
+        let frame = "";
+        if (frameId !== undefined) {
+            const index = record.content.frames.findIndex((candidate) => candidate.id === frameId);
+            if (index < 0) throw new StoryInputError("The story has no such frame.");
+            frame = `, frame ${String(index + 1)} of ${String(record.content.frames.length)}`;
+        }
+        const firstLine = record.content.caption?.split("\n")[0]?.trim() ?? "";
+        const title =
+            firstLine.length === 0
+                ? "Untitled"
+                : firstLine.length > 80
+                  ? `${firstLine.slice(0, 79).trimEnd()}…`
+                  : firstLine;
+        return {
+            agentId: record.agentAuthor,
+            quote: `> Feedback on your story ${JSON.stringify(title)} (${record.id})${frame}`,
+        };
+    }
+
+    /**
+     * Post an agent's story to its ring for the person it works for, ending the stories it
+     * supersedes in the same change. Keyed by the tool call, so a call repeated after a restart
+     * posts nothing a second time.
+     */
+    async postAgentStory(
+        ctx: Context,
+        call: {
+            readonly agentId: string;
+            readonly toolCallId: string;
+            readonly input: PostStoryToolInput;
+        },
+    ): Promise<{ readonly story: Story; readonly live: readonly Story[] }> {
+        const { agentId, toolCallId, input } = call;
+        const person = await this.postingPerson(ctx, agentId);
+        if (person === undefined || !(await this.enabledFor(ctx, person))) {
+            throw new StoryInputError("Stories is off for the person this work is for.");
+        }
+        const ringAgentId = await this.ringOf(ctx, agentId);
+        const made = await queryStoryBySource(ctx, agentId, toolCallId);
+        if (made !== undefined) {
+            return {
+                story: await this.#view(ctx, made, person),
+                live: await this.#views(ctx, await queryRingStories(ctx, ringAgentId), person),
+            };
+        }
+        const live = await queryRingStories(ctx, ringAgentId);
+        const superseded: StoryRecord[] = [];
+        for (const id of new Set(input.supersedes ?? [])) {
+            const found = live.find((record) => record.id === id);
+            if (found === undefined) {
+                throw new StoryInputError(
+                    `Story ${id} is not a live story in this ring, so it cannot be superseded. Call list_stories to see the live ones.`,
+                );
+            }
+            superseded.push(found);
+        }
+        const id = createId();
+        const frames = await this.#toolFrames(ctx, agentId, input);
+        const resolved = await this.#resolveFrames(ctx, id, 1, frames, []);
+        const now = Date.now();
+        const record = await this.#insert(ctx, {
+            id,
+            author: person,
+            createdBy: { kind: "agent", agentId },
+            source: { agentId, toolCallId },
+            content: { caption: input.caption ?? null, frames: resolved.frames },
+            placements: resolved.placements,
+            actor: await this.#artifacts.actorFor(ctx, agentId),
+            agent: {
+                agentAuthor: agentId,
+                ringAgentId,
+                supersedes: superseded.map((story) => story.id),
+                postedAt: now,
+            },
+            ending: superseded,
+        });
+        return {
+            story: await this.#view(ctx, record, person),
+            live: await this.#views(ctx, await queryRingStories(ctx, ringAgentId), person),
+        };
+    }
+
+    /** End stories in an agent's ring as withdrawn; ones already ended are left as they are. */
+    async withdraw(
+        ctx: Context,
+        call: { readonly agentId: string; readonly storyIds: readonly string[] },
+    ): Promise<{
+        readonly withdrawn: readonly string[];
+        readonly alreadyEnded: readonly string[];
+        readonly live: readonly Story[];
+    }> {
+        const ringAgentId = await this.ringOf(ctx, call.agentId);
+        const live = await queryRingStories(ctx, ringAgentId);
+        const ending: StoryRecord[] = [];
+        const alreadyEnded: string[] = [];
+        for (const id of new Set(call.storyIds)) {
+            const found = live.find((record) => record.id === id);
+            if (found !== undefined) {
+                ending.push(found);
+                continue;
+            }
+            const record = Value.Check(cuid2Schema, id) ? await queryStory(ctx, id) : undefined;
+            if (record?.ringAgentId !== ringAgentId) {
+                throw new StoryInputError(
+                    `Story ${id} is not a story in this ring. Call list_stories to see the live ones.`,
+                );
+            }
+            alreadyEnded.push(id);
+        }
+        if (ending.length > 0) {
+            await ctx.inTx(async (txCtx) => {
+                await this.#end(txCtx, ending, "withdrawn", Date.now());
+            });
+        }
+        const person = await this.postingPerson(ctx, call.agentId);
+        const remaining = await queryRingStories(ctx, ringAgentId);
+        return {
+            withdrawn: ending.map((record) => record.id),
+            alreadyEnded,
+            live: person === undefined ? [] : await this.#views(ctx, remaining, person),
+        };
+    }
+
+    /** The live stories of an agent's ring, as its person sees them. */
+    async ringStories(ctx: Context, agentId: string): Promise<readonly Story[]> {
+        const person = await this.postingPerson(ctx, agentId);
+        if (person === undefined) return [];
+        const records = await queryRingStories(ctx, await this.ringOf(ctx, agentId));
+        return await this.#views(ctx, records, person);
+    }
+
+    /** Set an agent's status line, keyed by the tool call that set it. */
+    async setStatus(
+        ctx: Context,
+        call: {
+            readonly agentId: string;
+            readonly toolCallId: string;
+            readonly text: string | null;
+        },
+    ): Promise<void> {
+        await this.#durableFunctions.invoke(ctx, {
+            function: SET_STATUS_FUNCTION,
+            operationId: `stories.status:${call.toolCallId}`,
+            arguments: {
+                agentId: call.agentId,
+                statusLine: call.text === null ? null : { text: call.text, updatedAt: Date.now() },
+            },
+        });
+    }
+
+    /**
+     * The person an agent's story is for: the conversation's own person, or else its nearest
+     * ancestor's, so a subtask nobody wrote in posts for whoever its task is for. The standalone
+     * installation's one person is everyone's.
+     */
+    async postingPerson(ctx: Context, agentId: string): Promise<StoryPerson | undefined> {
+        if (!this.#team.enabled) return STANDALONE_STORY_PERSON;
+        const agents = this.#requireAgents();
+        let current: string | null = agentId;
+        for (let depth = 0; current !== null && depth < 16; depth += 1) {
+            const person = await queryConversationPerson(ctx, current);
+            if (typeof person === "string") return person;
+            current = await agents.parentOf(ctx, current);
+        }
+        return undefined;
+    }
+
+    /** The agent whose ring wears an agent's stories: the root of its subtask chain. */
+    async ringOf(ctx: Context, agentId: string): Promise<string> {
+        const agents = this.#requireAgents();
+        let current = agentId;
+        for (let depth = 0; depth < 16; depth += 1) {
+            const parent = await agents.parentOf(ctx, current);
+            if (parent === null) return current;
+            current = parent;
+        }
+        return current;
+    }
+
+    #requireAgents(): AgentSystemRef {
+        if (this.#agents === undefined) throw new Error("Stories has not started.");
+        return this.#agents;
+    }
+
+    /** End agents' stories in the caller's transaction, announcing each after it commits. */
+    async #end(
+        ctx: Context,
+        records: readonly StoryRecord[],
+        reason: StoryEndReason,
+        at: number,
+    ): Promise<void> {
+        for (const record of records) {
+            const ended: StoryRecord = {
+                ...record,
+                endedAt: Math.max(at, record.updatedAt + 1),
+                endReason: reason,
+                updatedAt: Math.max(at, record.updatedAt + 1),
+                version: this.#createVersion(),
+            };
+            if (!(await updateStory(ctx, ended, record.version))) {
+                throw new StoryConflictError("The story changed while it was ending. Try again.");
+            }
+            this.#publish(ctx, "story.ended", ended.updatedAt, async (eventCtx) =>
+                (await this.enabledFor(eventCtx, ended.author))
+                    ? [
+                          {
+                              userId: personUserId(ended.author) ?? undefined,
+                              payload: {
+                                  storyId: ended.id,
+                                  version: ended.version,
+                                  ringAgentId: ended.ringAgentId,
+                                  endedAt: ended.endedAt,
+                                  endReason: ended.endReason,
+                                  story: await this.#view(eventCtx, ended, ended.author),
+                              },
+                          },
+                      ]
+                    : [],
+            );
+        }
     }
 
     /**
@@ -898,12 +1343,34 @@ export class StoriesModule implements AgentModule {
         return await this.#view(ctx, record, person);
     }
 
-    /** The frames a `draft_story` call names, or the conversation's latest media without any. */
+    /**
+     * The frames a `draft_story` or `post_story` call names, or the conversation's latest media
+     * without any. Every artifact a frame or window shows must have been shown in this
+     * conversation.
+     */
     async #toolFrames(
         ctx: Context,
         agentId: string,
-        input: DraftStoryToolInput,
+        input: DraftStoryToolInput | PostStoryToolInput,
     ): Promise<StoryFrameInput[]> {
+        const presented = async (label: string, artifactId: string): Promise<void> => {
+            const found = await this.#history.presentedResults(ctx, agentId, {
+                limit: 1,
+                artifactId,
+            });
+            if (found.length === 0) {
+                throw new StoryInputError(
+                    `${label}: artifact ${artifactId} was not shown in this conversation.`,
+                );
+            }
+        };
+        for (const [index, overlays] of (input.overlays ?? []).entries()) {
+            for (const overlay of overlays) {
+                if (overlay.type === "artifact") {
+                    await presented(`Frame ${String(index + 1)}`, overlay.artifactId);
+                }
+            }
+        }
         const assets: StoryAsset[] = [];
         if (input.frames === undefined) {
             assets.push(...(await this.#latestMedia(ctx, agentId)));
@@ -923,14 +1390,14 @@ export class StoriesModule implements AgentModule {
                     });
                     continue;
                 }
-                const presented = await this.#history.presentedResults(ctx, agentId, {
-                    limit: 1,
-                    artifactId: frame.artifactId,
-                });
-                if (presented.length === 0) {
-                    throw new StoryInputError(
-                        `Frame ${String(index + 1)}: artifact ${frame.artifactId} was not shown in this conversation.`,
-                    );
+                await presented(`Frame ${String(index + 1)}`, frame.artifactId);
+                if (!("path" in frame) || frame.path === undefined) {
+                    assets.push({
+                        type: "artifact",
+                        artifactId: frame.artifactId,
+                        ...(frame.version === undefined ? {} : { version: frame.version }),
+                    });
+                    continue;
                 }
                 assets.push({
                     type: "artifact_file",
@@ -1120,7 +1587,14 @@ export class StoriesModule implements AgentModule {
             const id = input.id ?? createId();
             if (ids.has(id)) throw new StoryInputError(`${label} repeats another frame's ID.`);
             ids.add(id);
-            const overlays = checkOverlays(label, input.overlays);
+            const overlays = await this.#resolveOverlays(
+                ctx,
+                label,
+                storyId,
+                version,
+                input.overlays,
+                placements,
+            );
             let media: ResolvedMedia;
             if ("upload" in input && input.upload !== undefined) {
                 const placed = await this.#uploadMedia(
@@ -1222,12 +1696,118 @@ export class StoriesModule implements AgentModule {
         };
     }
 
+    /**
+     * A write's overlays as stored. Beyond what the schema says: one emoji, safe links, at most
+     * five bubbles, three artifact windows onto artifacts that exist, and one round video, whose
+     * new recording becomes a file of the story's next version.
+     */
+    async #resolveOverlays(
+        ctx: Context,
+        label: string,
+        storyId: string,
+        version: number,
+        inputs: readonly StoryOverlayInput[] | undefined,
+        placements: ArtifactPlacement[],
+    ): Promise<StoryOverlay[] | undefined> {
+        if (inputs === undefined) return undefined;
+        const overlays: StoryOverlay[] = [];
+        let windows = 0;
+        let roundVideos = 0;
+        for (const input of inputs) {
+            if (input.type === "artifact") {
+                windows += 1;
+                await this.#requireShowableArtifact(ctx, label, input.artifactId, input.version);
+                overlays.push(input);
+                continue;
+            }
+            if (input.type !== "round_video") {
+                overlays.push(input);
+                continue;
+            }
+            roundVideos += 1;
+            if (input.media.type === "artifact_file") {
+                if (
+                    input.media.artifactId !== storyId ||
+                    (await this.#assetFile(ctx, input.media)) === undefined
+                ) {
+                    throw new StoryInputError(
+                        `${label}: a kept round video must be one this story already holds.`,
+                    );
+                }
+                overlays.push({ ...input, media: input.media });
+                continue;
+            }
+            const staged = await this.#artifacts.uploadContent(ctx, input.media.uploadId);
+            if (staged === undefined) {
+                throw new StoryInputError(
+                    `${label}: the round video's upload was not found. It may have expired or been used already; upload it again.`,
+                );
+            }
+            if (!VIDEO_TYPES.has(mediaTypeForPath(input.media.name))) {
+                throw new StoryInputError(
+                    `${label}: a round video is an MP4, QuickTime, or WebM video.`,
+                );
+            }
+            if (staged.upload.size > MAX_STORY_ROUND_VIDEO_BYTES) {
+                throw new StoryInputError(`${label}: a round video may be at most 64 MiB.`);
+            }
+            const name = input.media.name;
+            const path = `media/${input.id}.${name.slice(name.lastIndexOf(".") + 1).toLowerCase()}`;
+            placements.push({ path, uploadId: input.media.uploadId });
+            overlays.push({
+                ...input,
+                media: { type: "artifact_file", artifactId: storyId, version, path },
+            });
+        }
+        if (windows > MAX_STORY_ARTIFACT_OVERLAYS) {
+            throw new StoryInputError(
+                `${label} holds more than ${String(MAX_STORY_ARTIFACT_OVERLAYS)} artifact windows.`,
+            );
+        }
+        if (roundVideos > 1) throw new StoryInputError(`${label} holds more than one round video.`);
+        return checkOverlays(label, overlays);
+    }
+
+    /** An artifact a story may show live: one that exists, at a version it has, not a story. */
+    async #requireShowableArtifact(
+        ctx: Context,
+        label: string,
+        artifactId: string,
+        version: number | undefined,
+    ): Promise<void> {
+        const artifact = await this.#artifacts.get(ctx, artifactId);
+        if (artifact === undefined || artifact.status !== "active") {
+            throw new StoryInputError(`${label}: artifact ${artifactId} was not found.`);
+        }
+        if (UNSHOWABLE_ARTIFACT_TYPES.has(artifact.type)) {
+            throw new StoryInputError(
+                `${label}: a ${artifact.type} artifact cannot be shown live.`,
+            );
+        }
+        if (version !== undefined && version > artifact.latestVersion) {
+            throw new StoryInputError(
+                `${label}: artifact ${artifactId} has no version ${String(version)}.`,
+            );
+        }
+    }
+
     async #assetMedia(
         ctx: Context,
         label: string,
         storyId: string,
         asset: StoryAsset,
     ): Promise<ResolvedMedia> {
+        if (asset.type === "artifact") {
+            await this.#requireShowableArtifact(ctx, label, asset.artifactId, asset.version);
+            return {
+                kind: "artifact",
+                asset,
+                width: null,
+                height: null,
+                thumbhash: null,
+                background: BLACK_BACKGROUND,
+            };
+        }
         if (asset.type === "chat_media") {
             const stored = await this.#chatMedia.storedItem(
                 ctx,
@@ -1281,8 +1861,19 @@ export class StoriesModule implements AgentModule {
         return await imageMedia(asset, measured, bytes);
     }
 
+    /** Whether the daemon still holds what an asset names: its bytes, or a live artifact. */
+    async #assetAvailable(ctx: Context, asset: StoryAsset): Promise<boolean> {
+        if (asset.type !== "artifact") return (await this.#assetFile(ctx, asset)) !== undefined;
+        const artifact = await this.#artifacts.get(ctx, asset.artifactId);
+        return (
+            artifact?.status === "active" &&
+            (asset.version === undefined || asset.version <= artifact.latestVersion)
+        );
+    }
+
     /** Where an asset's bytes are now, or undefined when the daemon no longer holds them. */
     async #assetFile(ctx: Context, asset: StoryAsset): Promise<StoryFrameFile | undefined> {
+        if (asset.type === "artifact") return undefined;
         if (asset.type === "chat_media") {
             const stored = await this.#chatMedia.storedItem(
                 ctx,
@@ -1331,22 +1922,38 @@ export class StoriesModule implements AgentModule {
             readonly placements: readonly ArtifactPlacement[];
             readonly actor: StoryActor;
             readonly mutationId?: string | undefined;
+            readonly repostOf?: StoryRecord["repostOf"];
+            /** An agent's story, posted straight into its ring. */
+            readonly agent?: {
+                readonly agentAuthor: string;
+                readonly ringAgentId: string;
+                readonly supersedes: readonly string[];
+                readonly postedAt: number;
+            };
+            /** Stories the new one supersedes, ended in the same change. */
+            readonly ending?: readonly StoryRecord[];
         },
     ): Promise<StoryRecord> {
         checkContent(input.content);
-        const now = Date.now();
+        const now = input.agent?.postedAt ?? Date.now();
         const record: StoryRecord = {
             id: input.id,
             author: input.author,
-            status: "draft",
+            status: input.agent === undefined ? "draft" : "posted",
             createdBy: input.createdBy,
             source: input.source,
             content: input.content,
             artifactVersion: 1,
             createdAt: now,
             updatedAt: now,
-            postedAt: null,
+            postedAt: input.agent === undefined ? null : now,
             expiresAt: null,
+            agentAuthor: input.agent?.agentAuthor ?? null,
+            ringAgentId: input.agent?.ringAgentId ?? null,
+            supersedes: [...(input.agent?.supersedes ?? [])],
+            endedAt: null,
+            endReason: null,
+            repostOf: input.repostOf ?? null,
             version: this.#createVersion(),
         };
         await ctx.inTx(async (txCtx) => {
@@ -1366,14 +1973,22 @@ export class StoriesModule implements AgentModule {
             const mutationId = input.mutationId;
             this.#publish(
                 txCtx,
-                "story.created",
+                record.status === "posted" ? "story.posted" : "story.created",
                 now,
                 async (eventCtx) =>
-                    await this.#deliverViews(eventCtx, record, [record.author], (story) => ({
-                        story,
-                        ...(mutationId === undefined ? {} : { mutationId }),
-                    })),
+                    await this.#deliverViews(
+                        eventCtx,
+                        record,
+                        await this.#audience(eventCtx, record),
+                        (story) => ({
+                            story,
+                            ...(mutationId === undefined ? {} : { mutationId }),
+                        }),
+                    ),
             );
+            if (input.ending !== undefined && input.ending.length > 0) {
+                await this.#end(txCtx, input.ending, "superseded", now);
+            }
         });
         return record;
     }
@@ -1402,11 +2017,14 @@ export class StoriesModule implements AgentModule {
                 record.artifactVersion,
             );
             const used = new Set(
-                content.frames.flatMap((frame) =>
-                    frame.asset.type === "artifact_file" && frame.asset.artifactId === record.id
+                content.frames.flatMap((frame) => [
+                    ...(frame.asset.type === "artifact_file" && frame.asset.artifactId === record.id
                         ? [frame.asset.path]
-                        : [],
-                ),
+                        : []),
+                    ...frame.overlays.flatMap((overlay) =>
+                        overlay.type === "round_video" ? [overlay.media.path] : [],
+                    ),
+                ]),
             );
             const written = new Set(placements.map((placement) => placement.path));
             const remove = latest.files
@@ -1460,19 +2078,29 @@ export class StoriesModule implements AgentModule {
     }
 
     async #advanceSeen(ctx: Context, viewer: StoryPerson, record: StoryRecord): Promise<void> {
-        if (record.postedAt === null || record.author === viewer) return;
+        if (record.postedAt === null) return;
+        const ring = record.ringAgentId;
+        if (ring === null && record.author === viewer) return;
         const now = Date.now();
         const advanced = await advanceSeenMark(
             ctx,
             viewer,
-            { author: record.author, storyId: record.id, postedAt: record.postedAt },
+            {
+                author: ring === null ? record.author : ringMarkKey(ring),
+                storyId: record.id,
+                postedAt: record.postedAt,
+            },
             now,
         );
         if (!advanced) return;
         this.#publish(ctx, "story.seen", now, async () => [
             {
                 userId: personUserId(viewer) ?? undefined,
-                payload: { authorUserId: personUserId(record.author), storyId: record.id },
+                payload: {
+                    authorUserId: personUserId(record.author),
+                    storyId: record.id,
+                    ...(ring === null ? {} : { ringAgentId: ring }),
+                },
             },
         ]);
     }
@@ -1507,7 +2135,7 @@ export class StoriesModule implements AgentModule {
                 await this.#view(ctx, record, viewer),
             );
         }
-        if (record.author === viewer) {
+        if (record.author === viewer && record.agentAuthor === null) {
             throw new StoryConflictError(
                 "You cannot react to your own story.",
                 await this.#view(ctx, record, viewer),
@@ -1558,7 +2186,9 @@ export class StoriesModule implements AgentModule {
     /** Everyone who may read the story as it is now. */
     async #audience(ctx: Context, record: StoryRecord): Promise<StoryPerson[]> {
         if (!(await this.enabledFor(ctx, record.author))) return [];
-        if (record.status !== "posted" || !this.#team.enabled) return [record.author];
+        if (record.status !== "posted" || !this.#team.enabled || record.agentAuthor !== null) {
+            return [record.author];
+        }
         const audience: StoryPerson[] = [];
         for (const member of await this.#team.listMembers(ctx)) {
             if (member.id === record.author || (await this.enabledFor(ctx, member.id))) {
@@ -1571,6 +2201,8 @@ export class StoriesModule implements AgentModule {
 
     async #readable(ctx: Context, viewer: StoryPerson, record: StoryRecord): Promise<boolean> {
         if (record.author === viewer) return true;
+        // An agent's story is its person's alone until they repost it.
+        if (record.agentAuthor !== null) return false;
         if (record.status !== "posted" || !this.#team.enabled) return false;
         return await this.enabledFor(ctx, record.author);
     }
@@ -1626,13 +2258,14 @@ export class StoriesModule implements AgentModule {
         const mine = await queryViewerReactions(ctx, viewer, posted);
         const counts = await queryReactionCounts(ctx, posted);
         const available = new Map<string, boolean>();
+        const conversations = new Map<string, boolean>();
         const stories: Story[] = [];
         for (const record of records) {
             const frames: StoryFrame[] = [];
             for (const frame of record.content.frames) {
                 const key = JSON.stringify(frame.asset);
                 if (record.status !== "deleted" && !available.has(key)) {
-                    available.set(key, (await this.#assetFile(ctx, frame.asset)) !== undefined);
+                    available.set(key, await this.#assetAvailable(ctx, frame.asset));
                 }
                 frames.push({
                     ...frame,
@@ -1640,14 +2273,37 @@ export class StoriesModule implements AgentModule {
                 });
             }
             const isPosted = record.status === "posted" && record.postedAt !== null;
-            const own = record.author === viewer;
-            const mark = marks.get(record.author);
+            const agentStory = record.agentAuthor !== null;
+            const own = record.author === viewer && !agentStory;
+            const mark = marks.get(
+                record.ringAgentId === null ? record.author : ringMarkKey(record.ringAgentId),
+            );
+            let repostOf: Story["repostOf"] = null;
+            if (record.repostOf !== null) {
+                const agentId = record.repostOf.agentId;
+                if (!conversations.has(agentId)) {
+                    conversations.set(
+                        agentId,
+                        (await this.#requireAgents().config(ctx, agentId)) !== undefined,
+                    );
+                }
+                repostOf = { ...record.repostOf, canOpen: conversations.get(agentId) === true };
+            }
             stories.push({
                 id: record.id,
                 status: record.status,
                 authorUserId: personUserId(record.author),
                 createdBy: record.createdBy,
                 source: record.source,
+                author:
+                    record.agentAuthor === null
+                        ? { kind: "user", userId: personUserId(record.author) }
+                        : { kind: "agent", agentId: record.agentAuthor },
+                ringAgentId: record.ringAgentId,
+                supersedes: record.supersedes,
+                endedAt: record.endedAt,
+                endReason: record.endReason,
+                repostOf,
                 caption: record.content.caption,
                 frames,
                 audience: this.#team.enabled ? "team" : "self",
@@ -1797,7 +2453,9 @@ function checkContent(content: StoryContent): void {
 }
 
 /** A tool's overlays, each given its own ID and a default place on the canvas. */
-function toolOverlays(overlays: readonly DraftStoryToolOverlay[]): StoryOverlay[] {
+function toolOverlays(
+    overlays: readonly (DraftStoryToolOverlay | PostStoryToolOverlay)[],
+): StoryOverlay[] {
     return overlays.map((overlay, index) => {
         const transform = overlay.transform ?? defaultTransform(overlay.type, index);
         const id = createId();
@@ -1835,12 +2493,22 @@ function toolOverlays(overlays: readonly DraftStoryToolOverlay[]): StoryOverlay[
                 };
             case "emoji":
                 return { id, type: "emoji", emoji: overlay.emoji, transform };
+            case "artifact":
+                return {
+                    id,
+                    type: "artifact",
+                    artifactId: overlay.artifactId,
+                    ...(overlay.version === undefined ? {} : { version: overlay.version }),
+                    aspectRatio: overlay.aspectRatio ?? DEFAULT_ARTIFACT_ASPECT_RATIO,
+                    transform,
+                };
         }
     });
 }
 
 function defaultTransform(type: string, index: number): StoryTransform {
     if (type === "text") return { x: 0.5, y: 0.18 + 0.08 * index, scale: 1, rotation: 0 };
+    if (type === "artifact") return { x: 0.5, y: 0.55, scale: 0.8, rotation: 0 };
     if (type === "link") return { x: 0.5, y: 0.82, scale: 1, rotation: 0 };
     return { x: 0.78, y: 0.72 - 0.12 * index, scale: 0.3, rotation: 0 };
 }

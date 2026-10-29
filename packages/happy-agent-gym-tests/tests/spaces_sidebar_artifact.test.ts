@@ -404,7 +404,7 @@ it("Prioritizing files new work into a section with one edit and one live note i
     const gym = await createAgentGym({
         timeoutMs: 30000,
         inference: (request) => {
-            if (!request.instructions.includes("You are Focus"))
+            if (!request.instructions.includes("You are the Focus Agent"))
                 return { content: [{ type: "text", text: "Done." }] };
             const last = request.messages.at(-1);
             const text = JSON.stringify(last);
@@ -476,7 +476,7 @@ it("Prioritizing files new work into a section with one edit and one live note i
             () =>
                 gym.inference.requests.some(
                     (request) =>
-                        request.instructions.includes("You are Focus") &&
+                        request.instructions.includes("You are the Focus Agent") &&
                         JSON.stringify(request.messages.at(-1)).includes(
                             "queued; it applies when this turn ends",
                         ),
@@ -516,7 +516,7 @@ it("Prioritizing files new work into a section with one edit and one live note i
                 )
             ).runs.flatMap((run) => run.messages);
         const prioritizing = gym.inference.requests.findLast((request) =>
-            request.instructions.includes("You are Focus"),
+            request.instructions.includes("You are the Focus Agent"),
         )!;
         // The note is Prioritizing's own; Happy's chat hears nothing.
         expect((await messages(prioritizing.sessionId!)).map((message) => message.id)).toContain(

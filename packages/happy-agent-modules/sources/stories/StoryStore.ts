@@ -7,6 +7,7 @@ import { sql, type SQL } from "drizzle-orm";
 import {
     STORIES_TABLE,
     STORY_PARTICIPATION_TABLE,
+    STORY_PEOPLE_TABLE,
     STORY_REACTIONS_TABLE,
     STORY_SEEN_TABLE,
 } from "./StoryMigrations.js";
@@ -30,6 +31,12 @@ interface StoryRow {
     readonly updated_at: number | string;
     readonly posted_at: number | string | null;
     readonly expires_at: number | string | null;
+    readonly agent_author: string | null;
+    readonly ring_agent_id: string | null;
+    readonly supersedes_json: string;
+    readonly ended_at: number | string | null;
+    readonly end_reason: string | null;
+    readonly repost_of_json: string | null;
     readonly version: string;
 }
 
@@ -49,6 +56,12 @@ function storyFromRow(row: StoryRow): StoryRecord {
         updatedAt: Number(row.updated_at),
         postedAt: row.posted_at === null ? null : Number(row.posted_at),
         expiresAt: row.expires_at === null ? null : Number(row.expires_at),
+        agentAuthor: row.agent_author,
+        ringAgentId: row.ring_agent_id,
+        supersedes: JSON.parse(row.supersedes_json) as unknown,
+        endedAt: row.ended_at === null ? null : Number(row.ended_at),
+        endReason: row.end_reason,
+        repostOf: row.repost_of_json === null ? null : (JSON.parse(row.repost_of_json) as unknown),
         version: row.version,
     };
     if (!Value.Check(storyRecordSchema, record)) {
@@ -62,12 +75,17 @@ export async function insertStory(ctx: Context, story: StoryRecord): Promise<voi
         ctx.db,
         sql`INSERT INTO ${sql.raw(STORIES_TABLE)} (
                 id, author_key, status, created_by_json, source_agent_id, source_tool_call_id,
-                content_json, artifact_version, created_at, updated_at, posted_at, expires_at, version
+                content_json, artifact_version, created_at, updated_at, posted_at, expires_at,
+                agent_author, ring_agent_id, supersedes_json, ended_at, end_reason, repost_of_json,
+                version
             ) VALUES (
                 ${story.id}, ${story.author}, ${story.status}, ${JSON.stringify(story.createdBy)},
                 ${story.source?.agentId ?? null}, ${story.source?.toolCallId ?? null},
                 ${JSON.stringify(story.content)}, ${story.artifactVersion}, ${story.createdAt},
-                ${story.updatedAt}, ${story.postedAt}, ${story.expiresAt}, ${story.version}
+                ${story.updatedAt}, ${story.postedAt}, ${story.expiresAt},
+                ${story.agentAuthor}, ${story.ringAgentId}, ${JSON.stringify(story.supersedes)},
+                ${story.endedAt}, ${story.endReason},
+                ${story.repostOf === null ? null : JSON.stringify(story.repostOf)}, ${story.version}
             )`,
     );
 }
@@ -87,6 +105,8 @@ export async function updateStory(
                 updated_at = ${story.updatedAt},
                 posted_at = ${story.postedAt},
                 expires_at = ${story.expiresAt},
+                ended_at = ${story.endedAt},
+                end_reason = ${story.endReason},
                 version = ${story.version}
             WHERE id = ${story.id} AND version = ${expectedVersion}
             RETURNING id`,
@@ -125,6 +145,7 @@ export async function queryAuthorStories(
 ): Promise<StoryRecord[]> {
     const conditions: SQL[] = [
         sql`author_key = ${author}`,
+        sql`agent_author IS NULL`,
         sql`status IN (${sql.join(
             statuses.map((status) => sql`${status}`),
             sql`, `,
@@ -143,12 +164,38 @@ export async function queryAuthorStories(
     return rows.map(storyFromRow);
 }
 
-/** Every posted story still in the feed at `now`, oldest posted first. */
+/** Every person's posted story still in the feed at `now`, oldest posted first. */
 export async function queryLiveStories(ctx: Context, now: number): Promise<StoryRecord[]> {
     const rows = await agentDatabaseRows<StoryRow>(
         ctx.db,
         sql`SELECT * FROM ${sql.raw(STORIES_TABLE)}
-            WHERE status = 'posted' AND expires_at > ${now}
+            WHERE status = 'posted' AND agent_author IS NULL AND expires_at > ${now}
+            ORDER BY posted_at ASC, id ASC`,
+    );
+    return rows.map(storyFromRow);
+}
+
+/** Agents' stories still in a ring for one person, oldest posted first. */
+export async function queryRingStoriesFor(
+    ctx: Context,
+    person: StoryPerson,
+): Promise<StoryRecord[]> {
+    const rows = await agentDatabaseRows<StoryRow>(
+        ctx.db,
+        sql`SELECT * FROM ${sql.raw(STORIES_TABLE)}
+            WHERE author_key = ${person} AND ring_agent_id IS NOT NULL
+              AND status = 'posted' AND ended_at IS NULL
+            ORDER BY posted_at ASC, id ASC`,
+    );
+    return rows.map(storyFromRow);
+}
+
+/** One ring's stories that have not ended, oldest posted first. */
+export async function queryRingStories(ctx: Context, ringAgentId: string): Promise<StoryRecord[]> {
+    const rows = await agentDatabaseRows<StoryRow>(
+        ctx.db,
+        sql`SELECT * FROM ${sql.raw(STORIES_TABLE)}
+            WHERE ring_agent_id = ${ringAgentId} AND status = 'posted' AND ended_at IS NULL
             ORDER BY posted_at ASC, id ASC`,
     );
     return rows.map(storyFromRow);
@@ -163,6 +210,32 @@ export async function queryDraftCount(ctx: Context, author: StoryPerson): Promis
     return Number(rows[0]?.count ?? 0);
 }
 
+/** Record who a conversation's person is now, or that it has none. */
+export async function saveConversationPerson(
+    ctx: Context,
+    agentId: string,
+    person: StoryPerson | null,
+): Promise<void> {
+    await agentDatabaseRun(
+        ctx.db,
+        sql`INSERT INTO ${sql.raw(STORY_PEOPLE_TABLE)} (agent_id, person_key)
+            VALUES (${agentId}, ${person})
+            ON CONFLICT (agent_id) DO UPDATE SET person_key = excluded.person_key`,
+    );
+}
+
+/** A conversation's person as last recorded: a person, null for none, undefined if never. */
+export async function queryConversationPerson(
+    ctx: Context,
+    agentId: string,
+): Promise<StoryPerson | null | undefined> {
+    const rows = await agentDatabaseRows<{ person_key: string | null }>(
+        ctx.db,
+        sql`SELECT person_key FROM ${sql.raw(STORY_PEOPLE_TABLE)} WHERE agent_id = ${agentId}`,
+    );
+    return rows[0] === undefined ? undefined : rows[0].person_key;
+}
+
 /** When each of these authors posted since `since`, stories later deleted left out. */
 export async function queryPostedSince(
     ctx: Context,
@@ -173,7 +246,7 @@ export async function queryPostedSince(
     const rows = await agentDatabaseRows<{ author_key: string; posted_at: number | string }>(
         ctx.db,
         sql`SELECT author_key, posted_at FROM ${sql.raw(STORIES_TABLE)}
-            WHERE status = 'posted' AND posted_at >= ${since}
+            WHERE status = 'posted' AND agent_author IS NULL AND posted_at >= ${since}
               AND author_key IN (${sql.join(
                   authors.map((author) => sql`${author}`),
                   sql`, `,

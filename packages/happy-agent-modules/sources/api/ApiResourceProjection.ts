@@ -1,5 +1,9 @@
 import type { AgentConfig, AgentSystemRef } from "@slopus/happy-agent-base";
-import type { AgentRetrying, AgentWait } from "@slopus/happy-agent-client";
+import {
+    agentStatusLineSchema,
+    type AgentRetrying,
+    type AgentWait,
+} from "@slopus/happy-agent-client";
 import type { Context } from "@steve.kite/stdlib";
 import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
@@ -639,6 +643,9 @@ export async function agentResource(
         title: typeof metadata.title === "string" ? metadata.title : null,
         titleStatus: typeof metadata.title === "string" ? "ready" : "idle",
         status: state.working === true ? "working" : "idle",
+        statusLine: Value.Check(agentStatusLineSchema, metadata["statusLine"])
+            ? metadata["statusLine"]
+            : null,
         wait: state.wait ?? null,
         retrying: state.retrying ?? null,
         subagents: { total: children.length, running: state.runningSubagents ?? 0 },

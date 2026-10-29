@@ -40,6 +40,22 @@ asking where to post, because it read posting as public. The capability line now
 and says the result is a draft only the person sees until they press Post; with it, the model
 drafts the story directly.
 
+## Agents post only what shipped, and keep their ring fresh
+
+Kirill's direction for agent stories: a story announces a real shipped thing, never progress,
+and a ring holds at most one live story per agent — only the freshest per task tree. That is a
+judgement, so it lives in the `post_story` and `set_status` descriptions, not in code: the code
+only refuses superseding a story outside the ring. Captions and status lines are written for a
+vibe coder, so the prompts forbid hashes, versions, test counts, file names, and "14/14"-style
+tallies.
+
+## A repost belongs to the person
+
+A repost copies the agent story's frames into a new draft authored by the person, with
+`source: null`. Copying the agent story's `source` collided with the unique
+`(source_agent_id, source_tool_call_id)` index and failed every repost; it was also wrong, since
+the person, not the tool call, made the repost. `repostOf` carries the link back instead.
+
 ## Frames reference assets, never copy them
 
 Frames name chat media or an artifact file by ID. When the asset is gone, the frame stays and

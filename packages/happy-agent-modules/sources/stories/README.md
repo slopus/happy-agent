@@ -6,7 +6,15 @@ editor or by the conversation's agent with `draft_story`, and reaches its audien
 author presses Post. A posted story expires 24 hours later.
 
 ```ts
-const stories = new StoriesModule(team, profile, userSettings, artifacts, chatMedia, history);
+const stories = new StoriesModule(
+    team,
+    profile,
+    userSettings,
+    artifacts,
+    chatMedia,
+    history,
+    durableFunctions,
+);
 const stickers = new StickersModule(config, team, stories);
 ```
 
@@ -45,10 +53,31 @@ read. The result is an inline `artifact` presentation with `artifactType: "story
 tool call ID. A revision with a stale `baseVersion` fails and shows the draft as it stands: the
 person's edits win.
 
+## Agent stories
+
+An agent may also post a story itself, with `post_story`, to its own ring: the circle on the
+sidebar row of the root task or bot of its subtask chain (`ringAgentId`). The tools —
+`post_story`, `withdraw_story`, `list_stories`, and `set_status` — are offered to every agent
+without a parent and every subtask, while the person its stories are for has Stories on. That
+person is the last human who wrote in the conversation, or in its nearest ancestor
+(`happy_agent_story_people`). An agent story is visible only to that person, never expires, and
+is never edited: it ends when superseded, withdrawn, or when its task or bot is archived, and the
+end is a `story.ended` event. The person may repost it as their own draft (`repostOf`), and
+typing in the viewer sends their words to the agent as a message quoting the frame.
+
+Agent stories may show a whole artifact live (`{type:"artifact"}` asset) and float artifact
+windows over a frame; a person's own story may also carry one round video, uploaded into the
+story artifact as `media/<overlayId>.<ext>`.
+
+`set_status` writes the agent's `statusLine`, the row's second line. An agent cannot change its
+own metadata inside its turn, so the write is the durable function `stories.set-status`.
+
 ## Feed, seen marks, and reactions
 
 `feed` returns the caller's own circle first, then every other author with live stories, unseen
-authors first and then by importance: shared work, how often the two talk, and freshness.
+authors first and then by importance: shared work, how often the two talk, and freshness. Its
+`rings` list the caller's agents with live stories, newest first; a ring's seen mark is stored
+under the author key `ring:<agentId>`.
 Reacting also marks a story seen. Only the author reads its viewers.
 
 ## Events

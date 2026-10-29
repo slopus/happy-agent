@@ -64,7 +64,7 @@ it("lets the person drag stem cells anywhere and keeps Prioritizing off them, be
             () =>
                 h.gym.inference.requests.some(
                     (request) =>
-                        request.instructions.includes("You are Focus") &&
+                        request.instructions.includes("You are the Focus Agent") &&
                         JSON.stringify(request.messages).includes(
                             "The person already placed it. Choose its icon now",
                         ),

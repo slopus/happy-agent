@@ -18,8 +18,8 @@ import type { StoriesModule } from "../StoriesModule.js";
 import { StoryInputError } from "../StoryErrors.js";
 import { storyTitle } from "../impl/storyText.js";
 
-const colorSchema = Type.String({ pattern: "^#[0-9A-Fa-f]{6}$" });
-const transformSchema = Type.Optional(
+export const colorSchema = Type.String({ pattern: "^#[0-9A-Fa-f]{6}$" });
+export const transformSchema = Type.Optional(
     Type.Object(storyTransformSchema.properties, {
         additionalProperties: false,
         description:
@@ -27,7 +27,7 @@ const transformSchema = Type.Optional(
     }),
 );
 
-const toolOverlaySchema = Type.Union([
+export const toolOverlaySchema = Type.Union([
     Type.Object(
         {
             type: Type.Literal("text"),
