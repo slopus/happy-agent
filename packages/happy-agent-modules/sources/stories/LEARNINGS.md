@@ -63,13 +63,36 @@ The status almost always stays and states plainly where the conversation is, fin
 included ("Shipped to preview", "On main"), and it changes only at key moments, never on every
 step. `null` is for a status that would otherwise be untrue.
 
-## Agents set a status only when told to
+A replay of eight real conversations on gpt-6.1-sol found three status habits the first prompt
+allowed, and both the instruction and the description now name them:
+
+- **Restating the step.** Each new small request rewrote the status to the step at hand
+  ("Finding the new recording", "Checking the article's links"). A follow-up question, a small
+  extra request, or the next step now keeps the status, and step descriptions are named as wrong.
+- **Going stale at a hand-back.** When work stopped to wait for an approval or a choice, or was
+  paused, the status still described the old work. Waiting on the person's decision and paused
+  are now key moments, and the agent checks the status is still true before handing back.
+- **Tallies.** "136 icons counted" got through a list that only named test counts, so tallies are
+  named generally.
+
+Questions in a pure research chat still sometimes rewrite the status.
+
+## Agents use set_status and post_story only when told to
 
 `set_status` began deferred, discoverable only through its capability line. On the live daemon
 one conversation in 865 had a status: agents never looked for it, so Kirill saw empty rows. The
 tool is now always loaded wherever it is offered, and the module adds one short instruction there:
 set it early, change it at key moments. That is still a prompt, never code writing statuses on an
 agent's behalf.
+
+`post_story` repeated the story. In the replay, a deferred `post_story` was never posted at any
+moment where work had shipped. With an instruction alone, the agent searched for it, called
+`list_stories`, saw an empty ring, and ended its turn. It is now always loaded too, for every agent
+that posts to a ring. The module adds a second instruction there: post one story in the same turn
+something ships or becomes ready to try, and never for progress, plans, or work still waiting for
+review or approval. The last clause came from an agent that posted a story for a draft pull
+request. A story needs a frame, so for a change pushed to main the description and the "nothing
+shown" error tell the agent to make a screenshot or a small artifact page first, and it does.
 
 ## Only task and bot agents keep a status
 

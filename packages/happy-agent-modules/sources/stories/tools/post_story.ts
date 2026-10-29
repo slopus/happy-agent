@@ -127,16 +127,16 @@ const postStoryResultSchema = Type.Object(
 export function postStoryTool(stories: StoriesModule, scope: AgentModuleScope) {
     return defineAgentTool({
         name: "post_story",
-        defer: true,
+        // Loaded with the conversation's tools: deferred, agents found it and still did not post.
+        defer: false,
         capabilities: [
             "Post a story to this task's ring in the person's sidebar when you shipped something they can see or try, replacing your earlier story; never for progress.",
         ],
-        searchKeywords: ["story", "post story", "shipped", "announce", "ring", "show the person"],
         description: [
             "Post a story about something you shipped. It shows as a ring around this task's icon in the person's sidebar; only they see it, until they choose to repost it to their team. Clicking the ring plays it.",
             "Post only when something real shipped that the person can see or try: a release went out, a change was merged or pushed to main, an artifact was published, a new build is on their phone, a page is live. Never post progress, plans, test runs, rebases, or that you started or are still working. One story per thing shipped, not per step. Most turns post nothing.",
-            "Keep the ring fresh, and be aggressive about it: an old story left in the ring is noise. Every time you post, pass supersedes with every live story in this ring that the new one makes stale, which is usually all of them: your own earlier story and older ones other agents of this task posted. At most one live story per agent, and for the whole task only the freshest. When unsure, supersede. Call list_stories first if you do not know what is live.",
-            "Show, don't tell. Pick the one or two images or videos that show the result best, final over intermediate, or put an artifact you published in a frame or window, where the person can try it live. Without frames, the latest one or two images or videos shown in this conversation are used.",
+            "Keep the ring fresh, and be aggressive about it: an old story left in the ring is noise. Every time you post, pass supersedes with every live story in this ring that the new one makes stale, which is usually all of them: your own earlier story and older ones other agents of this task posted. At most one live story per agent, and for the whole task only the freshest. When unsure, supersede. If you do not know what is live, call list_stories, then post.",
+            "Show, don't tell. Pick the one or two images or videos that show the result best, final over intermediate, or put an artifact you published in a frame or window, where the person can try it live. Without frames, the latest one or two images or videos shown in this conversation are used. When nothing worth showing has been shown yet, such as for a change pushed to main, make something first: a screenshot of it working, or a small HTML artifact for the frame that says in plain words what changed and how to try it.",
             "A whole artifact in a frame fills a 9:16 portrait canvas. When you make an HTML page for a story frame, design it for that canvas, filling it edge to edge, and set html,body{margin:0;padding:0} so the viewer's default page inset does not frame it. The viewer draws the author and progress bar over the top 60 CSS px and the caption and reply bar over the bottom 90, so keep text and controls out of those bands; let a background run through them.",
             'Write the caption for someone who is not reading the code: what changed for them, in a few plain words, such as "Your sidebar now shows Focus\'s ideas where they apply" or "New test build is on your phone". No commit hashes, versions, test counts, file or branch names, or scores like "14/14" unless the person asked for them. Never invent results.',
         ].join("\n\n"),

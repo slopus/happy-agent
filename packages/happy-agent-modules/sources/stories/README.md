@@ -64,6 +64,8 @@ person is the last human who wrote in the conversation, or in its nearest ancest
 is never edited: it ends when superseded, withdrawn, or when its task or bot is archived, and the
 end is a `story.ended` event. The person may repost it as their own draft (`repostOf`), and
 typing in the viewer sends their words to the agent as a message quoting the frame.
+`post_story` is always loaded rather than deferred. Wherever it is offered, the module adds an
+instruction to post one story in the same turn that something ships or becomes ready to try.
 
 Agent stories may show a whole artifact live (`{type:"artifact"}` asset) and float artifact
 windows over a frame; a person's own story may also carry one round video, uploaded into the

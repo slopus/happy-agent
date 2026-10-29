@@ -145,7 +145,9 @@ const setStatusArgumentsSchema = Type.Object({
 });
 const subtaskMetadataSchema = Type.Object({ subtask: Type.Literal(true) });
 const SET_STATUS_INSTRUCTIONS =
-    "Keep this conversation's sidebar status current with set_status: one short phrase saying where the work stands for the person. Set it early, then change it only at key moments they would notice.";
+    "Keep this conversation's sidebar status current with set_status: one short phrase saying where the work stands for the person. Set it early, then change it only when that changes: a plan agreed, something ready to try or waiting on their decision, shipped, stuck, paused. Answering the person's follow-up question, a small extra request, or your next step keeps it.";
+const POST_STORY_INSTRUCTIONS =
+    "When something you made ships or is ready for the person to try (pushed to main, released, published, a video, image, or page you made for them), post one story about it with post_story in that same turn, superseding your earlier one. Never post progress, plans, or work still waiting for review or approval.";
 /** Raster images a story frame may show, by served type, with the extension it is kept under. */
 const IMAGE_EXTENSIONS: Readonly<Record<string, string>> = {
     "image/png": "png",
@@ -304,9 +306,13 @@ export class StoriesModule implements AgentModule {
                 ...((await this.#keepsStatus(ctx, scope)) ? [setStatusTool(this, scope)] : []),
             ];
         },
-        // set_status is always loaded, yet agents left their rows empty until told to use it.
-        instructions: async (ctx: Context, scope: AgentModuleScope): Promise<string> =>
-            (await this.#keepsStatus(ctx, scope)) ? SET_STATUS_INSTRUCTIONS : "",
+        // Agents left their rows empty and never looked for post_story until told to use them.
+        instructions: async (ctx: Context, scope: AgentModuleScope): Promise<string> => {
+            if (!(await this.#postsToRing(ctx, scope))) return "";
+            return (await this.#keepsStatus(ctx, scope))
+                ? `${SET_STATUS_INSTRUCTIONS}\n\n${POST_STORY_INSTRUCTIONS}`
+                : POST_STORY_INSTRUCTIONS;
+        },
         // Archiving a task or bot ends every story in its ring; a subtask's archival ends nothing.
         metadataChangedTransact: async (ctx, scope, change) => {
             if (typeof change.update["archivedAt"] !== "number") return;
@@ -1405,7 +1411,7 @@ export class StoriesModule implements AgentModule {
             assets.push(...(await this.#latestMedia(ctx, agentId)));
             if (assets.length === 0) {
                 throw new StoryInputError(
-                    "This conversation has shown no image or video to put in a story. Show one first, such as with present_files, or name frames.",
+                    "This conversation has shown no image or video to put in a story. Show one first, such as with present_files, or make an artifact that shows what changed and name it in frames.",
                 );
             }
         } else {

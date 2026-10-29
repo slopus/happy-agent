@@ -31,7 +31,7 @@ export function listStoriesTool(stories: StoriesModule, scope: AgentModuleScope)
                 type: "text",
                 text:
                     result.live.length === 0
-                        ? "No story is live in this task's ring."
+                        ? "No story is live in this task's ring, so a story you post now supersedes nothing."
                         : [
                               `Live in this task's ring (${String(result.live.length)}):`,
                               ...result.live,
