@@ -19,6 +19,7 @@ import {
     verifyFailedMessage,
 } from "../../sources/onboarding/impl/connectingCopy.js";
 import {
+    effortLabel,
     openingMessage,
     subscriptionsMessage,
 } from "../../sources/onboarding/impl/onboardingCopy.js";
@@ -178,6 +179,19 @@ describe("Happy's own onboarding words", () => {
         expect(offered).not.toContain(later);
         expect(chooseAtLeastOneMessage(offered)).not.toContain(later);
         expect(connectedMessage([{ app: "ChatGPT", cli: "codex" }]).split(later)).toHaveLength(2);
+    });
+});
+
+describe("an effort as the app shows it", () => {
+    it("reads the way the model picker does", () => {
+        expect(["off", "low", "medium", "high", "xhigh", "max"].map(effortLabel)).toEqual([
+            "Off",
+            "Low",
+            "Medium",
+            "High",
+            "Extra high",
+            "Max",
+        ]);
     });
 });
 

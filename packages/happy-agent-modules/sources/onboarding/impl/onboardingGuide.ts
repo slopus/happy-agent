@@ -48,6 +48,7 @@ export type OnboardingEvent =
           readonly kind: "begin";
           readonly connected: readonly { readonly app: string; readonly account?: string }[];
           /** The default model onboarding set, which Happy runs on from here. */
+          /** The effort as the app shows it, such as "High". */
           readonly model: { readonly name: string; readonly effort: string };
           /** The name and email Happy found, and where; absent when it found none. */
           readonly profile?: {

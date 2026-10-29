@@ -251,6 +251,10 @@ describe("Happy's model leading onboarding", () => {
                 '\\"profile\\":{\\"name\\":\\"Ada Lovelace\\",\\"email\\":\\"ada@example.com\\",\\"source\\":\\"git\\"}',
             );
             expect(begin?.tools.map((tool) => tool.name)).toContain("save_profile");
+            // The effort reads as the app shows it, never as its raw ID.
+            expect(JSON.stringify(begin?.messages.at(-1))).toContain(
+                '\\"model\\":{\\"name\\":\\"Gym Codex\\",\\"effort\\":\\"Medium\\"}',
+            );
             // The hidden events are the app's, never shown as anyone's message.
             for (const message of await messages(gym, happy)) {
                 expect(textOf(message)).not.toContain("<happy-onboarding-event>");

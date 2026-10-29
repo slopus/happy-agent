@@ -50,6 +50,21 @@ export const PROVIDER_BUTTONS: readonly {
 const FIRST_STEP =
     "First, let's check which AI subscriptions you already use today. I reuse your existing subscriptions, so there's nothing new to pay for.";
 
+const EFFORT_LABELS: Readonly<Record<string, string>> = {
+    off: "Off",
+    minimal: "Minimal",
+    low: "Low",
+    medium: "Medium",
+    high: "High",
+    xhigh: "Extra high",
+    max: "Max",
+};
+
+/** An effort as the app shows it, "High" rather than the raw `high`. */
+export function effortLabel(effort: string): string {
+    return EFFORT_LABELS[effort] ?? effort.charAt(0).toUpperCase() + effort.slice(1);
+}
+
 /** "Mac" on a Mac; "computer" anywhere else. */
 export function machineWord(platform: NodeJS.Platform): string {
     return platform === "darwin" ? "Mac" : "computer";

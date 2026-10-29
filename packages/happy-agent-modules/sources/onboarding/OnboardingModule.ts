@@ -83,6 +83,7 @@ import {
     PROVIDER_OF,
     accountOf,
     chatProviderId,
+    effortLabel,
     listOf,
     machineWord,
     openingMessage,
@@ -1139,7 +1140,7 @@ export class OnboardingModule implements AgentModule {
         if (happy !== undefined) {
             await this.#useModel(ctx, happy.agentId, update.providerId, update.modelId, effort);
         }
-        return `Set. The default is now ${model?.name ?? update.modelId} · ${effort}, and the rest of onboarding runs on it.`;
+        return `Set. The default is now ${model?.name ?? update.modelId} · ${effortLabel(effort)}, and the rest of onboarding runs on it.`;
     }
 
     /**
@@ -1514,7 +1515,7 @@ export class OnboardingModule implements AgentModule {
             })),
             model: {
                 name: model?.name ?? state.model?.modelId ?? "",
-                effort: model?.defaultEffort ?? "medium",
+                effort: effortLabel(model?.defaultEffort ?? "medium"),
             },
             ...(prefill === undefined ? {} : { profile: prefill }),
         });
