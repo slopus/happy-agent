@@ -30,10 +30,16 @@ export class AbortModule implements AgentModule {
         this.#compute = compute;
     }
 
-    /** Immediately abort the target and every descendant without waiting for them to settle. */
+    /**
+     * Immediately abort the target and every descendant without waiting for them to settle. An
+     * agent that no longer exists is already stopped.
+     */
     async abort(ctx: Context, agentId: string): Promise<void> {
         const agents = this.#requireAgents();
         await ctx.inTx(async (txCtx) => {
+            // An agent deleted for good has nothing left to stop. Work that was told to stop it
+            // before the deletion, such as an archive still retrying, finishes instead of failing.
+            if ((await agents.config(txCtx, agentId)) === undefined) return;
             const chain = await descendantChain(txCtx, agents, agentId);
             // A descendant can report its settlement to its parent. Release leaf cancellations
             // first so those reports arrive before the ancestor's cancellation and cannot reopen

@@ -91,6 +91,13 @@ against each other. A task's agent gets `list_bots` and `send_bot_message` but n
 `set_bot_avatar`, and when a bot created the task its instructions name that bot as the one to
 report to.
 
+## Permanent deletion
+
+`purge(ctx, botId)` deletes an archived bot for good, for an admin's permanent deletion: its
+folder, then its row and picture in one transaction that publishes `bot_deleted`. Its agent is the
+caller's to erase first. The built-in seed ledger stays, so a deleted built-in bot is not seeded
+again.
+
 ## Runners
 
 While runners are configured, a new bot's folder is created on the default runner, recorded as the

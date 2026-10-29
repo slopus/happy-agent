@@ -40,6 +40,10 @@ Signals are registered from the deepest descendants back to the target. A descen
 its settlement to its creator; leaf-first cancellation ensures that report arrives before the
 creator's own abort and cannot reopen an ancestor that was already canceled.
 
+An agent that no longer exists, because it was erased for good, has nothing left to stop: aborting
+it does nothing. Archive work still retrying the shutdown of an agent that was erased meanwhile
+therefore finishes instead of retrying forever.
+
 The traversal is breadth-first, rejects cycles or duplicate identities, and refuses a chain larger
 than `MAX_ABORT_CHAIN_AGENTS` rather than consuming unbounded memory.
 

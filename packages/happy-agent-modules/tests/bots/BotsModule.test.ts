@@ -454,6 +454,32 @@ describe("BotsModule", () => {
         }
     });
 
+    it("deletes an archived bot's folder and row for good, and refuses an active one", async () => {
+        const fixture = await started("bots-purge", true);
+        try {
+            const ctx = fixture.database.context;
+            const bot = await fixture.bots.create(ctx, { name: "Doomed Bot" });
+            await expect(fixture.bots.purge(ctx, bot.id)).rejects.toThrow(
+                "Only an archived bot can be deleted.",
+            );
+            expect((await stat(bot.path)).isDirectory()).toBe(true);
+
+            const archived = await fixture.bots.archive(ctx, bot.id, bot.version);
+            await fixture.bots.purge(ctx, bot.id);
+
+            expect(await fixture.bots.get(ctx, bot.id)).toBeUndefined();
+            expect(await fixture.bots.forAgent(ctx, bot.agentId)).toBeUndefined();
+            await expect(stat(bot.path)).rejects.toMatchObject({ code: "ENOENT" });
+            await vi.waitFor(() => {
+                expect(fixture.events.at(-1)).toMatchObject({ type: "bot_deleted", bot: archived });
+            });
+            // Repeating it once the bot is gone does nothing.
+            await fixture.bots.purge(ctx, bot.id);
+        } finally {
+            await fixture.close();
+        }
+    });
+
     it("normalizes, persists, versions, and clears avatar assets", async () => {
         const fixture = await started("bots-avatar", true);
         try {

@@ -445,6 +445,20 @@ export class EventsModule implements AgentModule<AnyAgentTool> {
             });
         },
 
+        // The last fact recorded about an agent deleted for good. Its earlier events age out of
+        // the window like any other, so nothing else is removed here.
+        agentErasedTransact: async (
+            ctx: Context,
+            scope: AgentModuleSystemScope,
+            agent: AgentModuleAgentLifecycle,
+        ): Promise<void> => {
+            await this.recordInDatabase(ctx, ctx.db, {
+                agentId: agent.id,
+                payload: { id: agent.id },
+                type: "agent.erased",
+            });
+        },
+
         messageAcceptedTransact: async (
             ctx: Context,
             scope: AgentModuleScope,

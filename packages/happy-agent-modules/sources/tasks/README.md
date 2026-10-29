@@ -100,7 +100,7 @@ so the task reports back to it. `SubtasksModule` gives it the same coordinator g
 
 `list`, `listForMember`, `get`, `membership`, `memberFor`, `forAgent`, `forWorkspace`,
 `hasIdentity`, `create`, `createWithResult`, `sendMessage`, `rename`, `join`, `joinAutomatically`, `leave`, `reorder`,
-`archive`, `archiveForAgent`, `unarchive`, and `onEvent`. Task mutations take an expected version
+`archive`, `archiveForAgent`, `unarchive`, `purge`, and `onEvent`. Task mutations take an expected version
 and raise `TaskConflictError` when the row moved; memberships are unversioned because each list
 has one writer. `task_created`, `task_updated`, `task_joined`, `task_reordered`, and `task_left`
 events are published after commit.
@@ -108,7 +108,11 @@ events are published after commit.
 Archival aborts the task's agent and descendants, marks the agent archived, and invokes the
 `tasks.archive` durable function, all in one transaction; the function ends the archived agent's
 machine and background processes after commit and survives restarts. Restoration cancels pending
-cleanup and clears the agent's archival. The folder is never deleted.
+cleanup and clears the agent's archival. The folder is never deleted by archival.
+
+`purge(ctx, taskId)` deletes an archived task for good, for an admin's permanent deletion: its
+folder, then its row with every membership and recorded leave in one transaction that cancels any
+pending archive cleanup and publishes `task_deleted`. Its agent is the caller's to erase first.
 
 ## Storage
 

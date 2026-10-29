@@ -1,4 +1,5 @@
 import { AsyncResource } from "node:async_hooks";
+import { basename } from "node:path";
 
 import { createId } from "@paralleldrive/cuid2";
 import {
@@ -70,6 +71,7 @@ import {
 import { taskMigrations } from "./TaskMigrations.js";
 import {
     deleteMembership,
+    deleteTask,
     insertMembership,
     insertTask,
     readMembership,
@@ -858,6 +860,36 @@ export class TasksModule implements AgentModule {
                 throw new TaskConflictError("Only the agent that created a task may archive it.");
             }
             return await this.#archive(txCtx, current);
+        });
+    }
+
+    /**
+     * Delete an archived task for good: its folder, then its row with every membership and
+     * recorded leave, publishing `task_deleted`. Its agent is not touched here; whoever deletes the
+     * task erases that first. Repeating this once the task is gone does nothing.
+     */
+    async purge(ctx: Context, taskId: string): Promise<void> {
+        const task = await readTask(ctx, taskId);
+        if (task === undefined) return;
+        if (task.status !== "archived") {
+            throw new TaskConflictError("Only an archived task can be deleted.");
+        }
+        if (basename(task.path) !== task.folderName) {
+            throw new TaskConflictError("The task's folder does not match its folder name.");
+        }
+        const machine = await this.#runners.machine(task.runnerId);
+        await machine.fs.rm(PRODUCT, task.path, { force: true, recursive: true });
+        await ctx.inTx(async (txCtx) => {
+            const current = await readTask(txCtx, taskId);
+            if (current === undefined) return;
+            await this.#durableFunctions.cancel(txCtx, `task-archive:${current.agentId}`);
+            await deleteTask(txCtx, taskId);
+            await this.#publish(txCtx, {
+                eventId: globalThis.crypto.randomUUID(),
+                at: Math.max(Date.now(), current.updatedAt + 1),
+                type: "task_deleted",
+                task: current,
+            });
         });
     }
 

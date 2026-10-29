@@ -9,7 +9,7 @@ import {
     type TaskMembership,
     type TaskRecord,
 } from "./Task.js";
-import { TASK_MEMBERS_TABLE, TASKS_TABLE } from "./TaskMigrations.js";
+import { TASK_LEAVES_TABLE, TASK_MEMBERS_TABLE, TASKS_TABLE } from "./TaskMigrations.js";
 
 interface TaskRow {
     readonly id: string;
@@ -193,6 +193,19 @@ export async function deleteMembership(
         sql`DELETE FROM ${sql.raw(TASK_MEMBERS_TABLE)}
             WHERE task_id = ${taskId} AND member_id = ${memberId}`,
     );
+}
+
+/** Remove a task's row with every membership and recorded leave of it. */
+export async function deleteTask(ctx: Context, taskId: string): Promise<void> {
+    await agentDatabaseRun(
+        ctx.db,
+        sql`DELETE FROM ${sql.raw(TASK_MEMBERS_TABLE)} WHERE task_id = ${taskId}`,
+    );
+    await agentDatabaseRun(
+        ctx.db,
+        sql`DELETE FROM ${sql.raw(TASK_LEAVES_TABLE)} WHERE task_id = ${taskId}`,
+    );
+    await agentDatabaseRun(ctx.db, sql`DELETE FROM ${sql.raw(TASKS_TABLE)} WHERE id = ${taskId}`);
 }
 
 function membershipFromRow(row: MembershipRow): TaskMembership {

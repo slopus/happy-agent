@@ -4242,6 +4242,8 @@ export class SpacesModule implements AgentModule {
                     await this.#closeWork(ctx, `task:${event.membership.taskId}`, [
                         event.membership.memberId,
                     ]);
+                } else if (event.type === "task_deleted") {
+                    await this.#closeWork(ctx, `task:${event.task.id}`);
                 } else if (event.type === "task_updated") {
                     if (
                         event.task.status === "archived" &&
@@ -4276,7 +4278,9 @@ export class SpacesModule implements AgentModule {
                 if (lifetime === undefined) return;
                 const ctx = lifetime.named("spaces-bot-event");
                 if (event.bot.systemKey !== undefined) return;
-                if (
+                if (event.type === "bot_deleted") {
+                    await this.#closeWork(ctx, `bot:${event.bot.id}`);
+                } else if (
                     event.type === "bot_created" ||
                     (event.bot.status === "active" && event.previousBot.status === "archived")
                 ) {

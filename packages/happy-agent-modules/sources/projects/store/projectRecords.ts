@@ -5,7 +5,12 @@ import type { Context } from "@steve.kite/stdlib";
 
 import { projectOrderKeySchema, projectVersionSchema, type Project } from "../Project.js";
 import { projectOrderKeyBetween } from "./projectRootAgentOrdering.js";
-import { PROJECTS_TABLE, PROJECT_SETTINGS_TABLE } from "../ProjectMigrations.js";
+import {
+    PROJECT_AVATARS_TABLE,
+    PROJECT_ROOT_AGENTS_TABLE,
+    PROJECT_SETTINGS_TABLE,
+    PROJECTS_TABLE,
+} from "../ProjectMigrations.js";
 import { projectFromRow, type ProjectRow } from "../ProjectRow.js";
 import { ProjectLifecycleError } from "../ProjectLifecycleError.js";
 
@@ -148,6 +153,27 @@ export function assertExpectedProjectVersion(
     if (expectedVersion === undefined) return;
     if (!Value.Check(projectVersionSchema, expectedVersion)) throw new Error(message);
     if (project.version !== expectedVersion) throw new ProjectLifecycleError(message, project);
+}
+
+/** Removes a project's row with its settings, avatar, and root-agent placements. */
+export async function deleteProjectRecord(
+    database: AgentDatabase,
+    projectId: string,
+): Promise<void> {
+    for (const table of [
+        PROJECT_SETTINGS_TABLE,
+        PROJECT_AVATARS_TABLE,
+        PROJECT_ROOT_AGENTS_TABLE,
+    ]) {
+        await agentDatabaseRun(
+            database,
+            sql`DELETE FROM ${sql.raw(table)} WHERE project_id = ${projectId}`,
+        );
+    }
+    await agentDatabaseRun(
+        database,
+        sql`DELETE FROM ${sql.raw(PROJECTS_TABLE)} WHERE id = ${projectId}`,
+    );
 }
 
 /** Writes a complete new project row and its empty settings row. */

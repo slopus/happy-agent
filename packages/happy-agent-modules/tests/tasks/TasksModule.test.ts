@@ -364,6 +364,32 @@ describe("TasksModule", () => {
         }
     });
 
+    it("deletes an archived task's folder and row for good", async () => {
+        const fixture = await started("tasks-purge");
+        try {
+            const ctx = fixture.database.context;
+            const task = await fixture.tasks.create(ctx, { name: "Doomed" });
+            await expect(fixture.tasks.purge(ctx, task.id)).rejects.toThrow(
+                "Only an archived task can be deleted.",
+            );
+            expect((await stat(task.path)).isDirectory()).toBe(true);
+
+            const archived = await fixture.tasks.archive(ctx, task.id, task.version);
+            fixture.events.length = 0;
+            await fixture.tasks.purge(ctx, task.id);
+
+            expect(await fixture.tasks.get(ctx, task.id)).toBeUndefined();
+            expect(await fixture.tasks.forAgent(ctx, task.agentId)).toBeUndefined();
+            await expect(stat(task.path)).rejects.toMatchObject({ code: "ENOENT" });
+            await vi.waitFor(() => {
+                expect(fixture.events).toMatchObject([{ type: "task_deleted", task: archived }]);
+            });
+            await fixture.tasks.purge(ctx, task.id);
+        } finally {
+            await fixture.close();
+        }
+    });
+
     it("offers the task catalog to bots and people, but not to tasks or subagents", async () => {
         const fixture = await started("tasks-tools");
         try {

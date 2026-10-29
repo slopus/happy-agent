@@ -134,11 +134,12 @@ import {
 } from "./tools/index.js";
 import {
     attachProjectRootAgent,
+    detachProjectRootAgent,
     listProjectRootAgents,
     projectForProjectRootAgent,
     reorderProjectRootAgent,
 } from "./store/projectRootAgents.js";
-import { touchProject } from "./store/projectRecords.js";
+import { deleteProjectRecord, touchProject } from "./store/projectRecords.js";
 import {
     PROJECT_ARCHIVE_FUNCTION,
     PROJECT_CLEANUP_FUNCTION,
@@ -339,6 +340,10 @@ export class ProjectsModule implements AgentModule {
                 createProjectTool(this),
                 cloneProjectTool(this),
             ];
+        },
+        // An agent deleted for good leaves the project it was a root agent of.
+        agentErasedTransact: async (ctx, _scope, agent) => {
+            await detachProjectRootAgent(ctx, agent.id);
         },
     };
 
@@ -856,6 +861,71 @@ export class ProjectsModule implements AgentModule {
                     ),
             },
         );
+    }
+
+    /**
+     * The folder Happy Agent cloned a project into, which `purge` removes, or undefined for a
+     * folder the person registered, which nothing here ever removes.
+     */
+    async managedDirectory(project: Project): Promise<string | undefined> {
+        if (project.remoteSource === undefined) return undefined;
+        const expected = join(
+            await this.#runners.projectsHome(project.runnerId),
+            project.storageKey,
+        );
+        return project.repositoryRef === expected ? expected : undefined;
+    }
+
+    /**
+     * Permanently deletes an archived project: the folder Happy Agent cloned it into, when it
+     * cloned one, and its settings, avatar, root-agent placements, and row.
+     *
+     * A folder the person registered is theirs and is never touched. The project's workspaces must
+     * already be deleted and its agents erased; both are the caller's, because the catalogs that
+     * own them sit above this one. Running it again after it finished does nothing.
+     */
+    async purge(ctx: Context, projectId: string): Promise<void> {
+        this.#assertId(projectId);
+        const project = await this.get(ctx, projectId);
+        if (project === undefined) return;
+        if (project.kind === "home") throw new Error("The home project cannot be deleted.");
+        if (project.status !== "archived") {
+            throw new Error("Only an archived project can be deleted.");
+        }
+        await this.runInProjectGitLock(ctx, projectId, async (lockedCtx) => {
+            let machine: Compute | undefined;
+            try {
+                machine = await this.#runners.machine(project.runnerId);
+            } catch (error) {
+                // Nothing runs on this machine any more, not even a removal.
+                if (!(error instanceof LocalExecutionDisabledError)) throw error;
+            }
+            if (machine !== undefined) {
+                await removeManagedProjectDirectory({
+                    machine,
+                    managedProjectsDirectory: await this.#runners.projectsHome(project.runnerId),
+                    project,
+                });
+            }
+            await lockedCtx.inTx(async (txCtx) => {
+                await this.#durableFunctions.cancel(
+                    txCtx,
+                    projectOperationId("archive", projectId),
+                );
+                await this.#durableFunctions.cancel(
+                    txCtx,
+                    projectOperationId("cleanup", projectId),
+                );
+                const current = await this.#mutations.getOptional(txCtx, projectId);
+                if (current === undefined) return;
+                await deleteProjectRecord(txCtx.db, projectId);
+                await this.#mutations.observeMutation(
+                    lockedCtx,
+                    txCtx,
+                    this.#mutations.newEvent({ type: "project_deleted", project: current }),
+                );
+            });
+        });
     }
 
     /** Brings an archived project back. Restoring an active project changes nothing. */

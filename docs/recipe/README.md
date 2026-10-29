@@ -52,6 +52,13 @@ configures both ends over existing administration access, then checks the
 same authenticated session in both directions. The desktop initiates outbound;
 only the reachable installation listens.
 
+## Cleaning up an installation
+
+Read [Clean up an installation](clean-up-instance.md) when the user wants old bots, tasks,
+subtasks, projects, workspaces, or folders gone. Only an active admin bot has the cleanup tools.
+Archive by default; delete only what the user chose, preview every deletion first, and remember
+that deletion erases conversations and cannot be undone.
+
 ## Windows and WSL
 
 Read [Set up WSL projects](setup-wsl-agent.md) when adding Linux projects to a Windows installation.

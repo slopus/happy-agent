@@ -220,11 +220,11 @@ describe("GET /v0/authentication with JWT team authentication", () => {
 });
 
 describe("GET /v0/health", () => {
-    it("advertises the daemon's live failure-switch protocol guarantee", async () => {
+    it("advertises the daemon's permanent-deletion protocol guarantee", async () => {
         const { call, token } = await harness("standalone");
 
         expect((await call("/v0/health", `Bearer ${token!}`)).body).toMatchObject({
-            version: { protocol: 32 },
+            version: { protocol: 33 },
         });
     });
 });

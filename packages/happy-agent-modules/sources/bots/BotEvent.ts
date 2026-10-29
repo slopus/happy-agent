@@ -22,6 +22,11 @@ export const botEventSchema = Type.Union([
         },
         { additionalProperties: false },
     ),
+    /** An admin deleted the bot for good; `bot` is its last state. */
+    Type.Object(
+        { ...envelope, type: Type.Literal("bot_deleted"), bot: botRecordSchema },
+        { additionalProperties: false },
+    ),
 ]);
 
 export type BotEvent = Static<typeof botEventSchema>;

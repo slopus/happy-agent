@@ -110,6 +110,9 @@ tool calls, and tool results), let the model size what it did and did not see wi
 - `resolveTarget(ctx, requesterAgentId, requestedTarget): Promise<string>` — the resolution behind
   the tool's `target` argument. Requesting one's own ID always resolves; anything else is used as
   a raw Agent ID as long as it is a well-formed one, and is refused when it is not.
+- `runActivity(ctx): Promise<ReadonlyMap<string, HistoryRunActivity>>` — when every agent that has
+  ever run last worked, and whether a run is open now, from one grouped read of run lifecycle rows.
+  The cleanup module rolls it up through agent trees.
 - `onAppend(listener): () => void` — subscribe to committed appends. The listener is called after
   the appending transaction commits, with a private clone of the messages, and the returned
   function unsubscribes. Subscribers are independent: one that fails is logged through `ctx.log`
@@ -139,7 +142,9 @@ message containing that call, including its one-line display summary),
 `afterInferenceTransact` (flushes any remaining buffered blocks or configuration records and, if
 inference failed, writes a separate `role: "error"` message), `afterAgentActivatedTransact`
 (reconciles any response blocks left in `pending_blocks` when Base restores interrupted work), and
-`afterAgentSettledTransact` (flushes any response blocks still pending after an interruption).
+`afterAgentSettledTransact` (flushes any response blocks still pending after an interruption), and
+`agentErasedTransact` (deletes every message, run, pending message, and tool-call index row of an
+agent erased for good, in the erasing transaction).
 These are not meant to be called directly.
 
 ## Storage

@@ -404,7 +404,7 @@ import {
 } from "./ApiSpaceProjection.js";
 import { SubtaskInputError, SubtasksModule } from "../subtasks/index.js";
 
-const API_PROTOCOL_VERSION = 32;
+const API_PROTOCOL_VERSION = 33;
 const createArtifactRequestSchema = Type.Composite([
     Type.Omit(publishedCreateArtifactRequestSchema, ["type"]),
     Type.Object({ type: artifactTypeSchema }),
@@ -3083,6 +3083,26 @@ export class ApiModule implements AgentModule {
     }
 
     async #convertProjectEvent(ctx: Context, event: ProjectEvent): Promise<void> {
+        if (event.type === "project_deleted") {
+            // A project is also its own root workspace, and both share the project's version.
+            const project = event.project;
+            const previousVersion = apiResourceVersion(
+                project.updatedAt,
+                project.version,
+                project.id,
+            );
+            this.#journal.append(
+                "project.removed",
+                { projectId: project.id, previousVersion },
+                event.at,
+            );
+            this.#journal.append(
+                "workspace.removed",
+                { workspaceId: project.id, previousVersion },
+                event.at,
+            );
+            return;
+        }
         if (event.type === "project_settings_updated") {
             const resource = await this.#projectWithAgents(ctx, event.project);
             this.#journal.append(
@@ -3192,6 +3212,17 @@ export class ApiModule implements AgentModule {
     }
 
     async #convertWorkspaceEvent(ctx: Context, event: WorkspaceEvent): Promise<void> {
+        if (event.type === "workspace_deleted") {
+            this.#journal.append(
+                "workspace.removed",
+                {
+                    workspaceId: event.workspace.id,
+                    previousVersion: workspaceResource(event.workspace)["version"],
+                },
+                event.at,
+            );
+            return;
+        }
         const resource: Record<string, unknown> = {
             ...workspaceResource(event.workspace),
             agents: await this.#agentsForWorkspace(ctx, event.workspace.id),
@@ -3223,6 +3254,31 @@ export class ApiModule implements AgentModule {
     }
 
     async #convertBotEvent(ctx: Context, event: BotEvent): Promise<void> {
+        if (event.type === "bot_deleted") {
+            // The bot's agent was erased before its row, so the removal names versions only.
+            const bot = event.bot;
+            this.#journal.append(
+                "bot.removed",
+                {
+                    botId: bot.id,
+                    previousVersion: apiResourceVersion(bot.updatedAt, bot.version, bot.id),
+                },
+                event.at,
+            );
+            this.#journal.append(
+                "workspace.removed",
+                {
+                    workspaceId: bot.workspaceId,
+                    previousVersion: apiResourceVersion(
+                        bot.workspaceUpdatedAt,
+                        bot.workspaceVersion,
+                        bot.workspaceId,
+                    ),
+                },
+                event.at,
+            );
+            return;
+        }
         // Agent creation and archival have their own independently versioned event chain. Bot
         // delivery runs inside the catalog's post-commit notification, so it must not wait on
         // another post-commit chain from that same transaction.
@@ -3290,6 +3346,18 @@ export class ApiModule implements AgentModule {
                 { membership: taskMembershipResource(event.membership) },
                 event.at,
                 memberId === STANDALONE_TASK_MEMBER ? undefined : memberId,
+            );
+            return;
+        }
+        if (event.type === "task_deleted") {
+            const task = event.task;
+            this.#journal.append(
+                "task.removed",
+                {
+                    taskId: task.id,
+                    previousVersion: apiResourceVersion(task.updatedAt, task.version, task.id),
+                },
+                event.at,
             );
             return;
         }
@@ -3484,6 +3552,20 @@ export class ApiModule implements AgentModule {
         if (event.type !== "message.accepted" && this.#acceptedMessageBatches.has(agentId)) {
             await this.#waitForPendingMessageAnnouncements(agentId);
             await this.#flushAcceptedMessages(ctx, agentId);
+        }
+        if (event.type === "agent.erased") {
+            // An agent whose earlier events all aged out still had a version; its own removal
+            // event is the newest one a client could have been shown.
+            this.#journal.append(
+                "agent.removed",
+                {
+                    agentId,
+                    previousVersion:
+                        (await this.#events.previousCursor(ctx, agentId, event.id)) ?? event.id,
+                },
+                event.occurredAt,
+            );
+            return;
         }
         if (event.type === "scheduling.wait-changed") {
             const wait = payload?.["wait"];

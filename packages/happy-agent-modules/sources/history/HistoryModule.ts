@@ -8,8 +8,10 @@ import type {
     AgentBaseToolOutcome,
     AgentBaseTurn,
     AgentModule,
+    AgentModuleAgentLifecycle,
     AgentModuleHooks,
     AgentModuleScope,
+    AgentModuleSystemScope,
     AnyAgentTool,
 } from "@slopus/happy-agent-base";
 import type {
@@ -133,6 +135,7 @@ import {
     MAX_HISTORY_RUNS_PER_PAGE,
     type HistoryPendingMessage,
     type HistoryRun,
+    type HistoryRunActivity,
     type HistoryRunState,
     type HistoryRunsPage,
     type HistoryRunsQuery,
@@ -1076,6 +1079,35 @@ export class HistoryModule implements AgentModule {
             throw new Error("The history module found multiple running runs for one agent.");
         }
         return rows[0] === undefined ? undefined : runStateFromRow(rows[0]);
+    }
+
+    /**
+     * When every agent that has ever run last worked: the latest time one of its runs started or
+     * settled, and whether a run is open now. One grouped read of run lifecycle rows, never of
+     * messages, so it stays cheap on an installation with long conversations.
+     */
+    async runActivity(ctx: Context): Promise<ReadonlyMap<string, HistoryRunActivity>> {
+        const rows = await agentDatabaseRows<{
+            agent_id: string;
+            at: number | string | bigint;
+            running: number | string | bigint;
+        }>(
+            ctx.db,
+            sql`SELECT agent_id,
+                       MAX(COALESCE(ended_at, started_at)) AS at,
+                       MAX(CASE WHEN status = 'running' THEN 1 ELSE 0 END) AS running
+                FROM ${sql.raw(HISTORY_RUNS_TABLE)}
+                GROUP BY agent_id`,
+        );
+        return new Map(
+            rows.map((row) => [
+                row.agent_id,
+                {
+                    at: toSafeInteger(row.at, "run activity time"),
+                    running: toSafeInteger(row.running, "run activity state") === 1,
+                },
+            ]),
+        );
     }
 
     /** Read the run immediately preceding one exact run in the agent's durable sequence. */
@@ -2347,6 +2379,21 @@ export class HistoryModule implements AgentModule {
         return page;
     }
 
+    /** Remove every message, run, pending message, and tool-call index row of one agent. */
+    async #erase(ctx: Context, agentId: string): Promise<void> {
+        for (const table of [
+            HISTORY_TABLE,
+            HISTORY_RUNS_TABLE,
+            HISTORY_PENDING_TABLE,
+            HISTORY_TOOL_CALLS_TABLE,
+        ]) {
+            await agentDatabaseRun(
+                ctx.db,
+                sql`DELETE FROM ${sql.raw(table)} WHERE agent_id = ${agentId}`,
+            );
+        }
+    }
+
     async #direct<Result>(
         ctx: Context,
         work: (txCtx: Context) => Promise<Result>,
@@ -2404,6 +2451,15 @@ export class HistoryModule implements AgentModule {
         tools: (_ctx: Context, scope: AgentModuleScope): readonly AnyAgentTool[] => [
             readAgentHistoryTool(this, scope.agent.id),
         ],
+
+        /** An agent deleted for good takes its conversation with it, in the same transaction. */
+        agentErasedTransact: async (
+            ctx: Context,
+            _scope: AgentModuleSystemScope,
+            agent: AgentModuleAgentLifecycle,
+        ): Promise<void> => {
+            await this.#erase(ctx, agent.id);
+        },
 
         /**
          * Keep each completed block of the response in the run-scoped Agent KV.

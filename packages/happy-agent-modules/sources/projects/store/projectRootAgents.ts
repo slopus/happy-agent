@@ -52,6 +52,14 @@ export async function attachProjectRootAgent(
     return orderedAssociation;
 }
 
+/** Removes an agent from whichever project it was a root agent of. */
+export async function detachProjectRootAgent(ctx: Context, agentId: string): Promise<void> {
+    await agentDatabaseRun(
+        databaseFor(ctx),
+        sql`DELETE FROM ${sql.raw(PROJECT_ROOT_AGENTS_TABLE)} WHERE agent_id = ${agentId}`,
+    );
+}
+
 /** Root-agent associations in durable order. */
 export async function listProjectRootAgents(
     ctx: Context,

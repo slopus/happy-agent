@@ -1,4 +1,5 @@
 import { AsyncResource } from "node:async_hooks";
+import { basename } from "node:path";
 
 import { createId } from "@paralleldrive/cuid2";
 import { orderKeyBetween } from "../utils/orderKeyBetween.js";
@@ -57,6 +58,7 @@ import {
 } from "./BotEvent.js";
 import { botMigrations } from "./BotMigrations.js";
 import {
+    deleteBot,
     deleteBotAvatar,
     insertBot,
     readBot,
@@ -722,6 +724,36 @@ export class BotsModule implements AgentModule {
                 status: "archived",
                 archivedAt: Date.now(),
             }));
+        });
+    }
+
+    /**
+     * Delete an archived bot for good: its folder, then its row and picture, publishing
+     * `bot_deleted`. Its agent is not touched here; whoever deletes the bot erases that first. The
+     * system seed ledger stays, so a deleted built-in bot is never seeded again. Repeating this
+     * once the bot is gone does nothing.
+     */
+    async purge(ctx: Context, botId: string): Promise<void> {
+        const bot = await readBot(ctx, botId);
+        if (bot === undefined) return;
+        if (bot.status !== "archived") {
+            throw new BotConflictError("Only an archived bot can be deleted.");
+        }
+        if (basename(bot.path) !== bot.username) {
+            throw new BotConflictError("The bot's folder does not match its username.");
+        }
+        const machine = await this.#runners.machine(bot.runnerId);
+        await machine.fs.rm(PRODUCT, bot.path, { force: true, recursive: true });
+        await ctx.inTx(async (txCtx) => {
+            const current = await readBot(txCtx, botId);
+            if (current === undefined) return;
+            await deleteBot(txCtx, botId);
+            this.#publish(txCtx, {
+                eventId: globalThis.crypto.randomUUID(),
+                at: Math.max(Date.now(), current.updatedAt + 1),
+                type: "bot_deleted",
+                bot: current,
+            });
         });
     }
 

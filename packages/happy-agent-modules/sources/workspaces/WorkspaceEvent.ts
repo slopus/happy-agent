@@ -123,6 +123,15 @@ export const workspaceEventSchema = Type.Union([
         },
         { additionalProperties: false },
     ),
+    /** An archived workspace was permanently deleted; `workspace` is its last stored row. */
+    Type.Object(
+        {
+            ...eventEnvelope,
+            type: Type.Literal("workspace_deleted"),
+            workspace: workspaceSchema,
+        },
+        { additionalProperties: false },
+    ),
 ]);
 
 export type WorkspaceUpdateChange = Static<typeof workspaceUpdateChangeSchema>;

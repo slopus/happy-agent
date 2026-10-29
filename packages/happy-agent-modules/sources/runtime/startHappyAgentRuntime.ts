@@ -55,6 +55,7 @@ import { DurableFunctionsModule } from "../durableFunctions/index.js";
 import { EventsModule } from "../events/index.js";
 import { ProjectFilesModule } from "../files/index.js";
 import { ChatMediaModule } from "../chatMedia/index.js";
+import { CleanupModule } from "../cleanup/index.js";
 import { GeminiModule } from "../gemini/index.js";
 import { GitModule } from "../git/index.js";
 import { GoalModule } from "../goal/index.js";
@@ -162,6 +163,7 @@ export interface HappyAgentRuntimeModules {
     readonly bridges: BridgesModule;
     readonly botSettings: BotSettingsModule;
     readonly chatMedia: ChatMediaModule;
+    readonly cleanup: CleanupModule;
     readonly exportedBots: ExportedBotsModule;
     readonly collaboration: CollaborationModule;
     readonly subtasks: SubtasksModule;
@@ -626,6 +628,18 @@ export async function startHappyAgentRuntime(
             botSettings,
         );
         const scheduling = new SchedulingModule(botSettings, history);
+        const cleanup = new CleanupModule(
+            config,
+            runners,
+            bots,
+            tasks,
+            subtasks,
+            projects,
+            workspaces,
+            history,
+            abort,
+            durableFunctions,
+        );
         const userInput = new UserInputModule(presence);
         const mcp = new McpModule(config, userInput, workspaces, runners, compute.computeModule);
         registerShutdown("mcp", async () => await mcp.close());
@@ -790,6 +804,7 @@ export async function startHappyAgentRuntime(
             bridges,
             botSettings,
             chatMedia,
+            cleanup,
             exportedBots,
             collaboration,
             subtasks,
@@ -892,6 +907,7 @@ export async function startHappyAgentRuntime(
             artifacts,
             artifactData,
             node,
+            cleanup,
             skillFolders,
             tailcat,
             mobileConnector,

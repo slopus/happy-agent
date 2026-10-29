@@ -57,6 +57,17 @@ export async function insertWorkspaceAgent(
     );
 }
 
+/** Removes an agent from whichever workspace it was placed in. */
+export async function deleteWorkspaceAgent(
+    database: AgentDatabase,
+    agentId: string,
+): Promise<void> {
+    await agentDatabaseRun(
+        database,
+        sql`DELETE FROM ${sql.raw(WORKSPACE_AGENTS_TABLE)} WHERE agent_id = ${agentId}`,
+    );
+}
+
 export async function updateWorkspaceAgentOrder(
     database: AgentDatabase,
     workspaceId: string,

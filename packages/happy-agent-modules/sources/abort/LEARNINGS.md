@@ -8,3 +8,10 @@ Abort now releases every signal immediately outside temporary database ownership
 keeps cleanup on its independently owned process context. The service runtime and filesystem
 removal barriers retain responsibility for confirming teardown. Aborting never claims that the
 service or sandbox has already exited, and failure never authorizes deleting its workspace.
+
+## An erased agent is already stopped
+
+Permanent deletion erases agents while workspace and project archival may still be retrying their
+shutdown. Aborting an identity that no longer exists used to throw, so those retries never
+finished. Abort now returns without signalling anything when the agent's configuration is gone:
+nothing of it is left to stop.

@@ -14,6 +14,12 @@ class Collection {
     readonly databases: unknown[] = [];
     readonly children = new Map<string, readonly string[]>();
     abortFailureAgentId: string | undefined;
+    /** Agents deleted for good; every other identity a test names exists. */
+    readonly erased = new Set<string>();
+
+    async config(_ctx: Context, agentId: string): Promise<object | undefined> {
+        return this.erased.has(agentId) ? undefined : {};
+    }
 
     async childOf(ctx: Context, agentId: string): Promise<readonly string[]> {
         this.databases.push(ctx.db);
@@ -193,6 +199,20 @@ describe("AbortModule", () => {
             await expect(abort.abort(database.context, "root")).rejects.toThrow("abort failed");
             expect(collection.aborted).toEqual([]);
             expect(compute.notices).toEqual([]);
+            expect(compute.hardKillCalls).toEqual([]);
+        } finally {
+            database.close();
+        }
+    });
+
+    it("treats an agent deleted for good as already stopped", async () => {
+        const collection = new Collection();
+        seedTree(collection);
+        collection.erased.add("root");
+        const { abort, compute, database } = await started("abort-chain-erased", collection);
+        try {
+            await abort.abort(database.context, "root");
+            expect(collection.aborted).toEqual([]);
             expect(compute.hardKillCalls).toEqual([]);
         } finally {
             database.close();

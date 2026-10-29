@@ -206,6 +206,13 @@ Registration and catalog edits:
   Archival cancels provisioning and schedules durable agent shutdown in the
   same transaction. Managed remote roots are deleted only after every child
   workspace has archived; restore cancels both archive and cleanup operations.
+- `purge` deletes an archived project for good, for an admin's permanent
+  deletion: the folder it was cloned into, when `managedDirectory` names one,
+  then its settings, avatar, root-agent placements, and row in one
+  transaction that emits `project_deleted`. A folder a person registered is
+  never removed, and the home project is refused. Its workspaces and agents
+  are the caller's to delete first. An erased agent leaves the project through
+  the module's `agentErasedTransact` hook.
 
 Lifecycle, each recording what was observed or done:
 

@@ -110,3 +110,16 @@ export const historyRunsPageSchema = Type.Object(
 );
 
 export type HistoryRunsPage = Static<typeof historyRunsPageSchema>;
+
+/** When one agent last worked, by its run lifecycle alone. */
+export const historyRunActivitySchema = Type.Object(
+    {
+        /** The latest time one of its runs started or settled. */
+        at: historyTimestampSchema,
+        /** Whether a run is open now. */
+        running: Type.Boolean(),
+    },
+    { additionalProperties: false },
+);
+
+export type HistoryRunActivity = Static<typeof historyRunActivitySchema>;

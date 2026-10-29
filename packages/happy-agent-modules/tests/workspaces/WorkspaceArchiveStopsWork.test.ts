@@ -29,6 +29,11 @@ class RecordingCollection {
     readonly children = new Map<string, readonly string[]>();
     failingAgentId: string | undefined;
 
+    /** Every agent a test names exists. */
+    async config(): Promise<object> {
+        return {};
+    }
+
     async childOf(_ctx: Context, agentId: string): Promise<readonly string[]> {
         return this.children.get(agentId) ?? [];
     }

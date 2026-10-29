@@ -54,7 +54,7 @@ All event identifiers are validated against a strict UUIDv7 pattern at runtime.
 
 The module implements the standard `AgentModule` lifecycle hooks and records raw events for:
 
-- `agent.created`, `agent.restored`, `agent.archived`
+- `agent.created`, `agent.restored`, `agent.archived`, `agent.erased`
 - `message.accepted`
 - `agent.permission-changed`, `agent.metadata-changed`
 - `loop.started`

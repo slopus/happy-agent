@@ -135,6 +135,15 @@ committed. Shutdown leaves a pending call for Durable Functions to recover, so `
 window rather than a startup-sweep resting state. Completion also re-runs sync convergence, which
 disarms the project watch when its last ready workspace disappears.
 
+`purge(ctx, workspaceId)` deletes an archived workspace for good, for an admin's permanent
+deletion. It refuses one still `archiving`, because that archival is still stopping its agents, and
+one with child workspaces, which go first. Under the project's Git lock it removes the folder or
+worktree whatever the keep-on-archive settings say and deletes the branch the worktree was cut as;
+Git still refuses a branch another worktree has checked out. Then one transaction deletes the row
+and its agent placements and emits `workspace_deleted`. The agents themselves are the caller's to
+erase. An agent erased with `AgentSystemRef.erase` leaves its placement through the module's
+`agentErasedTransact` hook, in the erasing transaction.
+
 ## Tools it provides to the model
 
 They are offered to root agents while `features.workspaces` is on, except to an agent whose bot
@@ -279,8 +288,8 @@ keys and branches.
 Every changed mutation emits a `WorkspaceEvent`: `workspace_created`, `workspace_updated` (carrying
 a `change` naming the transition), `workspace_renamed`, `workspace_reordered` (with
 `previousOrderKey`), `workspace_archived`, `workspace_agent_attached`,
-`workspace_agent_reordered`, or `workspace_agent_visibility_changed`. Each carries `eventId`, `at`,
-and the resulting workspace. A subscriber taken by `onEventTransactional(listener)` runs inside the
+`workspace_agent_reordered`, `workspace_agent_visibility_changed`, or `workspace_deleted`. Each
+carries `eventId`, `at`, and the resulting workspace; `workspace_deleted` carries the last stored row. A subscriber taken by `onEventTransactional(listener)` runs inside the
 same store transaction as the mutation, so a subscriber that throws rolls the mutation back with
 it. A subscriber taken by `onEvent(listener)` runs only after that transaction has durably
 committed, receiving the identical frozen event object; a failure there is logged and reaches

@@ -147,3 +147,11 @@ number of workspaces. `011-workspace-order-keys-renumbered` renumbers the siblin
 that already hold a key past half the bound, in their order, and advances each renumbered
 workspace's version so clients take the new key; other parents are left alone. Agent series keys are
 mirrored into agent metadata the catalog cannot version, so they are not renumbered.
+
+## Permanent deletion follows archival, not the keep settings
+
+Admins asked for deletion that really removes folders, conversations, and branches. `purge` runs
+only on an archived workspace, after archival has stopped its agents, and removes the folder even
+when keep-on-archive settings kept it, then deletes the worktree's branch. Those settings describe
+archival, which is reversible in spirit; deletion is not. A branch Git refuses to delete because
+another worktree has it checked out stays, and the purge retries rather than forcing it.

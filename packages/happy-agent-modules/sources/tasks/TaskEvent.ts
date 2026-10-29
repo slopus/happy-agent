@@ -22,6 +22,11 @@ export const taskEventSchema = Type.Union([
         },
         { additionalProperties: false },
     ),
+    /** An admin deleted the task for good; `task` is its last state. */
+    Type.Object(
+        { ...envelope, type: Type.Literal("task_deleted"), task: taskRecordSchema },
+        { additionalProperties: false },
+    ),
     Type.Object(
         { ...envelope, type: Type.Literal("task_joined"), membership: taskMembershipSchema },
         { additionalProperties: false },

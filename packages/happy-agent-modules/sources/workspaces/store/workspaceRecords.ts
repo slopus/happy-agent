@@ -4,7 +4,7 @@ import { TypeCompiler, type TypeCheck } from "@sinclair/typebox/compiler";
 
 import { workspaceSchema, type Workspace } from "../Workspace.js";
 import { workspaceNameKey } from "../WorkspaceIdentity.js";
-import { WORKSPACES_TABLE } from "../WorkspaceMigrations.js";
+import { WORKSPACE_AGENTS_TABLE, WORKSPACES_TABLE } from "../WorkspaceMigrations.js";
 
 type WorkspaceRow = {
     readonly id: string;
@@ -284,6 +284,21 @@ export async function touchWorkspace(
             updatedAt: Date.now(),
         },
         workspace.version,
+    );
+}
+
+/** Removes a workspace's row together with every agent placed in it. */
+export async function deleteWorkspaceRecord(
+    database: AgentDatabase,
+    workspaceId: string,
+): Promise<void> {
+    await agentDatabaseRun(
+        database,
+        sql`DELETE FROM ${sql.raw(WORKSPACE_AGENTS_TABLE)} WHERE workspace_id = ${workspaceId}`,
+    );
+    await agentDatabaseRun(
+        database,
+        sql`DELETE FROM ${sql.raw(WORKSPACES_TABLE)} WHERE id = ${workspaceId}`,
     );
 }
 

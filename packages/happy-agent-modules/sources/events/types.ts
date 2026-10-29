@@ -119,6 +119,7 @@ export const EVENT_TYPE = {
     AGENT_CREATED: "agent.created",
     AGENT_RESTORED: "agent.restored",
     AGENT_ARCHIVED: "agent.archived",
+    AGENT_ERASED: "agent.erased",
     MESSAGE_ACCEPTED: "message.accepted",
     PERMISSION_CHANGED: "agent.permission-changed",
     METADATA_CHANGED: "agent.metadata-changed",

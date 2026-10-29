@@ -193,6 +193,12 @@ export async function deleteBotAvatar(ctx: Context, botId: string): Promise<void
     );
 }
 
+/** Remove a bot's row and its picture. The system seed ledger is deliberately left alone. */
+export async function deleteBot(ctx: Context, botId: string): Promise<void> {
+    await deleteBotAvatar(ctx, botId);
+    await agentDatabaseRun(ctx.db, sql`DELETE FROM ${sql.raw(BOTS_TABLE)} WHERE id = ${botId}`);
+}
+
 function botFromRow(row: BotRow): BotRecord {
     const hasAvatar = row.avatar_source !== null && row.avatar_thumbhash !== null;
     const bot: BotRecord = {

@@ -69,6 +69,15 @@ export const projectEventSchema = Type.Union([
         },
         { additionalProperties: false },
     ),
+    /** An archived project was permanently deleted; `project` is its last stored row. */
+    Type.Object(
+        {
+            ...projectEventEnvelope,
+            type: Type.Literal("project_deleted"),
+            project: projectSchema,
+        },
+        { additionalProperties: false },
+    ),
     Type.Object(
         {
             ...projectEventEnvelope,

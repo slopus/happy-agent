@@ -36,6 +36,9 @@ export * from "./exportedBots/index.js";
 // Bot settings: the owner's restrictions on each bot and every agent working under it.
 export * from "./botSettings/index.js";
 
+// Cleanup: admin search over the installation, folder ownership, and orphaned folders.
+export * from "./cleanup/index.js";
+
 // Tasks: persistent owned conversations with dedicated folders, roots of their own subtasks.
 export * from "./tasks/index.js";
 export * from "./taskAutoJoin/index.js";

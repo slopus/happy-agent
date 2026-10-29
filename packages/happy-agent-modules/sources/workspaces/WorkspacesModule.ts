@@ -30,6 +30,7 @@ import {
     loadWorkspaceFolderSettings,
     type WorkspaceFolderSettings,
 } from "./impl/loadWorkspaceFolderSettings.js";
+import { deleteWorkspaceBranch } from "./impl/deleteWorkspaceBranch.js";
 import { removeWorkspaceDirectory } from "./impl/removeWorkspaceDirectory.js";
 import { runWorkspaceSetupCommands } from "./impl/runWorkspaceSetupCommands.js";
 import { syncWorkspaceFiles } from "./impl/syncWorkspaceFiles.js";
@@ -157,12 +158,14 @@ import { listWorkspacesTool } from "./tools/list_workspaces.js";
 import { renameWorkspaceTool } from "./tools/rename_workspace.js";
 import {
     insertWorkspaceAgent,
+    deleteWorkspaceAgent,
     readWorkspaceAgent,
     readWorkspaceAgents,
     updateWorkspaceAgentOrder,
 } from "./store/workspaceAgents.js";
 import { orderKeyBetween } from "./store/workspaceOrdering.js";
 import {
+    deleteWorkspaceRecord,
     readWorkspaceAncestorIds,
     readWorkspaceChildren,
     touchWorkspace,
@@ -349,6 +352,10 @@ export class WorkspacesModule implements AgentModule {
                 archiveWorkspaceTool(this, scope.agent.id),
                 getBranchMetadataTool(this, scope.agent.id),
             ];
+        },
+        // An agent deleted for good leaves the workspace it was placed in.
+        agentErasedTransact: async (ctx, _scope, agent) => {
+            await deleteWorkspaceAgent(ctx.db, agent.id);
         },
     };
 
@@ -793,6 +800,64 @@ export class WorkspacesModule implements AgentModule {
         });
     }
 
+    /**
+     * Permanently deletes an archived workspace: its folder or worktree whatever the folder's keep
+     * settings say, the branch its worktree was cut as, its agent placements, and its row.
+     *
+     * Only an archived workspace qualifies. One still being archived is refused, because its
+     * archival is still stopping the agents in it, and so is one with child workspaces, which go
+     * first. The agents placed in it are not deleted here; erasing them is the caller's decision.
+     * Running it again after it finished does nothing.
+     */
+    async purge(ctx: Context, workspaceId: string): Promise<void> {
+        this.#assertEnabled();
+        this.#assertId(workspaceId, "workspace");
+        const workspace = await this.get(ctx, workspaceId);
+        if (workspace === undefined) return;
+        if (workspace.status !== "archived") {
+            throw new Error("Only an archived workspace can be deleted.");
+        }
+        if ((await readWorkspaceChildren(ctx.db, workspace.projectRef, workspace.id)).length > 0) {
+            throw new Error("Delete the workspace's child workspaces before the workspace itself.");
+        }
+        const project = await this.#project(ctx, workspace.projectRef);
+        if (project !== undefined) {
+            const machine = await this.#runners.machine(workspace.runnerId);
+            await this.#projects.runInProjectGitLock(ctx, project.id, async () => {
+                await removeWorkspaceDirectory({
+                    git: this.#git,
+                    machine,
+                    keepCopiesOnArchive: false,
+                    keepWorktreesOnArchive: false,
+                    project,
+                    stopped: () => false,
+                    workspace,
+                });
+                if (
+                    workspace.kind === "git_worktree" &&
+                    workspace.gitCommonDir !== undefined &&
+                    (await machine.fs.exists(PRODUCT, project.repositoryRef))
+                ) {
+                    await deleteWorkspaceBranch({
+                        branch: workspace.branch,
+                        git: this.#git,
+                        projectPath: project.repositoryRef,
+                        ...this.#gitOptions(workspace.runnerId),
+                    });
+                }
+            });
+        }
+        await ctx.inTx(async (txCtx) => {
+            const current = await this.#mutations.getOptional(txCtx, workspaceId);
+            if (current === undefined) return;
+            await deleteWorkspaceRecord(txCtx.db, workspaceId);
+            await this.#mutations.observe(
+                txCtx,
+                this.#mutations.newEvent({ type: "workspace_deleted", workspace: current }),
+            );
+        });
+    }
+
     async #beginArchiveAndInvoke(
         ctx: Context,
         workspaceId: string,
@@ -815,6 +880,11 @@ export class WorkspacesModule implements AgentModule {
     // Everything below is the work the records describe: managed folders, worktrees and copies,
     // setup commands, file replication, branch moves, folder removal, and the background work that
     // carries a reservation through to a usable checkout. The catalog does it itself.
+
+    /** Whether project workspaces are on; while they are off, every catalog operation refuses. */
+    get enabled(): boolean {
+        return this.#enabled;
+    }
 
     /** Where workspace folders are created. */
     get managedWorkspacesDirectory(): string {
