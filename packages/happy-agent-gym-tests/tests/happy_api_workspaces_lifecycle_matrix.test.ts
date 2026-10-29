@@ -134,21 +134,31 @@ describe("public workspace lifecycle matrix", () => {
             id: "workspace-lifecycle-007-reorders-a-sibling-after-its-neighbour",
             run: async (gym) => {
                 const root = await rootWorkspace(gym);
-                const first = await createChild(gym, root.id, "lifecycle-order-first");
-                const second = await createChild(gym, root.id, "lifecycle-order-second");
+                await createChild(gym, root.id, "lifecycle-order-first");
+                await createChild(gym, root.id, "lifecycle-order-second");
+                // New workspaces join at the top, so move the front sibling past the next one
+                // rather than assuming the creation order.
+                const [moving, neighbour] = await siblingsOf(gym, root.id);
+                if (moving === undefined || neighbour === undefined) {
+                    throw new Error("Expected two siblings to reorder.");
+                }
                 const moved = (
                     await gym.client.reorderWorkspace(
-                        first.id,
-                        { afterId: second.id, mutationId: "lifecycle-order-after" },
-                        { ifMatch: first.version },
+                        moving.id,
+                        { afterId: neighbour.id, mutationId: "lifecycle-order-after" },
+                        { ifMatch: moving.version },
                     )
                 ).workspace;
                 const siblings = await siblingsOf(gym, root.id);
-                expect(siblings.map((workspace) => workspace.id).slice(-2)).toEqual([
-                    second.id,
-                    first.id,
+                expect(siblings.map((workspace) => workspace.id).slice(0, 2)).toEqual([
+                    neighbour.id,
+                    moving.id,
                 ]);
-                expect(moved.orderKey).not.toBe(first.orderKey);
+                expect(moved.orderKey).not.toBe(moving.orderKey);
+                expect(moved.version).not.toBe(moving.version);
+                const unmoved = siblings.find((workspace) => workspace.id === neighbour.id);
+                expect(unmoved?.orderKey).toBe(neighbour.orderKey);
+                expect(unmoved?.version).toBe(neighbour.version);
             },
         },
         {
