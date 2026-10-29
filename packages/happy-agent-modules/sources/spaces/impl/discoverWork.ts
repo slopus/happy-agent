@@ -3,9 +3,10 @@ import { open, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
-import type { ChatProviderId } from "./chatActions/chatAction.js";
-
 const run = promisify(execFile);
+
+/** The assistants whose own history Focus knows how to read. */
+export type SpaceDiscoveryAssistant = "codex" | "claude";
 
 /** At most this many projects, sessions read, and bytes of findings in all. */
 const MAX_PROJECTS = 30;
@@ -22,7 +23,7 @@ interface Project {
 }
 
 /**
- * What the person has been working on, read only from the places onboarding disclosed: the
+ * What the person has been working on, read only from the places Happy disclosed in onboarding: the
  * connected assistant's own sessions (`~/.codex/sessions` or `~/.claude/projects`), where each
  * ran and the first thing asked, then the last 30 days of commit subjects and the recent branch
  * names of those projects. Nothing is written; Git runs with optional locks off. The findings are
@@ -30,7 +31,7 @@ interface Project {
  */
 export async function discoverWork(
     home: string,
-    assistant: ChatProviderId,
+    assistant: SpaceDiscoveryAssistant,
 ): Promise<string | undefined> {
     const root =
         assistant === "codex"

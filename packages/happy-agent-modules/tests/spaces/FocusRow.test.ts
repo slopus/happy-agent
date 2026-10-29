@@ -89,6 +89,10 @@ async function setup(title?: string) {
 it("creates a helper named Focus Agent, serves that name, and never inserts a row of its own itself", async () => {
     const h = await setup();
     try {
+        // Reading the sidebar makes no helper; asking for a tidy with none does.
+        await h.spaces.sidebar(h.database.context, "standalone");
+        expect(h.created).toEqual([]);
+        expect(await h.spaces.requestTidy(h.database.context, "standalone")).toBe(true);
         const sidebar = await h.spaces.sidebar(h.database.context, "standalone");
         expect(h.created).toMatchObject([{ title: "Focus Agent" }]);
         const focus = sidebar.spaces.find((row) => row.role === "focus")!;

@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { discoverWork } from "../../sources/onboarding/impl/discoverWork.js";
+import { discoverWork } from "../../sources/spaces/impl/discoverWork.js";
 
 const folders: string[] = [];
 

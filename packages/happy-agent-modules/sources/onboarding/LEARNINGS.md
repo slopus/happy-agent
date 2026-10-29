@@ -56,8 +56,9 @@ ends the typing at once.
 ## Only the bootstrap is scripted, and nothing is redrawn
 
 The user asked for onboarding to be generative and in order: every new step appears at the
-bottom, and earlier messages are never redrawn. The welcome, subscriptions, install and sign-in,
-and "connected" are scripted; after that Happy's model writes every message from the guide and
+bottom, and earlier messages are never redrawn. The welcome, subscriptions, and install and sign-in
+are scripted; there is no scripted "Connected…" line, because Happy's first model message opens
+with it ("Connected to ChatGPT as ada@example.com."); after that Happy's model writes every message from the guide and
 does the work with visible tools. Progress that used to rewrite a message in place (the connecting
 steps, "discovering…" becoming the proposal) is now a live figure the app draws, or the next
 message.
@@ -65,20 +66,24 @@ message.
 Scripted messages carry no provider or model. The desktop relies on that to replace such a message
 whole on every update instead of merging it as streamed provider output.
 
-## Proposals come from Focus, not from Happy's model
+## Focus is a real sub-agent the daemon starts
 
-Happy's model never writes the proposal table. Focus proposes as a bounded side inference with its
-own placement rules; `propose_work` returns the table and stores its rows, and Looks right starts
-the stored rows, so a model that changed the table cannot change what starts. Happy's model
-introduces the proposal and shows the block as returned.
+Proposals used to be a hidden side inference behind Happy's `propose_work` tool, with a checklist
+and Looks right. The user wanted Focus to be what it says: Happy's sub-agent, visible at once. At
+Discover the daemon starts Focus programmatically, never by Happy's model choosing to: the press's
+transaction creates it as Happy's subtask named Focus with the `goals` icon and its task as its
+first message, inserts its row under Happy, and writes the ordinary `create_agent` row with an
+`agent_spawn` presentation (model and agent ID) into Happy's chat right after the press. Happy's
+model only introduces it. Focus then proposes in its own conversation, and Spaces tells Happy the
+proposal's ID when that turn ends.
 
-## Accepted work lands where its preview was
+## The proposal is a preview; Good to go decides
 
-The desktop draws a dashed preview of the proposal after the last sidebar item, rows under their
-topics in proposal order. Placement matches it exactly: new topic sections at the end of the
-sidebar, in proposal order; a topic that already exists takes its rows at its end. The empty
-default headings go at Start onboarding, not at Looks right, because a heading vanishing at accept
-time moved everything below it.
+The proposal card has no checkboxes and no Accept or Decline. The one decision is the chat button
+Good to go, pressed as the person's own message, in Happy's chat or Focus's; changes are typed and
+Focus revises. Accepting creates the proposal's new rows with their final names and icons from
+the start, so no row is a stem cell that grows an icon later. Every press is stored with the
+label the person saw and the ticked labels, so it reads as their own bubble.
 
 ## Onboarding proves each requirement once
 

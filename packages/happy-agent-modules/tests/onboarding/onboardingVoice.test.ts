@@ -7,7 +7,6 @@ import {
     catalogMessage,
     chooseAtLeastOneMessage,
     connectFailedMessage,
-    connectedMessage,
     connectingMessage,
     installOfferMessage,
     manualMessage,
@@ -103,7 +102,6 @@ describe("Happy's own onboarding words", () => {
             catalogMessage(new Set(["codex"])),
             accountAddMessage("codex", undefined),
             chooseAtLeastOneMessage(""),
-            connectedMessage([{ app: "ChatGPT", account: "ada@example.com", cli: "codex" }]),
             useFailedMessage(
                 "Claude",
                 "My settings on this computer have no connection for it.",
@@ -154,7 +152,7 @@ describe("Happy's own onboarding words", () => {
         expect(buttons(failed)).toEqual(["*Sign in to Claude", "Choose another AI"]);
     });
 
-    it("list every AI with the connected ones last, checked rather than relabelled", () => {
+    it("list only the AIs not connected yet, and never another account of one", () => {
         const catalog = catalogMessage(new Set(["codex"]));
         expect(catalog).toContain("Here's every AI I can connect:");
         expect(buttons(catalog)).toEqual([
@@ -162,23 +160,29 @@ describe("Happy's own onboarding words", () => {
             "Grok",
             "Gemini (Antigravity)",
             "API key or something else",
-            "ChatGPT",
         ]);
-        expect(catalog).toContain(
-            'data-provider="codex" data-mark="openai" data-connected>ChatGPT',
-        );
+        expect(catalog).not.toContain("onboarding.accountAdd");
     });
 
-    it("say once, under Connected, that more can be connected later", () => {
+    it("say the bootstrap exactly as the video script does, and that more can be connected later once", () => {
+        expect(openingMessage()).toContain(
+            "Hi, I'm Happy, your main agent. I run and coordinate agents across your work. The sidebar shows an example of what that looks like.",
+        );
         const later = "You can always ask me to connect more later.";
         const signedIn = {
             ...INSTALLED,
             signIn: { status: "signed_in" as const, account: null, methods: [] },
         };
         const offered = subscriptionsMessage([], [signedIn], "Mac");
-        expect(offered).not.toContain(later);
-        expect(chooseAtLeastOneMessage(offered)).not.toContain(later);
-        expect(connectedMessage([{ app: "ChatGPT", cli: "codex" }]).split(later)).toHaveLength(2);
+        expect(offered).toContain(
+            "First, let's check which AI subscriptions you already use. I reuse what you pay for today, so there's nothing new to pay for. I found these on this Mac; choose which ones I should use.",
+        );
+        expect(offered.split(later)).toHaveLength(2);
+        expect(offered).not.toContain("onboarding.accountAdd");
+        expect(offered).toContain("data-emphasis>Use selected</button>");
+        expect(offered).toContain(
+            'data-action="onboarding.connectAnother">Sign in to more</button>',
+        );
     });
 });
 
@@ -197,8 +201,8 @@ describe("an effort as the app shows it", () => {
 
 describe("the guide Happy's model follows", () => {
     it("names this computer's shortcut for Create", () => {
-        expect(onboardingGuide("darwin")).toContain("(or ⌘N)");
-        expect(onboardingGuide("win32")).toContain("(or Ctrl+N)");
+        expect(onboardingGuide("darwin")).toContain("in the sidebar, or ⌘N.");
+        expect(onboardingGuide("win32")).toContain("in the sidebar, or Ctrl+N.");
         expect(onboardingGuide("linux")).not.toContain("⌘N");
     });
 
@@ -207,9 +211,21 @@ describe("the guide Happy's model follows", () => {
         expect(guide).toContain("You are Happy, the person's main agent");
         expect(guide).not.toContain("—");
         expect(guide).toContain("Never put them inside a code fence.");
+        // Focus is introduced once, as Happy's sub-agent, and handed the work by message.
+        expect(guide).toContain("I'm handing this to Focus, my sub-agent");
+        expect(guide).toContain("The press started Focus with its task");
+        expect(guide).toContain('<figure data-sidebar-proposal="PROPOSAL_ID"></figure>');
         expect(guide).toContain(
-            "call propose_work right away, with no words between the two calls",
+            'sidebar.proposalAccept with data-proposal set to that ID, "Good to go"',
         );
+        // The person may type at any step, and is told so once.
+        expect(guide).toContain("The person may type instead of pressing, at any step");
+        expect(guide).toContain(
+            '"From here on, use the buttons or just message me anything below."',
+        );
+        expect(guide).toContain('("Connected to ChatGPT as ada@example.com."');
+        expect(guide).not.toContain("propose_work");
+        expect(guide).not.toContain("discover_work");
         expect(guide).toContain("write the step 2 message right away, in the same turn");
         expect(guide).toContain(
             'gemini "Gemini (Antigravity)", and other "API key or something else"',

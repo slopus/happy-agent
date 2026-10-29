@@ -1,5 +1,4 @@
 import type { ProviderCli } from "../../providerClis/index.js";
-import type { OnboardingWorkRow } from "../OnboardingFlow.js";
 import type { ChatProviderId } from "./chatActions/chatAction.js";
 import type {
     OnboardingPlaces,
@@ -84,42 +83,6 @@ export function manualCommands(cli: ProviderCli): string[] {
     ];
 }
 
-/** The proposal as the person was shown it, for Adjust. */
-export function proposalOutcome(rows: readonly OnboardingWorkRow[]): string {
-    return [
-        "They want to change this proposal:",
-        ...rows.map(
-            (row) =>
-                `- ${row.title} (topic ${row.topic}${row.ongoing ? ", ongoing" : ""}); first message: ${row.firstMessage}`,
-        ),
-    ].join("\n");
-}
-
-/** Looks right: what started, where it was placed, and what failed. */
-export function acceptedOutcome(
-    started: readonly OnboardingStartedChat[],
-    failed: readonly string[],
-    topicsError: string | undefined,
-): string {
-    if (started.length === 0 && failed.length === 0) {
-        return "Nothing was ticked, so nothing started.";
-    }
-    return [
-        started.length === 0
-            ? "No chat started."
-            : `Started ${String(started.length)} ${started.length === 1 ? "chat" : "chats"}, each making a read-only plan and waiting for them before it changes anything:`,
-        ...started.map((chat) => `- ${chat.title}, under ${chat.topic}`),
-        topicsError === undefined
-            ? started.length === 0
-                ? ""
-                : "Each is placed under its topic in the sidebar."
-            : `The topics couldn't be added: ${topicsError}`,
-        failed.length === 0 ? "" : `These couldn't start: ${failed.join(", ")}.`,
-    ]
-        .filter(Boolean)
-        .join("\n");
-}
-
 /** The last steps: the person's name, and the chats onboarding started, by their ids. */
 export function closingOutcome(closing: {
     readonly name: string;
@@ -132,7 +95,10 @@ export function closingOutcome(closing: {
             ? "Onboarding started no chats."
             : [
                   "Chats onboarding started, by the id to use as data-item:",
-                  ...closing.started.map((chat) => `- ${chat.id}: ${chat.title} (${chat.topic})`),
+                  ...closing.started.map(
+                      (chat) =>
+                          `- ${chat.id}: ${chat.title}${chat.topic === undefined ? "" : ` (${chat.topic})`}`,
+                  ),
               ].join("\n"),
     ]
         .filter(Boolean)

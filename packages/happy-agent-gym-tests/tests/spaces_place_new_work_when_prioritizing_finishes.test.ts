@@ -9,7 +9,12 @@ it("applies one factual batch when Prioritizing finishes while legacy row action
             sections: unknown[];
         }>("GET", "/v0/spaces");
         const happy = legacy.spaces[0]!;
-        expect((await h.gym.client.getAgent(happy.target.agentId)).agent.subtasks).toEqual([]);
+        // Happy's only subtask is Focus, which the tidy that opened this sidebar started.
+        expect(
+            (await h.gym.client.getAgent(happy.target.agentId)).agent.subtasks?.map(
+                (subtask) => subtask.title,
+            ),
+        ).toEqual(["Focus"]);
         await h.read();
         const created = await h.create();
         await h.gym.send("Plan this release.", { sessionId: created.agent.id });

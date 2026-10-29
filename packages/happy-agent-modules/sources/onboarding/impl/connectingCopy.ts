@@ -133,30 +133,23 @@ export function connectingMessage(id: ChatProviderId): string {
     ].join("\n");
 }
 
-/** Every AI Happy can connect, the connected ones last with their check. */
+/**
+ * Every AI Happy can connect that is not connected yet. A connected one is left out: a second
+ * account of the same AI is not offered until more than one can be used.
+ */
 export function catalogMessage(connected: ReadonlySet<ChatProviderId>): string {
-    const offered = PROVIDER_BUTTONS.filter((button) => button.choice !== "none");
-    const idOf = (button: (typeof PROVIDER_BUTTONS)[number]) =>
-        button.choice === "other" || button.choice === "none"
-            ? undefined
-            : PROVIDER_OF[button.choice];
-    const isConnected = (button: (typeof PROVIDER_BUTTONS)[number]) => {
-        const id = idOf(button);
-        return id !== undefined && connected.has(id);
-    };
-    const control = (button: (typeof PROVIDER_BUTTONS)[number]) => {
-        const id = idOf(button);
-        const mark = button.mark ? ` data-mark="${button.mark}"` : "";
-        return id !== undefined && connected.has(id)
-            ? `<button data-action="onboarding.accountAdd" data-provider="${id}"${mark} data-connected>${chatActionEscape(button.label)}</button>`
-            : `<button data-action="onboarding.provider" data-provider="${button.choice}"${mark}>${chatActionEscape(button.label)}</button>`;
-    };
+    const offered = PROVIDER_BUTTONS.filter((button) => {
+        if (button.choice === "none") return false;
+        return button.choice === "other" || !connected.has(PROVIDER_OF[button.choice]);
+    });
     return [
         "Here's every AI I can connect:",
         "",
         menu(
-            ...offered.filter((button) => !isConnected(button)).map(control),
-            ...offered.filter(isConnected).map(control),
+            ...offered.map((button) => {
+                const mark = button.mark ? ` data-mark="${button.mark}"` : "";
+                return `<button data-action="onboarding.provider" data-provider="${button.choice}"${mark}>${chatActionEscape(button.label)}</button>`;
+            }),
         ),
     ].join("\n");
 }
@@ -179,57 +172,6 @@ export function chooseAtLeastOneMessage(table: string): string {
     return ["Select at least one account to use, or sign in to another AI.", "", table].join("\n");
 }
 
-/**
- * Connected, and what else can be: the AIs not connected yet first, the connected ones at the
- * far end with their check, then another account of a connected one, which carries no check:
- * a second account is welcome, and a check there read as if it were already added. None of it has
- * to be answered.
- */
-export function connectedMessage(connections: readonly OnboardingConnection[]): string {
-    const first = connections[0]!;
-    const connectedIds = new Set(connections.flatMap((each) => (each.cli ? [each.cli] : [])));
-    const offered = PROVIDER_BUTTONS.filter((entry) => entry.choice !== "none");
-    const idOf = (entry: (typeof PROVIDER_BUTTONS)[number]) =>
-        entry.choice === "none" || entry.choice === "other" ? undefined : PROVIDER_OF[entry.choice];
-    const isConnected = (entry: (typeof PROVIDER_BUTTONS)[number]) => {
-        const id = idOf(entry);
-        return id !== undefined && connectedIds.has(id);
-    };
-    const button = (entry: (typeof PROVIDER_BUTTONS)[number]) => {
-        const mark = entry.mark ? ` data-mark="${entry.mark}"` : "";
-        const id = idOf(entry);
-        return id !== undefined && connectedIds.has(id)
-            ? `<button data-action="onboarding.accountAdd" data-provider="${id}"${mark} data-connected>${chatActionEscape(entry.label)}</button>`
-            : `<button data-action="onboarding.provider" data-provider="${entry.choice}"${mark}>${chatActionEscape(entry.label)}</button>`;
-    };
-    const lead =
-        connections.length === 1
-            ? `Connected to ${first.app}${first.account ? ` as ${first.account}` : ""}.`
-            : `Connected to ${listOf(connections.map((each) => each.app))}.`;
-    return [
-        `${lead} You can also type to me below anytime, or connect another AI${connections.length === 1 ? " if you use more than one" : ""}:`,
-        "",
-        menu(
-            ...offered.filter((entry) => !isConnected(entry)).map(button),
-            ...offered.filter(isConnected).map(button),
-        ),
-        ...(connectedIds.size === 0
-            ? []
-            : [
-                  "",
-                  menu(
-                      ...[...connectedIds].map(
-                          (id) =>
-                              `<button data-action="onboarding.accountAdd" data-provider="${id}" data-mark="${MARK_OF[id]}">${chatActionEscape(`Add another ${APP_OF[id]} account`)}</button>`,
-                      ),
-                  ),
-              ]),
-        "",
-        '<output data-status="info">You can always ask me to connect more later.</output>',
-    ].join("\n");
-}
-
-/** The AI chosen can't be used: the real cause, then signing in to it or choosing another. */
 export function useFailedMessage(
     app: string,
     reason: string,

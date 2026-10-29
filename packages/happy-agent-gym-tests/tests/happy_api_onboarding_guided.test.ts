@@ -205,7 +205,7 @@ async function connectCodex(gym: AgentGym, happy: string): Promise<void> {
         blockIndex: 0,
         action: { id: "onboarding.start", params: {} },
     });
-    const routes = await waitForText(gym, happy, "I found these set up");
+    const routes = await waitForText(gym, happy, "I found these on this");
     expect(textOf(routes)).toContain('value="codex" checked');
     await press(gym, happy, {
         messageId: routes.id,
@@ -224,15 +224,17 @@ describe("Happy's model leading onboarding", () => {
                 "pressed:That's me": () => ({ content: [{ text: WORK_STEP, type: "text" }] }),
             });
             await connectCodex(gym, happy);
-            const connected = textOf(await waitForText(gym, happy, "Connected to ChatGPT"));
-            // The connected AI carries its check; another account of it does not.
-            expect(connected).toMatch(/data-provider="codex"[^>]*data-connected>ChatGPT</u);
-            expect(connected).toMatch(/data-mark="openai">Add another ChatGPT account</u);
-            // The routes table above said nothing of later: it is said once, under Connected.
+            // No scripted Connected line: Happy's own first answer says it, and later is said once,
+            // under the subscriptions Happy found. No second account is ever offered.
             const later = (await messages(gym, happy)).filter((message) =>
                 textOf(message).includes("You can always ask me to connect more later."),
             );
-            expect(later.map(textOf)).toEqual([connected]);
+            expect(later).toHaveLength(1);
+            expect(textOf(later[0])).toContain("I found these on this");
+            for (const message of await messages(gym, happy)) {
+                expect(textOf(message)).not.toContain("Connected to ChatGPT");
+                expect(textOf(message)).not.toContain("Add another");
+            }
             const profileStep = await waitForText(gym, happy, "**Ada Lovelace** · ada@example.com");
             const verified = await gym.waitUntil(async () => {
                 const flow = await flowOf(gym);

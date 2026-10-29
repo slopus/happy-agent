@@ -509,6 +509,8 @@ export const historyActionBlockSchema = Type.Object(
         values: Type.Array(Type.String({ maxLength: 2_000 }), { maxItems: 200 }),
         /** The words on the control pressed, as the person read them. */
         label: Type.String({ maxLength: 2_000 }),
+        /** A submitted checklist's ticked labels, in the order it shows them. */
+        ticked: Type.Optional(Type.Array(Type.String({ maxLength: 2_000 }), { maxItems: 200 })),
         /** What the work did, as the agent's model reads it; absent when no model reads it. */
         outcome: Type.Optional(Type.String({ maxLength: 20_000 })),
         /** What the action returns to clients. */

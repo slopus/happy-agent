@@ -1,5 +1,6 @@
 import { createId } from "@paralleldrive/cuid2";
 import { createHash } from "node:crypto";
+import { homedir } from "node:os";
 import {
     cuid2Schema,
     DEFAULT_AGENT_PERMISSION_MODE,
@@ -44,6 +45,7 @@ import {
     type ArtifactRecord,
     type UpdateArtifactInput,
 } from "../artifacts/index.js";
+import { CollaborationModule } from "../collaboration/index.js";
 import { ConfigModule } from "../config/index.js";
 import { DurableFunctionsModule } from "../durableFunctions/index.js";
 import { EventsModule } from "../events/index.js";
@@ -54,8 +56,12 @@ import { TasksModule, type TaskRecord } from "../tasks/index.js";
 import { TeamModule } from "../team/index.js";
 import { TitlesModule } from "../titles/index.js";
 import { UserSettingsModule } from "../userSettings/index.js";
-import { AGENT_MESSAGE_ORIGIN_METADATA, isUserOriginMetadata } from "../impl/messageOrigin.js";
-import { proposeWork, type SpaceWorkProposal } from "./impl/proposeWork.js";
+import {
+    AGENT_MESSAGE_ORIGIN_METADATA,
+    isUserOriginMetadata,
+    USER_MESSAGE_ORIGIN_METADATA,
+} from "../impl/messageOrigin.js";
+import { discoverWork, type SpaceDiscoveryAssistant } from "./impl/discoverWork.js";
 
 import {
     SPACE_STANDALONE_OWNER,
@@ -66,6 +72,7 @@ import {
     SpaceInputError,
     type SidebarAuthor,
     type SidebarProposal,
+    type SidebarProposalNewRow,
     type SidebarProposalRecord,
     type SpaceAttachableSurfaceType,
     type SpaceBatch,
@@ -193,8 +200,14 @@ const PRIORITIZING_UPGRADED =
     "Happy Agent was updated. You now have a conversation of your own, your notes go to your conversation, and larger changes are proposals the person accepts. Check the sidebar and your history: show your conversation as a session under Happy, and if the person has not seen a proposal from you yet, propose once how to file the work they already have.";
 const PRIORITIZING_UPDATED =
     "Happy Agent was updated, and your instructions may have changed. Check the sidebar against them, starting with where your own conversation stands.";
-/** The icon of Prioritizing's own row. */
-const FOCUS_ICON: SpaceIconSlug = "prioritize";
+/**
+ * The opening task of a Prioritizing that Happy's onboarding starts: Happy is about to hand it the
+ * person's work, and its conversation is already shown under Happy.
+ */
+const PRIORITIZING_ONBOARDING_OPENING =
+    "Happy is onboarding this person and is about to message you with their work. Your conversation is already shown under Happy. Read the sidebar with list_sidebar now; when Happy's message arrives, do what it asks and propose their sidebar.";
+/** Focus wears a target: its own row and its session under Happy. */
+const FOCUS_ICON: SpaceIconSlug = "goals";
 /** The icon of Voice's own row. */
 const VOICE_ICON: SpaceIconSlug = "ai-agent";
 /** How many bytes `read_conversations` returns at most, and for one conversation. */
@@ -237,6 +250,7 @@ export class SpacesModule implements AgentModule {
 
     readonly #bots: BotsModule;
     readonly #artifacts: ArtifactsModule | undefined;
+    readonly #collaboration: CollaborationModule | undefined;
     readonly #config: ConfigModule;
     readonly #events: EventsModule;
     readonly #history: HistoryModule;
@@ -275,6 +289,7 @@ export class SpacesModule implements AgentModule {
         userSettings: UserSettingsModule,
         titles: TitlesModule,
         artifacts?: ArtifactsModule,
+        collaboration?: CollaborationModule,
     ) {
         this.#config = config;
         this.#tasks = tasks;
@@ -288,6 +303,7 @@ export class SpacesModule implements AgentModule {
         this.#userSettings = userSettings;
         this.#titles = titles;
         this.#artifacts = artifacts;
+        this.#collaboration = collaboration;
         artifacts?.bindSpaces(this);
         // Telling Prioritizing about new work commits with the work; the message is delivered
         // after the commit and survives a restart in between. A repeated delivery carries the
@@ -388,7 +404,9 @@ export class SpacesModule implements AgentModule {
             return owner === undefined
                 ? input.tools
                 : (await this.#stemCellsEnabled(ctx, owner.ownerUserId))
-                  ? prioritizingTools(this, owner.ownerUserId, scope.agent.id)
+                  ? prioritizingTools(this, owner.ownerUserId, scope.agent.id, {
+                        discovery: owner.discovery !== undefined,
+                    })
                   : [];
         },
         beforeAgentLoop: async (ctx, scope) => {
@@ -439,6 +457,7 @@ export class SpacesModule implements AgentModule {
             void (async () => {
                 await this.#settleBrief(settledCtx, owner, settlement.error === undefined);
                 await this.#applyIfDue(settledCtx, owner, "settled");
+                await this.#reportToHappy(settledCtx, owner, scope.agent.id);
                 await this.#wake(settledCtx, owner);
             })().catch((error: unknown) => {
                 ctx.log.warn("The sidebar batch could not be applied.", {}, error);
@@ -475,6 +494,24 @@ export class SpacesModule implements AgentModule {
             if (accepted.message.role !== "user" && accepted.message.role !== "agent") return;
             const fromPerson =
                 accepted.message.role === "user" && isUserOriginMetadata(accepted.metadata);
+            // Happy handed Prioritizing work: when that turn ends, Happy hears what came of it.
+            // Its opening task is Happy's only when onboarding gave it one, which startFocus marks.
+            if (accepted.message.role === "agent") {
+                const focus = await queryOwnerByPrioritizingAgent(ctx, scope.agent.id);
+                if (focus !== undefined) {
+                    const text = accepted.message.content
+                        .flatMap((block) => (block.type === "text" ? [block.text] : []))
+                        .join("\n")
+                        .trim();
+                    if (
+                        accepted.message.author.id ===
+                            (await this.#happyAgentId(ctx, focus.ownerUserId)) &&
+                        !(await this.#opensConversation(ctx, scope.agent.id, text))
+                    )
+                        await writeOwnerState(ctx, { ...focus, happyAsked: true });
+                    return;
+                }
+            }
             // The person wrote to Prioritizing itself: what it changes in answer is their request.
             const asked = fromPerson
                 ? await queryOwnerByPrioritizingAgent(ctx, scope.agent.id)
@@ -608,7 +645,6 @@ export class SpacesModule implements AgentModule {
     ) {
         return await ctx.inTx(async (txCtx) => {
             await this.#ensureOwner(txCtx, ownerUserId);
-            await this.#ensurePrioritizing(txCtx, ownerUserId);
             const artifactId = await this.#ensureSidebar(txCtx, ownerUserId);
             await this.#migrateSidebar(txCtx, ownerUserId, artifactId);
             return await this.#readSidebar(txCtx, ownerUserId, artifactId, "latest", options);
@@ -828,6 +864,7 @@ export class SpacesModule implements AgentModule {
         ownerUserId: SpaceOwnerId,
         document: SpaceSidebarDocument,
         only?: ReadonlySet<string>,
+        newRowIds: ReadonlySet<string> = new Set(),
     ): Promise<void> {
         if (only?.size === 0) return;
         const byId = new Map((await querySpaces(ctx, ownerUserId)).map((row) => [row.id, row]));
@@ -835,6 +872,12 @@ export class SpacesModule implements AgentModule {
             node: SpaceSidebarSpaceNode,
             parentAgent: string | undefined | null,
         ): Promise<void> => {
+            // A proposal's new row stands only at the top level, alone.
+            if (parentAgent === null && newRowIds.has(node.id)) {
+                if (node.children.length > 0)
+                    throw new SidebarValidationError(`New row ${node.id} holds nothing nested.`);
+                return;
+            }
             const row = byId.has(node.id);
             if (only === undefined || only.has(node.id)) {
                 if (parentAgent === null || row) {
@@ -1508,6 +1551,9 @@ export class SpacesModule implements AgentModule {
             version: latest.version,
             html: formatSpaceSidebar(latest.document),
             opened: `${formatConversationAge(Date.now() - open.createdAt)} ago`,
+            ...(open.newRows === undefined || open.newRows.length === 0
+                ? {}
+                : { newRows: open.newRows }),
             personSet: Object.entries(open.authorship ?? {})
                 .filter(([, aspects]) => Object.values(aspects).includes("person"))
                 .map(([id]) => id),
@@ -1711,6 +1757,176 @@ export class SpacesModule implements AgentModule {
         });
     }
 
+    /**
+     * Happy's onboarding starts the person's Prioritizing, as Focus, and shows it at once: its own
+     * row right after Happy's, as the daemon's one change. With a task, that task is Happy's first message to it, or
+     * Happy's next message when it already runs. Answers with its agent ID and the model it was
+     * made on, or `undefined` when the person has not turned Stem Cells on, or it cannot run.
+     */
+    async startFocus(
+        ctx: Context,
+        ownerUserId: SpaceOwnerId,
+        task?: string,
+    ): Promise<
+        | {
+              readonly agentId: string;
+              readonly model?: {
+                  readonly modelId: string;
+                  readonly providerId: string;
+                  readonly name: string;
+              };
+          }
+        | undefined
+    > {
+        return await ctx.inTx(async (txCtx) => {
+            await this.#ensureOwner(txCtx, ownerUserId);
+            if (!(await this.#stemCellsEnabled(txCtx, ownerUserId))) return undefined;
+            const running = await this.#livePrioritizing(txCtx, ownerUserId);
+            if (running === undefined)
+                await this.#ensurePrioritizing(
+                    txCtx,
+                    ownerUserId,
+                    task ?? PRIORITIZING_ONBOARDING_OPENING,
+                );
+            const agentId = await this.#livePrioritizing(txCtx, ownerUserId);
+            if (agentId === undefined) return undefined;
+            if (task !== undefined)
+                await writeOwnerState(txCtx, {
+                    ...(await this.#ownerState(txCtx, ownerUserId)),
+                    happyAsked: true,
+                });
+            const happyAgentId = await this.#happyAgentId(txCtx, ownerUserId);
+            if (running !== undefined && task !== undefined && happyAgentId !== undefined)
+                await this.#collaboration?.sendMessage(
+                    txCtx,
+                    happyAgentId,
+                    { toAgentId: agentId, explanation: "Focus's task", text: task },
+                    createId(),
+                );
+            await this.#showFocus(txCtx, ownerUserId, agentId);
+            const route = await this.#prioritizingRoute(txCtx, ownerUserId);
+            const model =
+                route === undefined
+                    ? undefined
+                    : this.#config.models.find(
+                          (candidate) =>
+                              candidate.providerId === route.providerId &&
+                              candidate.id === route.model,
+                      );
+            return {
+                agentId,
+                ...(model === undefined
+                    ? {}
+                    : {
+                          model: {
+                              modelId: model.id,
+                              providerId: model.providerId,
+                              name: model.name,
+                          },
+                      }),
+            };
+        });
+    }
+
+    /**
+     * Focus's own row, with its target icon, placed in the header right after Happy's row where its
+     * prompt keeps it, as the daemon's one change. A row already in the document stays put.
+     */
+    async #showFocus(ctx: Context, ownerUserId: SpaceOwnerId, agentId: string): Promise<void> {
+        await ctx.inTx(async (txCtx) => {
+            if (this.#artifacts === undefined) return;
+            await this.#setSessionIcon(txCtx, ownerUserId, agentId, FOCUS_ICON).catch(
+                () => undefined,
+            );
+            const focusId = (await querySpaceByRef(txCtx, ownerUserId, "focus"))?.id;
+            const happyId = (await querySpaceByRef(txCtx, ownerUserId, "happy"))?.id;
+            if (focusId === undefined || happyId === undefined) return;
+            const artifactId = await this.#ensureSidebar(txCtx, ownerUserId);
+            await this.#migrateSidebar(txCtx, ownerUserId, artifactId);
+            const current = await this.#sidebarDocument(txCtx, artifactId);
+            if (
+                locateSpaceSidebarNode(current.document, focusId) !== undefined ||
+                locateSpaceSidebarNode(current.document, happyId) === undefined
+            )
+                return;
+            const applied = applySpaceSidebarOperations(current.document, [
+                { type: "insert", node: { type: "space", id: focusId }, to: { after: happyId } },
+            ]);
+            await this.#commitSidebarVersion(txCtx, ownerUserId, {
+                artifactId,
+                previousVersion: current.version,
+                before: current.document,
+                after: applied.document,
+                operations: applied.operations,
+                author: "daemon",
+                operationId: createId(),
+            });
+        });
+    }
+
+    /**
+     * The person pressed Discover in onboarding: Prioritizing may now read, with discover_work,
+     * the places Happy disclosed for this assistant, and nothing else.
+     */
+    async allowDiscovery(
+        ctx: Context,
+        ownerUserId: SpaceOwnerId,
+        assistant: SpaceDiscoveryAssistant,
+    ): Promise<void> {
+        await ctx.inTx(async (txCtx) => {
+            await this.#ensureOwner(txCtx, ownerUserId);
+            await writeOwnerState(txCtx, {
+                ...(await this.#ownerState(txCtx, ownerUserId)),
+                discovery: { assistant },
+            });
+        });
+    }
+
+    /** Prioritizing's discover_work: the disclosed places, read-only, once the person agreed. */
+    async discover(ctx: Context, ownerUserId: SpaceOwnerId): Promise<string> {
+        const discovery = (await this.#ownerState(ctx, ownerUserId)).discovery;
+        if (discovery === undefined)
+            return "Nothing was read: the person has not agreed to let you read their work.";
+        const home = this.#config.processEnvironment["HOME"]?.trim() || homedir();
+        return (
+            (await discoverWork(home, discovery.assistant)) ??
+            `Found nothing: no ${discovery.assistant === "codex" ? "Codex" : "Claude Code"} session named a project.`
+        );
+    }
+
+    /**
+     * Prioritizing answers Happy as its sub-agent: a turn that received Happy's message ends with
+     * one message to Happy naming the open proposal, if any, and what Prioritizing said.
+     */
+    async #reportToHappy(ctx: Context, ownerUserId: SpaceOwnerId, agentId: string): Promise<void> {
+        const collaboration = this.#collaboration;
+        await ctx.inTx(async (txCtx) => {
+            const state = await this.#ownerState(txCtx, ownerUserId);
+            if (state.happyAsked !== true) return;
+            const { happyAsked: _asked, ...rest } = state;
+            await writeOwnerState(txCtx, rest);
+            const happyAgentId = await this.#happyAgentId(txCtx, ownerUserId);
+            if (collaboration === undefined || happyAgentId === undefined) return;
+            const open = state.sidebarProposals?.find((proposal) => proposal.status === "open");
+            const said = (await this.#lastAgentText(txCtx, agentId))?.trim();
+            await collaboration.sendMessage(
+                txCtx,
+                agentId,
+                {
+                    toAgentId: happyAgentId,
+                    explanation: open === undefined ? "Focus finished" : "Focus's proposal",
+                    text: [
+                        open === undefined
+                            ? "Focus finished without a proposal."
+                            : `Focus finished. Its open proposal is ${open.artifactId}.`,
+                        ...(said ? [`Focus said: ${said.slice(0, 2_000)}`] : []),
+                    ].join("\n\n"),
+                },
+                createId(),
+            );
+        });
+    }
+
     async #removeVoiceRow(ctx: Context, ownerUserId: SpaceOwnerId, spaceId: string): Promise<void> {
         await deleteSpace(ctx, spaceId);
         await this.#commitEvents(ctx, ownerUserId, undefined, [{ type: "space_removed", spaceId }]);
@@ -1858,7 +2074,11 @@ export class SpacesModule implements AgentModule {
     async proposeSidebar(
         ctx: Context,
         ownerUserId: SpaceOwnerId,
-        input: { baseVersion: number; edits: readonly { oldText: string; newText: string }[] },
+        input: {
+            baseVersion: number;
+            edits: readonly { oldText: string; newText: string }[];
+            newRows?: readonly ProposedNewRow[];
+        },
         operationId: string,
     ): Promise<{ readonly text: string; readonly artifact?: ArtifactRecord }> {
         await this.sidebar(ctx, ownerUserId);
@@ -1899,8 +2119,18 @@ export class SpacesModule implements AgentModule {
                 sidebarVersion = open.baseVersion;
             }
             const read = formatSpaceSidebar(base.document);
-            const html = applyExactEdits(read, input.edits);
-            if (html === read) return { text: "Nothing changed; no proposal version was made." };
+            // New rows are named by Prioritizing and reserved here: each name becomes a space ID
+            // that exists once the proposal is accepted.
+            const newRows = reserveNewRows(open?.newRows ?? [], input.newRows ?? []);
+            const html = applyExactEdits(
+                read,
+                input.edits.map((edit) => ({
+                    oldText: edit.oldText,
+                    newText: newRows.rename(edit.newText),
+                })),
+            );
+            if (html === read && !newRows.changed)
+                return { text: "Nothing changed; no proposal version was made." };
             const rows = new Map(
                 (await querySpaces(txCtx, ownerUserId)).map((row) => [row.id, row]),
             );
@@ -1920,7 +2150,7 @@ export class SpacesModule implements AgentModule {
                 },
             );
             const notes = reviewed.notes.length === 0 ? "" : `\n\n${reviewed.notes.join("\n")}`;
-            if (reviewed.operations.length === 0) {
+            if (reviewed.operations.length === 0 && !newRows.changed) {
                 if (reviewed.notes.length === 0)
                     return { text: "Nothing changed; no proposal version was made." };
                 throw new SidebarValidationError(`Nothing was proposed.${notes}`);
@@ -1930,6 +2160,7 @@ export class SpacesModule implements AgentModule {
                 ownerUserId,
                 reviewed.document,
                 placedSidebarIds(reviewed.operations),
+                new Set(newRows.rows.map((row) => row.id)),
             );
             const actor = await artifacts.actorFor(txCtx, agentId);
             let record = open;
@@ -1939,6 +2170,7 @@ export class SpacesModule implements AgentModule {
                     baseVersion: sidebarVersion,
                     status: "open",
                     createdAt: Date.now(),
+                    ...(newRows.rows.length === 0 ? {} : { newRows: newRows.rows }),
                 };
                 await this.#writeProposals(txCtx, ownerUserId, record);
                 await artifacts.create(txCtx, {
@@ -1956,6 +2188,9 @@ export class SpacesModule implements AgentModule {
                     source: actor.source,
                 });
                 base = { version: 1, document: base.document };
+            } else if (newRows.changed) {
+                record = { ...record, newRows: newRows.rows };
+                await this.#writeProposals(txCtx, ownerUserId, record);
             }
             const artifact = await artifacts.commitSidebar(txCtx, {
                 artifactId: record.artifactId,
@@ -1984,8 +2219,12 @@ export class SpacesModule implements AgentModule {
                     operations: reviewed.operations,
                 },
             ]);
+            const reserved =
+                newRows.reserved.length === 0
+                    ? ""
+                    : `\n\nNew rows, by the space ID each now has: ${newRows.reserved.map((row) => `${row.name} is ${row.id}`).join(", ")}.`;
             return {
-                text: `Proposal ${record.artifactId} is at version ${String(artifact.latestVersion)}. The person sees it as a card in your conversation and may edit, accept, or decline it; do not repeat it or its tag in your reply.${notes}`,
+                text: `Proposal ${record.artifactId} is at version ${String(artifact.latestVersion)}. The person sees it as a card in your conversation; offer Good to go in your reply, and do not repeat the card or its tag.${reserved}${notes}`,
                 artifact,
             };
         });
@@ -2075,6 +2314,7 @@ export class SpacesModule implements AgentModule {
                 ownerUserId,
                 applied.document,
                 placedSidebarIds(applied.operations),
+                new Set((record.newRows ?? []).map((row) => row.id)),
             );
             let version = current.version;
             if (applied.operations.length > 0) {
@@ -2175,6 +2415,7 @@ export class SpacesModule implements AgentModule {
                         operations: replay.operations,
                     },
                     archived: record.archived ?? [],
+                    started: record.started ?? [],
                 };
             }
             if (record.status !== "open")
@@ -2196,6 +2437,16 @@ export class SpacesModule implements AgentModule {
                     archiving.push({ spaceId: id, task });
             }
             const archived = new Set(archiving.map(({ spaceId }) => spaceId));
+            // The new rows still in the proposal become chats first, so each is moved into the
+            // place the proposal gives it, as the person's batch, like any other row.
+            const started = await this.#startNewRows(
+                txCtx,
+                ownerUserId,
+                (record.newRows ?? []).filter(
+                    (row) => locateSpaceSidebarNode(latest.document, row.id) !== undefined,
+                ),
+            );
+            const created = new Set(started.map(({ spaceId }) => spaceId));
             // A row that cannot be archived stays wherever it is in the sidebar.
             const operations = sidebarDiff(
                 first.document,
@@ -2214,8 +2465,25 @@ export class SpacesModule implements AgentModule {
             let base = first.document;
             const applied: SpaceSidebarOperation[] = [];
             for (const operation of operations) {
+                // A new row exists now, below Happy where new work arrives: it moves into place.
+                const effective: SpaceSidebarOperation =
+                    operation.type === "insert" &&
+                    operation.node.type === "space" &&
+                    created.has(operation.node.id)
+                        ? { type: "move", id: operation.node.id, to: operation.to }
+                        : operation;
+                // One the proposal offered but that could not start is left out.
+                if (
+                    operation.type === "insert" &&
+                    operation.node.type === "space" &&
+                    !created.has(operation.node.id) &&
+                    record.newRows?.some((row) => row.id === operation.node.id) === true
+                ) {
+                    base = projectSidebar(base, [{ operations: [operation] }]);
+                    continue;
+                }
                 try {
-                    const step = applySpaceSidebarOperations(working, [operation], { base });
+                    const step = applySpaceSidebarOperations(working, [effective], { base });
                     await this.#checkSidebarIds(
                         txCtx,
                         ownerUserId,
@@ -2249,6 +2517,7 @@ export class SpacesModule implements AgentModule {
                 acceptedVersion: version,
                 decisionMutationId: mutationId,
                 archived: [...archived],
+                ...(started.length === 0 ? {} : { started }),
             };
             await this.#writeProposals(txCtx, ownerUserId, decided);
             const proposal = await this.#proposalResource(txCtx, decided);
@@ -2264,7 +2533,7 @@ export class SpacesModule implements AgentModule {
             await this.#queueSidebarBrief(
                 txCtx,
                 ownerUserId,
-                `The person accepted your sidebar proposal ${artifactId}; the sidebar now follows it${archived.size === 0 ? "" : `, and ${String(archived.size)} finished ${archived.size === 1 ? "task was" : "tasks were"} archived`}.`,
+                `The person accepted your sidebar proposal ${artifactId}; the sidebar now follows it${archived.size === 0 ? "" : `, and ${String(archived.size)} finished ${archived.size === 1 ? "task was" : "tasks were"} archived`}${started.length === 0 ? "" : `, and ${String(started.length)} new ${started.length === 1 ? "chat was" : "chats were"} started read-only`}.`,
                 { wake: true },
             );
             return {
@@ -2276,8 +2545,134 @@ export class SpacesModule implements AgentModule {
                     operations: applied,
                 },
                 archived: [...archived],
+                started,
             };
         });
+    }
+
+    /**
+     * Good to go: the person accepts the proposal by pressing it in a chat, with the press's
+     * message ID as the mutation. Answers with what the press returns to clients, what the
+     * conversation's model reads, and each started chat with the section it stands under.
+     */
+    async acceptProposalByPress(
+        ctx: Context,
+        ownerUserId: SpaceOwnerId,
+        artifactId: string,
+        mutationId: string,
+    ): Promise<{
+        readonly result: {
+            readonly proposal: string;
+            readonly started: readonly { readonly spaceId: string; readonly agentId: string }[];
+        };
+        readonly outcome: string;
+        readonly chats: readonly SpaceStartedChat[];
+    }> {
+        const accepted = await this.acceptProposal(ctx, ownerUserId, artifactId, mutationId);
+        const record = await this.#ownedProposal(ctx, ownerUserId, artifactId);
+        const items = readSidebarDocument(accepted.sidebar.html).items;
+        const sectionOf = (id: string): string | undefined => {
+            let label: string | undefined;
+            for (const item of items) {
+                if (item.type === "section") label = item.label;
+                else if (item.type === "separator") label = undefined;
+                else if (item.id === id) return label;
+            }
+            return undefined;
+        };
+        const chats = accepted.started.map(({ spaceId, agentId }) => {
+            const section = sectionOf(spaceId);
+            return {
+                spaceId,
+                agentId,
+                title: record.newRows?.find((row) => row.id === spaceId)?.title ?? "A new chat",
+                ...(section === undefined ? {} : { section }),
+            };
+        });
+        const outcome = [
+            "Focus's proposal is accepted, and the sidebar now follows it.",
+            ...(chats.length === 0
+                ? []
+                : [
+                      `Started ${String(chats.length)} ${chats.length === 1 ? "chat" : "chats"}, each making a read-only plan and waiting for them before it changes anything:`,
+                      ...chats.map(
+                          (chat) =>
+                              `- ${chat.title}${chat.section === undefined ? "" : `, under ${chat.section}`} (data-item ${chat.spaceId})`,
+                      ),
+                  ]),
+            ...(accepted.archived.length === 0
+                ? []
+                : [
+                      `Archived ${String(accepted.archived.length)} finished ${accepted.archived.length === 1 ? "task" : "tasks"}.`,
+                  ]),
+        ].join("\n");
+        return { result: { proposal: artifactId, started: accepted.started }, outcome, chats };
+    }
+
+    /** The person's Prioritizing, when it is the conversation with this agent ID. */
+    async isFocus(ctx: Context, ownerUserId: SpaceOwnerId, agentId: string): Promise<boolean> {
+        return (await this.#livePrioritizing(ctx, ownerUserId)) === agentId;
+    }
+
+    /**
+     * Each accepted new row becomes a chat with the space ID the proposal reserved, named and
+     * iconed as proposed from the start, then sent its first message as the person's, read-only,
+     * on the person's default model. A row whose chat cannot be made is left out.
+     */
+    async #startNewRows(
+        ctx: Context,
+        ownerUserId: SpaceOwnerId,
+        rows: readonly SidebarProposalNewRow[],
+    ): Promise<{ spaceId: string; agentId: string }[]> {
+        const started: { spaceId: string; agentId: string }[] = [];
+        const route = await this.#prioritizingRoute(ctx, ownerUserId);
+        for (const row of rows) {
+            if ((await querySpace(ctx, row.id)) !== undefined) continue;
+            const agentId = createId();
+            try {
+                const creation = await this.#tasks.createWithResult(ctx, {
+                    id: createId(),
+                    agentId,
+                    name: row.title,
+                });
+                await this.createStemCell(ctx, ownerUserId, {
+                    spaceId: row.id,
+                    task: creation.task,
+                    icon: { type: "library", slug: row.icon },
+                });
+            } catch (error: unknown) {
+                ctx.log.warn("A proposed chat could not be started.", {}, error);
+                continue;
+            }
+            started.push({ spaceId: row.id, agentId });
+            if (route === undefined) continue;
+            const mode = {
+                providerId: route.providerId,
+                modelId: route.model,
+                effort: route.effort,
+                serviceTier: null,
+                permissionMode: "read_only" as const,
+            };
+            await this.#requireAgents().send(
+                ctx,
+                agentId,
+                { role: "user", content: [{ type: "text", text: row.firstMessage }] },
+                {
+                    id: createId(),
+                    metadata: { ...USER_MESSAGE_ORIGIN_METADATA, mode },
+                    provider: route.providerId,
+                    model: route.model,
+                    effort: route.effort,
+                    serviceTier: null,
+                    permissionMode: "read_only",
+                },
+            );
+            await this.#requireAgents().updateMetadata(ctx, agentId, {
+                lastMode: mode,
+                updatedAt: Date.now(),
+            });
+        }
+        return started;
     }
 
     /** The person declined a proposal: the sidebar stays as it is, and Prioritizing is told. */
@@ -2370,6 +2765,14 @@ export class SpacesModule implements AgentModule {
             createdAt: record.createdAt,
             decidedAt: record.decidedAt ?? null,
             acceptedVersion: record.acceptedVersion ?? null,
+            newRows: (record.newRows ?? []).map((row) => ({
+                id: row.id,
+                title: row.title,
+                icon: { type: "library" as const, slug: row.icon },
+                why: row.why ?? null,
+                firstMessage: row.firstMessage,
+            })),
+            started: record.started ?? [],
         };
     }
 
@@ -2382,8 +2785,9 @@ export class SpacesModule implements AgentModule {
         ownerUserId: SpaceOwnerId,
         document: SpaceSidebarDocument,
         placed: ReadonlySet<string>,
+        newRowIds: ReadonlySet<string> = new Set(),
     ): Promise<void> {
-        await this.#checkSidebarIds(ctx, ownerUserId, document, placed);
+        await this.#checkSidebarIds(ctx, ownerUserId, document, placed, newRowIds);
         const rows = new Map((await querySpaces(ctx, ownerUserId)).map((row) => [row.id, row]));
         for (const id of archiveOffers(document)) {
             const row = rows.get(id);
@@ -2682,84 +3086,6 @@ export class SpacesModule implements AgentModule {
     }
 
     /**
-     * Focus's proposal of the person's work during onboarding: its own instructions and placement
-     * rules, run once on `route` as a bounded side inference with no conversation of its own.
-     */
-    async proposeWork(
-        ctx: Context,
-        route: {
-            readonly providerId: string;
-            readonly model: string;
-            readonly effort: SessionReasoningEffort;
-        },
-        findings: string,
-    ): Promise<SpaceWorkProposal> {
-        return await proposeWork(ctx, this.#config.providers, route, findings);
-    }
-
-    /**
-     * Looks right in onboarding, as the person's one sidebar edit: each accepted topic becomes a
-     * new section at the end of the sidebar, in the order given, with its rows under it in order,
-     * where clients drew the preview. A topic that is already a section takes its rows at its end.
-     */
-    async placeWork(
-        ctx: Context,
-        ownerUserId: SpaceOwnerId,
-        rows: readonly { readonly spaceId: string; readonly topic?: string }[],
-    ): Promise<void> {
-        const sidebar = await this.sidebar(ctx, ownerUserId);
-        const items = readSidebarDocument(sidebar.html).items;
-        const placed = new Set(rows.map((row) => row.spaceId));
-        const sectionEnds = new Map<string, string>();
-        for (const [index, item] of items.entries()) {
-            if (item.type !== "section") continue;
-            let end = item.id;
-            for (const next of items.slice(index + 1)) {
-                if (next.type === "section" || next.type === "separator") break;
-                if (!placed.has(next.id)) end = next.id;
-            }
-            sectionEnds.set(item.label.toLowerCase(), end);
-        }
-        const ids = new Set(items.map((item) => item.id));
-        let last = items.findLast((item) => !placed.has(item.id))?.id;
-        const topics = [...new Set(rows.flatMap((row) => (row.topic ? [row.topic] : [])))];
-        const operations: SpaceSidebarOperation[] = [];
-        for (const topic of topics) {
-            let anchor = sectionEnds.get(topic.toLowerCase());
-            const added = anchor === undefined;
-            if (anchor === undefined) {
-                const base = `topic-${
-                    topic
-                        .toLowerCase()
-                        .replace(/[^a-z0-9]+/gu, "-")
-                        .replace(/^-|-$/gu, "") || "work"
-                }`;
-                let id = base;
-                for (let suffix = 2; ids.has(id); suffix += 1) id = `${base}-${String(suffix)}`;
-                ids.add(id);
-                anchor = id;
-                operations.push({
-                    type: "insert",
-                    node: { type: "section", id, label: topic },
-                    to: last === undefined ? { parent: null } : { after: last },
-                });
-            }
-            for (const row of rows) {
-                if (row.topic !== topic) continue;
-                operations.push({ type: "move", id: row.spaceId, to: { after: anchor } });
-                anchor = row.spaceId;
-            }
-            if (added) last = anchor;
-        }
-        if (operations.length === 0) return;
-        await this.applySidebarOperations(ctx, ownerUserId, {
-            mutationId: createId(),
-            baseVersion: sidebar.version,
-            operations,
-        });
-    }
-
-    /**
      * Onboarding's real sidebar replacing the example: the default Bots and Tasks headings go
      * while nothing is under them, so no heading disappears later and moves the rows below it.
      */
@@ -3040,7 +3366,12 @@ export class SpacesModule implements AgentModule {
     async requestTidy(ctx: Context, ownerUserId: SpaceOwnerId): Promise<boolean> {
         return await ctx.inTx(async (txCtx) => {
             await this.#ensureOwner(txCtx, ownerUserId);
-            if ((await this.#livePrioritizing(txCtx, ownerUserId)) === undefined) return false;
+            if ((await this.#livePrioritizing(txCtx, ownerUserId)) === undefined) {
+                // Asked to tidy with nobody to do it: Prioritizing begins, and its opening reads
+                // the sidebar.
+                await this.#ensurePrioritizing(txCtx, ownerUserId);
+                return (await this.#livePrioritizing(txCtx, ownerUserId)) !== undefined;
+            }
             await this.#brief(txCtx, ownerUserId, "Tidy the sidebar now.");
             return true;
         });
@@ -4101,7 +4432,11 @@ export class SpacesModule implements AgentModule {
      * Happy creates, with its opening task. It is made with the person's first new work, and
      * again with the next new work after the person archived it.
      */
-    async #ensurePrioritizing(ctx: Context, ownerUserId: SpaceOwnerId): Promise<void> {
+    async #ensurePrioritizing(
+        ctx: Context,
+        ownerUserId: SpaceOwnerId,
+        opening: string = PRIORITIZING_OPENING,
+    ): Promise<void> {
         if (!(await this.#stemCellsEnabled(ctx, ownerUserId))) return;
         if ((await this.#livePrioritizing(ctx, ownerUserId)) !== undefined) return;
         const happyAgentId = await this.#happyAgentId(ctx, ownerUserId);
@@ -4117,7 +4452,7 @@ export class SpacesModule implements AgentModule {
             happyAgentId,
             {
                 title: "Focus Agent",
-                text: PRIORITIZING_OPENING,
+                text: opening,
                 provider: route.providerId,
                 model: route.model,
                 effort: route.effort,
@@ -4843,4 +5178,72 @@ function emptyDefaultHeadings(
             ? [item]
             : [],
     );
+}
+
+/** A new row as Prioritizing proposes it: `id` is a `new-…` name, or a reserved space ID. */
+export interface ProposedNewRow {
+    readonly id: string;
+    readonly title: string;
+    readonly icon: SpaceIconSlug;
+    readonly why?: string;
+    readonly firstMessage: string;
+}
+
+/**
+ * A proposal's new rows after Prioritizing's call: a row naming a reserved ID revises it, a
+ * `new-…` name reserves a space ID, and `rename` puts those IDs in place of the names in its edits.
+ */
+function reserveNewRows(
+    existing: readonly SidebarProposalNewRow[],
+    proposed: readonly ProposedNewRow[],
+): {
+    readonly rows: SidebarProposalNewRow[];
+    readonly reserved: { readonly name: string; readonly id: string }[];
+    readonly changed: boolean;
+    rename(text: string): string;
+} {
+    const rows = [...existing];
+    const reserved: { name: string; id: string }[] = [];
+    let changed = false;
+    for (const row of proposed) {
+        const { id: name, ...fields } = row;
+        const at = rows.findIndex((each) => each.id === name);
+        if (at >= 0) {
+            const next = { ...rows[at]!, ...fields };
+            if (JSON.stringify(next) !== JSON.stringify(rows[at])) changed = true;
+            rows[at] = next;
+            continue;
+        }
+        if (!/^new-[a-z0-9-]{1,60}$/u.test(name))
+            throw new SidebarValidationError(
+                `New row ${name} needs a name like new-release-ci, or the space ID it was given.`,
+            );
+        if (reserved.some((each) => each.name === name))
+            throw new SidebarValidationError(`New row ${name} is named twice.`);
+        const id = createId();
+        reserved.push({ name, id });
+        rows.push({ id, ...fields });
+        changed = true;
+    }
+    if (rows.length > 16)
+        throw new SidebarValidationError("A proposal offers at most 16 new rows.");
+    return {
+        rows,
+        reserved,
+        changed,
+        rename: (text) =>
+            reserved.reduce(
+                (current, { name, id }) => current.replaceAll(`id="${name}"`, `id="${id}"`),
+                text,
+            ),
+    };
+}
+
+/** A chat accepting a proposal started, as a press reports it. */
+export interface SpaceStartedChat {
+    readonly spaceId: string;
+    readonly agentId: string;
+    readonly title: string;
+    /** The section it stands under, when one heads it. */
+    readonly section?: string;
 }

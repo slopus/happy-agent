@@ -11906,6 +11906,7 @@ function agentMetadataChanges(
     const changes: Record<string, unknown> = { updatedAt: occurredAt };
     for (const key of [
         "archivedAt",
+        "composerPlaceholder",
         "orderKey",
         "pendingQuestionId",
         "processes",

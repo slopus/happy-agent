@@ -362,7 +362,7 @@ it("tells an upgraded Prioritizing once and proposes what it may no longer apply
         expect(pending.proposal?.status).toBe("open");
         const own = upgraded.spaces.filter((row) => row.target.agentId === prioritizing);
         expect(own).toHaveLength(1);
-        expect(own[0]!.icon).toEqual({ type: "library", slug: "prioritize" });
+        expect(own[0]!.icon).toEqual({ type: "library", slug: "goals" });
         // A restart tells it nothing twice.
         await h.gym.restart();
         await h.read();

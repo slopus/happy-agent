@@ -84,7 +84,9 @@ export type ChatAction =
     /** Onboarding: finish in one of the chats acceptance opened. */
     | { readonly id: "onboarding.workOpen"; readonly item: string }
     /** Onboarding: finish where the person is. */
-    | { readonly id: "onboarding.finish" };
+    | { readonly id: "onboarding.finish" }
+    /** Good to go: accept Focus's sidebar proposal, by its artifact ID. */
+    | { readonly id: "sidebar.proposalAccept"; readonly proposal: string };
 
 export type ChatActionId = ChatAction["id"];
 
@@ -149,6 +151,10 @@ export function chatActionParse(
         case "onboarding.workOpen": {
             const item = attributes.get("item");
             return item ? { id, item } : undefined;
+        }
+        case "sidebar.proposalAccept": {
+            const proposal = attributes.get("proposal");
+            return proposal ? { id, proposal } : undefined;
         }
         default:
             return undefined;

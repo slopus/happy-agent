@@ -66,12 +66,15 @@ export const onboardingWorkRowSchema = Type.Object(
 );
 export type OnboardingWorkRow = Static<typeof onboardingWorkRowSchema>;
 
-/** A proposal row Looks right opened, with the chat and row it became. */
+/**
+ * A chat onboarding started: by Good to go on Focus's proposal, its space ID is its `id`, and its
+ * topic the section it stands under.
+ */
 export const onboardingStartedSchema = Type.Object(
     {
         id: Type.String({ minLength: 1, maxLength: 64 }),
         title: Type.String({ minLength: 1, maxLength: 80 }),
-        topic: Type.String({ minLength: 1, maxLength: 60 }),
+        topic: Type.Optional(Type.String({ minLength: 1, maxLength: 60 })),
         ongoing: Type.Boolean(),
         agentId: Type.String({ minLength: 1, maxLength: 64 }),
         spaceId: Type.String({ minLength: 1, maxLength: 64 }),
@@ -154,6 +157,30 @@ export const onboardingStateSchema = Type.Object(
         proposal: Type.Union([Type.Array(onboardingWorkRowSchema, { maxItems: 8 }), Type.Null()]),
         /** Discover was pressed: only then may Happy read the places it disclosed. */
         discoverAllowed: Type.Optional(Type.Boolean()),
+        /**
+         * Focus, started at Discover, waiting to be shown in Happy's chat as a sub-agent row right
+         * after the press, once the press is in the conversation.
+         */
+        focusSpawn: Type.Optional(
+            Type.Object(
+                {
+                    pressId: Type.String({ minLength: 1, maxLength: 64 }),
+                    agentId: Type.String({ minLength: 1, maxLength: 64 }),
+                    task: Type.String({ minLength: 1, maxLength: 2_000 }),
+                    model: Type.Optional(
+                        Type.Object(
+                            {
+                                modelId: Type.String({ minLength: 1, maxLength: 256 }),
+                                providerId: Type.String({ minLength: 1, maxLength: 256 }),
+                                name: Type.String({ minLength: 1, maxLength: 256 }),
+                            },
+                            { additionalProperties: false },
+                        ),
+                    ),
+                },
+                { additionalProperties: false },
+            ),
+        ),
         /** Written by earlier previews, which proposed once Happy's turn ended; now ignored. */
         proposeAbout: Type.Optional(Type.Union([Type.String({ maxLength: 4_000 }), Type.Null()])),
         /** How many proposals were made: each one's row values name it alone. */

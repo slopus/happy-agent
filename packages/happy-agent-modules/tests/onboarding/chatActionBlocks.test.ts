@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import { chatActionSegments } from "../../sources/onboarding/impl/chatActions/chatActionBlocks.js";
 import { openingMessage } from "../../sources/onboarding/impl/onboardingCopy.js";
-import { proposalBlock } from "../../sources/onboarding/impl/workCopy.js";
 
 describe("the inline action grammar the daemon checks presses with", () => {
     it("finds Happy's opening button as a pressable action", () => {
@@ -47,27 +46,54 @@ describe("the inline action grammar the daemon checks presses with", () => {
         expect(empty).not.toHaveProperty("block");
     });
 
-    it("gives the proposal's Looks right the label it takes while nothing is ticked", () => {
+    it("gives a checklist's submit the label it takes while nothing is ticked", () => {
         const [segment] = chatActionSegments(
-            `${proposalBlock([
-                {
-                    id: "p1-work-1",
-                    title: "Ship onboarding",
-                    icon: "rocket",
-                    topic: "Onboarding",
-                    why: "12 commits",
-                    firstMessage: "Plan it.",
-                    ongoing: false,
-                },
-            ])}\n`,
+            [
+                '<form data-action="onboarding.routesUse">',
+                '  <label><input type="checkbox" value="codex" checked>Codex <small>Desktop app</small></label>',
+                '  <button type="submit" data-emphasis data-empty-label="Continue without these">Use selected</button>',
+                "</form>",
+                "",
+            ].join("\n"),
         );
         expect(segment).toMatchObject({
             type: "actions",
             block: {
                 kind: "checklist",
-                submit: { label: "Looks right", emptyLabel: "Continue without these" },
+                submit: { label: "Use selected", emptyLabel: "Continue without these" },
             },
         });
+    });
+
+    it("counts a sidebar proposal figure as a block, so Good to go after it keeps its index", () => {
+        const blocks = chatActionSegments(
+            [
+                "Here's how Focus would organize it.",
+                "",
+                '<figure data-sidebar-proposal="p4k8m2q9w1e5r7y3u6i0o2p4"></figure>',
+                "",
+                '<menu><button data-action="sidebar.proposalAccept" data-proposal="p4k8m2q9w1e5r7y3u6i0o2p4" data-emphasis>Good to go</button></menu>',
+                "",
+            ].join("\n"),
+        ).flatMap((segment) =>
+            segment.type === "actions" && segment.block !== undefined ? [segment.block] : [],
+        );
+        expect(blocks).toEqual([
+            { kind: "sidebarProposal", artifactId: "p4k8m2q9w1e5r7y3u6i0o2p4" },
+            {
+                kind: "buttons",
+                buttons: [
+                    {
+                        label: "Good to go",
+                        action: {
+                            id: "sidebar.proposalAccept",
+                            proposal: "p4k8m2q9w1e5r7y3u6i0o2p4",
+                        },
+                        emphasized: true,
+                    },
+                ],
+            },
+        ]);
     });
 
     it("keeps a block with a script or a style as inert text", () => {

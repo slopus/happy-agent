@@ -104,6 +104,8 @@ export async function sidebarGym(
         },
     });
     await gym.client.saveUserSetting("happy-desktop.experiments.stemCells", { value: true });
+    // Reading the sidebar starts no helper; asking for a tidy with none starts one.
+    await gym.http.request("POST", "/v0/spaces/tidy", {});
     const read = () => gym.http.ok<SidebarDocument>("GET", "/v0/spaces/sidebar");
     const manager = async () =>
         await gym.waitUntil(

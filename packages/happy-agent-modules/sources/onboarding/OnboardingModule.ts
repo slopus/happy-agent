@@ -37,8 +37,12 @@ import { ProviderRoutesModule, type ProviderRoute } from "../providerRoutes/inde
 import { ProviderScanModule } from "../providerScan/index.js";
 import { USER_MESSAGE_ORIGIN_METADATA } from "../impl/messageOrigin.js";
 import { MobileConnectorModule } from "../mobileConnector/index.js";
-import { SPACE_STANDALONE_OWNER, spaceIconSchema, SpacesModule } from "../spaces/index.js";
-import { TasksModule } from "../tasks/index.js";
+import {
+    SPACE_STANDALONE_OWNER,
+    SpaceConflictError,
+    SpaceNotFoundError,
+    SpacesModule,
+} from "../spaces/index.js";
 import { createUuidV7Factory } from "../utils/createUuidV7.js";
 import { chatActionParse, type ChatAction } from "./impl/chatActions/chatAction.js";
 import type { ChatActionBlock } from "./impl/chatActions/chatActionBlocks.js";
@@ -47,7 +51,6 @@ import {
     catalogMessage,
     chooseAtLeastOneMessage,
     connectFailedMessage,
-    connectedMessage,
     connectingMessage,
     installOfferMessage,
     manualMessage,
@@ -68,16 +71,12 @@ import {
     type OnboardingPlaces,
 } from "./impl/onboardingGuide.js";
 import { readGitIdentity } from "./impl/readGitIdentity.js";
-import { discoverWork } from "./impl/discoverWork.js";
 import {
-    acceptedOutcome,
     aiChosenOutcome,
     closingOutcome,
     manualOutcome,
     placesOutcome,
-    proposalOutcome,
 } from "./impl/pressOutcome.js";
-import { proposalBlock } from "./impl/workCopy.js";
 import {
     APP_OF,
     PROVIDER_OF,
@@ -96,25 +95,23 @@ import {
 } from "./impl/onboardingCopy.js";
 import {
     ONBOARDING_VERSION,
-    type OnboardingAccepted,
     type OnboardingFlow,
     type OnboardingListener,
     type OnboardingStarted,
     type OnboardingState,
     type OnboardingSummary,
-    type OnboardingWorkRow,
 } from "./OnboardingFlow.js";
 import { onboardingMigrations } from "./OnboardingMigrations.js";
 import { OnboardingRequestError } from "./OnboardingRequestError.js";
 import { queryOnboardingState } from "./persistence/queryOnboardingState.js";
 import { upsertOnboardingState } from "./persistence/upsertOnboardingState.js";
-import { discoverWorkTool } from "./tools/discover_work.js";
-import { proposeWorkTool } from "./tools/propose_work.js";
 import { saveProfileTool } from "./tools/save_profile.js";
 import { setDefaultModelTool } from "./tools/set_default_model.js";
 
 /** Onboarding runs on the daemon's machine for its one person; team members keep their own. */
 const OWNER = "standalone";
+/** What Happy's composer says while its model leads onboarding. */
+const COMPOSER_PLACEHOLDER = "Or just tell me in your own words…";
 const SAY_FUNCTION = "onboarding.say";
 const STEP_FUNCTION = "onboarding.step";
 
@@ -245,7 +242,6 @@ export class OnboardingModule implements AgentModule {
     readonly #providerClis: ProviderClisModule;
     readonly #providerRoutes: ProviderRoutesModule;
     readonly #providerScan: ProviderScanModule;
-    readonly #tasks: TasksModule;
     readonly #spaces: SpacesModule;
     readonly #mobileConnector: MobileConnectorModule;
     readonly #listeners = new Set<OnboardingListener>();
@@ -269,11 +265,9 @@ export class OnboardingModule implements AgentModule {
         providerClis: ProviderClisModule,
         providerRoutes: ProviderRoutesModule,
         providerScan: ProviderScanModule,
-        tasks: TasksModule,
         spaces: SpacesModule,
         mobileConnector: MobileConnectorModule,
     ) {
-        this.#tasks = tasks;
         this.#spaces = spaces;
         this.#mobileConnector = mobileConnector;
         this.#config = config;
@@ -362,13 +356,20 @@ export class OnboardingModule implements AgentModule {
                 (await this.#guiding(hookCtx, scope)) ? onboardingGuide(process.platform) : "",
             tools: async (hookCtx, scope) =>
                 (await this.#guiding(hookCtx, scope))
-                    ? [
-                          saveProfileTool(this),
-                          discoverWorkTool(this),
-                          proposeWorkTool(this),
-                          setDefaultModelTool(this),
-                      ]
+                    ? [saveProfileTool(this), setDefaultModelTool(this)]
                     : [],
+            // Focus, started by Discover, shows right after the press as Happy's sub-agent row.
+            messageAcceptedTransact: async (hookCtx, scope, accepted) => {
+                const state = await queryOnboardingState(hookCtx, OWNER);
+                const spawn = state?.focusSpawn;
+                if (state === undefined || spawn === undefined || accepted.id !== spawn.pressId)
+                    return;
+                const { focusSpawn: _shown, ...rest } = state;
+                await this.#write(hookCtx, rest);
+                // In the run the press started, right after the press.
+                const press = await this.#history.message(hookCtx, scope.agent.id, accepted.id);
+                await this.#recordFocusSpawn(hookCtx, scope.agent.id, spawn, press?.runId);
+            },
             // Happy's first answer on the chosen provider is the real request onboarding requires.
             afterInferenceTransact: async (hookCtx, scope, inference) => {
                 if (
@@ -520,6 +521,7 @@ export class OnboardingModule implements AgentModule {
                         params: { ...press.params },
                         values: [...press.values],
                         label: found.label,
+                        ...(found.ticked === undefined ? {} : { ticked: [...found.ticked] }),
                     };
                     const responder = responderOf(found.action, state);
                     if (responder === "bootstrap") {
@@ -532,7 +534,8 @@ export class OnboardingModule implements AgentModule {
                         return { kind: "answered", message };
                     }
                     const decided = await this.#decide(txCtx, found.action, state, prepared, {
-                        offered: found.offered,
+                        id,
+                        inHappy: found.inHappy,
                     });
                     // A profile saved by the press may be the last requirement met.
                     await this.#reconcileCompletion(txCtx);
@@ -580,10 +583,12 @@ export class OnboardingModule implements AgentModule {
         readonly action: ChatAction;
         readonly choice: HistoryActionChoice;
         readonly label: string;
+        /** A submitted checklist's ticked labels, in the order it shows them. */
+        readonly ticked?: readonly string[];
         /** How the model reads the press. */
         readonly said: string;
-        /** A pressed checklist's row values. */
-        readonly offered: readonly string[];
+        /** Whether it was pressed in Happy's conversation rather than in Focus's. */
+        readonly inHappy: boolean;
     }> {
         const message = await this.#history.message(ctx, agentId, press.messageId);
         if (
@@ -642,7 +647,15 @@ export class OnboardingModule implements AgentModule {
                 message,
             );
         }
-        if ((await this.#bots.chiefOfStaff(ctx))?.agentId !== agentId) {
+        // Good to go is pressed in Happy's conversation and in Focus's own; the rest only in Happy's.
+        const inHappy = (await this.#bots.chiefOfStaff(ctx))?.agentId === agentId;
+        if (
+            !inHappy &&
+            !(
+                found.action.id === "sidebar.proposalAccept" &&
+                (await this.#spaces.isFocus(ctx, SPACE_STANDALONE_OWNER, agentId))
+            )
+        ) {
             throw new OnboardingRequestError(
                 "invalid",
                 "That action runs only in Happy's onboarding.",
@@ -655,8 +668,9 @@ export class OnboardingModule implements AgentModule {
             action: found.action,
             choice: found.choice,
             label: pressed.label,
+            ...(pressed.ticked === undefined ? {} : { ticked: pressed.ticked }),
             said: pressed.said,
-            offered: block?.kind === "checklist" ? block.options.map((option) => option.value) : [],
+            inHappy,
         };
     }
 
@@ -725,7 +739,7 @@ export class OnboardingModule implements AgentModule {
         action: ChatAction,
         state: OnboardingState,
         prepared: Prepared,
-        pressed: { readonly offered: readonly string[] },
+        pressed: { readonly id: string; readonly inHappy: boolean },
     ): Promise<{ readonly outcome: string; readonly result: unknown }> {
         const done = (outcome: string, result: unknown = null) => ({ outcome, result });
         switch (action.id) {
@@ -808,22 +822,79 @@ export class OnboardingModule implements AgentModule {
                 return done("They want to type their name and email.");
             case "onboarding.discover": {
                 if (state.step !== "guided") throw stepOver();
-                await this.#write(ctx, { ...state, discoverAllowed: true });
+                // The press is the person's consent: Focus may read the places Happy disclosed.
+                const cli = state.connections[0]?.cli;
+                // Allowed before Focus starts, so its first turn may already read.
+                if (cli === "codex" || cli === "claude")
+                    await this.#spaces.allowDiscovery(ctx, SPACE_STANDALONE_OWNER, cli);
+                const first = (await this.#closing(ctx)).name.trim().split(/\s+/u)[0] ?? "";
+                const task = `Organize ${first === "" ? "the person" : first}'s work from the places above, most important first.`;
+                const focus = await this.#spaces.startFocus(ctx, SPACE_STANDALONE_OWNER, task);
+                if (focus === undefined) {
+                    return done(
+                        "Focus isn't available here, so nothing was read. Ask them in one sentence what they're working on and what matters most right now.",
+                    );
+                }
+                // Shown in Happy's chat as Focus's sub-agent row once the press is recorded there.
+                await this.#write(ctx, {
+                    ...state,
+                    discoverAllowed: true,
+                    focusSpawn: {
+                        pressId: pressed.id,
+                        agentId: focus.agentId,
+                        task,
+                        ...(focus.model === undefined ? {} : { model: focus.model }),
+                    },
+                });
                 return done(
-                    `Discover is allowed. Read exactly the places you disclosed with discover_work now.\n${placesOutcome(onboardingPlaces(state.connections[0]?.cli))}`,
+                    `Discover is allowed. Focus, your sub-agent, is started with the task "${task}" It is shown in your chat and under you in the sidebar, and it reads the places you disclosed. Focus's agent ID is ${focus.agentId}. Its proposal comes back to you as a message; don't message Focus now.\n${placesOutcome(onboardingPlaces(cli))}`,
                 );
             }
-            case "onboarding.workTell":
+            case "onboarding.workTell": {
                 if (state.step !== "guided") throw stepOver();
-                return done("They'll tell you what they work on.");
-            case "onboarding.workChange":
-                if (state.step !== "guided") throw stepOver();
-                if (!isCurrentProposal(state, pressed.offered)) throw proposalReplaced();
-                return done(proposalOutcome(state.proposal ?? []));
-            case "onboarding.workAccept": {
-                if (state.step !== "guided") throw stepOver();
-                if (!isCurrentProposal(state, pressed.offered)) throw proposalReplaced();
-                return await this.#accept(ctx, state, action.values);
+                const focus = await this.#spaces.startFocus(ctx, SPACE_STANDALONE_OWNER);
+                return done(
+                    focus === undefined
+                        ? "They'll tell you what they work on."
+                        : `They'll tell you what they work on. Focus is started and shown under you in the sidebar; Focus's agent ID is ${focus.agentId}. When they answer, hand their words to Focus with send_agent_message. Its proposal comes back to you as a message.`,
+                );
+            }
+            case "sidebar.proposalAccept": {
+                let accepted: Awaited<ReturnType<SpacesModule["acceptProposalByPress"]>>;
+                try {
+                    accepted = await this.#spaces.acceptProposalByPress(
+                        ctx,
+                        SPACE_STANDALONE_OWNER,
+                        action.proposal,
+                        pressed.id,
+                    );
+                } catch (error: unknown) {
+                    if (error instanceof SpaceConflictError || error instanceof SpaceNotFoundError)
+                        throw new OnboardingRequestError("conflict", error.message);
+                    throw error;
+                }
+                // The chats onboarding started are the ones it offers to open at the end.
+                if (state.step === "guided" && accepted.chats.length > 0) {
+                    const current = await this.#state(ctx);
+                    await this.#write(ctx, {
+                        ...current,
+                        started: [
+                            ...current.started,
+                            ...accepted.chats.map((chat) => ({
+                                id: chat.spaceId,
+                                title: chat.title.slice(0, 80),
+                                ...(chat.section === undefined
+                                    ? {}
+                                    : { topic: chat.section.slice(0, 60) }),
+                                ongoing: false,
+                                agentId: chat.agentId,
+                                spaceId: chat.spaceId,
+                            })),
+                        ].slice(-8),
+                        placed: true,
+                    });
+                }
+                return done(accepted.outcome, accepted.result);
             }
             case "onboarding.newChat": {
                 if (state.step !== "guided") throw stepOver();
@@ -887,6 +958,7 @@ export class OnboardingModule implements AgentModule {
                         .catch(() => undefined);
                 }
                 await this.#write(ctx, { ...state, step: "finished" });
+                await this.#setComposerPlaceholder(ctx, null);
                 return done(
                     "Onboarding is finished.",
                     open === undefined ? null : { agentId: open.agentId, spaceId: open.spaceId },
@@ -1036,84 +1108,6 @@ export class OnboardingModule implements AgentModule {
     }
 
     /**
-     * Read, for Happy's discover_work tool, exactly the places Happy disclosed, once the person
-     * pressed Discover. Nothing is read before that press, whatever the model asks.
-     */
-    async discover(ctx: Context): Promise<string> {
-        const state = await this.#state(ctx);
-        if (state.discoverAllowed !== true) {
-            return "Nothing was read: the person has not pressed Discover. You read their work only after they do.";
-        }
-        const cli = state.connections[0]?.cli;
-        const places = onboardingPlaces(cli);
-        if (cli === undefined || places === undefined) {
-            return "Nothing was read: you know no history of theirs to read for the assistant they connected. Ask them what they work on.";
-        }
-        const home = this.#config.processEnvironment["HOME"]?.trim() || homedir();
-        const findings = await discoverWork(home, cli);
-        if (findings === undefined) {
-            return `Found nothing: no ${places.assistant} session named a project.`;
-        }
-        await this.#update(ctx, (current) => ({ ...current, findings }));
-        return findings;
-    }
-
-    /**
-     * Focus proposes the person's work, for Happy's propose_work tool, from what discovery found
-     * and what the person said. The proposal's rows are stored under values that name this
-     * proposal alone, so a press on an older one is refused and each first message is the stored
-     * one. Answers with the block Happy's message shows.
-     */
-    async propose(ctx: Context, about: string | undefined): Promise<string> {
-        const state = await this.#state(ctx);
-        const sources = [
-            ...(about?.trim() ? [`What the person said they work on:\n${about.trim()}`] : []),
-            ...(state.findings === null ? [] : [state.findings]),
-        ];
-        if (sources.length === 0) {
-            return "Nothing to propose from yet: ask what they work on, then call propose_work with their words.";
-        }
-        const chosen = state.model;
-        const model = this.#config.models.find(
-            (candidate) =>
-                candidate.providerId === chosen?.providerId && candidate.id === chosen.modelId,
-        );
-        if (model === undefined) {
-            return "Focus couldn't propose: the AI they connected is no longer available.";
-        }
-        const proposal = await this.#spaces.proposeWork(
-            ctx,
-            { providerId: model.providerId, model: model.id, effort: model.defaultEffort },
-            sources.join("\n\n"),
-        );
-        if (proposal.rows.length === 0) {
-            return "Focus found nothing worth a chat yet. Ask what matters most to them right now.";
-        }
-        const number = (state.proposals ?? 0) + 1;
-        const rows: OnboardingWorkRow[] = proposal.rows.map((row, index) => ({
-            id: `p${String(number)}-work-${String(index + 1)}`,
-            title: row.title,
-            icon: row.icon,
-            topic: row.topic,
-            why: row.why,
-            firstMessage: row.firstMessage,
-            ongoing: row.ongoing === true,
-        }));
-        await this.#update(ctx, (current) => ({
-            ...current,
-            proposal: rows,
-            proposals: number,
-        }));
-        return [
-            `Focus introduces it this way; say it in your own words: ${proposal.intro}`,
-            "",
-            "The proposal's block, to include exactly as it is:",
-            "",
-            proposalBlock(rows),
-        ].join("\n");
-    }
-
-    /**
      * Make a model the default, for Happy's set_default_model tool: new conversations start on it,
      * and so does the rest of onboarding.
      */
@@ -1144,124 +1138,48 @@ export class OnboardingModule implements AgentModule {
     }
 
     /**
-     * Looks right, inside its press's transaction: a chat for each ticked row, named and iconed as
-     * the row shows, its topics added and each row placed in one sidebar change of the person's
-     * own, then each chat's first message, exactly as shown, to run read-only.
+     * Focus's sub-agent row in Happy's chat: the daemon started Focus, not Happy's model, so the
+     * daemon writes the finished creation call any sub-agent shows, with Focus's agent ID and its
+     * task. It is the conversation's record only; Happy's model hears of Focus from the press.
      */
-    async #accept(
+    async #recordFocusSpawn(
         ctx: Context,
-        state: OnboardingState,
-        values: readonly string[],
-    ): Promise<{ readonly outcome: string; readonly result: unknown }> {
-        const rows = (state.proposal ?? []).filter((row) => values.includes(row.id));
-        const accepted: OnboardingAccepted[] = rows.map((row) => ({
-            value: row.id,
-            spaceId: createId(),
-            agentId: createId(),
-            taskId: createId(),
-            status: "pending",
-        }));
-        const opened: { readonly entry: OnboardingAccepted; readonly row: OnboardingWorkRow }[] =
-            [];
-        const failed: string[] = [];
-        for (const [index, entry] of accepted.entries()) {
-            const row = rows[index]!;
-            try {
-                await this.#openChat(ctx, entry, row);
-                opened.push({ entry, row });
-            } catch (error: unknown) {
-                ctx.log.warn("Onboarding could not open a proposed chat.", {}, error);
-                failed.push(row.title);
-            }
-        }
-        let topicsError: string | undefined;
-        try {
-            await this.#spaces.placeWork(
-                ctx,
-                SPACE_STANDALONE_OWNER,
-                opened.map(({ entry, row }) => ({ spaceId: entry.spaceId, topic: row.topic })),
-            );
-        } catch (error: unknown) {
-            topicsError = errorText(error);
-        }
-        const sent: OnboardingStarted[] = [];
-        for (const { entry, row } of opened) {
-            const started: OnboardingStarted = {
-                id: row.id,
-                title: row.title,
-                topic: row.topic,
-                ongoing: row.ongoing,
-                agentId: entry.agentId,
-                spaceId: entry.spaceId,
-            };
-            try {
-                await this.#sendFirst(ctx, started, createId(), row.firstMessage);
-                sent.push(started);
-            } catch (error: unknown) {
-                ctx.log.warn("Onboarding could not start a proposed chat.", {}, error);
-                failed.push(row.title);
-            }
-        }
-        await this.#update(ctx, (current) => ({
-            ...current,
-            proposal: null,
-            accepted: accepted.map((entry) => ({
-                ...entry,
-                status: sent.some((each) => each.id === entry.value) ? "started" : "failed",
-            })),
-            started: [
-                ...current.started.filter((row) => !sent.some((each) => each.id === row.id)),
-                ...sent,
-            ],
-            placed: topicsError === undefined && sent.length > 0,
-        }));
-        return {
-            outcome: acceptedOutcome(sent.map(startedOf), failed, topicsError),
-            result: {
-                started: accepted.map(({ value, spaceId, agentId }) => ({
-                    value,
-                    spaceId,
-                    agentId,
-                })),
-            },
-        };
-    }
-
-    /**
-     * A proposal row's chat, with the IDs its press fixed, on the model onboarding chose. It
-     * starts with the row's name and icon and keeps them: it is never a stem cell that names
-     * itself later.
-     */
-    async #openChat(
-        ctx: Context,
-        ids: Pick<OnboardingAccepted, "spaceId" | "taskId" | "agentId">,
-        row: OnboardingWorkRow,
+        agentId: string,
+        spawn: NonNullable<OnboardingState["focusSpawn"]>,
+        runId: string | undefined,
     ): Promise<void> {
-        const creation = await this.#tasks.createWithResult(ctx, {
-            id: ids.taskId,
-            agentId: ids.agentId,
-            name: row.title,
+        const callId = createId();
+        await this.#history.record(ctx, agentId, {
+            role: "assistant",
+            recordId: createId(),
+            ...(runId === undefined ? {} : { runId }),
+            blocks: [
+                {
+                    type: "tool_call",
+                    callId,
+                    name: "create_agent",
+                    arguments: {
+                        title: spawn.task,
+                        text: spawn.task,
+                        ...(spawn.model === undefined
+                            ? {}
+                            : { model: spawn.model.modelId, provider: spawn.model.providerId }),
+                    },
+                    spawnPresentation: {
+                        type: "agent_spawn",
+                        ...(spawn.model === undefined ? {} : { model: spawn.model }),
+                        agentId: spawn.agentId,
+                    },
+                },
+                {
+                    type: "tool_result",
+                    callId,
+                    toolName: "create_agent",
+                    display: "Started Focus",
+                    output: `Started Focus (${spawn.agentId}) and sent it the task.`,
+                },
+            ],
         });
-        const icon = { type: "library", slug: row.icon };
-        await this.#spaces.createStemCell(ctx, SPACE_STANDALONE_OWNER, {
-            spaceId: ids.spaceId,
-            task: creation.task,
-            ...(Value.Check(spaceIconSchema, icon) ? { icon } : {}),
-        });
-        const chosen = (await this.#state(ctx)).model;
-        const model = this.#config.models.find(
-            (candidate) =>
-                candidate.providerId === chosen?.providerId && candidate.id === chosen.modelId,
-        );
-        if (model !== undefined) {
-            await this.#useModel(
-                ctx,
-                creation.task.agentId,
-                model.providerId,
-                model.id,
-                model.defaultEffort,
-            );
-        }
     }
 
     /**
@@ -1367,55 +1285,6 @@ export class OnboardingModule implements AgentModule {
         return pending;
     }
 
-    /** The first message the proposal showed, as the person approved it, run read-only. */
-    async #sendFirst(
-        ctx: Context,
-        row: OnboardingStarted,
-        messageId: string,
-        text: string,
-    ): Promise<void> {
-        const agents = this.#agents;
-        const chosen = (await this.#state(ctx)).model;
-        if (agents === undefined || chosen === null) return;
-        if ((await this.#history.message(ctx, row.agentId, messageId)) !== undefined) return;
-        const model = this.#config.models.find(
-            (candidate) =>
-                candidate.providerId === chosen.providerId && candidate.id === chosen.modelId,
-        );
-        const effort = model?.defaultEffort ?? "medium";
-        const mode = {
-            providerId: chosen.providerId,
-            modelId: chosen.modelId,
-            effort,
-            serviceTier: null,
-            permissionMode: "read_only" as const,
-        };
-        await ctx.inTx(async (txCtx) => {
-            await agents.send(
-                txCtx,
-                row.agentId,
-                { role: "user", content: [{ type: "text", text }] },
-                {
-                    id: messageId,
-                    metadata: { ...USER_MESSAGE_ORIGIN_METADATA, mode },
-                    provider: chosen.providerId,
-                    model: chosen.modelId,
-                    effort,
-                    serviceTier: null,
-                    permissionMode: "read_only",
-                },
-            );
-            await this.#useModel(
-                txCtx,
-                row.agentId,
-                chosen.providerId,
-                chosen.modelId,
-                effort,
-                "read_only",
-            );
-        });
-    }
-
     /** What the last steps need: the person's name, the chats opened, and whether they are placed. */
     async #closing(ctx: Context): Promise<{
         name: string;
@@ -1518,6 +1387,27 @@ export class OnboardingModule implements AgentModule {
                 effort: effortLabel(model?.defaultEffort ?? "medium"),
             },
             ...(prefill === undefined ? {} : { profile: prefill }),
+        });
+        await this.#setComposerPlaceholder(ctx, COMPOSER_PLACEHOLDER);
+    }
+
+    /** What Happy's composer says while its model leads onboarding; `null` gives it back. */
+    async #setComposerPlaceholder(ctx: Context, placeholder: string | null): Promise<void> {
+        const agents = this.#agents;
+        const happy = await this.#bots.chiefOfStaff(ctx);
+        if (agents === undefined || happy === undefined) return;
+        const config = await agents.config(ctx, happy.agentId);
+        if (
+            config === undefined ||
+            (config.metadata?.["composerPlaceholder"] ?? null) === placeholder
+        )
+            return;
+        const version =
+            typeof config.metadata?.["version"] === "number" ? config.metadata["version"] + 1 : 1;
+        await agents.updateMetadata(ctx, happy.agentId, {
+            composerPlaceholder: placeholder,
+            updatedAt: Date.now(),
+            version,
         });
     }
 
@@ -1775,7 +1665,8 @@ export class OnboardingModule implements AgentModule {
                 model.defaultEffort,
             );
         }
-        await say(connectedMessage(connections));
+        // No scripted line: Happy's model opens with what is connected, and its run's thinking
+        // covers the wait.
         await this.#begin(ctx);
     }
 
@@ -2024,16 +1915,6 @@ export class OnboardingModule implements AgentModule {
                 provider,
                 profile: Boolean(profile?.name) && Boolean(profile?.email),
             },
-            ...(state.accepted === undefined
-                ? {}
-                : {
-                      accepted: state.accepted.map(({ value, spaceId, agentId, status }) => ({
-                          value,
-                          spaceId,
-                          agentId,
-                          status,
-                      })),
-                  }),
         };
     }
 
@@ -2077,21 +1958,13 @@ function stepOver(): OnboardingRequestError {
     return new OnboardingRequestError("conflict", "That step of onboarding is over.");
 }
 
-/** Whether a pressed proposal is the newest one: its rows are exactly the stored ones. */
-function isCurrentProposal(state: OnboardingState, offered: readonly string[]): boolean {
-    const rows = state.proposal ?? [];
-    return (
-        rows.length > 0 &&
-        offered.length === rows.length &&
-        rows.every((row) => offered.includes(row.id))
-    );
-}
-
 /**
  * Who answers a press: the bootstrap's scripted reply before an AI is connected, nothing for the
  * presses that end onboarding, and otherwise Happy's model.
  */
 function responderOf(action: ChatAction, state: OnboardingState): "bootstrap" | "none" | "model" {
+    // Good to go is answered by the model of the conversation it was pressed in.
+    if (action.id === "sidebar.proposalAccept") return "model";
     if (action.id === "onboarding.workOpen" || action.id === "onboarding.finish") return "none";
     if (action.id === "onboarding.start") return "bootstrap";
     return GUIDED_STEPS.has(state.step) ? "model" : "bootstrap";
@@ -2118,7 +1991,7 @@ function offers(block: ChatActionBlock, actionId: string): boolean {
 function pressedWords(
     block: ChatActionBlock | undefined,
     choice: HistoryActionChoice,
-): { readonly label: string; readonly said: string } {
+): { readonly label: string; readonly said: string; readonly ticked?: readonly string[] } {
     if (block?.kind === "buttons" && choice.kind === "button") {
         const label = block.buttons[choice.index]?.label ?? "";
         return { label, said: `[Pressed "${label}" in your message]` };
@@ -2131,21 +2004,18 @@ function pressedWords(
         const values = choice.kind === "checklist" ? choice.values : [];
         const ticked = block.options
             .filter((option) => values.includes(option.value))
-            .map((option) => `"${option.label}"`);
+            .map((option) => option.label);
         const label =
             ticked.length === 0 && block.submit.emptyLabel !== undefined
                 ? block.submit.emptyLabel
                 : block.submit.label;
         return {
             label,
-            said: `[Pressed "${label}" with ${ticked.length === 0 ? "nothing" : ticked.join(", ")} ticked in your message]`,
+            ticked,
+            said: `[Pressed "${label}" with ${ticked.length === 0 ? "nothing" : ticked.map((each) => `"${each}"`).join(", ")} ticked in your message]`,
         };
     }
     return { label: "", said: "[Pressed a control in your message]" };
-}
-
-function proposalReplaced(): OnboardingRequestError {
-    return new OnboardingRequestError("conflict", "A newer proposal replaced that one.");
 }
 
 /** Where onboarding stands once a connection stopped or failed: back to choosing, unless one works. */
@@ -2223,8 +2093,13 @@ function errorText(error: unknown): string {
 function startedOf(row: OnboardingStarted): {
     id: string;
     title: string;
-    topic: string;
+    topic?: string;
     ongoing: boolean;
 } {
-    return { id: row.id, title: row.title, topic: row.topic, ongoing: row.ongoing };
+    return {
+        id: row.id,
+        title: row.title,
+        ...(row.topic === undefined ? {} : { topic: row.topic }),
+        ongoing: row.ongoing,
+    };
 }

@@ -259,6 +259,28 @@ export type SidebarAuthorship = Static<typeof sidebarAuthorshipSchema>;
 export type SidebarAspect = keyof SidebarAuthorship;
 
 /**
+ * A new chat a proposal offers, by the space ID reserved for it: what its row shows, and the first
+ * message accepting sends. The first message lives only here, never in the document.
+ */
+export const sidebarProposalNewRowSchema = Type.Object(
+    {
+        id: cuid2Schema,
+        title: Type.String({ minLength: 1, maxLength: 80 }),
+        icon: spaceIconSlugSchema,
+        why: Type.Optional(Type.String({ minLength: 1, maxLength: 160 })),
+        firstMessage: Type.String({ minLength: 1, maxLength: 2_000 }),
+    },
+    { additionalProperties: false },
+);
+export type SidebarProposalNewRow = Static<typeof sidebarProposalNewRowSchema>;
+
+/** A chat accepting a proposal created for one of its new rows. */
+export const sidebarProposalStartedSchema = Type.Object(
+    { spaceId: cuid2Schema, agentId: cuid2Schema },
+    { additionalProperties: false },
+);
+
+/**
  * One sidebar proposal: a `sidebar_proposal` artifact whose version 1 is the sidebar it was drafted
  * from. `authorship` records what the person set in it, so Prioritizing's revisions keep it.
  */
@@ -277,6 +299,8 @@ export const sidebarProposalRecordSchema = Type.Object(
         /** The mutation that decided it, so a retried decision answers as the first did. */
         decisionMutationId: Type.Optional(Type.String({ minLength: 1, maxLength: 1100 })),
         archived: Type.Optional(Type.Array(cuid2Schema, { maxItems: 1000 })),
+        newRows: Type.Optional(Type.Array(sidebarProposalNewRowSchema, { maxItems: 16 })),
+        started: Type.Optional(Type.Array(sidebarProposalStartedSchema, { maxItems: 16 })),
         authorship: Type.Optional(
             Type.Record(Type.String({ minLength: 1, maxLength: 128 }), sidebarAuthorshipSchema, {
                 maxProperties: 2000,
@@ -297,6 +321,22 @@ export const sidebarProposalSchema = Type.Object(
         createdAt: spaceTimestampSchema,
         decidedAt: Type.Union([spaceTimestampSchema, Type.Null()]),
         acceptedVersion: Type.Union([spaceVersionSchema, Type.Null()]),
+        newRows: Type.Array(
+            Type.Object(
+                {
+                    id: cuid2Schema,
+                    title: sidebarProposalNewRowSchema.properties.title,
+                    icon: Type.Object(
+                        { type: Type.Literal("library"), slug: spaceIconSlugSchema },
+                        { additionalProperties: false },
+                    ),
+                    why: Type.Union([Type.String({ minLength: 1, maxLength: 160 }), Type.Null()]),
+                    firstMessage: sidebarProposalNewRowSchema.properties.firstMessage,
+                },
+                { additionalProperties: false },
+            ),
+        ),
+        started: Type.Array(sidebarProposalStartedSchema),
     },
     { additionalProperties: false },
 );
@@ -365,6 +405,18 @@ export const spaceOwnerStateSchema = Type.Object(
         /** When an event first asked to wake Prioritizing since its last brief. */
         sidebarWakeAt: Type.Optional(spaceTimestampSchema),
         prioritizingAgentId: Type.Optional(cuid2Schema),
+        /**
+         * The person pressed Discover in onboarding: Prioritizing may read that assistant's own
+         * history, and only the places Happy disclosed.
+         */
+        discovery: Type.Optional(
+            Type.Object(
+                { assistant: Type.Union([Type.Literal("codex"), Type.Literal("claude")]) },
+                { additionalProperties: false },
+            ),
+        ),
+        /** Happy messaged Prioritizing; when that turn ends, Happy hears what came of it. */
+        happyAsked: Type.Optional(Type.Literal(true)),
         /** The revision of Prioritizing's instructions it was last told about. */
         prioritizingRevision: Type.Optional(Type.Integer({ minimum: 0 })),
         /** Prioritizing's proposals, newest last; at most one is open. */

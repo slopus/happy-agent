@@ -35,6 +35,7 @@ import { chatActionParse, type ChatAction } from "./chatAction.js";
  * <figure data-phone-app></figure>
  * <figure data-provider-cli="codex"></figure>
  * <figure data-setting="default-model"></figure>
+ * <figure data-sidebar-proposal="ARTIFACT_ID"></figure>
  * ```
  *
  * A tree is the places something will be read, drawn as the app's file tree.
@@ -150,6 +151,8 @@ export type ChatActionBlock =
     | { readonly kind: "providerCli"; readonly cliId: string }
     /** One setting by its name, such as `default-model`, drawn live with a way to change it. */
     | { readonly kind: "setting"; readonly setting: string }
+    /** A sidebar proposal, by its artifact ID, drawn live as a read-only preview. */
+    | { readonly kind: "sidebarProposal"; readonly artifactId: string }
     | {
           /** One single-line field and its submit. The text goes to the action only. */
           readonly kind: "code";
@@ -209,7 +212,7 @@ const BLOCK_START = /^ {0,3}<(menu|form|output|ol|ul|figure)(?=[\t\n\f\r />]|$)/
 const STEPS_START = /^ {0,3}<ol[\t\n\f\r ][^>]*\bdata-steps\b/iu;
 const TREE_START = /^ {0,3}<ul[\t\n\f\r ][^>]*\bdata-tree\b/iu;
 const FIGURE_START =
-    /^ {0,3}<figure[\t\n\f\r ][^>]*\bdata-(?:phone-app|phone-pair|provider-cli|setting)\b/iu;
+    /^ {0,3}<figure[\t\n\f\r ][^>]*\bdata-(?:phone-app|phone-pair|provider-cli|setting|sidebar-proposal)\b/iu;
 const PARTIAL_START = /^ {0,3}<([a-z]*)$/iu;
 const FENCE = /^ {0,3}(`{3,}|~{3,})/u;
 const ROOTS = ["menu", "form", "output", "ol", "ul", "figure"];
@@ -625,6 +628,8 @@ export function chatActionBlockParse(html: string): ChatActionBlock | undefined 
             if (root.attributes.has("data-phone-pair")) return { kind: "phonePair" };
             const cliId = root.attributes.get("data-provider-cli")?.trim();
             if (cliId) return { kind: "providerCli", cliId };
+            const artifactId = root.attributes.get("data-sidebar-proposal")?.trim();
+            if (artifactId) return { kind: "sidebarProposal", artifactId };
             const setting = root.attributes.get("data-setting")?.trim();
             return setting ? { kind: "setting", setting } : undefined;
         }

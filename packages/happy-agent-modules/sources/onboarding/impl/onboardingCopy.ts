@@ -48,7 +48,11 @@ export const PROVIDER_BUTTONS: readonly {
 ];
 
 const FIRST_STEP =
-    "First, let's check which AI subscriptions you already use today. I reuse your existing subscriptions, so there's nothing new to pay for.";
+    "First, let's check which AI subscriptions you already use. I reuse what you pay for today, so there's nothing new to pay for.";
+
+/** Said once, under the subscriptions Happy found: connecting more never has to happen now. */
+const CONNECT_LATER =
+    '<output data-status="info">You can always ask me to connect more later.</output>';
 
 /** The desktop model picker's own labels (`happyAgentThinkingLabel`), so both read the same. */
 const EFFORT_LABELS: Readonly<Record<string, string>> = {
@@ -85,7 +89,7 @@ export function listOf(words: readonly string[], conjunction: "and" | "or" = "an
 /** Happy introduces itself and the example sidebar, and offers to start. */
 export function openingMessage(): string {
     return [
-        "Hi, I'm Happy, your main agent. I run and coordinate agents across your work. The sidebar shows an example of how your work looks once we're set up.",
+        "Hi, I'm Happy, your main agent. I run and coordinate agents across your work. The sidebar shows an example of what that looks like.",
         "",
         menu('<button data-action="onboarding.start" data-emphasis>Start onboarding</button>'),
     ].join("\n");
@@ -119,7 +123,7 @@ export function subscriptionsMessage(
     machine: string,
 ): string {
     if (routes.length > 0) {
-        return `${FIRST_STEP} I found these set up on this ${machine}:\n\n${routesTable(routes)}`;
+        return `${FIRST_STEP} I found these on this ${machine}; choose which ones I should use.\n\n${routesTable(routes)}\n\n${CONNECT_LATER}`;
     }
     if (signedIn.length === 0) {
         return [
@@ -130,7 +134,7 @@ export function subscriptionsMessage(
             '<output data-status="info">Nothing is connected yet.</output>',
         ].join("\n");
     }
-    return `${FIRST_STEP} You're already signed in to these on this ${machine}:\n\n${providersTable(signedIn)}`;
+    return `${FIRST_STEP} I found these on this ${machine}; choose which ones I should use.\n\n${providersTable(signedIn)}\n\n${CONNECT_LATER}`;
 }
 
 export function accountOf(cli: ProviderCli): string {
@@ -138,9 +142,8 @@ export function accountOf(cli: ProviderCli): string {
 }
 
 /**
- * The accounts signed in on this machine, every one ticked. "You can always ask me to connect
- * more later" is said once, under Connected, which always follows; said here too, it read twice in
- * a row.
+ * The accounts signed in on this machine, every one ticked. A second account of the same AI is
+ * not offered until more than one can be used.
  */
 export function providersTable(signedIn: readonly ProviderCli[]): string {
     return [
@@ -154,7 +157,6 @@ export function providersTable(signedIn: readonly ProviderCli[]): string {
         }),
         '  <button type="submit" data-emphasis>Use selected</button>',
         '  <button type="button" data-action="onboarding.connectAnother">Sign in to more</button>',
-        '  <button type="button" data-action="onboarding.accountAdd">Add another account</button>',
         "</form>",
     ].join("\n");
 }

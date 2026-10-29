@@ -35,6 +35,44 @@ const conversationsSchema = Type.Object(
     },
     { additionalProperties: false },
 );
+const proposeSchema = Type.Object(
+    {
+        baseVersion: editsSchema.properties.baseVersion,
+        edits: Type.Array(editsSchema.properties.edits.items, { maxItems: 64 }),
+        newRows: Type.Optional(
+            Type.Array(
+                Type.Object(
+                    {
+                        id: Type.String({
+                            minLength: 1,
+                            maxLength: 64,
+                            description:
+                                "A name you choose, new- then lowercase words joined by hyphens (new-release-ci), the id your edits give its happy-space; or the space ID it was given, to revise it.",
+                        }),
+                        title: Type.String({ minLength: 1, maxLength: 80 }),
+                        icon: spaceIconSlugSchema,
+                        why: Type.Optional(
+                            Type.String({
+                                minLength: 1,
+                                maxLength: 160,
+                                description: "A few words on where you saw the work.",
+                            }),
+                        ),
+                        firstMessage: Type.String({
+                            minLength: 1,
+                            maxLength: 2_000,
+                            description:
+                                "What the new chat is sent as the person's first message when they accept, read-only: ask for a plan and to wait for them before changing anything.",
+                        }),
+                    },
+                    { additionalProperties: false },
+                ),
+                { maxItems: 16 },
+            ),
+        ),
+    },
+    { additionalProperties: false },
+);
 const proposalPresentationSchema = Type.Object(
     {
         type: Type.Literal("artifact"),
@@ -71,8 +109,29 @@ export function prioritizingTools(
     spaces: SpacesModule,
     ownerUserId: string,
     agentId: string,
+    options: { readonly discovery: boolean },
 ): AnyAgentTool[] {
     return [
+        // Only once the person agreed in onboarding to have their work read.
+        ...(options.discovery
+            ? [
+                  defineAgentTool({
+                      name: "discover_work",
+                      defer: false,
+                      capabilities: [
+                          "Read what the person has been working on, from the places Happy disclosed.",
+                      ],
+                      description:
+                          "Read what the person has been working on, read-only, from exactly the places Happy disclosed in onboarding and they agreed to: their connected assistant's own sessions (which projects, and the first thing asked in each) and the recent commit subjects and branch names of those projects. Answers with what it found, or that it found nothing.",
+                      parameters: emptySchema,
+                      returnType: resultSchema,
+                      durable: true,
+                      shouldReviewInAutoMode: () => false,
+                      execute: async (ctx) => ({ text: await spaces.discover(ctx, ownerUserId) }),
+                      toLLM,
+                  }),
+              ]
+            : []),
         listSidebarTool(spaces, ownerUserId),
         readConversationsTool(spaces, ownerUserId, "rows"),
         defineAgentTool({
@@ -80,12 +139,12 @@ export function prioritizingTools(
             defer: false,
             capabilities: ["Propose a larger sidebar change for the person to accept."],
             description:
-                'Propose a change the person accepts or declines: exact-text edits, each oldText occurring once. With no open proposal they apply to the sidebar as list_sidebar shows it and baseVersion is its version; otherwise they revise list_sidebar\'s proposal and baseVersion is the proposal\'s version. Rows under <happy-section id="archive" label="Archive"/> are archived on accept. The proposal shows inline in your conversation. Edits that override the person\'s edits of the proposal are dropped with a note.',
-            parameters: editsSchema,
+                'Propose a change the person accepts with Good to go: exact-text edits, each oldText occurring once. With no open proposal they apply to the sidebar as list_sidebar shows it and baseVersion is its version; otherwise they revise list_sidebar\'s proposal and baseVersion is the proposal\'s version. Rows under <happy-section id="archive" label="Archive"/> are archived on accept. newRows offers chats the person does not have yet: place each with <happy-space id="new-…"/> at the top level in your edits; accepting creates it there and sends its first message read-only. The proposal shows inline in your conversation. Edits that override the person\'s edits of the proposal are dropped with a note.',
+            parameters: proposeSchema,
             returnType: proposalResultSchema,
             durable: true,
             shouldReviewInAutoMode: () => false,
-            execute: async (ctx, input: Static<typeof editsSchema>, call) => {
+            execute: async (ctx, input: Static<typeof proposeSchema>, call) => {
                 const result = await spaces.proposeSidebar(ctx, ownerUserId, input, call.id);
                 return {
                     text: result.text,

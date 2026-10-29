@@ -327,6 +327,13 @@ revisions keep them (`reviewProposalOperations`). Accepting applies the differen
 first and latest version as the person's batch, rebased one operation at a time, so what the person
 accepted is theirs; declining changes nothing. At most one is open.
 
+The user then made the card a preview only: no checkboxes, Accept, or Decline in it. The decision is
+the chat button Good to go (`sidebar.proposalAccept`), pressed as the person's message in Happy's
+chat or Focus's; the accept and decline routes stay for compatibility. Changes are typed and Focus
+revises. A proposal may offer chats the person does not have yet as `newRows`: Focus names them
+`new-…`, the daemon reserves a space ID for each at once, and accepting creates each still placed in
+the proposal with its final title and icon, then sends its first message read-only.
+
 Kirill also asked it to "offer to completely archive the stuff that looks completed based off the
 agents' history" and to put unfinished quiet work "in a new section called Stale". A proposal may
 carry a `<happy-section id="archive" label="Archive"/>` block of top-level task rows that are
@@ -652,10 +659,18 @@ The organiser was a hidden child agent called "Sidebar manager", invisible in Ha
 then became a conversation subtask (`createConversation`, with its own metadata), which Kirill
 still saw as not a true subtask. It is now made through `SubtasksModule.create`, exactly as Happy
 makes any subtask, with an opening task and nothing special-cased; it is found by the agent ID in
-the person's bookkeeping. It is created lazily with the person's first stem cell — not on seed or
-the first read — and before that briefs and tidy do nothing. As an ordinary subtask it reported every reply into
-Happy's chat, so it is created `unreported`, and batch notes go to its own conversation: Happy's
-chat hears nothing from it.
+the person's bookkeeping. It is created with the person's first stem cell, a tidy request, or
+onboarding's Discover — never on seed or a read of the sidebar. As an ordinary subtask it reported
+every reply into Happy's chat, so it is created `unreported`, and batch notes go to its own
+conversation. Happy hears from it only when Happy asked: a message from Happy (or the task
+onboarding started it with) marks the owner `happyAsked`, and when that turn ends Spaces sends Happy
+one message naming the open proposal and what Focus said. Its opening task alone does not count,
+so a tidy-started Focus never writes into Happy's chat.
+
+Onboarding starts it through `startFocus`, which also shows it at once: its session under Happy
+with the `goals` icon, Happy unfolded unless the person set the fold, as the daemon's one sidebar
+change. The person consents to reading their work at Discover (`allowDiscovery`); only then is
+`discover_work` among Focus's tools.
 
 ## Recent work stays in view by the prompt
 

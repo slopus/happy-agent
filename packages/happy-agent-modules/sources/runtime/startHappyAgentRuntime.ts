@@ -745,6 +745,7 @@ export async function startHappyAgentRuntime(
             userSettings,
             titles,
             artifacts,
+            collaboration,
         );
         registerShutdown("spaces", async () => await spaces.close());
         const teammates = new TeammatesModule(tasks, team, spaces);
@@ -770,7 +771,6 @@ export async function startHappyAgentRuntime(
             providerClis,
             providerRoutes,
             providerScan,
-            tasks,
             spaces,
             mobileConnector,
         );

@@ -103,10 +103,10 @@ describe("finding the control a press names", () => {
         expect(
             findPressedControl(table, {
                 blockIndex: 0,
-                action: { id: "onboarding.accountAdd", params: {} },
+                action: { id: "onboarding.connectAnother", params: {} },
                 values: [],
             }),
-        ).toMatchObject({ kind: "found", choice: { kind: "button", index: 2 } });
+        ).toMatchObject({ kind: "found", choice: { kind: "button", index: 1 } });
     });
 
     it("takes Try Create's new chat as the value the app pressed it with", () => {

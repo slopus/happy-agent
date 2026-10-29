@@ -156,7 +156,7 @@ describe("Onboarding in Happy's conversation", () => {
                 expect(event.payload["append"]).toMatch(/^\S.*(\s|\.)$|^\S+$/su);
             }
             expect(deltas).toBe(
-                "Hi, I'm Happy, your main agent. I run and coordinate agents across your work. The sidebar shows an example of how your work looks once we're set up.",
+                "Hi, I'm Happy, your main agent. I run and coordinate agents across your work. The sidebar shows an example of what that looks like.",
             );
 
             // Starting again, or after a restart, says nothing more.
@@ -297,9 +297,7 @@ describe("Onboarding in Happy's conversation", () => {
             expect(messages.map((message) => message.role)).toEqual(["agent", "user", "agent"]);
             expect(messages[1]?.id).toBe(PRESS_ID);
             const asked = messages[2]?.content[0]?.text ?? "";
-            expect(asked).toContain(
-                "First, let's check which AI subscriptions you already use today.",
-            );
+            expect(asked).toContain("First, let's check which AI subscriptions you already use.");
             expect(asked).toContain('data-action="onboarding.provider" data-provider="claude"');
             expect(asked).toContain("Nothing is connected yet.");
 

@@ -50,24 +50,36 @@ with the work's outcome (`impl/pressOutcome.ts`), which the model reads as the p
 the bootstrap the same message is recorded in a finished run and answered by the scripted reply.
 Only the newest offer of an action is live. Hidden events (`#tell`) remain only for what the
 person did not do: `begin`, a provider added, a connection that failed, a phone paired. The
-module adds four tools while it guides: `save_profile`, `discover_work`, `propose_work`, and
-`set_default_model`. Their calls are ordinary, visible tool calls.
+module adds two tools while it guides, `save_profile` and `set_default_model`; Happy talks to Focus
+with the ordinary `send_agent_message`. Their calls are ordinary, visible tool calls. The recipe is
+in Happy's instructions from the start, so the person may type at any step instead of pressing. A
+press is stored with the `label` the person saw and, for a checklist, the `ticked` labels, so
+clients draw it as the person's own bubble. While onboarding runs, Happy's agent carries
+`composerPlaceholder` ("Or just tell me in your own words…"); finishing clears it. No scripted
+Connected line is said: Happy's first model message opens with it.
 
 ## The person's work
 
-Pressing Discover allows `discover_work` to read only what Happy disclosed
-(`impl/discoverWork.ts`): the connected assistant's own sessions, the first request of each, and
-the last 30 days of commit subjects and branch names of their projects, bounded and read-only.
-`propose_work` asks Focus through `SpacesModule.proposeWork`, a bounded side inference on the
-chosen model with Focus's own rules and no conversation, from those findings and what the person
-said. It stores the rows under values that name that proposal alone (`p2-work-1`) and returns the
-`data-table` checklist (`impl/workCopy.ts`) that Happy's model shows as returned; a press on an
-older proposal is a conflict. Looks right fixes each ticked row's space, task, and agent IDs in the
-press and returns them; the step opens each chat, then places the rows under new topic sections at
-the end of the sidebar in one change of the person's own (`SpacesModule.placeWork`), committed with
-the rows becoming `started`, then sends each chat its first message exactly as shown, read-only.
-Start onboarding removes the empty Bots and Tasks headings, so no heading disappears later. Try
-Create is the app's own Create; its press names the space it made.
+Focus (the Spaces module's Prioritizing) does the organizing; onboarding only starts it. Discover
+is the person's consent: in the press's transaction `SpacesModule.allowDiscovery` lets Focus's
+consent-gated `discover_work` read what Happy disclosed, and `SpacesModule.startFocus` creates Focus
+as Happy's subtask with its task ("Organize Ada's work from the places above, most important
+first.") as its first message, shows its row under Happy with the `goals` icon as the daemon's
+sidebar change, and returns its ID and model. When the press is accepted into Happy's conversation,
+`messageAcceptedTransact` writes the finished `create_agent` call any sub-agent shows, with the
+`agent_spawn` presentation carrying Focus's model and agent ID, right after the press in its run.
+Happy's model never creates or messages Focus at Discover; it introduces Focus and waits. I'll tell
+you starts Focus without a task, and Happy hands over the person's words with `send_agent_message`.
+
+Focus proposes with `propose_sidebar`, offering chats the person does not have yet as `newRows`.
+When its turn that answered Happy ends, Spaces messages Happy with the open proposal's ID and what
+Focus said; that message starts Happy's next turn, which shows the
+`<figure data-sidebar-proposal>` card and the Good to go menu. The card is a preview with no
+controls: Good to go (`sidebar.proposalAccept`, pressable in Happy's chat and in Focus's) accepts
+it, creating the new rows read-only, and its outcome lists each started chat by space ID for
+`onboarding.workOpen`. Changes are typed; Focus revises the same proposal. Start onboarding
+removes the empty Bots and Tasks headings, so no heading disappears later. Try Create is the app's
+own Create; its press names the space it made.
 
 ## The inline action grammar
 
