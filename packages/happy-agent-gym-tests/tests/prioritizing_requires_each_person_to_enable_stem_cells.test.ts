@@ -23,8 +23,9 @@ it("keeps the enabled state isolated between two people", async () => {
         ),
     ];
     await alice.saveUserSetting(SETTING, { value: true });
-    await bobHttp.ok("GET", "/v0/spaces/sidebar");
-    await aliceHttp.ok("GET", "/v0/spaces/sidebar");
+    // A tidy request starts Prioritizing, and only for a person who enabled it.
+    await bobHttp.ok("POST", "/v0/spaces/tidy", {});
+    await aliceHttp.ok("POST", "/v0/spaces/tidy", {});
     const first = await gym.waitUntil(() => sessions()[0], "Alice's organiser");
     await gym.waitUntil(
         async () => ((await alice.getAgent(first)).agent.status !== "working" ? true : undefined),
@@ -32,7 +33,7 @@ it("keeps the enabled state isolated between two people", async () => {
     );
     expect(sessions()).toHaveLength(1);
     await bob.saveUserSetting(SETTING, { value: true });
-    await bobHttp.ok("GET", "/v0/spaces/sidebar");
+    await bobHttp.ok("POST", "/v0/spaces/tidy", {});
     const second = await gym.waitUntil(
         () => sessions().find((id) => id !== first),
         "Bob's separate organiser",
@@ -129,7 +130,7 @@ it("stops a running Prioritizing on disable and does not brief it again", async 
     });
     running.add(gym);
     await gym.client.saveUserSetting(SETTING, { value: true });
-    await gym.http.ok("GET", "/v0/spaces/sidebar");
+    await gym.http.ok("POST", "/v0/spaces/tidy", {});
     const manager = await gym.waitUntil(
         () =>
             gym.inference.requests.find((request) =>
