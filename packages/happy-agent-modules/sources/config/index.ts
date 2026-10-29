@@ -63,3 +63,8 @@ export {
     type VoiceSettingsToml,
     type VoiceSettingsUpdate,
 } from "./VoiceSettings.js";
+export {
+    DefaultModelError,
+    defaultModelUpdateSchema,
+    type DefaultModelUpdate,
+} from "./DefaultModel.js";

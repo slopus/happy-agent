@@ -214,7 +214,12 @@ import {
     type Compaction,
 } from "../compactions/index.js";
 import { ComputeModule, type ComputeProcessEvent } from "../compute/index.js";
-import { ConfigModule, VoiceSettingsError } from "../config/index.js";
+import {
+    ConfigModule,
+    DefaultModelError,
+    defaultModelUpdateSchema,
+    VoiceSettingsError,
+} from "../config/index.js";
 import { NodeModule } from "../node/index.js";
 import { CloudModule, CloudOperationError } from "../cloud/index.js";
 import {
@@ -1400,7 +1405,7 @@ export class ApiModule implements AgentModule {
                     throw new ApiError(
                         409,
                         "conflict",
-                        "This daemon can only change provider enablement, its display name, and voice settings at runtime.",
+                        "This daemon can only change provider enablement, the default model, its display name, and voice settings at runtime.",
                     );
                 }
                 if (
@@ -1412,6 +1417,17 @@ export class ApiModule implements AgentModule {
                         403,
                         "forbidden",
                         "Only the team owner can change voice settings.",
+                    );
+                }
+                if (
+                    body.defaults !== undefined &&
+                    this.#team.enabled &&
+                    teamUser(ctx)?.isOwner !== true
+                ) {
+                    throw new ApiError(
+                        403,
+                        "forbidden",
+                        "Only the team owner can change the default model.",
                     );
                 }
                 if (
@@ -1442,13 +1458,22 @@ export class ApiModule implements AgentModule {
                     if (error instanceof ProviderNotFoundError) throw notFound(error.message);
                     throw error;
                 }
+                // After providers, so a patch that enables one can make its model the default.
+                if (body.defaults !== undefined) {
+                    try {
+                        await this.#config.setDefaultModel(ctx, body.defaults);
+                    } catch (error: unknown) {
+                        if (error instanceof DefaultModelError) throw invalidRequest(error.message);
+                        throw error;
+                    }
+                }
                 const nameChanged = await ctx.inTx(async (txCtx) => {
                     if (body.node?.name === undefined) return false;
                     const previous = await this.#node.get(txCtx);
                     await this.#node.setName(txCtx, body.node.name);
                     return previous.name !== body.node.name;
                 });
-                if (body.providers !== undefined && !nameChanged)
+                if ((body.providers !== undefined || body.defaults !== undefined) && !nameChanged)
                     this.#journal.append("config.updated", {});
                 sendJson(response, 200, { config: await this.#sanitizedConfig(ctx) });
                 return;
@@ -11163,6 +11188,7 @@ const agentWaitStateSchema = Type.Union([agentWaitSchema, Type.Null()]);
 
 const runtimeConfigPatchSchema = Type.Object(
     {
+        defaults: Type.Optional(defaultModelUpdateSchema),
         node: Type.Optional(nodeConfigPatchSchema),
         voice: Type.Optional(voiceConfigPatchSchema),
         providers: Type.Optional(

@@ -110,6 +110,11 @@ import {
     type VoiceSettingsToml,
     type VoiceSettingsUpdate,
 } from "./VoiceSettings.js";
+import {
+    DefaultModelError,
+    defaultModelUpdateSchema,
+    type DefaultModelUpdate,
+} from "./DefaultModel.js";
 import { modelServiceTierOptions } from "./impl/modelServiceTierOptions.js";
 import { readGlobalInstructions } from "./impl/readGlobalInstructions.js";
 import { HAPPY_TOML_TEMPLATE, MCP_TOML_TEMPLATE } from "./impl/userConfigurationTemplate.js";
@@ -1878,6 +1883,8 @@ export class ConfigModule implements AgentModule {
     readonly #runtimeLock: AsyncLock = asyncLock({ reentry: "allow" });
     #mcpServers: HappyAgentConfigValues["mcpServers"];
     #runtimeValues: PartialValues;
+    /** The default model chosen while running, kept in the runtime configuration's `[defaults]`. */
+    #liveDefault: { providerId: string; modelId: string; effort: string } | undefined;
     #providerEnablement: ProviderEnablement | undefined;
     readonly #catalogNotices: string[] = [];
     #projectsHome: string | undefined;
@@ -2163,6 +2170,15 @@ export class ConfigModule implements AgentModule {
         this.configuration = configuration;
         this.#mcpServers = configuration.values.mcpServers;
         this.#runtimeValues = structuredClone(runtimeValues);
+        // A default model chosen while running is kept in the generated runtime configuration.
+        const chosen = runtimeValues.defaults;
+        if (chosen?.provider !== undefined && chosen.model !== undefined) {
+            this.#liveDefault = {
+                providerId: chosen.provider,
+                modelId: chosen.model,
+                effort: chosen.effort ?? "",
+            };
+        }
         this.#scripted = scripted;
         this.#environment = environment;
         this.#tailcatEnabled = configuration.values.feature.tailcat.enabled;
@@ -2251,16 +2267,86 @@ export class ConfigModule implements AgentModule {
             // can then take ownership and turn them off during its startup phase just like real
             // accounts.
             void this.#providerSource();
-            return scripted.filter((model) => this.#isModelSelectable(model));
+            return this.#withDefaultFirst(
+                scripted.filter((model) => this.#isModelSelectable(model)),
+            );
         }
-        return agentModels(
-            this.configuration,
-            (message) => {
-                if (!this.#catalogNotices.includes(message)) this.#catalogNotices.push(message);
-            },
-            (id) => this.isProviderEnabled(id),
-            (id) => this.#isAccountEnabled(id),
-        ).map((model) => this.#serviceTiers.apply(model));
+        return this.#withDefaultFirst(
+            agentModels(
+                this.configuration,
+                (message) => {
+                    if (!this.#catalogNotices.includes(message)) this.#catalogNotices.push(message);
+                },
+                (id) => this.isProviderEnabled(id),
+                (id) => this.#isAccountEnabled(id),
+            ).map((model) => this.#serviceTiers.apply(model)),
+        );
+    }
+
+    /**
+     * The default model set while running leads the list, at its chosen effort, the way a
+     * configured `[defaults]` model does at startup. One that is no longer usable is ignored.
+     */
+    #withDefaultFirst(models: readonly AgentModel[]): readonly AgentModel[] {
+        const wanted = this.#liveDefault;
+        if (wanted === undefined) return models;
+        const chosen = models.find(
+            (model) => model.providerId === wanted.providerId && model.id === wanted.modelId,
+        );
+        if (chosen === undefined) return models;
+        const effort = chosen.effortLevels.find((level) => level === wanted.effort);
+        return [
+            effort === undefined ? chosen : { ...chosen, defaultEffort: effort },
+            ...models.filter((model) => model !== chosen),
+        ];
+    }
+
+    /**
+     * Make one usable model the default for new conversations, now and after a restart: it is
+     * written to the generated runtime configuration's `[defaults]`. Without an effort, the
+     * model's own default effort is used.
+     */
+    async setDefaultModel(ctx: Context, update: DefaultModelUpdate): Promise<void> {
+        if (!Value.Check(defaultModelUpdateSchema, update))
+            throw new DefaultModelError("The default model is invalid.");
+        const model = this.models.find(
+            (candidate) =>
+                candidate.providerId === update.providerId && candidate.id === update.modelId,
+        );
+        if (model === undefined)
+            throw new DefaultModelError(
+                "That model is not offered by an enabled account on this computer.",
+            );
+        const effort = update.effort ?? this.#modelDefaultEffort(model);
+        if (!model.effortLevels.some((level) => level === effort))
+            throw new DefaultModelError(`${model.name} does not offer that effort.`);
+        await this.#runtimeLock.runInLock(ctx, async () => {
+            const next = structuredClone(this.#runtimeValues);
+            next.defaults = {
+                ...next.defaults,
+                provider: update.providerId,
+                model: update.modelId,
+                effort,
+            };
+            if (!Value.Check(partialValuesSchema, next))
+                throw new Error("The generated runtime configuration is invalid.");
+            await writeRuntimeConfigurationFile(this.configuration.paths.runtimeConfigPath, next);
+            this.#runtimeValues = next;
+            this.#liveDefault = { providerId: update.providerId, modelId: update.modelId, effort };
+        });
+    }
+
+    /** A model's own default effort, not the one a default-model choice gave it. */
+    #modelDefaultEffort(model: AgentModel): string {
+        const live = this.#liveDefault;
+        if (live?.providerId !== model.providerId || live.modelId !== model.id)
+            return model.defaultEffort;
+        return (
+            this.offeredModels.find(
+                (candidate) =>
+                    candidate.providerId === model.providerId && candidate.id === model.id,
+            )?.defaultEffort ?? model.defaultEffort
+        );
     }
 
     /** Every configured route independent of its live provider gate. */
