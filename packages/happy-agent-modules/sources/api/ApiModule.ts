@@ -770,6 +770,8 @@ export class ApiModule implements AgentModule {
     #closed = false;
     /** Paced onboarding messages changed in place while typing, which stop typing. */
     readonly #pacingSuperseded = new Set<string>();
+    /** Paced onboarding messages spoken and not yet fully announced. */
+    readonly #pacingPending = new Set<string>();
     /** How much work other than paced typing waits in each agent's queue. */
     readonly #agentWorkWaiting = new Map<string, number>();
     #token: string | undefined;
@@ -2893,6 +2895,7 @@ export class ApiModule implements AgentModule {
                       // A press's choice and a connecting message's progress change a message in
                       // place.
                       this.#onboardingFlow.onSpoken((agentId, message, proseLength) => {
+                          this.#pacingPending.add(message.recordId);
                           void this.#queueAgentWork(
                               ctx,
                               agentId,
@@ -2907,8 +2910,11 @@ export class ApiModule implements AgentModule {
                           });
                       }),
                       this.#onboardingFlow.onMessageUpdated((agentId, message) => {
-                          // A change in place ends the typing: the next update is the whole.
-                          this.#pacingSuperseded.add(message.recordId);
+                          // A change in place ends the typing, or skips it when it has not
+                          // started: the next update is the whole.
+                          if (this.#pacingPending.has(message.recordId)) {
+                              this.#pacingSuperseded.add(message.recordId);
+                          }
                           this.#appendForAgent(agentId, "message.updated", {
                               agentId,
                               runId: message.runId ?? null,
@@ -9551,7 +9557,6 @@ export class ApiModule implements AgentModule {
         const runId = message.runId ?? null;
         const block = message.blocks[0];
         const text = block?.type === "text" ? block.text.slice(0, proseLength) : "";
-        this.#pacingSuperseded.delete(message.recordId);
         // Other work waiting for this conversation, or a change in place, ends the typing.
         const hurried = () =>
             this.#closed ||
@@ -9592,6 +9597,7 @@ export class ApiModule implements AgentModule {
                 }
             }
         } finally {
+            this.#pacingPending.delete(message.recordId);
             this.#pacingSuperseded.delete(message.recordId);
             // The message as it stands now: a press or a redraw may have changed it meanwhile.
             const current =

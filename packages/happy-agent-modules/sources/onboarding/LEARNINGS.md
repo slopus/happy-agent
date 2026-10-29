@@ -21,7 +21,12 @@ Either the agent paces or the desktop does, never both: the agent does. A script
 stored whole and announced at about 300 words a minute, so history and reconnects always see the
 finished message. Typing out first ran on the conversation's event queue for its whole length, so
 a person's send waited up to ten seconds behind it; now any other work queued for the conversation
-ends the typing at once.
+ends the typing at once. A change in place, such as the progress message becoming the proposal,
+ends the typing too, and skips it when it lands before the typing starts, so stale words are never
+typed over the new ones.
+
+Scripted messages carry no provider or model. The desktop relies on that to replace such a message
+whole on every update instead of merging it as streamed provider output.
 
 ## Proposals come from Focus, not from Happy's model
 

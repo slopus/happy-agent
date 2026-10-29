@@ -1,6 +1,5 @@
 import type { OnboardingWorkRow } from "../OnboardingFlow.js";
 import { chatActionEscape } from "./chatActions/chatActionBlocks.js";
-import { listOf } from "./onboardingCopy.js";
 
 /**
  * Happy's words around the person's work, in the inline action grammar. The desktop's flow on
@@ -24,19 +23,11 @@ export function proposingMessage(): string {
 }
 
 /** Focus's proposal: the final state, each row ticked, Looks right the one answer. */
-export function proposalMessage(
-    intro: string,
-    rows: readonly OnboardingWorkRow[],
-    replaces: readonly string[],
-): string {
-    const replaced =
-        replaces.length > 0
-            ? ` replaces the empty ${listOf(replaces)} headings with these topics and`
-            : "";
+export function proposalMessage(intro: string, rows: readonly OnboardingWorkRow[]): string {
     return [
         intro,
         "",
-        `**Looks right**${replaced} starts each chat on its first message. Each one makes a read-only plan and waits for you.`,
+        "**Looks right** places these in your sidebar and starts each chat on its first message. Each one makes a read-only plan and waits for you.",
         "",
         '<form data-action="onboarding.workAccept" data-table>',
         ...rows.map(

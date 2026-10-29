@@ -913,11 +913,8 @@ export class OnboardingModule implements AgentModule {
                 firstMessage: row.firstMessage,
                 ongoing: row.ongoing === true,
             }));
-            const replaces = await this.#spaces
-                .emptyDefaultHeadings(ctx, SPACE_STANDALONE_OWNER)
-                .catch(() => []);
             await this.#update(ctx, (current) => ({ ...current, proposal: rows }));
-            await this.#rewrite(ctx, messageId, proposalMessage(proposal.intro, rows, replaces));
+            await this.#rewrite(ctx, messageId, proposalMessage(proposal.intro, rows));
         } catch (error: unknown) {
             await this.#rewrite(ctx, messageId, proposalFailedMessage(errorText(error)));
         }

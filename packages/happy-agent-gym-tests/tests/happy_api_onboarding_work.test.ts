@@ -377,6 +377,39 @@ describe("onboarding the person's work", () => {
 
             const proposal = await waitForText(gym, happy, PROPOSAL.intro);
             const shown = textOf(proposal);
+            // The progress message became the proposal in place. Once the proposal is announced,
+            // the progress words are never typed over it, even when the change landed before
+            // their typing began.
+            const proposalRun = (
+                (await gym.http.ok("GET", `/v0/agents/${happy}/messages`)) as {
+                    runs: { id: string; messages: Message[] }[];
+                }
+            ).runs.find((run) => run.messages.some((message) => message.id === proposal.id))?.id;
+            await gym.waitForEvent(
+                (event) =>
+                    event.type === "run.finished" &&
+                    (event.payload as { run: { id: string } }).run.id === proposalRun,
+                "the proposal's run to be announced",
+            );
+            const announced = (await gym.events())
+                .map(
+                    (event) =>
+                        event as unknown as { type: string; payload: Record<string, unknown> },
+                )
+                .filter(
+                    (event) =>
+                        (event.payload["message"] as { id?: string } | undefined)?.id ===
+                            proposal.id || event.payload["messageId"] === proposal.id,
+                );
+            const shownAt = announced.findIndex(
+                (event) =>
+                    event.type !== "message.delta" &&
+                    JSON.stringify(event.payload).includes(PROPOSAL.intro),
+            );
+            expect(shownAt).toBeGreaterThanOrEqual(0);
+            expect(
+                announced.slice(shownAt).filter((event) => event.type === "message.delta"),
+            ).toEqual([]);
             expect(shown).toContain('<form data-action="onboarding.workAccept" data-table>');
             expect(shown).toContain('value="work-1" checked>Onboarding redesign');
             // An icon outside the library is drawn plain; the ongoing row says so.

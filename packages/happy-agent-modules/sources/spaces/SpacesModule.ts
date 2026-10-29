@@ -2696,14 +2696,6 @@ export class SpacesModule implements AgentModule {
         return await proposeWork(ctx, this.#config.providers, route, findings);
     }
 
-    /** The empty default headings, such as Tasks and Bots, that `placeWork` takes out. */
-    async emptyDefaultHeadings(ctx: Context, ownerUserId: SpaceOwnerId): Promise<string[]> {
-        const sidebar = await this.sidebar(ctx, ownerUserId);
-        return emptyDefaultHeadings(readSidebarDocument(sidebar.html).items).map(
-            (item) => item.label,
-        );
-    }
-
     /**
      * Looks right in onboarding, as the person's one sidebar edit: each accepted topic becomes a
      * section after the divider, in the order accepted, with its rows under it in order; a topic
