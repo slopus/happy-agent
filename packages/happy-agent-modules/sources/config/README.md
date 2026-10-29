@@ -218,6 +218,14 @@ AWS credential provider, so process credentials are renewed without storing retu
 When no authentication source is named, Bedrock tries its bearer-token environment variable first
 and then the ambient AWS credential chain.
 
+Without `credential_isolation`, a Claude or Codex account also reuses a gateway set up for its
+CLI. For Claude, the `env` block of `settings.json` in the Claude config directory is applied over
+the daemon's environment, as Claude Code applies it. The result selects the key or token and
+reaches Claude Code, including `ANTHROPIC_BASE_URL`. A Codex account that names no key, auth file,
+or base URL calls the endpoint `config.toml` selects (the active `model_provider` table or
+`openai_base_url`) or `OPENAI_BASE_URL`, using that endpoint's API key. A ChatGPT sign-in always
+stays on its own backend. Model names are unchanged.
+
 Kimi K3 (`moonshotai/kimi-k3`) and GLM 5.3 (`zai/glm-5.3`) are available only through Bedrock
 Runtime. Both use the Runtime Chat Completions API and the account's existing AWS or bearer
 credentials. The provider resolves the US or global inference profile for the selected region;

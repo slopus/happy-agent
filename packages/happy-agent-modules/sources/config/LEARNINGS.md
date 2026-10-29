@@ -110,6 +110,39 @@ fails closed to unknown provenance. Native factories create fresh providers. Gym
 the same while preserving script progress, rather than carrying decorated provider instances into
 another runtime or rebinding production observation state.
 
+## Gateway setups are read where the native CLI keeps them
+
+People who reach Claude or OpenAI through a gateway or proxy configure the CLI and never sign in.
+Rig ignored those setups. Claude's exported `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` were
+never read, because the loaders were called without an environment. `~/.claude/settings.json` was
+never read either, since Claude Code runs with no setting sources. Codex ignored `config.toml` and
+`OPENAI_BASE_URL`. So onboarding reported no credentials, or verified against the vendor's own
+endpoint.
+
+For an ambient Claude provider (no `credential_isolation`), Rig now applies the `env` block of
+`settings.json` in the selected Claude config directory over the inherited environment. This is
+the same order Claude Code uses (`Object.assign(process.env, settings.env)`). That environment
+selects the credential and is handed to Claude Code, so `ANTHROPIC_BASE_URL` and headers reach
+the gateway. A key or token from Claude Code's settings outranks the sign-in. A key or token
+exported in the shell outranks the sign-in only when the environment also names a non-default
+`ANTHROPIC_BASE_URL`. Otherwise it is used only when there is no sign-in, because people export
+those variables for unrelated tooling and the key bills separately from the subscription.
+
+An ambient Codex provider that names no `api_key`, `auth_file`, or `base_url` reuses the endpoint
+Codex is configured for. That is the active profile's or the top-level `model_provider` table
+(`base_url`, then `env_key`, `experimental_bearer_token`, or OpenAI auth when
+`requires_openai_auth` is set), or the built-in provider's `openai_base_url`, then
+`OPENAI_BASE_URL`. Only an API key is sent to such an endpoint. A ChatGPT sign-in keeps its own
+backend, and a custom provider without its own key is missing rather than borrowing the sign-in.
+Tables Rig cannot speak are ignored: no `base_url`, a `wire_api` other than `responses`, or a
+reserved built-in name. A detected endpoint uses SSE unless the provider declares
+`supports_websockets`. Codex falls back from WebSocket itself, but a verification probe makes one
+attempt.
+
+Model names are unchanged: a custom endpoint is often a pass-through proxy serving the normal
+models. Claude Code's `ANTHROPIC_DEFAULT_*_MODEL` overrides only remap the family aliases. Rig
+sends full model IDs, so the CLI itself would not remap them either.
+
 ## Native Codex account history uses the execution credential and a private local identity
 
 Native accounts previously always appeared unknown, so signing into another account behind the same

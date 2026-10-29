@@ -49,6 +49,8 @@ import type { ProviderExecutionObservations } from "./ProviderExecutionObservati
 import { observeProviderExecution } from "./observeProviderExecution.js";
 import { resolveDefaultNodeName } from "./resolveDefaultNodeName.js";
 import { openAICompatibleApiKey, openAICompatibleModels } from "./openAICompatibleModels.js";
+import { readClaudeSettingsEnvironment } from "./readClaudeSettingsEnvironment.js";
+import { readCodexModelProvider, type CodexModelProvider } from "./readCodexModelProvider.js";
 
 type ConfiguredProvider = HappyAgentConfigValues["providers"][string];
 type ConcreteConfiguredProvider = Exclude<ConfiguredProvider, { readonly type: "smart" }>;
@@ -816,32 +818,62 @@ async function createProvider(
                 );
             }
         }
-        const credential = ambient
-            ? await loadCodexCredential({
-                  env: environment,
-                  ...(provider.apiKey === undefined ? {} : { apiKey: provider.apiKey }),
-                  ...(provider.authFile === undefined ? {} : { authFile: provider.authFile }),
-              })
-            : ((provider.apiKey === undefined
-                  ? null
-                  : await CodexApiKeyCredential.tryLoad({ apiKey: provider.apiKey })) ??
-              (provider.authFile === undefined
-                  ? null
-                  : await CodexSessionCredential.tryLoad({ authFile: provider.authFile })));
+        // A provider that names none of its own sources reuses the endpoint Codex itself is set
+        // up for, so a gateway configured for Codex is the one Rig calls too.
+        const detected =
+            ambient &&
+            provider.apiKey === undefined &&
+            provider.authFile === undefined &&
+            provider.baseUrl === undefined
+                ? await readCodexModelProvider(
+                      environment.CODEX_HOME?.trim() || join(homedir(), ".codex"),
+                      environment,
+                  )
+                : null;
+        if (detected?.path !== undefined) sources.path(detected.path);
+        const custom = detected?.kind === "custom" ? detected : undefined;
+        const credential =
+            custom !== undefined
+                ? await customCodexProviderCredential(custom, environment, sources)
+                : ambient
+                  ? await loadCodexCredential({
+                        env: environment,
+                        ...(provider.apiKey === undefined ? {} : { apiKey: provider.apiKey }),
+                        ...(provider.authFile === undefined ? {} : { authFile: provider.authFile }),
+                    })
+                  : ((provider.apiKey === undefined
+                        ? null
+                        : await CodexApiKeyCredential.tryLoad({ apiKey: provider.apiKey })) ??
+                    (provider.authFile === undefined
+                        ? null
+                        : await CodexSessionCredential.tryLoad({ authFile: provider.authFile })));
+        // A ChatGPT sign-in keeps its own backend: the subscription is never sent to a base URL
+        // the environment may have exported for unrelated API-key tooling.
+        const endpoint =
+            custom !== undefined ||
+            (detected?.kind === "openai" && credential instanceof CodexApiKeyCredential)
+                ? detected
+                : null;
         // Codex's own default sign-in, the one its login command repairs, was the source consulted.
         const defaultCodexLogin =
+            custom === undefined &&
             ambient &&
             provider.apiKey === undefined &&
             provider.authFile === undefined &&
             !environment.CODEX_HOME?.trim();
-        if (ambient && !provider.apiKey?.trim() && credential instanceof CodexApiKeyCredential)
+        if (
+            custom === undefined &&
+            ambient &&
+            !provider.apiKey?.trim() &&
+            credential instanceof CodexApiKeyCredential
+        )
             sources.environment("OPENAI_API_KEY", environment.OPENAI_API_KEY);
         if (credential instanceof CodexSessionCredential) {
             sources.path(credential.authFile);
             sources.add(credential.credential.accountId);
             sources.add(credential.credential.accessToken);
         }
-        if (credential !== null) {
+        if (credential !== null && custom === undefined) {
             if (provider.apiKey?.trim())
                 sources.selected("configuration", `providers.${id}.api_key`);
             else if (
@@ -860,6 +892,14 @@ async function createProvider(
             credential: required(credential, id, "codex", defaultCodexLogin),
             parallelToolCalls: true,
             ...(provider.baseUrl === undefined ? {} : { endpoint: provider.baseUrl }),
+            ...(endpoint === null ? {} : { endpoint: endpoint.baseUrl }),
+            // Codex falls back from WebSocket to HTTPS on its own, but a verification probe makes
+            // one attempt. A gateway serves streamed HTTPS unless it declares WebSocket support.
+            ...(endpoint !== null &&
+            provider.transport === undefined &&
+            !(endpoint.kind === "custom" && endpoint.supportsWebsockets)
+                ? { transport: "sse" as const }
+                : {}),
             ...(provider.transport === undefined || provider.transport === "auto"
                 ? {}
                 : {
@@ -881,6 +921,43 @@ async function createProvider(
     }
 
     if (provider.type === "claude") {
+        // Claude Code applies the `env` block of its settings over the environment it inherits.
+        // Rig starts it without setting sources, so the same block is applied here instead; it is
+        // where a gateway's `ANTHROPIC_BASE_URL` and token usually live.
+        const settings = ambient
+            ? await readClaudeSettingsEnvironment(
+                  provider.configDir ??
+                      (process.env.CLAUDE_CONFIG_DIR?.trim() || join(homedir(), ".claude")),
+              )
+            : undefined;
+        const configuredEnvironment =
+            settings === undefined || Object.keys(settings.env).length === 0
+                ? undefined
+                : { ...process.env, ...settings.env };
+        const environment = configuredEnvironment ?? process.env;
+        if (configuredEnvironment !== undefined) sources.path(settings?.path);
+        const fromSettings = (name: string) => (settings?.env[name]?.trim().length ?? 0) > 0;
+        const baseUrl = environment.ANTHROPIC_BASE_URL?.trim().replace(/\/+$/u, "");
+        const customEndpoint =
+            baseUrl !== undefined && baseUrl.length > 0 && baseUrl !== "https://api.anthropic.com";
+        // An exported key or token is billed separately from a Claude subscription, and people
+        // export them for unrelated tooling. One from the shell outranks the sign-in only when the
+        // environment also points Claude Code at another endpoint; one in Claude Code's own
+        // settings always does. Otherwise it is used only when there is no sign-in at all.
+        const ambientToken = async <T>(
+            name: "ANTHROPIC_API_KEY" | "ANTHROPIC_AUTH_TOKEN",
+            load: (value: string) => Promise<T | null>,
+            beforeSignIn: boolean,
+        ): Promise<T | null> => {
+            if (beforeSignIn !== (fromSettings(name) || customEndpoint)) return null;
+            const value = environment[name];
+            sources.environment(name, value);
+            return value === undefined ? null : await load(value);
+        };
+        const apiKey = async (value: string) =>
+            await ClaudeApiKeyCredential.tryLoad({ apiKey: value });
+        const authToken = async (value: string) =>
+            await ClaudeAuthTokenCredential.tryLoad({ authToken: value });
         const credential =
             (await configured(
                 "oauth_token",
@@ -889,28 +966,22 @@ async function createProvider(
                 async () => {
                     sources.environment(
                         "CLAUDE_CODE_OAUTH_TOKEN",
-                        process.env.CLAUDE_CODE_OAUTH_TOKEN,
+                        environment.CLAUDE_CODE_OAUTH_TOKEN,
                     );
-                    return await ClaudeOAuthCredential.tryLoad({});
+                    return await ClaudeOAuthCredential.tryLoad({ env: environment });
                 },
             )) ??
             (await configured(
                 "api_key",
                 provider.apiKey,
-                async (apiKey) => await ClaudeApiKeyCredential.tryLoad({ apiKey }),
-                async () => {
-                    sources.environment("ANTHROPIC_API_KEY", process.env.ANTHROPIC_API_KEY);
-                    return await ClaudeApiKeyCredential.tryLoad({});
-                },
+                apiKey,
+                async () => await ambientToken("ANTHROPIC_API_KEY", apiKey, true),
             )) ??
             (await configured(
                 "auth_token",
                 provider.authToken,
-                async (authToken) => await ClaudeAuthTokenCredential.tryLoad({ authToken }),
-                async () => {
-                    sources.environment("ANTHROPIC_AUTH_TOKEN", process.env.ANTHROPIC_AUTH_TOKEN);
-                    return await ClaudeAuthTokenCredential.tryLoad({});
-                },
+                authToken,
+                async () => await ambientToken("ANTHROPIC_AUTH_TOKEN", authToken, true),
             )) ??
             (await configured(
                 "config_dir",
@@ -925,7 +996,13 @@ async function createProvider(
                     sources.path(directory || join(homedir(), ".claude"));
                     return await ClaudeCodeCredential.tryLoad({});
                 },
-            ));
+            )) ??
+            (ambient && provider.apiKey === undefined
+                ? await ambientToken("ANTHROPIC_API_KEY", apiKey, false)
+                : null) ??
+            (ambient && provider.authToken === undefined
+                ? await ambientToken("ANTHROPIC_AUTH_TOKEN", authToken, false)
+                : null);
         if (credential instanceof ClaudeCodeCredential)
             sources.path(credential.configDir ?? join(homedir(), ".claude"));
         if (credential instanceof ClaudeCodeCredential) {
@@ -943,10 +1020,10 @@ async function createProvider(
                     : credential instanceof ClaudeApiKeyCredential
                       ? ["api_key", provider.apiKey, "ANTHROPIC_API_KEY"]
                       : ["auth_token", provider.authToken, "ANTHROPIC_AUTH_TOKEN"];
-            sources.selected(
-                value === undefined ? "environment" : "configuration",
-                value === undefined ? variable! : `providers.${id}.${key}`,
-            );
+            if (value !== undefined) sources.selected("configuration", `providers.${id}.${key}`);
+            else if (fromSettings(variable))
+                sources.selected("native_login", "Claude Code settings");
+            else sources.selected("environment", variable);
         }
         await ensureClaudeWorkingDirectory(claudeWorkingDirectory);
         return new AnthropicProvider({
@@ -962,6 +1039,7 @@ async function createProvider(
                     !process.env.CLAUDE_CONFIG_DIR?.trim(),
             ),
             cwd: claudeWorkingDirectory,
+            ...(configuredEnvironment === undefined ? {} : { env: configuredEnvironment }),
             // Bun cannot use the SDK's runtime require.resolve from its compiled filesystem.
             // The standalone build adapts this resolver to materialize its embedded executable.
             pathToClaudeCodeExecutable: provider.executable ?? resolveClaudeCodeExecutablePath(),
@@ -1234,6 +1312,48 @@ async function ensureClaudeWorkingDirectory(directory: string): Promise<void> {
     const existing = await stat(directory).catch(() => undefined);
     if (existing?.isDirectory() === true) return;
     await ensurePrivateDirectory(directory);
+}
+
+/**
+ * The key Codex itself sends to a `[model_providers.<id>]` endpoint: the variable its `env_key`
+ * names, then its bearer token, then — only when it asks for OpenAI authentication — an OpenAI
+ * API key. A ChatGPT sign-in is never sent to someone else's endpoint.
+ */
+async function customCodexProviderCredential(
+    custom: Extract<CodexModelProvider, { readonly kind: "custom" }>,
+    environment: NodeJS.ProcessEnv,
+    sources: CredentialDiagnosticSources,
+): Promise<CodexApiKeyCredential | null> {
+    if (custom.envKey !== undefined) {
+        const value = environment[custom.envKey];
+        sources.environment(custom.envKey, value);
+        const credential = await CodexApiKeyCredential.tryLoad(
+            value === undefined ? {} : { apiKey: value },
+        );
+        if (credential !== null) sources.selected("environment", custom.envKey);
+        return credential;
+    }
+    if (custom.bearerToken !== undefined) {
+        sources.add(custom.bearerToken);
+        const credential = await CodexApiKeyCredential.tryLoad({ apiKey: custom.bearerToken });
+        if (credential !== null) sources.selected("native_login", "Codex configuration");
+        return credential;
+    }
+    if (!custom.requiresOpenAIAuth) return null;
+    const loaded = await loadCodexCredential({ env: environment });
+    const fromEnvironment = environment.OPENAI_API_KEY?.trim();
+    sources.environment("OPENAI_API_KEY", fromEnvironment);
+    if (loaded instanceof CodexApiKeyCredential) {
+        sources.selected(
+            fromEnvironment ? "environment" : "native_login",
+            fromEnvironment ? "OPENAI_API_KEY" : "Codex sign-in",
+        );
+        return loaded;
+    }
+    // Signed into ChatGPT: only an API key from the environment may go to this endpoint.
+    if (!fromEnvironment) return null;
+    sources.selected("environment", "OPENAI_API_KEY");
+    return await CodexApiKeyCredential.tryLoad({ apiKey: fromEnvironment });
 }
 
 function required<T>(
