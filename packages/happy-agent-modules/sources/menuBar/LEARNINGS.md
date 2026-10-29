@@ -57,11 +57,20 @@ open, and the exit of the parent process itself through a dispatch process sourc
 alone was the original mechanism and is not sufficient, because anything else holding that pipe open
 keeps the app alive after the daemon is gone.
 
-## The macOS status item shows no count and the menu has no footer
+## The macOS status item shows no count, and the menu ends with two controls
 
-The bar carries the glyph alone: no number, no badge. The menu ends after plan usage — there is
-no version line, no ready/draining state, and no Quit item. A Quit item would be a lie, because
+The bar carries the glyph alone: no number, no badge. There is no version line, no
+ready/draining state, and no item that quits the menu bar app itself: that would be a lie, because
 the module would start the app again. These were explicit product decisions, not omissions.
+
+The person found the icon stayed after quitting the desktop with Cmd+Q, because the desktop only
+disconnects from the daemon and the icon lives as long as the daemon does. The menu therefore ends
+with "Stop Happy Agent", which asks the daemon to shut down like `happy-agent stop` and so takes
+the icon away truthfully, and "Quit Happy", shown only while the desktop (`com.slopus.happy` or
+`com.slopus.happy.nightly`) runs, which terminates it by bundle ID so it closes through its own
+`before-quit`. The desktop already respects a daemon stopped from here: reconnecting never starts
+it again. Choosing an item closes the menu before the daemon answers, so a refused stop is shown
+in the headline the next time the menu opens.
 
 ## The menu is compact: one line per thing
 
@@ -187,9 +196,10 @@ snapshots on its existing open-menu timer.
 ## The existing private API is the boundary
 
 Both apps use the ordinary HTTP API over the daemon's private socket with its bearer token.
-macOS remains read-only and uses events as refresh hints. Windows uses the existing shutdown
-endpoint for its explicit Stop action; if shutdown stalls, Force stop terminates the retained
-parent process and its tree. No new server endpoint, public listener, or token exposure is needed.
+Both use the existing shutdown endpoint for their explicit Stop action, and macOS uses events
+as refresh hints. On Windows, if shutdown stalls, Force stop terminates the retained parent
+process and its tree; macOS stops its app as soon as shutdown begins, so it has no Force stop.
+No new server endpoint, public listener, or token exposure is needed.
 
 ## A new daemon stops the apps old ones left behind
 
