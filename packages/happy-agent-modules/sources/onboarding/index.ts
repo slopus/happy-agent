@@ -1,15 +1,15 @@
 export {
     OnboardingModule,
-    type ChatActionPressResult,
+    type ActionPress,
+    type ActionPressed,
+    type OnboardingActionListener,
     type OnboardingMessageListener,
     type OnboardingSpeechListener,
 } from "./OnboardingModule.js";
 export { OnboardingRequestError } from "./OnboardingRequestError.js";
 export {
     ONBOARDING_VERSION,
-    chatActionPressSchema,
     onboardingFlowSchema,
-    type ChatActionPress,
     type OnboardingFlow,
     type OnboardingListener,
     type OnboardingStep,

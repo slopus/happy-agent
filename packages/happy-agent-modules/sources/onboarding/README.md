@@ -1,7 +1,7 @@
 # Onboarding
 
 Onboarding happens in Happy's own conversation, and the daemon controls it; clients only draw the
-conversation and post presses on its inline actions. `packages/happy-agent/API.md` ("Onboarding in
+conversation and send presses on its inline actions as the person's own action messages. `packages/happy-agent/API.md` ("Onboarding in
 Happy's conversation" and "Inline actions") is the contract.
 
 `OnboardingModule` takes Config, Durable Functions, History, Bots, Profile, Provider CLIs, Provider
@@ -44,8 +44,12 @@ first answer is the verification: Happy is told `begin`, with that model's name 
 hidden system message (`#tell`), and `afterInferenceTransact` marks the provider
 verified when that answer lands. If Happy's turn settles without one, onboarding says what failed
 and returns to choosing. From then on the model writes every message, following `ONBOARDING_GUIDE`
-(`impl/onboardingGuide.ts`) in its instructions; each press does the machine's work and tells the
-model what happened as one more hidden event, including presses that connect another AI. The
+(`impl/onboardingGuide.ts`) in its instructions. A press is an action message on the ordinary send
+queue (`pressAction`): its transaction records the choice, does the work, and queues the message
+with the work's outcome (`impl/pressOutcome.ts`), which the model reads as the person's turn. During
+the bootstrap the same message is recorded in a finished run and answered by the scripted reply.
+Only the newest offer of an action is live. Hidden events (`#tell`) remain only for what the
+person did not do: `begin`, a provider added, a connection that failed, a phone paired. The
 module adds four tools while it guides: `save_profile`, `discover_work`, `propose_work`, and
 `set_default_model`. Their calls are ordinary, visible tool calls.
 

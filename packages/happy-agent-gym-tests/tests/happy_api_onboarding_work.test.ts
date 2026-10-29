@@ -139,13 +139,20 @@ interface Accepted {
 
 type Answers = Record<string, (request: GymInferenceRequest) => GymTurn>;
 
-/** The hidden event a request's newest message carries, if any. */
+/**
+ * What a request answers: the label of the person's press, as `pressed:Label`, or the kind of the
+ * hidden event its newest message carries.
+ */
 function eventIn(request: GymInferenceRequest): string | undefined {
+    const pressed = /\[Pressed \\"([^"\\]+)\\"/u.exec(
+        JSON.stringify(request.messages.at(-1) ?? {}),
+    );
+    if (pressed !== null) return `pressed:${pressed[1]!}`;
     const text = JSON.stringify(request.messages.at(-1) ?? {});
     return /\\"kind\\":\\"(\w+)\\"/u.exec(text)?.[1];
 }
 
-/** The hidden event of that kind Happy's model was told, parsed. */
+/** The hidden event of that kind the app told Happy's model, parsed. */
 function told(gym: AgentGym, kind: string): Record<string, unknown> | undefined {
     const request = gym.inference.requests.find((each) => eventIn(each) === kind);
     if (request === undefined) return undefined;
@@ -156,6 +163,20 @@ function told(gym: AgentGym, kind: string): Record<string, unknown> | undefined 
     return JSON.parse(
         json.replace(/^<happy-onboarding-event>\n|\n<\/happy-onboarding-event>$/gu, ""),
     );
+}
+
+/** What Happy's model read for the person's press of `label`: the press, then its outcome. */
+function pressRead(gym: AgentGym, label: string): string | undefined {
+    for (const request of gym.inference.requests) {
+        for (const message of request.messages) {
+            if (message.role !== "user") continue;
+            const text = message.content
+                .map((block) => (block.type === "text" ? block.text : ""))
+                .join("");
+            if (text.startsWith(`[Pressed "${label}"`)) return text;
+        }
+    }
+    return undefined;
 }
 
 function say(text: string): () => GymTurn {
@@ -179,7 +200,9 @@ function toolResultIn(request: GymInferenceRequest): string | undefined {
  * the tool returned it.
  */
 function followsTools(request: GymInferenceRequest): GymTurn | undefined {
-    if (eventIn(request) === "discoverAsked") return call("discover_work");
+    if (eventIn(request) === "pressed:Discover what I've been working on") {
+        return call("discover_work");
+    }
     const result = toolResultIn(request);
     if (result === undefined) return undefined;
     if (result.startsWith("What the person has been working on")) return call("propose_work");
@@ -361,14 +384,32 @@ async function press(
     action: { id: string; params?: Record<string, string>; block?: number },
     values?: string[],
 ): Promise<unknown> {
-    const response = await gym.http.request("POST", `/v0/agents/${happy}/chat-actions`, {
-        messageId: message.id,
-        blockIndex: action.block ?? 0,
-        action: { id: action.id, params: action.params ?? {} },
-        ...(values === undefined ? {} : { values }),
-    });
+    const response = await sendPress(gym, happy, message, action, values);
     expect(response.status, JSON.stringify(response.body)).toBe(202);
-    return (response.body as { result: unknown }).result;
+    return (response.body as { message: { content: { result: unknown }[] } }).message.content[0]!
+        .result;
+}
+
+/** The person's press, sent as their own action message. */
+async function sendPress(
+    gym: AgentGym,
+    happy: string,
+    message: Message,
+    action: { id: string; params?: Record<string, string>; block?: number },
+    values?: string[],
+) {
+    return await gym.http.request("POST", `/v0/agents/${happy}/send`, {
+        content: [
+            {
+                type: "action",
+                messageId: message.id,
+                blockIndex: action.block ?? 0,
+                actionId: action.id,
+                params: action.params ?? {},
+                ...(values === undefined ? {} : { values }),
+            },
+        ],
+    });
 }
 
 async function flowOf(gym: AgentGym): Promise<Flow & { accepted?: Accepted[] }> {
@@ -409,10 +450,10 @@ describe("onboarding the person's work", () => {
         async () => {
             const { gym, happy, project } = await startGym({
                 begin: say(PROFILE_STEP),
-                profileSaved: say(WORK_STEP),
-                workAccepted: say(NEW_STEP),
-                newChatOpened: say(PHONE_STEP),
-                phoneAnswered: say(
+                "pressed:That's me": say(WORK_STEP),
+                "pressed:Looks right": say(NEW_STEP),
+                "pressed:Try Create": say(PHONE_STEP),
+                "pressed:Later": say(
                     [
                         "You're ready, Ada.",
                         "",
@@ -455,17 +496,39 @@ describe("onboarding the person's work", () => {
             expect(result.started).toHaveLength(1);
             const kept = result.started[0]!;
             expect(kept.value).toBe("p1-work-1");
-            await gym.waitUntil(async () => told(gym, "workAccepted"), "Looks right to finish");
             expect((await flowOf(gym)).accepted).toEqual([{ ...kept, status: "started" }]);
-            const accepted = told(gym, "workAccepted") as {
-                started: { id: string; title: string; topic: string }[];
-                failed: string[];
-            };
-            expect(accepted).toMatchObject({
-                started: [{ id: "p1-work-1", title: "Onboarding redesign", topic: "Product" }],
-                failed: [],
+            // Happy's model read the press as the person's turn, with what it started.
+            const accepted = await gym.waitUntil(
+                async () => pressRead(gym, "Looks right"),
+                "Happy's model to read Looks right",
+            );
+            expect(accepted).toBe(
+                [
+                    '[Pressed "Looks right" with "Onboarding redesign" ticked in your message]',
+                    "",
+                    "Started 1 chat, each making a read-only plan and waiting for them before it changes anything:",
+                    "- Onboarding redesign, under Product",
+                    "Each is placed under its topic in the sidebar.",
+                ].join("\n"),
+            );
+            // The press is the person's own message, with no hidden event beside it.
+            const pressedMessage = (await messages(gym, happy)).find(
+                (message) =>
+                    message.role === "user" &&
+                    JSON.stringify(message.content).includes('"onboarding.workAccept"'),
+            );
+            expect(pressedMessage?.content[0]).toMatchObject({
+                type: "action",
+                messageId: proposal.id,
+                actionId: "onboarding.workAccept",
+                label: "Looks right",
+                values: ["p1-work-1"],
             });
-            expect(accepted).not.toHaveProperty("topicsError");
+            expect(
+                gym.inference.requests.some((request) =>
+                    JSON.stringify(request.messages.at(-1)).includes("workAccepted"),
+                ),
+            ).toBe(false);
 
             // Its topic is a new section at the end of the sidebar, with its row under it.
             const sidebar = (await gym.http.ok("GET", "/v0/spaces/sidebar")) as { html: string };
@@ -522,13 +585,13 @@ describe("onboarding the person's work", () => {
                 // The menu follows the app's download codes.
                 block: 1,
             });
-            await gym.waitUntil(async () => told(gym, "phoneAnswered"), "the phone answer");
-            expect(told(gym, "phoneAnswered")).toMatchObject({
-                choice: "later",
-                name: "Ada Lovelace",
-                started: [{ id: "p1-work-1" }],
-                placed: true,
-            });
+            const later = await gym.waitUntil(
+                async () => pressRead(gym, "Later"),
+                "Happy's model to read Later",
+            );
+            expect(later).toContain("Later, for the phone.");
+            expect(later).toContain("Their name: Ada Lovelace.");
+            expect(later).toContain("- p1-work-1: Onboarding redesign (Product)");
 
             const done = await waitForText(gym, happy, "You're ready, Ada.");
             const opened = await press(gym, happy, done, {
@@ -547,11 +610,11 @@ describe("onboarding the person's work", () => {
         async () => {
             const { gym, happy } = await startGym({
                 begin: say(PROFILE_STEP),
-                profileSaved: say(WORK_STEP),
-                workTellAsked: say("What are you working on right now?"),
-                workAccepted: say(NEW_STEP),
-                newChatSkipped: say(PHONE_STEP),
-                phoneAnswered: say(
+                "pressed:That's me": say(WORK_STEP),
+                "pressed:I'll tell you instead": say("What are you working on right now?"),
+                "pressed:Continue without these": say(NEW_STEP),
+                "pressed:Maybe later": say(PHONE_STEP),
+                "pressed:Later": say(
                     [
                         "You're ready, Ada.",
                         "",
@@ -567,7 +630,7 @@ describe("onboarding the person's work", () => {
             });
             const work = await reachWork(gym, happy);
             const tools = gym.inference.requests.find(
-                (request) => eventIn(request) === "profileSaved",
+                (request) => eventIn(request) === "pressed:That's me",
             )?.tools;
             expect(tools?.map((tool) => tool.name)).toEqual(
                 expect.arrayContaining([
@@ -605,11 +668,9 @@ describe("onboarding the person's work", () => {
                 started: [],
             });
             const newStep = await waitForText(gym, happy, "Create opens a fresh chat.");
-            expect(told(gym, "workAccepted")).toEqual({
-                kind: "workAccepted",
-                started: [],
-                failed: [],
-            });
+            expect(pressRead(gym, "Continue without these")).toBe(
+                '[Pressed "Continue without these" with nothing ticked in your message]\n\nNothing was ticked, so nothing started.',
+            );
             const spacesAfter = (await gym.http.ok("GET", "/v0/spaces")) as {
                 spaces: unknown[];
             };
@@ -625,17 +686,13 @@ describe("onboarding the person's work", () => {
                 block: 1,
             });
             const done = await waitForText(gym, happy, "You're ready, Ada.");
-            expect(told(gym, "phoneAnswered")).toMatchObject({ started: [], placed: false });
+            expect(pressRead(gym, "Later")).toContain("Onboarding started no chats.");
             expect((await flowOf(gym)).step).toBe("guided");
             expect(await press(gym, happy, done, { id: "onboarding.finish" })).toBeNull();
             const flow = await flowOf(gym);
             expect(flow).toMatchObject({ step: "finished", completedVersion: 1 });
             // A finished onboarding answers no more of its actions.
-            const late = await gym.http.request("POST", `/v0/agents/${happy}/chat-actions`, {
-                messageId: done.id,
-                blockIndex: 0,
-                action: { id: "onboarding.finish", params: {} },
-            });
+            const late = await sendPress(gym, happy, done, { id: "onboarding.finish" });
             expect(late.status).toBe(409);
             expect(gym.errors).toEqual([]);
         },
@@ -648,10 +705,10 @@ describe("onboarding the person's work", () => {
             const { gym, happy } = await startGym(
                 {
                     begin: say(PROFILE_STEP),
-                    profileSaved: say(WORK_STEP),
-                    workTellAsked: say(NEW_STEP),
-                    newChatSkipped: say(PHONE_STEP),
-                    phoneAnswered: say(
+                    "pressed:That's me": say(WORK_STEP),
+                    "pressed:I'll tell you instead": say(NEW_STEP),
+                    "pressed:Maybe later": say(PHONE_STEP),
+                    "pressed:I have the app": say(
                         "Open Happy on your phone and scan this code.\n\n<figure data-phone-pair></figure>",
                     ),
                     phonePaired: say(
@@ -678,7 +735,9 @@ describe("onboarding the person's work", () => {
                 block: 1,
             });
             await waitForText(gym, happy, "<figure data-phone-pair></figure>");
-            expect(told(gym, "phoneAnswered")).toMatchObject({ choice: "opened" });
+            expect(pressRead(gym, "I have the app")).toContain(
+                "This computer's pairing code is open",
+            );
 
             // The pairing onboarding opened is the computer's ordinary one.
             const { mobileConnector } = (await gym.http.ok("GET", "/v0/mobile-connector")) as {
@@ -720,10 +779,10 @@ describe("onboarding the person's work", () => {
             const { gym, happy } = await startGym(
                 {
                     begin: say(PROFILE_STEP),
-                    profileSaved: say(WORK_STEP),
-                    workTellAsked: say(NEW_STEP),
-                    newChatSkipped: say(PHONE_STEP),
-                    phoneAnswered: say(
+                    "pressed:That's me": say(WORK_STEP),
+                    "pressed:I'll tell you instead": say(NEW_STEP),
+                    "pressed:Maybe later": say(PHONE_STEP),
+                    "pressed:I have the app": say(
                         [
                             "The phone couldn't pair. You're ready, Ada.",
                             "",
@@ -748,9 +807,10 @@ describe("onboarding the person's work", () => {
 
             // Happy's model hears what stopped it, and that the step ended as Later.
             await waitForText(gym, happy, "You're ready, Ada.");
-            const answered = told(gym, "phoneAnswered") as { choice: string; error?: string };
-            expect(answered.choice).toBe("later");
-            expect(answered.error).toContain("turned off on this computer");
+            const answered = pressRead(gym, "I have the app");
+            expect(answered).toContain("the phone pairing couldn't open");
+            expect(answered).toContain("turned off on this computer");
+            expect(answered).toContain("Treat it as Later.");
             const { mobileConnector } = (await gym.http.ok("GET", "/v0/mobile-connector")) as {
                 mobileConnector: { status: string; pairing: unknown };
             };
@@ -778,9 +838,9 @@ describe("onboarding the person's work", () => {
             const { gym, happy, project } = await startGym(
                 {
                     begin: say(PROFILE_STEP),
-                    profileSaved: say(WORK_STEP),
-                    workChangeAsked: say("What should I change?"),
-                    workAccepted: say(NEW_STEP),
+                    "pressed:That's me": say(WORK_STEP),
+                    "pressed:Adjust": say("What should I change?"),
+                    "pressed:Looks right": say(NEW_STEP),
                     "*": (request) =>
                         JSON.stringify(request.messages.at(-1)).includes("Only the copy")
                             ? call("propose_work", {
@@ -797,15 +857,17 @@ describe("onboarding the person's work", () => {
             // Adjust is the form's other button; the model hears the proposal that was shown.
             await press(gym, happy, first, { id: "onboarding.workChange" });
             await waitForText(gym, happy, "What should I change?");
-            expect(told(gym, "workChangeAsked")).toEqual({
-                kind: "workChangeAsked",
-                proposal: PROPOSAL.rows.map((row) => ({
-                    title: row.title,
-                    topic: row.topic,
-                    ongoing: row.ongoing === true,
-                    firstMessage: row.firstMessage,
-                })),
-            });
+            expect(pressRead(gym, "Adjust")).toBe(
+                [
+                    '[Pressed "Adjust" in your message]',
+                    "",
+                    "They want to change this proposal:",
+                    ...PROPOSAL.rows.map(
+                        (row) =>
+                            `- ${row.title} (topic ${row.topic}${row.ongoing === true ? ", ongoing" : ""}); first message: ${row.firstMessage}`,
+                    ),
+                ].join("\n"),
+            );
             await gym.send("Only the copy, please.", {
                 wait: false,
                 sessionId: happy,
@@ -826,19 +888,17 @@ describe("onboarding the person's work", () => {
             expect(findings).toContain(project);
 
             // The first proposal is replaced; only the new one starts its chat.
-            const stale = await gym.http.request("POST", `/v0/agents/${happy}/chat-actions`, {
-                messageId: first.id,
-                blockIndex: 0,
-                action: { id: "onboarding.workAccept", params: {} },
-                values: ["p1-work-1"],
-            });
+            const stale = await sendPress(gym, happy, first, { id: "onboarding.workAccept" }, [
+                "p1-work-1",
+            ]);
             expect(stale.status).toBe(409);
             await press(gym, happy, second, { id: "onboarding.workAccept" }, ["p2-work-1"]);
-            await gym.waitUntil(async () => told(gym, "workAccepted"), "Looks right to finish");
-            expect(told(gym, "workAccepted")).toMatchObject({
-                started: [{ id: "p2-work-1", title: "Onboarding copy", topic: "Product" }],
-                failed: [],
-            });
+            const accepted = await gym.waitUntil(
+                async () => pressRead(gym, "Looks right"),
+                "Happy's model to read Looks right",
+            );
+            expect(accepted).toContain("- Onboarding copy, under Product");
+            expect(accepted).not.toContain("Onboarding redesign");
             expect(gym.errors).toEqual([]);
         },
         TEST_TIMEOUT_MS,

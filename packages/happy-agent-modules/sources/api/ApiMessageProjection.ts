@@ -189,6 +189,7 @@ function historyBlocks(
         .map((block): Record<string, unknown> => {
             if (block.type === "configuration") return structuredClone(block);
             if (block.type === "tool_call_request") return structuredClone(block);
+            if (block.type === "action") return structuredClone(block);
             if (block.type === "text") return { type: "text", text: block.text };
             if (block.type === "thinking") {
                 return { type: "reasoning", text: block.thinking };

@@ -56,14 +56,6 @@ export type ChatAction =
     | { readonly id: "onboarding.accountAdd"; readonly provider?: ChatProviderId }
     /** Onboarding: open the vendor's sign-in page again. */
     | { readonly id: "onboarding.signInOpen"; readonly provider: ChatProviderId }
-    /** Onboarding: stop the install or sign-in under way. */
-    | { readonly id: "onboarding.connectCancel"; readonly provider: ChatProviderId }
-    /** Onboarding: the code the vendor's page showed, typed into its own field and never into the chat. */
-    | {
-          readonly id: "onboarding.codeEntry";
-          readonly provider: ChatProviderId;
-          readonly code: string;
-      }
     /** Onboarding: open the vendor's page for its current plans. */
     | { readonly id: "onboarding.subscribe"; readonly provider: ChatProviderId }
     /** Onboarding: add an API key, company account or custom endpoint in its own sheet. */
@@ -129,14 +121,8 @@ export function chatActionParse(
         case "onboarding.connect":
         case "onboarding.manual":
         case "onboarding.signInOpen":
-        case "onboarding.connectCancel":
         case "onboarding.subscribe":
             return provider ? { id, provider } : undefined;
-        case "onboarding.codeEntry": {
-            /* A code form's one value is what was typed in its field. */
-            const code = values?.[0]?.trim();
-            return provider && code !== undefined ? { id, provider, code } : undefined;
-        }
         case "onboarding.start":
         case "onboarding.apiKeyOpen":
         case "onboarding.profileConfirm":

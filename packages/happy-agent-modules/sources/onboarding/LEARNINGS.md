@@ -9,11 +9,25 @@ Happy's conversation and runs the work behind each press. The desktop draws the 
 what only it can (opening the browser, a sheet, a restart), and keeps its own flow only for daemons
 without `capabilities.onboarding`.
 
-## A press is never a person message
+## A press is the person's own message
 
-Pressing an inline action never posts a message and never moves into the person's lane: the button
-stays where it is, shown chosen, and Happy answers below. App events reach Happy's model as hidden
-context, never as something the person said.
+A press was first a separate route that recorded the choice and told Happy's model through a
+hidden onboarding event, so the model read the person's choices as the app's narration and a
+second input path existed beside sending. Now a press is an action message through the ordinary
+send queue: one transaction records the choice on the pressed message, does the work, and stores
+what it did as the action block's `outcome`. The model reads `[Pressed "Label" in your message]`
+and the outcome as an ordinary person turn. During the bootstrap the same message is answered by
+the scripted reply instead of a model. Clients draw no bubble for it: the control shows chosen in
+place. Hidden events remain only for what the person did not do, such as a provider CLI signing in
+or a phone pairing.
+
+Only the newest offer of an action is live. A model that repeats a step after an interruption
+leaves an older copy on screen; pressing it is a conflict, so no step runs twice. A control a
+model wrote wrong (an unknown action ID or parameter, or a step that is over) is refused with the
+message as it stands, and the person recovers by typing.
+
+Codes and secrets never travel in a message: the provider CLI figure calls its own sign-in code
+and cancel routes, and a sheet such as the API key sheet stays in the app.
 
 ## The agent paces Happy's words, and pacing never blocks
 

@@ -7703,7 +7703,8 @@ is exactly one `action` block and which has no `text`.
 - `messageId` — the agent message in this conversation that holds the control.
 - `blockIndex` — the block, numbered as under Inline actions.
 - `actionId`, `params` — the control's action ID and its parameters as written, every value a
-  string.
+  string: exactly the parameters its action reads (`provider`, `choice`, or `item`; none for
+  most), never a presentation attribute such as `data-mark` or `data-table`.
 - `values` — a checklist's ticked values, or what an action run by the client made, such as the
   space Try Create made; omitted or empty otherwise. A code field's text never travels here.
 - `mode` — optional and ignored: an action message runs on the conversation's current selection.
@@ -7711,7 +7712,10 @@ is exactly one `action` block and which has no `text`.
 The daemon reads the block from its own copy of the message and checks that the block exists, that
 it holds a control with exactly that action ID and those parameters, that every value is one the
 checklist offers and the person could change, and that the block has no choice yet, including from
-another action message still waiting. Then, in one transaction, it records the choice on the
+another action message still waiting. Only the newest offer of an action is live: when a later
+agent message in the conversation offers a control with the same action ID, as an agent does when
+it repeats a step after an interruption, the older copy is superseded and pressing it is a
+conflict, so no step runs twice. Then, in one transaction, it records the choice on the
 pressed message, does the action's work, writes the outcome on the action block, and accepts or
 queues the message. Work that reaches outside the daemon, such as installing an assistant or
 opening a phone pairing, starts once that commits.
@@ -7750,10 +7754,12 @@ Clients draw no bubble for an action message: the pressed control shows chosen i
 pressed message's `actionChoices`. Sending the same `id` again returns the message as it stands.
 
 Errors: `404 not_found` for an unknown message or block; `409 conflict` when the block already has
-a choice or no longer matches, with `message`, the pressed message as it now stands, in the error
-body so the client can draw the choice that won; `400 invalid_request` for `text` beside an action
-block, more than one block, a value the checklist does not offer, or an action the daemon does not
-run in that conversation. Actions run by the client, such as a vendor's page
+a choice, holds no pressable control with that action ID and those parameters, names a value the
+checklist does not offer, or is superseded by a newer offer, with `message`, the pressed message as
+it now stands, beside `error` and `code` in the error body so the client can draw the choice that
+won; `409 conflict` without `message` when the step the action belongs to is over or a newer
+proposal replaced the one pressed; `400 invalid_request` for `text` beside an action block, more
+than one block, or an action the daemon does not run in that conversation. Actions run by the client, such as a vendor's page
 (`onboarding.signInOpen`, `onboarding.subscribe`) or a client sheet (`onboarding.apiKeyOpen`), are
 never sent; `reply` sends its `text` as an ordinary message.
 

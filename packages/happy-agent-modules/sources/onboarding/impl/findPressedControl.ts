@@ -99,12 +99,11 @@ export function actionBlocks(message: HistoryMessage): ChatActionBlock[] {
     );
 }
 
-/** The parameters a control writes for an action: its fields, less what a submit carries. */
+/** The parameters a control writes for an action: its fields, less what a checklist carries. */
 function paramsOf(action: ChatAction): Record<string, string> {
     const params: Record<string, string> = {};
     for (const [key, value] of Object.entries(action)) {
         if (key === "id" || key === "values") continue;
-        if (key === "code" && action.id === "onboarding.codeEntry") continue;
         params[key] = String(value);
     }
     return params;

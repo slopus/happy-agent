@@ -493,9 +493,35 @@ export const historyCompactionBlockSchema = Type.Union([
     historyFailedCompactionBlockSchema,
 ]);
 
+/**
+ * The person pressing one inline action control, as their own message: which control, what the
+ * work did, and what it returned. Only in a user message, and its only block.
+ */
+export const historyActionBlockSchema = Type.Object(
+    {
+        type: Type.Literal("action"),
+        messageId: Type.String({ minLength: 1, maxLength: 128 }),
+        blockIndex: Type.Integer({ minimum: 0, maximum: 1_000 }),
+        actionId: Type.String({ minLength: 1, maxLength: 128 }),
+        params: Type.Record(Type.String({ maxLength: 64 }), Type.String({ maxLength: 2_000 }), {
+            maxProperties: 32,
+        }),
+        values: Type.Array(Type.String({ maxLength: 2_000 }), { maxItems: 200 }),
+        /** The words on the control pressed, as the person read them. */
+        label: Type.String({ maxLength: 2_000 }),
+        /** What the work did, as the agent's model reads it; absent when no model reads it. */
+        outcome: Type.Optional(Type.String({ maxLength: 20_000 })),
+        /** What the action returns to clients. */
+        result: Type.Unknown(),
+    },
+    { additionalProperties: false },
+);
+export type HistoryActionBlock = Static<typeof historyActionBlockSchema>;
+
 /** One piece of a recorded message. */
 export const historyBlockSchema = Type.Union([
     toolCallRequestBlockSchema,
+    historyActionBlockSchema,
     historyTextBlockSchema,
     historyThinkingBlockSchema,
     historyImageBlockSchema,

@@ -63,6 +63,7 @@ interface Flow {
 
 interface Message {
     id: string;
+    role: string;
     content: { type: string; text?: string }[];
     actionChoices?: Record<string, unknown>;
 }
@@ -115,7 +116,8 @@ async function waitForMessages(
     predicate: (all: Message[]) => boolean = () => true,
 ): Promise<Message[]> {
     return await gym.waitUntil(async () => {
-        const all = await messages(gym, happy);
+        // Happy's messages only: the person's presses are messages too.
+        const all = (await messages(gym, happy)).filter((message) => message.role !== "user");
         return all.length >= count && predicate(all) ? all : undefined;
     }, description);
 }
@@ -130,7 +132,18 @@ async function press(
         values?: string[];
     },
 ): Promise<void> {
-    const response = await gym.http.request("POST", `/v0/agents/${happy}/chat-actions`, body);
+    const response = await gym.http.request("POST", `/v0/agents/${happy}/send`, {
+        content: [
+            {
+                type: "action",
+                messageId: body.messageId,
+                blockIndex: body.blockIndex,
+                actionId: body.action.id,
+                params: body.action.params,
+                ...(body.values === undefined ? {} : { values: body.values }),
+            },
+        ],
+    });
     expect(response.status, JSON.stringify(response.body)).toBe(202);
 }
 
@@ -202,7 +215,9 @@ describe("Connecting an AI in Happy's onboarding", () => {
             const back = (await gym.http.ok("GET", "/v0/onboarding/flow")) as { flow: Flow };
             expect(back.flow.step).toBe("providers");
 
-            for (const message of after) expect(JSON.stringify(message)).not.toContain("good-code");
+            for (const message of await messages(gym, happy)) {
+                expect(JSON.stringify(message)).not.toContain("good-code");
+            }
             expect(gym.errors).toEqual([]);
         },
         TEST_TIMEOUT_MS,

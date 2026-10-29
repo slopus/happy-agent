@@ -70,8 +70,15 @@ interface Message {
     content: { type: string; text?: string }[];
 }
 
-/** The hidden event a request's newest message carries, if any. */
+/**
+ * What a request answers: the label of the person's press, as `pressed:Label`, or the kind of the
+ * hidden event its newest message carries.
+ */
 function eventIn(request: GymInferenceRequest): string | undefined {
+    const pressed = /\[Pressed \\"([^"\\]+)\\"/u.exec(
+        JSON.stringify(request.messages.at(-1) ?? {}),
+    );
+    if (pressed !== null) return `pressed:${pressed[1]!}`;
     const text = JSON.stringify(request.messages.at(-1) ?? {});
     return /\\"kind\\":\\"(\w+)\\"/u.exec(text)?.[1];
 }
@@ -171,7 +178,18 @@ async function press(
         values?: string[];
     },
 ): Promise<void> {
-    const response = await gym.http.request("POST", `/v0/agents/${happy}/chat-actions`, body);
+    const response = await gym.http.request("POST", `/v0/agents/${happy}/send`, {
+        content: [
+            {
+                type: "action",
+                messageId: body.messageId,
+                blockIndex: body.blockIndex,
+                actionId: body.action.id,
+                params: body.action.params,
+                ...(body.values === undefined ? {} : { values: body.values }),
+            },
+        ],
+    });
     expect(response.status, JSON.stringify(response.body)).toBe(202);
 }
 
@@ -203,7 +221,7 @@ describe("Happy's model leading onboarding", () => {
         async () => {
             const { gym, happy } = await startGym({
                 begin: () => ({ content: [{ text: PROFILE_STEP, type: "text" }] }),
-                profileSaved: () => ({ content: [{ text: WORK_STEP, type: "text" }] }),
+                "pressed:That's me": () => ({ content: [{ text: WORK_STEP, type: "text" }] }),
             });
             await connectCodex(gym, happy);
             const connected = textOf(await waitForText(gym, happy, "Connected to ChatGPT"));
@@ -228,7 +246,7 @@ describe("Happy's model leading onboarding", () => {
                 '\\"profile\\":{\\"name\\":\\"Ada Lovelace\\",\\"email\\":\\"ada@example.com\\",\\"source\\":\\"git\\"}',
             );
             expect(begin?.tools.map((tool) => tool.name)).toContain("save_profile");
-            // The events are Happy's, never shown as anyone's message.
+            // The hidden events are the app's, never shown as anyone's message.
             for (const message of await messages(gym, happy)) {
                 expect(textOf(message)).not.toContain("<happy-onboarding-event>");
             }
@@ -288,6 +306,124 @@ describe("Happy's model leading onboarding", () => {
                 const flow = await flowOf(gym);
                 return flow.step === "guided" ? flow : undefined;
             }, "the second answer to verify Codex");
+        },
+        TEST_TIMEOUT_MS,
+    );
+
+    it(
+        "refuses the controls a model got wrong, runs only its newest offer, and typing recovers",
+        async () => {
+            // The model ignores the guide: a made-up action ID, a provider no action knows, and
+            // a step that is over. Asked again, it repeats the profile step, twice.
+            const { gym, happy } = await startGym({
+                begin: () => ({
+                    content: [
+                        {
+                            type: "text",
+                            text: [
+                                "What should I call you?",
+                                "",
+                                "<menu>",
+                                '  <button data-action="onboarding.profileConfirmed" data-emphasis>That\'s me</button>',
+                                '  <button data-action="onboarding.connect" data-provider="nope">Connect</button>',
+                                '  <button data-action="onboarding.start">Start over</button>',
+                                "</menu>",
+                            ].join("\n"),
+                        },
+                    ],
+                }),
+                "": () => ({ content: [{ text: PROFILE_STEP, type: "text" }] }),
+                "pressed:That's me": () => ({ content: [{ text: WORK_STEP, type: "text" }] }),
+            });
+            await connectCodex(gym, happy);
+            const wrong = await waitForText(gym, happy, "What should I call you?");
+            await gym.waitUntil(
+                async () => ((await flowOf(gym)).step === "guided" ? true : undefined),
+                "the first answer to verify Codex",
+            );
+            const send = async (actionId: string, params: Record<string, string>, id: string) =>
+                await gym.http.request("POST", `/v0/agents/${happy}/send`, {
+                    content: [{ type: "action", messageId: id, blockIndex: 0, actionId, params }],
+                });
+
+            // None of them is pressable; each refusal returns the message as it stands.
+            const madeUp = await send("onboarding.profileConfirmed", {}, wrong.id);
+            expect(madeUp.status).toBe(409);
+            expect(madeUp.body).toMatchObject({ code: "conflict", message: { id: wrong.id } });
+            expect((await send("onboarding.connect", { provider: "nope" }, wrong.id)).status).toBe(
+                409,
+            );
+            const over = await send("onboarding.start", {}, wrong.id);
+            expect(over.status).toBe(409);
+            expect(over.body).toMatchObject({ error: "That step of onboarding is over." });
+            const asked = async () =>
+                (await messages(gym, happy)).filter((message) =>
+                    textOf(message).includes("**Ada Lovelace** · ada@example.com"),
+                );
+            expect(await asked()).toHaveLength(0);
+
+            // Typing is the way out: the model asks again, and again when pressed for it.
+            const typed = async (text: string, count: number) => {
+                await gym.send(text, {
+                    wait: false,
+                    sessionId: happy,
+                    providerId: "codex",
+                    modelId: "gym-codex",
+                    effort: "medium",
+                });
+                return await gym.waitUntil(
+                    async () => {
+                        const all = await asked();
+                        return all.length === count ? all : undefined;
+                    },
+                    `the profile step, offered ${String(count)} times`,
+                );
+            };
+            await typed("Those buttons don't work.", 1);
+            const [older, newer] = await typed("Ask me again, please.", 2);
+
+            // Only the newest offer is live: the older copy never saves the profile twice.
+            const stale = await send("onboarding.profileConfirm", {}, older!.id);
+            expect(stale.status).toBe(409);
+            expect(stale.body).toMatchObject({
+                error: "A newer message offers that again.",
+                message: { id: older!.id },
+            });
+            expect((await send("onboarding.profileConfirm", {}, newer!.id)).status).toBe(202);
+            await waitForText(gym, happy, WORK_STEP);
+            const complete = await gym.waitUntil(async () => {
+                const flow = await flowOf(gym);
+                return flow.completedVersion === 1 ? flow : undefined;
+            }, "onboarding to complete");
+            expect(complete.requirements).toEqual({ provider: true, profile: true });
+
+            // The refused presses left no choice and no message; the one that ran left one each.
+            const all = await messages(gym, happy);
+            const presses = all.filter((message) => message.role === "user");
+            // Start onboarding and the route the person used are presses too, before these.
+            expect(presses.map((message) => message.content[0]?.type)).toEqual([
+                "action",
+                "action",
+                "text",
+                "text",
+                "action",
+            ]);
+            const stored = all as (Message & { actionChoices?: unknown })[];
+            expect(
+                stored.find((message) => message.id === wrong.id)?.actionChoices,
+            ).toBeUndefined();
+            expect(
+                stored.find((message) => message.id === older!.id)?.actionChoices,
+            ).toBeUndefined();
+            expect(stored.find((message) => message.id === newer!.id)?.actionChoices).toEqual({
+                "0": { kind: "button", index: 0 },
+            });
+            expect(
+                gym.inference.requests.filter(
+                    (request) => eventIn(request) === "pressed:That's me",
+                ),
+            ).toHaveLength(1);
+            expect(gym.errors).toEqual([]);
         },
         TEST_TIMEOUT_MS,
     );

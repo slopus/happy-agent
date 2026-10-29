@@ -46,11 +46,7 @@ import {
     providerCliSignInRequestSchema,
     type ProviderCliId,
 } from "../providerClis/index.js";
-import {
-    OnboardingRequestError,
-    chatActionPressSchema,
-    type OnboardingModule,
-} from "../onboarding/index.js";
+import { OnboardingRequestError, type OnboardingModule } from "../onboarding/index.js";
 import {
     ProviderRouteRequestError,
     ProviderRoutesModule,
@@ -383,6 +379,7 @@ import {
     emptyMutationBodySchema,
     gitWatchBodySchema,
     invokeSlashCommandRequestSchema,
+    messageSendActionBlockSchema,
     messageSendBodySchema,
     profilePatchBodySchema,
     projectCloneBodySchema,
@@ -2931,6 +2928,46 @@ export class ApiModule implements AgentModule {
                               });
                           });
                       }),
+                      // An action message the bootstrap answers, or one ending onboarding, is
+                      // its own finished run, announced before the scripted answer that follows.
+                      this.#onboardingFlow.onActionRecorded((agentId, message) => {
+                          void this.#queueAgentWork(ctx, agentId, undefined, async () => {
+                              const run =
+                                  message.runId === undefined
+                                      ? undefined
+                                      : await this.#history.run(ctx, agentId, message.runId);
+                              if (run === undefined) return;
+                              const resource = await this.#runResource(ctx, run);
+                              this.#appendForAgent(agentId, "run.started", {
+                                  agentId,
+                                  run: {
+                                      ...resource,
+                                      status: "running",
+                                      reason: null,
+                                      endedAt: null,
+                                  },
+                                  acceptedMessageIds: [message.recordId],
+                              });
+                              this.#appendForAgent(agentId, "message.created", {
+                                  agentId,
+                                  runId: run.id,
+                                  message: messageResource(message),
+                              });
+                              boundedAdd(
+                                  this.#announcedTerminalRuns,
+                                  run.id,
+                                  MAX_ANNOUNCED_TERMINAL_RUNS,
+                              );
+                              this.#appendForAgent(agentId, "run.finished", {
+                                  agentId,
+                                  run: resource,
+                              });
+                          }).catch(() => {
+                              ctx.log.warn("The API could not announce an action message.", {
+                                  agentId,
+                              });
+                          });
+                      }),
                       this.#onboardingFlow.onMessageUpdated((agentId, message) => {
                           // A change in place ends the typing, or skips it when it has not
                           // started: the next update is the whole.
@@ -4774,7 +4811,7 @@ export class ApiModule implements AgentModule {
             return true;
         }
         const action =
-            /^\/v0\/agents\/([a-z][a-z0-9]*)\/(send|messages|question|abort|compact|read|archive|unarchive|reorder|subtask-reorder|draft|usage|mode|bootstrap|activity|chat-actions)$/.exec(
+            /^\/v0\/agents\/([a-z][a-z0-9]*)\/(send|messages|question|abort|compact|read|archive|unarchive|reorder|subtask-reorder|draft|usage|mode|bootstrap|activity)$/.exec(
                 url.pathname,
             );
         if (action !== null) {
@@ -4786,14 +4823,6 @@ export class ApiModule implements AgentModule {
             }
             if (operation === "messages" && request.method === "GET") {
                 await this.#handleAgentMessages(ctx, response, url, agentId);
-                return true;
-            }
-            if (
-                operation === "chat-actions" &&
-                request.method === "POST" &&
-                this.#onboardingFlow !== undefined
-            ) {
-                await this.#handleChatAction(ctx, request, response, agentId, this.#onboardingFlow);
                 return true;
             }
             if (operation === "question" && request.method === "GET") {
@@ -5277,8 +5306,24 @@ export class ApiModule implements AgentModule {
         agentId: string,
     ): Promise<void> {
         await this.#assertUserControlledAgent(ctx, agentId);
-        const body = await bodyAs(request, messageSendBodySchema, "agent message");
-        sendJson(response, 202, await this.#sendUserMessage(ctx, agentId, body));
+        const parsed = await bodyAs(request, messageSendBodySchema, "agent message");
+        const pressed = parsed.content?.[0];
+        if (pressed?.type === "action") {
+            if (parsed.text !== undefined) {
+                throw invalidRequest("An action message has no text.");
+            }
+            await this.#handleActionSend(ctx, response, agentId, parsed.id ?? createId(), pressed);
+            return;
+        }
+        const { text, mode } = parsed;
+        if (text === undefined || mode === undefined) {
+            throw invalidRequest("A message needs text and a mode.");
+        }
+        sendJson(
+            response,
+            202,
+            await this.#sendUserMessage(ctx, agentId, { ...parsed, text, mode }),
+        );
     }
 
     /**
@@ -5288,9 +5333,12 @@ export class ApiModule implements AgentModule {
     async #sendUserMessage(
         ctx: Context,
         agentId: string,
-        body: Static<typeof messageSendBodySchema>,
+        parsed: Static<typeof messageSendBodySchema> & {
+            readonly text: string;
+            readonly mode: NonNullable<Static<typeof messageSendBodySchema>["mode"]>;
+        },
     ): Promise<{ readonly message: unknown; readonly cursor: string | null }> {
-        body.mode = requestedAgentMode(body.mode);
+        const body = { ...parsed, mode: requestedAgentMode(parsed.mode) };
         const id = body.id ?? createId();
         return await this.#serializeMessageSend(id, async () => {
             const cursor = this.#journal.cursor();
@@ -5326,7 +5374,12 @@ export class ApiModule implements AgentModule {
             if (serviceTier === undefined) {
                 throw invalidRequest("The selected service tier is unavailable.");
             }
-            const content = [{ type: "text" as const, text: body.text }, ...(body.content ?? [])];
+            const content = [
+                { type: "text" as const, text: body.text },
+                ...(body.content ?? []).flatMap((block) =>
+                    block.type === "action" ? [] : [block],
+                ),
+            ];
             const userId = this.#team.enabled ? teamUser(ctx)?.id : undefined;
             const profile = decodeRequestProfile(body.profile);
             const options: AgentBaseMessageOptions = {
@@ -9467,33 +9520,85 @@ export class ApiModule implements AgentModule {
         sendJson(response, 200, { flow });
     }
 
-    /** `POST /v0/agents/:agentId/chat-actions`: one press on an inline action control. */
-    async #handleChatAction(
+    /**
+     * An action message: the person pressing one inline action control, sent like any message.
+     * Onboarding decides it in one transaction; it is either answered at once or queued for the
+     * agent's model. See "Action messages" in API.md.
+     */
+    async #handleActionSend(
         ctx: Context,
-        request: IncomingMessage,
         response: ServerResponse,
         agentId: string,
-        onboarding: OnboardingModule,
+        id: string,
+        block: Static<typeof messageSendActionBlockSchema>,
     ): Promise<void> {
-        if (this.#team.enabled) {
-            throw unsupported("Inline actions are unavailable in team mode.");
+        await this.#assertUserControlledAgent(ctx, agentId);
+        const onboarding = this.#onboardingFlow;
+        if (onboarding === undefined || this.#team.enabled) {
+            throw invalidRequest("This daemon runs no inline actions.");
         }
-        const body = await bodyAs(request, chatActionPressSchema, "inline action press");
-        let pressed;
-        try {
-            pressed = await this.#withMutationId(
-                body.mutationId,
-                async () => await onboarding.press(ctx, agentId, body),
+        await this.#serializeMessageSend(id, async () => {
+            const cursor = this.#journal.cursor();
+            const existing = await ctx.inTx(
+                async (txCtx) => await this.#sentUserMessage(txCtx, agentId, id),
             );
-        } catch (error: unknown) {
-            if (!(error instanceof OnboardingRequestError)) throw error;
-            if (error.code === "not_found") throw notFound(error.message);
-            if (error.code === "conflict") throw new ApiError(409, "conflict", error.message);
-            throw invalidRequest(error.message);
-        }
-        sendJson(response, 202, {
-            message: messageResource(pressed.message),
-            result: pressed.result,
+            if (existing !== undefined) {
+                sendJson(response, 202, { message: existing, cursor });
+                return;
+            }
+            this.#announcedPendingMessages.add(id);
+            this.#beginPendingMessageAnnouncement(id);
+            boundedAdd(this.#apiPendingMessageIds, id, MAX_ANNOUNCED_PENDING_MESSAGES);
+            let pressed;
+            try {
+                pressed = await onboarding.pressAction(ctx, agentId, id, {
+                    messageId: block.messageId,
+                    blockIndex: block.blockIndex,
+                    actionId: block.actionId,
+                    params: block.params,
+                    values: block.values ?? [],
+                });
+            } catch (error: unknown) {
+                this.#announcedPendingMessages.delete(id);
+                this.#apiPendingMessageIds.delete(id);
+                this.#finishPendingMessageAnnouncement(id);
+                if (!(error instanceof OnboardingRequestError)) throw error;
+                if (error.code === "not_found") throw notFound(error.message);
+                if (error.code === "conflict") {
+                    throw new ApiError(
+                        409,
+                        "conflict",
+                        error.message,
+                        error.pressed === undefined
+                            ? {}
+                            : { message: messageResource(error.pressed) },
+                    );
+                }
+                throw invalidRequest(error.message);
+            }
+            if (pressed.kind === "answered") {
+                this.#announcedPendingMessages.delete(id);
+                this.#apiPendingMessageIds.delete(id);
+                this.#finishPendingMessageAnnouncement(id);
+                sendJson(response, 202, { message: messageResource(pressed.message), cursor });
+                return;
+            }
+            const accepted = await this.#history.message(ctx, agentId, id);
+            this.#journal.append("message.created", {
+                agentId,
+                runId: null,
+                message: pendingMessageResource(pressed.pending),
+            });
+            this.#announcedPendingMessages.delete(id);
+            this.#finishPendingMessageAnnouncement(id);
+            await this.#flushAcceptedMessages(ctx, agentId);
+            sendJson(response, 202, {
+                message:
+                    accepted === undefined
+                        ? pendingMessageResource(pressed.pending)
+                        : messageResource(accepted),
+                cursor,
+            });
         });
     }
 

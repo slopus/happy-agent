@@ -229,28 +229,3 @@ export interface OnboardingSummary {
 
 /** Called after a change to the flow commits. */
 export type OnboardingListener = (flow: OnboardingFlow, mutationId: string | undefined) => void;
-
-/** The body of `POST /v0/agents/:agentId/chat-actions`. */
-export const chatActionPressSchema = Type.Object(
-    {
-        messageId: Type.String({ minLength: 1, maxLength: 128 }),
-        blockIndex: Type.Integer({ minimum: 0, maximum: 1_000 }),
-        action: Type.Object(
-            {
-                id: Type.String({ minLength: 1, maxLength: 128 }),
-                params: Type.Record(
-                    Type.String({ maxLength: 64 }),
-                    Type.String({ maxLength: 2_000 }),
-                    {
-                        maxProperties: 32,
-                    },
-                ),
-            },
-            { additionalProperties: false },
-        ),
-        values: Type.Optional(Type.Array(Type.String({ maxLength: 2_000 }), { maxItems: 200 })),
-        mutationId: Type.Optional(Type.String({ minLength: 1, maxLength: 512 })),
-    },
-    { additionalProperties: false },
-);
-export type ChatActionPress = Static<typeof chatActionPressSchema>;

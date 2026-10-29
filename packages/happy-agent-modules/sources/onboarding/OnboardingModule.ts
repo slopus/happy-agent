@@ -24,7 +24,13 @@ import {
 import { BotsModule } from "../bots/index.js";
 import { ConfigModule, DefaultModelError } from "../config/index.js";
 import { DurableFunctionsModule } from "../durableFunctions/index.js";
-import { HistoryModule, type HistoryMessage } from "../history/index.js";
+import {
+    HistoryModule,
+    type HistoryActionBlock,
+    type HistoryActionChoice,
+    type HistoryMessage,
+    type HistoryPendingMessage,
+} from "../history/index.js";
 import { ProfileModule } from "../profile/index.js";
 import { ProviderClisModule, type ProviderCli } from "../providerClis/index.js";
 import { ProviderRoutesModule, type ProviderRoute } from "../providerRoutes/index.js";
@@ -35,6 +41,7 @@ import { SPACE_STANDALONE_OWNER, spaceIconSchema, SpacesModule } from "../spaces
 import { TasksModule } from "../tasks/index.js";
 import { createUuidV7Factory } from "../utils/createUuidV7.js";
 import { chatActionParse, type ChatAction } from "./impl/chatActions/chatAction.js";
+import type { ChatActionBlock } from "./impl/chatActions/chatActionBlocks.js";
 import {
     accountAddMessage,
     catalogMessage,
@@ -58,9 +65,18 @@ import {
     onboardingEventText,
     onboardingPlaces,
     type OnboardingEvent,
+    type OnboardingPlaces,
 } from "./impl/onboardingGuide.js";
 import { readGitIdentity } from "./impl/readGitIdentity.js";
 import { discoverWork } from "./impl/discoverWork.js";
+import {
+    acceptedOutcome,
+    aiChosenOutcome,
+    closingOutcome,
+    manualCommands,
+    placesOutcome,
+    proposalOutcome,
+} from "./impl/pressOutcome.js";
 import { proposalBlock } from "./impl/workCopy.js";
 import {
     APP_OF,
@@ -79,7 +95,6 @@ import {
 } from "./impl/onboardingCopy.js";
 import {
     ONBOARDING_VERSION,
-    type ChatActionPress,
     type OnboardingAccepted,
     type OnboardingFlow,
     type OnboardingListener,
@@ -162,10 +177,31 @@ const stepArgumentsSchema = Type.Object(
 /** Says one message as Happy and answers with its ID. */
 type Say = (text: string) => Promise<string>;
 
-/** What a press returns beside the message it chose in. */
-export interface ChatActionPressResult {
-    readonly message: HistoryMessage;
-    readonly result: unknown;
+/** One press, as an action message's block names the control. */
+export interface ActionPress {
+    readonly messageId: string;
+    readonly blockIndex: number;
+    readonly actionId: string;
+    readonly params: Readonly<Record<string, string>>;
+    readonly values: readonly string[];
+}
+
+/**
+ * An action message once its press committed: answered already, in a finished run of its own,
+ * or waiting for the agent's model like any message the person sends.
+ */
+export type ActionPressed =
+    | { readonly kind: "answered"; readonly message: HistoryMessage }
+    | { readonly kind: "queued"; readonly pending: HistoryPendingMessage };
+
+/** Called after an action message no model reads was recorded. */
+export type OnboardingActionListener = (agentId: string, message: HistoryMessage) => void;
+
+/** What a press needs from outside the database, gathered before its transaction. */
+interface Prepared {
+    readonly cli?: ProviderCli;
+    readonly signedIn?: readonly ProviderCli[];
+    readonly pairing?: { readonly id: string | null } | { readonly error: string };
 }
 
 /** Called after a message in Happy's conversation changed in place. */
@@ -214,6 +250,7 @@ export class OnboardingModule implements AgentModule {
     readonly #listeners = new Set<OnboardingListener>();
     readonly #messageListeners = new Set<OnboardingMessageListener>();
     readonly #speechListeners = new Set<OnboardingSpeechListener>();
+    readonly #recordedListeners = new Set<OnboardingActionListener>();
     /** Scripted messages the API announces at reading speed rather than at once. */
     readonly #paced = new Set<string>();
     /** Presses and the work they start read and change the state one at a time. */
@@ -265,7 +302,7 @@ export class OnboardingModule implements AgentModule {
                 if (action === undefined) return null;
                 await this.#lock.runInLock(
                     ctx,
-                    async () => await this.#work(ctx, action, this.#sayer(ctx, call.kv), call.kv),
+                    async () => await this.#work(ctx, action, this.#sayer(ctx, call.kv)),
                 );
                 return null;
             },
@@ -395,6 +432,14 @@ export class OnboardingModule implements AgentModule {
         };
     }
 
+    /** Hear every action message no model reads, after it committed, to announce it. */
+    onActionRecorded(listener: OnboardingActionListener): () => void {
+        this.#recordedListeners.add(listener);
+        return () => {
+            this.#recordedListeners.delete(listener);
+        };
+    }
+
     /** Whether a message is one of Happy's scripted ones, which `onSpoken` announces instead. */
     paces(recordId: string): boolean {
         return this.#paced.has(recordId);
@@ -434,188 +479,357 @@ export class OnboardingModule implements AgentModule {
     }
 
     /**
-     * Press one inline action control in any agent's message. The control is read from the
-     * daemon's own copy of the message, the choice is recorded on it, and the action is decided,
-     * all in one transaction; the work it starts continues after that commits. Onboarding's
-     * actions run only in Happy's conversation.
+     * One action message: the person pressing one inline action control in an agent's message.
+     * The control is read from the daemon's own copy of the message, and in one transaction its
+     * choice is recorded there, the action's work is done, and the message is either answered by
+     * onboarding's scripted bootstrap, recorded as ending onboarding, or queued for the agent's
+     * model with the work's outcome. Work that reaches outside the daemon starts after that
+     * commits. See "Action messages" in API.md.
      */
-    async press(
+    async pressAction(
         ctx: Context,
         agentId: string,
-        press: ChatActionPress,
-    ): Promise<ChatActionPressResult> {
-        if (CLIENT_ACTIONS.has(press.action.id)) {
+        id: string,
+        press: ActionPress,
+    ): Promise<ActionPressed> {
+        if (CLIENT_ACTIONS.has(press.actionId)) {
             throw new OnboardingRequestError("invalid", "That action runs in the app.");
         }
-        return await this.#lock.runInLock(
-            ctx,
-            async () =>
-                await ctx.inTx(async (txCtx) => {
-                    const message = await this.#history.message(txCtx, agentId, press.messageId);
-                    if (
-                        message === undefined ||
-                        (message.role !== "assistant" && message.role !== "agent") ||
-                        message.hideFromUser === true
-                    ) {
-                        throw new OnboardingRequestError("not_found", "No message has that ID.");
-                    }
-                    const found = findPressedControl(message, {
-                        blockIndex: press.blockIndex,
-                        action: press.action,
-                        values: press.values ?? [],
-                    });
-                    if (found.kind === "no_block") {
-                        throw new OnboardingRequestError(
-                            "not_found",
-                            "That message has no such block.",
-                        );
-                    }
-                    if (found.kind === "mismatch") {
-                        throw new OnboardingRequestError(
-                            "conflict",
-                            "That block has no such control.",
-                        );
-                    }
-                    const key = String(press.blockIndex);
-                    if (message.actionChoices?.[key] !== undefined) {
-                        throw new OnboardingRequestError("conflict", "That was already chosen.");
-                    }
-                    if ((await this.#bots.chiefOfStaff(txCtx))?.agentId !== agentId) {
-                        throw new OnboardingRequestError(
-                            "invalid",
-                            "That action runs only in Happy's onboarding.",
-                        );
-                    }
-                    const offered = actionBlocks(message)[press.blockIndex];
-                    const result = await this.#decide(txCtx, found.action, press.mutationId, {
-                        offered:
-                            offered?.kind === "checklist"
-                                ? offered.options.map((option) => option.value)
-                                : [],
-                    });
+        return await this.#lock.runInLock(ctx, async () => {
+            const before = await this.#control(ctx, agentId, press);
+            const prepared = await this.#prepare(ctx, before.action);
+            try {
+                return await ctx.inTx(async (txCtx) => {
+                    const found = await this.#control(txCtx, agentId, press);
+                    const state = await this.#state(txCtx);
                     const chosen: HistoryMessage = {
-                        ...message,
-                        actionChoices: { ...message.actionChoices, [key]: found.choice },
+                        ...found.message,
+                        actionChoices: {
+                            ...found.message.actionChoices,
+                            [String(press.blockIndex)]: found.choice,
+                        },
                     };
                     await this.#history.replace(txCtx, agentId, chosen);
                     this.#announce(txCtx, agentId, chosen);
-                    return { message: chosen, result };
-                }),
-        );
+                    const block = {
+                        type: "action" as const,
+                        messageId: press.messageId,
+                        blockIndex: press.blockIndex,
+                        actionId: press.actionId,
+                        params: { ...press.params },
+                        values: [...press.values],
+                        label: found.label,
+                    };
+                    const responder = responderOf(found.action, state);
+                    if (responder === "bootstrap") {
+                        // Recorded first, so it is announced before the scripted answer.
+                        const message = await this.#recordAction(txCtx, agentId, id, {
+                            ...block,
+                            result: null,
+                        });
+                        await this.#decideBootstrap(txCtx, found.action, state);
+                        return { kind: "answered", message };
+                    }
+                    const decided = await this.#decide(txCtx, found.action, state, prepared, {
+                        offered: found.offered,
+                    });
+                    // A profile saved by the press may be the last requirement met.
+                    await this.#reconcileCompletion(txCtx);
+                    if (responder === "none") {
+                        const message = await this.#recordAction(txCtx, agentId, id, {
+                            ...block,
+                            result: decided.result,
+                        });
+                        return { kind: "answered", message };
+                    }
+                    const pending = await this.#queueAction(
+                        txCtx,
+                        agentId,
+                        id,
+                        { ...block, outcome: decided.outcome, result: decided.result },
+                        `${found.said}\n\n${decided.outcome}`,
+                    );
+                    return { kind: "queued", pending };
+                });
+            } catch (error: unknown) {
+                if (prepared.pairing !== undefined && "id" in prepared.pairing) {
+                    const pairingId = prepared.pairing.id;
+                    if (pairingId !== null) {
+                        await this.#mobileConnector
+                            .cancelPairing(ctx, pairingId)
+                            .catch(() => undefined);
+                    }
+                }
+                throw error;
+            }
+        });
     }
 
     /**
-     * Decide what one pressed action does, inside the press's transaction: the state it moves to
-     * and the work that follows the commit. `offered` is the pressed checklist's row values.
+     * The control a press names, checked against the daemon's own copy of its message: it exists,
+     * matches exactly, has no choice yet, no other action message is waiting on it, no newer
+     * message offers the same action, and it runs in this conversation.
+     */
+    async #control(
+        ctx: Context,
+        agentId: string,
+        press: ActionPress,
+    ): Promise<{
+        readonly message: HistoryMessage;
+        readonly action: ChatAction;
+        readonly choice: HistoryActionChoice;
+        readonly label: string;
+        /** How the model reads the press. */
+        readonly said: string;
+        /** A pressed checklist's row values. */
+        readonly offered: readonly string[];
+    }> {
+        const message = await this.#history.message(ctx, agentId, press.messageId);
+        if (
+            message === undefined ||
+            (message.role !== "assistant" && message.role !== "agent") ||
+            message.hideFromUser === true
+        ) {
+            throw new OnboardingRequestError("not_found", "No message has that ID.");
+        }
+        const found = findPressedControl(message, {
+            blockIndex: press.blockIndex,
+            action: { id: press.actionId, params: press.params },
+            values: press.values,
+        });
+        if (found.kind === "no_block") {
+            throw new OnboardingRequestError("not_found", "That message has no such block.");
+        }
+        if (found.kind === "mismatch") {
+            throw new OnboardingRequestError(
+                "conflict",
+                "That block has no such control.",
+                message,
+            );
+        }
+        if (message.actionChoices?.[String(press.blockIndex)] !== undefined) {
+            throw new OnboardingRequestError("conflict", "That was already chosen.", message);
+        }
+        const waiting = (await this.#history.pending(ctx, agentId)).some((pending) =>
+            pending.blocks.some(
+                (block) =>
+                    block.type === "action" &&
+                    block.messageId === press.messageId &&
+                    block.blockIndex === press.blockIndex,
+            ),
+        );
+        if (waiting) {
+            throw new OnboardingRequestError("conflict", "That was already chosen.", message);
+        }
+        // Only the newest offer of an action is live: an older copy never runs it again.
+        const records = await this.#history.messages(ctx, agentId, { from: "end", limit: 100 });
+        const at = records.findIndex((record) => record.message.recordId === message.recordId);
+        const newer =
+            at === -1 ||
+            records
+                .slice(at + 1)
+                .some(
+                    (record) =>
+                        (record.message.role === "assistant" || record.message.role === "agent") &&
+                        record.message.hideFromUser !== true &&
+                        actionBlocks(record.message).some((block) => offers(block, press.actionId)),
+                );
+        if (newer) {
+            throw new OnboardingRequestError(
+                "conflict",
+                "A newer message offers that again.",
+                message,
+            );
+        }
+        if ((await this.#bots.chiefOfStaff(ctx))?.agentId !== agentId) {
+            throw new OnboardingRequestError(
+                "invalid",
+                "That action runs only in Happy's onboarding.",
+            );
+        }
+        const block = actionBlocks(message)[press.blockIndex];
+        const pressed = pressedWords(block, found.choice);
+        return {
+            message,
+            action: found.action,
+            choice: found.choice,
+            label: pressed.label,
+            said: pressed.said,
+            offered: block?.kind === "checklist" ? block.options.map((option) => option.value) : [],
+        };
+    }
+
+    /** What a press needs from outside the database, gathered before its transaction. */
+    async #prepare(ctx: Context, action: ChatAction): Promise<Prepared> {
+        const state = await this.#state(ctx);
+        if (!GUIDED_STEPS.has(state.step)) return {};
+        switch (action.id) {
+            case "onboarding.provider":
+                return action.provider === "none" || action.provider === "other"
+                    ? {}
+                    : { cli: await this.#providerClis.get(ctx, PROVIDER_OF[action.provider]) };
+            case "onboarding.connect":
+            case "onboarding.manual":
+                return { cli: await this.#providerClis.get(ctx, action.provider) };
+            case "onboarding.connectAnother":
+                return { signedIn: await this.#signedIn(ctx) };
+            case "onboarding.phone": {
+                if (action.choice !== "opened" || state.step !== "guided" || state.phonePaired) {
+                    return {};
+                }
+                try {
+                    const snapshot = await this.#mobileConnector.startPairing(ctx);
+                    return { pairing: { id: snapshot.pairing?.id ?? null } };
+                } catch (error: unknown) {
+                    return { pairing: { error: errorText(error) } };
+                }
+            }
+            default:
+                return {};
+        }
+    }
+
+    /** A bootstrap press: the state it moves to, and the scripted answer that follows the commit. */
+    async #decideBootstrap(
+        ctx: Context,
+        action: ChatAction,
+        state: OnboardingState,
+    ): Promise<void> {
+        if (action.id === "onboarding.start") {
+            if (state.step !== "welcome") throw stepOver();
+            // The example goes: the sidebar is the person's own from here, without the empty
+            // default headings, so none of them disappears later and moves what is below it.
+            await this.#write(ctx, { ...state, step: "providers", exampleSidebar: false });
+            await this.#spaces
+                .removeEmptyDefaultHeadings(ctx, SPACE_STANDALONE_OWNER)
+                .catch((error: unknown) => {
+                    ctx.log.warn("Onboarding could not tidy the sidebar.", {}, error);
+                });
+            await this.#invokeSay(ctx, { kind: "subscriptions" });
+            return;
+        }
+        if (!CONNECT_STEPS.has(state.step)) throw stepOver();
+        await this.#durable.invoke(ctx, {
+            function: STEP_FUNCTION,
+            arguments: { action: actionArguments(action) },
+        });
+    }
+
+    /**
+     * A press Happy's model answers, or one that ends onboarding: the work it does inside the
+     * transaction, what it returns to clients, and its outcome as the model reads it.
      */
     async #decide(
         ctx: Context,
         action: ChatAction,
-        mutationId: string | undefined,
+        state: OnboardingState,
+        prepared: Prepared,
         pressed: { readonly offered: readonly string[] },
-    ): Promise<unknown> {
-        const state = await this.#state(ctx);
+    ): Promise<{ readonly outcome: string; readonly result: unknown }> {
+        const done = (outcome: string, result: unknown = null) => ({ outcome, result });
         switch (action.id) {
-            case "onboarding.start": {
-                if (state.step !== "welcome") throw stepOver();
-                // The example goes: the sidebar is the person's own from here, without the empty
-                // default headings, so none of them disappears later and moves what is below it.
-                await this.#write(
-                    ctx,
-                    { ...state, step: "providers", exampleSidebar: false },
-                    mutationId,
-                );
-                await this.#spaces
-                    .removeEmptyDefaultHeadings(ctx, SPACE_STANDALONE_OWNER)
-                    .catch((error: unknown) => {
-                        ctx.log.warn("Onboarding could not tidy the sidebar.", {}, error);
-                    });
-                await this.#invokeSay(ctx, { kind: "subscriptions" });
-                return null;
+            case "onboarding.provider": {
+                if (!CONNECT_STEPS.has(state.step)) throw stepOver();
+                await this.#invokeStep(ctx, action);
+                if (action.provider === "none") {
+                    return done(
+                        "They have no AI subscription yet. Nothing is connected for this choice.",
+                    );
+                }
+                if (action.provider === "other") {
+                    return done(
+                        "They want to connect an API key, a company account, or a custom endpoint.",
+                    );
+                }
+                const id = PROVIDER_OF[action.provider];
+                const cli = prepared.cli;
+                if (cli === undefined) return done(`They chose ${APP_OF[id]}.`);
+                return done(aiChosenOutcome(id, cli, cli.installer !== null));
             }
-            case "onboarding.provider":
-            case "onboarding.connect":
-            case "onboarding.manual":
+            case "onboarding.connect": {
+                if (!CONNECT_STEPS.has(state.step)) throw stepOver();
+                await this.#invokeStep(ctx, action);
+                return done(
+                    `Connecting ${APP_OF[action.provider]} started. The provider CLI figure for ${action.provider} shows its install and sign-in live.`,
+                );
+            }
+            case "onboarding.manual": {
+                if (!CONNECT_STEPS.has(state.step)) throw stepOver();
+                await this.#invokeStep(ctx, action);
+                const commands = prepared.cli === undefined ? [] : manualCommands(prepared.cli);
+                return done(
+                    [
+                        `They'd rather set ${APP_OF[action.provider]} up themselves. The commands, in order:`,
+                        ...commands,
+                        "You'll hear when it's connected.",
+                    ].join("\n"),
+                );
+            }
             case "onboarding.providersUse":
-            case "onboarding.routesUse":
-            case "onboarding.connectAnother":
+            case "onboarding.routesUse": {
+                if (!CONNECT_STEPS.has(state.step)) throw stepOver();
+                await this.#invokeStep(ctx, action);
+                return done(
+                    action.values.length === 0
+                        ? "They ticked nothing, so nothing more is connected."
+                        : "Adding what they ticked; you'll hear when it's connected.",
+                );
+            }
+            case "onboarding.connectAnother": {
+                if (!CONNECT_STEPS.has(state.step)) throw stepOver();
+                const connected = (prepared.signedIn ?? []).flatMap((cli) => {
+                    const id = chatProviderId(cli.id);
+                    return id === undefined ? [] : [APP_OF[id]];
+                });
+                return done(
+                    `They want to see every AI they can connect. Connected already: ${connected.length === 0 ? "none" : connected.join(", ")}.`,
+                );
+            }
             case "onboarding.accountAdd": {
                 if (!CONNECT_STEPS.has(state.step)) throw stepOver();
-                await this.#durable.invoke(ctx, {
-                    function: STEP_FUNCTION,
-                    arguments: { action: actionArguments(action) },
-                });
-                return null;
+                const app = action.provider === undefined ? "an AI" : APP_OF[action.provider];
+                return done(
+                    `They asked to add a second account of ${app}. A second account of the same AI isn't available yet; their current one stays connected.`,
+                );
             }
-            case "onboarding.profileConfirm":
-            case "onboarding.profileChange": {
+            case "onboarding.profileConfirm": {
                 if (!GUIDED_STEPS.has(state.step)) throw stepOver();
-                await this.#durable.invoke(ctx, {
-                    function: STEP_FUNCTION,
-                    arguments: { action: actionArguments(action) },
-                });
-                return null;
+                const prefill = state.profilePrefill;
+                if (prefill === null) {
+                    return done("There is no name and email to save. Ask them to type theirs.");
+                }
+                try {
+                    const saved = await this.#saveProfile(ctx, prefill.name, prefill.email);
+                    return done(
+                        `Saved their name and email: ${saved.name}, ${saved.email}.\n${placesOutcome(saved.places)}`,
+                    );
+                } catch (error: unknown) {
+                    return done(
+                        `Saving their name and email failed: ${errorText(error)} Ask them to type theirs.`,
+                    );
+                }
             }
+            case "onboarding.profileChange":
+                if (!GUIDED_STEPS.has(state.step)) throw stepOver();
+                return done("They want to type their name and email.");
             case "onboarding.discover": {
                 if (state.step !== "guided") throw stepOver();
-                const places = onboardingPlaces(state.connections[0]?.cli);
-                await this.#write(ctx, { ...state, discoverAllowed: true }, mutationId);
-                await this.#tell(ctx, { kind: "discoverAsked", ...(places ? { places } : {}) });
-                return null;
+                await this.#write(ctx, { ...state, discoverAllowed: true });
+                return done(
+                    `Discover is allowed. Read exactly the places you disclosed with discover_work now.\n${placesOutcome(onboardingPlaces(state.connections[0]?.cli))}`,
+                );
             }
             case "onboarding.workTell":
-            case "onboarding.newChatSkip": {
                 if (state.step !== "guided") throw stepOver();
-                await this.#tell(ctx, {
-                    kind: action.id === "onboarding.workTell" ? "workTellAsked" : "newChatSkipped",
-                });
-                return null;
-            }
-            case "onboarding.workChange": {
+                return done("They'll tell you what they work on.");
+            case "onboarding.workChange":
                 if (state.step !== "guided") throw stepOver();
-                if (!this.#isCurrentProposal(state, pressed.offered)) throw proposalReplaced();
-                await this.#tell(ctx, {
-                    kind: "workChangeAsked",
-                    proposal: (state.proposal ?? []).map((row) => ({
-                        title: row.title,
-                        topic: row.topic,
-                        ongoing: row.ongoing,
-                        firstMessage: row.firstMessage,
-                    })),
-                });
-                return null;
-            }
+                if (!isCurrentProposal(state, pressed.offered)) throw proposalReplaced();
+                return done(proposalOutcome(state.proposal ?? []));
             case "onboarding.workAccept": {
                 if (state.step !== "guided") throw stepOver();
-                if (!this.#isCurrentProposal(state, pressed.offered)) throw proposalReplaced();
-                const rows = (state.proposal ?? []).filter((row) => action.values.includes(row.id));
-                // Every chat's IDs are fixed here, before anything exists, so the client can
-                // draw each one where its preview row is and swap it in once it is placed.
-                const accepted: OnboardingAccepted[] = rows.map((row) => ({
-                    value: row.id,
-                    spaceId: createId(),
-                    agentId: createId(),
-                    taskId: createId(),
-                    status: "pending",
-                }));
-                if (accepted.length === 0) {
-                    // Nothing ticked starts nothing, and onboarding moves on to Create.
-                    await this.#write(ctx, { ...state, proposal: null, accepted }, mutationId);
-                    await this.#tell(ctx, { kind: "workAccepted", started: [], failed: [] });
-                } else {
-                    await this.#write(ctx, { ...state, accepted }, mutationId);
-                    await this.#durable.invoke(ctx, {
-                        function: STEP_FUNCTION,
-                        arguments: { action: actionArguments(action) },
-                    });
-                }
-                return {
-                    started: accepted.map(({ value, spaceId, agentId }) => ({
-                        value,
-                        spaceId,
-                        agentId,
-                    })),
-                };
+                if (!isCurrentProposal(state, pressed.offered)) throw proposalReplaced();
+                return await this.#accept(ctx, state, action.values);
             }
             case "onboarding.newChat": {
                 if (state.step !== "guided") throw stepOver();
@@ -624,15 +838,44 @@ export class OnboardingModule implements AgentModule {
                 if (spaceId === undefined) {
                     throw new OnboardingRequestError(
                         "invalid",
-                        "Try Create runs in the app: press it with the new chat's space ID.",
+                        "Try Create runs in the app: send it with the new chat's space ID.",
                     );
                 }
                 const space = await this.#spaces.get(ctx, spaceId);
                 if (space === undefined || space.ownerUserId !== SPACE_STANDALONE_OWNER) {
                     throw new OnboardingRequestError("invalid", "That chat is not one of yours.");
                 }
-                await this.#tell(ctx, { kind: "newChatOpened" });
-                return null;
+                return done("They made a new chat with Create. It's open in their app.");
+            }
+            case "onboarding.newChatSkip":
+                if (state.step !== "guided") throw stepOver();
+                return done("They skipped Create for now.");
+            case "onboarding.phone": {
+                if (state.step !== "guided") throw stepOver();
+                if (state.phonePaired) {
+                    return done(
+                        `Their phone is already paired.\n${closingOutcome(await this.#closing(ctx))}`,
+                    );
+                }
+                let line: string;
+                if (action.choice === "opened") {
+                    const pairing = prepared.pairing;
+                    if (pairing !== undefined && "id" in pairing) {
+                        await this.#write(ctx, { ...state, pairingId: pairing.id });
+                        line =
+                            "They have the app. This computer's pairing code is open; the phone pairing figure shows it.";
+                    } else {
+                        line = `They have the app, but the phone pairing couldn't open: ${pairing?.error ?? "it is unavailable"}. Treat it as Later.`;
+                    }
+                } else {
+                    if (state.pairingId !== null) {
+                        await this.#mobileConnector
+                            .cancelPairing(ctx, state.pairingId)
+                            .catch(() => undefined);
+                    }
+                    line = "Later, for the phone.";
+                }
+                return done(`${line}\n${closingOutcome(await this.#closing(ctx))}`);
             }
             case "onboarding.workOpen":
             case "onboarding.finish": {
@@ -649,80 +892,55 @@ export class OnboardingModule implements AgentModule {
                         .cancelPairing(ctx, state.pairingId)
                         .catch(() => undefined);
                 }
-                await this.#write(ctx, { ...state, step: "finished" }, mutationId);
-                return open === undefined ? null : { agentId: open.agentId, spaceId: open.spaceId };
-            }
-            case "onboarding.phone": {
-                if (state.step !== "guided") throw stepOver();
-                await this.#durable.invoke(ctx, {
-                    function: STEP_FUNCTION,
-                    arguments: { action: actionArguments(action) },
-                });
-                return null;
+                await this.#write(ctx, { ...state, step: "finished" });
+                return done(
+                    "Onboarding is finished.",
+                    open === undefined ? null : { agentId: open.agentId, spaceId: open.spaceId },
+                );
             }
             default:
                 throw new OnboardingRequestError("invalid", "Happy can't run that action yet.");
         }
     }
 
-    /** Whether a pressed proposal is the newest one: its rows are exactly the stored ones. */
-    #isCurrentProposal(state: OnboardingState, offered: readonly string[]): boolean {
-        const rows = state.proposal ?? [];
-        return (
-            rows.length > 0 &&
-            offered.length === rows.length &&
-            rows.every((row) => offered.includes(row.id))
-        );
+    /** The machine work a press asks for that continues after it commits. */
+    async #invokeStep(ctx: Context, action: ChatAction): Promise<void> {
+        await this.#durable.invoke(ctx, {
+            function: STEP_FUNCTION,
+            arguments: { action: actionArguments(action) },
+        });
     }
 
     /**
-     * The work one pressed action asks for, after its press committed. While Happy's model leads,
-     * it hears what happened and writes the next step; before that, Happy says a scripted one.
+     * The machine work one press asks for, after it committed. During the bootstrap Happy says
+     * the scripted answer too; once Happy's model leads, the press's outcome already told it.
      */
-    async #work(ctx: Context, action: ChatAction, say: Say, kv: AgentKV): Promise<void> {
+    async #work(ctx: Context, action: ChatAction, say: Say): Promise<void> {
         const led = GUIDED_STEPS.has((await this.#state(ctx)).step);
         switch (action.id) {
             case "onboarding.provider": {
                 if (action.provider === "none") {
-                    if (led) await this.#tell(ctx, aiChosen("none", "none"));
-                    else await say(noneYetMessage());
+                    if (!led) await say(noneYetMessage());
                     return;
                 }
                 if (action.provider === "other") {
                     await this.#update(ctx, (state) => ({ ...state, awaitingSignIn: true }));
-                    if (led) await this.#tell(ctx, aiChosen("other", "other"));
-                    else await say(otherConnectionMessage());
+                    if (!led) await say(otherConnectionMessage());
                     return;
                 }
                 const id = PROVIDER_OF[action.provider];
                 const cli = await this.#providerClis.get(ctx, id);
-                const chosen = (status: Extract<OnboardingEvent, { kind: "aiChosen" }>["status"]) =>
-                    ({ ...aiChosen(action.provider, status), app: APP_OF[id], cli: id }) as const;
                 if (cli.signIn.status === "signed_in") {
-                    if (led) await this.#tell(ctx, chosen("signed_in"));
                     await this.#useClis(ctx, say, [cli], []);
                     return;
                 }
                 await this.#update(ctx, (state) => ({ ...state, awaitingSignIn: true }));
+                if (led) return;
                 const machine = machineWord(process.platform);
                 if (cli.installation.status === "installed") {
-                    if (led) await this.#tell(ctx, chosen("sign_in"));
-                    else await say(signInOfferMessage(cli, id, machine));
+                    await say(signInOfferMessage(cli, id, machine));
                 } else if (cli.installer === null) {
-                    if (led) {
-                        await this.#tell(ctx, {
-                            ...chosen("manual_only"),
-                            commands: manualCommands(cli),
-                        });
-                    } else await say(manualMessage(cli, id));
-                } else if (led) {
-                    await this.#tell(ctx, {
-                        ...chosen("install"),
-                        installer: {
-                            command: cli.installer.command,
-                            sourceHost: cli.installer.sourceHost,
-                        },
-                    });
+                    await say(manualMessage(cli, id));
                 } else {
                     await say(installOfferMessage(cli, id, machine));
                 }
@@ -730,9 +948,7 @@ export class OnboardingModule implements AgentModule {
             }
             case "onboarding.connect": {
                 const id = action.provider;
-                if (led)
-                    await this.#tell(ctx, { kind: "connectStarted", app: APP_OF[id], cli: id });
-                else await say(connectingMessage(id));
+                if (!led) await say(connectingMessage(id));
                 await this.#update(ctx, (state) => ({
                     ...state,
                     step: state.step === "providers" ? "connecting" : state.step,
@@ -754,17 +970,14 @@ export class OnboardingModule implements AgentModule {
                 return;
             }
             case "onboarding.manual": {
-                const cli = await this.#providerClis.get(ctx, action.provider);
                 await this.#update(ctx, (state) => ({ ...state, awaitingSignIn: true }));
-                if (led) {
-                    await this.#tell(ctx, {
-                        kind: "manualAsked",
-                        app: APP_OF[action.provider],
-                        cli: action.provider,
-                        commands: manualCommands(cli),
-                    });
-                } else {
-                    await say(manualMessage(cli, action.provider));
+                if (!led) {
+                    await say(
+                        manualMessage(
+                            await this.#providerClis.get(ctx, action.provider),
+                            action.provider,
+                        ),
+                    );
                 }
                 return;
             }
@@ -805,26 +1018,10 @@ export class OnboardingModule implements AgentModule {
                         return id === undefined ? [] : [id];
                     }),
                 );
-                if (led) {
-                    await this.#tell(ctx, {
-                        kind: "connectAnotherAsked",
-                        connected: Object.entries(PROVIDER_OF).flatMap(([choice, id]) =>
-                            connected.has(id) ? [choice] : [],
-                        ),
-                    });
-                } else {
-                    await say(catalogMessage(connected));
-                }
+                await say(catalogMessage(connected));
                 return;
             }
             case "onboarding.accountAdd": {
-                if (led) {
-                    await this.#tell(ctx, {
-                        kind: "accountAddAsked",
-                        ...(action.provider === undefined ? {} : { app: APP_OF[action.provider] }),
-                    });
-                    return;
-                }
                 const state = await this.#state(ctx);
                 const signedIn = await this.#signedIn(ctx);
                 await say(
@@ -837,55 +1034,6 @@ export class OnboardingModule implements AgentModule {
                               : providerMenu({ withNone: false }),
                     ),
                 );
-                return;
-            }
-            case "onboarding.profileConfirm": {
-                const prefill = (await this.#state(ctx)).profilePrefill;
-                if (prefill === null) {
-                    await this.#tell(ctx, { kind: "profileChangeAsked" });
-                    return;
-                }
-                let saved: Extract<OnboardingEvent, { kind: "profileSaved" }>;
-                try {
-                    saved = await this.#saveProfile(ctx, prefill.name, prefill.email);
-                } catch (error: unknown) {
-                    await this.#tell(ctx, { kind: "profileChangeAsked", error: errorText(error) });
-                    return;
-                }
-                await this.#tell(ctx, saved);
-                return;
-            }
-            case "onboarding.profileChange":
-                await this.#tell(ctx, { kind: "profileChangeAsked" });
-                return;
-            case "onboarding.workAccept":
-                await this.#accept(ctx, kv);
-                return;
-            case "onboarding.phone": {
-                const state = await this.#state(ctx);
-                if (state.phonePaired) return;
-                let choice = action.choice;
-                let error: string | undefined;
-                if (choice === "opened") {
-                    try {
-                        const snapshot = await this.#mobileConnector.startPairing(ctx);
-                        const pairingId = snapshot.pairing?.id ?? null;
-                        await this.#update(ctx, (current) => ({ ...current, pairingId }));
-                    } catch (cause: unknown) {
-                        error = errorText(cause);
-                        choice = "later";
-                    }
-                } else if (state.pairingId !== null) {
-                    await this.#mobileConnector
-                        .cancelPairing(ctx, state.pairingId)
-                        .catch(() => undefined);
-                }
-                await this.#tell(ctx, {
-                    kind: "phoneAnswered",
-                    choice,
-                    ...(error === undefined ? {} : { error }),
-                    ...(await this.#closing(ctx)),
-                });
                 return;
             }
             default:
@@ -1002,20 +1150,28 @@ export class OnboardingModule implements AgentModule {
     }
 
     /**
-     * Looks right, after its press fixed each ticked row's IDs: a chat for each row, named and
-     * iconed as the row shows, then its topics added and each row placed in one sidebar change of
-     * the person's own, committed with the rows becoming `started`, and only then each chat's
-     * first message, exactly as shown, run read-only. Happy's model hears what started.
+     * Looks right, inside its press's transaction: a chat for each ticked row, named and iconed as
+     * the row shows, its topics added and each row placed in one sidebar change of the person's
+     * own, then each chat's first message, exactly as shown, to run read-only.
      */
-    async #accept(ctx: Context, kv: AgentKV): Promise<void> {
-        const state = await this.#state(ctx);
-        const rows = state.proposal ?? [];
+    async #accept(
+        ctx: Context,
+        state: OnboardingState,
+        values: readonly string[],
+    ): Promise<{ readonly outcome: string; readonly result: unknown }> {
+        const rows = (state.proposal ?? []).filter((row) => values.includes(row.id));
+        const accepted: OnboardingAccepted[] = rows.map((row) => ({
+            value: row.id,
+            spaceId: createId(),
+            agentId: createId(),
+            taskId: createId(),
+            status: "pending",
+        }));
         const opened: { readonly entry: OnboardingAccepted; readonly row: OnboardingWorkRow }[] =
             [];
         const failed: string[] = [];
-        for (const entry of state.accepted ?? []) {
-            const row = rows.find((each) => each.id === entry.value);
-            if (entry.status === "failed" || row === undefined) continue;
+        for (const [index, entry] of accepted.entries()) {
+            const row = rows[index]!;
             try {
                 await this.#openChat(ctx, entry, row);
                 opened.push({ entry, row });
@@ -1024,28 +1180,15 @@ export class OnboardingModule implements AgentModule {
                 failed.push(row.title);
             }
         }
-        const statuses = (current: OnboardingState): OnboardingState => ({
-            ...current,
-            accepted: (current.accepted ?? []).map((entry) => ({
-                ...entry,
-                status: opened.some((each) => each.entry.value === entry.value)
-                    ? "started"
-                    : "failed",
-            })),
-        });
         let topicsError: string | undefined;
         try {
-            await ctx.inTx(async (txCtx) => {
-                await this.#spaces.placeWork(
-                    txCtx,
-                    SPACE_STANDALONE_OWNER,
-                    opened.map(({ entry, row }) => ({ spaceId: entry.spaceId, topic: row.topic })),
-                );
-                await this.#update(txCtx, statuses);
-            });
+            await this.#spaces.placeWork(
+                ctx,
+                SPACE_STANDALONE_OWNER,
+                opened.map(({ entry, row }) => ({ spaceId: entry.spaceId, topic: row.topic })),
+            );
         } catch (error: unknown) {
             topicsError = errorText(error);
-            await this.#update(ctx, statuses);
         }
         const sent: OnboardingStarted[] = [];
         for (const { entry, row } of opened) {
@@ -1058,8 +1201,7 @@ export class OnboardingModule implements AgentModule {
                 spaceId: entry.spaceId,
             };
             try {
-                const messageId = await kv.getOrCreate(ctx, `first.${row.id}`, () => createId());
-                await this.#sendFirst(ctx, started, messageId, row.firstMessage);
+                await this.#sendFirst(ctx, started, createId(), row.firstMessage);
                 sent.push(started);
             } catch (error: unknown) {
                 ctx.log.warn("Onboarding could not start a proposed chat.", {}, error);
@@ -1069,58 +1211,166 @@ export class OnboardingModule implements AgentModule {
         await this.#update(ctx, (current) => ({
             ...current,
             proposal: null,
+            accepted: accepted.map((entry) => ({
+                ...entry,
+                status: sent.some((each) => each.id === entry.value) ? "started" : "failed",
+            })),
             started: [
                 ...current.started.filter((row) => !sent.some((each) => each.id === row.id)),
                 ...sent,
             ],
             placed: topicsError === undefined && sent.length > 0,
         }));
-        await this.#tell(ctx, {
-            kind: "workAccepted",
-            started: sent.map(startedOf),
-            failed,
-            ...(topicsError === undefined ? {} : { topicsError }),
-        });
+        return {
+            outcome: acceptedOutcome(sent.map(startedOf), failed, topicsError),
+            result: {
+                started: accepted.map(({ value, spaceId, agentId }) => ({
+                    value,
+                    spaceId,
+                    agentId,
+                })),
+            },
+        };
     }
 
     /**
      * A proposal row's chat, with the IDs its press fixed, on the model onboarding chose. It
      * starts with the row's name and icon and keeps them: it is never a stem cell that names
-     * itself later. Opening one that already exists finds it.
+     * itself later.
      */
     async #openChat(
         ctx: Context,
         ids: Pick<OnboardingAccepted, "spaceId" | "taskId" | "agentId">,
         row: OnboardingWorkRow,
     ): Promise<void> {
-        await ctx.inTx(async (txCtx) => {
-            if ((await this.#spaces.get(txCtx, ids.spaceId)) !== undefined) return;
-            const creation = await this.#tasks.createWithResult(txCtx, {
-                id: ids.taskId,
-                agentId: ids.agentId,
-                name: row.title,
-            });
-            const icon = { type: "library", slug: row.icon };
-            await this.#spaces.createStemCell(txCtx, SPACE_STANDALONE_OWNER, {
-                spaceId: ids.spaceId,
-                task: creation.task,
-                ...(Value.Check(spaceIconSchema, icon) ? { icon } : {}),
-            });
-            const chosen = (await this.#state(txCtx)).model;
-            const model = this.#config.models.find(
-                (candidate) =>
-                    candidate.providerId === chosen?.providerId && candidate.id === chosen.modelId,
+        const creation = await this.#tasks.createWithResult(ctx, {
+            id: ids.taskId,
+            agentId: ids.agentId,
+            name: row.title,
+        });
+        const icon = { type: "library", slug: row.icon };
+        await this.#spaces.createStemCell(ctx, SPACE_STANDALONE_OWNER, {
+            spaceId: ids.spaceId,
+            task: creation.task,
+            ...(Value.Check(spaceIconSchema, icon) ? { icon } : {}),
+        });
+        const chosen = (await this.#state(ctx)).model;
+        const model = this.#config.models.find(
+            (candidate) =>
+                candidate.providerId === chosen?.providerId && candidate.id === chosen.modelId,
+        );
+        if (model !== undefined) {
+            await this.#useModel(
+                ctx,
+                creation.task.agentId,
+                model.providerId,
+                model.id,
+                model.defaultEffort,
             );
-            if (model !== undefined) {
-                await this.#useModel(
-                    txCtx,
-                    creation.task.agentId,
-                    model.providerId,
-                    model.id,
-                    model.defaultEffort,
-                );
+        }
+    }
+
+    /**
+     * An action message no model reads: the bootstrap answers it, or it ends onboarding. It is
+     * the person's own message, in a finished run of its own.
+     */
+    async #recordAction(
+        ctx: Context,
+        agentId: string,
+        id: string,
+        block: HistoryActionBlock,
+    ): Promise<HistoryMessage> {
+        const runId = createId();
+        const now = Date.now();
+        await this.#history.beginMaintenanceRun(ctx, agentId, runId, now);
+        await this.#history.record(ctx, agentId, {
+            role: "user",
+            recordId: id,
+            runId,
+            delivery: "queue",
+            blocks: [block],
+            at: now,
+        });
+        await this.#history.finishMaintenanceRun(ctx, agentId, runId, "completed", now);
+        const message = await this.#history.message(ctx, agentId, id);
+        if (message === undefined) throw new Error("The action message was not recorded.");
+        afterCommit(ctx, () => {
+            for (const listener of this.#recordedListeners) {
+                try {
+                    listener(agentId, structuredClone(message));
+                } catch (error: unknown) {
+                    ctx.log.warn("An onboarding action listener failed.", {}, error);
+                }
             }
         });
+        return message;
+    }
+
+    /**
+     * An action message Happy's model answers: queued like any message the person sends, on the
+     * conversation's current selection, and read by the model as `said`.
+     */
+    async #queueAction(
+        ctx: Context,
+        agentId: string,
+        id: string,
+        block: HistoryActionBlock,
+        said: string,
+    ): Promise<HistoryPendingMessage> {
+        const agents = this.#agents;
+        if (agents === undefined) throw new Error("The onboarding module has not started.");
+        const config = await agents.config(ctx, agentId);
+        const last: unknown = config?.metadata?.["lastMode"];
+        const chosen = (await this.#state(ctx)).model;
+        const model = this.#config.models.find(
+            (candidate) =>
+                candidate.providerId === chosen?.providerId && candidate.id === chosen.modelId,
+        );
+        const mode = Value.Check(messageModeSchema, last)
+            ? last
+            : model === undefined
+              ? undefined
+              : {
+                    providerId: model.providerId,
+                    modelId: model.id,
+                    effort: model.defaultEffort,
+                    serviceTier: null,
+                    permissionMode: DEFAULT_AGENT_PERMISSION_MODE,
+                };
+        if (mode === undefined) {
+            throw new OnboardingRequestError("invalid", "No AI is connected to answer that yet.");
+        }
+        const effort = effortOf(this.#config.models, mode);
+        if (effort === undefined) {
+            throw new OnboardingRequestError("invalid", "The AI this chat uses is unavailable.");
+        }
+        const pending: HistoryPendingMessage = {
+            id,
+            agentId,
+            role: "user",
+            status: "pending",
+            delivery: "queue",
+            createdAt: Date.now(),
+            blocks: [block],
+            mode,
+            runId: null,
+        };
+        await this.#history.queuePending(ctx, pending);
+        await agents.send(
+            ctx,
+            agentId,
+            { role: "user", content: [{ type: "text", text: said }] },
+            {
+                id,
+                provider: mode.providerId,
+                model: mode.modelId,
+                effort,
+                serviceTier: mode.serviceTier,
+                permissionMode: mode.permissionMode,
+                metadata: { ...USER_MESSAGE_ORIGIN_METADATA, mode },
+            },
+        );
+        return pending;
     }
 
     /** The first message the proposal showed, as the person approved it, run read-only. */
@@ -1193,18 +1443,22 @@ export class OnboardingModule implements AgentModule {
      */
     async saveTypedProfile(ctx: Context, name: string, email: string): Promise<string> {
         const saved = await this.#saveProfile(ctx, name.trim(), email.trim());
-        return `Saved.\n\n${onboardingEventText(saved)}`;
+        return `Saved their name and email: ${saved.name}, ${saved.email}.\n${placesOutcome(saved.places)}`;
     }
 
     async #saveProfile(
         ctx: Context,
         name: string,
         email: string,
-    ): Promise<Extract<OnboardingEvent, { kind: "profileSaved" }>> {
+    ): Promise<{
+        readonly name: string;
+        readonly email: string;
+        readonly places?: OnboardingPlaces;
+    }> {
         const profile = await this.#profile.ensure(ctx);
         await this.#profile.update(ctx, profile.id, { name, email });
         const places = onboardingPlaces((await this.#state(ctx)).connections[0]?.cli);
-        return { kind: "profileSaved", name, email, ...(places ? { places } : {}) };
+        return { name, email, ...(places ? { places } : {}) };
     }
 
     /** Whether this is Happy, while its model leads onboarding. */
@@ -1835,26 +2089,75 @@ function stepOver(): OnboardingRequestError {
     return new OnboardingRequestError("conflict", "That step of onboarding is over.");
 }
 
+/** Whether a pressed proposal is the newest one: its rows are exactly the stored ones. */
+function isCurrentProposal(state: OnboardingState, offered: readonly string[]): boolean {
+    const rows = state.proposal ?? [];
+    return (
+        rows.length > 0 &&
+        offered.length === rows.length &&
+        rows.every((row) => offered.includes(row.id))
+    );
+}
+
+/**
+ * Who answers a press: the bootstrap's scripted reply before an AI is connected, nothing for the
+ * presses that end onboarding, and otherwise Happy's model.
+ */
+function responderOf(action: ChatAction, state: OnboardingState): "bootstrap" | "none" | "model" {
+    if (action.id === "onboarding.workOpen" || action.id === "onboarding.finish") return "none";
+    if (action.id === "onboarding.start") return "bootstrap";
+    return GUIDED_STEPS.has(state.step) ? "model" : "bootstrap";
+}
+
+/** Whether a block offers a control running `actionId`. */
+function offers(block: ChatActionBlock, actionId: string): boolean {
+    switch (block.kind) {
+        case "buttons":
+            return block.buttons.some((button) => button.action?.id === actionId);
+        case "checklist":
+            return (
+                block.actionId === actionId ||
+                block.others.some((button) => button.action?.id === actionId)
+            );
+        case "code":
+            return block.actionId === actionId;
+        default:
+            return false;
+    }
+}
+
+/** The words on the control pressed, and how the model reads the press. */
+function pressedWords(
+    block: ChatActionBlock | undefined,
+    choice: HistoryActionChoice,
+): { readonly label: string; readonly said: string } {
+    if (block?.kind === "buttons" && choice.kind === "button") {
+        const label = block.buttons[choice.index]?.label ?? "";
+        return { label, said: `[Pressed "${label}" in your message]` };
+    }
+    if (block?.kind === "checklist") {
+        if (choice.kind === "button") {
+            const label = block.others[choice.index - 1]?.label ?? "";
+            return { label, said: `[Pressed "${label}" in your message]` };
+        }
+        const values = choice.kind === "checklist" ? choice.values : [];
+        const ticked = block.options
+            .filter((option) => values.includes(option.value))
+            .map((option) => `"${option.label}"`);
+        const label =
+            ticked.length === 0 && block.submit.emptyLabel !== undefined
+                ? block.submit.emptyLabel
+                : block.submit.label;
+        return {
+            label,
+            said: `[Pressed "${label}" with ${ticked.length === 0 ? "nothing" : ticked.join(", ")} ticked in your message]`,
+        };
+    }
+    return { label: "", said: "[Pressed a control in your message]" };
+}
+
 function proposalReplaced(): OnboardingRequestError {
     return new OnboardingRequestError("conflict", "A newer proposal replaced that one.");
-}
-
-/** The person chose an AI, as Happy's model hears it; the caller adds what it knows of it. */
-function aiChosen(
-    choice: string,
-    status: Extract<OnboardingEvent, { kind: "aiChosen" }>["status"],
-): Extract<OnboardingEvent, { kind: "aiChosen" }> {
-    return { kind: "aiChosen", choice, status };
-}
-
-/** What a person runs to set an assistant up by hand: its install when missing, then sign-in. */
-function manualCommands(cli: ProviderCli): string[] {
-    return [
-        ...(cli.installation.status !== "installed" && cli.installer !== null
-            ? [cli.installer.command]
-            : []),
-        cli.commands.signIn,
-    ];
 }
 
 /** Where onboarding stands once a connection stopped or failed: back to choosing, unless one works. */
@@ -1876,6 +2179,16 @@ function actionArguments(action: ChatAction): {
         else params[key] = String(value);
     }
     return { id: action.id, params, values };
+}
+
+/** The effort a mode names, as the model it names offers it. */
+function effortOf(
+    models: ConfigModule["models"],
+    mode: { readonly providerId: string; readonly modelId: string; readonly effort: string },
+): ConfigModule["models"][number]["defaultEffort"] | undefined {
+    return models
+        .find((model) => model.providerId === mode.providerId && model.id === mode.modelId)
+        ?.effortLevels.find((effort) => effort === mode.effort);
 }
 
 function cliConnection(cli: ProviderCli): OnboardingConnection {
