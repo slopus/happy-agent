@@ -33,9 +33,14 @@ same path watches that one instead. A file the platform will not watch is report
 change of unknown paths, and not again until it can be watched; that memory holds the last 256
 such files, so a client rendering more than that at once may be asked to refetch them again.
 
-Smaller transports pass an optional byte limit to `read` or `readRevision`; the default remains
-44 MiB. Current reads verify a contained regular file and stream at most the limit plus one byte.
+Smaller transports pass an optional byte limit to `read` or `readRevision`; the default is
+50 MiB. Current reads verify a contained regular file and stream at most the limit plus one byte.
 Revision callers may request strict errors; the HTTP preview retains its nullable default.
+
+Workspace file writes accept up to 50 MiB of decoded bytes. Their HTTP JSON envelope is bounded at
+72 MiB to accommodate base64 expansion; other JSON routes retain their existing limits. This API
+does not use Happy's attachment blob storage. Remote Tailcat connections may carry encrypted bytes
+through a DERP relay when a direct UDP path is unavailable.
 
 ## Folders on runners
 

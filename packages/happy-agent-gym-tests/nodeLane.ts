@@ -9,6 +9,7 @@ export const nodeLaneScenarios: readonly string[] = [
     "happy_api_events_transport_matrix.test.ts",
     "happy_api_proxy_matrix.test.ts",
     "happy_api_files_git.test.ts",
+    "workspace_files_transfer_fifty_mebibytes.test.ts",
     "happy_api_artifacts_serve_file_bundles.test.ts",
     // The event stream, bootstrap, and replica reconciliation.
     "happy_api_sync_concurrency.test.ts",

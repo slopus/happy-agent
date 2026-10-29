@@ -138,7 +138,7 @@ describe("the public files and Git API", () => {
         });
 
         const oversizedPath = join(gym.workspacePath, "too-large.bin");
-        await writeFs(oversizedPath, Buffer.alloc(44 * 1024 * 1024 + 1, 7));
+        await writeFs(oversizedPath, Buffer.alloc(50 * 1024 * 1024 + 1, 7));
         await expectApiError(() => gym.client.readFile(workspaceId, "too-large.bin"), {
             code: "too_large",
             status: 413,

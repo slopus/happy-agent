@@ -434,6 +434,8 @@ interface ArchivedOwnerAgent {
     readonly archivedAt: number;
 }
 const MAX_JSON_BODY_BYTES = 48 * 1024 * 1024;
+// A 50 MiB file expands to about 67 MiB in base64, before its JSON metadata.
+const MAX_FILE_WRITE_BODY_BYTES = 72 * 1024 * 1024;
 // One setting write carries a value of at most 64 KiB as compact JSON. A body sixteen times that
 // leaves room for any reasonable spacing and escaping, and anything larger is refused unparsed.
 const MAX_USER_SETTING_BODY_BYTES = 1024 * 1024;
@@ -8735,7 +8737,12 @@ export class ApiModule implements AgentModule {
                 return true;
             }
             if (kind === "file" && request.method === "PUT") {
-                const body = await bodyAs(request, fileWriteSchema, "file write");
+                const body = await bodyAs(
+                    request,
+                    fileWriteSchema,
+                    "file write",
+                    MAX_FILE_WRITE_BODY_BYTES,
+                );
                 sendJson(response, 200, await this.#files.write(root, body));
                 return true;
             }

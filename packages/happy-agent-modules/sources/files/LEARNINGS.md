@@ -1,5 +1,13 @@
 # Project files — learnings
 
+## Workspace transfers allow 50 MiB without raising relay storage limits
+
+The previous 44 MiB file limit and 48 MiB HTTP JSON limit could not carry a 50 MiB attachment.
+Workspace reads and writes now allow 50 MiB, and only file-write requests receive a 72 MiB JSON
+envelope for base64 expansion. Smaller callers keep their own byte bounds. Happy attachment blob
+storage keeps its existing limit; remote workspace requests use Tailcat, which may relay encrypted
+bytes through DERP when direct UDP is unavailable.
+
 ## Smaller transports reuse the existing read methods
 
 Separate bounded-reader siblings duplicated the file API unnecessarily. `read` now accepts an
@@ -7,7 +15,7 @@ optional byte limit and shares one regular-file, contained, bounded stream with 
 It checks size before reading and reads at most one extra byte to detect growth. `readRevision`
 accepts the same limit through options; strict callers preserve failures while the default keeps
 the HTTP preview's nullable result. Absolute native file links are normalized only within the
-selected root; the HTTP request schema still requires relative paths. The 44 MiB default is unchanged.
+selected root; the HTTP request schema still requires relative paths.
 
 ## Binary filenames in plain folders, ancestor ignore rules in nested folders
 

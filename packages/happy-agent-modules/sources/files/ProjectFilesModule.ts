@@ -24,7 +24,7 @@ import { WorkspaceFileIndex } from "./WorkspaceFileIndex.js";
 /** Folder files are the product's own work, so the agent sandbox does not apply to them. */
 const PRODUCT = computePermissions("full_access");
 
-const MAX_FILE_BYTES = 44 * 1024 * 1024;
+const MAX_FILE_BYTES = 50 * 1024 * 1024;
 const MAX_CHANGED_PATHS = 256;
 const MAX_SEARCH_RESULTS = 50;
 const MAX_TREE_ENTRIES = 500;

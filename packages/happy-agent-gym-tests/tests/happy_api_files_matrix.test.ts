@@ -247,7 +247,7 @@ describe("files API matrix: bytes, hashes, and writes", () => {
         const gym = await fresh();
         await writeFile(
             join(gym.workspacePath, "oversized.bin"),
-            Buffer.alloc(44 * 1024 * 1024 + 1),
+            Buffer.alloc(50 * 1024 * 1024 + 1),
         );
         const workspaceId = await root(gym);
         await expectError(() => gym.client.readFile(workspaceId, "oversized.bin"), 413);
