@@ -100,6 +100,20 @@ export interface AgentDraft {
     permissionMode: PermissionMode;
 }
 
+/** The longest status line an agent may set. */
+export const MAX_AGENT_STATUS_LINE_LENGTH = 120;
+
+/** An agent's status line: one line of plain text about where its work stands. */
+export const agentStatusLineSchema = Type.Object({
+    text: Type.String({
+        minLength: 1,
+        maxLength: MAX_AGENT_STATUS_LINE_LENGTH,
+        pattern: "^[^\\r\\n]+$",
+    }),
+    updatedAt: timestampSchema,
+});
+export type AgentStatusLine = Static<typeof agentStatusLineSchema>;
+
 /** The agent object. */
 export const agentSchema = Type.Recursive((agent) =>
     Type.Object({
@@ -121,6 +135,11 @@ export const agentSchema = Type.Recursive((agent) =>
         /** How many background processes started by this agent are running now. */
         processes: Type.Object({ running: Type.Integer() }),
         status: agentStatusSchema,
+        /**
+         * The one line the agent last wrote about where its work stands, with `set_status`: the
+         * second line of its sidebar row. `null` when unset; absent on older daemons.
+         */
+        statusLine: Type.Optional(Nullable(agentStatusLineSchema)),
         /** How many subagents this agent spawned over its life, and how many run now. */
         subagents: Type.Object({ running: Type.Integer(), total: Type.Integer() }),
         /** A user-interactive, parent-managed subtask. Absent means false on older daemons. */

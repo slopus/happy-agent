@@ -230,9 +230,12 @@ import type {
 import type {
     CreateStoryRequest,
     PostStoryRequest,
+    RepostStoryRequest,
     SetStoryReactionRequest,
     StoriesQuery,
     StoriesResponse,
+    StoryFeedbackRequest,
+    StoryFeedbackResponse,
     StoryFeedResponse,
     StoryMediaQuery,
     StoryMediaResponse,
@@ -1281,6 +1284,69 @@ export class HappyAgentClient {
     /** The URL of one frame, for an element that loads it through a transport adding the token. */
     storyFrameUrl(storyId: Cuid2, frameId: Cuid2): string {
         return endpointUrl(this.#endpoint, storyFramePath(storyId, frameId));
+    }
+
+    /** `GET /v0/stories/:storyId/overlays/:overlayId/media` — a round video's bytes, or a range. */
+    async getStoryOverlayMedia(
+        storyId: Cuid2,
+        overlayId: Cuid2,
+        options: ToolCallMediaRequestOptions = {},
+    ): Promise<ToolCallMediaContent | null> {
+        const response = await this.#send({
+            method: "GET",
+            path: storyOverlayMediaPath(storyId, overlayId),
+            accept: "*/*",
+            ifNoneMatch: options.ifNoneMatch,
+            range: options.range === undefined ? undefined : rangeHeader(options.range),
+            signal: options.signal,
+            allowNotModified: true,
+        });
+        if (response.status === 304) return null;
+        return {
+            contentRange: response.status === 206 ? response.headers.get("content-range") : null,
+            contentType: response.headers.get("content-type") ?? "application/octet-stream",
+            data: await response.arrayBuffer(),
+            etag: response.headers.get("etag"),
+        };
+    }
+
+    /** The URL of a round video, for an element that loads it through a transport adding the token. */
+    storyOverlayMediaUrl(storyId: Cuid2, overlayId: Cuid2): string {
+        return endpointUrl(this.#endpoint, storyOverlayMediaPath(storyId, overlayId));
+    }
+
+    /**
+     * `POST /v0/stories/:storyId/repost` — the caller's own draft, started from an agent's story
+     * posted for them; edit it and post it like any draft.
+     */
+    async repostStory(
+        storyId: Cuid2,
+        request: RepostStoryRequest = {},
+        options: RequestOptions = {},
+    ): Promise<StoryResponse> {
+        return await this.#json({
+            method: "POST",
+            path: `${storyPath(storyId)}/repost`,
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /**
+     * `POST /v0/stories/:storyId/feedback` — a message to the agent that posted the story, quoting
+     * the frame the viewer was on.
+     */
+    async sendStoryFeedback(
+        storyId: Cuid2,
+        request: StoryFeedbackRequest,
+        options: RequestOptions = {},
+    ): Promise<StoryFeedbackResponse> {
+        return await this.#json({
+            method: "POST",
+            path: `${storyPath(storyId)}/feedback`,
+            json: request,
+            signal: options.signal,
+        });
     }
 
     // Stickers
@@ -3895,6 +3961,10 @@ function artifactFilePath(
 /** The `Range` header for one byte range. */
 function storyPath(storyId: Cuid2): string {
     return `v0/stories/${encodeURIComponent(storyId)}`;
+}
+
+function storyOverlayMediaPath(storyId: Cuid2, overlayId: Cuid2): string {
+    return `${storyPath(storyId)}/overlays/${encodeURIComponent(overlayId)}/media`;
 }
 
 function storyFramePath(storyId: Cuid2, frameId: Cuid2): string {
