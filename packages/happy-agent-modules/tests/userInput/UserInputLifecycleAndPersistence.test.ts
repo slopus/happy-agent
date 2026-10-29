@@ -300,12 +300,14 @@ describe("UserInput durable lifecycle and persistence", () => {
                     reason: "A different reason.",
                 }),
             ).toEqual(cancellation);
-            expect(
-                await module.answer(database.context, agentId, {
+            // A late answer is refused with the request as it stands, and changes nothing.
+            await expect(
+                module.answer(database.context, agentId, {
                     requestId: cancelled.id,
                     answer: "Too late.",
                 }),
-            ).toEqual(cancellation);
+            ).rejects.toMatchObject({ name: "UserInputConflictError", request: cancellation });
+            expect(await module.get(database.context, agentId, cancelled.id)).toEqual(cancellation);
 
             const away = await module.ask(database.context, agentId, singularAsk(), "away");
             const awayResult = await module.complete(database.context, agentId, {

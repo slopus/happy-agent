@@ -317,7 +317,11 @@ import {
     WebSocketDuplex,
 } from "../transport/index.js";
 import { UsageModule, type UsageCurrentContext, type UsageRunSummary } from "../usage/index.js";
-import { UserInputModule, type UserInputEvent } from "../userInput/index.js";
+import {
+    UserInputConflictError,
+    UserInputModule,
+    type UserInputEvent,
+} from "../userInput/index.js";
 import {
     STANDALONE_USER_SETTINGS_OWNER,
     UserSettingsError,
@@ -5235,50 +5239,71 @@ export class ApiModule implements AgentModule {
             const agentId = answer[1] as string;
             const questionId = answer[2] as string;
             const body = await bodyAs(request, questionAnswerBodySchema, "question answer");
-            const requestRow = await this.#userInput.get(ctx, agentId, questionId);
-            if (requestRow === undefined) throw notFound("The question was not found.");
+            // The run waiting on the question, read before the answer lets it finish.
             const questionRunId = await this.#activeRunId(ctx, agentId);
-            if (requestRow.status !== "pending") {
-                throw new ApiError(409, "conflict", "The question has already been resolved.", {
-                    question: questionResource(requestRow, questionRunId),
-                });
-            }
-            const expectedQuestionIds = requestRow.questions?.map((question) => question.id) ?? [
-                requestRow.id,
-            ];
-            const answeredQuestionIds = Object.keys(body.answers);
-            if (
-                answeredQuestionIds.length !== expectedQuestionIds.length ||
-                expectedQuestionIds.some((questionId) => !Object.hasOwn(body.answers, questionId))
-            ) {
-                throw invalidRequest("Every question in the batch must receive an answer.");
-            }
             const toAnswer = (values: readonly string[]) =>
                 values.length === 1 ? (values[0] as string) : { selectedOptions: [...values] };
-            // A one-question request is stored in its singular shape and only accepts the
-            // singular answer; a batched request only accepts the batch.
-            const answered = await this.#withMutationId(
-                body.mutationId,
-                async () =>
-                    await this.#userInput.answer(
-                        ctx,
-                        agentId,
-                        requestRow.questions === undefined
-                            ? {
-                                  requestId: questionId,
-                                  answer: toAnswer(body.answers[requestRow.id] ?? []),
-                              }
-                            : {
-                                  requestId: questionId,
-                                  answers: Object.fromEntries(
-                                      Object.entries(body.answers).map(([id, values]) => [
-                                          id,
-                                          toAnswer(values),
-                                      ]),
-                                  ),
-                              },
-                    ),
-            );
+            // The pending check and the answer share one transaction, so of answers sent at once
+            // exactly one wins and every other is a conflict carrying the answer that won.
+            let answered;
+            try {
+                answered = await this.#withMutationId(
+                    body.mutationId,
+                    async () =>
+                        await ctx.inTx(async (txCtx) => {
+                            const requestRow = await this.#userInput.get(
+                                txCtx,
+                                agentId,
+                                questionId,
+                            );
+                            if (requestRow === undefined) {
+                                throw notFound("The question was not found.");
+                            }
+                            if (requestRow.status !== "pending") {
+                                throw new UserInputConflictError(requestRow);
+                            }
+                            const expectedQuestionIds = requestRow.questions?.map(
+                                (question) => question.id,
+                            ) ?? [requestRow.id];
+                            const answeredQuestionIds = Object.keys(body.answers);
+                            if (
+                                answeredQuestionIds.length !== expectedQuestionIds.length ||
+                                expectedQuestionIds.some(
+                                    (questionId) => !Object.hasOwn(body.answers, questionId),
+                                )
+                            ) {
+                                throw invalidRequest(
+                                    "Every question in the batch must receive an answer.",
+                                );
+                            }
+                            // A one-question request is stored in its singular shape and only
+                            // accepts the singular answer; a batched request only accepts the batch.
+                            return await this.#userInput.answer(
+                                txCtx,
+                                agentId,
+                                requestRow.questions === undefined
+                                    ? {
+                                          requestId: questionId,
+                                          answer: toAnswer(body.answers[requestRow.id] ?? []),
+                                      }
+                                    : {
+                                          requestId: questionId,
+                                          answers: Object.fromEntries(
+                                              Object.entries(body.answers).map(([id, values]) => [
+                                                  id,
+                                                  toAnswer(values),
+                                              ]),
+                                          ),
+                                      },
+                            );
+                        }),
+                );
+            } catch (error: unknown) {
+                if (!(error instanceof UserInputConflictError)) throw error;
+                throw new ApiError(409, "conflict", error.message, {
+                    question: questionResource(error.request, questionRunId),
+                });
+            }
             sendJson(response, 200, {
                 question: questionResource(answered, questionRunId),
             });

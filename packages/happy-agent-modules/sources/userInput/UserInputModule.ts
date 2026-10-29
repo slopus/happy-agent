@@ -77,6 +77,7 @@ import { createSqliteUserInputStorage, userInputMigrations } from "./SqliteUserI
 import { cancelAskTool } from "./tools/cancel_ask.js";
 import { readUserInputTool } from "./tools/read_user_input.js";
 import { requestUserInputTool } from "./tools/request_user_input.js";
+import { UserInputConflictError } from "./UserInputConflictError.js";
 
 /** The most requests one list page may return. */
 export const MAX_USER_INPUT_PAGE_SIZE = 50;
@@ -262,8 +263,9 @@ export class UserInputModule implements AgentModule {
         const request = await ctx.inTx(async (txCtx) => {
             const current = await this.#readRequiredRequest(txCtx, input.requestId);
             await this.#authorize(txCtx, agentId, current.askingAgentId, "answer");
+            // First answer wins: a later one is refused, never reported as if it had won.
             if (isUserInputTerminal(current)) {
-                return current;
+                throw new UserInputConflictError(structuredClone(current));
             }
             const at = now();
             const answeredFields =

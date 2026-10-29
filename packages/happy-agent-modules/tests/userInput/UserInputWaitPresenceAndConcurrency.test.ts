@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { UserInputEvent } from "../../sources/userInput/index.js";
+import { UserInputConflictError, type UserInputEvent } from "../../sources/userInput/index.js";
 import { resolveModuleHooks } from "../support/moduleHooks.js";
 import {
     createPresenceModule,
@@ -327,12 +327,18 @@ describe("UserInput waits, presence, and concurrency", () => {
         await database.ready;
         try {
             const request = await module.ask(database.context, agentId, singularAsk(), "race");
+            // An answer that loses to the cancellation is refused with the cancelled request.
             const outcomes = await Promise.all([
                 enqueue(() =>
-                    module.answer(database.context, agentId, {
-                        requestId: request.id,
-                        answer: "Answer wins.",
-                    }),
+                    module
+                        .answer(database.context, agentId, {
+                            requestId: request.id,
+                            answer: "Answer wins.",
+                        })
+                        .catch((error: unknown) => {
+                            if (error instanceof UserInputConflictError) return error.request;
+                            throw error;
+                        }),
                 ),
                 enqueue(() =>
                     module.cancel(database.context, agentId, {
@@ -346,6 +352,32 @@ describe("UserInput waits, presence, and concurrency", () => {
             await expect(module.get(database.context, agentId, request.id)).resolves.toEqual(
                 outcomes[0],
             );
+        } finally {
+            database.close();
+        }
+    });
+
+    it("refuses a second answer to a settled request instead of reporting the first as its own", async () => {
+        const module = createUserInputModule();
+        const database = createUserInputDatabase(module, "user-input-second-answer");
+        await database.ready;
+        try {
+            const request = await module.ask(database.context, agentId, singularAsk(), "twice");
+            await module.answer(database.context, agentId, {
+                requestId: request.id,
+                answer: "The first answer.",
+            });
+            const second = module.answer(database.context, agentId, {
+                requestId: request.id,
+                answer: "The second answer.",
+            });
+            await expect(second).rejects.toBeInstanceOf(UserInputConflictError);
+            await expect(second).rejects.toMatchObject({
+                request: { id: request.id, status: "answered", answer: "The first answer." },
+            });
+            await expect(module.get(database.context, agentId, request.id)).resolves.toMatchObject({
+                answer: "The first answer.",
+            });
         } finally {
             database.close();
         }

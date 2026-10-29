@@ -34,7 +34,9 @@ Requests contain one to four related questions, each with an optional short head
 choices, plus bounded Markdown context. They have a discriminated outcome: `pending`, `answered`,
 `cancelled`, `away`, or `timed_out`. Answer payloads can be free-form text or structured selected
 labels plus text; batched requests settle with one answer map. Answer, cancellation, timeout, and
-away transitions are single-settlement operations.
+away transitions are single-settlement operations. A cancellation or completion of a settled request
+returns it unchanged; an answer to one throws `UserInputConflictError` carrying the request as it
+stands, so no caller reports another answer as its own.
 
 The `request_user_input`, `read_user_input`, and `cancel_ask` tools never enter Auto-mode review.
 The request tool takes one flat object with shared `context`, a `questions` array even for one

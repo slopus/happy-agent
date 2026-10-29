@@ -198,6 +198,49 @@ describe("public question API matrix", () => {
         }
     });
 
+    it("accepts exactly one of many answers sent at once, and refuses every other", async () => {
+        const gym = await start({
+            inference: [ask("crowd", [prompt("choice", false)]), answerText("Answered once.")],
+        });
+        const accepted = await gym.send("Ask a crowded question.", { wait: false });
+        const question = await pending(gym);
+        const values = Array.from({ length: 8 }, (_, index) =>
+            index % 2 === 0 ? "One" : `Typed answer ${String(index)}`,
+        );
+        const attempts = await Promise.allSettled(
+            values.map(
+                async (value, index) =>
+                    await gym.client.answerQuestion(gym.defaultSessionId, question.id, {
+                        answers: { choice: [value] },
+                        mutationId: `matrix-crowd-${String(index)}`,
+                    }),
+            ),
+        );
+
+        const won = attempts.flatMap((attempt) =>
+            attempt.status === "fulfilled" ? [attempt.value] : [],
+        );
+        expect(won).toHaveLength(1);
+        const winner = won[0]!.question.answers;
+        for (const attempt of attempts) {
+            if (attempt.status === "fulfilled") continue;
+            expect(attempt.reason).toMatchObject({ status: 409, code: "conflict" });
+        }
+        await gym.waitForRun(accepted.runId);
+        // The stored answer, and the one the model read, is the answer that won.
+        expect((await gym.client.getPendingQuestion(gym.defaultSessionId)).question).toBeNull();
+        const result = gym.inference.requests
+            .flatMap((request) => request.messages)
+            .find((message) => message.role === "tool");
+        const told = JSON.stringify(result);
+        const chosen = winner?.["choice"]?.[0] ?? "";
+        expect(told).toContain(chosen);
+        // "One" is also an option label, so only the typed answers that lost are checked.
+        for (const value of values.filter((each) => each !== chosen && each !== "One")) {
+            expect(told).not.toContain(value);
+        }
+    }, 30_000);
+
     it("publishes question.created with the complete public snapshot", async () => {
         const gym = await start({ inference: [ask("createdevent", [prompt("event", false)])] });
         await gym.send("Emit a question.", { wait: false });

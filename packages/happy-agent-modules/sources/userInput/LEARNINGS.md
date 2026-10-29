@@ -64,3 +64,12 @@ it was no longer pending, and the call's raw result was model-facing text. `requ
 now returns a `user_input` presentation with the questions as shown and the person's values when
 the request is answered, and History records it with the call. Cancelled, away, and timed-out
 requests carry none.
+
+## The first answer wins, and every other answer is told so
+
+The answer route checked that a question was pending, then answered it in a separate transaction,
+and `answer` quietly returned a request that was already settled. Two answers sent at once could
+both get `200`, the second carrying the first one's answer as if it had won. The pending check and
+the answer now share one transaction, and `answer` throws `UserInputConflictError` for a settled
+request, which the API reports as `409` with the question as it stands. Cancellation and completion
+stay idempotent: repeating them asks for nothing new.
