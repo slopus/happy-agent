@@ -14,7 +14,7 @@ it("applies one factual batch when Prioritizing finishes while legacy row action
             (await h.gym.client.getAgent(happy.target.agentId)).agent.subtasks?.map(
                 (subtask) => subtask.title,
             ),
-        ).toEqual(["Focus"]);
+        ).toEqual(["Focus Agent"]);
         await h.read();
         const created = await h.create();
         await h.gym.send("Plan this release.", { sessionId: created.agent.id });

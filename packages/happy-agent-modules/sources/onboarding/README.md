@@ -63,8 +63,8 @@ Connected line is said: Happy's first model message opens with it.
 Focus (the Spaces module's Prioritizing) does the organizing; onboarding only starts it. Discover
 is the person's consent: in the press's transaction `SpacesModule.allowDiscovery` lets Focus's
 consent-gated `discover_work` read what Happy disclosed, and `SpacesModule.startFocus` creates Focus
-as Happy's subtask with its task ("Organize Ada's work from the places above, most important
-first.") as its first message, shows its row under Happy with the `goals` icon as the daemon's
+as Happy's subtask (titled Focus Agent) with its task ("Organize Ada's work from the places above, most important
+first.") as its first message, inserts its own row right after Happy's with the `goals` icon as the daemon's
 sidebar change, and returns its ID and model. When the press is accepted into Happy's conversation,
 `messageAcceptedTransact` writes the finished `create_agent` call any sub-agent shows, with the
 `agent_spawn` presentation carrying Focus's model and agent ID, right after the press in its run.

@@ -20,6 +20,7 @@ const REVISIONS: readonly { readonly revision: number; readonly sha256: string }
     { revision: 7, sha256: "1294100c86d9f140be3ed18b792b27d21fe71c72f0fe67aa97b3aefd2a5af3e8" },
     { revision: 8, sha256: "496b1a5d3eb7a90727057e47673140ca78c402608a361621e4f9783223149d59" },
     { revision: 9, sha256: "b7be2920703a24f9c185d83dd8b6495fcdd0d702ebe32a8017ce303bc898732e" },
+    { revision: 10, sha256: "aa28578fede6329b1d5e181f0a182c46b302e510cc09113151f88788ef6062c4" },
 ];
 
 it("offers the voice icons", () => {

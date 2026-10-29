@@ -307,27 +307,42 @@ function relay(request: GymInferenceRequest, words: string): GymTurn {
     );
 }
 
-/** Where the phone connector's relay listens, for the scenario that pairs a phone. */
+/** The phone connector's configured port, which only names it in the QR code. */
 const PHONE_PORT = 24_879;
+/** Where the fake Tailcat accepts the phone's connections, standing in for the tailnet. */
+const TAILNET_PORT = 24_880;
 
 /**
- * Only the Tailcat binary is fake: it publishes an address and stays up. The relay, the loopback
- * listener, and the pairing behind them are the daemon's own.
+ * Only the Tailcat binary is fake. Like `serve exec -- <command>`, it runs the command for each
+ * connection with the connection as its stdin and stdout, and publishes an address once it
+ * accepts them. The command and everything behind it are the daemon's own.
  */
 async function fakeTailcat(root: string): Promise<void> {
     const executable = join(root, "tailcat");
     await writeFile(
         executable,
         `#!/usr/bin/env node
+import { spawn } from "node:child_process";
 import { writeFileSync } from "node:fs";
+import { createServer } from "node:net";
 const args = process.argv.slice(2);
 if (args[0] === "genkey") {
     writeFileSync(args.find((value) => value.startsWith("--key=")).slice(6), "key\\n", { mode: 0o600 });
     process.exit(0);
 }
-writeFileSync(process.env.TAILCAT_ADDR_FILE, "tcGymOnboardingPhone\\n", { mode: 0o600 });
+if (args.slice(1, 4).join(" ") !== "serve exec --") process.exit(2);
+const [command, ...commandArguments] = args.slice(4);
+const server = createServer((connection) => {
+    const child = spawn(command, commandArguments, { stdio: ["pipe", "pipe", "inherit"] });
+    connection.pipe(child.stdin);
+    child.stdout.pipe(connection);
+    connection.on("error", () => child.kill());
+    child.stdin.on("error", () => connection.destroy());
+});
+server.listen(${String(TAILNET_PORT)}, "127.0.0.1", () => {
+    writeFileSync(process.env.TAILCAT_ADDR_FILE, "tcGymOnboardingPhone\\n", { mode: 0o600 });
+});
 process.on("SIGTERM", () => process.exit(0));
-setInterval(() => undefined, 1_000);
 `,
     );
     await chmod(executable, 0o755);
@@ -431,7 +446,8 @@ async function startGym(
                     content: [{ text: "<title>Work</title><slug>work</slug>", type: "text" }],
                 };
             }
-            if (request.instructions.includes("You are Focus")) return focusTurn(request, propose);
+            if (request.instructions.includes("You are the Focus Agent"))
+                return focusTurn(request, propose);
             const led = happyLeads(request);
             if (led !== undefined) return led;
             const answer = answers[eventIn(request) ?? ""] ?? answers["*"];
@@ -598,7 +614,7 @@ describe("onboarding the person's work", () => {
             const { agent: focusAgent } = (await gym.http.ok("GET", `/v0/agents/${focus}`)) as {
                 agent: { title: string };
             };
-            expect(focusAgent.title).toBe("Focus");
+            expect(focusAgent.title).toBe("Focus Agent");
 
             // The daemon showed Focus in Happy's chat as its sub-agent, right after the press:
             // the finished creation row any sub-agent gets, with Focus's ID, model, and task.
@@ -634,13 +650,20 @@ describe("onboarding the person's work", () => {
                 "Focus's task",
             );
             expect(opening.role).not.toBe("assistant");
-            // Its row has its target icon from the start, under Happy.
+            // Its own row has its target icon from the start, right after Happy's in the sidebar.
             const { spaces: rows } = (await gym.http.ok("GET", "/v0/spaces")) as {
-                spaces: { title: string; icon: unknown; agentId?: string }[];
+                spaces: { id: string; title: string; icon: unknown }[];
             };
-            expect(rows.find((row) => row.title === "Focus")).toMatchObject({
-                icon: { type: "library", slug: "goals" },
-            });
+            const focusRow = rows.find((row) => row.title === "Focus Agent");
+            expect(focusRow).toMatchObject({ icon: { type: "library", slug: "goals" } });
+            const shownAt = (await gym.http.ok("GET", "/v0/spaces/sidebar")) as { html: string };
+            const happyRow = rows.find((row) => row.title === "Happy")!;
+            expect(shownAt.html).toMatch(
+                new RegExp(
+                    `<happy-space id="${happyRow.id}"[^>]*(?:/>|>[\\s\\S]*?</happy-space>)\\s*<happy-space id="${focusRow!.id}"`,
+                    "u",
+                ),
+            );
             await waitForText(gym, happy, HANDING);
             // Happy's model only introduced Focus: it never created or messaged it.
             expect(
@@ -654,7 +677,7 @@ describe("onboarding the person's work", () => {
             const proposal = /data-sidebar-proposal="([a-z0-9]+)"/u.exec(textOf(shown))![1]!;
             const heard = gym.inference.requests.find(
                 (request) =>
-                    !request.instructions.includes("You are Focus") &&
+                    !request.instructions.includes("You are the Focus Agent") &&
                     JSON.stringify(request.messages.at(-1)).includes(
                         `Focus finished. Its open proposal is ${proposal}.`,
                     ),
@@ -874,7 +897,7 @@ describe("onboarding the person's work", () => {
             const proposal = /data-sidebar-proposal="([a-z0-9]+)"/u.exec(textOf(first))![1]!;
             // Without Discover, Focus was never offered discover_work.
             const focusTools = gym.inference.requests.find((request) =>
-                request.instructions.includes("You are Focus"),
+                request.instructions.includes("You are the Focus Agent"),
             )?.tools;
             expect(focusTools?.map((tool) => tool.name)).not.toContain("discover_work");
             expect(
@@ -1027,7 +1050,7 @@ describe("onboarding the person's work", () => {
             expect(mobileConnector.pairing.status).toBe("waiting");
             const session = await startPhonePairing(
                 mobileConnector.pairing.qr!,
-                httpPhoneTransport(`http://127.0.0.1:${String(PHONE_PORT)}`),
+                httpPhoneTransport(`http://127.0.0.1:${String(TAILNET_PORT)}`),
             );
             const confirming = session.confirm();
             await gym.waitUntil(async () => {

@@ -71,8 +71,8 @@ whole on every update instead of merging it as streamed provider output.
 Proposals used to be a hidden side inference behind Happy's `propose_work` tool, with a checklist
 and Looks right. The user wanted Focus to be what it says: Happy's sub-agent, visible at once. At
 Discover the daemon starts Focus programmatically, never by Happy's model choosing to: the press's
-transaction creates it as Happy's subtask named Focus with the `goals` icon and its task as its
-first message, inserts its row under Happy, and writes the ordinary `create_agent` row with an
+transaction creates it as Happy's subtask (titled Focus Agent) with the `goals` icon and its task as its
+first message, inserts its own row right after Happy's, and writes the ordinary `create_agent` row with an
 `agent_spawn` presentation (model and agent ID) into Happy's chat right after the press. Happy's
 model only introduces it. Focus then proposes in its own conversation, and Spaces tells Happy the
 proposal's ID when that turn ends.

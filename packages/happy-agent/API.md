@@ -1217,7 +1217,14 @@ Fields:
   attached under rows and the `attach_to_my_row` tool, described under Spaces.
   `sidebarProposals: true` advertises sidebar proposals and Prioritizing's own row, described
   under Spaces. `sidebarSeparatorPins: true` advertises `pin` on sidebar separators, described
-  under Spaces. `agentStories: true` advertises agents' stories, story rings, and agent status lines, described under Stories. `providerClis: true` advertises the routes under `/v0/provider-clis` and the `provider_cli.updated` event, described under Provider CLIs. `providerRoutes: true` advertises the routes under `/v0/provider-routes`, described under Provider routes. `onboarding: true` advertises onboarding in Happy's conversation, `/v0/onboarding/flow`, and the `onboarding.flow.updated` event, described under Onboarding. `chatActions: true` advertises action messages through `send` and `actionChoices`, described under Inline actions.
+  under Spaces. `agentStories: true` advertises agents' stories, story rings, and agent status
+  lines, described under Stories. `providerClis: true` advertises the routes under
+  `/v0/provider-clis` and the `provider_cli.updated` event, described under Provider CLIs.
+  `providerRoutes: true` advertises the routes under `/v0/provider-routes`, described under
+  Provider routes. `onboarding: true` advertises onboarding in Happy's conversation,
+  `/v0/onboarding/flow`, and the `onboarding.flow.updated` event, described under Onboarding.
+  `chatActions: true` advertises action messages through `send` and `actionChoices`, described
+  under Inline actions.
 - `ready` — `false` while starting, `true` once the agent system is loaded.
 - `status` — `"starting"` or `"ready"`; the human-readable form of `ready`.
 - `version` — one identity object. `protocol` is the wire protocol number, the client's
@@ -10650,11 +10657,11 @@ Prioritizing, and neither does reading the sidebar. While enabled, Prioritizing 
 person's first new work (`POST /v0/spaces/stem-cells`), when the person asks for a tidy
 (`POST /v0/spaces/tidy`), or when Happy's onboarding starts it (see "Focus in onboarding"), the same
 way Happy creates any subtask, and appears in Happy's `subtasks` like any other; until then there is
-none, and nothing organises the sidebar. The person knows it as Focus: a new one is titled Focus,
-and an existing one keeps its title. This chapter still calls it Prioritizing, and the API
+none, and nothing organises the sidebar. The person knows it as the Focus Agent: a new one is titled Focus
+Agent, and an existing one keeps its title. This chapter still calls it Prioritizing, and the API
 identifiers that name it (`"prioritizing"` as an author, for one) stay. It has a
 conversation of its own, shown as its own row (see "Prioritizing's row"), where the person may
-write to it; it never writes into Happy's conversation. After a new conversation's first
+write to it; it writes into Happy's conversation only to answer Happy (see "Focus in onboarding"). After a new conversation's first
 message it gives the row an icon and decides where it belongs, and it tidies the list when asked.
 Prioritizing runs when an event wakes it (see "Notices"), never on a timer and never because of its
 own writes. Its placement, visibility, and section changes are not applied one by one: they wait
@@ -11181,17 +11188,17 @@ When the person presses `onboarding.discover`, the same transaction records thei
 discovery and starts Prioritizing if they have none, with its task ("Organize Ada's work from the
 places above, most important first.", with the person's first name) as Happy's first message to
 it; a Prioritizing that already runs receives the task as Happy's next message. Prioritizing is
-created as Happy's subtask, titled Focus, so it is listed in Happy's `subtasks` with `subtask` and
-`userVisible` set, and its own space (title Focus, icon `goals`) exists before anything below
+created as Happy's subtask, titled Focus Agent, so it is listed in Happy's `subtasks` with `subtask` and
+`userVisible` set, and its own space (title Focus Agent, icon `goals`) exists before anything below
 names it. When the press is accepted into Happy's conversation, the daemon records one `agent`
 message right after it, in the run the press started: a completed `create_agent` tool call whose
 `arguments` carry the task as `title` and `text`, with an `agent_spawn` presentation carrying the
 model Prioritizing runs on and its `agentId`. Clients draw it as any sub-agent row; no model made
 that call. `onboarding.workTell` starts Prioritizing without a task, consent to discovery, or a
-sub-agent row. A Prioritizing that onboarding starts is shown at once: its
-conversation is inserted into the document as a session under Happy's row, and Happy's row gets
-`expanded="true"` unless the person last set its fold, in one version authored `daemon`, committed
-with the press. Its session icon is `goals`. From then on, where its conversation stands is
+sub-agent row. A Prioritizing that onboarding starts is shown at once: its own
+row is inserted into the document at the top level right after Happy's row, unless the document
+already names it, in one version authored `daemon`, committed with the press. Its row and session
+icon are `goals`. From then on, where its conversation stands is
 Prioritizing's decision as above.
 
 Happy hands later work to it with an ordinary `send_agent_message`, which Happy's conversation

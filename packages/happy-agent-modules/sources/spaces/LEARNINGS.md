@@ -667,8 +667,8 @@ onboarding started it with) marks the owner `happyAsked`, and when that turn end
 one message naming the open proposal and what Focus said. Its opening task alone does not count,
 so a tidy-started Focus never writes into Happy's chat.
 
-Onboarding starts it through `startFocus`, which also shows it at once: its session under Happy
-with the `goals` icon, Happy unfolded unless the person set the fold, as the daemon's one sidebar
+Onboarding starts it through `startFocus`, which also shows it at once: its own row with the
+`goals` icon inserted right after Happy's, where its prompt keeps it, as the daemon's one sidebar
 change. The person consents to reading their work at Discover (`allowDiscovery`); only then is
 `discover_work` among Focus's tools.
 
