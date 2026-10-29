@@ -155,6 +155,46 @@ describe("reading a message from Happy", () => {
         });
     });
 
+    it("reads whether the person queued or steered, and leaves anything else unsaid", () => {
+        const plain = (meta: Record<string, unknown>) =>
+            readHappyRemoteInput({ content: { text: "next", type: "text" }, meta, role: "user" });
+        expect(plain({ delivery: "queue" })).toEqual({
+            delivery: "queue",
+            kind: "text",
+            selection: {},
+            text: "next",
+        });
+        expect(plain({ delivery: "steer" })).toMatchObject({ delivery: "steer" });
+        for (const delivery of ["later", 1, null]) {
+            expect(plain({ delivery, model: "gpt-5.6-sol" })).toEqual({
+                kind: "text",
+                selection: { modelId: "gpt-5.6-sol" },
+                text: "next",
+            });
+        }
+        expect(
+            readHappyRemoteInput({
+                content: {
+                    data: {
+                        ev: { t: "text", text: "inner" },
+                        meta: { delivery: "queue" },
+                        role: "user",
+                    },
+                    type: "session",
+                },
+                meta: { delivery: "steer" },
+                role: "session",
+            }),
+        ).toMatchObject({ delivery: "queue", text: "inner" });
+        expect(
+            readHappyRemoteInput({
+                content: { role: "user", ev: { t: "text", text: "bare" } },
+                meta: { delivery: "queue" },
+                role: "session",
+            }),
+        ).toMatchObject({ delivery: "queue", text: "bare" });
+    });
+
     it("says nothing rather than guess at a message it does not know", () => {
         expect(readHappyRemoteInput(undefined)).toBeUndefined();
         expect(readHappyRemoteInput("hello")).toBeUndefined();

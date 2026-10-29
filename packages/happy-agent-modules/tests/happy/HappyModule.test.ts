@@ -155,6 +155,7 @@ async function fixture() {
         message: Record<string, unknown>;
         options: Record<string, unknown>;
     }[] = [];
+    const sent: typeof steered = [];
     const projects = new Map([
         [
             "project-1",
@@ -220,6 +221,15 @@ async function fixture() {
             // written before the message from what was written after it.
             steered.push({ agentId, config: configs.get(agentId), message, options });
             return { accepted: "created", delivery: "steer", id: options.id };
+        },
+        send: async (
+            _ctx: unknown,
+            agentId: string,
+            message: Record<string, unknown>,
+            options: Record<string, unknown>,
+        ) => {
+            sent.push({ agentId, config: configs.get(agentId), message, options });
+            return { accepted: "created", delivery: "send", id: options.id };
         },
         updateMetadata: async (
             ctx: Context,
@@ -462,6 +472,7 @@ async function fixture() {
         projectAgents,
         projects,
         releaseHeldWrite: () => releaseWrite?.(),
+        sent,
         steered,
         wornAvatars,
         workspaceAgents,
@@ -642,6 +653,40 @@ describe("Happy mobile messages", () => {
                     id: pendingId,
                     metadata: expect.objectContaining({
                         happy: { remoteMessageId: "happy:mobile-message-1" },
+                    }),
+                }),
+            }),
+        ]);
+        expect(test.sent).toEqual([]);
+    });
+
+    it("holds a queued phone message for the next run instead of steering it in", async () => {
+        const test = await fixture();
+        test.configs.set("agent-active", { metadata: { happy: SELECTION } });
+
+        await test.module.submit(databases.at(-1)!.context, "agent-active", {
+            delivery: "queue",
+            images: [],
+            remoteMessageId: "happy:mobile-message-2",
+            selection: {},
+            text: "Then update the tests.",
+        });
+
+        expect(test.pendingMessages).toEqual([
+            expect.objectContaining({ delivery: "queue", status: "pending" }),
+        ]);
+        expect(test.steered).toEqual([]);
+        expect(test.sent).toEqual([
+            expect.objectContaining({
+                agentId: "agent-active",
+                message: {
+                    content: [{ text: "Then update the tests.", type: "text" }],
+                    role: "user",
+                },
+                options: expect.objectContaining({
+                    id: test.pendingMessages[0]?.id,
+                    metadata: expect.objectContaining({
+                        happy: { remoteMessageId: "happy:mobile-message-2" },
                     }),
                 }),
             }),

@@ -3,7 +3,9 @@ import { Value } from "@sinclair/typebox/value";
 
 import {
     HAPPY_SENT_FROM_RIG,
+    happyDeliverySchema,
     happyInputContentSchema,
+    type HappyDelivery,
     type HappyRemoteInput,
 } from "./HappyProtocol.js";
 
@@ -96,6 +98,7 @@ export function readHappyRemoteInput(value: unknown): HappyRemoteInput | undefin
     if (outerMeta?.sentFrom === HAPPY_SENT_FROM_RIG) return { kind: "echo" };
 
     if (Value.Check(plainTextSchema, value)) {
+        const delivery = readDelivery(outerMeta);
         return {
             kind: "text",
             selection: readSelection(outerMeta),
@@ -103,6 +106,7 @@ export function readHappyRemoteInput(value: unknown): HappyRemoteInput | undefin
             ...(value.content.content === undefined
                 ? {}
                 : { content: structuredClone(value.content.content) }),
+            ...(delivery === undefined ? {} : { delivery }),
         };
     }
     if (!Value.Check(wrappedSchema, value) || value.role !== "session") return undefined;
@@ -119,13 +123,16 @@ export function readHappyRemoteInput(value: unknown): HappyRemoteInput | undefin
         };
     }
     if (Value.Check(textEventSchema, envelope.ev)) {
+        const meta = envelope.meta ?? outerMeta;
+        const delivery = readDelivery(meta);
         return {
             kind: "text",
-            selection: readSelection(envelope.meta ?? outerMeta),
+            selection: readSelection(meta),
             text: envelope.ev.text,
             ...(envelope.ev.content === undefined
                 ? {}
                 : { content: structuredClone(envelope.ev.content) }),
+            ...(delivery === undefined ? {} : { delivery }),
         };
     }
     return undefined;
@@ -152,6 +159,16 @@ function readSelection(meta: Record<string, unknown> | undefined): {
         ...(providerId === undefined ? {} : { providerId }),
         ...(serviceTier === undefined ? {} : { serviceTier }),
     };
+}
+
+/**
+ * Reads when the person wants the message delivered. Anything other than the two known values is
+ * left unsaid, so the message steers as it always has. Like the selection, it comes from whichever
+ * one meta object applies, never from a mix of the envelope's and the outer one's.
+ */
+function readDelivery(meta: Record<string, unknown> | undefined): HappyDelivery | undefined {
+    const delivery = meta?.delivery;
+    return Value.Check(happyDeliverySchema, delivery) ? delivery : undefined;
 }
 
 function firstString(...values: readonly unknown[]): string | undefined {

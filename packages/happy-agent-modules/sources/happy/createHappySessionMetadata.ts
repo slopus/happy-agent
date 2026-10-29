@@ -45,6 +45,11 @@ export interface HappySessionMetadata {
         messageReceipts: boolean;
         modelSelection: boolean;
         permissionModeSelection: boolean;
+        /**
+         * This daemon reads `meta.delivery: "queue"` on a phone message and holds it until the
+         * current run ends instead of steering it in, so the phone may offer both.
+         */
+        queueing: boolean;
         reasoningSelection: boolean;
         resume: boolean;
         rpcMethods: readonly string[];
@@ -186,6 +191,7 @@ export function createHappySessionMetadata(options: {
             messageReceipts: true,
             modelSelection: true,
             permissionModeSelection: true,
+            queueing: true,
             reasoningSelection: efforts.length > 0,
             resume: false,
             rpcMethods: HAPPY_SESSION_RPC_METHODS.filter(

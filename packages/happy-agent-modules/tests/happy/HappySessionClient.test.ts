@@ -1002,7 +1002,12 @@ describe("keeping one session in step with Happy", () => {
         server.deliver([
             remoteMessage(7, "remote-message-1", {
                 content: { text: "carry on", type: "text" },
-                meta: { model: "gpt-5.6-sol", modelProviderId: "codex", thinkingLevel: "high" },
+                meta: {
+                    delivery: "queue",
+                    model: "gpt-5.6-sol",
+                    modelProviderId: "codex",
+                    thinkingLevel: "high",
+                },
                 role: "user",
             }),
         ]);
@@ -1012,6 +1017,7 @@ describe("keeping one session in step with Happy", () => {
         const submitted = calls.find((call) => call.kind === "submit")
             ?.detail as HappyInboundMessage;
         expect(submitted.text).toBe("carry on");
+        expect(submitted.delivery).toBe("queue");
         expect(submitted.remoteMessageId).toBe("happy:remote-message-1");
         expect(submitted.selection).toEqual({
             effort: "high",

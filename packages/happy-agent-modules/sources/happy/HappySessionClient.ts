@@ -1139,6 +1139,7 @@ export class HappySessionClient {
                 },
                 text: incoming.text,
                 ...(incoming.content === undefined ? {} : { content: incoming.content }),
+                ...(incoming.delivery === undefined ? {} : { delivery: incoming.delivery }),
             });
         } catch (error) {
             if (!(error instanceof HappyMessageRefused)) throw error;

@@ -6,7 +6,12 @@ import { once } from "node:events";
 import { mkdir, readFile, stat, symlink, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
-import { clientFrameEvent, createAgentGym, type AgentGym } from "@slopus/happy-agent-gym";
+import {
+    clientFrameEvent,
+    createAgentGym,
+    type AgentGym,
+    type GymTurn,
+} from "@slopus/happy-agent-gym";
 import nacl from "tweetnacl";
 import { afterEach, describe, expect, it } from "vitest";
 import { WebSocketServer, type WebSocket } from "ws";
@@ -727,6 +732,142 @@ describe("Happy integration API", () => {
             ),
         ).toEqual(new Set([published.id]));
         expect(JSON.stringify(await gym.history(bot.agent.id))).toContain("Answer from mobile.");
+    }, 60_000);
+
+    it("holds a phone message sent with queue delivery until the active run ends", async () => {
+        const happy = await startProtocolHappyServer({ authorizePairing: true });
+        let agentCalls = 0;
+        const gym = await createAgentGym({
+            environment: { HAPPY_AGENT_HAPPY_SERVER_URL: happy.url },
+            inference: async (request): Promise<GymTurn> => {
+                if (request.sessionId.startsWith("naming:")) {
+                    return { content: [{ text: "<title>Queued phone</title>", type: "text" }] };
+                }
+                const current = agentCalls;
+                agentCalls += 1;
+                if (current > 0) return { content: [{ text: `answer-${current}`, type: "text" }] };
+                return {
+                    content: [
+                        {
+                            arguments: {
+                                context: "The run waits here until the question is answered.",
+                                questions: [
+                                    {
+                                        header: "Continue",
+                                        id: "continue",
+                                        multiSelect: false,
+                                        options: [{ description: "Go on.", label: "Continue" }],
+                                        question: "Continue the run?",
+                                    },
+                                ],
+                            },
+                            callId: "queuequestion",
+                            name: "request_user_input",
+                            type: "tool_call",
+                        },
+                    ],
+                };
+            },
+            timeoutMs: 20_000,
+        });
+        gyms.add(gym);
+        const bot = (await gym.client.createBot({ name: "Queueing Bot" })).bot;
+        await gym.client.startHappyIntegration();
+        await waitForIntegration(gym, "connected");
+        const published = await gym.waitUntil(
+            () => happy.sessions.find((session) => session.metadata.bot?.id === bot.id),
+            "the bot session",
+        );
+        await gym.waitUntil(
+            () =>
+                (happy.metadata.get(published.id)?.capabilities as { queueing?: boolean })
+                    ?.queueing === true
+                    ? true
+                    : undefined,
+            "the queueing capability on the phone",
+        );
+
+        const first = await gym.send("start the run", { sessionId: bot.agent.id, wait: false });
+        const question = await gym.waitUntil(
+            async () => (await gym.client.getPendingQuestion(bot.agent.id)).question ?? undefined,
+            "the run to wait on its question",
+        );
+        happy.deliver(published.id, {
+            role: "user",
+            content: { type: "text", text: "Queued from the phone." },
+            meta: {
+                delivery: "queue",
+                model: gym.selection.modelId,
+                modelProviderId: gym.selection.providerId,
+                effort: gym.selection.effort,
+            },
+        });
+        const queued = await gym.waitUntil(async () => {
+            const { pending } = await gym.client.getAgentBootstrap(bot.agent.id);
+            return pending.find((message) => JSON.stringify(message).includes("from the phone"));
+        }, "the phone message to be pending");
+        expect(queued.delivery).toBe("queue");
+
+        await gym.client.answerQuestion(bot.agent.id, question.id, {
+            answers: { continue: ["Continue"] },
+        });
+        const started = await gym.waitForEvent(
+            (event) =>
+                event.type === "run.started" &&
+                event.payload.acceptedMessageIds.includes(queued.id),
+            "the queued phone message to start its own run",
+        );
+        if (started.type !== "run.started") throw new Error("The queued message did not start.");
+        await gym.waitForRun(started.payload.run.id);
+
+        expect(
+            (await gym.events()).some(
+                (event) =>
+                    event.type === "run.boundary" &&
+                    event.payload.acceptedMessageIds.includes(queued.id),
+            ),
+        ).toBe(false);
+        expect(started.payload.run.id).not.toBe(first.runId);
+        const requests = gym.inference.requests.filter(
+            (request) => !request.sessionId.startsWith("naming:"),
+        );
+        expect(requests).toHaveLength(3);
+        expect(requests[1]?.messages.at(-1)).toMatchObject({
+            callId: "queuequestion",
+            role: "tool",
+        });
+        expect(requests[2]?.messages.at(-1)).toEqual({
+            content: [{ text: "Queued from the phone.", type: "text" }],
+            role: "user",
+        });
+
+        // The phone hears the finished run end as completed, then its receipt, then a new turn.
+        const stream = await gym.waitUntil(() => {
+            const events = (happy.outgoing.get(published.id) ?? []).map(
+                (message) =>
+                    (
+                        message as {
+                            content: {
+                                ev: { t: string; reason?: string; id?: string; runId?: string };
+                            };
+                        }
+                    ).content.ev,
+            );
+            const receipt = events.findIndex(
+                (ev) => ev.t === "user-message-accepted" && ev.id === queued.id,
+            );
+            return receipt >= 0 && events.slice(receipt).some((ev) => ev.t === "turn-start")
+                ? { events, receipt }
+                : undefined;
+        }, "the receipt and the queued message's turn on the phone");
+        expect(
+            stream.events.filter((ev) => ev.t === "user-message-accepted" && ev.id === queued.id),
+        ).toEqual([expect.objectContaining({ runId: started.payload.run.id })]);
+        expect(stream.events.filter((ev) => ev.reason === "steering")).toEqual([]);
+        expect(stream.events[stream.receipt - 1]).toMatchObject({
+            reason: "completed",
+            t: "turn-end",
+        });
     }, 60_000);
 
     it("syncs idle and newly created bots without projects and reuses their sessions after restart", async () => {

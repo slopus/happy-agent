@@ -143,6 +143,14 @@ export const happyRemoteSelectionSchema = Type.Object(
 export type HappyRemoteSelection = Static<typeof happyRemoteSelectionSchema>;
 
 /**
+ * When the phone wants its message to reach the agent: `steer` at the next inference boundary,
+ * `queue` once the current run ends. A phone that predates queueing says neither, which means
+ * steering.
+ */
+export const happyDeliverySchema = Type.Union([Type.Literal("queue"), Type.Literal("steer")]);
+export type HappyDelivery = Static<typeof happyDeliverySchema>;
+
+/**
  * What one decrypted remote message turned out to be.
  *
  * `echo` is Happy Agent's own message coming back; it carries nothing new and must not
@@ -151,7 +159,13 @@ export type HappyRemoteSelection = Static<typeof happyRemoteSelectionSchema>;
 export type HappyRemoteInput =
     | { kind: "echo" }
     | { kind: "attachment"; mimeType?: string; name: string; ref: string; size: number }
-    | { kind: "text"; selection: HappyRemoteSelection; text: string; content?: HappyInputContent };
+    | {
+          kind: "text";
+          selection: HappyRemoteSelection;
+          text: string;
+          content?: HappyInputContent;
+          delivery?: HappyDelivery;
+      };
 
 /** Marks a message Happy Agent itself produced, so its echo can be recognized. */
 export const HAPPY_SENT_FROM_RIG = "rig";
