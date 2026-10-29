@@ -54,7 +54,10 @@ tallies.
 A live artifact page in a story frame was drawn with the side panel's 24–32 px inset unless the
 page itself set `body{padding:0}`. The fix is guidance, not a renderer special case: the
 `post_story` description tells the agent that a whole-artifact frame is a 9:16 portrait canvas,
-and that a page made for one fills it edge to edge with `html,body{margin:0;padding:0}`.
+and that a page made for one fills it edge to edge with `html,body{margin:0;padding:0}`. On iOS
+a real agent's page then put its title under the viewer's author name and progress strip, and
+its last lines under the caption and reply bar, so the description also names those bands —
+the top 60 and bottom 90 CSS px — as free of text and controls.
 
 ## A repost belongs to the person
 
