@@ -493,6 +493,19 @@ capabilities are still reported, and the routes answer that person with `404` as
 would. A client that predates stories shows a `story` artifact presentation as it shows every
 artifact type it does not know.
 
+Agent stories are additive and do not increment the protocol version. A daemon that serves them
+reports `capabilities.agentStories: true` from health: story `author`, `ringAgentId`,
+`supersedes`, `endedAt`, `endReason`, and `repostOf`; `artifact` frames; `artifact` and
+`round_video` overlays; the feed's `rings`; `POST /v0/stories/:storyId/repost`,
+`POST /v0/stories/:storyId/feedback`, and `GET /v0/stories/:storyId/overlays/:overlayId/media`;
+the `post_story`, `withdraw_story`, `list_stories`, and `set_status` tools; and the agent's
+`statusLine`. Older daemons omit every one of these fields and answer the new routes with `404`;
+clients then show no rings and no status lines. They follow the Stories setting: a person with
+Stories off is offered none of the tools, and their agents never carry a `statusLine`. A client
+that predates agent stories never meets an agent's story, which only its person can read, but it
+may meet a reposted one: it skips an overlay type it does not know, as before, and shows a frame
+whose `kind` it does not know as its background.
+
 Drain intent is additive and does not increment the protocol version. A daemon that supports it
 accepts the optional `POST /v0/drain` body and includes `drain` in the drain response, health, the
 `hello` frame, and the `daemon.draining` event, as described under Daemon lifecycle. Older
@@ -1181,7 +1194,8 @@ Fields:
   attached under rows and the `attach_to_my_row` tool, described under Spaces.
   `sidebarProposals: true` advertises sidebar proposals and Prioritizing's own row, described
   under Spaces. `sidebarSeparatorPins: true` advertises `pin` on sidebar separators, described
-  under Spaces.
+  under Spaces. `agentStories: true` advertises agents' stories, story rings, and agent status
+  lines, described under Stories.
 - `ready` — `false` while starting, `true` once the agent system is loaded.
 - `status` — `"starting"` or `"ready"`; the human-readable form of `ready`.
 - `version` — one identity object. `protocol` is the wire protocol number, the client's
@@ -5266,6 +5280,13 @@ Fields:
   `null`. See "Questions" below.
 - `unread` — set when the agent finished work the user has not looked at: why (`reason`) and
   since when. `null` when there is nothing unread. Cleared by `POST /v0/agents/:agentId/read`.
+- `statusLine` — optional additive object, emitted by daemons with `capabilities.agentStories`:
+  `null`, or `{ "text": "Testing with a few friends", "updatedAt": 1755400000000 }`, the one line
+  the agent last wrote about where its work stands, with its `set_status` tool (see "Agent
+  stories"). `text` is 1–120 characters on one line. A client shows it as the second line of the
+  agent's sidebar row or session, in place of what it would show otherwise, and shows nothing
+  different while it is `null` or absent. Every change is an `agent.updated` event carrying
+  `statusLine` in `changes`. Archival keeps it.
 - `orderKey` — an opaque owner-local sort key, as on projects and workspaces; the list order is
   manual and moved with `reorder`. It is non-null for every user-visible root, including one
   managed from another workspace, and `null` for an ordinary hidden subagent or shared-filesystem
@@ -11709,8 +11730,12 @@ ways to start one, and they make the same objects:
   or from media already in their conversations, and edits and posts the draft themselves.
 
 A story's frames refer to existing media by identity; their bytes are never copied from a
-conversation or uploaded twice. Comments, reactions, and posting outside Happy are not part of
-Stories yet.
+conversation or uploaded twice. Comments and posting outside Happy are not part of Stories yet.
+
+Agents post stories too, about what they shipped (see "Agent stories"). An agent's story is the
+same object, posted by the agent itself to its own **ring**: the ring drawn around its sidebar
+row's icon, not the people row. It is visible only to the agent's person until that person reposts
+it to the team as a story of their own.
 
 ### Turning Stories on
 
@@ -11813,8 +11838,34 @@ Turning Stories on again restores them unchanged, with the same `expiresAt`.
   by `draft_story` it is that conversation's person when the call ran. It never changes.
 - `createdBy` — `{ "kind": "user", "userId": ... }` for a story made by hand (`userId` is `null`
   in standalone mode), or `{ "kind": "agent", "agentId": ... }` for one made by `draft_story`.
-- `source` — the conversation and tool call that drafted the story, or `null` for one made by
-  hand. A client offers to open that conversation from the story when the viewer may read it.
+- `source` — the conversation and tool call that drafted or posted the story, or `null` for one
+  made by hand. A client offers to open that conversation from the story when the viewer may read
+  it.
+- `author` — optional additive, always emitted by daemons with `capabilities.agentStories`: whose
+  story it is to its viewers. `{ "kind": "user", "userId": ... }` for every story a person posts
+  or drafts, `draft_story` drafts included (`userId` is `null` in standalone mode), or
+  `{ "kind": "agent", "agentId": ... }` for an agent's story, made by `post_story`. It never
+  changes. A story with an agent author belongs in a ring, never in the people row, and its
+  `authorUserId` is the person it was posted for.
+- `ringAgentId` — optional additive: on an agent's story, the agent whose sidebar row wears it.
+  That is the root of the posting agent's subtask chain — the task's or bot's own agent — so
+  subtasks' stories roll up into their task's or bot's ring; an agent with no parent is its own
+  root. `null` on every other story. It never changes.
+- `supersedes` — optional additive: on an agent's story, the IDs of the stories it ended by
+  replacing them when it was posted, possibly empty; `[]` on every other story.
+- `endedAt`, `endReason` — optional additive: when an agent's story left its ring and why, or
+  both `null` while it is in its ring and on every other story. `endReason` is `"superseded"`
+  (a later story named it in `supersedes`), `"withdrawn"` (an agent withdrew it), or
+  `"archived"` (its ring's task or bot was archived). An ended story keeps `status: "posted"`,
+  stays readable by its person, and still serves its frames, so it still shows inline in the
+  conversation and can still be reposted; it only leaves the ring.
+- `repostOf` — optional additive: on a story made by `POST /v0/stories/:storyId/repost`,
+  `{ "storyId", "agentId", "title", "canOpen" }`: the agent story it reposts, the agent that
+  posted that story, the agent's conversation title when it was reposted (or `null` when it had
+  none), and whether the caller may open that conversation. `null` on every other story. Clients
+  draw it on every frame of the story as a chip reading "Reposted from <title>" (or "Reposted from
+  an agent" without a title), which opens the conversation when `canOpen` is `true` and does
+  nothing otherwise. `canOpen` is caller-relative, like `seen`.
 - `caption` — at most 1,024 characters of plain text shown at the bottom of every frame over a
   dark fade, or `null`.
 - `frames` — one to ten frames, in viewing order. See "Frames".
@@ -11825,7 +11876,8 @@ Turning Stories on again restores them unchanged, with the same `expiresAt`.
   change to the story's content makes a new version.
 - `createdAt`, `updatedAt` — when the story was made and last changed, in epoch milliseconds.
 - `postedAt`, `expiresAt` — when it was posted and when it leaves the feed, exactly 24 hours later;
-  both `null` for a draft.
+  both `null` for a draft. An agent's story has no 24-hour clock: its `expiresAt` is always `null`,
+  and it leaves its ring only when it ends (`endedAt`).
 - `seen` — whether the caller has seen this story; see `POST /v0/stories/:storyId/seen`. It is
   caller-relative, and a story's `version` does not change when someone sees it. Always `true` on
   the caller's own stories and `false` on drafts.
@@ -11839,6 +11891,8 @@ Turning Stories on again restores them unchanged, with the same `expiresAt`.
 
 Who may read a story:
 
+- an agent's story — only the person it was posted for (`authorUserId`), while it is not deleted,
+  whether it is in its ring or ended;
 - a draft — only its author;
 - a posted story in team mode — every member with Stories on;
 - a posted story in standalone mode — the installation's one person;
@@ -11854,13 +11908,15 @@ left in black, so a frame, its media, and its overlays look the same on every cl
 are fractions of the canvas, never of the screen or of the media.
 
 - `id` — the frame's CUID2, stable for the life of the story.
-- `kind` — `"image"` or `"video"`.
+- `kind` — `"image"`, `"video"`, or, on daemons with `capabilities.agentStories`, `"artifact"`: a
+  live artifact filling the whole canvas (see "Artifact frames").
 - `width`, `height`, `scale`, `thumbhash` — the media's size in pixels after EXIF orientation, its
   pixels per point, and its ThumbHash, measured the way chat media measures images. `scale` is
   absent when it is 1. Videos have `null` `width`, `height`, and `thumbhash` until the daemon
   measures videos; clients then take them from the player.
 - `durationMs` — a video's length when known, otherwise `null`. Clients show an image for five
-  seconds and a video for its length, at most 60 seconds.
+  seconds and a video for its length, at most 60 seconds. `width`, `height`, `thumbhash`, and
+  `durationMs` are `null` on an artifact frame.
 - `asset` — the media the frame shows, by identity:
     - `{ "type": "chat_media", "agentId", "toolCallId", "index" }` — one item of a completed tool
       call's `media` presentation, as served by
@@ -11870,6 +11926,9 @@ are fractions of the canvas, never of the screen or of the media.
       `GET /v0/artifacts/:artifactId/versions/:number/files/*path`. Media uploaded from a device for
       this story is kept this way, as a file of the story's own artifact (see "Making a story by
       hand").
+    - `{ "type": "artifact", "artifactId", "version" }` — an artifact itself, shown live: the frame
+      of `kind` `"artifact"`. `version` is a version number to pin, or absent to always show the
+      artifact's latest version. Any artifact type may be shown except `story` and `sidebar`.
 - `available` — whether the daemon still holds the asset. It becomes `false` when the asset's
   artifact is deleted, or when the daemon no longer holds the copy of a conversation's media. A
   conversation being archived does not change it, because archiving keeps the conversation's
@@ -11889,6 +11948,23 @@ A frame's bytes are served by `GET /v0/stories/:storyId/frames/:frameId`, never 
 route: the viewer of a story does not need to be able to read the conversation or artifact the
 media came from. Posting a story is its author sharing exactly those frames with its audience.
 
+#### Artifact frames
+
+An artifact frame shows an artifact as a live, interactive page that fills the canvas, so a story
+can hold a small app the viewer can try. Artifacts are global — everyone using the installation
+may read every artifact — so a viewer reads it with the ordinary artifact routes, never through
+`/frames/:frameId`, which answers `404` for it. A client draws it exactly as it draws an inline
+`artifact` presentation of that artifact and version (the latest when `version` is absent),
+including the artifact data bridge of an `html` page and the artifact proxy of a live-URL page.
+
+The page lays out in a viewport of 360 × 640 CSS pixels, scaled uniformly to fill the canvas, so it
+looks the same on every client. `placement` is ignored and `background` is drawn behind it, black
+by default. Touching or pointing into the page interacts with it instead of moving between frames,
+and pauses the frame's timer until the pointer leaves or the touch ends; only the left and right
+tenth of the canvas still move between frames. An artifact frame shows for ten seconds of
+untouched time. When the artifact is deleted, or a pinned version does not exist, the frame is
+unavailable and shows its background reading "This page is no longer available".
+
 ### Overlays
 
 Overlays are drawn live by the client over the frame from the data below; the daemon never draws
@@ -11900,7 +11976,8 @@ afterwards), a `type`, and a `transform`:
   hang off an edge.
 - `transform.scale` — its size, from `0.05` through `10`. For text, `1` sets a base font size of
   1/16 of the canvas's width; for links, the pill's height at `1` is 1/12 of the canvas's width;
-  for stickers and emoji, it is the fraction of the canvas's width the sticker's longer side takes.
+  for stickers and emoji, it is the fraction of the canvas's width the sticker's longer side takes;
+  for artifact windows and round videos, the fraction of the canvas's width their width takes.
 - `transform.rotation` — clockwise rotation in radians, from `-π` through `π`.
 
 The types:
@@ -11930,6 +12007,27 @@ The types:
   absent. `transform.scale` is the fraction of the canvas's width the bubble takes. Once the story
   is posted, the bubble shows under its emoji how many people reacted with that emoji, from
   `reactions`, when there are any. A frame holds at most five reaction overlays.
+- `artifact` — a live window onto an artifact, on daemons with `capabilities.agentStories`:
+  `artifactId`, an optional `version` to pin (absent always shows the latest), and `aspectRatio`,
+  the window's width over its height, from `0.25` through `4` (`0.8` when omitted on a write). The
+  page lays out 360 CSS pixels wide and `360 / aspectRatio` tall, scaled uniformly to the window,
+  with corners rounded at 1/27 of the canvas's width. It is drawn and interacts like an artifact
+  frame (see "Artifact frames"), within the window. Any artifact type may be shown except `story`
+  and `sidebar`; a deleted artifact or a missing pinned version is left out of the drawing, and
+  the overlay itself is kept. A frame holds at most three artifact overlays.
+- `round_video` — a round video, Telegram style, recorded with the webcam or the camera, on daemons
+  with `capabilities.agentStories`. `media` is the video, a file of the story's own artifact:
+  `{ "type": "artifact_file", "artifactId": <story id>, "version", "path" }` as read, under
+  `media/<overlayId>` with the file's extension. A write places a new recording with
+  `{ "type": "upload", "uploadId", "name" }` from `POST /v0/artifact-uploads` instead, and keeps an
+  existing one by sending `media` back as it was read. The upload must be an MP4, QuickTime, or
+  WebM video of at most 64 MiB. `durationMs` is its length, 1–60,000, as the recording client
+  measured it. `mirrored: true` flips it horizontally, for a front camera; optional, false when
+  absent. Clients draw it as a circle whose diameter is `transform.scale` of the canvas's width,
+  the video centre-cropped to a square, with a thin white rim. It plays from its start with sound
+  when the frame shows, the frame stays up at least as long as it plays, and it holds its last
+  picture afterwards. Its bytes are served by `GET /v0/stories/:storyId/overlays/:overlayId/media`.
+  A frame holds at most one round video, and only a person adds one; agents cannot.
 
 A client ignores an overlay of a type it does not know.
 
@@ -11952,7 +12050,9 @@ they may choose from one conversation.
 
 The caller's own stories, newest first. Query parameters: `status` (optional; `draft`, `posted`,
 or `deleted`, comma-separated for several, default `draft,posted`), `cursor` (optional, an opaque
-cursor from a previous page), and `limit` (optional, `1`–`100`, default `50`).
+cursor from a previous page), and `limit` (optional, `1`–`100`, default `50`). Only stories whose
+`author` is the caller are listed; agents' stories posted for them are not, and are read through
+the feed's `rings` instead.
 
 Response — `200`:
 
@@ -12010,7 +12110,12 @@ Request:
       to JPEG before uploading. It is used once: the story that places it removes it in the same
       change.
     - `asset` — a `chat_media` or `artifact_file` asset the caller may read, which must be an image
-      or a video.
+      or a video, or an `artifact` asset naming an artifact that exists and is not a `story` or
+      `sidebar` (see "Artifact frames").
+
+`overlays` may hold `artifact` and `round_video` overlays on daemons with
+`capabilities.agentStories`. A round video's `upload` is checked and used once like a frame's; a
+kept round video must name a file of this story's own artifact that it already holds.
 
 The caller becomes `authorUserId`, `createdBy` is the caller, `source` is `null`, and `status` is
 `"draft"`. Response — `201`: `{ "story": { ... } }`, and `story.created` after commit, echoing
@@ -12060,7 +12165,9 @@ Response — `200`: `{ "story": { ... } }`.
 ### `PATCH /v0/stories/:storyId`
 
 Edits a draft or a posted story. Requires `If-Match` with the story's current `version`. Only the
-author may edit; anyone else receives `403 forbidden`.
+author may edit; anyone else receives `403 forbidden`. Nobody edits an agent's story, its person
+included: they repost it instead (see `POST /v0/stories/:storyId/repost`), so a `PATCH` of one is
+`403 forbidden`.
 
 Request — any of:
 
@@ -12116,6 +12223,9 @@ frames are no longer served. The author can still read the tombstone. Response �
 `{ "story": { ... } }`, with `story.deleted` after commit. Deleting a deleted story answers `200`
 and emits nothing.
 
+An agent's story is deleted by the person it was posted for, who is its author for this route; it
+leaves the ring and the conversation's inline story shows "This story was deleted".
+
 ### `POST /v0/stories/:storyId/seen`
 
 Records that the caller has seen this posted story and every earlier story by the same author.
@@ -12127,13 +12237,20 @@ seen, by `postedAt`. A call naming a story older than the mark changes nothing. 
 after commit, so their other devices update the ring. An author's own stories are always seen.
 Marking a draft is `409 conflict`.
 
+For an agent's story the mark is per viewer and ring instead: the newest story in that ring
+(`ringAgentId`) the person has seen, by `postedAt`, whichever agent of the task tree posted it.
+`story.seen` then carries `ringAgentId` too. An agent's story starts unseen, its person not being
+its author.
+
 ### Reactions
 
 Each person who may read a posted story has at most one reaction to it: one emoji. They react by
 tapping a reaction overlay, which reacts with its emoji, or with the heart in the viewer's bottom
 bar, which reacts with ❤️; pressing and holding the heart offers other emoji. Tapping the same
 emoji again removes the reaction, and reacting with another emoji replaces it. The author does not
-react to their own story; the viewer's bottom bar shows them `viewCount` instead.
+react to their own story; the viewer's bottom bar shows them `viewCount` instead. The person an
+agent's story was posted for may react to it like anyone else's; the agent sees the reaction
+through `list_stories`.
 
 Everyone who may read the story sees its `reactions` counts. Only the author sees who reacted,
 through `GET /v0/stories/:storyId/viewers`. Reacting also marks the story seen.
@@ -12224,6 +12341,73 @@ Anyone else who reads the conversation sees the draft without buttons, labelled 
 posted, the inline story shows its final version labelled "Posted", and opening it opens the
 viewer. Once deleted, it shows "This story was deleted".
 
+### `GET /v0/stories/:storyId/overlays/:overlayId/media`
+
+The bytes of one `round_video` overlay, served exactly as `GET /v0/stories/:storyId/frames/:frameId`
+serves a frame, single byte ranges included. `404` when the caller may not read the story, when it
+is deleted, or when it has no such round video.
+
+### `POST /v0/stories/:storyId/repost`
+
+Starts the caller's own story from an agent's story: an ordinary draft, which the person edits in
+the story editor and posts to their audience like any story of theirs. Only the person the agent's
+story was posted for may repost it, ended or not; anyone else receives `404`. Reposting a story
+that is not an agent's is `409 conflict`.
+
+Request — `{}`, or:
+
+```json
+{ "id": "s2w4e6r8t0y2u4i6o8p0a2s4", "mutationId": "..." }
+```
+
+`id` is optional and works as on `POST /v0/stories`: a repeated `id` returns the draft as it stands
+and makes nothing new. The draft copies the agent's story's caption and frames — new frame and
+overlay IDs, the same assets, placements, backgrounds, and overlays — so its frames name the same
+media without copying bytes, and artifact frames and windows stay live. Its `author` and
+`createdBy` are the caller, its `source` is the agent's story's `source`, and `repostOf` names the
+agent's story. Response — `201`: `{ "story": { ... } }`, with `story.created` after commit echoing
+`mutationId`. The reposted story itself is unchanged and stays in its ring.
+
+The repost is then edited with `PATCH` and posted with `POST /v0/stories/:storyId/post` as usual:
+editing may add round videos and any other overlay, and keeps `repostOf`, which no write can set or
+change.
+
+### `POST /v0/stories/:storyId/feedback`
+
+Feedback on an agent's story, typed in the viewer: an ordinary message from the caller to the agent
+that posted it (`author.agentId`, not the ring's root), quoting the frame. Only the person the story
+was posted for may send it; anyone else receives `404`. It is `409 conflict` for a story that is
+not an agent's, and when the agent no longer accepts messages, such as when it is archived.
+
+Request:
+
+```json
+{
+    "id": "m6n8b0v2c4x6z8l0k2j4h6g8",
+    "frameId": "f1a2b3c4d5e6f7g8h9i0j1k2",
+    "text": "Make the archive button red",
+    "mutationId": "..."
+}
+```
+
+- `id` — optional client-chosen CUID2 of the message, as on `POST /v0/agents/:agentId/send`; a
+  repeated `id` sends nothing new.
+- `frameId` — optional; the frame the viewer was on. Absent quotes the story as a whole.
+- `text` — required, 1–8,000 characters.
+
+The daemon sends `text` to the agent exactly as `POST /v0/agents/:agentId/send` would, on the mode
+the agent last ran with, preceded by one quoting line the same for every client:
+
+```text
+> Feedback on your story "Focus's ideas, right where they apply" (s7k2m9q4w1e5t8y3u6i0o2p5), frame 2 of 3
+Make the archive button red
+```
+
+The quoted title is the story's caption cut to its first line and 80 characters, or "Untitled"; the
+frame part is left out without `frameId`. Response — `202`:
+`{ "agentId": "...", "messageId": "..." }`. The agent answers in its own conversation, where the
+client may open it. Feedback does not mark the story seen or change it.
+
 ### "Post it": `draft_story`
 
 `draft_story` is a fixed common tool, offered to every ordinary agent conversation whose person has
@@ -12259,6 +12443,74 @@ The call presents the story inline (see "The inline draft") and returns its stor
 Auto, because a draft is visible only to its author and nothing is posted; it is refused in Read
 only.
 
+### Agent stories
+
+An agent posts a story to say it shipped something: a release went out, a change was merged, an
+artifact was published, there is something the person can try. The story is the same object as a
+person's, made from the same frames and overlays, with `author` naming the agent. It goes straight
+into the agent's ring, with no draft and no Post button, and is visible only to the person it was
+posted for: the conversation's person, as for `draft_story`, or, for a subtask no person has
+written in, the person of its nearest ancestor that has one. Teammates see it only if that person
+reposts it.
+
+**Rings.** A ring is drawn around a sidebar row's icon. It belongs to the row's agent — a task's or
+a bot's own agent — and holds the live stories of that agent and of every subtask below it, so
+subtasks' stories roll up into their task's or bot's ring (`ringAgentId`). A session row shows no
+ring. Coloured segments are stories the person has not seen and grey ones are seen; a row with no
+live story has no ring. Clicking the ring opens the viewer on the ring's first unseen story (or its
+first story when all are seen); clicking the row's text opens the conversation as before. The
+viewer plays the ring's stories oldest first, then closes. The ring never spins or animates
+progress.
+
+**Ending.** Agents' stories have no 24-hour clock. A story leaves its ring only when it ends:
+
+- **superseded** — a later `post_story` names it in `supersedes`. Any live story in the same ring
+  may be superseded, whichever agent of the tree posted it;
+- **withdrawn** — `withdraw_story` names it, again within the same ring;
+- **archived** — the ring's task or bot is archived. Archiving a subtask ends nothing: its stories
+  stay in the root's ring until they are superseded, withdrawn, or the root is archived.
+
+Ending is final. Whether an agent supersedes or withdraws, and when, is its own judgement, made
+from its tools' instructions; the daemon only applies what it is told, within the ring.
+
+**The viewer.** A client shows an agent's story in the same viewer as anyone's, with the agent's row
+icon and conversation title in the header, a text field reading "Tell the agent what to change…"
+that sends `POST /v0/stories/:storyId/feedback` for the frame shown, the heart, and a repost button
+(↻) that calls `POST /v0/stories/:storyId/repost` and opens the editor on the draft it returns.
+
+**Tools.** Every conversation offered `draft_story` whose agent is a task's or a bot's own agent or
+a subtask is also offered these fixed common tools. Hidden subagents and Prioritizing are not.
+
+| Tool             | Arguments                                                          | Does                                                                    |
+| ---------------- | ------------------------------------------------------------------ | ----------------------------------------------------------------------- |
+| `post_story`     | `frames`, `caption`, `overlays` as for `draft_story`; `supersedes` | Posts an agent's story to this conversation's ring for its person       |
+| `withdraw_story` | `storyIds`, 1–10 live stories in this conversation's ring          | Ends them as withdrawn                                                  |
+| `list_stories`   | none                                                               | The ring's live stories: who posted each, caption, when, seen, reaction |
+| `set_status`     | `text`, 1–120 characters on one line, or `null` to clear           | Sets this agent's `statusLine`, the second line of its row or session   |
+
+`post_story` takes the frames `draft_story` takes, and one more kind: `{ "artifactId", "version" }`
+without `path`, an artifact this conversation presented, shown live as an artifact frame; without
+`version` it always shows the latest. Its overlays add `{ "type": "artifact", "artifactId",
+"version", "aspectRatio", "transform" }`, a live window onto such an artifact. Without `frames`, the
+daemon chooses as for `draft_story`. `supersedes` lists live stories in the same ring that the new
+one replaces; they end in the same change that posts it, and an ID that is not a live story of
+that ring fails the call and posts nothing. The result names the story and lists the ring's
+remaining live stories.
+
+`post_story` and `withdraw_story` need no review in Auto: the story is visible only to the person,
+and nothing reaches anyone else. `set_status` and `list_stories` need none either. Read only
+refuses `post_story`, `withdraw_story`, and `set_status`. Each call is keyed by its tool call, so a
+call repeated after a restart posts, ends, or sets nothing a second time.
+
+The tools' instructions decide when to post, and they are the product: post only when something
+real shipped that the person can see or try, never progress; supersede the agent's earlier story
+whenever it posts again, and withdraw stories that went stale — superseded or reverted work, or
+something the person already acknowledged by watching, reacting, or replying; keep at most one live
+story per agent and, across a task tree, only the freshest. Captions and status lines are written
+for someone who is not reading the code: what changed for them, in plain words, without commit
+hashes, versions, test counts, file names, or scores such as "14/14" unless the person asked for
+them.
+
 ### `GET /v0/stories/feed`
 
 Everything a client needs to draw the stories row: one circle per author, in rank order, with the
@@ -12292,6 +12544,14 @@ Response — `200`:
             "latestPostedAt": 1755400000000
         }
     ],
+    "rings": [
+        {
+            "agentId": "a9b8c7d6e5f4g3h2i1j0k9l8",
+            "storyIds": ["s5g6h7j8k9l0z1x2c3v4b5n6"],
+            "unseenCount": 1,
+            "latestPostedAt": 1755400500000
+        }
+    ],
     "stories": {
         "s7k2m9q4w1e5t8y3u6i0o2p5": {
             /* story object */
@@ -12316,8 +12576,21 @@ Response — `200`:
   circle.
 - `draftCount` — on the caller's own circle, how many drafts they have; `null` on every other.
 - `latestPostedAt` — when the author's newest story in `storyIds` was posted, or `null`.
-- `stories` — every story `storyIds` names, from the caller's view, keyed by ID.
+- `rings` — optional additive, always emitted by daemons with `capabilities.agentStories`: one
+  entry per sidebar ring with at least one live story posted for the caller, newest
+  `latestPostedAt` first. `agentId` is the ring's agent (`ringAgentId`): match it to the sidebar
+  row whose target `agentId` it is. `storyIds` are its live stories in viewing order, oldest first;
+  `unseenCount` how many of them the caller has not seen; `latestPostedAt` when the newest was
+  posted. A ring absent from the list has nothing to show. An agent's stories never appear in
+  `authors`.
+- `stories` — every story `storyIds` names, in `authors` and `rings`, from the caller's view, keyed
+  by ID.
 - `cursor` — the event cursor this read is current at; follow `story.*` events from it.
+
+A client keeps rings live from events: `story.posted` of a story with an agent `author` adds it to
+the end of its `ringAgentId`'s ring, unseen; `story.ended` and `story.deleted` take it out; and
+`story.seen` with a `ringAgentId` marks every story of that ring posted at or before the named one
+as seen.
 
 How the row behaves, the same in every client:
 
@@ -12362,7 +12635,8 @@ again. In standalone mode the row is the caller's circle alone.
 All `story.*` events are journaled, follow the version-chain rules, and reach only the
 connections of people who may read the story as it is after the change.
 
-- `story.created` — a new story, in full. Only drafts are created, so it reaches the author only.
+- `story.created` — a new draft, in full. It reaches the author only. An agent's story is never
+  a draft: `post_story` emits only `story.posted`, reaching the person it was posted for.
 - `story.updated` — `storyId`, `previousVersion`, `version`, the whole `story`, and optional
   `mutationId`.
 - `story.posted` — the whole `story`. It reaches every member of its audience, who reads the feed
@@ -12371,7 +12645,12 @@ connections of people who may read the story as it is after the change.
   it was deleted.
 - `story.seen` — `authorUserId` and `storyId`, the viewer's new mark for that author. It reaches
   only the person who saw it. The author's `viewCount` changes without an event; the author's
-  client reads the story again when it shows the count.
+  client reads the story again when it shows the count. For an agent's story it also carries
+  `ringAgentId`, and the mark is for that ring.
+- `story.ended` — an agent's story left its ring: `storyId`, `version`, `ringAgentId`, `endedAt`,
+  `endReason`, and the whole `story`. It reaches the person the story was posted for. A story
+  superseded by a new one ends in the same change that posts it, and its `story.ended` is
+  delivered right after the new story's `story.posted`.
 - `story.reacted` — `storyId`, the story's new `reactions`, and optional `mutationId`. It reaches
   everyone who may read the story; the reacting person's own copy also carries their new
   `myReaction`. The author's client reads `viewers` again when it shows them.
@@ -13625,7 +13904,10 @@ version rules. Snapshot-to-stream cursor and version-gap recovery rules remain u
 - `story.deleted` — a story became a tombstone. It reaches everyone who could read it before.
     - `storyId`, `version`, `mutationId`.
 - `story.seen` — the person's seen mark for an author moved. Only that person receives it.
-    - `authorUserId`, `storyId`.
+    - `authorUserId`, `storyId`, `ringAgentId` (only for an agent's story).
+- `story.ended` — an agent's story left its ring, superseded, withdrawn, or archived. Only the
+  person it was posted for receives it.
+    - `storyId`, `version`, `ringAgentId`, `endedAt`, `endReason`, `story`.
 - `story.reacted` — a story's reaction counts changed. It reaches those who may read the story.
     - `storyId`, `reactions`, `myReaction` (only in the reacting person's copy), `mutationId`.
 - `sticker_recents.updated` — the person's recently used stickers changed. Only that person
