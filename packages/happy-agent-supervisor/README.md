@@ -47,6 +47,11 @@ Windows retains Codex's native restricted-token model. A folder granting write a
 This release does not include Codex TUI's additional world-writable-folder audit; use normal
 per-user project directories. Broader filesystem hardening is deferred.
 
+Workspaces outside the Windows user profile run as separate sandbox accounts whose group is
+permanently denied the profile (setup version 10). The flaw this fixes, why it needs one elevated
+setup, the alternatives considered, and how to verify and roll it back are in
+[`native/windows/EXTERNAL_SANDBOX_IDENTITY.md`](native/windows/EXTERNAL_SANDBOX_IDENTITY.md).
+
 ## Install
 
 ```sh

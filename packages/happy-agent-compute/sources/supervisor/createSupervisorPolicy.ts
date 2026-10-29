@@ -24,7 +24,6 @@ export function createSupervisorPolicy(options: {
     deniedReadPaths?: readonly string[];
     allowedWritePaths?: readonly string[];
     deniedWritePaths?: readonly string[];
-    deniedWriteFilePaths?: readonly string[];
     network?: ComputeNetworkPermissions;
     /** Forces a proxy even for an empty host list, which means "deny every destination". */
     networkProxy?: boolean;
@@ -73,9 +72,7 @@ export function createSupervisorPolicy(options: {
         ...(deniedWritePaths === undefined
             ? {}
             : { deniedWritePaths: absolutePaths(deniedWritePaths) }),
-        ...(options.deniedWriteFilePaths === undefined
-            ? {}
-            : { deniedWriteFilePaths: absolutePaths(options.deniedWriteFilePaths) }),
+
         network: nativeNetwork,
     });
 }

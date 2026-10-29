@@ -1,6 +1,10 @@
+// Protected project paths that exist stay immutable; protected paths that do not exist stay absent.
+// The supervisor never materializes a placeholder to hang a deny ACE on. Removing a protected path
+// a command creates is the caller's job (Happy Agent Compute's protected path monitor), so this
+// check runs commands that leave missing protected paths alone and proves none appear.
 import { mkdtemp, writeFile, readFile, stat, access } from "node:fs/promises";
 import { spawn, spawnSync } from "node:child_process";
-import { join, resolve, isAbsolute } from "node:path";
+import { join, isAbsolute } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
@@ -17,8 +21,9 @@ const state = process.env.HAPPY_WINDOWS_SANDBOX_HOME;
 if (!state || !isAbsolute(state))
     throw new Error("Set HAPPY_WINDOWS_SANDBOX_HOME to the provisioned Happy sandbox state.");
 const outside = root + "-outside.toml";
-const files = ["happy.toml", "AGENTS.md", "AGENTS_SECURITY.md", "mcp.toml", "keep.toml"];
-const directories = [".git", ".agents", ".codex"];
+const existing = ["keep.toml"];
+const missingFiles = ["happy.toml", "AGENTS.md", "AGENTS_SECURITY.md", "mcp.toml"];
+const missingDirectories = [".agents", ".codex"];
 const shortPath = spawnSync(
     "powershell.exe",
     [
@@ -32,33 +37,30 @@ const shortPath = spawnSync(
 assert.equal(shortPath.status, 0, shortPath.stderr);
 const policyRoot = shortPath.stdout.trim();
 assert.ok(isAbsolute(policyRoot), "Windows returned an absolute short path");
-assert.equal((await stat(policyRoot)).isDirectory(), true);
 console.log(JSON.stringify({ fixture: root, policyRoot, shortPathCheck: true }));
 assert.equal(spawnSync(git, ["init", root], { windowsHide: true }).status, 0);
 await writeFile(join(root, "keep.toml"), "keep = 1\n");
 const policy = {
     mode: "workspace_write",
     allowedReadPaths: [node, git],
-    // Missing names must remain protected even when their spelling differs from
-    // the filesystem casing of the existing workspace root.
-    deniedWritePaths: [...files, ...directories]
+    // Protected names must hold even when their spelling differs from the filesystem casing of
+    // the existing workspace root.
+    deniedWritePaths: [...existing, ...missingFiles, ".git", ...missingDirectories]
         .map((n) => join(policyRoot, n).toUpperCase())
         .concat(outside),
-    deniedWriteFilePaths: files.map((n) => join(policyRoot, n).toUpperCase()).concat(outside),
     network: { egress: false, localBinding: false },
 };
 const program = `const fs=require('fs');const cp=require('child_process');const result={};
 const deny=(label,fn)=>{try{fn();result[label]='ALLOWED'}catch(e){result[label]=e.code}};
+result.absent=${JSON.stringify([...missingFiles, ...missingDirectories])}.filter((n)=>fs.existsSync(n));
 fs.writeFileSync('normal-file.txt','normal write works\\n');
-deny('write',()=>fs.writeFileSync('happy.toml','BAD'));
-deny('delete',()=>fs.unlinkSync('happy.toml'));
-deny('rename',()=>fs.renameSync('happy.toml','moved.toml'));
+deny('write',()=>fs.writeFileSync('keep.toml','BAD'));
+deny('delete',()=>fs.unlinkSync('keep.toml'));
+deny('rename',()=>fs.renameSync('keep.toml','moved.toml'));
 fs.writeFileSync('replacement.tmp','BAD');
-deny('replace',()=>fs.renameSync('replacement.tmp','happy.toml'));
-deny('child',()=>fs.writeFileSync('.agents/payload.txt','BAD'));
-deny('removeDirectory',()=>fs.rmdirSync('.codex'));
-deny('renameDirectory',()=>fs.renameSync('.agents','moved-agents'));
-result.empty=fs.readFileSync('happy.toml','utf8');
+deny('replace',()=>fs.renameSync('replacement.tmp','keep.toml'));
+deny('child',()=>fs.writeFileSync('.git/payload.txt','BAD'));
+deny('renameDirectory',()=>fs.renameSync('.git','moved-git'));
 result.existing=fs.readFileSync('keep.toml','utf8');
 result.git=cp.execFileSync(${JSON.stringify(git)},['-c',${JSON.stringify("safe.directory=" + root.replaceAll("\\", "/"))},'status','--short'],{encoding:'utf8',windowsHide:true});
 console.log(JSON.stringify(result));`;
@@ -93,29 +95,22 @@ async function run() {
     const error = Buffer.concat(stderr).toString();
     assert.equal(code, 0, JSON.stringify({ code, output, error }));
     const result = JSON.parse(output);
-    for (const dir of directories)
-        assert.equal((await stat(join(root, dir))).isDirectory(), true, `${dir} placeholder`);
-    for (const key of [
-        "write",
-        "delete",
-        "rename",
-        "replace",
-        "child",
-        "removeDirectory",
-        "renameDirectory",
-    ])
+    // Absent before the command, during it, and after it.
+    assert.deepEqual(result.absent, [], "the supervisor materialized a protected path");
+    for (const key of ["write", "delete", "rename", "replace", "child", "renameDirectory"])
         assert.match(result[key], /^(EACCES|EPERM)$/u, key + ": " + result[key]);
-    assert.equal(result.empty, "");
     assert.equal(result.existing, "keep = 1\n");
     assert.match(result.git, /normal-file\.txt/);
     console.log(JSON.stringify({ fixture: root, result }));
 }
 await run();
 await run();
-for (const file of files) assert.equal((await stat(join(root, file))).isFile(), true, file);
-for (const dir of directories) assert.equal((await stat(join(root, dir))).isDirectory(), true, dir);
+for (const name of [...missingFiles, ...missingDirectories])
+    await assert.rejects(access(join(root, name)), { code: "ENOENT" }, name);
 await assert.rejects(access(outside), { code: "ENOENT" });
+assert.equal((await stat(join(root, ".git"))).isDirectory(), true);
+assert.equal(await readFile(join(root, "keep.toml"), "utf8"), "keep = 1\n");
 assert.equal(await readFile(join(root, "normal-file.txt"), "utf8"), "normal write works\n");
 console.log(
-    "PASS native placeholders: file types, existing bytes, write/delete/rename/replacement denial, normal writes, Git, repeated execution, and no outside materialization.",
+    "PASS native protected paths: existing paths deny write/delete/rename/replacement, missing paths are never materialized, normal writes and Git work, repeated execution.",
 );

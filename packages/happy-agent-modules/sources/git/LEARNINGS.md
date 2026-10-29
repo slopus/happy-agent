@@ -47,6 +47,15 @@ spends hundreds of watches per checkout instead of tens of thousands. Polling re
 fallback for a tree that cannot be watched, backs off while nothing changes, and proves "nothing
 changed" with a status and a stat of each changed path before it will run a diff.
 
+## "Git changes are unavailable" everywhere can be the sandbox, not Git
+
+On Windows, every workspace at once showing Git changes as unavailable was a sandbox ACL problem:
+the sandbox group had been denied the whole user profile, so the read-only scanner could not read
+any repository inside it. Check `icacls $env:USERPROFILE` for a `HappySandboxUsers` deny before
+debugging Git. Setup now removes such a deny on its own; why it existed and how workspaces outside
+the profile avoid it are in
+`packages/happy-agent-supervisor/native/windows/EXTERNAL_SANDBOX_IDENTITY.md`.
+
 ## A working-tree watch must never be replaced or outlive its folder
 
 Two watcher failures surfaced only in the release gate. On Linux, replacing a folder's Parcel

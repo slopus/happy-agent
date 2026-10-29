@@ -18,21 +18,13 @@ export function createSupervisorCommand(options: {
     shell: string;
     supervisorPath: string;
 }): SupervisorCommand {
-    const environment = options.environment ?? process.env;
-    // Native Windows resolves its installation state from the actual Windows user profile.
-    // App homes, project folders, and emulated HOME/USERPROFILE values must not select accounts.
-    const sandboxState = environment.HAPPY_WINDOWS_SANDBOX_HOME?.trim() || undefined;
     return {
         args: [
             "--policy",
             JSON.stringify(options.policy),
             ...((options.platform ?? process.platform) === "win32"
                 ? [
-                      ...(environment.HAPPY_WINDOWS_SANDBOX_NO_PROVISION === "1" ||
-                      process.env.HAPPY_WINDOWS_SANDBOX_NO_PROVISION === "1"
-                          ? ["--no-provision"]
-                          : []),
-                      ...(sandboxState === undefined ? [] : ["--state-dir", sandboxState]),
+                      ...windowsStateArgs(options.environment),
                       "--cwd",
                       options.cwd ?? process.cwd(),
                       ...(options.tty === true ? ["--tty"] : []),
@@ -44,4 +36,70 @@ export function createSupervisorCommand(options: {
         ],
         command: options.supervisorPath,
     };
+}
+
+/**
+ * A native Windows worker that runs many read-only commands for one workspace over its stdio.
+ *
+ * The worker logs on to the sandbox account and prepares its desktop and scratch directory once,
+ * instead of once per command.
+ */
+export function createSupervisorWorkerCommand(options: {
+    cwd: string;
+    environment?: NodeJS.ProcessEnv;
+    policy: SupervisorPolicy;
+    supervisorPath: string;
+}): SupervisorCommand {
+    if (options.policy.mode !== "read_only") {
+        throw new Error("A sandbox worker runs only read-only commands.");
+    }
+    return {
+        args: [
+            "--policy",
+            JSON.stringify(options.policy),
+            ...windowsStateArgs(options.environment),
+            "--cwd",
+            options.cwd,
+            "--worker",
+        ],
+        command: options.supervisorPath,
+    };
+}
+
+/**
+ * A native Windows runner that runs one workspace's shell commands, concurrently, under one policy.
+ *
+ * Each command arrives on stdin with its own argv and complete environment; the runner holds none
+ * of its own to pass on.
+ */
+export function createSupervisorShellRunnerCommand(options: {
+    cwd: string;
+    environment?: NodeJS.ProcessEnv;
+    policy: SupervisorPolicy;
+    supervisorPath: string;
+}): SupervisorCommand {
+    return {
+        args: [
+            "--policy",
+            JSON.stringify(options.policy),
+            ...windowsStateArgs(options.environment),
+            "--cwd",
+            options.cwd,
+            "--shell-runner",
+        ],
+        command: options.supervisorPath,
+    };
+}
+
+function windowsStateArgs(environment: NodeJS.ProcessEnv = process.env): string[] {
+    // Native Windows resolves its installation state from the actual Windows user profile.
+    // App homes, project folders, and emulated HOME/USERPROFILE values must not select accounts.
+    const sandboxState = environment.HAPPY_WINDOWS_SANDBOX_HOME?.trim() || undefined;
+    return [
+        ...(environment.HAPPY_WINDOWS_SANDBOX_NO_PROVISION === "1" ||
+        process.env.HAPPY_WINDOWS_SANDBOX_NO_PROVISION === "1"
+            ? ["--no-provision"]
+            : []),
+        ...(sandboxState === undefined ? [] : ["--state-dir", sandboxState]),
+    ];
 }

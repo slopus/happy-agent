@@ -29,6 +29,11 @@ export interface ProcessTransport {
     onStdout(listener: (chunk: Buffer) => void): void;
     /** Releases every listener; the command may still be running. */
     release(): void;
+    /**
+     * Stops the command and everything it started, for a transport whose command the host
+     * cannot signal by process id. The exit is still reported through `onExit` or `onError`.
+     */
+    terminate?(): void;
     write(data: string | Uint8Array): boolean;
 }
 
@@ -58,16 +63,10 @@ export async function startProcessTransport<Result>(
     started: (ctx: Context, transport: ProcessTransport) => Result | PromiseLike<Result>,
 ): Promise<Awaited<Result>> {
     return await ctx.span("compute.process.spawn", async (ctx) => {
-        const executable =
-            options.args === undefined ? (options.shell ?? resolveSystemShell()) : options.command;
-        const args =
-            options.args === undefined
-                ? shellCommandArgs(executable, options.command)
-                : [...options.args];
         const transport =
-            options.tty === true
-                ? startPtyTransport(executable, args, options)
-                : startPipeTransport(executable, args, options);
+            options.transport === undefined
+                ? startLocalTransport(options)
+                : await options.transport();
         // Attach lifecycle listeners before the traced callback yields. A command may exit in the
         // first microtask after spawn, and observing it must not depend on tracing latency.
         let result: Result | PromiseLike<Result>;
@@ -76,7 +75,9 @@ export async function startProcessTransport<Result>(
             await transport.initialize(options.initialStdin);
         } catch (error) {
             try {
-                if (transport.pid !== null) {
+                if (transport.terminate !== undefined) {
+                    transport.terminate();
+                } else if (transport.pid !== null) {
                     await killProcessTree(ctx, transport.pid, "SIGKILL");
                 }
             } finally {
@@ -86,6 +87,18 @@ export async function startProcessTransport<Result>(
         }
         return await result;
     });
+}
+
+function startLocalTransport(options: ProcessStartOptions): ProcessTransport {
+    const executable =
+        options.args === undefined ? (options.shell ?? resolveSystemShell()) : options.command;
+    const args =
+        options.args === undefined
+            ? shellCommandArgs(executable, options.command)
+            : [...options.args];
+    return options.tty === true
+        ? startPtyTransport(executable, args, options)
+        : startPipeTransport(executable, args, options);
 }
 
 function startPipeTransport(
