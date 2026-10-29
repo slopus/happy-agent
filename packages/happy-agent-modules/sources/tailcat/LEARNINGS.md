@@ -67,6 +67,16 @@ binary acting as Bun through `BUN_BE_BUN`, which every other runtime ignores. A 
 its side ends the connection, as the relay did, so pipes left behind by a stopped Tailcat exit
 when their stdin closes.
 
+The pipe must not exit until its last byte has left stdout. The daemon closes each response's
+connection right after writing it, and the pipe used to exit from the callback of an empty
+`stdout.write('')`. On Bun 1.4.4, the runtime Happy Agent ships, that callback fires before
+earlier output has flushed. Large responses, such as a phone's 130–250 KB message pages, then lost
+their tail, and the phone saw the chunked body end mid-chunk. Node and Bun 1.4.0 flushed in time,
+which is why the module tests running on Node missed it. The pipe now ends stdout and exits from
+`end`'s callback. Tailcat half-closes the connection when stdout closes, so the peer still gets
+every byte and then its FIN. A gym test reads a 1 MiB file through the mobile connector the way
+the iOS app does, ten times, and checks the bytes.
+
 Each new connection pays for one short-lived process. On real Tailcat between two processes on one
 Mac, a fresh connection and request took about 1 ms through the relay, about 15 ms through the
 release binary's pipe, and about 45 ms under Node from source; each open connection's pipe holds

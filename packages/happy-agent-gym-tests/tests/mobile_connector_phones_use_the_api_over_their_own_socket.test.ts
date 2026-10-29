@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { request as httpRequest } from "node:http";
-import { createServer, type Socket } from "node:net";
+import { createConnection, createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -137,6 +137,50 @@ async function phoneHttp(
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
     return { status: response.status, body: await response.json().catch(() => null) };
+}
+
+interface RawResponse {
+    readonly status: number;
+    readonly headers: string;
+    /** The decoded body, or `undefined` when the connection closed before it was complete. */
+    readonly body: Buffer | undefined;
+}
+
+/**
+ * One request the way the iOS app sends it: a fresh connection, `connection: close`, and the
+ * response read until the connector closes it. The body must be complete by then.
+ */
+async function phoneRawGet(path: string, credential: string): Promise<RawResponse> {
+    const raw = await new Promise<Buffer>((resolve, reject) => {
+        const parts: Buffer[] = [];
+        const connection = createConnection({ host: "127.0.0.1", port: TAILNET_PORT });
+        connection.on("data", (part: Buffer) => parts.push(part));
+        connection.once("error", reject);
+        connection.once("close", () => resolve(Buffer.concat(parts)));
+        connection.write(
+            `GET ${path} HTTP/1.1\r\nhost: ${FAKE_ADDRESS}\r\nauthorization: Bearer ${credential}\r\n` +
+                "connection: close\r\n\r\n",
+        );
+    });
+    const headEnd = raw.indexOf("\r\n\r\n");
+    if (headEnd < 0) throw new Error(`The connection closed after ${raw.length} bytes of head.`);
+    const headers = raw.subarray(0, headEnd).toString("latin1");
+    const status = Number(/^HTTP\/1\.1 (\d{3})/u.exec(headers)?.[1]);
+    const rest = raw.subarray(headEnd + 4);
+    if (!/^transfer-encoding:\s*chunked\s*$/imu.test(headers)) {
+        const length = Number(/^content-length:\s*(\d+)\s*$/imu.exec(headers)?.[1]);
+        return { status, headers, body: rest.length === length ? rest : undefined };
+    }
+    const chunks: Buffer[] = [];
+    for (let cursor = 0; ; ) {
+        const lineEnd = rest.indexOf("\r\n", cursor);
+        if (lineEnd < 0) return { status, headers, body: undefined };
+        const size = Number.parseInt(rest.subarray(cursor, lineEnd).toString("latin1"), 16);
+        if (size === 0) return { status, headers, body: Buffer.concat(chunks) };
+        if (lineEnd + 2 + size + 2 > rest.length) return { status, headers, body: undefined };
+        chunks.push(rest.subarray(lineEnd + 2, lineEnd + 2 + size));
+        cursor = lineEnd + 2 + size + 2;
+    }
 }
 
 /** Text messages each WebSocket received, kept from the moment it was created. */
@@ -427,6 +471,30 @@ describe("phones use the Happy Agent API over the mobile connector's own socket"
             status: 200,
         });
         keptSocket.terminate();
+        expect(gym.errors).toEqual([]);
+    }, 60_000);
+
+    it("delivers a large response in full before closing a phone's connection", async () => {
+        const gym = await mobileGym();
+        const paired = await pairPhone(gym);
+        const workspaceId = (await gym.client.getAgent(gym.defaultSessionId)).agent.workspaceId!;
+        const bytes = randomBytes(1024 * 1024);
+        await writeFile(join(gym.workspacePath, "large.bin"), bytes);
+
+        // The daemon closes each connection right after its last byte; the pipe used to exit
+        // before that byte reached the phone, which saw the body end mid-chunk.
+        for (let attempt = 0; attempt < 10; attempt += 1) {
+            const response = await phoneRawGet(
+                `/v0/workspaces/${workspaceId}/file?path=large.bin`,
+                paired.deviceToken,
+            );
+            expect(response.status).toBe(200);
+            expect(response.body, `attempt ${String(attempt + 1)}`).toBeDefined();
+            const { content } = JSON.parse(response.body!.toString("utf8")) as {
+                content: string;
+            };
+            expect(Buffer.from(content, "base64").equals(bytes)).toBe(true);
+        }
         expect(gym.errors).toEqual([]);
     }, 60_000);
 

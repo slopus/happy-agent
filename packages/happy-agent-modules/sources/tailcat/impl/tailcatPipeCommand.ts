@@ -21,8 +21,9 @@ const PIPE_SCRIPT = [
     "    upstream.pipe(process.stdout);",
     "});",
     "upstream.once('finish', exit);",
-    // A pipe never ends stdout, so the daemon's close waits for its last write to flush instead.
-    "upstream.once('end', () => process.stdout.write('', exit));",
+    // A pipe never ends stdout, so the daemon's close ends it here and exits once it has flushed.
+    // Bun calls back an empty write before earlier output is flushed, and exiting then drops it.
+    "upstream.once('end', () => process.stdout.end(exit));",
 ].join("\n");
 
 export interface TailcatPipeCommand {
