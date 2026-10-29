@@ -22,7 +22,7 @@ const setStatusToolInputSchema = Type.Object(
             ],
             {
                 description:
-                    "A short plain-language status on where the work stands for the person, or null to clear it.",
+                    "A short plain-language status on where the work stands for the person, or null to remove it.",
             },
         ),
     },
@@ -41,14 +41,14 @@ export function setStatusTool(stories: StoriesModule, scope: AgentModuleScope) {
         name: "set_status",
         defer: true,
         capabilities: [
-            "Set the short status shown under this conversation's title in the person's sidebar, saying where the work stands for them; clear it when you finish.",
+            "Set the short status shown under this conversation's title in the person's sidebar, saying where the work stands for them; keep it current at key moments.",
         ],
         searchKeywords: ["status", "set status", "sidebar subtitle", "progress line"],
         description: [
-            'Set the status shown under this conversation\'s title in the person\'s sidebar, like the preview under a chat in Telegram. It tells them at a glance where the work stands for them, in plain words: "Testing with a few friends", "Ready for you to try on your phone", "Stuck on the payment provider\'s sign-up". The row wraps it onto at most two lines and cuts the rest, so write one or two short phrases, about 70 characters, never more than 120, and no line breaks.',
+            'Set the status shown under this conversation\'s title in the person\'s sidebar, like the preview under a chat in Telegram. It tells them at a glance where the work stands for them, in plain words: "Visualization ready", "On main, ready to release", "Shipped to preview", "Stuck on the payment provider\'s sign-up". The row wraps it onto at most two lines and cuts the rest, so write one or two short phrases, about 70 characters, never more than 120, and no line breaks.',
             'When the work has a few clear stages, you may lead with a tiny cue of them in plain text, one dot per stage: ● for done, [●] for the one under way, ○ for still to come, such as "● ● [●] ○ Checkout works, testing payments next". Use it only when the stages are real and few; it replaces a count, never adds one.',
-            'Write it for someone who is not reading the code. No commit hashes, versions, test counts, file or branch names, or counts like "step 3/7" unless the person asked for them. The row already shows whether you are working or waiting on the person, so never say only that ("Working…", "Waiting on you"); say what for.',
-            "Change it when where things stand changes in a way the person would care about, not on every step. When you finish, or it no longer says anything true, clear it with null; a status left behind on finished work is noise.",
+            'Write it for someone who is not reading the code. No commit hashes, test counts, file or branch names, or counts like "step 3/7" unless the person asked for them; a release version is fine when shipping it is the news. The row already shows whether you are working or waiting on the person, so never say only that ("Working…", "Waiting on you"); say what for.',
+            'Almost always keep one: it should say plainly what this conversation is doing or where it ended up, even when the work is done ("Shipped to preview", "On main", "Plan agreed"). Set it early, then change it only at key moments the person would notice: a plan agreed, something ready to try, shipped, stuck. Never update it on every step. Clear it with null only when it would otherwise say something untrue and nothing true is worth saying.',
         ].join("\n\n"),
         parameters: setStatusToolInputSchema,
         returnType: setStatusResultSchema,

@@ -55,8 +55,10 @@ Rows show `statusLine` under the title, wrapped onto at most two lines like a ch
 Telegram. Kirill wanted tiny step cues such as `● ● [●] ○`. Both are carried by the prompt, not
 the API: `text` stays one string of at most 120 characters with no line break, and `set_status`
 tells the agent to write one or two short phrases (about 70 characters), optionally led by that
-dot cue for a few real stages, and to clear the status with `null` when it finishes, because a
-status left on finished work is noise.
+dot cue for a few real stages. Kirill then corrected the lifetime: the status almost always stays and
+states plainly where the conversation is, finished work included ("Shipped to preview", "On main"),
+and it changes only at key moments, never on every step. `null` is for a status that would
+otherwise be untrue.
 
 ## Story pages fill the frame because the prompt says so
 
