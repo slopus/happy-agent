@@ -8417,11 +8417,9 @@ export class ApiModule implements AgentModule {
             return;
         }
         const project = await this.#projects.projectForAgent(ctx, agentId);
-        if (
-            project === undefined &&
-            this.#subtasks?.isSubtask(await this.#agentSystem().config(ctx, agentId))
-        ) {
-            // Shared-filesystem subtasks have no owner-series membership to change.
+        if (project === undefined && (await this.#agentSystem().parentOf(ctx, agentId)) !== null) {
+            // Shared-filesystem subtasks and hidden collaborators belong to their creator's tree
+            // and have no owner-series membership to change.
             return;
         }
         if (project === undefined) throw notFound("The agent owner was not found.");
