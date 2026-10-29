@@ -177,7 +177,7 @@ export function gitCommandRunnerFromScanGitRunner(runGit: ScanGitRunner): GitCom
     };
 }
 
-function scanEnvironment(cwd: string, gitCeilingDirectories?: string): NodeJS.ProcessEnv {
+export function scanEnvironment(cwd: string, gitCeilingDirectories?: string): NodeJS.ProcessEnv {
     const environment: NodeJS.ProcessEnv = { ...process.env };
     for (const name of STRIPPED_ENVIRONMENT) delete environment[name];
     // The shared sandbox correctly withholds private home-directory files. Tell Git not to probe
@@ -200,6 +200,9 @@ function scanEnvironment(cwd: string, gitCeilingDirectories?: string): NodeJS.Pr
         environment.GIT_CEILING_DIRECTORIES = gitCeilingDirectories;
     }
     environment.LC_ALL = "C";
+    // A scan runs for every watched workspace on every daemon start. It must never open the
+    // one-time Windows administrator prompt, which nobody asked for at that moment.
+    environment.HAPPY_WINDOWS_SANDBOX_BACKGROUND = "1";
     if (process.platform !== "win32") environment.SHELL = "/bin/bash";
     return environment;
 }

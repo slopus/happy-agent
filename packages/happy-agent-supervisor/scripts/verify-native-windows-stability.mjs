@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,13 +16,15 @@ const supervisor = fileURLToPath(
 const cwd = await mkdtemp(join(tmpdir(), "happy-stability-"));
 const outside = cwd + "-outside.txt";
 const protectedPath = join(cwd, ".agents");
+const missingProtectedPath = join(cwd, "AGENTS.md");
 await writeFile(outside, "outside remains protected");
+await mkdir(protectedPath);
 
 function run(mode) {
     const policy = {
         mode,
         allowedReadPaths: [process.execPath],
-        deniedWritePaths: [protectedPath, outside],
+        deniedWritePaths: [protectedPath, missingProtectedPath, outside],
         network: { egress: false, localBinding: false },
     };
     const program = `const fs=require('node:fs'),a=require('node:assert/strict');
@@ -105,6 +108,10 @@ try {
     );
     assert.equal(await readFile(outside, "utf8"), "outside remains protected");
     assert.equal(await readFile(join(cwd, "proof.txt"), "utf8"), "allowed");
+    assert.ok(
+        !existsSync(missingProtectedPath),
+        "Missing protected paths must not be materialized",
+    );
     console.log(
         JSON.stringify({
             commands: 66,
@@ -114,6 +121,7 @@ try {
             readOnly: "enforced",
             outsideWrites: "denied",
             protectedWrites: "denied",
+            missingProtectedPaths: "absent",
         }),
     );
 } finally {

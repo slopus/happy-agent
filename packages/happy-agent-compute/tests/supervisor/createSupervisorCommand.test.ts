@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createSupervisorCommand } from "../../sources/supervisor/createSupervisorCommand.js";
+import {
+    createSupervisorCommand,
+    createSupervisorWorkerCommand,
+} from "../../sources/supervisor/createSupervisorCommand.js";
 
 afterEach(() => vi.unstubAllEnvs());
 const options = {
@@ -52,6 +55,28 @@ describe("Windows supervisor setup selection", () => {
             }).args,
         ).toContain("--no-provision");
     });
+    it("marks a background launch from its own environment so it never opens the prompt", () => {
+        vi.stubEnv("HAPPY_WINDOWS_SANDBOX_BACKGROUND", "1");
+        expect(createSupervisorCommand({ ...options, environment: {} }).args).not.toContain(
+            "--background",
+        );
+        const background = createSupervisorCommand({
+            ...options,
+            environment: { HAPPY_WINDOWS_SANDBOX_BACKGROUND: "1" },
+        });
+        expect(background.args).toContain("--background");
+        expect(background.args.indexOf("--background")).toBeLessThan(background.args.indexOf("--"));
+        // Different arguments mean a scan never shares a shell runner with an agent command.
+        expect(background.args).not.toEqual(
+            createSupervisorCommand({ ...options, environment: {} }).args,
+        );
+        expect(
+            createSupervisorCommand({
+                ...options,
+                environment: { HAPPY_WINDOWS_SANDBOX_BACKGROUND: "0" },
+            }).args,
+        ).not.toContain("--background");
+    });
     it("honors the supplied no-provision boundary independently of ambient variables", () => {
         vi.stubEnv("HAPPY_WINDOWS_SANDBOX_NO_PROVISION", "0");
         expect(
@@ -60,5 +85,39 @@ describe("Windows supervisor setup selection", () => {
                 environment: { HAPPY_WINDOWS_SANDBOX_NO_PROVISION: "1" },
             }).args,
         ).toContain("--no-provision");
+    });
+});
+
+describe("Windows supervisor worker", () => {
+    it("starts a read-only worker for one workspace with the same installation selection", () => {
+        vi.stubEnv("HAPPY_WINDOWS_SANDBOX_NO_PROVISION", "1");
+        const result = createSupervisorWorkerCommand({
+            cwd: "C:\\project",
+            environment: { HAPPY_WINDOWS_SANDBOX_HOME: "C:\\approved-state" },
+            policy: options.policy,
+            supervisorPath: options.supervisorPath,
+        });
+        expect(result).toEqual({
+            args: [
+                "--policy",
+                JSON.stringify(options.policy),
+                "--no-provision",
+                "--state-dir",
+                "C:\\approved-state",
+                "--cwd",
+                "C:\\project",
+                "--worker",
+            ],
+            command: options.supervisorPath,
+        });
+    });
+    it("refuses a policy that could write", () => {
+        expect(() =>
+            createSupervisorWorkerCommand({
+                cwd: "C:\\project",
+                policy: { ...options.policy, mode: "workspace_write" },
+                supervisorPath: options.supervisorPath,
+            }),
+        ).toThrow("only read-only");
     });
 });

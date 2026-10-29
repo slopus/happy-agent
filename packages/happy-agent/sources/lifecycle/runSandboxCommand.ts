@@ -7,6 +7,8 @@ import { AgentDaemonError } from "./AgentDaemonError.js";
 
 const sandboxStatusSchema = Type.Object({
     ready: Type.Boolean(),
+    // Absent from helpers that predate the separate accounts for folders outside the user folder.
+    externalReady: Type.Optional(Type.Boolean()),
     stateDirectory: Type.String({ minLength: 1 }),
     setupVersion: Type.Integer({ minimum: 0 }),
 });
@@ -92,6 +94,13 @@ export async function runSandboxCommand(args: readonly string[]): Promise<void> 
             ? "Happy's Windows sandbox is configured."
             : "Happy's Windows sandbox is not configured.",
     );
+    if (status.externalReady !== undefined) {
+        console.log(
+            status.externalReady
+                ? "Workspaces outside your user folder: ready."
+                : "Workspaces outside your user folder: not set up yet. Happy asks for administrator approval the first time an agent runs a command in one, or run happy-agent sandbox setup.",
+        );
+    }
     console.log("State directory: " + status.stateDirectory);
     console.log("Setup version: " + status.setupVersion);
     if (!status.ready) console.log("Run happy-agent sandbox setup to initialize it.");
