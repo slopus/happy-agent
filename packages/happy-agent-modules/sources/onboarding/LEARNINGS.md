@@ -85,6 +85,13 @@ Focus revises. Accepting creates the proposal's new rows with their final names 
 the start, so no row is a stem cell that grows an icon later. Every press is stored with the
 label the person saw and the ticked labels, so it reads as their own bubble.
 
+## Asking again keeps what the person ticked
+
+Pressing Use selected with nothing ticked used to answer "Select at least one account" with a
+fresh table that re-ticked every recommendation, undoing the person's choice and contradicting
+the message. The retry table now ticks exactly what the person submitted, so it asks again from
+where they left it.
+
 ## Onboarding proves each requirement once
 
 Completion is a verified provider and a profile with a name and an email, stored as a versioned

@@ -288,6 +288,43 @@ describe("Happy's model leading onboarding", () => {
     );
 
     it(
+        "keeps what the person unticked when Use selected had nothing selected",
+        async () => {
+            const { gym, happy } = await startGym({
+                begin: () => ({ content: [{ text: PROFILE_STEP, type: "text" }] }),
+            });
+            const opening = await waitForText(gym, happy, "Hi, I'm Happy");
+            await press(gym, happy, {
+                messageId: opening.id,
+                blockIndex: 0,
+                action: { id: "onboarding.start", params: {} },
+            });
+            const routes = await waitForText(gym, happy, "I found these on this");
+            await press(gym, happy, {
+                messageId: routes.id,
+                blockIndex: 0,
+                action: { id: "onboarding.routesUse", params: {} },
+                values: [],
+            });
+            const retry = await waitForText(gym, happy, "Select at least one account");
+            // The table asks again as the person left it, not with the recommendations re-ticked.
+            expect(textOf(retry)).toContain('value="codex"');
+            expect(textOf(retry)).not.toContain("checked");
+            expect((await flowOf(gym)).step).toBe("providers");
+
+            await press(gym, happy, {
+                messageId: retry.id,
+                blockIndex: 0,
+                action: { id: "onboarding.routesUse", params: {} },
+                values: ["codex"],
+            });
+            await waitForText(gym, happy, "**Ada Lovelace** · ada@example.com");
+            expect(gym.errors).toEqual([]);
+        },
+        TEST_TIMEOUT_MS,
+    );
+
+    it(
         "says what failed when the first answer fails, and verifies on the next try",
         async () => {
             let attempts = 0;

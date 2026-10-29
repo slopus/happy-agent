@@ -142,17 +142,20 @@ export function accountOf(cli: ProviderCli): string {
 }
 
 /**
- * The accounts signed in on this machine, every one ticked. A second account of the same AI is
- * not offered until more than one can be used.
+ * The accounts signed in on this machine, every one ticked unless `ticked` keeps what the person
+ * last submitted. A second account of the same AI is not offered until more than one can be used.
  */
-export function providersTable(signedIn: readonly ProviderCli[]): string {
+export function providersTable(
+    signedIn: readonly ProviderCli[],
+    ticked?: readonly string[],
+): string {
     return [
         '<form data-action="onboarding.providersUse" data-table>',
         ...signedIn.flatMap((cli) => {
             const id = chatProviderId(cli.id);
             if (id === undefined) return [];
             return [
-                `  <label data-mark="${MARK_OF[id]}"><input type="checkbox" value="${id}" checked>${chatActionEscape(APP_OF[id])} <small>${chatActionEscape(cli.name)}</small><small>${chatActionEscape(accountOf(cli) || "Signed in")}</small><small>${chatActionEscape(`${APP_OF[id]} subscription`)}</small></label>`,
+                `  <label data-mark="${MARK_OF[id]}"><input type="checkbox" value="${id}"${ticked === undefined || ticked.includes(id) ? " checked" : ""}>${chatActionEscape(APP_OF[id])} <small>${chatActionEscape(cli.name)}</small><small>${chatActionEscape(accountOf(cli) || "Signed in")}</small><small>${chatActionEscape(`${APP_OF[id]} subscription`)}</small></label>`,
             ];
         }),
         '  <button type="submit" data-emphasis>Use selected</button>',
@@ -163,9 +166,12 @@ export function providersTable(signedIn: readonly ProviderCli[]): string {
 
 /**
  * The ways this computer already reaches models: the recommended ones start ticked, so each
- * vendor is reached one way, and one that reaches what another already does says so.
+ * vendor is reached one way, and one that reaches what another already does says so. Asking
+ * again, `ticked` keeps what the person last submitted instead.
  */
-export function routesTable(routes: readonly ProviderRoute[]): string {
+export function routesTable(routes: readonly ProviderRoute[], ticked?: readonly string[]): string {
+    const checked = (route: ProviderRoute) =>
+        ticked === undefined ? route.recommended : ticked.includes(route.id);
     return [
         '<form data-action="onboarding.routesUse" data-table>',
         ...routes.map((route) => {
@@ -178,7 +184,7 @@ export function routesTable(routes: readonly ProviderRoute[]): string {
                 (overlaps.length > 0
                     ? `Overlaps ${listOf(overlaps.map((other) => other.name))}`
                     : undefined);
-            return `  <label${mark ? ` data-mark="${mark}"` : ""}><input type="checkbox" value="${chatActionEscape(route.id)}"${route.recommended ? " checked" : ""}>${chatActionEscape(route.name)} ${note ? `<small>${chatActionEscape(note)}</small>` : ""}<small>${chatActionEscape(routeKindLabel(route))}</small><small>${chatActionEscape(routeAccountLabel(route) ?? "—")}</small></label>`;
+            return `  <label${mark ? ` data-mark="${mark}"` : ""}><input type="checkbox" value="${chatActionEscape(route.id)}"${checked(route) ? " checked" : ""}>${chatActionEscape(route.name)} ${note ? `<small>${chatActionEscape(note)}</small>` : ""}<small>${chatActionEscape(routeKindLabel(route))}</small><small>${chatActionEscape(routeAccountLabel(route) ?? "—")}</small></label>`;
         }),
         '  <button type="submit" data-emphasis>Use selected</button>',
         '  <button type="button" data-action="onboarding.connectAnother">Sign in to more</button>',

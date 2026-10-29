@@ -1051,7 +1051,9 @@ export class OnboardingModule implements AgentModule {
                 const signedIn = await this.#signedIn(ctx);
                 const chosen = signedIn.filter((cli) => action.values.includes(cli.id));
                 if (chosen.length === 0) {
-                    if (!led) await say(chooseAtLeastOneMessage(providersTable(signedIn)));
+                    if (!led) {
+                        await say(chooseAtLeastOneMessage(providersTable(signedIn, action.values)));
+                    }
                     return;
                 }
                 await this.#useClis(
@@ -1066,7 +1068,8 @@ export class OnboardingModule implements AgentModule {
                 const routes = (await this.#providerRoutes.list(ctx)).filter(routeChoosable);
                 const chosen = routes.filter((route) => action.values.includes(route.id));
                 if (chosen.length === 0) {
-                    if (!led) await say(chooseAtLeastOneMessage(routesTable(routes)));
+                    if (!led)
+                        await say(chooseAtLeastOneMessage(routesTable(routes, action.values)));
                     return;
                 }
                 await this.#useRoutes(
