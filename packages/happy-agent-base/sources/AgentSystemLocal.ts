@@ -41,7 +41,12 @@ import type { AgentModel } from "./AgentModel.js";
 import type { AgentProviders } from "./AgentProviders.js";
 import type { AgentQueuedMessage } from "./AgentQueuedMessage.js";
 import type { AgentStorage, AgentStorageLock } from "./AgentStorage.js";
-import type { AgentCreateOptions, AgentSystem, AgentSystemDrainProgress } from "./AgentSystem.js";
+import type {
+    AgentCreateOptions,
+    AgentDeleteOptions,
+    AgentSystem,
+    AgentSystemDrainProgress,
+} from "./AgentSystem.js";
 import { withAgentSystem } from "./AgentSystemContext.js";
 import { AgentSystemRef } from "./AgentSystemRef.js";
 import type { AnyAgentTool } from "./AgentTool.js";
@@ -530,13 +535,20 @@ export class AgentSystemLocal<
      * Close an agent and release its identity, so the same ID can be created again. Used to undo
      * a creation whose follow-up work failed; an ID that was never created is left alone.
      *
-     * What the agent wrote is left where it is. The close finishes first, so the store holds a
-     * whole conversation rather than a truncated one, and that record is worth more here than the
-     * space it takes: whoever deleted the agent may still want to know what it did. The next
-     * identity created under this ID starts from an empty store all the same, because creation is
-     * what clears it.
+     * What the agent wrote is left where it is unless `erase` is set. The close finishes first, so
+     * the store holds a whole conversation rather than a truncated one, and that record is worth
+     * more here than the space it takes: whoever deleted the agent may still want to know what it
+     * did. The next identity created under this ID starts from an empty store all the same,
+     * because creation is what clears it.
+     *
+     * With `erase`, the deleting transaction also clears the agent's model context and every
+     * key-value entry in its store, and runs `agentErasedTransact` so modules drop what they keep
+     * about it. Inside a caller's transaction the live agent closes only after the commit, and a
+     * close can still settle a turn into the store, so the store is cleared again once the close
+     * has finished, unless the identity was created again by then.
      */
-    async delete(ctx: Context, agentId: string): Promise<void> {
+    async delete(ctx: Context, agentId: string, options?: AgentDeleteOptions): Promise<void> {
+        const erase = options?.erase === true;
         await this.#admit(async () => {
             await this.#waitForTransition(ctx, agentId);
             const remove = async (lockCtx: Context): Promise<void> => {
@@ -583,6 +595,17 @@ export class AgentSystemLocal<
                             (hooks) => hooks.agentArchived,
                         );
                     }
+                    if (erase) {
+                        if (config !== undefined) {
+                            await this.#recordLifecycle(
+                                txCtx,
+                                lifecycleAgent(agentId, config),
+                                (hooks) => hooks.agentErasedTransact,
+                                (hooks) => hooks.agentErased,
+                            );
+                        }
+                        await this.#erasePersistence(txCtx, agentId);
+                    }
                 });
                 provisional?.set(agentId, null);
                 if (transaction === undefined) {
@@ -594,6 +617,17 @@ export class AgentSystemLocal<
                             this.#beginTransition(agentId, async () => {
                                 await agent?.close();
                                 this.#persistences.delete(agentId);
+                                // A close settles the turn it stopped, which may write once more.
+                                if (erase && agent !== undefined) {
+                                    await this.#configs.transaction(this.#ctx, async (_, txCtx) => {
+                                        if (
+                                            (await this.#configs.read(txCtx, agentId)) !== undefined
+                                        ) {
+                                            return;
+                                        }
+                                        await this.#erasePersistence(txCtx, agentId);
+                                    });
+                                }
                             });
                         });
                     });
@@ -603,6 +637,17 @@ export class AgentSystemLocal<
                 await remove(ctx);
             } else {
                 await this.#lockFor(agentId).runInLock(ctx, remove);
+            }
+        });
+    }
+
+    /** Clear one identity's model context and every key-value entry in its store. */
+    async #erasePersistence(txCtx: Context, agentId: string): Promise<void> {
+        const persistence = this.#storage.persistence(agentId);
+        await persistence.transaction(txCtx, async (eraseCtx) => {
+            await persistence.clearRecords(eraseCtx);
+            for (const { key } of await persistence.readValues(eraseCtx, "")) {
+                await persistence.deleteValue(eraseCtx, key);
             }
         });
     }

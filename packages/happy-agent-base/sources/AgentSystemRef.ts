@@ -17,9 +17,10 @@ import type { AgentCreateOptions, AgentSystem } from "./AgentSystem.js";
  *
  * What is missing is missing on purpose. `delete` closes an agent and `start` resumes whole
  * agents; both are the owning caller's business, and both would wait for a loop that may be
- * waiting for the very code asking. Agents come back as `AgentRef` for the same reason — handing
- * out the real `Agent` would hand back `close` and `waitForIdle`, both of which wait for the
- * whole agent.
+ * waiting for the very code asking. `erase` is the one deletion offered here, because it commits
+ * in a transaction and leaves the close to run after it, so it never waits for a loop. Agents
+ * come back as `AgentRef` for the same reason — handing out the real `Agent` would hand back
+ * `close` and `waitForIdle`, both of which wait for the whole agent.
  *
  * A message is the one thing a caller here may be told about, because accepting one is a durable
  * queue write rather than a turn: `steer` and `send` resolve once the message is safely part of
@@ -131,6 +132,34 @@ export class AgentSystemRef<Database extends AgentDatabase = AgentDatabase> {
     /** Cancel an agent's active turn, and resolve once the cancellation has been signalled. */
     async abort(ctx: Context, agentId: string): Promise<void> {
         await (await this.resolve(ctx, agentId)).abort(ctx);
+    }
+
+    /**
+     * Delete another agent for good, erasing everything it wrote, and resolve once that deletion
+     * is durable. It never waits for the agent's loop: the deletion commits in one transaction,
+     * the caller's own when it carries one, and the live agent closes after the commit. An agent
+     * that is still finishing an earlier deletion is refused rather than waited for. This
+     * reference's own agent cannot be erased through it, and neither can one of its ancestors,
+     * because the loop asking would be closing itself or the agent it reports to. Children of the
+     * erased agent are left as roots, so a caller erasing a tree erases the deepest agents first.
+     * The context must carry the agent database, as every module and tool context does.
+     */
+    async erase(ctx: Context, agentId: string): Promise<void> {
+        this.#assertNotLifecycleTarget(agentId);
+        for (
+            let ancestor: string | null = this.agentId;
+            ancestor !== null;
+            ancestor = await this.#system.parentOf(ctx, ancestor)
+        ) {
+            if (ancestor === agentId) {
+                throw new Error(
+                    `Agent "${agentId}" cannot be erased by itself or by an agent below it.`,
+                );
+            }
+        }
+        await ctx.inTx(async (txCtx) => {
+            await this.#system.delete(txCtx, agentId, { erase: true });
+        });
     }
 
     /** Fail quickly instead of re-entering an identity lock held by its transactional lifecycle. */

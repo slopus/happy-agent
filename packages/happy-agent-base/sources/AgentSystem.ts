@@ -49,6 +49,17 @@ export interface AgentCreateOptions {
     readonly parent?: string | null;
 }
 
+/** How `AgentSystem.delete` ends an agent. */
+export interface AgentDeleteOptions {
+    /**
+     * Also erase everything the agent wrote: its model context and every key-value entry in its
+     * store, module state included, and tell modules through `agentErasedTransact` and
+     * `agentErased` so they drop what they keep about it. Without it, what the agent wrote stays
+     * where it is.
+     */
+    readonly erase?: boolean;
+}
+
 /**
  * A collection of agents addressed by ID: what an owner can ask of the agents it runs. An agent
  * exists only once it has been created with its persisted configuration; resolving one that was
@@ -85,7 +96,7 @@ export interface AgentSystem<Database extends AgentDatabase = AgentDatabase> {
     ): Promise<Agent<AnyAgentTool, Database>>;
 
     /** Close an agent and release its identity, so the same ID can be created again. */
-    delete(ctx: Context, agentId: string): Promise<void>;
+    delete(ctx: Context, agentId: string, options?: AgentDeleteOptions): Promise<void>;
 
     /** The current configuration of an agent, or undefined when there is no such agent. */
     config(ctx: Context, agentId: string): Promise<AgentConfig | undefined>;

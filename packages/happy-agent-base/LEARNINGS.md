@@ -210,6 +210,14 @@ restoration test opens sixty databases, and booting them took about three quarte
 That had kept it just above CI's sixty-second limit on PGlite since it was written. It now takes
 about twelve seconds locally.
 
+## A module may erase an agent, but never wait for it
+
+Admins asked to delete agents for good, conversations included, from a tool. `delete` waits for the
+agent's loop to close, which deadlocks when a module or tool inside a loop asks. `erase` on
+`AgentSystemRef` commits the deletion in one transaction and leaves the close to run after it, and
+refuses the ref's own agent and its ancestors, so the code asking is never waiting on itself.
+Modules drop what they keep about the agent in `agentErasedTransact`, in the same transaction.
+
 ## Verification
 
 `verification/lean/` (Lean 4) and `verification/tla/` (TLA+) model this state machine. Keep

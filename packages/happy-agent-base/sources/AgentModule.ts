@@ -233,6 +233,20 @@ export interface AgentModuleHooks<
         scope: AgentModuleSystemScope<Database>,
         agent: AgentModuleAgentLifecycle,
     ) => MaybePromise<void>;
+    /**
+     * The agent is being deleted with `erase`: everything it wrote is going, so a module drops
+     * what it keeps about it in the same transaction. Runs after `agentArchivedTransact`.
+     */
+    readonly agentErasedTransact?: (
+        ctx: Context,
+        scope: AgentModuleSystemScope<Database>,
+        agent: AgentModuleAgentLifecycle,
+    ) => MaybePromise<void>;
+    readonly agentErased?: (
+        ctx: Context,
+        scope: AgentModuleSystemScope<Database>,
+        agent: AgentModuleAgentLifecycle,
+    ) => MaybePromise<void>;
     /** Observes published session events; context-only provider lifecycles are omitted. */
     readonly onEvent?: (
         ctx: Context,

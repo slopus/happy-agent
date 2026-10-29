@@ -1371,7 +1371,8 @@ describe("AgentSystemLocal shared modules", () => {
         await agent.waitForIdle();
 
         expect(seen).toBeInstanceOf(AgentSystemRef);
-        // Nothing that ends an agent's life, or waits for one, is reachable from inside.
+        // Nothing that waits for an agent's life to end is reachable from inside; `erase` commits
+        // the deletion and leaves the close to run after it.
         expect(Object.getOwnPropertyNames(Object.getPrototypeOf(seen)).sort()).toEqual([
             "abort",
             "childOf",
@@ -1379,6 +1380,7 @@ describe("AgentSystemLocal shared modules", () => {
             "config",
             "constructor",
             "create",
+            "erase",
             "models",
             "parentOf",
             "resolve",

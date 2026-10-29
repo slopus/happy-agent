@@ -197,9 +197,9 @@ completed blocks end the conversation (after a restart, a notice that reopened i
 off." in the inference stage's transaction, ahead of that boundary's module notices. Providers
 such as Claude reject an assistant prefill, and the notice stays in history so every later request
 repeats the same prefix. A trailing native compaction is continued as it stands.
-Modules may also observe agent creation, restoration, metadata changes, and archival. Creation,
-restoration, and archival provide transactional and post-commit hook pairs with an immutable agent
-ID/metadata snapshot and module-scoped shared KV.
+Modules may also observe agent creation, restoration, metadata changes, archival, and erasure.
+Creation, restoration, archival, and erasure provide transactional and post-commit hook pairs with
+an immutable agent ID/metadata snapshot and module-scoped shared KV.
 
 Each process restores an identity once, before its first use. One transaction at startup decides
 which identities are restored then: every agent whose store holds a valid pending record, read for
@@ -222,6 +222,18 @@ commit before memory changes, and fire transactional and post-commit hooks. Crea
 record a durable parent. An `AgentSystemRef` carries its owning agent ID (or `null`) and uses it as
 the default parent, while creation options may override the parent or explicitly choose `null`.
 `parentOf` and `childOf` query the resulting direct relationship, and `AgentRef.parent` exposes it.
+
+`AgentSystem.delete(ctx, agentId)` closes an agent and releases its identity but leaves what it
+wrote in its store. `delete(ctx, agentId, { erase: true })` deletes it for good: the same
+transaction clears its model context and every key-value entry in its store, module state
+included, and runs `agentErasedTransact` after `agentArchivedTransact` so modules drop what they
+keep about the agent; `agentErased` observes the commit. Inside a caller's transaction the live
+agent closes after the commit, and once that close has settled the stopped turn the store is
+cleared again, unless the identity was created again first. Children are not erased with their
+parent; they become roots. `AgentSystemRef.erase(ctx, agentId)` is the deletion code inside an
+agent may use: it always commits in a transaction and never waits for the target's loop, refuses
+an agent that is still finishing an earlier deletion, and refuses the reference's own agent and its
+ancestors.
 
 `AgentKV.getOrCreate(ctx, key, factory)` standardizes durable allocate-once values. Used on a
 tool's call-bound KV, it supplies retry-stable operation identities without heap state or provider

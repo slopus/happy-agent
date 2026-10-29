@@ -5,6 +5,7 @@ export { Agent, type AgentOptions } from "./Agent.js";
 export {
     type AgentSystem,
     type AgentCreateOptions,
+    type AgentDeleteOptions,
     type AgentInitialContext,
     type AgentSystemDrainAgent,
     type AgentSystemDrainProgress,
