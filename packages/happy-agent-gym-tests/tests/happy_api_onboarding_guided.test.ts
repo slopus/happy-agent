@@ -228,6 +228,11 @@ describe("Happy's model leading onboarding", () => {
             // The connected AI carries its check; another account of it does not.
             expect(connected).toMatch(/data-provider="codex"[^>]*data-connected>ChatGPT</u);
             expect(connected).toMatch(/data-mark="openai">Add another ChatGPT account</u);
+            // The routes table above said nothing of later: it is said once, under Connected.
+            const later = (await messages(gym, happy)).filter((message) =>
+                textOf(message).includes("You can always ask me to connect more later."),
+            );
+            expect(later.map(textOf)).toEqual([connected]);
             const profileStep = await waitForText(gym, happy, "**Ada Lovelace** · ada@example.com");
             const verified = await gym.waitUntil(async () => {
                 const flow = await flowOf(gym);

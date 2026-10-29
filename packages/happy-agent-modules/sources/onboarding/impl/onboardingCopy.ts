@@ -119,7 +119,11 @@ export function accountOf(cli: ProviderCli): string {
     return [cli.signIn.account?.email, cli.signIn.account?.plan].filter(Boolean).join(" · ");
 }
 
-/** The accounts signed in on this machine, every one ticked. */
+/**
+ * The accounts signed in on this machine, every one ticked. "You can always ask me to connect
+ * more later" is said once, under Connected, which always follows; said here too, it read twice in
+ * a row.
+ */
 export function providersTable(signedIn: readonly ProviderCli[]): string {
     return [
         '<form data-action="onboarding.providersUse" data-table>',
@@ -134,8 +138,6 @@ export function providersTable(signedIn: readonly ProviderCli[]): string {
         '  <button type="button" data-action="onboarding.connectAnother">Sign in to more</button>',
         '  <button type="button" data-action="onboarding.accountAdd">Add another account</button>',
         "</form>",
-        "",
-        '<output data-status="info">You can always ask me to connect more later.</output>',
     ].join("\n");
 }
 
@@ -161,8 +163,6 @@ export function routesTable(routes: readonly ProviderRoute[]): string {
         '  <button type="submit" data-emphasis>Use selected</button>',
         '  <button type="button" data-action="onboarding.connectAnother">Sign in to more</button>',
         "</form>",
-        "",
-        '<output data-status="info">You can always ask me to connect more later.</output>',
     ].join("\n");
 }
 

@@ -167,6 +167,18 @@ describe("Happy's own onboarding words", () => {
             'data-provider="codex" data-mark="openai" data-connected>ChatGPT',
         );
     });
+
+    it("say once, under Connected, that more can be connected later", () => {
+        const later = "You can always ask me to connect more later.";
+        const signedIn = {
+            ...INSTALLED,
+            signIn: { status: "signed_in" as const, account: null, methods: [] },
+        };
+        const offered = subscriptionsMessage([], [signedIn], "Mac");
+        expect(offered).not.toContain(later);
+        expect(chooseAtLeastOneMessage(offered)).not.toContain(later);
+        expect(connectedMessage([{ app: "ChatGPT", cli: "codex" }]).split(later)).toHaveLength(2);
+    });
 });
 
 describe("the guide Happy's model follows", () => {
