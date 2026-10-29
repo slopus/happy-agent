@@ -1908,7 +1908,10 @@ export class SpacesModule implements AgentModule {
             const happyAgentId = await this.#happyAgentId(txCtx, ownerUserId);
             if (collaboration === undefined || happyAgentId === undefined) return;
             const open = state.sidebarProposals?.find((proposal) => proposal.status === "open");
-            const said = (await this.#lastAgentText(txCtx, agentId))?.trim();
+            // Only Focus's words: its own Good to go stays in its chat, so Happy's shows one.
+            const said = (await this.#lastAgentText(txCtx, agentId))
+                ?.replace(/<menu\b[\s\S]*?<\/menu>/gu, "")
+                .trim();
             await collaboration.sendMessage(
                 txCtx,
                 agentId,

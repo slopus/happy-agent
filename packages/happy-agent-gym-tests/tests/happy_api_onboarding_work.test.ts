@@ -685,6 +685,8 @@ describe("onboarding the person's work", () => {
             expect(JSON.stringify(heard?.messages.at(-1))).toContain(
                 "Focus said: I'd start with the onboarding work.",
             );
+            // Focus's own Good to go stays in its chat: Happy's chat offers it once, from Happy.
+            expect(JSON.stringify(heard?.messages.at(-1))).not.toContain("<menu");
             const order = (await messages(gym, happy)).map((message) => message.id);
             expect(order.indexOf(shown.id)).toBeGreaterThan(order.indexOf(work.id));
             // Focus read only what was disclosed: the session's project and what was asked.
