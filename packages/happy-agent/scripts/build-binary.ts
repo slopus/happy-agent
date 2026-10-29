@@ -629,8 +629,14 @@ export function resolveSourceAdapters(target: BinaryTarget): Map<string, SourceA
         {
             name: "Tailcat executable resolver",
             required: true,
+            // An explicit override still wins, so tests can stand in for Tailcat.
             adapt: () =>
-                `export { getTailcatExecutable as resolveTailcatExecutable } from ${JSON.stringify(VIRTUAL_ASSETS_MODULE)};\n`,
+                `import { getTailcatExecutable } from ${JSON.stringify(VIRTUAL_ASSETS_MODULE)};
+export function resolveTailcatExecutable() {
+    const configured = process.env.HAPPY_AGENT_TAILCAT_PATH?.trim();
+    return configured === undefined || configured.length === 0 ? getTailcatExecutable() : configured;
+}
+`,
         },
     );
 

@@ -99,8 +99,9 @@ Happy Agent keeps its shorter address without a pre-shared key, so clients of ev
 still reach it. The server logs a warning about the missing pre-shared key.
 
 The embedded executable is specific to standalone Happy Agent release binaries. A source checkout
-or the Node-compatible npm package instead resolves `tailcat` from `PATH`; development runs may set
-`HAPPY_AGENT_TAILCAT_PATH` to an explicit executable.
+or the Node-compatible npm package instead resolves `tailcat` from `PATH`. Any of them, including a
+release binary, uses `HAPPY_AGENT_TAILCAT_PATH` instead when it names an executable, so development
+runs and tests can supply their own.
 
 ## Connect to a standalone daemon
 

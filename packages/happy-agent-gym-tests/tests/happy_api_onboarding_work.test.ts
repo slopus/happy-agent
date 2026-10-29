@@ -14,6 +14,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 // The phone is written from API.md alone, independently of the daemon's own pairing code.
 import {
     httpPhoneTransport,
+    parseQr,
     startPhonePairing,
 } from "../../happy-agent-modules/tests/mobileConnector/support/fakePhone.js";
 
@@ -1050,6 +1051,9 @@ describe("onboarding the person's work", () => {
                 mobileConnector: { pairing: { id: string; status: string; qr: string | null } };
             };
             expect(mobileConnector.pairing.status).toBe("waiting");
+            // The code names the stand-in Tailcat's address, and only the stand-in listens where
+            // the phone dials, so pairing never leaves this computer.
+            expect(parseQr(mobileConnector.pairing.qr!).a).toBe("tcGymOnboardingPhone");
             const session = await startPhonePairing(
                 mobileConnector.pairing.qr!,
                 httpPhoneTransport(`http://127.0.0.1:${String(TAILNET_PORT)}`),
