@@ -731,6 +731,7 @@ export async function startHappyAgentRuntime(
             artifacts,
             chatMedia,
             history,
+            durableFunctions,
         );
         const stickers = new StickersModule(config, team, stories);
         const apiModule = new ApiModule(

@@ -22,7 +22,7 @@ function wakes(h: Gym): string[] {
     return h.gym.inference.requests.flatMap((request) => {
         const last = request.messages.at(-1);
         const text = JSON.stringify(last);
-        return request.instructions.includes("You are Focus") &&
+        return request.instructions.includes("You are the Focus Agent") &&
             last?.role === "user" &&
             text.includes("Here is what changed since your last notice.")
             ? [text]
@@ -34,7 +34,7 @@ function wakes(h: Gym): string[] {
 function told(h: Gym, text: string): boolean {
     return h.gym.inference.requests.some(
         (request) =>
-            request.instructions.includes("You are Focus") &&
+            request.instructions.includes("You are the Focus Agent") &&
             JSON.stringify(request.messages).includes(text),
     );
 }
@@ -456,7 +456,7 @@ it("wakes Prioritizing for work another agent created, with its title and first 
                     ? true
                     : undefined,
             () =>
-                `the first-message notice; created: ${created.text}; told: ${JSON.stringify(h.gym.inference.requests.filter((r) => r.instructions.includes("You are Focus")).map((r) => r.messages.at(-1)))}`,
+                `the first-message notice; created: ${created.text}; told: ${JSON.stringify(h.gym.inference.requests.filter((r) => r.instructions.includes("You are the Focus Agent")).map((r) => r.messages.at(-1)))}`,
         );
         expect(told(h, `New space ${row.id} \\"Telegram retries\\" was inserted below Happy`)).toBe(
             true,

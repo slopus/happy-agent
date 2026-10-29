@@ -494,7 +494,7 @@ reports `capabilities.agentStories: true` from health: story `author`, `ringAgen
 the `post_story`, `withdraw_story`, `list_stories`, and `set_status` tools; and the agent's
 `statusLine`. Older daemons omit every one of these fields and answer the new routes with `404`;
 clients then show no rings and no status lines. They follow the Stories setting: a person with
-Stories off is offered none of the tools, and their agents never carry a `statusLine`. A client
+Stories off is offered none of the tools, so their agents gain no `statusLine`. A client
 that predates agent stories never meets an agent's story, which only its person can read, but it
 may meet a reposted one: it skips an overlay type it does not know, as before, and shows a frame
 whose `kind` it does not know as its background.
@@ -12330,9 +12330,9 @@ Request — `{}`, or:
 and makes nothing new. The draft copies the agent's story's caption and frames — new frame and
 overlay IDs, the same assets, placements, backgrounds, and overlays — so its frames name the same
 media without copying bytes, and artifact frames and windows stay live. Its `author` and
-`createdBy` are the caller, its `source` is the agent's story's `source`, and `repostOf` names the
-agent's story. Response — `201`: `{ "story": { ... } }`, with `story.created` after commit echoing
-`mutationId`. The reposted story itself is unchanged and stays in its ring.
+`createdBy` are the caller, its `source` is `null` because the person made it, and `repostOf`
+names the agent's story. Response — `201`: `{ "story": { ... } }`, with `story.created` after
+commit echoing `mutationId`. The reposted story itself is unchanged and stays in its ring.
 
 The repost is then edited with `PATCH` and posted with `POST /v0/stories/:storyId/post` as usual:
 editing may add round videos and any other overlay, and keeps `repostOf`, which no write can set or
@@ -12362,7 +12362,8 @@ Request:
 - `text` — required, 1–8,000 characters.
 
 The daemon sends `text` to the agent exactly as `POST /v0/agents/:agentId/send` would, on the mode
-the agent last ran with, preceded by one quoting line the same for every client:
+the agent last ran with (`409 conflict` when it has never run), preceded by one quoting line the
+same for every client:
 
 ```text
 > Feedback on your story "Focus's ideas, right where they apply" (s7k2m9q4w1e5t8y3u6i0o2p5), frame 2 of 3
@@ -12444,8 +12445,9 @@ icon and conversation title in the header, a text field reading "Tell the agent 
 that sends `POST /v0/stories/:storyId/feedback` for the frame shown, the heart, and a repost button
 (↻) that calls `POST /v0/stories/:storyId/repost` and opens the editor on the draft it returns.
 
-**Tools.** Every conversation offered `draft_story` whose agent is a task's or a bot's own agent or
-a subtask is also offered these fixed common tools. Hidden subagents and Prioritizing are not.
+**Tools.** Every agent with no parent (a task's or a bot's own agent among them) and every subtask
+is offered these fixed common tools while the person its stories are for, as above, has Stories on.
+Hidden subagents and Prioritizing are not.
 
 | Tool             | Arguments                                                          | Does                                                                    |
 | ---------------- | ------------------------------------------------------------------ | ----------------------------------------------------------------------- |

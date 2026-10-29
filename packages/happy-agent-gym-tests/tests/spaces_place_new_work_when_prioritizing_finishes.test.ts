@@ -63,7 +63,7 @@ ${node}</nav>`,
             (await h.gym.http.patch(`/v0/spaces/${happy.id}`, { afterId: happy.id })).status,
         ).toBe(409);
         const tools = h.gym.inference.requests
-            .findLast((request) => request.instructions.includes("You are Focus"))!
+            .findLast((request) => request.instructions.includes("You are the Focus Agent"))!
             .tools.map((tool) => tool.name)
             .sort();
         expect(tools).toEqual([

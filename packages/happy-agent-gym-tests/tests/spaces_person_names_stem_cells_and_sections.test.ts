@@ -24,7 +24,7 @@ it("keeps the name the person gave new work when its first message arrives", asy
             () =>
                 h.gym.inference.requests.some(
                     (request) =>
-                        request.instructions.includes("You are Focus") &&
+                        request.instructions.includes("You are the Focus Agent") &&
                         JSON.stringify(request.messages).includes(stem.space.id),
                 )
                     ? true

@@ -19,6 +19,7 @@ const REVISIONS: readonly { readonly revision: number; readonly sha256: string }
     { revision: 6, sha256: "cf9d747ef58f3502258b761c14f9498a86983c28dd2c0b81d08d09df6eb5c759" },
     { revision: 7, sha256: "1294100c86d9f140be3ed18b792b27d21fe71c72f0fe67aa97b3aefd2a5af3e8" },
     { revision: 8, sha256: "496b1a5d3eb7a90727057e47673140ca78c402608a361621e4f9783223149d59" },
+    { revision: 9, sha256: "b7be2920703a24f9c185d83dd8b6495fcdd0d702ebe32a8017ce303bc898732e" },
 ];
 
 it("offers the voice icons", () => {
@@ -26,41 +27,43 @@ it("offers the voice icons", () => {
     for (const slug of ["waveform", "microphone", "headphones"]) expect(text).toContain(slug);
 });
 
-it("arranges by the person's own priorities into the Focus layout within the budget", () => {
+it("orders free-form sections by importance below a fixed header, within the budget", () => {
     const text = formatPrioritizingInstructions();
+    expect(text).toContain("You are the Focus Agent");
     // Priorities come from the person's words only, and are guessed aloud until they state any.
     expect(text).toContain('end your reply with one line "Priorities: …"');
     expect(text).toContain("Only their explicit words change it");
     expect(text).toContain('"Priorities (my guess): …"');
-    // The layout, top to bottom, with its folded catch-all last.
-    const order = [
-        "1. Now, no label",
-        'id="tell-people" label="Tell people"',
-        'id="priorities" label="Priorities"',
-        'id="waiting" label="Waiting on you"',
-        'id="in-hand" label="In hand"',
-        'id="later" label="Later" collapsed="true"',
-    ].map((part) => text.indexOf(part));
-    expect(order.every((at) => at >= 0)).toBe(true);
-    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    // A fixed header, then sections it names freely; order is the one rule.
+    expect(text).toContain("<happy-search/>, <happy-create/>, Happy's row, then your own row");
+    expect(text).toContain("Names may change from day to day");
+    expect(text).toContain(
+        "The one rule is order: sections run from most to least important, and rows inside each section do too.",
+    );
+    // Waiting on the person is the row's dot, not a section.
+    expect(text).toContain('"Waiting on you" is not a section.');
+    expect(text).not.toContain('label="Waiting on you"');
+    expect(text).not.toContain('label="In hand"');
+    // The day starts by agreeing on what matters.
+    expect(text).toContain("What matters today?");
     expect(text).toContain("At most 10 rows shown");
+    expect(text).toContain("fold the lowest sections first");
     expect(text).toContain("At most 6 sections");
     expect(text).toContain("Over budget is not a resting state");
     expect(text).not.toContain("Doing nothing is usually right");
     // Shipping needs explicit evidence, and real work is never nagged about.
     expect(text).toContain("Approval alone is not shipping.");
     expect(text).toContain("Never nudge about releases, regressions, bug fixes");
-    // Focus is reached by unfolding Happy, never from a top-level row of its own.
-    expect(text).toContain("You never take a top-level row");
-    expect(text).toContain("Keep your conversation nested under Happy's row as a session");
-    expect(text).not.toContain("immediately after Happy's row");
+    // Its own row is part of the header, never nested under Happy.
+    expect(text).toContain("Your own row is part of the header: right after Happy's row");
+    expect(text).toContain("never nest your conversation under Happy");
     // After the update, one bold reorganization through the ordinary proposal.
     expect(text).toContain("make one bold proposal that brings the sidebar to this layout");
 });
 
 it("cleans up aggressively, archiving by itself only what explicitly shipped", () => {
     const text = formatPrioritizingInstructions();
-    expect(text).toContain("is a real target, not a guideline: fold everything else");
+    expect(text).toContain("is a real target, not a guideline: fold the lowest sections first");
     // Every proposal offers what qualifies; Focus archives by itself only what explicitly shipped.
     expect(text).toContain(
         'Every proposal carries an <happy-section id="archive" label="Archive"/> block',

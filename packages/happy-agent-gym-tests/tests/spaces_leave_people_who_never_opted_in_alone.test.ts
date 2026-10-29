@@ -53,7 +53,7 @@ it("creates no Prioritizing, sidebar, or notes for a person who never opened the
         // Nobody is Prioritizing, no request ever briefed one, and no sidebar exists.
         expect(
             gym.inference.requests.some((request) =>
-                request.instructions.includes("You are Focus"),
+                request.instructions.includes("You are the Focus Agent"),
             ),
         ).toBe(false);
         const { artifacts } = await gym.client.listArtifacts();
@@ -72,7 +72,9 @@ it("creates no Prioritizing, sidebar, or notes for a person who never opened the
         expect(happy).toBeDefined();
         if (happy !== undefined) {
             const agent = (await gym.client.getAgent(happy.agent.id)).agent;
-            expect((agent.subtasks ?? []).filter((child) => child.title === "Focus")).toEqual([]);
+            expect((agent.subtasks ?? []).filter((child) => child.title === "Focus Agent")).toEqual(
+                [],
+            );
             const page = (await gym.client.getMessages(happy.agent.id)) as unknown as {
                 runs: { messages: unknown[] }[];
             };

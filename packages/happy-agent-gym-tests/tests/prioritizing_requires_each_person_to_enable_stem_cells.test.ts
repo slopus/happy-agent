@@ -18,7 +18,7 @@ it("keeps the enabled state isolated between two people", async () => {
     const sessions = () => [
         ...new Set(
             gym.inference.requests
-                .filter((request) => request.instructions.includes("You are Focus"))
+                .filter((request) => request.instructions.includes("You are the Focus Agent"))
                 .map((request) => request.sessionId),
         ),
     ];
@@ -111,7 +111,9 @@ it("keeps Prioritizing off by default and still names ordinary tasks and bots", 
         );
     }
     expect(
-        gym.inference.requests.some((request) => request.instructions.includes("You are Focus")),
+        gym.inference.requests.some((request) =>
+            request.instructions.includes("You are the Focus Agent"),
+        ),
     ).toBe(false);
     expect(gym.errors).toEqual([]);
 }, 30_000);
@@ -120,7 +122,7 @@ it("stops a running Prioritizing on disable and does not brief it again", async 
     const gym = await createAgentGym({
         inference(request) {
             return {
-                delayMs: request.instructions.includes("You are Focus") ? 60_000 : 0,
+                delayMs: request.instructions.includes("You are the Focus Agent") ? 60_000 : 0,
                 content: [{ type: "text", text: "Done." }],
             };
         },
@@ -130,8 +132,9 @@ it("stops a running Prioritizing on disable and does not brief it again", async 
     await gym.http.ok("GET", "/v0/spaces/sidebar");
     const manager = await gym.waitUntil(
         () =>
-            gym.inference.requests.find((request) => request.instructions.includes("You are Focus"))
-                ?.sessionId,
+            gym.inference.requests.find((request) =>
+                request.instructions.includes("You are the Focus Agent"),
+            )?.sessionId,
         "enabled Prioritizing to begin",
     );
     await gym.client.saveUserSetting(SETTING, { value: null });
@@ -141,14 +144,16 @@ it("stops a running Prioritizing on disable and does not brief it again", async 
         "disabled Prioritizing to stop",
     );
     const count = gym.inference.requests.filter((request) =>
-        request.instructions.includes("You are Focus"),
+        request.instructions.includes("You are the Focus Agent"),
     ).length;
     await gym.http.ok("POST", "/v0/spaces/tidy", {});
     await gym.http.ok("POST", "/v0/spaces/attention", { state: "calm" });
     await gym.http.ok("GET", "/v0/spaces/sidebar");
     await gym.send("An unrelated request.");
     expect(
-        gym.inference.requests.filter((request) => request.instructions.includes("You are Focus")),
+        gym.inference.requests.filter((request) =>
+            request.instructions.includes("You are the Focus Agent"),
+        ),
     ).toHaveLength(count);
     expect(gym.errors).toEqual([]);
 }, 30_000);

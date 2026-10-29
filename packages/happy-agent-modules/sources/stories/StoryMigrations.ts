@@ -11,6 +11,7 @@ export const STORIES_TABLE = "happy_agent_stories";
 export const STORY_SEEN_TABLE = "happy_agent_story_seen";
 export const STORY_REACTIONS_TABLE = "happy_agent_story_reactions";
 export const STORY_PARTICIPATION_TABLE = "happy_agent_story_participation";
+export const STORY_PEOPLE_TABLE = "happy_agent_story_people";
 
 /**
  * One row per story: who it belongs to, where it came from, its state, and its current content,
@@ -98,6 +99,47 @@ export const storyMigrations: readonly AgentModuleMigration[] = [
                 database,
                 sql`CREATE INDEX happy_agent_story_participation_person
                     ON ${sql.raw(STORY_PARTICIPATION_TABLE)} (person_key, last_at)`,
+            );
+        },
+    ],
+    /**
+     * Agents' stories. `agent_author` names the agent whose story it is, while `author_key` stays
+     * the person it was posted for and the only one who reads it. `ring_agent_id` is the task's or
+     * bot's agent whose ring wears it, and `ended_at` is set once it leaves that ring. A repost
+     * names the agent's story it started from. Seen marks for rings reuse the seen table with the
+     * ring's key in `author_key`.
+     *
+     * Each conversation's person is also kept here, so a subtask nobody wrote in posts for its
+     * nearest ancestor's person.
+     */
+    [
+        "002-agent-stories",
+        async (_ctx: Context, database: AgentDatabaseFacade<AgentDatabase>): Promise<void> => {
+            for (const column of [
+                "agent_author TEXT",
+                "ring_agent_id TEXT",
+                "supersedes_json TEXT NOT NULL DEFAULT '[]'",
+                "ended_at INTEGER",
+                "end_reason TEXT",
+                "repost_of_json TEXT",
+            ]) {
+                await agentDatabaseRun(
+                    database,
+                    sql`ALTER TABLE ${sql.raw(STORIES_TABLE)} ADD COLUMN ${sql.raw(column)}`,
+                );
+            }
+            await agentDatabaseRun(
+                database,
+                sql`CREATE INDEX happy_agent_stories_ring
+                    ON ${sql.raw(STORIES_TABLE)} (ring_agent_id, ended_at, posted_at)
+                    WHERE ring_agent_id IS NOT NULL`,
+            );
+            await agentDatabaseRun(
+                database,
+                sql`CREATE TABLE ${sql.raw(STORY_PEOPLE_TABLE)} (
+                    agent_id TEXT PRIMARY KEY,
+                    person_key TEXT
+                )`,
             );
         },
     ],

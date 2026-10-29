@@ -3,6 +3,7 @@ import {
     MAX_STORY_CAPTION_LENGTH,
     MAX_STORY_FRAMES,
     storyCreatorSchema,
+    storyEndReasonSchema,
     storyFrameSchema,
     storyStatusSchema,
     type Story,
@@ -50,11 +51,35 @@ export const storyRecordSchema = Type.Object(
         updatedAt: Type.Integer({ minimum: 0 }),
         postedAt: Type.Union([Type.Integer({ minimum: 0 }), Type.Null()]),
         expiresAt: Type.Union([Type.Integer({ minimum: 0 }), Type.Null()]),
+        /** The agent whose story it is, for an agent's story; `author` is its person. */
+        agentAuthor: Type.Union([cuid2Schema, Type.Null()]),
+        /** The task's or bot's agent whose ring wears an agent's story. */
+        ringAgentId: Type.Union([cuid2Schema, Type.Null()]),
+        supersedes: Type.Array(cuid2Schema),
+        endedAt: Type.Union([Type.Integer({ minimum: 0 }), Type.Null()]),
+        endReason: Type.Union([storyEndReasonSchema, Type.Null()]),
+        /** The agent's story a repost started from, and its conversation's title then. */
+        repostOf: Type.Union([
+            Type.Object(
+                {
+                    storyId: cuid2Schema,
+                    agentId: cuid2Schema,
+                    title: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+                },
+                { additionalProperties: false },
+            ),
+            Type.Null(),
+        ]),
         version: Type.String({ minLength: 1 }),
     },
     { additionalProperties: false },
 );
 export type StoryRecord = Static<typeof storyRecordSchema>;
+
+/** The seen-mark key of a ring: marks for agents' stories are per viewer and ring. */
+export function ringMarkKey(ringAgentId: string): string {
+    return `ring:${ringAgentId}`;
+}
 
 /** One viewer's seen mark for one author. */
 export interface StorySeenMark {
@@ -77,7 +102,8 @@ export interface StoryEvent {
         | "story.posted"
         | "story.deleted"
         | "story.seen"
-        | "story.reacted";
+        | "story.reacted"
+        | "story.ended";
     readonly at: number;
     readonly deliveries: readonly StoryEventDelivery[];
 }

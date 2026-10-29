@@ -27,7 +27,9 @@ import { createId } from "@paralleldrive/cuid2";
 import {
     createStoryRequestSchema,
     postStoryRequestSchema,
+    repostStoryRequestSchema,
     setStoryReactionRequestSchema,
+    storyFeedbackRequestSchema,
     updateStoryRequestSchema,
     useStickerRequestSchema,
     type StoryAsset,
@@ -5008,17 +5010,26 @@ export class ApiModule implements AgentModule {
     ): Promise<void> {
         await this.#assertUserControlledAgent(ctx, agentId);
         const body = await bodyAs(request, messageSendBodySchema, "agent message");
+        sendJson(response, 202, await this.#sendUserMessage(ctx, agentId, body));
+    }
+
+    /**
+     * Send a person's message to an agent, as `send` does: a repeated `id` sends nothing new and
+     * answers with the message as it stands.
+     */
+    async #sendUserMessage(
+        ctx: Context,
+        agentId: string,
+        body: Static<typeof messageSendBodySchema>,
+    ): Promise<{ readonly message: unknown; readonly cursor: string | null }> {
         body.mode = requestedAgentMode(body.mode);
         const id = body.id ?? createId();
-        await this.#serializeMessageSend(id, async () => {
+        return await this.#serializeMessageSend(id, async () => {
             const cursor = this.#journal.cursor();
             const existing = await ctx.inTx(
                 async (txCtx) => await this.#sentUserMessage(txCtx, agentId, id),
             );
-            if (existing !== undefined) {
-                sendJson(response, 202, { message: existing, cursor });
-                return;
-            }
+            if (existing !== undefined) return { message: existing, cursor };
 
             const selected = this.#config.models.find(
                 (model) =>
@@ -5134,7 +5145,7 @@ export class ApiModule implements AgentModule {
             this.#announcedPendingMessages.delete(id);
             this.#finishPendingMessageAnnouncement(id);
             await this.#flushAcceptedMessages(ctx, agentId);
-            sendJson(response, 202, { message, cursor });
+            return { message, cursor };
         });
     }
 
@@ -7162,8 +7173,25 @@ export class ApiModule implements AgentModule {
                 );
                 return true;
             }
+            const overlayMedia =
+                /^\/v0\/stories\/([a-z][a-z0-9]*)\/overlays\/([a-z][a-z0-9]*)\/media$/.exec(
+                    url.pathname,
+                );
+            if (overlayMedia !== null && request.method === "GET") {
+                const file = await stories.overlayMedia(
+                    ctx,
+                    overlayMedia[1] as string,
+                    overlayMedia[2] as string,
+                );
+                await sendStoredFile(request, response, {
+                    ...file,
+                    // A round video's file never changes; a new recording gets a new overlay.
+                    cacheControl: "private, max-age=31536000, immutable",
+                });
+                return true;
+            }
             const route =
-                /^\/v0\/stories\/([a-z][a-z0-9]*)(?:\/(post|delete|seen|reaction|viewers|frames)(?:\/([a-z][a-z0-9]*))?)?$/.exec(
+                /^\/v0\/stories\/([a-z][a-z0-9]*)(?:\/(post|delete|seen|reaction|viewers|frames|repost|feedback)(?:\/([a-z][a-z0-9]*))?)?$/.exec(
                     url.pathname,
                 );
             if (route === null) return false;
@@ -7171,6 +7199,45 @@ export class ApiModule implements AgentModule {
             const action = route[2];
             const frameId = route[3];
             if (frameId !== undefined && action !== "frames") return false;
+            if (action === "repost" && request.method === "POST") {
+                const body = await bodyAs(request, repostStoryRequestSchema, "story repost");
+                const story = await this.#withMutationId(
+                    body.mutationId,
+                    async () => await stories.repost(ctx, storyId, body),
+                );
+                sendJson(response, 201, { story });
+                return true;
+            }
+            if (action === "feedback" && request.method === "POST") {
+                const body = await bodyAs(request, storyFeedbackRequestSchema, "story feedback");
+                const target = await stories.feedbackTarget(ctx, storyId, body.frameId);
+                const mode = (await this.#agentSystem().config(ctx, target.agentId))?.metadata?.[
+                    "lastMode"
+                ];
+                if (!Value.Check(messageModeSchema, mode)) {
+                    throw new ApiError(
+                        409,
+                        "conflict",
+                        "This agent has not run yet. Open its conversation to write to it.",
+                    );
+                }
+                await this.#assertUserControlledAgent(ctx, target.agentId);
+                const sent = await this.#withMutationId(
+                    body.mutationId,
+                    async () =>
+                        await this.#sendUserMessage(ctx, target.agentId, {
+                            ...(body.id === undefined ? {} : { id: body.id }),
+                            mode,
+                            text: `${target.quote}\n${body.text}`,
+                        }),
+                );
+                const messageId = (sent.message as { id?: unknown }).id;
+                sendJson(response, 202, {
+                    agentId: target.agentId,
+                    messageId: typeof messageId === "string" ? messageId : body.id,
+                });
+                return true;
+            }
             if (action === undefined && request.method === "GET") {
                 sendJson(response, 200, { story: await stories.get(ctx, storyId) });
                 return true;
@@ -8971,7 +9038,10 @@ export class ApiModule implements AgentModule {
     }
 
     /** Serialize concurrent retries before they touch the shared pending-announcement state. */
-    async #serializeMessageSend(messageId: string, operation: () => Promise<void>): Promise<void> {
+    async #serializeMessageSend<Result>(
+        messageId: string,
+        operation: () => Promise<Result>,
+    ): Promise<Result> {
         const predecessor = this.#messageSendGates.get(messageId);
         let release!: () => void;
         const gate = new Promise<void>((resolve) => {
@@ -8980,7 +9050,7 @@ export class ApiModule implements AgentModule {
         this.#messageSendGates.set(messageId, gate);
         if (predecessor !== undefined) await predecessor;
         try {
-            await operation();
+            return await operation();
         } finally {
             release();
             if (this.#messageSendGates.get(messageId) === gate) {
@@ -9976,7 +10046,7 @@ export class ApiModule implements AgentModule {
             status: this.#ready ? "ready" : "starting",
             capabilities: {
                 desktopLiveControl: this.#live !== undefined,
-                ...(this.#stories === undefined ? {} : { stories: true }),
+                ...(this.#stories === undefined ? {} : { stories: true, agentStories: true }),
                 ...(this.#stickers === undefined ? {} : { stickers: true }),
                 ...(this.#bridges === undefined ? {} : { workspaceBridges: true }),
                 ...(this.#spaces === undefined || this.#tasks === undefined
@@ -11134,6 +11204,7 @@ function agentMetadataChanges(
         "orderKey",
         "pendingQuestionId",
         "processes",
+        "statusLine",
         "subagents",
         "subtaskOrderKey",
         "title",
