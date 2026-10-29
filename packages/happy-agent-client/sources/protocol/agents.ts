@@ -120,6 +120,8 @@ export const agentSchema = Type.Recursive((agent) =>
         archivedAt: Nullable(timestampSchema),
         /** Whether the user-facing send route accepts messages for this agent. */
         canSendMessages: Type.Optional(Type.Boolean()),
+        /** What the empty composer says in this conversation, when the daemon sets it. */
+        composerPlaceholder: Type.Optional(Nullable(Type.String())),
         createdAt: timestampSchema,
         id: cuid2Schema,
         /**

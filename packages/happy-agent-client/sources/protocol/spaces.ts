@@ -180,8 +180,27 @@ export const spaceSidebarProposalSchema = Type.Object({
     decidedAt: Nullable(timestampSchema),
     /** The sidebar version accepting it made, or `null`. */
     acceptedVersion: Nullable(Type.Integer({ minimum: 1 })),
+    /**
+     * New chats the proposal offers, by the space ID reserved for each. Such an ID is no space yet:
+     * draw the proposal's row from this entry. Older daemons omit it; treat it as empty.
+     */
+    newRows: Type.Optional(Type.Array(spaceSidebarProposalNewRowSchema())),
+    /** Once accepted, the chats accepting created. Older daemons omit it. */
+    started: Type.Optional(Type.Array(Type.Object({ spaceId: cuid2Schema, agentId: cuid2Schema }))),
 });
 export type SpaceSidebarProposal = Static<typeof spaceSidebarProposalSchema>;
+
+/** One new chat a proposal offers: what its row shows, and the first message accepting sends. */
+function spaceSidebarProposalNewRowSchema() {
+    return Type.Object({
+        id: cuid2Schema,
+        title: Type.String({ minLength: 1 }),
+        icon: Type.Object({ type: Type.Literal("library"), slug: Type.String() }),
+        /** A few words on where the work was seen, or `null`. */
+        why: Nullable(Type.String()),
+        firstMessage: Type.String({ minLength: 1 }),
+    });
+}
 
 /** The person's authoritative HTML sidebar and live space identities. */
 export const spaceSidebarResponseSchema = Type.Object({
@@ -458,6 +477,8 @@ export const acceptSpaceSidebarProposalResponseSchema = Type.Object({
     sidebar: spaceSidebarOperationsResponseSchema,
     /** The space IDs whose tasks accepting archived, from the proposal's Archive block. */
     archived: Type.Array(cuid2Schema),
+    /** The chats accepting created for the proposal's new rows. Older daemons omit it. */
+    started: Type.Optional(Type.Array(Type.Object({ spaceId: cuid2Schema, agentId: cuid2Schema }))),
 });
 export type AcceptSpaceSidebarProposalResponse = Static<
     typeof acceptSpaceSidebarProposalResponseSchema
