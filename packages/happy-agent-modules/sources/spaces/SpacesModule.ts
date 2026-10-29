@@ -70,6 +70,7 @@ import {
     type SpaceAttachableSurfaceType,
     type SpaceBatch,
     type SpaceDescription,
+    type SpaceIcon,
     type SpaceIconSlug,
     type SpaceOwnerId,
     type SpaceOwnerState,
@@ -2774,6 +2775,8 @@ export class SpacesModule implements AgentModule {
             readonly task: TaskRecord;
             readonly sectionId?: string;
             readonly mutationId?: string;
+            /** Work that already knows what it is wears its icon from the start, never growing one. */
+            readonly icon?: SpaceIcon;
         },
     ): Promise<SpaceRecord> {
         return await ctx.inTx(async (txCtx) => {
@@ -2816,7 +2819,7 @@ export class SpacesModule implements AgentModule {
                 id: input.spaceId,
                 ownerUserId,
                 role: "item",
-                icon: { type: "stem_cell" },
+                icon: input.icon ?? { type: "stem_cell" },
                 contents: [content],
                 ...(legacySectionId === undefined ? {} : { sectionId: legacySectionId }),
                 orderKey: rowKeyAtTop(siblings),

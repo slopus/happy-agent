@@ -459,6 +459,31 @@ describe("onboarding the person's work", () => {
             }, "the kept chat's first message");
             expect(opened.found.role).toBe("user");
             expect(opened.found.mode?.permissionMode).toBe("read_only");
+            // Its row has the proposal's name and icon from the start and keeps them: it is never
+            // a stem cell that names itself or grows an icon later.
+            const rowOf = async () =>
+                (
+                    (await gym.http.ok("GET", "/v0/spaces")) as {
+                        spaces: { id: string; title: string; icon: unknown }[];
+                    }
+                ).spaces.find((space) => space.id === opened.spaceId);
+            expect(await rowOf()).toMatchObject({
+                title: "Onboarding redesign",
+                icon: { type: "library", slug: "wip" },
+            });
+            const published = (await gym.events())
+                .map((event) => event as unknown as { type: string; payload: { space?: unknown } })
+                .filter(
+                    (event) =>
+                        event.type.startsWith("space.") &&
+                        (event.payload.space as { id?: string } | undefined)?.id === opened.spaceId,
+                );
+            expect(published.length).toBeGreaterThan(0);
+            for (const event of published) {
+                expect(event.payload.space).toMatchObject({
+                    icon: { type: "library", slug: "wip" },
+                });
+            }
             const placedAt = sidebar.html.indexOf('label="Product"');
             expect(sidebar.html.indexOf(opened.spaceId)).toBeGreaterThan(placedAt);
 

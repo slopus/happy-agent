@@ -31,7 +31,7 @@ import { ProviderRoutesModule, type ProviderRoute } from "../providerRoutes/inde
 import { ProviderScanModule } from "../providerScan/index.js";
 import { USER_MESSAGE_ORIGIN_METADATA } from "../impl/messageOrigin.js";
 import { MobileConnectorModule } from "../mobileConnector/index.js";
-import { SPACE_STANDALONE_OWNER, SpacesModule } from "../spaces/index.js";
+import { SPACE_STANDALONE_OWNER, spaceIconSchema, SpacesModule } from "../spaces/index.js";
 import { TasksModule } from "../tasks/index.js";
 import { createUuidV7Factory } from "../utils/createUuidV7.js";
 import { chatActionParse, type ChatAction } from "./impl/chatActions/chatAction.js";
@@ -948,7 +948,7 @@ export class OnboardingModule implements AgentModule {
                     title: row.title,
                     topic: row.topic,
                     ongoing: row.ongoing,
-                    ...(await this.#openChat(ctx, ids)),
+                    ...(await this.#openChat(ctx, ids, row)),
                 });
             } catch (error: unknown) {
                 ctx.log.warn("Onboarding could not open a proposed chat.", {}, error);
@@ -995,19 +995,28 @@ export class OnboardingModule implements AgentModule {
         });
     }
 
-    /** A new chat as New makes it, on the model onboarding chose. */
+    /**
+     * A new chat as New makes it, on the model onboarding chose. A proposal row's chat starts with
+     * the row's name and icon and keeps them: it is never a stem cell that names itself later.
+     */
     async #openChat(
         ctx: Context,
         ids: { readonly spaceId: string; readonly taskId: string },
+        row?: OnboardingWorkRow,
     ): Promise<{ readonly agentId: string; readonly spaceId: string }> {
         return await ctx.inTx(async (txCtx) => {
             const existing = await this.#spaces.get(txCtx, ids.spaceId);
             const content = existing?.contents[0];
             if (content?.kind === "task") return { agentId: content.agentId, spaceId: ids.spaceId };
-            const creation = await this.#tasks.createWithResult(txCtx, { id: ids.taskId });
+            const creation = await this.#tasks.createWithResult(txCtx, {
+                id: ids.taskId,
+                ...(row === undefined ? {} : { name: row.title }),
+            });
+            const icon = row === undefined ? undefined : { type: "library", slug: row.icon };
             await this.#spaces.createStemCell(txCtx, SPACE_STANDALONE_OWNER, {
                 spaceId: ids.spaceId,
                 task: creation.task,
+                ...(Value.Check(spaceIconSchema, icon) ? { icon } : {}),
             });
             const chosen = (await this.#state(txCtx)).model;
             const model = this.#config.models.find(
