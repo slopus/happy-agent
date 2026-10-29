@@ -22,7 +22,7 @@ const setStatusToolInputSchema = Type.Object(
             ],
             {
                 description:
-                    "One plain line on where the work stands for the person, or null to clear it.",
+                    "A short plain-language status on where the work stands for the person, or null to clear it.",
             },
         ),
     },
@@ -41,13 +41,14 @@ export function setStatusTool(stories: StoriesModule, scope: AgentModuleScope) {
         name: "set_status",
         defer: true,
         capabilities: [
-            "Set the one line shown under this conversation's title in the person's sidebar, saying where the work stands for them.",
+            "Set the short status shown under this conversation's title in the person's sidebar, saying where the work stands for them; clear it when you finish.",
         ],
         searchKeywords: ["status", "set status", "sidebar subtitle", "progress line"],
         description: [
-            'Set the one line shown under this conversation\'s title in the person\'s sidebar. It tells them at a glance where the work stands for them, in plain words: "Testing with a few friends", "Ready for you to try on your phone", "Stuck on the payment provider\'s sign-up". At most 120 characters on one line.',
+            'Set the status shown under this conversation\'s title in the person\'s sidebar, like the preview under a chat in Telegram. It tells them at a glance where the work stands for them, in plain words: "Testing with a few friends", "Ready for you to try on your phone", "Stuck on the payment provider\'s sign-up". The row wraps it onto at most two lines and cuts the rest, so write one or two short phrases, about 70 characters, never more than 120, and no line breaks.',
+            'When the work has a few clear stages, you may lead with a tiny cue of them in plain text, one dot per stage: ● for done, [●] for the one under way, ○ for still to come, such as "● ● [●] ○ Checkout works, testing payments next". Use it only when the stages are real and few; it replaces a count, never adds one.',
             'Write it for someone who is not reading the code. No commit hashes, versions, test counts, file or branch names, or counts like "step 3/7" unless the person asked for them. The row already shows whether you are working or waiting on the person, so never say only that ("Working…", "Waiting on you"); say what for.',
-            "Change it when where things stand changes in a way the person would care about, not on every step. Clear it with null when it no longer says anything true.",
+            "Change it when where things stand changes in a way the person would care about, not on every step. When you finish, or it no longer says anything true, clear it with null; a status left behind on finished work is noise.",
         ].join("\n\n"),
         parameters: setStatusToolInputSchema,
         returnType: setStatusResultSchema,

@@ -49,6 +49,15 @@ only refuses superseding a story outside the ring. Captions and status lines are
 vibe coder, so the prompts forbid hashes, versions, test counts, file names, and "14/14"-style
 tallies.
 
+## The status is a short subtitle, and progress cues are just text
+
+Rows show `statusLine` under the title, wrapped onto at most two lines like a chat preview in
+Telegram. Kirill wanted tiny step cues such as `● ● [●] ○`. Both are carried by the prompt, not
+the API: `text` stays one string of at most 120 characters with no line break, and `set_status`
+tells the agent to write one or two short phrases (about 70 characters), optionally led by that
+dot cue for a few real stages, and to clear the status with `null` when it finishes, because a
+status left on finished work is noise.
+
 ## Story pages fill the frame because the prompt says so
 
 A live artifact page in a story frame was drawn with the side panel's 24–32 px inset unless the

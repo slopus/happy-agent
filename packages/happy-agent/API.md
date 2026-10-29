@@ -5283,9 +5283,10 @@ Fields:
 - `statusLine` — optional additive object, emitted by daemons with `capabilities.agentStories`:
   `null`, or `{ "text": "Testing with a few friends", "updatedAt": 1755400000000 }`, the one line
   the agent last wrote about where its work stands, with its `set_status` tool (see "Agent
-  stories"). `text` is 1–120 characters on one line. A client shows it as the second line of the
-  agent's sidebar row or session, in place of what it would show otherwise, and shows nothing
-  different while it is `null` or absent. Every change is an `agent.updated` event carrying
+  stories"). `text` is 1–120 characters with no line break. A client shows it under the title of
+  the agent's sidebar row or session, in place of what it would show otherwise, wrapped onto at
+  most two lines and truncated past them, and shows nothing different while it is `null` or
+  absent. Every change is an `agent.updated` event carrying
   `statusLine` in `changes`. Archival keeps it.
 - `orderKey` — an opaque owner-local sort key, as on projects and workspaces; the list order is
   manual and moved with `reorder`. It is non-null for every user-visible root, including one
@@ -12488,7 +12489,7 @@ Hidden subagents and Prioritizing are not.
 | `post_story`     | `frames`, `caption`, `overlays` as for `draft_story`; `supersedes` | Posts an agent's story to this conversation's ring for its person       |
 | `withdraw_story` | `storyIds`, 1–10 live stories in this conversation's ring          | Ends them as withdrawn                                                  |
 | `list_stories`   | none                                                               | The ring's live stories: who posted each, caption, when, seen, reaction |
-| `set_status`     | `text`, 1–120 characters on one line, or `null` to clear           | Sets this agent's `statusLine`, the second line of its row or session   |
+| `set_status`     | `text`, 1–120 characters on one line, or `null` to clear           | Sets the `statusLine` shown under this agent's row or session title     |
 
 `post_story` takes the frames `draft_story` takes, and one more kind: `{ "artifactId", "version" }`
 without `path`, an artifact this conversation presented, shown live as an artifact frame; without

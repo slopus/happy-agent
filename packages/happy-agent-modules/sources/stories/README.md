@@ -69,7 +69,8 @@ Agent stories may show a whole artifact live (`{type:"artifact"}` asset) and flo
 windows over a frame; a person's own story may also carry one round video, uploaded into the
 story artifact as `media/<overlayId>.<ext>`.
 
-`set_status` writes the agent's `statusLine`, the row's second line. An agent cannot change its
+`set_status` writes the agent's `statusLine`, the status under the row's title, which clients wrap
+onto at most two lines. An agent cannot change its
 own metadata inside its turn, so the write is the durable function `stories.set-status`.
 
 ## Feed, seen marks, and reactions
