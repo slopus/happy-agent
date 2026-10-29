@@ -57,12 +57,31 @@ export const storyArtifactFileAssetSchema = Type.Object({
     path: Type.String({ minLength: 1, maxLength: 1_024 }),
 });
 
+/**
+ * An artifact itself, shown live and interactive: the asset of an `artifact` frame. Without
+ * `version` it always shows the artifact's latest version.
+ */
+export const storyArtifactAssetSchema = Type.Object({
+    type: Type.Literal("artifact"),
+    artifactId: cuid2Schema,
+    version: Type.Optional(Type.Integer({ minimum: 1 })),
+});
+
 /** The media a frame shows, by identity; its bytes are never copied or uploaded again. */
 export const storyAssetSchema = Type.Union([
     storyChatMediaAssetSchema,
     storyArtifactFileAssetSchema,
+    storyArtifactAssetSchema,
 ]);
 export type StoryAsset = Static<typeof storyAssetSchema>;
+
+/** The CSS viewport an artifact frame lays out in, scaled uniformly to fill the canvas. */
+export const STORY_ARTIFACT_VIEWPORT = { width: 360, height: 640 } as const;
+/** How long an artifact frame shows while nobody touches it. */
+export const STORY_ARTIFACT_DURATION_MS = 10_000;
+export const MAX_STORY_ARTIFACT_OVERLAYS = 3;
+export const MAX_STORY_ROUND_VIDEO_BYTES = 64 * 1024 * 1024;
+export const MAX_STORY_ROUND_VIDEO_DURATION_MS = 60_000;
 
 /**
  * Where something sits on the canvas: its centre as fractions of the canvas from the top-left
@@ -182,6 +201,57 @@ export const storyReactionOverlaySchema = Type.Object({
 });
 export type StoryReactionOverlay = Static<typeof storyReactionOverlaySchema>;
 
+/**
+ * A live window onto an artifact. The page lays out 360 CSS pixels wide and `360 / aspectRatio`
+ * tall; `transform.scale` is the fraction of the canvas's width the window takes.
+ */
+export const storyArtifactOverlaySchema = Type.Object({
+    id: cuid2Schema,
+    type: Type.Literal("artifact"),
+    artifactId: cuid2Schema,
+    /** Absent always shows the latest version. */
+    version: Type.Optional(Type.Integer({ minimum: 1 })),
+    /** The window's width over its height. */
+    aspectRatio: Type.Number({ minimum: 0.25, maximum: 4 }),
+    transform: storyTransformSchema,
+});
+export type StoryArtifactOverlay = Static<typeof storyArtifactOverlaySchema>;
+
+const storyRoundVideoFields = {
+    id: cuid2Schema,
+    type: Type.Literal("round_video"),
+    /** Its length as the recording client measured it. */
+    durationMs: Type.Integer({ minimum: 1, maximum: MAX_STORY_ROUND_VIDEO_DURATION_MS }),
+    /** Flipped horizontally, for a front camera. */
+    mirrored: Type.Optional(Type.Boolean()),
+    /** `scale` is the circle's diameter as a fraction of the canvas's width. */
+    transform: storyTransformSchema,
+};
+
+/**
+ * A round video, Telegram style. Its media is a file of the story's own artifact, served by
+ * `GET /v0/stories/:storyId/overlays/:overlayId/media`.
+ */
+export const storyRoundVideoOverlaySchema = Type.Object({
+    ...storyRoundVideoFields,
+    media: storyArtifactFileAssetSchema,
+});
+export type StoryRoundVideoOverlay = Static<typeof storyRoundVideoOverlaySchema>;
+
+/** A new recording for a round video, from `POST /v0/artifact-uploads`. */
+export const storyRoundVideoUploadSchema = Type.Object({
+    type: Type.Literal("upload"),
+    uploadId: cuid2Schema,
+    name: Type.String({ minLength: 1, maxLength: 255 }),
+});
+
+/** A round video in a write: a new upload, or the media it already has, sent back as read. */
+export const storyRoundVideoOverlayInputSchema = Type.Object({
+    ...storyRoundVideoFields,
+    media: Type.Union([storyRoundVideoUploadSchema, storyArtifactFileAssetSchema]),
+});
+export type StoryRoundVideoOverlayInput = Static<typeof storyRoundVideoOverlayInputSchema>;
+
 /** Drawn live by the client over the frame; a client skips a type it does not know. */
 export const storyOverlaySchema = Type.Union([
     storyTextOverlaySchema,
@@ -189,10 +259,27 @@ export const storyOverlaySchema = Type.Union([
     storyStickerOverlaySchema,
     storyEmojiOverlaySchema,
     storyReactionOverlaySchema,
+    storyArtifactOverlaySchema,
+    storyRoundVideoOverlaySchema,
 ]);
 export type StoryOverlay = Static<typeof storyOverlaySchema>;
 
+/** An overlay in a write: as read, except that a round video may carry a new upload. */
+export const storyOverlayInputSchema = Type.Union([
+    storyTextOverlaySchema,
+    storyLinkOverlaySchema,
+    storyStickerOverlaySchema,
+    storyEmojiOverlaySchema,
+    storyReactionOverlaySchema,
+    storyArtifactOverlaySchema,
+    storyRoundVideoOverlayInputSchema,
+]);
+export type StoryOverlayInput = Static<typeof storyOverlayInputSchema>;
+
 const storyOverlaysSchema = Type.Array(storyOverlaySchema, { maxItems: MAX_STORY_OVERLAYS });
+const storyOverlayInputsSchema = Type.Array(storyOverlayInputSchema, {
+    maxItems: MAX_STORY_OVERLAYS,
+});
 
 /** Two colours drawn top to bottom behind the media, filling the canvas around it. */
 export const storyBackgroundSchema = Type.Tuple([colorSchema, colorSchema]);
@@ -200,7 +287,8 @@ export type StoryBackground = Static<typeof storyBackgroundSchema>;
 
 export const storyFrameSchema = Type.Object({
     id: cuid2Schema,
-    kind: Type.Union([Type.Literal("image"), Type.Literal("video")]),
+    /** `"artifact"` shows a live artifact filling the canvas. */
+    kind: Type.Union([Type.Literal("image"), Type.Literal("video"), Type.Literal("artifact")]),
     /** Pixels after EXIF orientation; `null` for a video the daemon has not measured. */
     width: Nullable(Type.Integer({ minimum: 1 })),
     height: Nullable(Type.Integer({ minimum: 1 })),
@@ -224,6 +312,32 @@ export const storyCreatorSchema = Type.Union([
 ]);
 export type StoryCreator = Static<typeof storyCreatorSchema>;
 
+/** Whose story it is to its viewers: a person's, or an agent's in its ring. */
+export const storyAuthorSchema = Type.Union([
+    Type.Object({ kind: Type.Literal("user"), userId: Nullable(userIdSchema) }),
+    Type.Object({ kind: Type.Literal("agent"), agentId: cuid2Schema }),
+]);
+export type StoryAuthor = Static<typeof storyAuthorSchema>;
+
+/** Why an agent's story left its ring. */
+export const storyEndReasonSchema = Type.Union([
+    Type.Literal("superseded"),
+    Type.Literal("withdrawn"),
+    Type.Literal("archived"),
+]);
+export type StoryEndReason = Static<typeof storyEndReasonSchema>;
+
+/** The agent's story a person's repost started from, for the "Reposted from" chip. */
+export const storyRepostOfSchema = Type.Object({
+    storyId: cuid2Schema,
+    agentId: cuid2Schema,
+    /** The agent's conversation title when it was reposted. */
+    title: Nullable(Type.String({ minLength: 1, maxLength: 256 })),
+    /** Whether the caller may open that conversation. */
+    canOpen: Type.Boolean(),
+});
+export type StoryRepostOf = Static<typeof storyRepostOfSchema>;
+
 /** How many people reacted to a story with one emoji. */
 export const storyReactionCountSchema = Type.Object({
     emoji: storyReactionEmojiSchema,
@@ -242,8 +356,19 @@ export const storySchema = Type.Object({
     /** `null` in standalone mode. */
     authorUserId: Nullable(userIdSchema),
     createdBy: storyCreatorSchema,
-    /** The conversation and tool call that drafted it, or `null` for a story made by hand. */
+    /** The conversation and tool call that drafted or posted it, or `null` for one made by hand. */
     source: Nullable(Type.Object({ agentId: cuid2Schema, toolCallId: cuid2Schema })),
+    /** Agent stories: whose story it is. Older daemons omit it. */
+    author: Type.Optional(storyAuthorSchema),
+    /** On an agent's story, the task's or bot's agent whose ring wears it; otherwise `null`. */
+    ringAgentId: Type.Optional(Nullable(cuid2Schema)),
+    /** On an agent's story, the stories it ended by replacing them. */
+    supersedes: Type.Optional(Type.Array(cuid2Schema)),
+    /** When an agent's story left its ring, or `null` while it is in it. */
+    endedAt: Type.Optional(Nullable(timestampSchema)),
+    endReason: Type.Optional(Nullable(storyEndReasonSchema)),
+    /** On a repost, the agent's story it started from. */
+    repostOf: Type.Optional(Nullable(storyRepostOfSchema)),
     caption: Nullable(Type.String({ minLength: 1, maxLength: MAX_STORY_CAPTION_LENGTH })),
     frames: Type.Array(storyFrameSchema, { minItems: 1, maxItems: MAX_STORY_FRAMES }),
     /** Set by the daemon: every member with Stories on in team mode, the one person otherwise. */
@@ -253,7 +378,7 @@ export const storySchema = Type.Object({
     createdAt: timestampSchema,
     updatedAt: timestampSchema,
     postedAt: Nullable(timestampSchema),
-    /** Exactly 24 hours after `postedAt`. */
+    /** Exactly 24 hours after `postedAt`; always `null` on an agent's story. */
     expiresAt: Nullable(timestampSchema),
     seen: Type.Boolean(),
     /** On the author's own posted story, how many other people have seen it; otherwise `null`. */
@@ -297,7 +422,7 @@ const storyFrameInputFields = {
     id: Type.Optional(cuid2Schema),
     placement: Type.Optional(storyTransformSchema),
     background: Type.Optional(storyBackgroundSchema),
-    overlays: Type.Optional(storyOverlaysSchema),
+    overlays: Type.Optional(storyOverlayInputsSchema),
 };
 
 /**
@@ -389,14 +514,54 @@ export const storyFeedAuthorSchema = Type.Object({
 });
 export type StoryFeedAuthor = Static<typeof storyFeedAuthorSchema>;
 
+/** One sidebar row's ring: an agent's live stories, with its subtasks' rolled up. */
+export const storyRingSchema = Type.Object({
+    /** The ring's agent: match it to the sidebar row whose target `agentId` it is. */
+    agentId: cuid2Schema,
+    /** Live stories, oldest first. */
+    storyIds: Type.Array(cuid2Schema, { minItems: 1 }),
+    unseenCount: Type.Integer({ minimum: 0 }),
+    latestPostedAt: timestampSchema,
+});
+export type StoryRing = Static<typeof storyRingSchema>;
+
 /** `GET /v0/stories/feed` — the whole row, in the order it is shown; clients never sort again. */
 export const storyFeedResponseSchema = Type.Object({
     authors: Type.Array(storyFeedAuthorSchema, { minItems: 1 }),
-    /** Every story the authors name, from the caller's view. */
+    /** Agent stories: rings with a live story for the caller, newest first. */
+    rings: Type.Optional(Type.Array(storyRingSchema)),
+    /** Every story the authors and rings name, from the caller's view. */
     stories: Type.Record(Type.String(), storySchema),
     cursor: eventCursorSchema,
 });
 export type StoryFeedResponse = Static<typeof storyFeedResponseSchema>;
+
+/** `POST /v0/stories/:storyId/repost` — the caller's own draft, started from an agent's story. */
+export const repostStoryRequestSchema = Type.Object({
+    /** Retrying with the same ID returns the draft as it stands and makes nothing new. */
+    id: Type.Optional(cuid2Schema),
+    mutationId: Type.Optional(mutationIdSchema),
+});
+export type RepostStoryRequest = Static<typeof repostStoryRequestSchema>;
+
+export const MAX_STORY_FEEDBACK_LENGTH = 8_000;
+
+/** `POST /v0/stories/:storyId/feedback` — a message to the agent that posted it, quoting a frame. */
+export const storyFeedbackRequestSchema = Type.Object({
+    /** The message's ID; a repeated one sends nothing new. */
+    id: Type.Optional(cuid2Schema),
+    /** The frame the viewer was on; absent quotes the whole story. */
+    frameId: Type.Optional(cuid2Schema),
+    text: Type.String({ minLength: 1, maxLength: MAX_STORY_FEEDBACK_LENGTH }),
+    mutationId: Type.Optional(mutationIdSchema),
+});
+export type StoryFeedbackRequest = Static<typeof storyFeedbackRequestSchema>;
+
+export const storyFeedbackResponseSchema = Type.Object({
+    agentId: cuid2Schema,
+    messageId: cuid2Schema,
+});
+export type StoryFeedbackResponse = Static<typeof storyFeedbackResponseSchema>;
 
 /** `PUT /v0/stories/:storyId/reaction` — sets or replaces the caller's one reaction. */
 export const setStoryReactionRequestSchema = Type.Object({
@@ -473,8 +638,21 @@ export type StoryDeletedPayload = Static<typeof storyDeletedPayloadSchema>;
 export const storySeenPayloadSchema = Type.Object({
     authorUserId: Nullable(userIdSchema),
     storyId: cuid2Schema,
+    /** For an agent's story: the ring the mark is for. */
+    ringAgentId: Type.Optional(cuid2Schema),
 });
 export type StorySeenPayload = Static<typeof storySeenPayloadSchema>;
+
+/** `story.ended` — an agent's story left its ring; only its person receives it. */
+export const storyEndedPayloadSchema = Type.Object({
+    storyId: cuid2Schema,
+    version: resourceVersionSchema,
+    ringAgentId: cuid2Schema,
+    endedAt: timestampSchema,
+    endReason: storyEndReasonSchema,
+    story: storySchema,
+});
+export type StoryEndedPayload = Static<typeof storyEndedPayloadSchema>;
 
 /**
  * `story.reacted` — a story's reaction counts changed. Everyone who may read the story receives

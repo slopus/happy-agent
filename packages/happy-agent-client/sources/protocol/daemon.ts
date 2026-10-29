@@ -175,6 +175,11 @@ export const healthResponseSchema = Type.Object({
              * and `story.*` events. A person with Stories off still receives `404` from them.
              */
             stories: Type.Optional(Type.Boolean()),
+            /**
+             * True when the daemon serves agents' stories: story rings, artifact frames and
+             * overlays, round videos, repost, feedback, `story.ended`, and agent status lines.
+             */
+            agentStories: Type.Optional(Type.Boolean()),
             /** True when the daemon serves `/v0/stickers` and `sticker_recents.updated`. */
             stickers: Type.Optional(Type.Boolean()),
         }),

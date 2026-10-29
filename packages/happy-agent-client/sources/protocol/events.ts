@@ -40,6 +40,7 @@ import type { Profile } from "./profile.js";
 import type { StickerRecentsUpdatedPayload } from "./stickers.js";
 import type {
     StoryDeletedPayload,
+    StoryEndedPayload,
     StoryEventPayload,
     StoryReactedPayload,
     StorySeenPayload,
@@ -792,6 +793,7 @@ export type HappyAgentEvent =
     | EventEnvelope<"story.deleted", StoryDeletedPayload>
     | EventEnvelope<"story.seen", StorySeenPayload>
     | EventEnvelope<"story.reacted", StoryReactedPayload>
+    | EventEnvelope<"story.ended", StoryEndedPayload>
     | EventEnvelope<"sticker_recents.updated", StickerRecentsUpdatedPayload>;
 
 /** The name of an event this client build knows. */
