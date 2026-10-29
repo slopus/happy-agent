@@ -325,7 +325,11 @@ export class OnboardingModule implements AgentModule {
             void this.#lock
                 .runInLock(moduleCtx, async () => {
                     const state = await this.#state(moduleCtx);
-                    if (state.pairingId !== pairing.id || state.phonePaired) return;
+                    // Any pairing that completes once onboarding opened one counts: after a
+                    // mismatch the person shows a new code, which is a new pairing.
+                    if (state.step !== "guided" || state.pairingId === null || state.phonePaired) {
+                        return;
+                    }
                     await this.#update(moduleCtx, (current) => ({
                         ...current,
                         phonePaired: true,

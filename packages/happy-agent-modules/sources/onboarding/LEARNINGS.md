@@ -100,6 +100,13 @@ in, so the person could not fall back to the other one they had found. Happy now
 AI in the order chosen, and the failure repeats the table of AIs found with the failed one
 unticked and the others still ticked, beside "Sign in again" for the one that failed.
 
+## A phone paired on a new code still completes the step
+
+Onboarding followed only the pairing it opened. When the emoji did not match, the person showed a
+new code, which is a new pairing, so its completion was ignored and Happy never heard the phone
+paired. Onboarding now counts any pairing that completes on this computer once its phone step
+opened one.
+
 ## Onboarding proves each requirement once
 
 Completion is a verified provider and a profile with a name and an email, stored as a versioned

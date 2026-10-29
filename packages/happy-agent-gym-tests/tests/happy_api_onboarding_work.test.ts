@@ -1084,6 +1084,75 @@ describe("onboarding the person's work", () => {
     );
 
     it(
+        "tells Happy when the phone pairs on a new code after the emoji did not match",
+        async () => {
+            const { gym, happy } = await startGym(
+                {
+                    begin: say(PROFILE_STEP),
+                    "pressed:That's me": say(WORK_STEP),
+                    "pressed:I'll tell you instead": say(NEW_STEP),
+                    "pressed:Continue": say(PHONE_STEP),
+                    "pressed:I've downloaded and opened Happy": say(
+                        "Open Happy on your phone and scan this code.\n\n<figure data-phone-pair></figure>",
+                    ),
+                    phonePaired: say("Your phone is connected. You're ready, Ada."),
+                },
+                { phone: "on" },
+            );
+            const work = await reachWork(gym, happy);
+            await press(gym, happy, work, { id: "onboarding.workTell" });
+            const newStep = await waitForText(
+                gym,
+                happy,
+                "Press Create whenever you want to start something new.",
+            );
+            await press(gym, happy, newStep, { id: "onboarding.newChatSkip" });
+            const phone = await waitForText(
+                gym,
+                happy,
+                "Want to follow your agents from your phone?",
+            );
+            await press(gym, happy, phone, {
+                id: "onboarding.phone",
+                params: { choice: "opened" },
+                block: 1,
+            });
+            await waitForText(gym, happy, "<figure data-phone-pair></figure>");
+
+            type Connector = {
+                mobileConnector: {
+                    pairing: { id: string; qr: string | null; mobileConfirmed: boolean };
+                };
+            };
+            const transport = httpPhoneTransport(`http://127.0.0.1:${String(TAILNET_PORT)}`);
+            // The emoji don't match: the person at the desktop says so, and shows a new code.
+            const first = (await gym.http.ok("GET", "/v0/mobile-connector")) as Connector;
+            await startPhonePairing(first.mobileConnector.pairing.qr!, transport);
+            await gym.http.ok("POST", "/v0/mobile-connector/pairing/cancel", {
+                pairingId: first.mobileConnector.pairing.id,
+            });
+            const second = (await gym.http.ok("POST", "/v0/mobile-connector/pairing")) as Connector;
+            expect(second.mobileConnector.pairing.id).not.toBe(first.mobileConnector.pairing.id);
+
+            const session = await startPhonePairing(second.mobileConnector.pairing.qr!, transport);
+            const confirming = session.confirm();
+            await gym.waitUntil(async () => {
+                const current = (await gym.http.ok("GET", "/v0/mobile-connector")) as Connector;
+                return current.mobileConnector.pairing.mobileConfirmed ? true : undefined;
+            }, "the phone to confirm the emoji");
+            await gym.http.ok("POST", "/v0/mobile-connector/pairing/confirm", {
+                pairingId: second.mobileConnector.pairing.id,
+            });
+            await confirming;
+
+            await waitForText(gym, happy, "Your phone is connected.");
+            expect(told(gym, "phonePaired")).toMatchObject({ name: "Ada Lovelace" });
+            expect(gym.errors).toEqual([]);
+        },
+        TEST_TIMEOUT_MS,
+    );
+
+    it(
         "tells Happy why the phone could not pair when phone connections are off, and moves on",
         async () => {
             const { gym, happy } = await startGym(
