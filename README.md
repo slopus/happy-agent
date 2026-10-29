@@ -23,7 +23,7 @@
   <a href="https://github.com/slopus/happy">original Happy CLI</a>.
 </p>
 
-https://github.com/user-attachments/assets/99a7dee6-36ef-4110-95b2-e236633640a4
+https://github.com/user-attachments/assets/deeeeaf5-e550-49bc-829f-1186898f441a
 
 <p>
   <a href="#quick-start">Quick start</a> ·
