@@ -1,15 +1,7 @@
 import type { ProviderCli } from "../../providerClis/index.js";
 import type { ChatProviderId } from "./chatActions/chatAction.js";
-import { chatActionEscape, type ChatActionMark } from "./chatActions/chatActionBlocks.js";
-import {
-    APP_OF,
-    MARK_OF,
-    PROVIDER_BUTTONS,
-    PROVIDER_OF,
-    accountOf,
-    listOf,
-    menu,
-} from "./onboardingCopy.js";
+import { chatActionEscape } from "./chatActions/chatActionBlocks.js";
+import { APP_OF, MARK_OF, PROVIDER_BUTTONS, PROVIDER_OF, listOf, menu } from "./onboardingCopy.js";
 
 /**
  * Happy's words while an AI is chosen and connected, in the inline action grammar. The desktop's
@@ -107,133 +99,18 @@ export function connectFailedMessage(id: ChatProviderId, reason: string): string
 }
 
 /**
- * The connecting message, rewritten in place as the install and sign-in move: its steps, then
- * while the browser is out, the page to open again and Cancel, and a field of its own for a code
- * the page shows. `now` decides whether a waiting page has timed out.
+ * The connecting message, written once: the app draws the install and sign-in live from the
+ * provider CLI figure, with its own page, code field, Cancel, and Try again, so nothing here is
+ * ever rewritten.
  */
-export function connectingMessage(cli: ProviderCli, id: ChatProviderId, now: number): string {
-    const operation = cli.operation;
-    const signedIn = cli.signIn.status === "signed_in";
-    const waitingOperation =
-        operation?.kind === "sign_in" && operation.status === "waiting" && !signedIn;
-    const expiresAt = operation?.authorization?.expiresAt;
-    const expired = waitingOperation && expiresAt !== undefined && now >= expiresAt;
-    const waiting = waitingOperation && !expired;
-    const installing = operation?.kind === "install" && operation.status === "running";
-    const failed = (operation?.status === "failed" || expired) && !signedIn;
-    const authorization = waiting ? operation.authorization : null;
-    const app = APP_OF[id];
-    const parts = [`Connecting ${app}:`, stepsOf(cli, id, expired)];
-    if (installing) {
-        parts.push(
-            menu(
-                `<button data-action="onboarding.connectCancel" data-provider="${id}">Cancel</button>`,
-            ),
-        );
-    }
-    if (waiting) {
-        const opened = authorization?.openedByProgram
-            ? `${cli.name} opened the ${cli.vendor} sign-in page in your browser.`
-            : `I opened the ${cli.vendor} sign-in page in your browser.`;
-        const code = authorization?.userCode ? ` Enter **${authorization.userCode}** there.` : "";
-        const quick =
-            authorization !== null &&
-            authorization !== undefined &&
-            authorization.expiresAt - now < 120_000
-                ? " The page times out in about a minute."
-                : "";
-        parts.push(
-            `${opened}${code} Finish there and come back; I'll carry on as soon as you're signed in.${quick}`,
-        );
-        // The page is opened again only on a click: the program already opened it once.
-        parts.push(
-            menu(
-                ...(authorization?.url
-                    ? [
-                          `<button data-action="onboarding.signInOpen" data-provider="${id}" data-emphasis>Open sign-in page</button>`,
-                      ]
-                    : []),
-                `<button data-action="onboarding.connectCancel" data-provider="${id}">Cancel</button>`,
-            ),
-        );
-        if (authorization?.acceptsCode) {
-            parts.push(
-                "If the page shows you a code, enter it here:",
-                [
-                    `<form data-action="onboarding.codeEntry" data-provider="${id}">`,
-                    '  <input type="text" placeholder="Sign-in code">',
-                    '  <button type="submit">Enter code</button>',
-                    "</form>",
-                ].join("\n"),
-            );
-        }
-    }
-    if (failed) {
-        parts.push(
-            expired
-                ? `That sign-in page expired. Open a new one to finish connecting ${app}.`
-                : `${cli.name} couldn't finish. You can try again or choose another AI.`,
-            menu(
-                `<button data-action="onboarding.connect" data-provider="${id}" data-mark="${MARK_OF[id]}" data-emphasis>${expired ? "Sign in again" : "Try again"}</button>`,
-                '<button data-action="onboarding.connectAnother">Choose another AI</button>',
-                `<button data-action="onboarding.manual" data-provider="${id}">Do it myself</button>`,
-            ),
-        );
-    }
-    return parts.join("\n\n");
-}
-
-function stepsOf(cli: ProviderCli, id: ChatProviderId, expired: boolean): string {
-    const operation = cli.operation;
-    const installed = cli.installation.status === "installed";
-    const signedIn = cli.signIn.status === "signed_in";
-    const installStatus = installed
-        ? "done"
-        : operation?.kind === "install" && operation.status === "failed"
-          ? "failed"
-          : operation?.kind === "install"
-            ? "running"
-            : "pending";
-    const signInStatus = signedIn
-        ? "done"
-        : operation?.kind === "sign_in" && (operation.status === "failed" || expired)
-          ? "failed"
-          : operation?.kind === "sign_in" && operation.status !== "cancelled"
-            ? "running"
-            : "pending";
-    const installDetail = installed
-        ? cli.installation.version
-            ? `${cli.installation.version} · ${cli.installation.desktopApp ? `in ${cli.installation.desktopApp}` : "installed"}`
-            : "installed"
-        : operation?.kind === "install"
-          ? (operation.error?.message ?? operation.message)
-          : undefined;
-    const signInDetail = signedIn
-        ? accountOf(cli) || "signed in"
-        : operation?.kind === "sign_in"
-          ? expired
-              ? "timed out"
-              : operation.status === "cancelled"
-                ? "paused"
-                : (operation.error?.message ??
-                  (operation.status === "waiting" ? "waiting for your browser" : operation.message))
-          : undefined;
-    const item = (status: string, label: string, detail?: string, mark?: ChatActionMark) =>
-        `  <li data-status="${status}"${mark ? ` data-mark="${mark}"` : ""}>${chatActionEscape(label)}${detail ? ` <small>${chatActionEscape(detail)}</small>` : ""}</li>`;
+export function connectingMessage(id: ChatProviderId): string {
     return [
-        "<ol data-steps>",
-        item(installStatus, `Install ${cli.name}`, installDetail, MARK_OF[id]),
-        item(signInStatus, `Sign in to ${APP_OF[id]}`, signInDetail),
-        "</ol>",
-    ].join("\n");
-}
-
-export function connectPausedMessage(id: ChatProviderId, installed: boolean): string {
-    return [
-        `${APP_OF[id]} sign-in is paused. You can finish it whenever you're ready.`,
+        `Connecting ${APP_OF[id]}. I'll carry on here as soon as you're signed in.`,
+        "",
+        `<figure data-provider-cli="${id}"></figure>`,
         "",
         menu(
-            `<button data-action="onboarding.connect" data-provider="${id}" data-mark="${MARK_OF[id]}" data-emphasis>${installed ? "Continue sign-in" : "Install and sign in"}</button>`,
+            `<button data-action="onboarding.manual" data-provider="${id}">I'd rather do it myself</button>`,
             '<button data-action="onboarding.connectAnother">Choose another AI</button>',
         ),
     ].join("\n");
@@ -276,10 +153,6 @@ export function accountAddMessage(
 
 export function chooseAtLeastOneMessage(table: string): string {
     return ["Choose at least one, or sign in to another AI.", "", table].join("\n");
-}
-
-export function codeFailedMessage(reason: string): string {
-    return `That code didn't work: ${reason}`;
 }
 
 /**

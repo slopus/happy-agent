@@ -80,8 +80,11 @@ export type ChatAction =
     | { readonly id: "onboarding.workAccept"; readonly values: readonly string[] }
     /** Onboarding: the proposals are not right. */
     | { readonly id: "onboarding.workChange" }
-    /** Onboarding: open a fresh, blank stem cell, as New does. */
-    | { readonly id: "onboarding.newChat" }
+    /**
+     * Onboarding: the app made a fresh chat with its own Create; the press carries that chat's
+     * space ID as its one value.
+     */
+    | { readonly id: "onboarding.newChat"; readonly values?: readonly string[] }
     /** Onboarding: not now for New. */
     | { readonly id: "onboarding.newChatSkip" }
     /** Onboarding: the phone offer's answer: the app is open on the phone, or later. */
@@ -142,12 +145,13 @@ export function chatActionParse(
         case "onboarding.discover":
         case "onboarding.workTell":
         case "onboarding.connectAnother":
-        case "onboarding.newChat":
         case "onboarding.newChatSkip":
         case "onboarding.finish":
             return { id };
         case "onboarding.accountAdd":
             return provider ? { id, provider } : { id };
+        case "onboarding.newChat":
+            return values !== undefined && values.length > 0 ? { id, values } : { id };
         case "onboarding.workAccept":
         case "onboarding.providersUse":
         case "onboarding.routesUse":

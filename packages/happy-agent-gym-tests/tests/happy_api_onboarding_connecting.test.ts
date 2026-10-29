@@ -136,7 +136,7 @@ async function press(
 
 describe("Connecting an AI in Happy's onboarding", () => {
     it(
-        "discloses the installer, installs and signs in in place, and never stores the code",
+        "discloses the installer, shows the install and sign-in as a live figure, and never stores the code",
         async () => {
             const { gym, happy } = await startGym();
             const [opening] = await waitForMessages(gym, happy, 1, "Happy's first message");
@@ -162,25 +162,30 @@ describe("Connecting an AI in Happy's onboarding", () => {
                 blockIndex: 0,
                 action: { id: "onboarding.connect", params: { provider: "claude" } },
             });
-            const waiting = await waitForMessages(
-                gym,
-                happy,
-                4,
-                "the sign-in to wait for its code",
-                (all) => textOf(all[3]).includes('data-action="onboarding.codeEntry"'),
-            );
-            const connecting = waiting[3]!;
-            expect(textOf(connecting)).toContain("Connecting Claude:");
-            expect(textOf(connecting)).toContain('<li data-status="done" data-mark="claude">');
+            const connecting = (await waitForMessages(gym, happy, 4, "the connecting message"))[3]!;
+            const written = textOf(connecting);
+            expect(written).toContain("Connecting Claude.");
+            expect(written).toContain('<figure data-provider-cli="claude"></figure>');
             const flow = (await gym.http.ok("GET", "/v0/onboarding/flow")) as { flow: Flow };
             expect(flow.flow.step).toBe("connecting");
 
-            // The steps, the page and Cancel, then the code field: the third action block.
-            await press(gym, happy, {
-                messageId: connecting.id,
-                blockIndex: 2,
-                action: { id: "onboarding.codeEntry", params: { provider: "claude" } },
-                values: ["good-code"],
+            // The figure draws the provider CLI itself; its code field calls the generic route.
+            await gym.waitUntil(async () => {
+                const { providerCli } = (await gym.http.ok("GET", "/v0/provider-clis/claude")) as {
+                    providerCli: {
+                        operation: {
+                            status: string;
+                            authorization: { acceptsCode: boolean } | null;
+                        } | null;
+                    };
+                };
+                return providerCli.operation?.status === "waiting" &&
+                    providerCli.operation.authorization?.acceptsCode === true
+                    ? true
+                    : undefined;
+            }, "the sign-in to wait for its code");
+            await gym.http.ok("POST", "/v0/provider-clis/claude/sign-in/code", {
+                code: "good-code",
             });
             const after = await waitForMessages(
                 gym,
@@ -188,8 +193,8 @@ describe("Connecting an AI in Happy's onboarding", () => {
                 5,
                 "Happy to carry on after the sign-in",
             );
-            expect(textOf(after[3])).toContain("ada@example.com · Max");
-            expect(textOf(after[3])).not.toContain("onboarding.codeEntry");
+            // Nothing above is redrawn: the connecting message is exactly as it was written.
+            expect(textOf(after[3])).toBe(written);
             // The gym serves no Claude account, so Happy says so and asks again.
             expect(textOf(after[4])).toContain(
                 "I couldn't make Claude the AI Happy uses. Happy Agent has no account for it on this computer.",

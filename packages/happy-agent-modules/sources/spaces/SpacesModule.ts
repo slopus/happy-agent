@@ -2699,8 +2699,8 @@ export class SpacesModule implements AgentModule {
 
     /**
      * Looks right in onboarding, as the person's one sidebar edit: each accepted topic becomes a
-     * section after the divider, in the order accepted, with its rows under it in order; a topic
-     * that is already a section takes its rows at its top. The empty default headings give way.
+     * new section at the end of the sidebar, in the order given, with its rows under it in order,
+     * where clients drew the preview. A topic that is already a section takes its rows at its end.
      */
     async placeWork(
         ctx: Context,
@@ -2709,21 +2709,23 @@ export class SpacesModule implements AgentModule {
     ): Promise<void> {
         const sidebar = await this.sidebar(ctx, ownerUserId);
         const items = readSidebarDocument(sidebar.html).items;
-        const sections = new Map(
-            items.flatMap((item) =>
-                item.type === "section" ? [[item.label.toLowerCase(), item.id] as const] : [],
-            ),
-        );
+        const placed = new Set(rows.map((row) => row.spaceId));
+        const sectionEnds = new Map<string, string>();
+        for (const [index, item] of items.entries()) {
+            if (item.type !== "section") continue;
+            let end = item.id;
+            for (const next of items.slice(index + 1)) {
+                if (next.type === "section" || next.type === "separator") break;
+                if (!placed.has(next.id)) end = next.id;
+            }
+            sectionEnds.set(item.label.toLowerCase(), end);
+        }
         const ids = new Set(items.map((item) => item.id));
-        let after: string | undefined = items.some(
-            (item) => item.type === "separator" && item.id === "divider",
-        )
-            ? "divider"
-            : items.at(-1)?.id;
+        let last = items.findLast((item) => !placed.has(item.id))?.id;
         const topics = [...new Set(rows.flatMap((row) => (row.topic ? [row.topic] : [])))];
         const operations: SpaceSidebarOperation[] = [];
         for (const topic of topics) {
-            let anchor = sections.get(topic.toLowerCase());
+            let anchor = sectionEnds.get(topic.toLowerCase());
             const added = anchor === undefined;
             if (anchor === undefined) {
                 const base = `topic-${
@@ -2739,7 +2741,7 @@ export class SpacesModule implements AgentModule {
                 operations.push({
                     type: "insert",
                     node: { type: "section", id, label: topic },
-                    to: after === undefined ? { parent: null } : { after },
+                    to: last === undefined ? { parent: null } : { after: last },
                 });
             }
             for (const row of rows) {
@@ -2747,14 +2749,25 @@ export class SpacesModule implements AgentModule {
                 operations.push({ type: "move", id: row.spaceId, to: { after: anchor } });
                 anchor = row.spaceId;
             }
-            if (added) after = anchor;
+            if (added) last = anchor;
         }
-        const wanted = new Set(topics.map((topic) => topic.toLowerCase()));
-        for (const item of emptyDefaultHeadings(items)) {
-            if (!wanted.has(item.label.toLowerCase())) {
-                operations.push({ type: "remove", id: item.id });
-            }
-        }
+        if (operations.length === 0) return;
+        await this.applySidebarOperations(ctx, ownerUserId, {
+            mutationId: createId(),
+            baseVersion: sidebar.version,
+            operations,
+        });
+    }
+
+    /**
+     * Onboarding's real sidebar replacing the example: the default Bots and Tasks headings go
+     * while nothing is under them, so no heading disappears later and moves the rows below it.
+     */
+    async removeEmptyDefaultHeadings(ctx: Context, ownerUserId: SpaceOwnerId): Promise<void> {
+        const sidebar = await this.sidebar(ctx, ownerUserId);
+        const operations: SpaceSidebarOperation[] = emptyDefaultHeadings(
+            readSidebarDocument(sidebar.html).items,
+        ).map((item) => ({ type: "remove", id: item.id }));
         if (operations.length === 0) return;
         await this.applySidebarOperations(ctx, ownerUserId, {
             mutationId: createId(),

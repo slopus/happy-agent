@@ -80,6 +80,23 @@ export const onboardingStartedSchema = Type.Object(
 );
 export type OnboardingStarted = Static<typeof onboardingStartedSchema>;
 
+/** A row Looks right ticked: the IDs its chat takes, fixed by the press, and how it went. */
+export const onboardingAcceptedSchema = Type.Object(
+    {
+        value: Type.String({ minLength: 1, maxLength: 64 }),
+        spaceId: Type.String({ minLength: 1, maxLength: 64 }),
+        agentId: Type.String({ minLength: 1, maxLength: 64 }),
+        taskId: Type.String({ minLength: 1, maxLength: 64 }),
+        status: Type.Union([
+            Type.Literal("pending"),
+            Type.Literal("started"),
+            Type.Literal("failed"),
+        ]),
+    },
+    { additionalProperties: false },
+);
+export type OnboardingAccepted = Static<typeof onboardingAcceptedSchema>;
+
 /** What the daemon stores for one owner: everything that cannot be derived cheaply. */
 export const onboardingStateSchema = Type.Object(
     {
@@ -88,7 +105,7 @@ export const onboardingStateSchema = Type.Object(
         verified: Type.Union([onboardingVerificationSchema, Type.Null()]),
         exampleSidebar: Type.Boolean(),
         restartRequired: Type.Boolean(),
-        /** The assistant being installed or signed in to, and the message that shows its steps. */
+        /** The assistant being installed or signed in to. */
         connecting: Type.Union([
             Type.Object(
                 {
@@ -98,7 +115,7 @@ export const onboardingStateSchema = Type.Object(
                         Type.Literal("grok"),
                         Type.Literal("antigravity"),
                     ]),
-                    messageId: Type.String({ minLength: 1, maxLength: 64 }),
+                    messageId: Type.Optional(Type.String({ minLength: 1, maxLength: 64 })),
                 },
                 { additionalProperties: false },
             ),
@@ -135,8 +152,14 @@ export const onboardingStateSchema = Type.Object(
         findings: Type.Union([Type.String({ maxLength: 20_000 }), Type.Null()]),
         /** The rows of the newest proposal, which Looks right opens. */
         proposal: Type.Union([Type.Array(onboardingWorkRowSchema, { maxItems: 8 }), Type.Null()]),
-        /** What the person said they work on, for a proposal once Happy's turn ends. */
-        proposeAbout: Type.Union([Type.String({ maxLength: 4_000 }), Type.Null()]),
+        /** Discover was pressed: only then may Happy read the places it disclosed. */
+        discoverAllowed: Type.Optional(Type.Boolean()),
+        /** Written by earlier previews, which proposed once Happy's turn ended; now ignored. */
+        proposeAbout: Type.Optional(Type.Union([Type.String({ maxLength: 4_000 }), Type.Null()])),
+        /** How many proposals were made: each one's row values name it alone. */
+        proposals: Type.Optional(Type.Integer({ minimum: 0 })),
+        /** The rows the last Looks right ticked, and how each one's chat is going. */
+        accepted: Type.Optional(Type.Array(onboardingAcceptedSchema, { maxItems: 8 })),
         /** The rows Looks right opened, and whether their topics were placed. */
         started: Type.Array(onboardingStartedSchema, { maxItems: 8 }),
         placed: Type.Boolean(),
@@ -175,6 +198,23 @@ export const onboardingFlowSchema = Type.Object(
         requirements: Type.Object(
             { provider: Type.Boolean(), profile: Type.Boolean() },
             { additionalProperties: false },
+        ),
+        accepted: Type.Optional(
+            Type.Array(
+                Type.Object(
+                    {
+                        value: Type.String(),
+                        spaceId: Type.String(),
+                        agentId: Type.String(),
+                        status: Type.Union([
+                            Type.Literal("pending"),
+                            Type.Literal("started"),
+                            Type.Literal("failed"),
+                        ]),
+                    },
+                    { additionalProperties: false },
+                ),
+            ),
         ),
     },
     { additionalProperties: false },

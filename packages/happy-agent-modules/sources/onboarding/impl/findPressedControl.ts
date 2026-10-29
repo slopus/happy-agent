@@ -39,8 +39,12 @@ export function findPressedControl(message: HistoryMessage, press: ControlPress)
     }
     switch (block.kind) {
         case "buttons": {
+            // A button the app runs itself, such as Try Create, carries what it made as values.
+            const { values: _made, ...control } = requested as ChatAction & {
+                readonly values?: readonly string[];
+            };
             const index = block.buttons.findIndex((button) =>
-                isDeepStrictEqual(button.action, requested),
+                isDeepStrictEqual(button.action, control),
             );
             return index === -1
                 ? { kind: "mismatch" }

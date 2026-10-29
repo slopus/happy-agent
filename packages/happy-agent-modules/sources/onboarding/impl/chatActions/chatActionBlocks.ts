@@ -33,11 +33,14 @@ import { chatActionParse, type ChatAction } from "./chatAction.js";
  * </ul>
  *
  * <figure data-phone-app></figure>
+ * <figure data-provider-cli="codex"></figure>
+ * <figure data-setting="default-model"></figure>
  * ```
  *
  * A tree is the places something will be read, drawn as the app's file tree.
- * The phone figure is the codes that download Happy's phone app; it carries
- * nothing of its own.
+ * A figure carries nothing but what it names: the codes that download Happy's
+ * phone app, the phone pairing, one provider CLI's install and sign-in, or one
+ * setting, each drawn live by the app from the daemon's own state.
  *
  * A checklist marked `data-table` is drawn as a table whose column headings
  * belong to its action (`CHAT_TABLE_COLUMNS`), never to the markup: each label
@@ -112,6 +115,8 @@ export type ChatActionBlock =
           readonly options: readonly ChatChecklistOption[];
           readonly submit: {
               readonly label: string;
+              /** The submit's label while nothing is ticked (`data-empty-label`). */
+              readonly emptyLabel?: string;
               readonly emphasized: boolean;
               /** Whether the form names an action this build runs. */
               readonly available: boolean;
@@ -141,6 +146,10 @@ export type ChatActionBlock =
     | { readonly kind: "phoneApp" }
     /** The caller's current phone pairing, drawn live; the block itself carries nothing. */
     | { readonly kind: "phonePair" }
+    /** One provider CLI by its ID, drawn live with its own install and sign-in controls. */
+    | { readonly kind: "providerCli"; readonly cliId: string }
+    /** One setting by its name, such as `default-model`, drawn live with a way to change it. */
+    | { readonly kind: "setting"; readonly setting: string }
     | {
           /** One single-line field and its submit. The text goes to the action only. */
           readonly kind: "code";
@@ -199,7 +208,8 @@ export type ChatActionSegment =
 const BLOCK_START = /^ {0,3}<(menu|form|output|ol|ul|figure)(?=[\t\n\f\r />]|$)/iu;
 const STEPS_START = /^ {0,3}<ol[\t\n\f\r ][^>]*\bdata-steps\b/iu;
 const TREE_START = /^ {0,3}<ul[\t\n\f\r ][^>]*\bdata-tree\b/iu;
-const PHONE_START = /^ {0,3}<figure[\t\n\f\r ][^>]*\bdata-phone-(?:app|pair)\b/iu;
+const FIGURE_START =
+    /^ {0,3}<figure[\t\n\f\r ][^>]*\bdata-(?:phone-app|phone-pair|provider-cli|setting)\b/iu;
 const PARTIAL_START = /^ {0,3}<([a-z]*)$/iu;
 const FENCE = /^ {0,3}(`{3,}|~{3,})/u;
 const ROOTS = ["menu", "form", "output", "ol", "ul", "figure"];
@@ -245,7 +255,7 @@ export function chatActionSegments(text: string): readonly ChatActionSegment[] {
             tag !== undefined &&
             (tag !== "ol" || STEPS_START.test(rest)) &&
             (tag !== "ul" || TREE_START.test(rest)) &&
-            (tag !== "figure" || PHONE_START.test(rest))
+            (tag !== "figure" || FIGURE_START.test(rest))
         ) {
             pushMarkdown(text.slice(markdownStart, lineStart));
             const end = blockEnd(text, lineStart, tag);
@@ -436,7 +446,12 @@ function cellsOf(nodes: readonly Node[]): { label: string; smalls: string[] } | 
 function data(attributes: ReadonlyMap<string, string>): Map<string, string> {
     const params = new Map<string, string>();
     for (const [key, value] of attributes)
-        if (key.startsWith("data-") && key !== "data-action" && key !== "data-emphasis")
+        if (
+            key.startsWith("data-") &&
+            key !== "data-action" &&
+            key !== "data-emphasis" &&
+            key !== "data-empty-label"
+        )
             params.set(key.slice(5), value);
     return params;
 }
@@ -522,8 +537,10 @@ export function chatActionBlockParse(html: string): ChatActionBlock | undefined 
                     const label = plain(child.children);
                     if (submit || !label || child.attributes.get("type") !== "submit")
                         return undefined;
+                    const emptyLabel = child.attributes.get("data-empty-label")?.trim();
                     submit = {
                         label,
+                        ...(emptyLabel ? { emptyLabel } : {}),
                         emphasized: child.attributes.has("data-emphasis"),
                         available:
                             chatActionParse(actionId, data(root.attributes), []) !== undefined,
@@ -605,7 +622,11 @@ export function chatActionBlockParse(html: string): ChatActionBlock | undefined 
         case "figure": {
             if (elements(root.children)?.length !== 0) return undefined;
             if (root.attributes.has("data-phone-app")) return { kind: "phoneApp" };
-            return root.attributes.has("data-phone-pair") ? { kind: "phonePair" } : undefined;
+            if (root.attributes.has("data-phone-pair")) return { kind: "phonePair" };
+            const cliId = root.attributes.get("data-provider-cli")?.trim();
+            if (cliId) return { kind: "providerCli", cliId };
+            const setting = root.attributes.get("data-setting")?.trim();
+            return setting ? { kind: "setting", setting } : undefined;
         }
         case "output": {
             const status = STATUS_TONES.find(

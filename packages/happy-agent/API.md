@@ -6363,7 +6363,7 @@ The only elements are `menu`, `form`, `output`, `ol`, `ul`, `figure`, `li`, `but
 `middot`, `hellip`, `mdash`, `ndash`, and numeric references. Optional presentation attributes are
 `data-emphasis` (the first one in a block counts; at most one control is emphasized),
 `data-mark` (`claude`, `openai`, `grok`, or `gemini`), `data-connected`, `data-icon` (a clay icon
-slug), `data-ongoing`, and, on a checklist form, `data-empty-label`: the submit's label while
+slug), `data-ongoing`, and, on a checklist's submit, `data-empty-label`: that submit's label while
 nothing is ticked, such as "Continue without these". A block with any other element, any `on*` or `style` attribute,
 mismatched nesting, stray text between elements, or more than one root is not a block; it is drawn
 as the inert text it was written as.
