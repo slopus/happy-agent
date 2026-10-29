@@ -48,7 +48,7 @@ export const PROVIDER_BUTTONS: readonly {
 ];
 
 const FIRST_STEP =
-    "The first thing is to check which subscriptions you already use today. I reuse your existing subscriptions, so there's nothing new to pay for.";
+    "First, let's check which AI subscriptions you already use today. I reuse your existing subscriptions, so there's nothing new to pay for.";
 
 /** "Mac" on a Mac; "computer" anywhere else. */
 export function machineWord(platform: NodeJS.Platform): string {
@@ -67,7 +67,7 @@ export function listOf(words: readonly string[], conjunction: "and" | "or" = "an
 /** Happy introduces itself and the example sidebar, and offers to start. */
 export function openingMessage(): string {
     return [
-        "Hi, I'm Happy, your main agent. I help you get things done with agents of your own. The sidebar shows an example of what that looks like.",
+        "Hi, I'm Happy, your main agent. I run and coordinate agents across your work. The sidebar shows an example of how your work looks once we're set up.",
         "",
         menu('<button data-action="onboarding.start" data-emphasis>Start onboarding</button>'),
     ].join("\n");
@@ -101,18 +101,18 @@ export function subscriptionsMessage(
     machine: string,
 ): string {
     if (routes.length > 0) {
-        return `${FIRST_STEP} This ${machine} already reaches these; choose which ones I should use.\n\n${routesTable(routes)}`;
+        return `${FIRST_STEP} I found these set up on this ${machine}:\n\n${routesTable(routes)}`;
     }
     if (signedIn.length === 0) {
         return [
-            `${FIRST_STEP} I didn't find any on this ${machine}. Which one do you already pay for?`,
+            `${FIRST_STEP} I didn't find any signed in on this ${machine}. Which do you use?`,
             "",
             providerMenu({ withNone: true }),
             "",
             '<output data-status="info">Nothing is connected yet.</output>',
         ].join("\n");
     }
-    return `${FIRST_STEP} You're already signed in on this ${machine}; choose which ones I should use.\n\n${providersTable(signedIn)}`;
+    return `${FIRST_STEP} You're already signed in to these on this ${machine}:\n\n${providersTable(signedIn)}`;
 }
 
 export function accountOf(cli: ProviderCli): string {

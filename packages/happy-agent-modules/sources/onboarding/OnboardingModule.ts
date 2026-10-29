@@ -61,7 +61,7 @@ import {
 } from "./impl/connectingCopy.js";
 import { actionBlocks, findPressedControl } from "./impl/findPressedControl.js";
 import {
-    ONBOARDING_GUIDE,
+    onboardingGuide,
     onboardingEventText,
     onboardingPlaces,
     type OnboardingEvent,
@@ -73,7 +73,7 @@ import {
     acceptedOutcome,
     aiChosenOutcome,
     closingOutcome,
-    manualCommands,
+    manualOutcome,
     placesOutcome,
     proposalOutcome,
 } from "./impl/pressOutcome.js";
@@ -358,7 +358,7 @@ export class OnboardingModule implements AgentModule {
                 await this.#resumeAfterRestart(startCtx);
             },
             instructions: async (hookCtx, scope) =>
-                (await this.#guiding(hookCtx, scope)) ? ONBOARDING_GUIDE : "",
+                (await this.#guiding(hookCtx, scope)) ? onboardingGuide(process.platform) : "",
             tools: async (hookCtx, scope) =>
                 (await this.#guiding(hookCtx, scope))
                     ? [
@@ -756,14 +756,7 @@ export class OnboardingModule implements AgentModule {
             case "onboarding.manual": {
                 if (!CONNECT_STEPS.has(state.step)) throw stepOver();
                 await this.#invokeStep(ctx, action);
-                const commands = prepared.cli === undefined ? [] : manualCommands(prepared.cli);
-                return done(
-                    [
-                        `They'd rather set ${APP_OF[action.provider]} up themselves. The commands, in order:`,
-                        ...commands,
-                        "You'll hear when it's connected.",
-                    ].join("\n"),
-                );
+                return done(manualOutcome(prepared.cli, APP_OF[action.provider]));
             }
             case "onboarding.providersUse":
             case "onboarding.routesUse": {
@@ -1048,12 +1041,12 @@ export class OnboardingModule implements AgentModule {
     async discover(ctx: Context): Promise<string> {
         const state = await this.#state(ctx);
         if (state.discoverAllowed !== true) {
-            return "Nothing was read: the person has not pressed Discover. Happy reads their work only after they do.";
+            return "Nothing was read: the person has not pressed Discover. You read their work only after they do.";
         }
         const cli = state.connections[0]?.cli;
         const places = onboardingPlaces(cli);
         if (cli === undefined || places === undefined) {
-            return "Nothing was read: Happy knows no history of theirs to read for the assistant they connected. Ask them what they work on.";
+            return "Nothing was read: you know no history of theirs to read for the assistant they connected. Ask them what they work on.";
         }
         const home = this.#config.processEnvironment["HOME"]?.trim() || homedir();
         const findings = await discoverWork(home, cli);
@@ -1515,12 +1508,6 @@ export class OnboardingModule implements AgentModule {
         await this.#update(ctx, (current) => ({ ...current, profilePrefill: prefill ?? null }));
         await this.#tell(ctx, {
             kind: "begin",
-            platform:
-                process.platform === "darwin"
-                    ? "mac"
-                    : process.platform === "win32"
-                      ? "windows"
-                      : "linux",
             connected: state.connections.map(({ app, account }) => ({
                 app,
                 ...(account === undefined ? {} : { account }),
@@ -1638,7 +1625,7 @@ export class OnboardingModule implements AgentModule {
                 ctx,
                 say,
                 connections,
-                "Happy Agent has no account for it on this computer.",
+                "My settings on this computer have no connection for it.",
             );
             return;
         }
@@ -1760,7 +1747,7 @@ export class OnboardingModule implements AgentModule {
             providerIds.includes(candidate.providerId),
         );
         if (model === undefined) {
-            await this.#useFailed(ctx, say, connections, "It offers no model Happy can use yet.");
+            await this.#useFailed(ctx, say, connections, "It offers no model I can use yet.");
             return;
         }
         await this.#update(ctx, (current) => ({
@@ -1805,7 +1792,7 @@ export class OnboardingModule implements AgentModule {
         }));
         const app = connections[0]?.app ?? "it";
         if (led) await this.#tell(ctx, { kind: "connectFailed", app, error: reason });
-        else await say(useFailedMessage(app, reason));
+        else await say(useFailedMessage(app, reason, connections[0]?.cli));
     }
 
     /** A conversation shows, and runs on, the model onboarding chose. */

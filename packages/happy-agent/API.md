@@ -6328,7 +6328,7 @@ is one of:
 - `<form data-action="ID" [data-table]>` — a checklist: `<label>` rows, each holding one
   `<input type="checkbox" value="V" [checked] [disabled]>`, its label, and optional `<small>`
   details. Then exactly one `<button type="submit">` and optional
-  `<button type="button" data-action="ID">` others, such as Adjust.
+  `<button type="button" data-action="ID">` others, such as Change these.
 - `<form data-action="ID">` with exactly one `<input type="text" placeholder="…">` and one
   submit — a code field. What is typed goes to the action only and is never written into the chat.
 - `<ol data-steps>` — steps, each

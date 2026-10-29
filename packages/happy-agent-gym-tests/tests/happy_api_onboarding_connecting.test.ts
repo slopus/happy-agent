@@ -159,7 +159,7 @@ describe("Connecting an AI in Happy's onboarding", () => {
                 action: { id: "onboarding.start", params: {} },
             });
             const asked = (await waitForMessages(gym, happy, 2, "the subscriptions question"))[1]!;
-            expect(textOf(asked)).toContain("I didn't find any on this");
+            expect(textOf(asked)).toContain("I didn't find any signed in on this");
 
             await press(gym, happy, {
                 messageId: asked.id,
@@ -208,10 +208,14 @@ describe("Connecting an AI in Happy's onboarding", () => {
             );
             // Nothing above is redrawn: the connecting message is exactly as it was written.
             expect(textOf(after[3])).toBe(written);
-            // The gym serves no Claude account, so Happy says so and asks again.
-            expect(textOf(after[4])).toContain(
-                "I couldn't make Claude the AI Happy uses. Happy Agent has no account for it on this computer.",
+            // The gym serves no Claude account, so Happy names the cause and offers the way on.
+            const failed = textOf(after[4]);
+            expect(failed).toContain(
+                "I couldn't switch to Claude. My settings on this computer have no connection for it. Sign in to Claude, or choose another AI.",
             );
+            expect(failed).toContain('data-action="onboarding.connect" data-provider="claude"');
+            expect(failed).toContain('data-action="onboarding.connectAnother"');
+            expect(failed).not.toMatch(/\bHappy\b/u);
             const back = (await gym.http.ok("GET", "/v0/onboarding/flow")) as { flow: Flow };
             expect(back.flow.step).toBe("providers");
 
@@ -240,14 +244,17 @@ describe("Connecting an AI in Happy's onboarding", () => {
                 action: { id: "onboarding.provider", params: { provider: "none" } },
             });
             const none = (await waitForMessages(gym, happy, 3, "the advice"))[2]!;
-            expect(textOf(none)).toContain("I'd start with ChatGPT for general work");
+            expect(textOf(none)).toContain(
+                "I reuse the subscription you already pay for, so there's nothing new to pay for.",
+            );
+            expect(textOf(none)).not.toContain("coding and writing");
             await press(gym, happy, {
                 messageId: none.id,
                 blockIndex: 0,
                 action: { id: "onboarding.connectAnother", params: {} },
             });
             const catalog = (await waitForMessages(gym, happy, 4, "every AI"))[3]!;
-            expect(textOf(catalog)).toContain("Here's every AI Happy can connect:");
+            expect(textOf(catalog)).toContain("Here's every AI I can connect:");
             expect(textOf(catalog)).toContain('data-provider="gemini"');
             expect(gym.errors).toEqual([]);
         },

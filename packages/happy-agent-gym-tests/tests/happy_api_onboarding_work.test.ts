@@ -70,21 +70,21 @@ const WORK_STEP = [
 ].join("\n");
 
 const NEW_STEP = [
-    "Your chats are making a plan. Create opens a fresh chat.",
+    "Your chats are drafting a plan. Press Create whenever you want to start something new.",
     "",
     "<menu>",
     '  <button data-action="onboarding.newChat" data-emphasis>Try Create</button>',
-    '  <button data-action="onboarding.newChatSkip">Maybe later</button>',
+    '  <button data-action="onboarding.newChatSkip">Continue</button>',
     "</menu>",
 ].join("\n");
 
 const PHONE_STEP = [
-    "Want Happy on your phone too?",
+    "Want to follow your agents from your phone?",
     "",
     "<figure data-phone-app></figure>",
     "",
     "<menu>",
-    '  <button data-action="onboarding.phone" data-choice="opened" data-emphasis>I have the app</button>',
+    '  <button data-action="onboarding.phone" data-choice="opened" data-emphasis>I\'ve downloaded and opened Happy</button>',
     '  <button data-action="onboarding.phone" data-choice="later">Later</button>',
     "</menu>",
 ].join("\n");
@@ -433,7 +433,7 @@ async function reachWork(gym: AgentGym, happy: string): Promise<Message> {
     const sidebar = (await gym.http.ok("GET", "/v0/spaces/sidebar")) as { html: string };
     expect(sidebar.html).not.toContain('label="Bots"');
     expect(sidebar.html).not.toContain('label="Tasks"');
-    const routes = await waitForText(gym, happy, "already reaches these");
+    const routes = await waitForText(gym, happy, "I found these set up");
     await press(gym, happy, routes, { id: "onboarding.routesUse" }, ["codex"]);
     const profile = await waitForText(gym, happy, "**Ada Lovelace** · ada@example.com");
     await gym.waitUntil(
@@ -571,14 +571,22 @@ describe("onboarding the person's work", () => {
             }
 
             // Try Create is the app's own Create; the press names the chat it made.
-            const newStep = await waitForText(gym, happy, "Create opens a fresh chat.");
+            const newStep = await waitForText(
+                gym,
+                happy,
+                "Press Create whenever you want to start something new.",
+            );
             const fresh = "s3k8m2q9w1e5r7y3u6i0o2p9";
             await create(gym, fresh);
             expect(
                 await press(gym, happy, newStep, { id: "onboarding.newChat" }, [fresh]),
             ).toBeNull();
 
-            const phone = await waitForText(gym, happy, "Want Happy on your phone too?");
+            const phone = await waitForText(
+                gym,
+                happy,
+                "Want to follow your agents from your phone?",
+            );
             await press(gym, happy, phone, {
                 id: "onboarding.phone",
                 params: { choice: "later" },
@@ -613,7 +621,7 @@ describe("onboarding the person's work", () => {
                 "pressed:That's me": say(WORK_STEP),
                 "pressed:I'll tell you instead": say("What are you working on right now?"),
                 "pressed:Continue without these": say(NEW_STEP),
-                "pressed:Maybe later": say(PHONE_STEP),
+                "pressed:Continue": say(PHONE_STEP),
                 "pressed:Later": say(
                     [
                         "You're ready, Ada.",
@@ -667,7 +675,11 @@ describe("onboarding the person's work", () => {
             expect(await press(gym, happy, proposal, { id: "onboarding.workAccept" }, [])).toEqual({
                 started: [],
             });
-            const newStep = await waitForText(gym, happy, "Create opens a fresh chat.");
+            const newStep = await waitForText(
+                gym,
+                happy,
+                "Press Create whenever you want to start something new.",
+            );
             expect(pressRead(gym, "Continue without these")).toBe(
                 '[Pressed "Continue without these" with nothing ticked in your message]\n\nNothing was ticked, so nothing started.',
             );
@@ -678,7 +690,11 @@ describe("onboarding the person's work", () => {
 
             // Skipping Create and the phone, then Done, finishes.
             await press(gym, happy, newStep, { id: "onboarding.newChatSkip" });
-            const phone = await waitForText(gym, happy, "Want Happy on your phone too?");
+            const phone = await waitForText(
+                gym,
+                happy,
+                "Want to follow your agents from your phone?",
+            );
             await press(gym, happy, phone, {
                 id: "onboarding.phone",
                 params: { choice: "later" },
@@ -707,8 +723,8 @@ describe("onboarding the person's work", () => {
                     begin: say(PROFILE_STEP),
                     "pressed:That's me": say(WORK_STEP),
                     "pressed:I'll tell you instead": say(NEW_STEP),
-                    "pressed:Maybe later": say(PHONE_STEP),
-                    "pressed:I have the app": say(
+                    "pressed:Continue": say(PHONE_STEP),
+                    "pressed:I've downloaded and opened Happy": say(
                         "Open Happy on your phone and scan this code.\n\n<figure data-phone-pair></figure>",
                     ),
                     phonePaired: say(
@@ -726,16 +742,24 @@ describe("onboarding the person's work", () => {
             const work = await reachWork(gym, happy);
             // Straight to Create, as a person who would rather not say yet.
             await press(gym, happy, work, { id: "onboarding.workTell" });
-            const newStep = await waitForText(gym, happy, "Create opens a fresh chat.");
+            const newStep = await waitForText(
+                gym,
+                happy,
+                "Press Create whenever you want to start something new.",
+            );
             await press(gym, happy, newStep, { id: "onboarding.newChatSkip" });
-            const phone = await waitForText(gym, happy, "Want Happy on your phone too?");
+            const phone = await waitForText(
+                gym,
+                happy,
+                "Want to follow your agents from your phone?",
+            );
             await press(gym, happy, phone, {
                 id: "onboarding.phone",
                 params: { choice: "opened" },
                 block: 1,
             });
             await waitForText(gym, happy, "<figure data-phone-pair></figure>");
-            expect(pressRead(gym, "I have the app")).toContain(
+            expect(pressRead(gym, "I've downloaded and opened Happy")).toContain(
                 "This computer's pairing code is open",
             );
 
@@ -781,8 +805,8 @@ describe("onboarding the person's work", () => {
                     begin: say(PROFILE_STEP),
                     "pressed:That's me": say(WORK_STEP),
                     "pressed:I'll tell you instead": say(NEW_STEP),
-                    "pressed:Maybe later": say(PHONE_STEP),
-                    "pressed:I have the app": say(
+                    "pressed:Continue": say(PHONE_STEP),
+                    "pressed:I've downloaded and opened Happy": say(
                         [
                             "The phone couldn't pair. You're ready, Ada.",
                             "",
@@ -796,9 +820,17 @@ describe("onboarding the person's work", () => {
             );
             const work = await reachWork(gym, happy);
             await press(gym, happy, work, { id: "onboarding.workTell" });
-            const newStep = await waitForText(gym, happy, "Create opens a fresh chat.");
+            const newStep = await waitForText(
+                gym,
+                happy,
+                "Press Create whenever you want to start something new.",
+            );
             await press(gym, happy, newStep, { id: "onboarding.newChatSkip" });
-            const phone = await waitForText(gym, happy, "Want Happy on your phone too?");
+            const phone = await waitForText(
+                gym,
+                happy,
+                "Want to follow your agents from your phone?",
+            );
             await press(gym, happy, phone, {
                 id: "onboarding.phone",
                 params: { choice: "opened" },
@@ -807,7 +839,7 @@ describe("onboarding the person's work", () => {
 
             // Happy's model hears what stopped it, and that the step ended as Later.
             await waitForText(gym, happy, "You're ready, Ada.");
-            const answered = pressRead(gym, "I have the app");
+            const answered = pressRead(gym, "I've downloaded and opened Happy");
             expect(answered).toContain("the phone pairing couldn't open");
             expect(answered).toContain("turned off on this computer");
             expect(answered).toContain("Treat it as Later.");
@@ -821,7 +853,7 @@ describe("onboarding the person's work", () => {
     );
 
     it(
-        "proposes again after Adjust, from the findings and the change, and only the new proposal starts",
+        "proposes again after Change these, from the findings and the change, and only the new proposal starts",
         async () => {
             const revised = {
                 intro: "Here's the revised list.",
@@ -839,7 +871,7 @@ describe("onboarding the person's work", () => {
                 {
                     begin: say(PROFILE_STEP),
                     "pressed:That's me": say(WORK_STEP),
-                    "pressed:Adjust": say("What should I change?"),
+                    "pressed:Change these": say("What should I change?"),
                     "pressed:Looks right": say(NEW_STEP),
                     "*": (request) =>
                         JSON.stringify(request.messages.at(-1)).includes("Only the copy")
@@ -854,12 +886,12 @@ describe("onboarding the person's work", () => {
             await press(gym, happy, work, { id: "onboarding.discover" });
             const first = await waitForText(gym, happy, PROPOSAL.intro);
 
-            // Adjust is the form's other button; the model hears the proposal that was shown.
+            // Change these is the form's other button; the model hears the proposal that was shown.
             await press(gym, happy, first, { id: "onboarding.workChange" });
             await waitForText(gym, happy, "What should I change?");
-            expect(pressRead(gym, "Adjust")).toBe(
+            expect(pressRead(gym, "Change these")).toBe(
                 [
-                    '[Pressed "Adjust" in your message]',
+                    '[Pressed "Change these" in your message]',
                     "",
                     "They want to change this proposal:",
                     ...PROPOSAL.rows.map(

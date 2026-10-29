@@ -205,7 +205,7 @@ async function connectCodex(gym: AgentGym, happy: string): Promise<void> {
         blockIndex: 0,
         action: { id: "onboarding.start", params: {} },
     });
-    const routes = await waitForText(gym, happy, "already reaches these");
+    const routes = await waitForText(gym, happy, "I found these set up");
     expect(textOf(routes)).toContain('value="codex" checked');
     await press(gym, happy, {
         messageId: routes.id,

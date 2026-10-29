@@ -43,7 +43,7 @@ The first connected AI becomes Happy's model and the default model for new conve
 first answer is the verification: Happy is told `begin`, with that model's name and effort, as a
 hidden system message (`#tell`), and `afterInferenceTransact` marks the provider
 verified when that answer lands. If Happy's turn settles without one, onboarding says what failed
-and returns to choosing. From then on the model writes every message, following `ONBOARDING_GUIDE`
+and returns to choosing. From then on the model writes every message, following `onboardingGuide`
 (`impl/onboardingGuide.ts`) in its instructions. A press is an action message on the ordinary send
 queue (`pressAction`): its transaction records the choice, does the work, and queues the message
 with the work's outcome (`impl/pressOutcome.ts`), which the model reads as the person's turn. During

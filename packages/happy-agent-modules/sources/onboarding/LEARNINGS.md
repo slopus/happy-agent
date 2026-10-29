@@ -29,6 +29,20 @@ message as it stands, and the person recovers by typing.
 Codes and secrets never travel in a message: the provider CLI figure calls its own sign-in code
 and cancel routes, and a sheet such as the API key sheet stays in the app.
 
+## Happy speaks as itself, plainly
+
+A copy review found the bootstrap and the guide drifting between "I" and a third-person "Happy" or
+"Happy Agent", hedging ("I'd look"), and cheerful filler. Happy now speaks in the first person
+everywhere; "Happy" names only the phone app. Messages are direct and concrete, with no exclamation
+marks, filler, hedging, or em dashes. Work is organized or placed under topics, never "filed".
+Happy makes no pricing or quality claims about an AI: it reuses the subscription the person already
+pays for, so there's nothing new to pay for, and suggests the one they already use.
+
+Every setback offers a way on: a failed install offers Try again, doing it themselves, or another
+AI; after "I'd rather do it myself", doing it for them is offered again only when it is possible and
+never emphasized; an AI that can't be used names the cause and offers its sign-in. The model is
+never left to guess the platform: the guide is built with this computer's shortcut for Create.
+
 ## The agent paces Happy's words, and pacing never blocks
 
 Either the agent paces or the desktop does, never both: the agent does. A scripted message is

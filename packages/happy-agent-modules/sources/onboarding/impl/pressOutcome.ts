@@ -39,7 +39,7 @@ export function aiChosenOutcome(
 ): string {
     const app = APP_OF[id];
     if (cli.signIn.status === "signed_in") {
-        return `${cli.name} is already signed in. I'm adding ${app} now; you'll hear when it's connected.`;
+        return `${cli.name} is already signed in, so ${app} is being added now. You'll hear when it's connected.`;
     }
     if (cli.installation.status === "installed") {
         return `${cli.name} is installed and needs a sign-in. The provider CLI figure for ${id} offers it.`;
@@ -54,6 +54,23 @@ export function aiChosenOutcome(
     return [
         `${cli.name} has no installer for this computer. They set it up themselves with:`,
         ...manualCommands(cli),
+    ].join("\n");
+}
+
+/** The way back from setting an assistant up by hand, for the model to offer when there is one. */
+export function manualOutcome(cli: ProviderCli | undefined, app: string): string {
+    const commands = cli === undefined ? [] : manualCommands(cli);
+    const back =
+        cli === undefined || (cli.installation.status !== "installed" && cli.installer === null)
+            ? "There is no installer for this computer, so they set it up themselves."
+            : cli.installation.status === "installed"
+              ? "It's installed, so you can open the sign-in page instead."
+              : "You can install it for them instead.";
+    return [
+        `They'd rather set ${app} up themselves. The commands, in order:`,
+        ...commands,
+        back,
+        "You'll hear when it's connected.",
     ].join("\n");
 }
 
