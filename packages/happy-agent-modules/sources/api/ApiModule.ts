@@ -307,6 +307,7 @@ import {
 } from "../mobileConnector/index.js";
 import { isMobileTransport, mobileDevice, withMobileDevice } from "./impl/apiMobileTransport.js";
 import { jsonResponseBody } from "./impl/jsonResponseBody.js";
+import { firstTokenDelay, streamLikeInference } from "./impl/streamLikeInference.js";
 import {
     createNodeBinaryWebSocket,
     createSseWriter,
@@ -620,10 +621,6 @@ interface ApiAdmittedMutation {
  * It is an agent module so it can subscribe before any other module starts emitting. It does not
  * own a listener or a socket: the executable binds the Unix socket and forwards requests here.
  */
-/** Happy's scripted onboarding messages: a moment of thinking, then ~300 words a minute. */
-const PACED_THINK_MS = 650;
-const PACED_FRAME_MS = 66;
-const PACED_FRAME_CHARS = 2;
 
 export class ApiModule implements AgentModule {
     readonly name = "api";
@@ -9539,10 +9536,10 @@ export class ApiModule implements AgentModule {
     }
 
     /**
-     * Announce one of Happy's scripted onboarding messages at about reading speed, though it is
-     * stored whole: its run starts, Happy thinks for a moment, its prose arrives in small deltas
-     * at about 300 words a minute, then the whole message, action blocks included, and the run's
-     * end. See "Onboarding in Happy's conversation" in API.md.
+     * Announce one of Happy's scripted onboarding messages the way a model's answer streams,
+     * though it is stored whole: its run starts, a short time to first token, its prose in
+     * word-sized chunks (`streamLikeInference`), then the whole message, action blocks included,
+     * and the run's end. See "Onboarding in Happy's conversation" in API.md.
      */
     async #announcePaced(
         ctx: Context,
@@ -9571,7 +9568,7 @@ export class ApiModule implements AgentModule {
                     run: { ...finished, status: "running", reason: null, endedAt: null },
                     acceptedMessageIds: [],
                 });
-                if (!hurried()) await this.#pause(PACED_THINK_MS);
+                if (!hurried()) await this.#pause(firstTokenDelay());
             }
             if (text.length > 0 && !hurried()) {
                 typing = true;
@@ -9583,7 +9580,8 @@ export class ApiModule implements AgentModule {
                         blocks: [{ type: "text", text: "" }],
                     }),
                 });
-                for (let offset = 0; offset < text.length; offset += PACED_FRAME_CHARS) {
+                let offset = 0;
+                for (const chunk of streamLikeInference(text)) {
                     if (hurried()) break;
                     this.#appendForAgent(agentId, "message.delta", {
                         agentId,
@@ -9591,9 +9589,10 @@ export class ApiModule implements AgentModule {
                         messageId: message.recordId,
                         blockIndex: 0,
                         offset,
-                        append: text.slice(offset, offset + PACED_FRAME_CHARS),
+                        append: chunk.text,
                     });
-                    await this.#pause(PACED_FRAME_MS);
+                    offset += chunk.text.length;
+                    await this.#pause(chunk.afterMs);
                 }
             }
         } finally {

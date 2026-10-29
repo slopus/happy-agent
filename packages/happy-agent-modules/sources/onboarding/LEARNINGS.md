@@ -18,8 +18,10 @@ context, never as something the person said.
 ## The agent paces Happy's words, and pacing never blocks
 
 Either the agent paces or the desktop does, never both: the agent does. A scripted message is
-stored whole and announced at about 300 words a minute, so history and reconnects always see the
-finished message. Typing out first ran on the conversation's event queue for its whole length, so
+stored whole and streamed the way real inference streams: 300–500 ms to the first token, then a
+word or a few every 30–60 ms with jitter, so a two-sentence message lands in about a second.
+Typing two characters at a time, as first built, read as painfully slow and was replaced. History
+and reconnects always see the finished message. Typing out first ran on the conversation's event queue for its whole length, so
 a person's send waited up to ten seconds behind it; now any other work queued for the conversation
 ends the typing at once. A change in place, such as the progress message becoming the proposal,
 ends the typing too, and skips it when it lands before the typing starts, so stale words are never

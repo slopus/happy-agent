@@ -2481,9 +2481,10 @@ onboarding against `GET /v0/onboarding` and `POST /v0/onboarding/complete`.
 
 Before a provider is connected, the daemon writes Happy's messages itself. They are ordinary agent
 messages, each in a finished run of its own with no provider or model, and they are never model
-input. The daemon stores each one whole and announces it at about reading speed: `run.started`, a
-short pause while the run has no text, `message.created` with empty text, `message.delta` events
-at about 300 words a minute, then `message.updated` with the whole message and `run.finished`. When
+input. The daemon stores each one whole and announces it the way a model's answer streams:
+`run.started`, a pause of 300–500 ms while the run has no text, `message.created` with empty text,
+`message.delta` events of a word or a few every 30–60 ms (about 50–80 tokens a second), then
+`message.updated` with the whole message and `run.finished`. When
 anything else happens in Happy's conversation meanwhile, such as the person sending a message or
 Happy's model starting to answer, the rest of the message arrives at once: the typing never holds
 anything up. A client that reads history or reconnects sees the finished message. Once a provider

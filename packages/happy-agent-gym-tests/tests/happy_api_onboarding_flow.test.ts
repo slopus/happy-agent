@@ -145,12 +145,16 @@ describe("Onboarding in Happy's conversation", () => {
             expect(kinds[0]).toBe("run.started");
             expect(typed[0]?.payload["run"]).toMatchObject({ status: "running" });
             expect(kinds[1]).toBe("message.created");
-            expect(kinds.filter((kind) => kind === "message.delta").length).toBeGreaterThan(20);
+            // It streams as a model's answer does: word-sized chunks, never split words.
+            expect(kinds.filter((kind) => kind === "message.delta").length).toBeGreaterThan(5);
             expect(kinds.slice(-2)).toEqual(["message.updated", "run.finished"]);
             const deltas = typed
                 .filter((event) => event.type === "message.delta")
                 .map((event) => event.payload["append"] as string)
                 .join("");
+            for (const event of typed.filter((each) => each.type === "message.delta")) {
+                expect(event.payload["append"]).toMatch(/^\S.*(\s|\.)$|^\S+$/su);
+            }
             expect(deltas).toBe(
                 "Hi, I'm Happy, your main agent. I help you get things done with agents of your own. The sidebar shows an example of what that looks like.",
             );

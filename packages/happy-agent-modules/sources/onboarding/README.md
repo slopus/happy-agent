@@ -31,8 +31,8 @@ or model, so it is never model input, and a rerun after a restart finds it alrea
 words are in `impl/onboardingCopy.ts`, `impl/connectingCopy.ts`, and `impl/workCopy.ts`, in the
 inline action grammar; the desktop's flow on `chat-onboarding` is the reference for their wording.
 
-The daemon also paces them: each is stored whole, and the API announces it at about reading speed
-(`#announcePaced` in `ApiModule`), the prose in small deltas, the action blocks with the whole
+The daemon also paces them: each is stored whole, and the API streams it the way a model's answer
+streams (`#announcePaced` in `ApiModule`), the prose in word-sized chunks, the action blocks with the whole
 message. Clients draw what arrives and never pace anything themselves. Other work queued for
 Happy's conversation, such as a send or the model's own events, ends the typing at once.
 
