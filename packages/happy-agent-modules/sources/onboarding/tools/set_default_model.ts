@@ -8,7 +8,7 @@ export function setDefaultModelTool(module: OnboardingModule) {
     return defineAgentTool({
         name: "set_default_model",
         capabilities: ["Change the default model new conversations start on."],
-        searchKeywords: ["default model", "change model", "model settings"],
+        defer: false,
         description:
             "Make a model the default for new conversations, as Settings does, and run the rest of onboarding on it. Use it only when the person asks for another model or effort. Answers with what is set, or why it cannot be.",
         parameters: Type.Object(

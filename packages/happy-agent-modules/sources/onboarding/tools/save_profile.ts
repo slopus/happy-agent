@@ -8,7 +8,7 @@ export function saveProfileTool(module: OnboardingModule) {
     return defineAgentTool({
         name: "save_profile",
         capabilities: ["Save the person's name and email to their Happy profile."],
-        searchKeywords: ["profile name", "profile email", "onboarding profile"],
+        defer: false,
         description:
             "Save the person's name and the email for their Happy profile, exactly as they typed them in this chat. Use it only after they wrote both; ask for whatever is missing instead of guessing. Returns what onboarding's profileSaved event would carry, so you continue with the next onboarding step.",
         parameters: Type.Object(

@@ -111,6 +111,12 @@ The same goes the other way: a pairing code never outlives the step that showed 
 later, and finishing cancel every pairing still waiting, the first code and any new one shown
 since, not only the one onboarding opened.
 
+## Onboarding's own tools are loaded, never searched for
+
+`save_profile` and `set_default_model` reach Happy only while it guides onboarding, and Happy
+calls them as soon as the person answers. They are declared `defer: false` with no search
+keywords: a deferred copy would make Happy search for a tool it already needs at that moment.
+
 ## Onboarding proves each requirement once
 
 Completion is a verified provider and a profile with a name and an email, stored as a versioned
