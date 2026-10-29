@@ -145,9 +145,9 @@ const setStatusArgumentsSchema = Type.Object({
 });
 const subtaskMetadataSchema = Type.Object({ subtask: Type.Literal(true) });
 const SET_STATUS_INSTRUCTIONS =
-    "Keep this conversation's sidebar status current with set_status: one short phrase saying where the work stands for the person. Set it early, then change it only when that changes: a plan agreed, something ready to try or waiting on their decision, shipped, stuck, paused. Answering the person's follow-up question, a small extra request, or your next step keeps it.";
+    "Keep this conversation's sidebar status current with set_status: one short phrase saying where the work stands for the person. Set it early, then change it only when that changes: a plan agreed, something ready to try or waiting on their decision, shipped, stuck, paused, or waiting for them to choose between options you laid out. Answering the person's follow-up question, a small extra request, or your next step keeps it.";
 const POST_STORY_INSTRUCTIONS =
-    "When something you made ships or is ready for the person to try (pushed to main, released, published, a video, image, or page you made for them), post one story about it with post_story in that same turn, superseding your earlier one. Never post progress, plans, or work still waiting for review or approval.";
+    "When something you made ships or is ready for the person to try (pushed to main, released, published, or a video, image, or page you rendered or made for them, such as a finished demo video), post one story about it with post_story in that same turn, superseding your earlier one. Never post progress, plans, or work still waiting for review or approval.";
 /** Raster images a story frame may show, by served type, with the extension it is kept under. */
 const IMAGE_EXTENSIONS: Readonly<Record<string, string>> = {
     "image/png": "png",

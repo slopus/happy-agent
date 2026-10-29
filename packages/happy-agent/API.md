@@ -5936,7 +5936,7 @@ Fields:
   the agent last wrote about where its work stands, with its `set_status` tool (see "Agent
   stories"). `text` is 1–120 characters with no line break, the only bound `set_status`
   enforces; agents aim for a short phrase of about 40 characters so it fits. A client shows it
-  under the title of the agent's sidebar row or session, in place of what it would show otherwise, on a single line truncated past it,
+  under the title of the agent's sidebar row or session, in place of what it would show otherwise, on up to two lines, truncated past them,
   and shows nothing different while it is `null` or absent. Every change is an `agent.updated` event carrying
   `statusLine` in `changes`. Archival keeps it.
 - `orderKey` — an opaque owner-local sort key, as on projects and workspaces; the list order is
