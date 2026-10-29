@@ -484,32 +484,40 @@ describe("agents post stories to their own ring", () => {
         expect(gym.errors).toEqual([]);
     }, 90_000);
 
-    it("keeps set_status loaded, asks for it early, and refuses a status too long for one line", async () => {
-        const { gym, call } = await harness();
+    it("keeps set_status loaded for a bot's and a task's own agent, and accepts a long status", async () => {
+        const { gym, call, makeBot } = await harness();
         await gym.client.saveUserSetting(STORIES, { value: true });
-        const agentId = gym.defaultSessionId;
-        await gym.send("Hello.");
+        const bot = await makeBot("Status keeper");
+        const { task } = await gym.client.createTask({ name: "Status task" });
 
         // Loaded with the conversation's tools rather than found through tool search, and the
         // instructions ask for it.
-        const request = gym.inference.requests.filter((item) => item.sessionId === agentId).at(-1)!;
-        const tool = request.tools.find((item) => item.name === "set_status");
-        expect(tool).toBeDefined();
-        expect(tool!.defer).not.toBe(true);
-        expect(tool!.description).toContain("about 40 characters at most");
-        expect(tool!.description).not.toContain("two lines");
-        expect(request.instructions).toContain(
-            "Keep this conversation's sidebar status current with set_status",
-        );
+        for (const agentId of [bot.agent.id, task.agent.id]) {
+            await gym.send("Hello.", { sessionId: agentId });
+            const request = gym.inference.requests
+                .filter((item) => item.sessionId === agentId)
+                .at(-1)!;
+            const tool = request.tools.find((item) => item.name === "set_status");
+            expect(tool).toBeDefined();
+            expect(tool!.defer).not.toBe(true);
+            expect(tool!.description).toContain("keep it to a short phrase, about 40 characters");
+            expect(request.instructions).toContain(
+                "Keep this conversation's sidebar status current with set_status",
+            );
+        }
+        const agentId = bot.agent.id;
 
-        // Longer than one line allows: the agent is told to shorten it, and nothing is written.
+        // Length is only guidance: a long status is written as it is.
         const long = "Visualization ready and the export finished, waiting on review";
         expect(long.length).toBeGreaterThan(60);
-        const refused = await call(agentId, "set_status", { text: long });
-        expect(refused.text).toContain("Shorten it");
-        expect((await gym.client.getAgent(agentId)).agent.statusLine).toBeNull();
+        const accepted = await call(agentId, "set_status", { text: long });
+        expect(accepted.text).toContain(long);
+        await gym.waitUntil(
+            async () => (await gym.client.getAgent(agentId)).agent.statusLine?.text === long,
+            "the long status",
+        );
 
-        // A short status and a stage cue both fit.
+        // A short status and a stage cue are written too.
         await call(agentId, "set_status", { text: "Visualization ready" });
         await gym.waitUntil(
             async () =>
@@ -524,6 +532,48 @@ describe("agents post stories to their own ring", () => {
                 "● ● [●] ○ Testing payments",
             "the stage cue",
         );
+        expect(gym.errors).toEqual([]);
+    }, 60_000);
+
+    it("offers set_status to no subtask, worker, or project session", async () => {
+        const { gym, call, makeBot } = await harness();
+        await gym.client.saveUserSetting(STORIES, { value: true });
+        const bot = await makeBot("Delegator");
+        const model = {
+            model: gym.selection.modelId,
+            effort: gym.selection.effort,
+            provider: gym.selection.providerId,
+        };
+        const children: string[] = [];
+        for (const [name, title] of [
+            ["create_subtask", "Status subtask"],
+            ["create_agent", "Status worker"],
+        ] as const) {
+            const created = await call(bot.agent.id, name, {
+                ...model,
+                title,
+                text: `Work on ${title}.`,
+            });
+            const id = /Created (?:collaborator|subtask) ([a-z0-9]+)/.exec(created.text)?.[1];
+            expect(id, created.text).toBeDefined();
+            children.push(id!);
+        }
+        await gym.send("Hello.");
+
+        for (const agentId of [...children, gym.defaultSessionId]) {
+            const request = await gym.waitUntil(
+                async () => gym.inference.requests.find((item) => item.sessionId === agentId),
+                "the conversation's first inference",
+            );
+            const tools = request.tools.map((item) => item.name);
+            expect(tools).not.toContain("set_status");
+            expect(request.instructions).not.toContain("set_status");
+        }
+        // A subtask still posts to its bot's ring.
+        const subtaskRequest = gym.inference.requests.find(
+            (item) => item.sessionId === children[0],
+        )!;
+        expect(subtaskRequest.tools.map((item) => item.name)).toContain("post_story");
         expect(gym.errors).toEqual([]);
     }, 60_000);
 

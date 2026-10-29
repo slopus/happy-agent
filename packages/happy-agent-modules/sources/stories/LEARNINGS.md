@@ -49,17 +49,15 @@ only refuses superseding a story outside the ring. Captions and status lines are
 vibe coder, so the prompts forbid hashes, versions, test counts, file names, and "14/14"-style
 tallies.
 
-## The status is one short line, and progress cues are just text
+## The status is a short phrase, and its length is the model's call
 
-Rows show `statusLine` under the title on a single line; only about 32 characters fit before the
-"…". Kirill first allowed two lines and about 70 characters, then cut it to one line. The
-`set_status` description now asks for one short phrase of about 40 characters with short examples
-("Shipped to preview", "On main", "Stuck on payment sign-up"), and the tool refuses more than 60
-characters with a message telling the agent to shorten it, rather than truncating. The check runs
-in the tool, not the schema, because a schema mismatch on a string-or-null argument only says
-"Expected string or null". The wire limit stays 120 so stored and older statuses still validate.
-Kirill kept the tiny stage cue (`● ● [●] ○ Testing payments`), but only when the current stage is
-one or two words and the whole status still fits in about 40 characters.
+Rows show `statusLine` under the title in one or two short lines. Kirill first allowed about 70
+characters, then wanted it shorter. The `set_status` description asks for a short phrase of about
+40 characters with short examples ("Shipped to preview", "On main", "Stuck on payment sign-up").
+A release briefly refused anything over 60 characters; Kirill removed that: length is guidance in
+the prompt only, never a rejection or a truncation, and the model decides. The wire limit of 120
+is the only hard bound. Kirill kept the tiny stage cue (`● ● [●] ○ Testing payments`), but only
+when the current stage is one or two words and the whole status still fits in about 40 characters.
 
 The status almost always stays and states plainly where the conversation is, finished work
 included ("Shipped to preview", "On main"), and it changes only at key moments, never on every
@@ -71,7 +69,14 @@ step. `null` is for a status that would otherwise be untrue.
 one conversation in 865 had a status: agents never looked for it, so Kirill saw empty rows. The
 tool is now always loaded wherever it is offered, and the module adds one short instruction there:
 set it early, change it at key moments. That is still a prompt, never code writing statuses on an
-agent's behalf. A person with Stories off gets neither the tool nor the instruction.
+agent's behalf.
+
+## Only task and bot agents keep a status
+
+The status describes a task's or a bot's sidebar row, so Kirill limited `set_status` and its
+instruction to a task's or a bot's own agent, recognized by the Tasks and Bots modules' own
+records (`forAgent`), and only while its person has Stories on. Subtasks, helpers, collaborators,
+and project or workspace sessions get neither, even though subtasks still post to their ring.
 
 ## Story pages fill the frame because the prompt says so
 

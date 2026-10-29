@@ -5288,9 +5288,9 @@ Fields:
 - `statusLine` — optional additive object, emitted by daemons with `capabilities.agentStories`:
   `null`, or `{ "text": "Testing with a few friends", "updatedAt": 1755400000000 }`, the one line
   the agent last wrote about where its work stands, with its `set_status` tool (see "Agent
-  stories"). `text` is 1–120 characters with no line break; `set_status` writes at most 60, and
-  agents aim for about 40 so it fits. A client shows it under the title of the agent's sidebar
-  row or session, in place of what it would show otherwise, on a single line truncated past it,
+  stories"). `text` is 1–120 characters with no line break, the only bound `set_status`
+  enforces; agents aim for a short phrase of about 40 characters so it fits. A client shows it
+  under the title of the agent's sidebar row or session, in place of what it would show otherwise, on a single line truncated past it,
   and shows nothing different while it is `null` or absent. Every change is an `agent.updated` event carrying
   `statusLine` in `changes`. Archival keeps it.
 - `orderKey` — an opaque owner-local sort key, as on projects and workspaces; the list order is
@@ -12487,14 +12487,15 @@ that sends `POST /v0/stories/:storyId/feedback` for the frame shown, the heart, 
 
 **Tools.** Every agent with no parent (a task's or a bot's own agent among them) and every subtask
 is offered these fixed common tools while the person its stories are for, as above, has Stories on.
-Hidden subagents and Prioritizing are not.
+Hidden subagents and Prioritizing are not. `set_status` alone is narrower: only a task's or a bot's
+own agent is offered it. Subtasks, other subagents, and project or workspace sessions are not.
 
 | Tool             | Arguments                                                          | Does                                                                    |
 | ---------------- | ------------------------------------------------------------------ | ----------------------------------------------------------------------- |
 | `post_story`     | `frames`, `caption`, `overlays` as for `draft_story`; `supersedes` | Posts an agent's story to this conversation's ring for its person       |
 | `withdraw_story` | `storyIds`, 1–10 live stories in this conversation's ring          | Ends them as withdrawn                                                  |
 | `list_stories`   | none                                                               | The ring's live stories: who posted each, caption, when, seen, reaction |
-| `set_status`     | `text`, 1–60 characters on one line, or `null` to clear            | Sets the `statusLine` shown under this agent's row or session title     |
+| `set_status`     | `text`, 1–120 characters on one line, or `null` to clear           | Sets the `statusLine` shown under this agent's row or session title     |
 
 `post_story` takes the frames `draft_story` takes, and one more kind: `{ "artifactId", "version" }`
 without `path`, an artifact this conversation presented, shown live as an artifact frame; without
@@ -12511,9 +12512,9 @@ refuses `post_story`, `withdraw_story`, and `set_status`. Each call is keyed by 
 call repeated after a restart posts, ends, or sets nothing a second time.
 
 `set_status` is always in the conversation's tool list rather than found through tool search, and
-the conversation's instructions ask the agent to set it early and change it at key moments. A
-status longer than 60 characters fails the call with a message asking the agent to shorten it;
-nothing is truncated.
+the conversation's instructions ask the agent to set it early and change it at key moments, only
+where the tool is offered. How long to make it is guidance to the agent, never enforced: the call
+accepts any `text` the wire allows, and nothing is truncated.
 
 The tools' instructions decide when to post, and they are the product: post only when something
 real shipped that the person can see or try, never progress; supersede the agent's earlier story

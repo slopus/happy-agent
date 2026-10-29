@@ -57,8 +57,8 @@ person's edits win.
 
 An agent may also post a story itself, with `post_story`, to its own ring: the circle on the
 sidebar row of the root task or bot of its subtask chain (`ringAgentId`). The tools —
-`post_story`, `withdraw_story`, `list_stories`, and `set_status` — are offered to every agent
-without a parent and every subtask, while the person its stories are for has Stories on. That
+`post_story`, `withdraw_story`, and `list_stories` — are offered to every agent without a parent
+and every subtask, while the person its stories are for has Stories on. That
 person is the last human who wrote in the conversation, or in its nearest ancestor
 (`happy_agent_story_people`). An agent story is visible only to that person, never expires, and
 is never edited: it ends when superseded, withdrawn, or when its task or bot is archived, and the
@@ -69,12 +69,13 @@ Agent stories may show a whole artifact live (`{type:"artifact"}` asset) and flo
 windows over a frame; a person's own story may also carry one round video, uploaded into the
 story artifact as `media/<overlayId>.<ext>`.
 
-`set_status` writes the agent's `statusLine`, the status under the row's title, which clients show
-on one line. It is always loaded rather than deferred, and the module adds one instruction asking
-the agent to set it early and change it at key moments, only where the tool is offered. The tool
-writes at most 60 characters and refuses a longer one with a request to shorten it. An agent
-cannot change its own metadata inside its turn, so the write is the durable function
-`stories.set-status`.
+`set_status` writes the agent's `statusLine`, the status under the row's title. Only a task's or a
+bot's own agent is offered it, and only while its person has Stories on; subtasks, helpers, and
+project or workspace sessions are not. It is always loaded rather than deferred, and the module
+adds one instruction asking the agent to set it early and change it at key moments, only where the
+tool is offered. Length is guidance in the description, about 40 characters; the tool enforces
+only the protocol's 120. An agent cannot change its own metadata inside its turn, so the write is
+the durable function `stories.set-status`.
 
 ## Feed, seen marks, and reactions
 

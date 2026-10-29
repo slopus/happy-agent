@@ -50,6 +50,7 @@ import {
     type ArtifactPlacement,
     type ArtifactSource,
 } from "../artifacts/index.js";
+import { BotsModule } from "../bots/index.js";
 import { ChatMediaModule, type MeasuredChatImage } from "../chatMedia/index.js";
 import { DurableFunctionsModule } from "../durableFunctions/index.js";
 import { createUuidV7Factory } from "../events/index.js";
@@ -57,6 +58,7 @@ import { HistoryModule, type HistoryPresentedResult } from "../history/index.js"
 import { mediaTypeForPath } from "../impl/mediaTypeForPath.js";
 import { isGuestOriginMetadata, isUserOriginMetadata } from "../impl/messageOrigin.js";
 import { ProfileModule } from "../profile/index.js";
+import { TasksModule } from "../tasks/index.js";
 import { TeamAuthenticationError, TeamModule, teamUser } from "../team/index.js";
 import { UserSettingsModule } from "../userSettings/index.js";
 import { BLACK_BACKGROUND, edgeBackground } from "./impl/edgeBackground.js";
@@ -211,6 +213,8 @@ export class StoriesModule implements AgentModule {
     readonly #chatMedia: ChatMediaModule;
     readonly #history: HistoryModule;
     readonly #durableFunctions: DurableFunctionsModule;
+    readonly #bots: BotsModule;
+    readonly #tasks: TasksModule;
     /** Status lines are written from outside the agent loop that asked for them. */
     readonly #backgroundScope = new AsyncResource("happy-agent-story-status");
     #agents: AgentSystemRef | undefined;
@@ -229,6 +233,8 @@ export class StoriesModule implements AgentModule {
         chatMedia: ChatMediaModule,
         history: HistoryModule,
         durableFunctions: DurableFunctionsModule,
+        bots: BotsModule,
+        tasks: TasksModule,
     ) {
         this.#team = team;
         this.#profile = profile;
@@ -237,6 +243,8 @@ export class StoriesModule implements AgentModule {
         this.#chatMedia = chatMedia;
         this.#history = history;
         this.#durableFunctions = durableFunctions;
+        this.#bots = bots;
+        this.#tasks = tasks;
         // A status line is agent metadata, which an agent cannot change from inside its own turn;
         // the write follows the tool call's commit and survives a restart in between.
         durableFunctions.register({
@@ -293,12 +301,12 @@ export class StoriesModule implements AgentModule {
                 postStoryTool(this, scope),
                 withdrawStoryTool(this, scope),
                 listStoriesTool(this, scope),
-                setStatusTool(this, scope),
+                ...((await this.#keepsStatus(ctx, scope)) ? [setStatusTool(this, scope)] : []),
             ];
         },
         // set_status is always loaded, yet agents left their rows empty until told to use it.
         instructions: async (ctx: Context, scope: AgentModuleScope): Promise<string> =>
-            (await this.#postsToRing(ctx, scope)) ? SET_STATUS_INSTRUCTIONS : "",
+            (await this.#keepsStatus(ctx, scope)) ? SET_STATUS_INSTRUCTIONS : "",
         // Archiving a task or bot ends every story in its ring; a subtask's archival ends nothing.
         metadataChangedTransact: async (ctx, scope, change) => {
             if (typeof change.update["archivedAt"] !== "number") return;
@@ -321,8 +329,8 @@ export class StoriesModule implements AgentModule {
     };
 
     /**
-     * A task's or bot's own agent and its subtasks post to their ring and keep its status; hidden
-     * helpers do not, and neither does anyone whose person has Stories off.
+     * A task's or bot's own agent and its subtasks post to their ring; hidden helpers do not, and
+     * neither does anyone whose person has Stories off.
      */
     async #postsToRing(ctx: Context, scope: AgentModuleScope): Promise<boolean> {
         const eligible =
@@ -331,6 +339,17 @@ export class StoriesModule implements AgentModule {
         if (!eligible) return false;
         const poster = await this.postingPerson(ctx, scope.agent.id);
         return poster !== undefined && (await this.enabledFor(ctx, poster));
+    }
+
+    /**
+     * Only a task's or a bot's own agent keeps a sidebar status, and only while its person has
+     * Stories on. Subtasks, helpers, and project or workspace sessions do not.
+     */
+    async #keepsStatus(ctx: Context, scope: AgentModuleScope): Promise<boolean> {
+        const own =
+            (await this.#tasks.forAgent(ctx, scope.agent.id)) !== undefined ||
+            (await this.#bots.forAgent(ctx, scope.agent.id)) !== undefined;
+        return own && (await this.#postsToRing(ctx, scope));
     }
 
     /** Hear of every story change once it commits, with what each connection should receive. */
