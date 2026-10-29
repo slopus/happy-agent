@@ -274,10 +274,12 @@ describe("team authorship across the real runtime and HTTP API", () => {
         ]);
         expect(Object.keys(lookup.users[0]!).sort()).toEqual([
             "canLogIn",
+            "follows",
             "id",
             "kind",
             "name",
             "photo",
+            "role",
             "updatedAt",
             "version",
         ]);
