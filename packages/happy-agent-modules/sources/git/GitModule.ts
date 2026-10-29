@@ -128,9 +128,9 @@ interface CachedSnapshot {
  *
  * Everything the product does with a repository runs through here: reading facts and change
  * snapshots, probing a folder, cloning a remote, cutting and retiring worktrees, renaming
- * branches and watching repositories for change. It reaches
- * Git itself rather than being handed a runner, and unattended reads go
- * through the hardened read-only scanner while mutations and network work use the foreground one.
+ * branches and watching repositories for change. It reaches Git itself rather than being handed a
+ * runner. Unattended reads of a repository's contents and changes go through the hardened read-only
+ * scanner; mutations, network work, and the structural reads that decide them use the foreground one.
  *
  * Snapshots compare against the merge base with the default branch (origin's when it has one,
  * otherwise the local one), HEAD, or the empty tree, include committed, staged, unstaged,
@@ -263,6 +263,10 @@ export class GitModule implements AgentModule {
     }
 
     // --- Reading a repository --------------------------------------------------------------
+    //
+    // What a folder is, and how a worktree is cut from it, is read with the same foreground Git
+    // that then cuts, adopts, or removes the worktree, so a read-only sandbox that cannot start on
+    // this machine never makes a repository look like a plain folder.
 
     /** What a folder is: present, a repository root, and whether a worktree can be cut from it. */
     async probe(
@@ -271,7 +275,7 @@ export class GitModule implements AgentModule {
     ): Promise<GitRepositoryProbe> {
         const machine = this.#machine(options.runnerId);
         return await probeGitRepository({
-            git: machine.read,
+            git: machine.foreground,
             ...(this.#native(options.runnerId)
                 ? {}
                 : {
@@ -296,12 +300,12 @@ export class GitModule implements AgentModule {
 
     /** The canonical top level of the repository containing a path. */
     async topLevel(path: string, options: GitOperationOptions = {}): Promise<string> {
-        return await readGitTopLevel(this.#machine(options.runnerId).read, path);
+        return await readGitTopLevel(this.#machine(options.runnerId).foreground, path);
     }
 
     /** The shared Git directory every worktree of a repository has in common. */
     async commonDir(path: string, options: GitOperationOptions = {}): Promise<string> {
-        return await readGitCommonDir(this.#machine(options.runnerId).read, path);
+        return await readGitCommonDir(this.#machine(options.runnerId).foreground, path);
     }
 
     /** Both halves of a worktree's identity: its own top level and its shared common directory. */
@@ -309,7 +313,7 @@ export class GitModule implements AgentModule {
         path: string,
         options: GitOperationOptions = {},
     ): Promise<GitWorktreeIdentity> {
-        return await readGitWorktreeIdentity(this.#machine(options.runnerId).read, path);
+        return await readGitWorktreeIdentity(this.#machine(options.runnerId).foreground, path);
     }
 
     /** Whether a path is the top level of a worktree belonging to one specific repository. */
@@ -318,7 +322,7 @@ export class GitModule implements AgentModule {
     ): Promise<boolean> {
         return await isGitWorktreeAt({
             commonDir: options.commonDir,
-            git: this.#machine(options.runnerId).read,
+            git: this.#machine(options.runnerId).foreground,
             path: options.path,
         });
     }
@@ -328,7 +332,7 @@ export class GitModule implements AgentModule {
         path: string,
         options: GitOperationOptions = {},
     ): Promise<string | undefined> {
-        return await detectGitDefaultBranch(this.#machine(options.runnerId).read, path);
+        return await detectGitDefaultBranch(this.#machine(options.runnerId).foreground, path);
     }
 
     /** The remote URL a repository is really working against, tracked branch first. */
@@ -336,7 +340,7 @@ export class GitModule implements AgentModule {
         cwd: string,
         options: GitOperationOptions = {},
     ): Promise<string | undefined> {
-        return await selectGitRemoteUrl(this.#machine(options.runnerId).read, cwd);
+        return await selectGitRemoteUrl(this.#machine(options.runnerId).foreground, cwd);
     }
 
     /** The commit a reference resolves to, or nothing when Git answered with something else. */
@@ -346,7 +350,7 @@ export class GitModule implements AgentModule {
         options: GitOperationOptions = {},
     ): Promise<string | undefined> {
         return await resolveGitCommit(
-            this.#machine(options.runnerId).read,
+            this.#machine(options.runnerId).foreground,
             cwd,
             ref,
             options.signal === undefined ? undefined : { signal: options.signal },

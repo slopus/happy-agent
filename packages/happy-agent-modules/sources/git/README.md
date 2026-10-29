@@ -9,10 +9,11 @@ no protocol or HTTP coupling.
 const git = new GitModule();
 ```
 
-The constructor takes nothing. The module reaches Git itself: unattended reads go through the
-hardened read-only scanner, while mutations, fetches and clones use the foreground boundary. Cache
-lifetime, cache size, the snapshot file cap and the watch batch cap are internal constants, and the
-module reads the clock and mints its own identity.
+The constructor takes nothing. The module reaches Git itself: unattended reads of a repository's
+contents and changes go through the hardened read-only scanner, while mutations, fetches, clones,
+and the structural reads that decide them (`probe`, `topLevel`, `commonDir`, and the like) use the
+foreground boundary. Cache lifetime, cache size, the snapshot file cap and the watch batch cap are
+internal constants, and the module reads the clock and mints its own identity.
 
 `GitModule.withRunner(runner)` is the one alternate construction, and it exists for tests: it
 replaces the whole execution boundary with a supplied one so a test can watch which commands were

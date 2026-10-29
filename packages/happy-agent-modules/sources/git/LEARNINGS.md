@@ -1,5 +1,19 @@
 # Git learnings
 
+## What a folder is comes from the Git that acts on it
+
+When the GitHub credential broker was removed, `probe`, `topLevel`, `commonDir`, and the other
+structural reads fell through to the sandboxed read-only scanner. Before that they had always run
+on foreground Git, because every project carried a credential. On a Linux host where the sandbox
+cannot start, such as a GitHub Ubuntu 24.04 runner that restricts unprivileged user namespaces,
+every scanner read failed. The probe then recorded each repository as "not a Git repository", and
+every new workspace became a copy of the project folder, dirty working tree included. Nothing
+reported an error.
+
+The structural reads now use foreground Git, the same Git that cuts, adopts, and removes the
+worktree, so the answer and the action can never disagree. Reads of a repository's contents and
+changes (snapshots, file listings, revision reads, live tracking) stay on the hardened scanner.
+
 ## Internal Git events must not launch worktree scans
 
 Recursive Windows watches also report object packs, lock files and reflogs under `.git`.
