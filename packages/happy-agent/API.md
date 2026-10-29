@@ -286,6 +286,13 @@ failure for older clients but is always empty, including on failures stored earl
 Switch on protocol 32 or newer take its targets and usage from the same live sources as their
 model picker. An older daemon accepts only targets from the failure's own `fallbackProviders`.
 
+Protocol 33 adds permanent deletion by admin bots, described under [Permanent deletion](#permanent-deletion),
+and the removal events that announce it: `project.removed`, `workspace.removed`, `bot.removed`,
+`task.removed`, and `agent.removed`. A client on protocol 33 or newer drops the named resource when
+it sees one. An older client ignores these event types as it does every type it does not recognize,
+keeps showing the deleted resource as archived, and finds it gone with `404` on its next read or
+resync. No request or response schema changes.
+
 Account provenance, configuration history blocks, and structured error details are additive output
 and do not increment the protocol version. Clients tolerate their absence and older clients keep
 their existing text rendering. Existing sends and idle-only compaction remain unchanged.
@@ -632,18 +639,43 @@ User messages do not need this dance at all: the client names the message itself
 its `id` to `send`, so the optimistic copy and the durable message are one message from the
 start — see `POST /v0/agents/:agentId/send`.
 
-### Archival, not deletion
+### Archival, and permanent deletion
 
-Nothing durable is ever permanently deleted through this API — that is deliberate, not an
-omission. Projects, workspaces, agents, and bots **archive**: they leave the active lists but keep
-their history and can be inspected. Only agents and bots can be unarchived for now; an archived project
-is revived by registering its path again, and an archived workspace or subtask stays archived. There are
-no hard-delete endpoints. The only things that end are runtime state — a terminal, a background process — and
-the transcript resets described under `message.deleted`, none of which is a client deleting a
-durable resource. Artifacts are the one resource that is deleted rather than archived, and their
-deletion is a tombstone: the artifact leaves the lists and stops serving its content, but its record
-stays readable and its stored content stays on the daemon's disk. Todo deletion also records a
-tombstone: every version remains readable and can be reverted or unarchived.
+Clients never permanently delete anything durable through this API. Projects, workspaces, agents,
+bots, and tasks **archive**: they leave the active lists but keep their history and can be
+inspected. Only agents, bots, and tasks can be unarchived for now; an archived project is revived
+by registering its path again, and an archived workspace or subtask stays archived. There are no
+hard-delete endpoints. The only things that end through the API are runtime state — a terminal, a
+background process — and the transcript resets described under `message.deleted`. Artifacts are
+the one resource a client deletes rather than archives, and their deletion is a tombstone: the
+artifact leaves the lists and stops serving its content, but its record stays readable and its
+stored content stays on the daemon's disk. Todo deletion also records a tombstone: every version
+remains readable and can be reverted or unarchived.
+
+#### Permanent deletion
+
+From protocol 33, an active admin bot can permanently delete one bot, task, subtask, project, or
+workspace, archived or still active, through its own agent tools; there is still no HTTP endpoint
+for it. Deletion is irreversible. It removes:
+
+- every agent that belongs to the item, at any depth, hidden subagents included, with its whole
+  conversation: messages, runs, pending messages, and agent state;
+- for a bot or task, its catalog row, memberships, picture, and folder;
+- for a workspace, its row, its agent placements, its child workspaces, its resident subtask, its
+  folder or worktree whatever the folder's keep-on-archive settings say, and the Git branch the
+  worktree was cut as;
+- for a project, every workspace cut from it, its root agents, its settings, picture, and row,
+  and the folder the daemon cloned it into. A folder a person registered as a project is never
+  removed;
+- for a subtask, the workspace it is the resident subtask of, if any.
+
+The admin previews the deletion first, which lists everything above and changes nothing, then
+confirms it with the preview's confirmation code. The confirmation is refused when what would be
+removed has changed since. A deletion that would reach the admin bot's own agent, or any agent it
+runs inside, is refused, and so is deleting the home project. Confirming stops every agent
+involved and archives whatever is still active in one transaction, so clients first see the usual
+`*.updated` archival events; the removal itself then completes durably in the background and
+announces each removed resource with its `*.removed` event.
 
 ## Endpoints
 
@@ -8007,7 +8039,8 @@ processes are killed, and its workspace's terminals are closed, with the same du
 contract as workspace archival — the cancellation is prepared inside the transaction that
 records the archival. The workspace and agent are archived with the bot and the agent's
 `canSendMessages` becomes `false`; the conversation history remains readable. The folder is
-kept on disk — archival is a logical action, never a deletion.
+kept on disk — archival is a logical action, never a deletion. Only an admin bot's
+[permanent deletion](#permanent-deletion) removes the folder and the bot.
 
 Response — `200`: `{ "bot": { ... } }` with `status` `"archived"`.
 
@@ -9723,7 +9756,8 @@ Archiving has the same effect as the creating agent's `archive_task` tool and th
 contract as bot archival: the task agent's run is aborted and its background processes are
 stopped, the agent is archived and its `canSendMessages` becomes `false`, and its history remains
 readable. The folder is kept on disk — archival is logical, never a deletion. Memberships are
-unchanged.
+unchanged. Only an admin bot's [permanent deletion](#permanent-deletion) removes the folder and
+the task.
 
 Response — `200`: `{ "task": { ... }, "membership": { ... } }` with `status` `"archived"`; the
 membership is the caller's, or `null`. Archival emits `task.updated` after commit, echoing
@@ -13177,6 +13211,10 @@ to a different daemon process.
   change to the root-agent association. Reordering emits one event for the moved project;
   neighbour keys remain unchanged.
     - `projectId` (ID string), `previousVersion`, `version`, `changes`.
+- `project.removed` — protocol 33 or newer. An admin bot permanently deleted the project. Its
+  root workspace emits `workspace.removed` with the same ID and version; every other workspace and
+  every agent it took arrives with its own removal event.
+    - `projectId` (ID string), `previousVersion` (the project's final version).
 
 **Workspaces**
 
@@ -13185,6 +13223,9 @@ to a different daemon process.
 - `workspace.updated` — rename, reorder, archive progress, initialization settling, or a change
   to the workspace's top-level-agent association.
     - `workspaceId` (ID string), `previousVersion`, `version`, `changes`.
+- `workspace.removed` — protocol 33 or newer. An admin bot permanently deleted the workspace, or
+  the project or bot it belongs to.
+    - `workspaceId` (ID string), `previousVersion` (the workspace's final version).
 
 **Secrets**
 
@@ -13222,6 +13263,9 @@ event is idempotent by attachment ID.
   state changes travel as `agent.updated` and do not advance the bot; likewise the workspace's
   own changes travel as `workspace.updated`.
     - `botId` (ID string), `previousVersion`, `version`, `changes`.
+- `bot.removed` — protocol 33 or newer. An admin bot permanently deleted the bot. Its workspace
+  emits `workspace.removed` and its agents emit `agent.removed`.
+    - `botId` (ID string), `previousVersion` (the bot's final version).
 
 **Tasks**
 
@@ -13232,6 +13276,10 @@ event is idempotent by attachment ID.
   state changes travel as `agent.updated` and do not advance the task. A task's workspace has no
   `workspace.*` events of its own; it follows the task.
     - `taskId` (ID string), `previousVersion`, `version`, `changes`.
+- `task.removed` — protocol 33 or newer. An admin bot permanently deleted the task. Its
+  memberships go with it without separate `task.left` events, and its agents emit
+  `agent.removed`.
+    - `taskId` (ID string), `previousVersion` (the task's final version).
 - `task.joined` — the caller joined a task, including the owner's automatic membership at
   creation. In team mode it reaches only that member's connections.
     - `membership` (full membership object).
@@ -13353,6 +13401,11 @@ surface and are not part of bootstrap.
   and unarchive. `changes` carries exactly the fields that moved — a status flip is
   `{ "status": "running_tools", "updatedAt": ... }`, nothing more.
     - `agentId` (ID string), `previousVersion`, `version`, `changes`.
+- `agent.removed` — protocol 33 or newer. The agent was permanently deleted with its whole
+  conversation. Clients drop the agent and its messages, and remove it from every parent's
+  `subtasks`, `subagents`, and every workspace's or project's `agents` list naming it; those
+  containers do not emit their own update for it.
+    - `agentId` (ID string), `previousVersion` (the agent's final version).
 
     A wait transition carries the complete replacement `wait` object or `null`, plus `updatedAt`,
     on the existing agent version chain, published only after the durable transition commits.

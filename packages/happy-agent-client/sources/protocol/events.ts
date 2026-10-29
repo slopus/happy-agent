@@ -136,6 +136,23 @@ export type ProjectUpdatedPayload = ResourceUpdate<Project> & { projectId: Cuid2
 export type WorkspaceCreatedPayload = MutationEcho & { workspace: Workspace };
 export type WorkspaceUpdatedPayload = ResourceUpdate<Workspace> & { workspaceId: Cuid2 };
 
+/**
+ * An admin bot deleted a project for good, protocol 33 or newer. Clients drop it, and every
+ * workspace and agent it names arrives with its own removal.
+ */
+export const projectRemovedPayloadSchema = Type.Object({
+    previousVersion: resourceVersionSchema,
+    projectId: cuid2Schema,
+});
+export type ProjectRemovedPayload = Static<typeof projectRemovedPayloadSchema>;
+
+/** An admin bot deleted a workspace for good, protocol 33 or newer. */
+export const workspaceRemovedPayloadSchema = Type.Object({
+    previousVersion: resourceVersionSchema,
+    workspaceId: cuid2Schema,
+});
+export type WorkspaceRemovedPayload = Static<typeof workspaceRemovedPayloadSchema>;
+
 /** A global secret entered the catalog; values are absent by construction. */
 export const secretCreatedPayloadSchema = Type.Object({
     mutationId: Type.Optional(mutationIdSchema),
@@ -202,6 +219,13 @@ export const botUpdatedPayloadSchema = Type.Object({
 });
 export type BotUpdatedPayload = Static<typeof botUpdatedPayloadSchema>;
 
+/** An admin bot deleted a bot for good, protocol 33 or newer. */
+export const botRemovedPayloadSchema = Type.Object({
+    botId: cuid2Schema,
+    previousVersion: resourceVersionSchema,
+});
+export type BotRemovedPayload = Static<typeof botRemovedPayloadSchema>;
+
 /** A task was created together with its dedicated workspace and one agent. */
 export const taskCreatedPayloadSchema = Type.Object({
     mutationId: Type.Optional(mutationIdSchema),
@@ -218,6 +242,13 @@ export const taskUpdatedPayloadSchema = Type.Object({
     version: resourceVersionSchema,
 });
 export type TaskUpdatedPayload = Static<typeof taskUpdatedPayloadSchema>;
+
+/** An admin bot deleted a task for good, protocol 33 or newer. Its memberships go with it. */
+export const taskRemovedPayloadSchema = Type.Object({
+    previousVersion: resourceVersionSchema,
+    taskId: cuid2Schema,
+});
+export type TaskRemovedPayload = Static<typeof taskRemovedPayloadSchema>;
 
 /**
  * The caller joined, moved, or left a task in their own list, or a membership changed in place,
@@ -498,6 +529,16 @@ export interface FilesUpdatedPayload {
 export type AgentCreatedPayload = MutationEcho & { agent: Agent };
 export type AgentUpdatedPayload = ResourceUpdate<Agent> & { agentId: Cuid2 };
 
+/**
+ * An agent was deleted for good with its conversation, protocol 33 or newer. Clients drop the
+ * agent, its messages, and every nested subtask entry naming it.
+ */
+export const agentRemovedPayloadSchema = Type.Object({
+    agentId: cuid2Schema,
+    previousVersion: resourceVersionSchema,
+});
+export type AgentRemovedPayload = Static<typeof agentRemovedPayloadSchema>;
+
 /** Current context is computed state, so it carries a complete replacement and no version chain. */
 export interface AgentContextUpdatedPayload {
     agentId: Cuid2;
@@ -665,8 +706,10 @@ export type HappyAgentEvent =
     | EventEnvelope<"daemon.draining", DaemonDrainingPayload>
     | EventEnvelope<"project.created", ProjectCreatedPayload>
     | EventEnvelope<"project.updated", ProjectUpdatedPayload>
+    | EventEnvelope<"project.removed", ProjectRemovedPayload>
     | EventEnvelope<"workspace.created", WorkspaceCreatedPayload>
     | EventEnvelope<"workspace.updated", WorkspaceUpdatedPayload>
+    | EventEnvelope<"workspace.removed", WorkspaceRemovedPayload>
     | EventEnvelope<"secret.created", SecretCreatedPayload>
     | EventEnvelope<"secret.updated", SecretUpdatedPayload>
     | EventEnvelope<"secret.attached", SecretAttachedPayload>
@@ -674,8 +717,10 @@ export type HappyAgentEvent =
     | EventEnvelope<"secret.removed", SecretRemovedPayload>
     | EventEnvelope<"bot.created", BotCreatedPayload>
     | EventEnvelope<"bot.updated", BotUpdatedPayload>
+    | EventEnvelope<"bot.removed", BotRemovedPayload>
     | EventEnvelope<"task.created", TaskCreatedPayload>
     | EventEnvelope<"task.updated", TaskUpdatedPayload>
+    | EventEnvelope<"task.removed", TaskRemovedPayload>
     | EventEnvelope<"task.joined", TaskMembershipPayload>
     | EventEnvelope<"task.reordered", TaskMembershipPayload>
     | EventEnvelope<"task.left", TaskMembershipPayload>
@@ -715,6 +760,7 @@ export type HappyAgentEvent =
     | EventEnvelope<"skills.updated", SkillsUpdatedPayload>
     | EventEnvelope<"agent.created", AgentCreatedPayload>
     | EventEnvelope<"agent.updated", AgentUpdatedPayload>
+    | EventEnvelope<"agent.removed", AgentRemovedPayload>
     | EventEnvelope<"agent.context.updated", AgentContextUpdatedPayload>
     | EventEnvelope<"agent.draft.updated", AgentDraftUpdatedPayload>
     | EventEnvelope<"agent.profiles.updated", AgentProfilesUpdatedPayload>

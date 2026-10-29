@@ -482,6 +482,17 @@ describe("HappyReducer agent synchronization", () => {
         await vi.waitFor(() => expect(observedUpdates).toHaveBeenCalledTimes(9));
         expect(reducer.getState()).toBe(beforeUnrelated);
 
+        // A subagent deleted for good leaves the list.
+        harness.stream.push(
+            eventUpdate({
+                cursor: CURSOR_9,
+                occurredAt: 9,
+                payload: { agentId: CHILD_A, previousVersion: CURSOR_5 },
+                type: "agent.removed",
+            }),
+        );
+        await vi.waitFor(() => expect(reducer.getState().agents[AGENT_A]?.subagents).toEqual([]));
+
         reducer.stop();
     });
 

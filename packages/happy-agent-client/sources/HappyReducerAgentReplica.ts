@@ -218,6 +218,18 @@ export function reduceHappyReducerAgentEvent(
                 }
             }
         }
+    } else if (event.type === "agent.removed") {
+        // A subagent deleted for good leaves the list; the replica's own agent is the caller's to drop.
+        if (
+            event.cursor > fieldCursors.subagents &&
+            state.subagents.some((subagent) => subagent.id === event.payload.agentId)
+        ) {
+            state = withSubagents(
+                state,
+                state.subagents.filter((subagent) => subagent.id !== event.payload.agentId),
+            );
+            fieldCursors = withFieldCursor(fieldCursors, "subagents", event.cursor);
+        }
     } else if (
         event.type === "agent.context.updated" &&
         event.payload.agentId === agent.id &&
