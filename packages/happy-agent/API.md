@@ -2505,10 +2505,12 @@ anything else happens in Happy's conversation meanwhile, such as the person send
 Happy's model starting to answer, the rest of the message arrives at once: the typing never holds
 anything up. A client that reads history or reconnects sees the finished message.
 
-Those scripted messages are only the bootstrap: the welcome, choosing a subscription, installing and
-signing in, and saying that Happy is connected. From the first connection on, Happy's model writes
-every message itself, following onboarding instructions in its private context, and does the work
-with ordinary tools whose calls are shown like any other chat's.
+Those scripted messages are only the bootstrap: the welcome, choosing a subscription, and installing
+and signing in. From the first connection on, Happy's model writes every message itself, starting
+with saying what is connected. It follows onboarding instructions that are part of its system
+prompt while onboarding runs, so no call is needed to read them, and does the work with ordinary
+tools whose calls are shown like any other chat's. The person may type instead of pressing at any
+step, and Happy's model answers what they wrote.
 
 A press is the person's own message either way: an action message, described under `send`, with
 one input path. Only who answers it changes. During the bootstrap the daemon answers it with the
@@ -2583,12 +2585,9 @@ and members keep the onboarding described above.
 - `restartRequired` — `true` when a provider chosen during onboarding takes effect only after the
   daemon restarts; clients restart it through the ordinary drain and restart.
 - `requirements` — which requirements of `onboardingVersion` are met.
-- `accepted` — optional; the proposal rows the last `onboarding.workAccept` press ticked, each with
-  the space and agent IDs its chat has, which were fixed by the press before anything was created.
-  `status` is `"pending"` until the chat exists and its row is placed under its topic in the
-  sidebar document, then `"started"`, or `"failed"` when its chat could not be opened. Absent until
-  a press ticks a row. Clients keep a proposal's preview rows until their row is `"started"`, then
-  swap each for its real row without moving it.
+- `accepted` — optional and no longer set. Daemons before `sidebar.proposalAccept` listed here the
+  rows the last `onboarding.workAccept` press ticked; an accepted proposal now reports the chats it
+  started in the press's `result` and in the accept response.
 
 #### `GET /v0/onboarding/flow`
 
@@ -2612,49 +2611,47 @@ then on, Happy's model reads the press and its `outcome`, the result of the work
 the next message. `onboarding.workOpen` and `onboarding.finish` end onboarding and are never
 answered.
 
-| Action                                               | Parameters                                                         | What the daemon does                                                                                                                                                                                                                                                                                                                                                                                          |
-| ---------------------------------------------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `onboarding.start`                                   |                                                                    | Hides the example sidebar and shows which subscriptions this computer already uses.                                                                                                                                                                                                                                                                                                                           |
-| `onboarding.provider`                                | `provider`: `claude`, `chatgpt`, `grok`, `gemini`, `none`, `other` | Discloses how that assistant is connected, what to subscribe to, or how to add a key.                                                                                                                                                                                                                                                                                                                         |
-| `onboarding.connect`                                 | `provider`: `claude`, `codex`, `grok`, `antigravity`               | Installs the provider CLI when it is missing and starts its sign-in, as under Provider CLIs. The message that follows shows the progress as a `data-provider-cli` figure.                                                                                                                                                                                                                                     |
-| `onboarding.manual`                                  | `provider`                                                         | Shows the exact commands, and continues when discovery finds the sign-in.                                                                                                                                                                                                                                                                                                                                     |
-| `onboarding.providersUse`                            | `values`: provider CLI IDs                                         | Turns on those signed-in assistants.                                                                                                                                                                                                                                                                                                                                                                          |
-| `onboarding.routesUse`                               | `values`: provider route IDs                                       | Uses those routes as `POST /v0/provider-routes/:routeId/use` does.                                                                                                                                                                                                                                                                                                                                            |
-| `onboarding.connectAnother`, `onboarding.accountAdd` | `provider`, optional on `accountAdd`                               | Offers another AI, or another account of one.                                                                                                                                                                                                                                                                                                                                                                 |
-| `onboarding.profileConfirm`                          |                                                                    | Stores the name and email Happy showed.                                                                                                                                                                                                                                                                                                                                                                       |
-| `onboarding.profileChange`                           |                                                                    | Happy asks the person to type them.                                                                                                                                                                                                                                                                                                                                                                           |
-| `onboarding.discover`                                |                                                                    | Happy's model reads exactly the places it disclosed with its `discover_work` tool, then asks Focus for a proposal with `propose_work`.                                                                                                                                                                                                                                                                        |
-| `onboarding.workTell`, `onboarding.workChange`       |                                                                    | Happy asks the person to say what they work on, or what to change.                                                                                                                                                                                                                                                                                                                                            |
-| `onboarding.workAccept`                              | `values`: proposal row values                                      | Opens a chat for each ticked row, named and iconed as the row shows from the start, adds its topics and places each row in one sidebar change of the person's own, then sends each chat its first message exactly as shown, all in the press's own change. `result` is `{ "started": [{ "value", "spaceId", "agentId" }] }`, the IDs each ticked row's chat has; the flow's `accepted` carries the same rows. |
-| `onboarding.newChat`                                 | `values`: the new space's ID                                       | Run by the client: it makes a new chat with its own Create, then sends the press with that space's ID. The daemon checks the space is the person's.                                                                                                                                                                                                                                                           |
-| `onboarding.newChatSkip`                             |                                                                    | Moves on.                                                                                                                                                                                                                                                                                                                                                                                                     |
-| `onboarding.phone`                                   | `choice`: `opened` or `later`                                      | `opened` starts a phone pairing, shown by a `data-phone-pair` figure; `later` moves on.                                                                                                                                                                                                                                                                                                                       |
-| `onboarding.workOpen`                                | `item`: a proposal row value                                       | Finishes onboarding; the client opens that row's chat.                                                                                                                                                                                                                                                                                                                                                        |
-| `onboarding.finish`                                  |                                                                    | Finishes onboarding.                                                                                                                                                                                                                                                                                                                                                                                          |
+| Action                                               | Parameters                                                         | What the daemon does                                                                                                                                                                                            |
+| ---------------------------------------------------- | ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `onboarding.start`                                   |                                                                    | Hides the example sidebar and shows which subscriptions this computer already uses.                                                                                                                             |
+| `onboarding.provider`                                | `provider`: `claude`, `chatgpt`, `grok`, `gemini`, `none`, `other` | Discloses how that assistant is connected, what to subscribe to, or how to add a key.                                                                                                                           |
+| `onboarding.connect`                                 | `provider`: `claude`, `codex`, `grok`, `antigravity`               | Installs the provider CLI when it is missing and starts its sign-in, as under Provider CLIs. The message that follows shows the progress as a `data-provider-cli` figure.                                       |
+| `onboarding.manual`                                  | `provider`                                                         | Shows the exact commands, and continues when discovery finds the sign-in.                                                                                                                                       |
+| `onboarding.providersUse`                            | `values`: provider CLI IDs                                         | Turns on those signed-in assistants.                                                                                                                                                                            |
+| `onboarding.routesUse`                               | `values`: provider route IDs                                       | Uses those routes as `POST /v0/provider-routes/:routeId/use` does.                                                                                                                                              |
+| `onboarding.connectAnother`, `onboarding.accountAdd` | `provider`, optional on `accountAdd`                               | Offers another AI, or says that another account of one is not available yet. Happy no longer offers `accountAdd`; older messages may still hold it.                                                             |
+| `onboarding.profileConfirm`                          |                                                                    | Stores the name and email Happy showed.                                                                                                                                                                         |
+| `onboarding.profileChange`                           |                                                                    | Happy asks the person to type them.                                                                                                                                                                             |
+| `onboarding.discover`                                |                                                                    | Records the person's consent to read the places Happy disclosed, and starts Focus, shown under Happy at once (see "Focus in onboarding"). The outcome names Focus's agent ID, so Happy can hand the work to it. |
+| `onboarding.workTell`                                |                                                                    | Starts Focus the same way, without consent to discovery; Happy asks the person what they work on.                                                                                                               |
+| `onboarding.newChat`                                 | `values`: the new space's ID                                       | Run by the client: it makes a new chat with its own Create, then sends the press with that space's ID. The daemon checks the space is the person's.                                                             |
+| `onboarding.newChatSkip`                             |                                                                    | Moves on.                                                                                                                                                                                                       |
+| `onboarding.phone`                                   | `choice`: `opened` or `later`                                      | `opened` starts a phone pairing, shown by a `data-phone-pair` figure; `later` moves on.                                                                                                                         |
+| `onboarding.workOpen`                                | `item`: a proposal row value                                       | Finishes onboarding; the client opens that row's chat.                                                                                                                                                          |
+| `onboarding.finish`                                  |                                                                    | Finishes onboarding.                                                                                                                                                                                            |
+
+`sidebar.proposalAccept` (see "Proposals" under Spaces) is pressed in Happy's onboarding too, to
+accept Focus's proposal. `onboarding.workAccept` and `onboarding.workChange`, which older messages
+may hold, are no longer run: pressing one is `400 invalid_request`.
 
 `onboarding.signInOpen`, `onboarding.subscribe`, and `onboarding.apiKeyOpen` open a vendor page or
 a client sheet; clients run them without sending them. A sign-in code goes only to
 `POST /v0/provider-clis/:cliId/sign-in/code`, never into a message.
 
-Discovering the person's work reads only what Happy disclosed before the press: the projects in the
-connected assistant's own session history (`~/.codex/sessions` for Codex, `~/.claude/projects` for
-Claude Code), the first request of their recent sessions, and the last 30 days of commit subjects
-and branch names in those projects. It writes nothing. What it reads goes to the connected
-assistant's model, which proposes the work.
+Discovering the person's work is Focus's (see "Focus in onboarding" under Spaces). Happy discloses
+the places before the press; pressing Discover is the person's consent, and Focus then reads only
+those places.
 
-Happy's model has these tools while it leads onboarding. Their calls are ordinary tool calls in
-Happy's conversation:
+Happy's model has these tools while it leads onboarding, besides its ordinary ones. Their calls are
+ordinary tool calls in Happy's conversation:
 
 - `save_profile` — saves the name and email the person typed.
-- `discover_work` — reads the places above and returns what it found.
-- `propose_work` — Focus proposes the person's work from what was found or what the person said,
-  as a bounded request of its own on the chosen model. It returns the proposal's
-  `<form data-action="onboarding.workAccept" data-table>` block, which the model includes in its
-  message as returned. Its rows' values name this proposal alone, so a press on an older proposal
-  is `409 conflict`, and each chat's first message is the one the proposal stored, never read from
-  the message.
 - `set_default_model` — makes a model the default for new conversations, as `PATCH /v0/config`
   `defaults` does, when the person asks Happy to change it.
+
+Happy hands the person's work to Focus with its ordinary `send_agent_message`, shown in Happy's
+conversation like any message to another agent, and shows Focus's proposal in its own next message
+with a `data-sidebar-proposal` figure and the `sidebar.proposalAccept` action.
 
 ## Provider CLIs
 
@@ -5866,6 +5863,11 @@ Fields:
   when the user-facing `send` route accepts a message for this agent. It is `false` for ordinary
   non-subtask agents with a parent, and archived agents. Active subtasks are
   sendable despite their non-null parent.
+- `composerPlaceholder` — optional additive string or `null`. When it is a non-empty string, a
+  client shows it in this conversation's empty message composer instead of its own prompt. Happy's
+  onboarding sets it on Happy while its model leads onboarding ("Or just tell me in your own
+  words…") and clears it when onboarding finishes. Older daemons omit it; treat a missing field as
+  `null`. It changes through `agent.updated` like the other fields.
 - `title`, `titleStatus` — a generated human-readable title for the conversation.
   `titleStatus` is `"idle"` while none has been generated yet and `"ready"` once one has.
 - `totalTokens` — optional additive non-negative integer or `null`. Emitted on every child in
@@ -6361,6 +6363,8 @@ is one of:
     `openedByProgram` is `false`; otherwise it shows the control. A figure appearing never opens a
     browser. An ID the client does not know draws as any unknown figure does.
 
+- `<figure data-sidebar-proposal="ARTIFACT_ID"></figure>` — a sidebar proposal, drawn live as the
+  read-only preview described under Spaces, "Proposals".
 - `<figure data-setting="default-model"></figure>` — the default model for new conversations, from
   `GET /v0/config` `defaults` and the `models` map's names, refreshed on `config.updated`: the
   model's name and effort, with a control that changes them through `PATCH /v0/config`
@@ -6381,8 +6385,8 @@ action ID a client or the daemon does not know, or one whose parameters do not c
 cannot be pressed; nothing is inferred from a label. A checklist's ticked values and a code field's
 text are the action's `values` and cannot come from an attribute. A `data-table` checklist is
 drawn as a table whose column headings belong to its action ID, not to the markup:
-`onboarding.providersUse` (Use, AI, Account, Route), `onboarding.routesUse` (Use, AI, How,
-Account), and `onboarding.workAccept` (Keep, Work, Topic, First message).
+`onboarding.providersUse` (Use, AI, Account, Route) and `onboarding.routesUse` (Use, AI, How,
+Account).
 
 Blocks are numbered by `blockIndex`: the zero-based position of a valid action block among the
 valid action blocks of the message's text, in order. Steps, status lines, trees, and figures are
@@ -7691,9 +7695,9 @@ is exactly one `action` block and which has no `text`.
             "type": "action",
             "messageId": "tz4a98xxat96iws9zmbrgj3a",
             "blockIndex": 2,
-            "actionId": "onboarding.workAccept",
+            "actionId": "onboarding.routesUse",
             "params": {},
-            "values": ["p1-work-1"]
+            "values": ["codex"]
         }
     ],
     "delivery": "queue"
@@ -7727,31 +7731,38 @@ The stored block adds what the daemon decided:
     "type": "action",
     "messageId": "tz4a98xxat96iws9zmbrgj3a",
     "blockIndex": 2,
-    "actionId": "onboarding.workAccept",
+    "actionId": "onboarding.routesUse",
     "params": {},
-    "values": ["p1-work-1"],
-    "label": "Looks right",
-    "outcome": "Started 1 chat: Onboarding redesign, under Product. …",
-    "result": { "started": [{ "value": "p1-work-1", "spaceId": "…", "agentId": "…" }] }
+    "values": ["codex"],
+    "label": "Use selected",
+    "ticked": ["Codex in the ChatGPT app"],
+    "outcome": "Adding what they ticked; you'll hear when it's connected.",
+    "result": null
 }
 ```
 
 - `label` — the words on the control pressed, as the person read them; for a checklist submitted
   with nothing ticked, its empty label when it has one.
+- `ticked` — present only when a checklist was submitted: the labels of the options ticked, in the
+  order the checklist shows them, as the person read them, and `[]` when none was. Older messages
+  omit it.
 - `outcome` — what the work did, in English, as the agent's model reads it; absent when no model
   reads the message.
-- `result` — what the action returns to clients, or `null`; `onboarding.workAccept` returns the IDs
-  its chats have.
+- `result` — what the action returns to clients, or `null`; `sidebar.proposalAccept` returns the
+  chats it started.
 
-The agent's model reads an action message as an ordinary person turn: `[Pressed "Looks right" with
-"Onboarding redesign" ticked in your message]`, then the outcome. Who answers depends on the
+The agent's model reads an action message as an ordinary person turn: `[Pressed "Use selected" with
+"Codex in the ChatGPT app" ticked in your message]`, then the outcome. Who answers depends on the
 action: during Happy's onboarding bootstrap, the daemon accepts the message at once in a finished
 run of its own and answers with its next scripted message, and no model reads it; ending onboarding
 is answered by nothing. Otherwise the message waits and is accepted like any other, and the agent's
 model answers it.
 
-Clients draw no bubble for an action message: the pressed control shows chosen in place, from the
-pressed message's `actionChoices`. Sending the same `id` again returns the message as it stands.
+Clients draw an action message as the person's own message, from its stored block: `label`, or for a
+submitted checklist `label`, a colon, and `ticked` joined with ", " ("Use selected: Codex in the
+ChatGPT app"). Showing presses teaches the person that typing the same thing works too. The pressed
+control also shows chosen in place, from the pressed message's `actionChoices`. Sending the same
+`id` again returns the message as it stands.
 
 Errors: `404 not_found` for an unknown message or block; `409 conflict` when the block already has
 a choice, holds no pressable control with that action ID and those parameters, names a value the
@@ -10632,9 +10643,13 @@ on the person's default model. It is enabled only when that person's opaque user
 `happy-desktop.experiments.stemCells` is the JSON boolean `true`; missing, cleared, false, or
 other values disable it. This setting is per authenticated member in team mode and belongs to
 the installation's one person in standalone mode. Enabling it does not itself create work or
-Prioritizing. While enabled, Prioritizing is created on the first sidebar-document read or new work
-(`POST /v0/spaces/stem-cells`), the same way Happy creates any subtask, and appears in Happy's
-`subtasks` like any other; until then there is none, and nothing organises the sidebar. It has a
+Prioritizing, and neither does reading the sidebar. While enabled, Prioritizing is created with the
+person's first new work (`POST /v0/spaces/stem-cells`), when the person asks for a tidy
+(`POST /v0/spaces/tidy`), or when Happy's onboarding starts it (see "Focus in onboarding"), the same
+way Happy creates any subtask, and appears in Happy's `subtasks` like any other; until then there is
+none, and nothing organises the sidebar. The person knows it as Focus: a new one is titled Focus,
+and an existing one keeps its title. This chapter still calls it Prioritizing, and the API
+identifiers that name it (`"prioritizing"` as an author, for one) stay. It has a
 conversation of its own, shown as its own row (see "Prioritizing's row"), where the person may
 write to it; it never writes into Happy's conversation. After a new conversation's first
 message it gives the row an icon and decides where it belongs, and it tidies the list when asked.
@@ -11126,7 +11141,7 @@ nesting that Surface's row.
 Prioritizing's conversation has a row of its own, so the person can open it, read its notes and
 proposals, and answer it. The daemon makes that space when it makes Prioritizing, and, on the first
 start of a daemon that serves proposals, for every person whose Prioritizing predates its row. The
-space has `target.kind: "agent"`, the icon `{ "type": "library", "slug": "prioritize" }`, the title
+space has `target.kind: "agent"`, the icon `{ "type": "library", "slug": "goals" }`, the title
 of Prioritizing's conversation, and `placement: "settled"`. Like any space, it shows only where the
 document names it, and the daemon never inserts it into the document itself. The row is how the
 person learns that a proposal exists, so Prioritizing keeps it in view without being asked. Its
@@ -11152,6 +11167,33 @@ sidebar; the next Prioritizing gets a row of its own.
 A message the person writes in Prioritizing's conversation is a request in their own words: the
 changes Prioritizing queues while answering it apply as soon as that turn finishes, without the
 limits below.
+
+#### Focus in onboarding
+
+Happy's onboarding (see "Onboarding in Happy's conversation") introduces Prioritizing as Focus,
+Happy's sub-agent, and hands it the person's work. It requires the person's Stem Cells setting;
+without it, Happy asks the person what they work on and starts nothing.
+
+When the person presses `onboarding.discover`, the same transaction records their consent to
+discovery and starts Prioritizing if they have none. `onboarding.workTell` starts it the same way,
+without consent to discovery. A Prioritizing that onboarding starts is shown at once: its
+conversation is inserted into the document as a session under Happy's row, and Happy's row gets
+`expanded="true"` unless the person last set its fold, in one version authored `daemon`, committed
+with the press. Its session icon is `goals`. From then on, where its conversation stands is
+Prioritizing's decision as above.
+
+Happy hands work to it with an ordinary `send_agent_message`, which Happy's conversation shows like
+any message to another agent. Prioritizing answers as Happy's sub-agent: when a turn that received
+a message from Happy ends, the daemon sends Happy one message from Prioritizing, as a collaborator's
+report arrives, naming the proposal that turn made or revised, if any, and Prioritizing's last
+reply. Happy's next turn starts from it; nothing waits in between. Prioritizing's other turns are
+never reported to Happy.
+
+While the person has consented to discovery, Prioritizing also has `discover_work`. It reads,
+without writing anything, exactly the places Happy disclosed before the press: the projects in the
+connected assistant's own session history (`~/.codex/sessions` for Codex, `~/.claude/projects` for
+Claude Code), the first request of their recent sessions, and the last 30 days of commit subjects
+and branch names in those projects. What it reads goes only to Prioritizing's model.
 
 #### Voice's row
 
@@ -11189,8 +11231,9 @@ not apply, and only the rules above and under "Authorship" do.
 #### Proposals
 
 A larger change is a proposal: a `sidebar_proposal` artifact that holds the person's sidebar with
-the change made, shown to the person in Prioritizing's conversation, where they can edit it, accept
-it, or decline it. Accepting applies it to the sidebar as the person's own change. A proposal has
+the change made, shown to the person in Prioritizing's conversation. The person accepts it by
+pressing Good to go, and asks for any change in their own words. Accepting applies it to the
+sidebar as the person's own change. A proposal has
 the sidebar's grammar, document rules, and limits, and its versions are immutable like any
 artifact's. Version 1 is a copy of the sidebar as Prioritizing read it, its queued edits drawn in:
 the proposal's base. Every later version is the proposed sidebar. Its `display` is
@@ -11214,6 +11257,21 @@ artifact ID and version, not its reference tag, so that Prioritizing does not re
 reply. `list_sidebar` also returns the open proposal, its document, the nodes the person last set in it, and the
 decisions on the person's last proposals.
 
+**New rows.** A proposal may also add work the person does not have yet: a new chat, with its name,
+icon, and first message. `propose_sidebar` takes `newRows: [{ id, title, icon, why?, firstMessage }]`
+beside its edits, where `id` is a name Prioritizing chose, `new-` followed by lowercase letters,
+digits, and hyphens, and its edits place `<happy-space id="new-…"/>` where the row goes, at the top
+level. The daemon replaces each such name with a space ID it reserves for the row, in the stored
+document and in the proposal's `newRows`. That space does not exist until the proposal is accepted,
+so `GET /v0/spaces` does not list it; a client draws a proposal row whose ID is not a known space
+from `newRows`. A later revision may change a new row's title, icon, `why`, or first message by
+naming its reserved ID, or add more. The person moves or removes a new row with the proposal
+operations like any other; nothing else of it is theirs to change, and the first message is never
+read from the document. Accepting creates exactly the new rows still in the latest version, each a
+task chat with that space ID, named and iconed as proposed from the start rather than as new work
+that names itself, placed where the proposal puts it, and sent its first message as the person's
+message on the person's default model, read-only. A row whose chat cannot be created is skipped.
+
 **Archive offers.** A proposal may also offer to archive work that looks finished. In a proposal
 document, and only there, `<happy-section id="archive" label="Archive"/>` heads the rows offered
 for archiving: the rows of its block, up to the next section or separator. Only top-level task rows
@@ -11236,10 +11294,37 @@ with the person's archive authority. Its row leaves as archived work always does
 can unarchive it. Everything else that looks finished is offered through a proposal.
 
 A client shows a `sidebar_proposal` inline as a sidebar drawn from its document with the same
-components as the sidebar, never as raw HTML. While it is open, the client follows its latest
-version, lets the person edit it in place, and offers Accept and Decline. Once it is decided, the
-client shows its final version and its status. Ordinary artifact updates of a proposal are refused
-with `400 invalid_request`; only `propose_sidebar` and the routes below change one.
+components as the sidebar, never as raw HTML, and draws no controls in it: it is a preview. While it
+is open, the client follows its latest version; once it is decided, the client shows its final
+version and its status. Ordinary artifact updates of a proposal are refused with
+`400 invalid_request`; only `propose_sidebar` and the routes below change one.
+
+The decision is a chat action in the message that shows the proposal, Prioritizing's reply in its
+own conversation or Happy's message in onboarding:
+
+```html
+<menu>
+    <button data-action="sidebar.proposalAccept" data-proposal="ARTIFACT_ID" data-emphasis>
+        Good to go
+    </button>
+</menu>
+```
+
+Pressing it is an action message (see `send`) with `params: { "proposal": "ARTIFACT_ID" }`. In the
+press's own transaction it accepts the proposal exactly as the accept route below does, as the
+person and with the press's message `id` as its `mutationId`, and the conversation's model answers
+it with the outcome. `result` is `{ "proposal": "ARTIFACT_ID", "started": [{ "spaceId", "agentId" }] }`.
+Only the newest offer of the action is live, as for every action, so a Good to go shown with an
+earlier revision is a conflict. A proposal that is not open, or not the person's, is `409 conflict`
+without `message`. It is pressable in Happy's conversation and in Prioritizing's own, and only in
+standalone mode. There is no decline control: the person types what to change, and Prioritizing
+revises the proposal or leaves it.
+
+Happy shows a proposal in its own message with
+`<figure data-sidebar-proposal="ARTIFACT_ID"></figure>`: the client draws that proposal's latest
+version live from `GET /v0/spaces/sidebar/proposals/:artifactId` and
+`space.sidebar.proposal.changed`, as the same preview. Any other client draws it as any unknown
+figure.
 
 The proposal object:
 
@@ -11251,7 +11336,17 @@ The proposal object:
     "status": "open",
     "createdAt": 1755300000000,
     "decidedAt": null,
-    "acceptedVersion": null
+    "acceptedVersion": null,
+    "newRows": [
+        {
+            "id": "n7d2k9q4w1e5r7y3u6i0o2p4",
+            "title": "Release CI",
+            "icon": { "type": "library", "slug": "flaky" },
+            "why": "Three failing runs this week",
+            "firstMessage": "Look at why Release CI keeps failing and draft a read-only plan. Change nothing until I approve."
+        }
+    ],
+    "started": []
 }
 ```
 
@@ -11260,6 +11355,12 @@ The proposal object:
 - `status` — `"open"`, `"accepted"`, or `"declined"`.
 - `decidedAt` — when the person accepted or declined it, or `null` while it is open.
 - `acceptedVersion` — the sidebar version that accepting it made, or `null`.
+- `newRows` — optional additive: the new rows the proposal has offered, each with its reserved
+  space `id`, `title`, `icon`, `why` (a few words on where the work was seen, or `null`), and
+  `firstMessage`. A row that the latest version no longer holds is not created. Older daemons omit
+  it; treat a missing list as empty.
+- `started` — optional additive: once accepted, the chats accepting created, as
+  `[{ "spaceId", "agentId" }]`. Older daemons omit it.
 
 `GET /v0/spaces/sidebar` also returns `proposal`, the person's open proposal object, when one
 exists. Daemons without proposals omit it, and so does a daemon when no proposal is open.
@@ -11290,9 +11391,11 @@ everything it set, publishes `space.sidebar.changed` with author `"person"` and 
 and ends `seed`. When nothing changed in the meantime, the sidebar becomes exactly the proposal's
 latest version.
 
-Response — `200 { "proposal": { ... }, "sidebar": { "artifactId", "version", "html", "operations" }, "archived": [ ... ] }`,
-where `sidebar` takes the shape of the `POST /v0/spaces/sidebar/operations` response and
-`archived` lists the space IDs whose tasks accepting archived. The proposal
+Response — `200 { "proposal": { ... }, "sidebar": { "artifactId", "version", "html", "operations" }, "archived": [ ... ], "started": [ ... ] }`,
+where `sidebar` takes the shape of the `POST /v0/spaces/sidebar/operations` response,
+`archived` lists the space IDs whose tasks accepting archived, and `started`, optional and
+additive, lists the new rows' chats as `{ "spaceId", "agentId" }`. Accepting creates the new rows
+before it applies the operations, so each is inserted where the proposal puts it. The proposal
 becomes `"accepted"`. A retry with the same `mutationId` returns the first answer and applies
 nothing again. A proposal that was already decided under another mutation is `409 conflict`.
 Prioritizing is told at once.
@@ -11517,7 +11620,8 @@ A batch moves rows only and never changes what the person has selected.
 ### `POST /v0/spaces/tidy`
 
 Posts "Tidy the sidebar now" into Prioritizing's conversation as an automatic message, and
-nothing more; before the person's first new work there is no Prioritizing, and it does nothing.
+nothing more. When the person has no Prioritizing yet and Stem Cells is enabled, it starts one
+instead, whose opening task reads the sidebar; with Stem Cells disabled it does nothing.
 Request: `{}` or `{ "mutationId": "..." }`.
 
 Response — `202` with no body. The changes Prioritizing makes apply when its turn ends, like any
