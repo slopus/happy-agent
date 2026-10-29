@@ -1,3 +1,5 @@
+import type { ProcessTransport } from "./impl/startProcessTransport.js";
+
 export type ManagedProcessStatus = "running" | "exited" | "killed";
 
 export interface ProcessStartOptions {
@@ -11,6 +13,11 @@ export interface ProcessStartOptions {
     maxOutputBytes?: number;
     /** Run the command under a pseudo-terminal instead of pipes. */
     tty?: boolean;
+    /**
+     * Starts the command somewhere other than a local child process, such as a long-lived
+     * sandbox runner. `command`, `args`, and `shell` then only describe it.
+     */
+    transport?: () => Promise<ProcessTransport>;
 }
 
 export interface ProcessRunOptions extends ProcessStartOptions {
