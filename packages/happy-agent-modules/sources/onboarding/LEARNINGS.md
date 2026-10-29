@@ -107,6 +107,10 @@ new code, which is a new pairing, so its completion was ignored and Happy never 
 paired. Onboarding now counts any pairing that completes on this computer once its phone step
 opened one.
 
+The same goes the other way: a pairing code never outlives the step that showed it. Later, Pair
+later, and finishing cancel every pairing still waiting, the first code and any new one shown
+since, not only the one onboarding opened.
+
 ## Onboarding proves each requirement once
 
 Completion is a verified provider and a profile with a name and an email, stored as a versioned

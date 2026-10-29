@@ -937,11 +937,7 @@ export class OnboardingModule implements AgentModule {
                         line = `They have the app, but the phone pairing couldn't open: ${pairing?.error ?? "it is unavailable"}. Treat it as Later.`;
                     }
                 } else {
-                    if (state.pairingId !== null) {
-                        await this.#mobileConnector
-                            .cancelPairing(ctx, state.pairingId)
-                            .catch(() => undefined);
-                    }
+                    await this.#cancelOpenPairings(ctx, state);
                     line = "Later, for the phone.";
                 }
                 return done(`${line}\n${closingOutcome(await this.#closing(ctx))}`);
@@ -956,11 +952,7 @@ export class OnboardingModule implements AgentModule {
                 if (action.id === "onboarding.workOpen" && open === undefined) {
                     throw new OnboardingRequestError("invalid", "That chat was not opened.");
                 }
-                if (state.pairingId !== null && !state.phonePaired) {
-                    await this.#mobileConnector
-                        .cancelPairing(ctx, state.pairingId)
-                        .catch(() => undefined);
-                }
+                await this.#cancelOpenPairings(ctx, state);
                 await this.#write(ctx, { ...state, step: "finished" });
                 await this.#setComposerPlaceholder(ctx, null);
                 return done(
@@ -970,6 +962,23 @@ export class OnboardingModule implements AgentModule {
             }
             default:
                 throw new OnboardingRequestError("invalid", "Happy can't run that action yet.");
+        }
+    }
+
+    /**
+     * A pairing code never outlives the step that showed it: once onboarding opened one, every
+     * pairing still waiting ends with the step, including a new code shown after a mismatch.
+     */
+    async #cancelOpenPairings(ctx: Context, state: OnboardingState): Promise<void> {
+        if (state.pairingId === null) return;
+        const current = await this.#mobileConnector.snapshot(ctx).catch(() => undefined);
+        const open = current?.pairing;
+        const ids = new Set(state.phonePaired ? [] : [state.pairingId]);
+        if (open != null && (open.status === "waiting" || open.status === "verifying")) {
+            ids.add(open.id);
+        }
+        for (const id of ids) {
+            await this.#mobileConnector.cancelPairing(ctx, id).catch(() => undefined);
         }
     }
 

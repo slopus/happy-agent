@@ -1095,7 +1095,15 @@ describe("onboarding the person's work", () => {
                     "pressed:I've downloaded and opened Happy": say(
                         "Open Happy on your phone and scan this code.\n\n<figure data-phone-pair></figure>",
                     ),
-                    phonePaired: say("Your phone is connected. You're ready, Ada."),
+                    phonePaired: say(
+                        [
+                            "Your phone is connected. You're ready, Ada.",
+                            "",
+                            "<menu>",
+                            '  <button data-action="onboarding.finish" data-emphasis>Done</button>',
+                            "</menu>",
+                        ].join("\n"),
+                    ),
                 },
                 { phone: "on" },
             );
@@ -1145,8 +1153,23 @@ describe("onboarding the person's work", () => {
             });
             await confirming;
 
-            await waitForText(gym, happy, "Your phone is connected.");
+            const done = await waitForText(gym, happy, "Your phone is connected.");
             expect(told(gym, "phonePaired")).toMatchObject({ name: "Ada Lovelace" });
+
+            // A code shown during the step and never used ends with it.
+            const unused = (await gym.http.ok("POST", "/v0/mobile-connector/pairing")) as {
+                mobileConnector: { pairing: { id: string; status: string } };
+            };
+            expect(unused.mobileConnector.pairing.status).toBe("waiting");
+            await press(gym, happy, done, { id: "onboarding.finish" });
+            expect((await flowOf(gym)).step).toBe("finished");
+            const after = (await gym.http.ok("GET", "/v0/mobile-connector")) as {
+                mobileConnector: { pairing: { id: string; status: string } | null };
+            };
+            expect(after.mobileConnector.pairing).toMatchObject({
+                id: unused.mobileConnector.pairing.id,
+                status: "cancelled",
+            });
             expect(gym.errors).toEqual([]);
         },
         TEST_TIMEOUT_MS,
