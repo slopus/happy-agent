@@ -228,6 +228,108 @@ describe("Connecting an AI in Happy's onboarding", () => {
     );
 
     it(
+        "starts the sign-in again when the person signs in after a failed and a cancelled one",
+        async () => {
+            const { gym, happy } = await startGym();
+            const [opening] = await waitForMessages(gym, happy, 1, "Happy's first message");
+            await press(gym, happy, {
+                messageId: opening!.id,
+                blockIndex: 0,
+                action: { id: "onboarding.start", params: {} },
+            });
+            const asked = (await waitForMessages(gym, happy, 2, "the subscriptions question"))[1]!;
+            await press(gym, happy, {
+                messageId: asked.id,
+                blockIndex: 0,
+                action: { id: "onboarding.provider", params: { provider: "claude" } },
+            });
+            const offer = (await waitForMessages(gym, happy, 3, "the install offer"))[2]!;
+            await press(gym, happy, {
+                messageId: offer.id,
+                blockIndex: 0,
+                action: { id: "onboarding.connect", params: { provider: "claude" } },
+            });
+
+            type Cli = {
+                operation: {
+                    id: string;
+                    kind: string;
+                    status: string;
+                    authorization: { acceptsCode: boolean } | null;
+                } | null;
+            };
+            const cli = async () =>
+                ((await gym.http.ok("GET", "/v0/provider-clis/claude")) as { providerCli: Cli })
+                    .providerCli;
+            const waitingOther = async (seen: readonly string[], description: string) =>
+                await gym.waitUntil(async () => {
+                    const current = await cli();
+                    return current.operation?.kind === "sign_in" &&
+                        current.operation.status === "waiting" &&
+                        current.operation.authorization?.acceptsCode === true &&
+                        !seen.includes(current.operation.id)
+                        ? current.operation.id
+                        : undefined;
+                }, description);
+
+            // A wrong code fails the first sign-in; the figure's Try again starts another, and
+            // its Cancel ends that one.
+            const first = await waitingOther([], "the first sign-in to wait for its code");
+            await gym.http.ok("POST", "/v0/provider-clis/claude/sign-in/code", {
+                code: "bad-code",
+            });
+            await gym.waitUntil(
+                async () => ((await cli()).operation?.status === "failed" ? true : undefined),
+                "the wrong code to fail",
+            );
+            await gym.http.ok("POST", "/v0/provider-clis/claude/sign-in", {});
+            const second = await waitingOther([first], "Try again to wait for its code");
+            await gym.http.ok("POST", "/v0/provider-clis/claude/cancel", {});
+
+            // Choose another AI, Claude, Sign in to Claude: a fresh sign-in starts at once.
+            const connecting = (await waitForMessages(gym, happy, 4, "the connecting message"))[3]!;
+            await press(gym, happy, {
+                messageId: connecting.id,
+                blockIndex: 1,
+                action: { id: "onboarding.connectAnother", params: {} },
+            });
+            const catalog = await gym.waitUntil(async () => {
+                const all = (await messages(gym, happy)).filter((m) => m.role !== "user");
+                return all.find((message) => textOf(message).includes("Here's every AI"));
+            }, "every AI");
+            await press(gym, happy, {
+                messageId: catalog.id,
+                blockIndex: 0,
+                action: { id: "onboarding.provider", params: { provider: "claude" } },
+            });
+            const signInOffer = await gym.waitUntil(async () => {
+                const all = (await messages(gym, happy)).filter((m) => m.role !== "user");
+                return all.find(
+                    (message) =>
+                        message.id !== offer.id &&
+                        textOf(message).includes(
+                            'data-action="onboarding.connect" data-provider="claude"',
+                        ),
+                );
+            }, "the sign-in offer");
+            await press(gym, happy, {
+                messageId: signInOffer.id,
+                blockIndex: 0,
+                action: { id: "onboarding.connect", params: { provider: "claude" } },
+            });
+            await waitingOther([first, second], "a fresh sign-in to wait for its code");
+            await gym.http.ok("POST", "/v0/provider-clis/claude/sign-in/code", {
+                code: "good-code",
+            });
+            await waitForMessages(gym, happy, 1, "Happy to carry on after the sign-in", (all) =>
+                all.some((message) => textOf(message).includes("I couldn't switch to Claude")),
+            );
+            expect(gym.errors).toEqual([]);
+        },
+        TEST_TIMEOUT_MS,
+    );
+
+    it(
         "answers None yet and shows every AI on Sign in to more",
         async () => {
             const { gym, happy } = await startGym();

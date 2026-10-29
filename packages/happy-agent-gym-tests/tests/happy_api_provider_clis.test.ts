@@ -317,6 +317,68 @@ describe("Provider CLIs API", () => {
     );
 
     it(
+        "starts a fresh sign-in after a failed one and a cancelled one",
+        async () => {
+            const { gym } = await start();
+            await gym.http.ok("POST", "/v0/provider-clis/claude/install", {});
+            await waitForCli(
+                gym,
+                "claude",
+                (cli) => cli.operation?.status === "succeeded",
+                "install",
+            );
+            const waiting = (cli: ProviderCli) =>
+                cli.operation?.status === "waiting" &&
+                cli.operation.authorization?.acceptsCode === true;
+
+            await gym.http.ok("POST", "/v0/provider-clis/claude/sign-in", {});
+            await waitForCli(gym, "claude", waiting, "the first sign-in to wait");
+            await gym.http.ok("POST", "/v0/provider-clis/claude/sign-in/code", {
+                code: "bad-code",
+            });
+            const failed = await waitForCli(
+                gym,
+                "claude",
+                (cli) => cli.operation?.status === "failed",
+                "the bad code to fail",
+            );
+            expect(failed.operation?.error?.code).toBe("sign_in_failed");
+
+            await gym.http.ok("POST", "/v0/provider-clis/claude/sign-in", {});
+            // Every sign-in is a new operation, so each wait names the one before it.
+            const second = await waitForCli(
+                gym,
+                "claude",
+                (cli) => waiting(cli) && cli.operation?.id !== failed.operation?.id,
+                "the second sign-in to wait",
+            );
+            await gym.http.ok("POST", "/v0/provider-clis/claude/cancel", {});
+
+            await gym.http.ok("POST", "/v0/provider-clis/claude/sign-in", {});
+            await waitForCli(
+                gym,
+                "claude",
+                (cli) =>
+                    waiting(cli) &&
+                    cli.operation?.id !== failed.operation?.id &&
+                    cli.operation?.id !== second.operation?.id,
+                "the third sign-in to wait",
+            );
+            await gym.http.ok("POST", "/v0/provider-clis/claude/sign-in/code", {
+                code: "good-code",
+            });
+            await waitForCli(
+                gym,
+                "claude",
+                (cli) => cli.signIn.status === "signed_in",
+                "the third sign-in to succeed",
+            );
+            expect(gym.errors).toEqual([]);
+        },
+        TEST_TIMEOUT_MS,
+    );
+
+    it(
         "cancels a waiting sign-in and refuses what cannot start",
         async () => {
             const { gym } = await start();
