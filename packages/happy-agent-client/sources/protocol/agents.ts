@@ -122,6 +122,11 @@ export const agentSchema = Type.Recursive((agent) =>
         canSendMessages: Type.Optional(Type.Boolean()),
         createdAt: timestampSchema,
         id: cuid2Schema,
+        /**
+         * When a person last wrote here or the status line last changed, else `createdAt`; it
+         * never moves for runs, tool calls, or bookkeeping. Absent on older daemons.
+         */
+        lastActivityAt: Type.Optional(timestampSchema),
         /** The newest event cursor for this agent, so a stream opens where this left off. */
         lastCursor: eventCursorSchema,
         /** Whether another agent owns this agent's Agent Base ancestry. */
@@ -137,7 +142,8 @@ export const agentSchema = Type.Recursive((agent) =>
         status: agentStatusSchema,
         /**
          * The one line the agent last wrote about where its work stands, with `set_status`: the
-         * second line of its sidebar row. `null` when unset; absent on older daemons.
+         * second line of its sidebar row, shown on one line. `null` when unset; absent on older
+         * daemons.
          */
         statusLine: Type.Optional(Nullable(agentStatusLineSchema)),
         /** How many subagents this agent spawned over its life, and how many run now. */

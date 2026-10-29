@@ -506,6 +506,10 @@ that predates agent stories never meets an agent's story, which only its person 
 may meet a reposted one: it skips an overlay type it does not know, as before, and shows a frame
 whose `kind` it does not know as its background.
 
+Last activity is additive and does not increment the protocol version. Current daemons emit the
+agent's `lastActivityAt` on every full agent object and in `agent.updated` changes when it moves.
+Older daemons omit it; clients then fall back to what they used before, such as `updatedAt`.
+
 Drain intent is additive and does not increment the protocol version. A daemon that supports it
 accepts the optional `POST /v0/drain` body and includes `drain` in the drain response, health, the
 `hello` frame, and the `daemon.draining` event, as described under Daemon lifecycle. Older
@@ -5180,6 +5184,7 @@ guarding the whole row. The version exists for event chaining and newer-copy com
     "processes": { "running": 1 },
     "pendingQuestionId": null,
     "unread": { "reason": "turn_finished", "since": 1755400000000 },
+    "lastActivityAt": 1755390000000,
     "orderKey": "5",
     "lastCursor": "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e",
     "version": "01991f3a-5f4d-7000-8000-6d3e5f708192",
@@ -5283,10 +5288,10 @@ Fields:
 - `statusLine` — optional additive object, emitted by daemons with `capabilities.agentStories`:
   `null`, or `{ "text": "Testing with a few friends", "updatedAt": 1755400000000 }`, the one line
   the agent last wrote about where its work stands, with its `set_status` tool (see "Agent
-  stories"). `text` is 1–120 characters with no line break. A client shows it under the title of
-  the agent's sidebar row or session, in place of what it would show otherwise, wrapped onto at
-  most two lines and truncated past them, and shows nothing different while it is `null` or
-  absent. Every change is an `agent.updated` event carrying
+  stories"). `text` is 1–120 characters with no line break; `set_status` writes at most 60, and
+  agents aim for about 40 so it fits. A client shows it under the title of the agent's sidebar
+  row or session, in place of what it would show otherwise, on a single line truncated past it,
+  and shows nothing different while it is `null` or absent. Every change is an `agent.updated` event carrying
   `statusLine` in `changes`. Archival keeps it.
 - `orderKey` — an opaque owner-local sort key, as on projects and workspaces; the list order is
   manual and moved with `reorder`. It is non-null for every user-visible root, including one
@@ -12489,7 +12494,7 @@ Hidden subagents and Prioritizing are not.
 | `post_story`     | `frames`, `caption`, `overlays` as for `draft_story`; `supersedes` | Posts an agent's story to this conversation's ring for its person       |
 | `withdraw_story` | `storyIds`, 1–10 live stories in this conversation's ring          | Ends them as withdrawn                                                  |
 | `list_stories`   | none                                                               | The ring's live stories: who posted each, caption, when, seen, reaction |
-| `set_status`     | `text`, 1–120 characters on one line, or `null` to clear           | Sets the `statusLine` shown under this agent's row or session title     |
+| `set_status`     | `text`, 1–60 characters on one line, or `null` to clear            | Sets the `statusLine` shown under this agent's row or session title     |
 
 `post_story` takes the frames `draft_story` takes, and one more kind: `{ "artifactId", "version" }`
 without `path`, an artifact this conversation presented, shown live as an artifact frame; without
@@ -12504,6 +12509,11 @@ remaining live stories.
 and nothing reaches anyone else. `set_status` and `list_stories` need none either. Read only
 refuses `post_story`, `withdraw_story`, and `set_status`. Each call is keyed by its tool call, so a
 call repeated after a restart posts, ends, or sets nothing a second time.
+
+`set_status` is always in the conversation's tool list rather than found through tool search, and
+the conversation's instructions ask the agent to set it early and change it at key moments. A
+status longer than 60 characters fails the call with a message asking the agent to shorten it;
+nothing is truncated.
 
 The tools' instructions decide when to post, and they are the product: post only when something
 real shipped that the person can see or try, never progress; supersede the agent's earlier story
