@@ -1,5 +1,16 @@
 # Permissions module learnings
 
+## macOS browser startup failures need shared guidance
+
+Chrome has aborted during application registration in restricted macOS shell
+launches; repeated retries created native crash dialogs. A bounded headless check
+with a fresh profile succeeded outside Happy Agent's sandbox, without isolating
+the exact denied operation. Shared permission guidance now tells every agent to
+apply the current mode's blocked-work rule before
+launching when this failure is known, stop after a startup failure, and isolate
+profiles, timeouts, and process cleanup. Auto still reviews each exact command;
+the guidance grants no automatic elevation and forbids disabling Chrome's own sandbox.
+
 ## File content needs a larger per-string review budget
 
 The 8,192-character argument-string limit rejected ordinary long file writes before a reviewer
