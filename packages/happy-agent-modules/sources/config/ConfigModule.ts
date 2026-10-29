@@ -3990,7 +3990,7 @@ export function parseHappyAgentConfigToml(source: string): {
     if (Buffer.byteLength(source, "utf8") > MAX_CONFIG_FILE_BYTES) {
         throw new Error(`Configuration exceeds the ${MAX_CONFIG_FILE_BYTES}-byte limit.`);
     }
-    const table = parse(source);
+    const table = parse(source.replace(/^\uFEFF/u, ""));
     if (!isTable(table)) throw new Error("The Happy Agent configuration must be a TOML table.");
     assertTableSize(table, "configuration");
     const unknownSettings: string[] = [];

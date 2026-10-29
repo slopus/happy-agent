@@ -40,7 +40,7 @@ export async function refreshCodexAuthFile(options: {
     refreshTokenUrl: string;
 }): Promise<CodexQuotaAuth> {
     const contents = await readFile(options.authFile, "utf8");
-    const parsed: unknown = JSON.parse(contents);
+    const parsed: unknown = JSON.parse(contents.replace(/^\uFEFF/u, ""));
     if (!Value.Check(authSchema, parsed)) {
         throw new Error("Codex authentication is missing a refresh token.");
     }
