@@ -49,16 +49,29 @@ only refuses superseding a story outside the ring. Captions and status lines are
 vibe coder, so the prompts forbid hashes, versions, test counts, file names, and "14/14"-style
 tallies.
 
-## The status is a short subtitle, and progress cues are just text
+## The status is one short line, and progress cues are just text
 
-Rows show `statusLine` under the title, wrapped onto at most two lines like a chat preview in
-Telegram. Kirill wanted tiny step cues such as `● ● [●] ○`. Both are carried by the prompt, not
-the API: `text` stays one string of at most 120 characters with no line break, and `set_status`
-tells the agent to write one or two short phrases (about 70 characters), optionally led by that
-dot cue for a few real stages. Kirill then corrected the lifetime: the status almost always stays and
-states plainly where the conversation is, finished work included ("Shipped to preview", "On main"),
-and it changes only at key moments, never on every step. `null` is for a status that would
-otherwise be untrue.
+Rows show `statusLine` under the title on a single line; only about 32 characters fit before the
+"…". Kirill first allowed two lines and about 70 characters, then cut it to one line. The
+`set_status` description now asks for one short phrase of about 40 characters with short examples
+("Shipped to preview", "On main", "Stuck on payment sign-up"), and the tool refuses more than 60
+characters with a message telling the agent to shorten it, rather than truncating. The check runs
+in the tool, not the schema, because a schema mismatch on a string-or-null argument only says
+"Expected string or null". The wire limit stays 120 so stored and older statuses still validate.
+Kirill kept the tiny stage cue (`● ● [●] ○ Testing payments`), but only when the current stage is
+one or two words and the whole status still fits in about 40 characters.
+
+The status almost always stays and states plainly where the conversation is, finished work
+included ("Shipped to preview", "On main"), and it changes only at key moments, never on every
+step. `null` is for a status that would otherwise be untrue.
+
+## Agents set a status only when told to
+
+`set_status` began deferred, discoverable only through its capability line. On the live daemon
+one conversation in 865 had a status: agents never looked for it, so Kirill saw empty rows. The
+tool is now always loaded wherever it is offered, and the module adds one short instruction there:
+set it early, change it at key moments. That is still a prompt, never code writing statuses on an
+agent's behalf. A person with Stories off gets neither the tool nor the instruction.
 
 ## Story pages fill the frame because the prompt says so
 

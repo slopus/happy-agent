@@ -484,6 +484,49 @@ describe("agents post stories to their own ring", () => {
         expect(gym.errors).toEqual([]);
     }, 90_000);
 
+    it("keeps set_status loaded, asks for it early, and refuses a status too long for one line", async () => {
+        const { gym, call } = await harness();
+        await gym.client.saveUserSetting(STORIES, { value: true });
+        const agentId = gym.defaultSessionId;
+        await gym.send("Hello.");
+
+        // Loaded with the conversation's tools rather than found through tool search, and the
+        // instructions ask for it.
+        const request = gym.inference.requests.filter((item) => item.sessionId === agentId).at(-1)!;
+        const tool = request.tools.find((item) => item.name === "set_status");
+        expect(tool).toBeDefined();
+        expect(tool!.defer).not.toBe(true);
+        expect(tool!.description).toContain("about 40 characters at most");
+        expect(tool!.description).not.toContain("two lines");
+        expect(request.instructions).toContain(
+            "Keep this conversation's sidebar status current with set_status",
+        );
+
+        // Longer than one line allows: the agent is told to shorten it, and nothing is written.
+        const long = "Visualization ready and the export finished, waiting on review";
+        expect(long.length).toBeGreaterThan(60);
+        const refused = await call(agentId, "set_status", { text: long });
+        expect(refused.text).toContain("Shorten it");
+        expect((await gym.client.getAgent(agentId)).agent.statusLine).toBeNull();
+
+        // A short status and a stage cue both fit.
+        await call(agentId, "set_status", { text: "Visualization ready" });
+        await gym.waitUntil(
+            async () =>
+                (await gym.client.getAgent(agentId)).agent.statusLine?.text ===
+                "Visualization ready",
+            "the short status",
+        );
+        await call(agentId, "set_status", { text: "● ● [●] ○ Testing payments" });
+        await gym.waitUntil(
+            async () =>
+                (await gym.client.getAgent(agentId)).agent.statusLine?.text ===
+                "● ● [●] ○ Testing payments",
+            "the stage cue",
+        );
+        expect(gym.errors).toEqual([]);
+    }, 60_000);
+
     it("offers none of it to a person with Stories off", async () => {
         const { gym } = await harness();
         await gym.send("Hello.");
@@ -494,6 +537,7 @@ describe("agents post stories to their own ring", () => {
             expect(tools).not.toContain(name);
         }
         expect(JSON.stringify(gym.inference.requests)).not.toContain("post_story");
+        expect(JSON.stringify(gym.inference.requests)).not.toContain("set_status");
         expect((await gym.http.get("/v0/stories/feed")).status).toBe(404);
         expect((await gym.client.getAgent(gym.defaultSessionId)).agent.statusLine).toBeNull();
         expect((await gym.client.getHealth()).capabilities).toMatchObject({ agentStories: true });

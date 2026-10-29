@@ -139,6 +139,7 @@ import {
 import { WebSocketServer } from "ws";
 
 import { AbortModule } from "../abort/index.js";
+import { LAST_PERSON_MESSAGE_AT_METADATA_KEY } from "../activity/index.js";
 import { SurfacesModule, SurfaceError } from "../surfaces/index.js";
 import type { SchedulingModule } from "../scheduling/index.js";
 import {
@@ -322,6 +323,7 @@ import {
 import { prepareLocalApiToken } from "./prepareLocalApiToken.js";
 import {
     agentArchivedAt,
+    agentLastActivityAt,
     agentResource,
     agentModeFromConfig,
     apiResourceVersion,
@@ -3759,8 +3761,21 @@ export class ApiModule implements AgentModule {
                       0,
                   )
                 : undefined;
+            // Last activity moves only with a person's message or the status line.
+            const metadata = recordValue(payload?.["metadata"]);
+            const lastActivityAt =
+                metadata !== undefined &&
+                (Object.hasOwn(update, "statusLine") ||
+                    Object.hasOwn(update, LAST_PERSON_MESSAGE_AT_METADATA_KEY))
+                    ? agentLastActivityAt(
+                          metadata,
+                          (await this.#agentSystem().config(ctx, agentId))?.provenance?.createdAt ??
+                              0,
+                      )
+                    : undefined;
             await this.#appendAgentUpdate(ctx, event, {
                 ...agentMetadataChanges(update, event.occurredAt, canSendMessages),
+                ...(lastActivityAt === undefined ? {} : { lastActivityAt }),
                 ...(subtasks === undefined ? {} : { subtasks }),
             });
             return;

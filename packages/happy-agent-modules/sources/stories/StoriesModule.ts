@@ -142,6 +142,8 @@ const setStatusArgumentsSchema = Type.Object({
     statusLine: Type.Union([agentStatusLineSchema, Type.Null()]),
 });
 const subtaskMetadataSchema = Type.Object({ subtask: Type.Literal(true) });
+const SET_STATUS_INSTRUCTIONS =
+    "Keep this conversation's sidebar status current with set_status: one short phrase saying where the work stands for the person. Set it early, then change it only at key moments they would notice.";
 /** Raster images a story frame may show, by served type, with the extension it is kept under. */
 const IMAGE_EXTENSIONS: Readonly<Record<string, string>> = {
     "image/png": "png",
@@ -285,15 +287,7 @@ export class StoriesModule implements AgentModule {
             if (person !== undefined && (await this.enabledFor(ctx, person))) {
                 tools.push(draftStoryTool(this, scope));
             }
-            // A task's or bot's own agent and its subtasks post to their ring; hidden helpers do
-            // not, and neither does anyone whose person has Stories off.
-            const agents = this.#requireAgents();
-            const eligible =
-                (await agents.parentOf(ctx, scope.agent.id)) === null ||
-                Value.Check(subtaskMetadataSchema, scope.agent.metadata);
-            if (!eligible) return tools;
-            const poster = await this.postingPerson(ctx, scope.agent.id);
-            if (poster === undefined || !(await this.enabledFor(ctx, poster))) return tools;
+            if (!(await this.#postsToRing(ctx, scope))) return tools;
             return [
                 ...tools,
                 postStoryTool(this, scope),
@@ -302,6 +296,9 @@ export class StoriesModule implements AgentModule {
                 setStatusTool(this, scope),
             ];
         },
+        // set_status is always loaded, yet agents left their rows empty until told to use it.
+        instructions: async (ctx: Context, scope: AgentModuleScope): Promise<string> =>
+            (await this.#postsToRing(ctx, scope)) ? SET_STATUS_INSTRUCTIONS : "",
         // Archiving a task or bot ends every story in its ring; a subtask's archival ends nothing.
         metadataChangedTransact: async (ctx, scope, change) => {
             if (typeof change.update["archivedAt"] !== "number") return;
@@ -322,6 +319,19 @@ export class StoriesModule implements AgentModule {
         this.#eventsCtx = database === undefined ? detached : withAgentDatabase(detached, database);
         return this.#hooks;
     };
+
+    /**
+     * A task's or bot's own agent and its subtasks post to their ring and keep its status; hidden
+     * helpers do not, and neither does anyone whose person has Stories off.
+     */
+    async #postsToRing(ctx: Context, scope: AgentModuleScope): Promise<boolean> {
+        const eligible =
+            (await this.#requireAgents().parentOf(ctx, scope.agent.id)) === null ||
+            Value.Check(subtaskMetadataSchema, scope.agent.metadata);
+        if (!eligible) return false;
+        const poster = await this.postingPerson(ctx, scope.agent.id);
+        return poster !== undefined && (await this.enabledFor(ctx, poster));
+    }
 
     /** Hear of every story change once it commits, with what each connection should receive. */
     onEvent(listener: StoryEventListener): () => void {

@@ -16,6 +16,7 @@ import type {
     ArtifactUpload,
     ArtifactVersion,
 } from "../artifacts/index.js";
+import { LAST_PERSON_MESSAGE_AT_METADATA_KEY } from "../activity/index.js";
 import type { BotRecord } from "../bots/index.js";
 import type { Profile } from "../profile/index.js";
 import type { SurfaceChat } from "../surfaces/index.js";
@@ -586,6 +587,22 @@ export function agentArchivedAt(config: AgentConfig): number | null {
     return Value.Check(agentArchivedAtSchema, value) ? value : null;
 }
 
+/**
+ * When a person last did something in the conversation: the later of their last message and the
+ * status line's last change, else creation. Runs, tool calls, and bookkeeping never move it.
+ */
+export function agentLastActivityAt(
+    metadata: Readonly<Record<string, unknown>>,
+    createdAt: number,
+): number {
+    const statusLine = metadata["statusLine"];
+    return Math.max(
+        createdAt,
+        numericMetadata(metadata[LAST_PERSON_MESSAGE_AT_METADATA_KEY]) ?? 0,
+        Value.Check(agentStatusLineSchema, statusLine) ? statusLine.updatedAt : 0,
+    );
+}
+
 export async function agentResource(
     ctx: Context,
     agents: AgentSystemRef,
@@ -646,6 +663,7 @@ export async function agentResource(
         statusLine: Value.Check(agentStatusLineSchema, metadata["statusLine"])
             ? metadata["statusLine"]
             : null,
+        lastActivityAt: agentLastActivityAt(metadata, createdAt),
         wait: state.wait ?? null,
         retrying: state.retrying ?? null,
         subagents: { total: children.length, running: state.runningSubagents ?? 0 },

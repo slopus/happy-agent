@@ -27,6 +27,9 @@ export * from "./toolDiscovery/index.js";
 // Files: safe, project- and workspace-rooted filesystem access.
 export * from "./files/index.js";
 
+// Activity: when a person last wrote in each conversation, for ordering sidebar rows.
+export * from "./activity/index.js";
+
 // Bots: persistent single-conversation assistants with dedicated folders and agents.
 export * from "./bots/index.js";
 

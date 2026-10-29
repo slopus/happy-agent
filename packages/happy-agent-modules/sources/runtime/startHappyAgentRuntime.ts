@@ -29,6 +29,7 @@ import {
 import type { LibSQLDatabase } from "drizzle-orm/libsql";
 
 import { AbortModule } from "../abort/index.js";
+import { ActivityModule } from "../activity/index.js";
 import { ApiModule } from "../api/index.js";
 import { ArtifactDataModule } from "../artifactData/index.js";
 import { ArtifactsModule } from "../artifacts/index.js";
@@ -155,6 +156,7 @@ export interface HappyAgentRuntimeModules {
     readonly stories: StoriesModule;
     readonly live: LiveModule;
     readonly abort: AbortModule;
+    readonly activity: ActivityModule;
     readonly api: ApiModule;
     readonly artifacts: ArtifactsModule;
     readonly artifactData: ArtifactDataModule;
@@ -519,6 +521,7 @@ export async function startHappyAgentRuntime(
             botSettings,
         );
         const titles = new TitlesModule(config, history, workspaces);
+        const activity = new ActivityModule(durableFunctions);
         const collaboration = new CollaborationModule(
             config,
             abort,
@@ -797,6 +800,7 @@ export async function startHappyAgentRuntime(
         const modules: HappyAgentRuntimeModules = {
             live,
             abort,
+            activity,
             api: apiModule,
             artifacts,
             artifactData,
@@ -917,6 +921,7 @@ export async function startHappyAgentRuntime(
             projects,
             peerMessaging,
             titles,
+            activity,
             workspaces,
             files,
             bridges,
