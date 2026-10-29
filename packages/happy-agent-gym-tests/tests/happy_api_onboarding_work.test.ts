@@ -118,6 +118,8 @@ const REDESIGN = {
         "Plan: ship the onboarding redesign. List what's left and wait for me before changing anything.",
 };
 
+const PLAN_STATUS = "Drafting the plan";
+
 const line = (id: string) => `  <happy-space id="${id}"/>\n`;
 const section = (id: string, label: string) => `  <happy-section id="${id}" label="${label}"/>\n`;
 
@@ -570,7 +572,7 @@ async function focusOf(gym: AgentGym): Promise<string> {
 
 describe("onboarding the person's work", () => {
     it(
-        "hands Discover to Focus, shows its proposal with Good to go, starts the new chat read-only, then finishes",
+        "hands Discover to Focus, shows its proposal with Good to go, starts the new chat read-only with its status, then finishes",
         async () => {
             const { gym, happy, project } = await startGym({
                 begin: say(PROFILE_STEP),
@@ -592,7 +594,17 @@ describe("onboarding the person's work", () => {
                         ].join("\n"),
                     )();
                 },
+                // The new chat sets its status early, as set_status asks, then plans.
+                "*": (request) => {
+                    const last = request.messages.at(-1);
+                    if (last?.role === "tool" && last.callId.startsWith("plan-status"))
+                        return say("Plan drafted.")();
+                    if (JSON.stringify(last ?? {}).includes(REDESIGN.firstMessage))
+                        return call("set_status", { text: PLAN_STATUS }, "plan-status");
+                    return say("Done.")();
+                },
             });
+            await gym.client.saveUserSetting("happy-desktop.experiments.stories", { value: true });
             const work = await reachWork(gym, happy);
             // The composer invites typing while onboarding runs.
             expect(await placeholderOf(gym, happy)).toBe(PLACEHOLDER);
@@ -754,6 +766,21 @@ describe("onboarding the person's work", () => {
             );
             expect(first.role).toBe("user");
             expect(first.mode?.permissionMode).toBe("read_only");
+            // Read only still lets it say where it stands under its row.
+            const statusSet = await gym.waitUntil(
+                async () =>
+                    gym.inference
+                        .toolResults()
+                        .find((result) => result.callId.startsWith("plan-status")),
+                "the new chat's set_status result",
+            );
+            expect(statusSet.text).toBe(`The sidebar now reads: ${PLAN_STATUS}`);
+            await gym.waitUntil(
+                async () =>
+                    (await gym.client.getAgent(kept.agentId)).agent.statusLine?.text ===
+                    PLAN_STATUS,
+                "the new chat's status line",
+            );
             // Its row has the proposal's name and icon from the start and keeps them.
             const { spaces } = (await gym.http.ok("GET", "/v0/spaces")) as {
                 spaces: { id: string; title: string; icon: unknown }[];

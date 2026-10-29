@@ -76,8 +76,9 @@ bot's own agent is offered it, and only while its person has Stories on; subtask
 project or workspace sessions are not. It is always loaded rather than deferred, and the module
 adds one instruction asking the agent to set it early and change it at key moments, only where the
 tool is offered. Length is guidance in the description, about 40 characters; the tool enforces
-only the protocol's 120. An agent cannot change its own metadata inside its turn, so the write is
-the durable function `stories.set-status`.
+only the protocol's 120. It works in every permission mode, Read only included, because it changes
+only the person's own sidebar. An agent cannot change its own metadata inside its turn, so the
+write is the durable function `stories.set-status`.
 
 ## Feed, seen marks, and reactions
 

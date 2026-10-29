@@ -13559,8 +13559,9 @@ remaining live stories.
 
 `post_story` and `withdraw_story` need no review in Auto: the story is visible only to the person,
 and nothing reaches anyone else. `set_status` and `list_stories` need none either. Read only
-refuses `post_story`, `withdraw_story`, and `set_status`. Each call is keyed by its tool call, so a
-call repeated after a restart posts, ends, or sets nothing a second time.
+refuses `post_story` and `withdraw_story`; `set_status` works in every mode, since it changes only
+the person's own sidebar. Each call is keyed by its tool call, so a call repeated after a restart
+posts, ends, or sets nothing a second time.
 
 `set_status` is always in the conversation's tool list rather than found through tool search, and
 the conversation's instructions ask the agent to set it early and change it at key moments, only

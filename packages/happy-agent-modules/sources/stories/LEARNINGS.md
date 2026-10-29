@@ -101,6 +101,15 @@ instruction to a task's or a bot's own agent, recognized by the Tasks and Bots m
 records (`forAgent`), and only while its person has Stories on. Subtasks, helpers, collaborators,
 and project or workspace sessions get neither, even though subtasks still post to their ring.
 
+## Read only keeps the status
+
+`set_status` used to be refused in Read only like `post_story`. Onboarding's Good to go starts
+each accepted chat on a read-only plan, so every one of them called `set_status` early, was
+refused, and sat in the sidebar with an empty row: the person's first sight after onboarding.
+The status changes nothing outside the person's own sidebar, so it now works in every permission
+mode. `post_story`, `withdraw_story`, and `draft_story` stay refused in Read only: a read-only
+chat has shipped nothing to tell a story about.
+
 ## Story pages fill the frame because the prompt says so
 
 A live artifact page in a story frame was drawn with the side panel's 24–32 px inset unless the
