@@ -2611,24 +2611,24 @@ then on, Happy's model reads the press and its `outcome`, the result of the work
 the next message. `onboarding.workOpen` and `onboarding.finish` end onboarding and are never
 answered.
 
-| Action                                               | Parameters                                                         | What the daemon does                                                                                                                                                                                            |
-| ---------------------------------------------------- | ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `onboarding.start`                                   |                                                                    | Hides the example sidebar and shows which subscriptions this computer already uses.                                                                                                                             |
-| `onboarding.provider`                                | `provider`: `claude`, `chatgpt`, `grok`, `gemini`, `none`, `other` | Discloses how that assistant is connected, what to subscribe to, or how to add a key.                                                                                                                           |
-| `onboarding.connect`                                 | `provider`: `claude`, `codex`, `grok`, `antigravity`               | Installs the provider CLI when it is missing and starts its sign-in, as under Provider CLIs. The message that follows shows the progress as a `data-provider-cli` figure.                                       |
-| `onboarding.manual`                                  | `provider`                                                         | Shows the exact commands, and continues when discovery finds the sign-in.                                                                                                                                       |
-| `onboarding.providersUse`                            | `values`: provider CLI IDs                                         | Turns on those signed-in assistants.                                                                                                                                                                            |
-| `onboarding.routesUse`                               | `values`: provider route IDs                                       | Uses those routes as `POST /v0/provider-routes/:routeId/use` does.                                                                                                                                              |
-| `onboarding.connectAnother`, `onboarding.accountAdd` | `provider`, optional on `accountAdd`                               | Offers another AI, or says that another account of one is not available yet. Happy no longer offers `accountAdd`; older messages may still hold it.                                                             |
-| `onboarding.profileConfirm`                          |                                                                    | Stores the name and email Happy showed.                                                                                                                                                                         |
-| `onboarding.profileChange`                           |                                                                    | Happy asks the person to type them.                                                                                                                                                                             |
-| `onboarding.discover`                                |                                                                    | Records the person's consent to read the places Happy disclosed, and starts Focus, shown under Happy at once (see "Focus in onboarding"). The outcome names Focus's agent ID, so Happy can hand the work to it. |
-| `onboarding.workTell`                                |                                                                    | Starts Focus the same way, without consent to discovery; Happy asks the person what they work on.                                                                                                               |
-| `onboarding.newChat`                                 | `values`: the new space's ID                                       | Run by the client: it makes a new chat with its own Create, then sends the press with that space's ID. The daemon checks the space is the person's.                                                             |
-| `onboarding.newChatSkip`                             |                                                                    | Moves on.                                                                                                                                                                                                       |
-| `onboarding.phone`                                   | `choice`: `opened` or `later`                                      | `opened` starts a phone pairing, shown by a `data-phone-pair` figure; `later` moves on.                                                                                                                         |
-| `onboarding.workOpen`                                | `item`: a proposal row value                                       | Finishes onboarding; the client opens that row's chat.                                                                                                                                                          |
-| `onboarding.finish`                                  |                                                                    | Finishes onboarding.                                                                                                                                                                                            |
+| Action                                               | Parameters                                                         | What the daemon does                                                                                                                                                                                                                                           |
+| ---------------------------------------------------- | ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `onboarding.start`                                   |                                                                    | Hides the example sidebar and shows which subscriptions this computer already uses.                                                                                                                                                                            |
+| `onboarding.provider`                                | `provider`: `claude`, `chatgpt`, `grok`, `gemini`, `none`, `other` | Discloses how that assistant is connected, what to subscribe to, or how to add a key.                                                                                                                                                                          |
+| `onboarding.connect`                                 | `provider`: `claude`, `codex`, `grok`, `antigravity`               | Installs the provider CLI when it is missing and starts its sign-in, as under Provider CLIs. The message that follows shows the progress as a `data-provider-cli` figure.                                                                                      |
+| `onboarding.manual`                                  | `provider`                                                         | Shows the exact commands, and continues when discovery finds the sign-in.                                                                                                                                                                                      |
+| `onboarding.providersUse`                            | `values`: provider CLI IDs                                         | Turns on those signed-in assistants.                                                                                                                                                                                                                           |
+| `onboarding.routesUse`                               | `values`: provider route IDs                                       | Uses those routes as `POST /v0/provider-routes/:routeId/use` does.                                                                                                                                                                                             |
+| `onboarding.connectAnother`, `onboarding.accountAdd` | `provider`, optional on `accountAdd`                               | Offers another AI, or says that another account of one is not available yet. Happy no longer offers `accountAdd`; older messages may still hold it.                                                                                                            |
+| `onboarding.profileConfirm`                          |                                                                    | Stores the name and email Happy showed.                                                                                                                                                                                                                        |
+| `onboarding.profileChange`                           |                                                                    | Happy asks the person to type them.                                                                                                                                                                                                                            |
+| `onboarding.discover`                                |                                                                    | Records the person's consent to read the places Happy disclosed, and starts Focus with its task, shown under Happy and in Happy's conversation at once (see "Focus in onboarding"). The outcome names Focus's agent ID and its task; Happy only introduces it. |
+| `onboarding.workTell`                                |                                                                    | Starts Focus the same way, without consent to discovery; Happy asks the person what they work on.                                                                                                                                                              |
+| `onboarding.newChat`                                 | `values`: the new space's ID                                       | Run by the client: it makes a new chat with its own Create, then sends the press with that space's ID. The daemon checks the space is the person's.                                                                                                            |
+| `onboarding.newChatSkip`                             |                                                                    | Moves on.                                                                                                                                                                                                                                                      |
+| `onboarding.phone`                                   | `choice`: `opened` or `later`                                      | `opened` starts a phone pairing, shown by a `data-phone-pair` figure; `later` moves on.                                                                                                                                                                        |
+| `onboarding.workOpen`                                | `item`: a proposal row value                                       | Finishes onboarding; the client opens that row's chat.                                                                                                                                                                                                         |
+| `onboarding.finish`                                  |                                                                    | Finishes onboarding.                                                                                                                                                                                                                                           |
 
 `sidebar.proposalAccept` (see "Proposals" under Spaces) is pressed in Happy's onboarding too, to
 accept Focus's proposal. `onboarding.workAccept` and `onboarding.workChange`, which older messages
@@ -2649,9 +2649,12 @@ ordinary tool calls in Happy's conversation:
 - `set_default_model` — makes a model the default for new conversations, as `PATCH /v0/config`
   `defaults` does, when the person asks Happy to change it.
 
-Happy hands the person's work to Focus with its ordinary `send_agent_message`, shown in Happy's
-conversation like any message to another agent, and shows Focus's proposal in its own next message
-with a `data-sidebar-proposal` figure and the `sidebar.proposalAccept` action.
+At Discover the daemon, not Happy's model, starts Focus with its task and shows it in Happy's
+conversation as a sub-agent (see "Focus in onboarding"); Happy's model only introduces it. When the
+person tells Happy their work instead, or types a change to a proposal, Happy passes it to Focus
+with its ordinary `send_agent_message`, shown like any message to another agent. Happy shows
+Focus's proposal in its own next message with a `data-sidebar-proposal` figure and the
+`sidebar.proposalAccept` action.
 
 ## Provider CLIs
 
@@ -11175,16 +11178,25 @@ Happy's sub-agent, and hands it the person's work. It requires the person's Stem
 without it, Happy asks the person what they work on and starts nothing.
 
 When the person presses `onboarding.discover`, the same transaction records their consent to
-discovery and starts Prioritizing if they have none. `onboarding.workTell` starts it the same way,
-without consent to discovery. A Prioritizing that onboarding starts is shown at once: its
+discovery and starts Prioritizing if they have none, with its task ("Organize Ada's work from the
+places above, most important first.", with the person's first name) as Happy's first message to
+it; a Prioritizing that already runs receives the task as Happy's next message. Prioritizing is
+created as Happy's subtask, titled Focus, so it is listed in Happy's `subtasks` with `subtask` and
+`userVisible` set, and its own space (title Focus, icon `goals`) exists before anything below
+names it. When the press is accepted into Happy's conversation, the daemon records one `agent`
+message right after it, in the run the press started: a completed `create_agent` tool call whose
+`arguments` carry the task as `title` and `text`, with an `agent_spawn` presentation carrying the
+model Prioritizing runs on and its `agentId`. Clients draw it as any sub-agent row; no model made
+that call. `onboarding.workTell` starts Prioritizing without a task, consent to discovery, or a
+sub-agent row. A Prioritizing that onboarding starts is shown at once: its
 conversation is inserted into the document as a session under Happy's row, and Happy's row gets
 `expanded="true"` unless the person last set its fold, in one version authored `daemon`, committed
 with the press. Its session icon is `goals`. From then on, where its conversation stands is
 Prioritizing's decision as above.
 
-Happy hands work to it with an ordinary `send_agent_message`, which Happy's conversation shows like
-any message to another agent. Prioritizing answers as Happy's sub-agent: when a turn that received
-a message from Happy ends, the daemon sends Happy one message from Prioritizing, as a collaborator's
+Happy hands later work to it with an ordinary `send_agent_message`, which Happy's conversation
+shows like any message to another agent. Prioritizing answers as Happy's sub-agent: when a turn
+that received the Discover task or a later message from Happy ends, the daemon sends Happy one message from Prioritizing, as a collaborator's
 report arrives, naming the proposal that turn made or revised, if any, and Prioritizing's last
 reply. Happy's next turn starts from it; nothing waits in between. Prioritizing's other turns are
 never reported to Happy.
