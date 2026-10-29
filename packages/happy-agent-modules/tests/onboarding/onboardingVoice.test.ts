@@ -183,14 +183,14 @@ describe("Happy's own onboarding words", () => {
 });
 
 describe("an effort as the app shows it", () => {
-    it("reads the way the model picker does", () => {
+    it("reads exactly as the desktop model picker labels it", () => {
         expect(["off", "low", "medium", "high", "xhigh", "max"].map(effortLabel)).toEqual([
             "Off",
             "Low",
             "Medium",
             "High",
-            "Extra high",
-            "Max",
+            "Extra High",
+            "Maximum",
         ]);
     });
 });

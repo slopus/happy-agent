@@ -50,14 +50,17 @@ export const PROVIDER_BUTTONS: readonly {
 const FIRST_STEP =
     "First, let's check which AI subscriptions you already use today. I reuse your existing subscriptions, so there's nothing new to pay for.";
 
+/** The desktop model picker's own labels (`happyAgentThinkingLabel`), so both read the same. */
 const EFFORT_LABELS: Readonly<Record<string, string>> = {
     off: "Off",
+    on: "On",
     minimal: "Minimal",
     low: "Low",
     medium: "Medium",
     high: "High",
-    xhigh: "Extra high",
-    max: "Max",
+    xhigh: "Extra High",
+    max: "Maximum",
+    ultra: "Ultra",
 };
 
 /** An effort as the app shows it, "High" rather than the raw `high`. */
