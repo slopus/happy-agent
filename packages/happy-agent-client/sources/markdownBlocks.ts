@@ -1,6 +1,6 @@
 /**
  * The parts of Markdown where inline syntax is live: outside fenced code, and outside code spans.
- * Reference tags and file links both scan with these, so they agree on what is code.
+ * Happy links scan with these, so they agree with Markdown on what is code.
  */
 
 const BLANK_LINE = /^[ \t\r]*$/;

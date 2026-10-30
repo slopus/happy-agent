@@ -33,8 +33,8 @@ export type { QueryParameters, QueryValue } from "./endpointUrl.js";
 export { applyMessageDelta } from "./applyMessageDelta.js";
 export type { MessageDeltaApplication } from "./applyMessageDelta.js";
 export * from "./requestOptions.js";
-export * from "./happyFileLinks.js";
-export * from "./happyReferences.js";
+export * from "./happyLinks.js";
+export * from "./happyLinksInMarkdown.js";
 export * from "./mediaLayoutBlocks.js";
 export * from "./mediaLayoutHtml.js";
 export {

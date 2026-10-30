@@ -3,9 +3,9 @@ import { describe, expect, it } from "vitest";
 
 import {
     HappyAgentClient,
-    formatHappyReferenceTag,
+    formatHappyReferenceUrl,
     isKnownHappyReferenceKind,
-    parseHappyReferenceTag,
+    parseHappyUrl,
     profileSchema,
     profileUpdateRequestSchema,
     usersResponseSchema,
@@ -87,9 +87,12 @@ describe("teammates protocol", () => {
     });
 
     it("knows the user reference kind", () => {
-        const tag = formatHappyReferenceTag({ kind: "user", id: USER });
-        expect(tag).toBe(`<happy-user id="${USER}"/>`);
-        expect(parseHappyReferenceTag(tag)).toEqual({ kind: "user", id: USER });
+        const url = formatHappyReferenceUrl({ kind: "user", id: USER });
+        expect(url).toBe(`happy://users/${USER}`);
+        expect(parseHappyUrl(url)).toEqual({
+            type: "reference",
+            reference: { kind: "user", id: USER },
+        });
         expect(isKnownHappyReferenceKind("user")).toBe(true);
     });
 

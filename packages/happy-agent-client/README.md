@@ -175,7 +175,7 @@ guest is someone who reaches an exported bot from an outside chat service: `kind
 standalone mode.
 In team mode a user and the profile also carry the member's `role` and what they `follows`,
 each a string or `null`; `updateProfile()` sets them. Agents mention a person as
-`<happy-user id="…"/>`, a `user` reference resolved through `getUsers()`.
+`[Name](happy://users/<userId>)`, a `user` reference resolved through `getUsers()`.
 
 User settings are the caller's own opaque key-value preferences, kept on the daemon so they follow
 the person across devices: the authenticated member's in team mode, the installation's one person's
@@ -534,29 +534,65 @@ Focused agent responses and agent bootstrap include the current module-contribut
 catalog. `invokeSlashCommand` executes one through its owning module, while
 `agent.slash_commands.updated` carries complete catalog replacements discovered at turn time.
 
-## Reference tags
+## Happy links
 
-Agent text may mention Happy entities as `<happy-artifact id="…"/>`, `<happy-agent id="…"/>`,
-`<happy-workspace id="…"/>`, or `<happy-project id="…"/>`, as API.md
-specifies under "Reference tags". This package holds the one shared parser, so every client and
-the daemon agree on what is a tag:
+Agent text mentions Happy entities and files with ordinary Markdown links to `happy://` URLs, as
+API.md specifies under "Happy links":
 
-- `parseHappyReferences(markdown, { streaming? })` splits text into `text` and `reference`
-  segments. Tags in code spans, fenced code, or after a backslash stay text.
-- `replaceHappyReferences(markdown, replace, { streaming? })` substitutes each tag in the Markdown
-  source before a Markdown parser sees it. Tags are never Markdown HTML, so substitute them instead
-  of reading HTML nodes.
-- With `streaming: true`, both functions drop a trailing incomplete tag such as `<happy-arti`.
-  `happyReferencePartialTagLength(markdown)` reports how many characters that is.
-- `renderHappyReferencesAsMarkdown(markdown, resolve)` is the plain-Markdown fallback. Each tag
-  becomes its escaped label, or `happyReferencePlaceholder(reference)` when `resolve` returns
-  nothing.
-- `parseHappyReferenceTag(tag)` parses exactly one tag. `formatHappyReferenceTag(reference)` writes
-  the canonical one. `isKnownHappyReferenceKind(kind)` tells which kinds to resolve.
-- `escapeMarkdownText(text)` is the escaping the fallback uses for labels.
+| Kind                         | URL                                                          |
+| ---------------------------- | ------------------------------------------------------------ |
+| Artifact, or one version     | `happy://artifacts/<id>`, `happy://artifacts/<id>?version=2` |
+| Agent                        | `happy://agents/<id>`                                        |
+| Project                      | `happy://projects/<id>`                                      |
+| Workspace                    | `happy://workspaces/<id>`                                    |
+| Service                      | `happy://workspaces/<workspaceId>/services/<id>`             |
+| Surface                      | `happy://surfaces/<id>`                                      |
+| User                         | `happy://users/<id>`                                         |
+| File in an agent's workspace | `happy://agents/<id>/files/<path>#L42-L50`                   |
+| File in a workspace          | `happy://workspaces/<id>/files/<path>#L42`                   |
 
-Show a resolved reference as a link whose text is the live title. Indicate a busy entity on the
-link. Show unknown kinds and unresolvable references as inert placeholder text.
+A file link may equally use the API's `happy-file` form,
+`happy-file://agents/<id>/<path>#L42-L50` or `happy-file://workspaces/<id>/<path>`, which puts the
+path straight after the target. Both forms name the same file and parse to the same value.
+
+This package holds the one implementation, so every client and the daemon agree on what a link
+names:
+
+- `parseHappyUrl(url)` returns a `HappyLink`, either `{ type: "reference", reference }` with a
+  `HappyReference` `{ kind, id, version?, workspaceId? }`, or `{ type: "file", file }` with a
+  `HappyFileLink` `{ target, path, lines? }`. It returns `undefined` for anything malformed,
+  including the Happy mobile app's own deep links. `isHappyUrl(url)` tells whether a URL is one
+  Happy owns, well-formed or not; never hand such a URL to the operating system or a browser.
+- `formatHappyUrl(link)`, `formatHappyReferenceUrl(reference)`, and
+  `formatHappyFileUrl(file, scheme?)` write canonical URLs and throw a `TypeError` for anything the
+  grammar cannot express. `formatHappyFileUrl` writes the `happy://` form by default, and the
+  `happy-file://` form with `scheme` `"happy-file"`.
+  `formatHappyMarkdownLink(link, label?)` writes a ready-to-paste `[label](happy://…)` with the
+  label escaped.
+- `parseHappyLinks(markdown, { streaming? })` splits text into `text` and `link` segments, and
+  `replaceHappyLinks(markdown, replace, { streaming? })` substitutes each link in the Markdown
+  source. Each match carries the parsed `link` (undefined when malformed), its `label`, whether it
+  is an `image`, its `source`, and its `syntax`. Links in code spans, fenced code, or after a
+  backslash stay text.
+- With `streaming: true`, both drop a trailing unfinished Happy link, from `[label]` on, while its
+  destination could still become `happy:` or `happy-file:`. `happyLinkPartialLength(markdown)` reports how many
+  characters that is.
+- `renderHappyLinksAsText(markdown, resolve?)` is the plain-Markdown fallback. An entity link
+  becomes the name `resolve` returns, else its label, else `happyReferencePlaceholder(reference)`;
+  a file link becomes its label or its decoded path. `escapeMarkdownText(text)` is the escaping it
+  uses for names.
+
+Show an entity link as a link whose text is the entity's live title, falling back to the label the
+agent wrote, and indicate a busy entity on it. Show a file link with its label as written, and
+open it read-only inside the reader's own conversation: resolve an agent target through
+`GET /v0/agents/:agentId` to its `workspaceId`, then read the file from that workspace. Show
+malformed and unresolvable links as inert text.
+
+**Legacy reference tags.** Older history holds `<happy-KIND id="…"/>` reference tags. Nothing
+writes them any more, but the Markdown functions still read them onto the same model, reporting
+`syntax: "legacyTag"` with an empty label. `rewriteLegacyHappyReferenceTags(markdown)` turns them
+into empty-label `happy://` links, so a renderer that handles Happy links in its link component
+shows old history too.
 
 ## Media layouts in text
 
@@ -578,26 +614,3 @@ as API.md specifies under "Media layouts in text". This package holds the one sp
 - `stripMediaLayoutBlocks(markdown)` is the fallback for surfaces that cannot show blocks.
 
 Never load a `src` yourself; show only the matched item's snapshot.
-
-## File links
-
-A file outside the reader's own workspace is linked as an ordinary Markdown link to a `happy-file`
-URL, as API.md specifies under "File links":
-`[Foo.tsx:42](happy-file://agents/<agentId>/packages/app/Foo.tsx#L42-L50)` or
-`[README](happy-file://workspaces/<workspaceId>/README.md)`.
-
-- `parseHappyFileLink(url)` returns a `HappyFileLink`, `{ target, path, lines? }`, or `undefined`
-  for anything malformed. `target` is `{ type: "agent", agentId }` or
-  `{ type: "workspace", workspaceId }`; `path` is decoded and relative to the workspace root;
-  `lines` is inclusive, so `#L42` is `{ start: 42, end: 42 }`.
-- `formatHappyFileLink(link)` writes the canonical URL and throws a `TypeError` for an invalid
-  link. `happyFileLinkSchema` is the TypeBox schema, and `HAPPY_FILE_LINK_SCHEME` and
-  `MAX_HAPPY_FILE_LINK_LENGTH` are the scheme and the longest URL.
-- `renderHappyFileLinksAsText(markdown)` is the fallback for surfaces that cannot open file links:
-  each inline link or image to a `happy-file` URL becomes its label. Links in code stay literal.
-  The general form is `replaceHappyFileLinks(markdown, replace)`.
-
-Resolve an agent link through `GET /v0/agents/:agentId` to its `workspaceId`, then read the file
-from that workspace. Open it read-only inside the reader's own conversation, and show the usual
-"could not open" treatment for a malformed or unresolvable link. Never hand a `happy-file` URL to
-the operating system or a browser.

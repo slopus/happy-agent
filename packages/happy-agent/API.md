@@ -409,12 +409,13 @@ receives `405` and stops; it can still open and read every document through `GET
 sees content changes live because `surface.document.updated` is no longer emitted. Creating a
 separator returns `400`, and separators created earlier are no longer listed.
 
-Reference tags in agent text, described under "Message content", are additive and do not
-increment the protocol version. Request and response schemas are unchanged; a client that does not
-render them shows the tag text as written. The `surface` kind is additive on the same terms: a
-client that does not know it shows such a reference as inert text. File links, described in the same section, are additive
-on the same terms; a client that does not know them treats them as Markdown links with an unknown
-scheme.
+Happy links in agent text, described under "Message content", are additive and do not increment
+the protocol version. Request and response schemas are unchanged; a client that does not render
+them treats them as Markdown links with an unknown scheme. The `surface` kind is additive on the
+same terms: a client that does not know it shows such a link's label as inert text. File links,
+described in the same section, are additive on the same terms, in both their `happy://` and
+`happy-file://` forms. Legacy reference tags stay readable; a client that does not render them
+shows the tag text as written.
 
 Artifacts are additive and do not increment the protocol version. Clients detect them through
 `GET /v0/artifacts`: `404` means the daemon has no artifacts, not that the catalog is empty. The
@@ -7322,21 +7323,114 @@ Other calls, including background-terminal-input calls, currently carry no prese
 their raw data. The presentation set may grow; a client that meets an unknown presentation type
 falls back to rendering the block's raw data, exactly as if the presentation were absent.
 
-#### Reference tags
+#### Happy links
 
-An agent's `text` blocks are Markdown. Inside them an agent may mention a Happy entity by its
-**reference tag**, written inline where the entity's name belongs:
+An agent's `text` blocks are Markdown. Inside them an agent mentions a Happy entity with an
+ordinary Markdown inline link to a `happy://` URL, written where the entity's name belongs:
 
 ```markdown
-I published <happy-artifact id="r7k2m9q4w1e5t8y3u6i0o2p5"/> with the full breakdown.
+I published [Q3 revenue](happy://artifacts/r7k2m9q4w1e5t8y3u6i0o2p5) with the full breakdown.
 ```
 
-The tag carries only identity. The agent never writes the entity's title; a client looks up the
-live entity through the routes below and shows its current title in the tag's place. The daemon
-stores and returns message text exactly as written: tags are part of `text`, not a block of their
-own, and no route rewrites them.
+A file is linked the same way, as described under "File links". The daemon stores and returns
+message text exactly as written: links are part of `text`, not a block of their own, and no route
+rewrites them.
 
-**Grammar.** In ABNF, with `DIGIT`, `DQUOTE`, `SP`, and `HTAB` as in RFC 5234:
+**URLs.** Every host is a plural noun. The Happy mobile app registers `happy://` for its own deep
+links, such as `happy://session/…` and `happy://terminal?…`, and none of its routes uses these
+hosts, so the two never collide.
+
+| Kind        | URL                                                            | Names                                                         |
+| ----------- | -------------------------------------------------------------- | ------------------------------------------------------------- |
+| `artifact`  | `happy://artifacts/<id>`, `happy://artifacts/<id>?version=<N>` | an artifact, or one version of it                             |
+| `agent`     | `happy://agents/<id>`                                          | an agent: a task's, a bot's, a subtask, or another root agent |
+| `project`   | `happy://projects/<id>`                                        | a project                                                     |
+| `workspace` | `happy://workspaces/<id>`                                      | a workspace                                                   |
+| `service`   | `happy://workspaces/<workspaceId>/services/<id>`               | a service in a workspace                                      |
+| `surface`   | `happy://surfaces/<id>`                                        | a Surface of any type, such as a todo list, document, or chat |
+| `user`      | `happy://users/<id>`                                           | a person, by their Happy user ID                              |
+
+**Grammar.** In ABNF, with `ALPHA` and `DIGIT` as in RFC 5234:
+
+```text
+entity-url = "happy://" ( artifact / service / other )
+artifact   = "artifacts/" id [ "?version=" version ]
+service    = "workspaces/" id "/services/" id
+other      = ( "agents/" / "projects/" / "workspaces/" / "surfaces/" / "users/" ) id
+id         = 1*128( ALPHA / DIGIT / "_" / "-" )
+version    = %x31-39 *8DIGIT
+```
+
+- Matching is case-sensitive: the scheme, hosts, `services/`, and `?version=` are written exactly
+  as shown. A URL is at most 4,096 characters.
+- `version` is a positive decimal integer without leading zeros, at most nine digits, and only an
+  artifact takes it.
+- Anything else under `happy://` that is not a file URL as described under "File links" is
+  malformed: an unknown or singular host, a trailing `/`, any other query or fragment, or a broken
+  rule above. A malformed URL is never partly interpreted.
+
+**Links.** A Happy link is a CommonMark inline link, `[label](destination)` or
+`[label](<destination>)` with an optional title, whose destination uses the `happy` or
+`happy-file` scheme. Its label may hold balanced brackets, code spans, and backslash escapes, and
+it cannot cross a blank line. An image, `![alt](happy://…)`, is a Happy link whose label is its alt
+text. A link in an inline code span or a fenced code block, or one whose `[` is backslash-escaped,
+is literal text, as in Markdown.
+
+The label of an entity link is the writer's fallback: the name the agent knows. It may be empty,
+`[](happy://artifacts/…)`, which asks the client to fill in the name.
+
+**Resolution.** Each kind resolves through routes that already exist:
+
+| Kind        | Resolved through                                                        | Live title                                                       | Busy while                                                                |
+| ----------- | ----------------------------------------------------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `artifact`  | `GET /v0/artifacts/:artifactId`, and `…/versions/:number` for a version | `title`, or that version's `title`                               | never                                                                     |
+| `agent`     | `GET /v0/agents/:agentId`                                               | the agent's `title`, or the owning bot's `name` or task's `name` | `status` is not `"idle"`                                                  |
+| `workspace` | `GET /v0/workspaces/:workspaceId`                                       | `name`                                                           | `initialization.status` is `"initializing"`, or `status` is `"archiving"` |
+| `project`   | `GET /v0/projects/:projectId`                                           | `name`                                                           | `initialization.status` is `"initializing"`                               |
+| `surface`   | `GET /v0/surfaces`, the instance whose `id` matches                     | `name`, following `surface.updated`                              | never                                                                     |
+| `user`      | `GET /v0/users?ids=…`                                                   | `name`, following `profile.updated`                              | never                                                                     |
+
+A Surface has no route of its own, so it resolves from the catalog, and it is unresolvable when
+the catalog has no instance with its `id`. A `user` is unresolvable in standalone mode, where
+`GET /v0/users` resolves only guests, and for an unknown ID. Services are specified, but no client
+resolves them yet.
+
+**Rendering.** A client that renders Happy links shows an entity link as a link whose text is the
+entity's live title and which opens the entity in the client. The title follows the entity's
+update events, so a rename shows without reloading the message. Until the title resolves, and
+whenever it cannot, the client shows the label as written, or, when the label is empty, an inert
+placeholder such as "an unavailable artifact". While the entity is busy as defined above, the
+client SHOULD show its usual progress treatment on the link. An entity link is inert, shown as
+non-interactive text, when:
+
+- the entity does not exist or cannot be resolved;
+- the caller cannot see it;
+- an artifact is deleted, a project, workspace, or agent is archived, or the named artifact
+  version does not exist.
+
+A malformed Happy link shows its label as inert text. A client never shows the bare URL or ID in
+place of a link, and never hands a `happy://` or `happy-file://` URL to the operating system or a
+browser.
+
+**Streaming.** While a text block is still growing through `message.delta`, its end may be a Happy
+link that is not complete yet. Once its label's `]` has arrived, a client hides the link from its
+`[` (or `![`) for as long as the destination so far could still become a `happy:` or `happy-file:`
+URL, such as `[Q3]`, `[Q3](`, `[Q3](hap`, or `[Q3](happy://artifacts/r7k2`. The tail is shown once
+the link completes, or once the text proves it is not a Happy link. A tail longer than 5,120
+characters is never hidden, and the tail is never hidden inside code. Once the message is final,
+an incomplete link is ordinary text.
+
+**Fallback.** A surface that cannot render Happy links gets plain Markdown in which each Happy
+link is replaced. An entity link becomes the entity's live title when the surface can resolve it,
+escaped as literal text; otherwise its label as written; otherwise the inert placeholder. A file
+link becomes what "File links" describes. A malformed link becomes its label, or nothing when the
+label is blank. The daemon applies this fallback to text it relays to integrations that cannot
+render links, including the Happy mobile app.
+
+**Legacy reference tags.** Before Happy links, agents mentioned entities with reference tags such
+as `<happy-artifact id="…" version="2"/>`, and stored history still holds them. Nothing emits them
+any more. Clients and the daemon read them as entity links with an empty label, so old messages
+render as before:
 
 ```text
 tag        = "<happy-" kind 1*(1*ws attribute) *ws "/>"
@@ -7349,77 +7443,60 @@ ws         = SP / HTAB
 lower      = %x61-7A
 ```
 
-- A tag is at most 512 characters and never spans lines.
-- Values are double-quoted and taken literally; there are no character references.
-- The self-closing `/>` is required. A paired `<happy-artifact …></happy-artifact>` is not a tag.
-- `id` is required and matches `[A-Za-z0-9_-]{1,128}`.
-- `version`, when present, is a positive decimal integer without leading zeros, at most nine
-  digits.
-- `workspace`, when present, has the same form as `id`.
-- Attributes may appear in any order. A repeated attribute, or a missing or malformed `id`,
-  `version`, or `workspace`, makes the text not a tag. Clients ignore other attributes, so new
-  optional attributes may be added.
+- A tag is at most 512 characters and never spans lines. Values are taken literally.
+- `id` is required and has the form of `id` above. `version`, when present, has the form of
+  `version` above and applies only to an `artifact`. `workspace`, when present, has the form of
+  `id` and names a `service`'s workspace. Other attributes are ignored.
+- A repeated attribute, or a missing or malformed `id`, `version`, or `workspace`, makes the text
+  not a tag. A tag of an unknown kind, or a `service` tag without `workspace`, is an unresolvable
+  reference; its placeholder is "an unavailable reference" or "an unavailable service".
+- A tag is never Markdown HTML. A tag in code, or whose `<` is backslash-escaped, stays literal.
+  While text streams, a trailing partial tag, anything from a lone `<` to `<happy-artifact id="r7k2`,
+  is hidden like a partial link.
 
-Anything that does not match the grammar is ordinary text. Reference tags are never Markdown HTML.
-A tag on a line of its own is a paragraph holding just that reference. It is not an HTML block,
-and the lines after it stay ordinary Markdown. A tag inside an inline code span or a fenced code
-block stays literal text. A tag whose `<` is backslash-escaped stays literal text. That is how an
-agent shows the syntax itself.
+**One implementation.** `@slopus/happy-agent-client` exports the grammar, parsers, formatters,
+streaming rule, legacy tag reader, and fallback, for entity and file links alike:
 
-**Kinds.** Each kind resolves through routes that already exist:
+```ts
+type HappyReference = {
+    kind: "artifact" | "agent" | "workspace" | "project" | "service" | "surface" | "user";
+    id: string;
+    version?: number; // artifacts only
+    workspaceId?: string; // services only
+};
+type HappyLink =
+    | { type: "reference"; reference: HappyReference }
+    | { type: "file"; file: HappyFileLink }; // see "File links"
+type HappyLinkMatch = {
+    link: HappyLink | undefined; // undefined when malformed
+    label: string; // the Markdown between the brackets; empty for a legacy tag
+    image: boolean;
+    source: string; // exactly as written
+    syntax: "link" | "legacyTag";
+};
 
-| Kind        | `id` names                                                    | Resolved through                                                        | Label                                                            | Busy while                                                                |
-| ----------- | ------------------------------------------------------------- | ----------------------------------------------------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| `artifact`  | an artifact; `version` optionally names one version           | `GET /v0/artifacts/:artifactId`, and `…/versions/:number` for a version | `title`, or that version's `title`                               | never                                                                     |
-| `agent`     | an agent: a task's, a bot's, a subtask, or another root agent | `GET /v0/agents/:agentId`                                               | the agent's `title`, or the owning bot's `name` or task's `name` | `status` is not `"idle"`                                                  |
-| `workspace` | a workspace                                                   | `GET /v0/workspaces/:workspaceId`                                       | `name`                                                           | `initialization.status` is `"initializing"`, or `status` is `"archiving"` |
-| `project`   | a project                                                     | `GET /v0/projects/:projectId`                                           | `name`                                                           | `initialization.status` is `"initializing"`                               |
-| `surface`   | a Surface of any type, such as a todo list, document, or chat | `GET /v0/surfaces`, the instance whose `id` matches                     | `name`, following `surface.updated`                              | never                                                                     |
-| `user`      | a person, by their Happy user ID                              | `GET /v0/users?ids=…`                                                   | `name`, following `profile.updated`                              | never                                                                     |
+parseHappyUrl(url: string): HappyLink | undefined; // happy:// and happy-file://
+isHappyUrl(url: string): boolean; // happy: or happy-file:, any case, well-formed or not
+formatHappyUrl(link: HappyLink): string;
+formatHappyReferenceUrl(reference: HappyReference): string;
+formatHappyMarkdownLink(link: HappyLink, label?: string): string; // "[label](happy://…)"
+parseHappyLinks(markdown: string, options?: { streaming?: boolean }):
+    ({ type: "text"; text: string } | ({ type: "link" } & HappyLinkMatch))[];
+replaceHappyLinks(markdown: string, replace: (match: HappyLinkMatch) => string,
+    options?: { streaming?: boolean }): string;
+happyLinkPartialLength(markdown: string): number;
+renderHappyLinksAsText(markdown: string, resolve?: (reference: HappyReference) => string | undefined,
+    options?: { streaming?: boolean }): string;
+rewriteLegacyHappyReferenceTags(markdown: string, options?: { streaming?: boolean }): string;
+happyReferencePlaceholder(reference: HappyReference): string; // "an unavailable artifact"
+```
 
-A Surface has no route of its own, so it resolves
-from the catalog, and it is inert when the catalog has no instance with its `id`. A `user` is
-inert in standalone mode, where `GET /v0/users` resolves only guests, and for an unknown ID. Other attributes have no meaning for kinds that do not list
-them and are ignored. Files have no tag: agents keep referring to them as `path:line`. The kind set
-may grow.
+`HAPPY_REFERENCE_KINDS` lists the kinds. Clients and the daemon use these rather than their own
+parsers, so every surface agrees on exactly what a link names.
 
-**Rendering.** A client that renders reference tags shows each resolvable reference as a link
-whose text is the entity's live label and which opens the entity in the client. It looks the same
-whether the tag sits inside a sentence or alone on its line. The label follows the entity's update
-events, so a rename shows without reloading the message. While the entity is busy as defined
-above, the client SHOULD show its usual progress treatment on the link. A reference is inert,
-shown as plain non-interactive text such as "an unavailable artifact", when:
-
-- the kind is not one the client knows;
-- the entity does not exist or cannot be resolved;
-- the caller cannot see it;
-- an artifact is deleted, a project, workspace, or agent is archived, or the named artifact
-  version does not exist.
-
-A client never shows the raw tag or the bare ID in place of a reference.
-
-**Streaming.** While a text block is still growing through `message.delta`, its end may be a tag
-that is not complete yet, such as `<happy-arti`. A client must never show such a trailing partial
-tag as text. It hides the shortest tail that could still become a tag. That can be anything from a
-lone `<` to `<happy-artifact id="r7k2`. The tail is shown once the tag completes, or once the text
-proves it is not a tag. The tail is never hidden inside code. Once the message is final, an
-incomplete tag is ordinary text.
-
-**Fallback.** A surface that cannot render live references gets plain Markdown with each tag
-replaced by the entity's label, escaped as literal text, or by the inert placeholder when the
-label cannot be resolved. The daemon applies this fallback to text it relays to integrations that
-cannot render tags, including the Happy mobile app.
-
-**One implementation.** `@slopus/happy-agent-client` exports the grammar, parser, streaming rule,
-and fallback renderer: `parseHappyReferences`, `parseHappyReferenceTag`,
-`happyReferencePartialTagLength`, `replaceHappyReferences`, `renderHappyReferencesAsMarkdown`,
-`happyReferencePlaceholder`, `formatHappyReferenceTag`, and `HAPPY_REFERENCE_KINDS`. Clients and
-the daemon use these rather than their own parsers, so every surface agrees on exactly what is a
-tag.
-
-Reference tags are additive and do not increment the protocol version. Request and response
-schemas are unchanged. A client that does not know about reference tags shows the tag text as
-written.
+Happy links are additive and do not increment the protocol version. Request and response schemas
+are unchanged. A client that does not know them shows them as Markdown links with an unknown
+scheme.
 
 #### Media layouts in text
 
@@ -7497,23 +7574,26 @@ the HTML as its Markdown renderer does.
 A bare `path:line` is read against the workspace of the conversation that shows it. That is the
 wrong workspace whenever the text is read somewhere else: a subtask's report relayed by its
 parent, or a message from an agent that works in another folder. A **file link** names the
-workspace explicitly. It is not a reference tag but an ordinary Markdown inline link whose
-destination is a `happy-file` URL:
+workspace explicitly. It is a Happy link, an ordinary Markdown inline link, whose destination is a
+file URL in one of two equally valid forms:
 
 ```markdown
-The loop starts in [Foo.tsx:42](happy-file://agents/a1b2c3d4/packages/app/Foo.tsx#L42-L50).
+The loop starts in [Foo.tsx:42](happy://agents/a1b2c3d4/files/packages/app/Foo.tsx#L42-L50).
 The setup steps are in [README](happy-file://workspaces/k2h4j5l6/README.md).
 ```
 
-The label is ordinary Markdown that the agent writes. As with reference tags, the daemon stores
-and returns message text exactly as written, and no route rewrites it. An agent keeps writing
-plain `path:line` for a file in the reader's own workspace. The scheme is `happy-file`, not
-`happy`, because the Happy mobile app registers `happy://` for its deep links.
+The `happy://…/files/…` form is the one agents write in Markdown, alongside entity links. The
+`happy-file://` form, which puts the path straight after the target, is the API's canonical file
+URL. Readers accept both everywhere, and both name the same file. The label is ordinary Markdown
+that the agent writes, and the daemon stores and returns message text exactly as written. An agent
+keeps writing plain `path:line` for a file in the reader's own workspace.
 
 **Grammar.** In ABNF, with `ALPHA`, `DIGIT`, and `HEXDIG` as in RFC 5234:
 
 ```text
-file-link   = "happy-file://" target "/" path [ "#" lines ]
+file-url    = happy-form / file-form
+happy-form  = "happy://" target "/files/" path [ "#" lines ]
+file-form   = "happy-file://" target "/" path [ "#" lines ]
 target      = "agents/" id / "workspaces/" id
 id          = 1*128( ALPHA / DIGIT / "_" / "-" )
 path        = segment *( "/" segment )
@@ -7525,9 +7605,9 @@ lines       = "L" line [ "-L" line ]
 line        = %x31-39 *8DIGIT
 ```
 
-- A link is at most 4,096 characters.
-- Matching is case-sensitive. `happy-file://`, `agents/`, `workspaces/`, and `L` are written
-  exactly as shown. Only the hex digits of `pct-encoded` may be either case.
+- A URL is at most 4,096 characters.
+- Matching is case-sensitive. `happy://`, `happy-file://`, `agents/`, `workspaces/`, `/files/`,
+  and `L` are written exactly as shown. Only the hex digits of `pct-encoded` may be either case.
 - `agents/<id>` names an agent, and the file lives in that agent's workspace, its `workspaceId`.
   `workspaces/<id>` names a workspace directly. A project's files are linked through its root
   workspace's ID, as under "Files".
@@ -7566,25 +7646,20 @@ the agent's label. Opening it shows the file read-only, from the linked workspac
 reader's own conversation. The reader does not move to the other agent or workspace. When `lines`
 is present, the client shows those lines and SHOULD highlight them. A range past the end of the
 file shows the file without a selection. When a link is malformed or unresolvable, the client
-shows its usual "could not open" treatment. A client never hands a `happy-file` URL to the
-operating system or a browser.
+shows its usual "could not open" treatment. A client never hands a file URL to the operating
+system or a browser.
 
 **Fallback.** A surface that cannot open file links gets plain Markdown in which each inline link
-whose destination starts with `happy-file:`, in any letter case and whether or not it is
-well-formed, is replaced by its label. The label stays as the Markdown written between the
-brackets. An image, `![alt](happy-file://…)`, is replaced by its alt text the same way. When the
-label is empty or blank, the link becomes its decoded path, escaped as literal text, or nothing
-when the link is malformed. An inline link here is `[label](destination)` or
-`[label](<destination>)` with an optional title, as in CommonMark. Its label may hold balanced
-brackets, code spans, and backslash escapes, and it cannot cross a blank line. A link in a code
-span or fenced code block, or one whose `[` is backslash-escaped, is left alone. The daemon
-applies this fallback, together with the reference-tag fallback, to the agent text it relays to
-the Happy mobile app.
+whose destination starts with `happy:` or `happy-file:`, in any letter case and whether or not it
+is well-formed, is replaced as "Happy links" describes. A file link becomes its label, kept as the
+Markdown written between the brackets. An image, `![alt](happy-file://…)`, becomes its alt text
+the same way. When the label is empty or blank, the link becomes its decoded path, escaped as
+literal text, or nothing when the link is malformed.
 
-**One implementation.** `@slopus/happy-agent-client` exports the grammar, parser, formatter, and
-fallback: `HAPPY_FILE_LINK_SCHEME`, `MAX_HAPPY_FILE_LINK_LENGTH`, `happyFileLinkSchema` with its
-`HappyFileLink` type, `parseHappyFileLink`, `formatHappyFileLink`, `replaceHappyFileLinks`, and
-`renderHappyFileLinksAsText`. A parsed link has this shape, with `path` decoded:
+**One implementation.** `@slopus/happy-agent-client` exports the file grammar with the rest of
+the Happy links: `HAPPY_URL_SCHEME`, `HAPPY_FILE_URL_SCHEME`, `MAX_HAPPY_URL_LENGTH`,
+`happyFileLinkSchema` with its `HappyFileLink` type, `parseHappyUrl`, and `formatHappyFileUrl`.
+A parsed link has this shape, with `path` decoded:
 
 ```ts
 {
@@ -7594,8 +7669,9 @@ fallback: `HAPPY_FILE_LINK_SCHEME`, `MAX_HAPPY_FILE_LINK_LENGTH`, `happyFileLink
 }
 ```
 
-Clients and the daemon use these rather than their own parsers, so every surface agrees on exactly
-what a file link names.
+`formatHappyFileUrl(file, scheme?)` writes the `happy://` form by default and the `happy-file://`
+form when `scheme` is `"happy-file"`. Clients and the daemon use these rather than their own
+parsers, so every surface agrees on exactly what a file link names.
 
 File links are additive and do not increment the protocol version. Request and response schemas
 are unchanged.
@@ -10340,7 +10416,7 @@ their sidebar; when it does, its `join_task` tool joins its person to the task. 
 `tasks.autoJoin`, clears an explicit leave like a manual join, and marks the membership `unread`
 with Prioritizing's reason; joining a task the member is already in keeps its place and marks it
 unread again. A member without Stem Cells has no Prioritizing, so the mention adds nothing for
-them. Agents write a person as `<happy-user id="…"/>` (see "Reference tags").
+them. Agents write a person as `[Name](happy://users/<userId>)` (see "Happy links").
 
 **Unread.** A membership's `unread` says what its member has not looked at yet, today only that
 their Prioritizing added the task for them after a teammate's agent mentioned them. It is the
@@ -11272,7 +11348,7 @@ including those whose place the person last set in the sidebar, because acceptin
 person's own change. The call presents the artifact (an `artifact`
 presentation with `shows: "latest"`), so the proposal appears inline in Prioritizing's
 conversation at its full height and again after every revision. The call returns the proposal's
-artifact ID and version, not its reference tag, so that Prioritizing does not repeat the card in its
+artifact ID and version, not its Happy link, so that Prioritizing does not repeat the card in its
 reply. `list_sidebar` also returns the open proposal, its document, the nodes the person last set in it, and the
 decisions on the person's last proposals.
 
@@ -11460,7 +11536,7 @@ The change applies at once as one version authored `prioritizing`, under the sam
 rules: it is refused, changing nothing, when it would move a space whose place the person last set,
 Happy, or new work before its first message, or when the calling row is not in the document. Once
 the person moves the attachment, nothing moves it back. The result names the space and, for a
-Surface, its ID and reference tag, so the agent can fill it with the ordinary Surface tools. It is
+Surface, its ID and Happy link, so the agent can fill it with the ordinary Surface tools. It is
 durable: a repeated call creates and attaches once. It requires Auto or Full access, because it
 writes shared Surface data, and a call that creates a Surface is reviewed in Auto.
 
@@ -11716,9 +11792,9 @@ For a private or link-local URL it identifies the address as non-public and expl
 artifact proxy will refuse it. This review does not itself grant Full access. Other
 permission-mode and ownership rules above still apply.
 
-An agent mentions an artifact in its replies with the reference tag
-`<happy-artifact id="…"/>`, which clients show as a link labeled with the artifact's live title;
-see "Reference tags". The writing and reading tools give the agent the exact tag.
+An agent mentions an artifact in its replies with a Happy link,
+`[title](happy://artifacts/<id>)`, which clients show as a link labeled with the artifact's live
+title; see "Happy links". The writing and reading tools give the agent the exact link.
 
 Published artifact content lives on the daemon's machine, in its private data directory
 (`.happy/agent/artifacts`). Published content is stored once per distinct content, so a file that
@@ -11854,7 +11930,7 @@ Authors are extensible in the same way; a client shows an unrecognized `kind` as
 
 **Versions.** Versions are numbered from 1 and never change once made. Each records its title, its
 files or live URL and network, its author, its source, and when it was made. The integer `number`
-identifies a version everywhere, in routes and reference tags, and every version takes the next
+identifies a version everywhere, in routes and Happy links, and every version takes the next
 one, whatever it changed.
 
 Each version also carries a `major.minor` label. The first version is 1.0. Every change makes a
@@ -13381,7 +13457,7 @@ deleted cannot be revised. A call is keyed by its tool call, so it makes nothing
 after a restart.
 
 The call presents the story inline (see "The inline draft") and returns its story ID and
-`artifactVersion`, not a reference tag, so the agent does not show it twice. It needs no review in
+`artifactVersion`, not a Happy link, so the agent does not show it twice. It needs no review in
 Auto, because a draft is visible only to its author and nothing is posted; it is refused in Read
 only.
 
