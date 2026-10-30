@@ -254,3 +254,18 @@ its shared-data or membership write boundary. A structural check covers directly
 module tools, and the real daemon gym proves that an approved edit commits while a denied edit
 leaves the todo and its history unchanged. Review requirements and filesystem elevation remain
 unchanged.
+
+## Important documents are one installation-wide list that admin bots manage
+
+Steve asked for a list of important documents in agents' system prompts, rendered like skills,
+telling agents to read them to understand how and what to do. Attaching documents to individual
+agents, as secrets attach, was rejected, and so was naming them in the machine `happy.toml`,
+which needed a restart. The list is one table in this module. Every agent sees it; only active
+admin bots can list, mark, or unmark it, rechecked on every execution. It lives here rather than in
+its own module because the catalog and `read_document` report whether a document is important,
+and a separate module that needed Surfaces could not also be asked by Surfaces.
+
+Steve asked for a stable order: by first mark time, oldest first, ties broken by Surface ID.
+Re-marking replaces the description and name but keeps the first mark time, so rewording never
+reshuffles every prompt. A stored name is null unless the admin gives one, and a null name is
+read from the Surface on every request, so renaming the document is reflected without copying.

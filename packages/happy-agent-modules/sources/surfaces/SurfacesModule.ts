@@ -40,6 +40,7 @@ import {
     type UpdateTodoRequest,
     type Surface,
     type SurfaceTarget,
+    type SurfacePromptDocument,
     type Todo,
     type TodoRevision,
     type TodoListScope,
@@ -89,6 +90,14 @@ import {
 import { SurfaceDocuments, type DocumentProjection } from "./documents/SurfaceDocuments.js";
 import { SurfaceCalendars, type CalendarRange } from "./calendar/SurfaceCalendars.js";
 import { SystemMonitorSampler } from "./systemMonitor/SystemMonitorSampler.js";
+import { SurfacePromptDocuments } from "./promptDocuments/SurfacePromptDocuments.js";
+import { formatPromptDocumentsInstructions } from "./promptDocuments/formatPromptDocumentsInstructions.js";
+import type {
+    MarkPromptDocumentInput,
+    PromptDocument,
+    PromptDocumentChange,
+    PromptDocumentList,
+} from "./promptDocuments/PromptDocument.js";
 
 const eventSchema = Type.Union([
     Type.Object({ type: Type.Literal("surface.created"), payload: surfaceCreatedPayloadSchema }),
@@ -149,6 +158,9 @@ export class SurfacesModule implements AgentModule {
     #kv!: AgentKV;
     #documents!: SurfaceDocuments;
     #calendars!: SurfaceCalendars;
+    readonly #promptDocuments = new SurfacePromptDocuments((ctx, surfaceId) =>
+        this.get(ctx, surfaceId),
+    );
     #systemMonitor!: SystemMonitorSampler;
     #agents: AgentSystemRef | undefined;
     constructor(
@@ -204,9 +216,18 @@ export class SurfacesModule implements AgentModule {
         return {
             instructions: async (hookCtx, scope) => {
                 const chat = await this.chatForAgent(hookCtx, scope.agent.id);
-                if (chat === undefined) return SURFACE_REFERENCE_INSTRUCTIONS;
-                const surface = await this.#surface(hookCtx, chat.surfaceId);
-                return `${formatSurfaceChatPrompt(surface)}\n\n${SURFACE_REFERENCE_INSTRUCTIONS}`;
+                const important = formatPromptDocumentsInstructions(
+                    await this.promptDocuments(hookCtx),
+                );
+                return [
+                    chat === undefined
+                        ? undefined
+                        : formatSurfaceChatPrompt(await this.#surface(hookCtx, chat.surfaceId)),
+                    SURFACE_REFERENCE_INSTRUCTIONS,
+                    important,
+                ]
+                    .filter((part) => part !== undefined && part.length > 0)
+                    .join("\n\n");
             },
             tools: async (toolCtx, scope) =>
                 surfaceTools(this, scope, await this.isAdmin(toolCtx, scope.agent.id)),
@@ -242,6 +263,60 @@ export class SurfacesModule implements AgentModule {
         return () => {
             this.#documentChanged.delete(listener);
         };
+    }
+    /**
+     * The installation's important documents as every agent's instructions list them, oldest
+     * mark first. A marked Surface that is missing or no longer a document is left out.
+     */
+    async promptDocuments(ctx: Context): Promise<readonly PromptDocument[]> {
+        return ctx.inTx(async (tx) =>
+            (await this.#promptDocuments.list(tx)).filter((document) => document.readable),
+        );
+    }
+    /** A document's important-document entry, or null when it is not marked. */
+    async promptDocumentEntry(
+        ctx: Context,
+        surfaceId: string,
+    ): Promise<SurfacePromptDocument | null> {
+        checked(surfaceIdSchema, surfaceId);
+        return ctx.inTx((tx) => this.#promptDocuments.entry(tx, surfaceId));
+    }
+    /** Every marked document, for an admin bot, including any agents can no longer read. */
+    async listPromptDocuments(ctx: Context, agentId: string): Promise<PromptDocumentList> {
+        return ctx.inTx(async (tx) => {
+            await this.requirePromptDocumentsAdmin(tx, agentId);
+            return { documents: await this.#promptDocuments.list(tx) };
+        });
+    }
+    /** Mark a document Surface as important for every agent; only active admin bots may. */
+    async markPromptDocument(
+        ctx: Context,
+        agentId: string,
+        input: MarkPromptDocumentInput,
+    ): Promise<PromptDocumentChange> {
+        return ctx.inTx(async (tx) => {
+            await this.requirePromptDocumentsAdmin(tx, agentId);
+            return this.#promptDocuments.mark(tx, agentId, input);
+        });
+    }
+    /** Stop listing a document as important; only active admin bots may. */
+    async unmarkPromptDocument(
+        ctx: Context,
+        agentId: string,
+        surfaceId: string,
+    ): Promise<PromptDocumentChange> {
+        checked(surfaceIdSchema, surfaceId);
+        return ctx.inTx(async (tx) => {
+            await this.requirePromptDocumentsAdmin(tx, agentId);
+            return this.#promptDocuments.unmark(tx, surfaceId);
+        });
+    }
+    async requirePromptDocumentsAdmin(ctx: Context, agentId: string): Promise<void> {
+        if (!(await this.isAdmin(ctx, agentId)))
+            throw new SurfaceError(
+                "forbidden",
+                "Only an active admin bot can change this installation's important documents.",
+            );
     }
     async owner(ctx: Context): Promise<string | null> {
         if (!this.team.enabled) return null;
@@ -1187,8 +1262,16 @@ export class SurfacesModule implements AgentModule {
             .map((row) => readSurface(row.value))
             .filter((surface) => !WITHDRAWN_TYPES.has(surface.type));
     }
-    /** Shared records never hold a target projection; it is resolved for each read. */
+    /**
+     * Shared records never hold a target projection or a document's important-document entry;
+     * both are resolved for each read.
+     */
     async #present(ctx: Context, surface: Surface): Promise<Surface> {
+        if (surface.type === "document")
+            return {
+                ...surface,
+                promptDocument: await this.#promptDocuments.entry(ctx, surface.id),
+            };
         if (!isReferenceType(surface.type)) return surface;
         const stored = await this.#kv.read(ctx, `reference.${surface.id}`);
         return {

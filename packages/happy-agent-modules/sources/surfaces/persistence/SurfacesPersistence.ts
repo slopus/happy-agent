@@ -248,4 +248,14 @@ export const surfacesMigrations: readonly AgentModuleMigration[] = [
             );
         },
     ],
+    [
+        "005-surface-prompt-documents",
+        async (_ctx, database) => {
+            // The installation's important documents; a null name follows the Surface's own.
+            await agentDatabaseRun(
+                database,
+                sql`CREATE TABLE happy_agent_surface_prompt_documents (surface_id TEXT PRIMARY KEY, name TEXT, description TEXT NOT NULL, marked_at BIGINT NOT NULL, marked_by_agent_id TEXT NOT NULL, updated_at BIGINT NOT NULL)`,
+            );
+        },
+    ],
 ];

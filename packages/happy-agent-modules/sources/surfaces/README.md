@@ -77,3 +77,20 @@ agent or workspace belongs to a chat; the Surface, not those catalogs, owns its 
 agent receives the ordinary, non-admin Surface tools. Its context names the Surface, tells it to
 read the Surface's current state with that type's tools before every answer or change, keeps it on
 that Surface, and gives each type its own working rules.
+
+Document Surfaces can be the installation's important documents. `promptDocuments/` keeps one
+installation-wide list of marked documents in its own table, each with the admin's description,
+an optional display name, its first mark time, and the marking agent. Every agent's instructions
+end the Surface section with an `# Important documents` list modeled on the skills catalog:
+name (the given one, else the Surface's live name), description, `surface_id`, and
+`happy://surfaces/<id>` link, oldest mark first with ties broken by Surface ID, plus guidance to
+read matching documents with `read_document` before acting, re-read them when work touches them
+again, and let the user's direct request win over a conflicting document. Missing or non-document
+Surfaces are left out. The list is read on every request, so a change reaches each agent's next
+turn. Only active admin bots receive `list_prompt_documents`, `mark_prompt_document`, and
+`unmark_prompt_document`; authority is rechecked on execution, and mark and unmark are durable,
+transactional, Auto-or-Full-access tools that are always reviewed as an installation-wide
+instruction change. Re-marking keeps the first mark time, and at most 32 documents are marked.
+Every document Surface the module presents carries `promptDocument`, `null` or the description
+and given name, resolved on read like a reference target, so shared events never carry it and
+marking changes no Surface version; `read_document` adds it for a marked document.

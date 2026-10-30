@@ -18,6 +18,7 @@ import {
     surfaceNameSchema,
     surfaceDocumentSchema,
     surfaceDocumentSeqSchema,
+    surfacePromptDocumentSchema,
     surfaceDocumentTextSchema,
     surfaceDocumentChangeListResponseSchema,
     resourceVersionSchema,
@@ -28,6 +29,9 @@ import type { SurfacesModule } from "../SurfacesModule.js";
 import { SurfaceError } from "../SurfaceError.js";
 import { calendarTools } from "./calendarTools.js";
 import { formatSystemMonitor } from "../systemMonitor/formatSystemMonitor.js";
+import { listPromptDocumentsTool } from "../promptDocuments/tools/list_prompt_documents.js";
+import { markPromptDocumentTool } from "../promptDocuments/tools/mark_prompt_document.js";
+import { unmarkPromptDocumentTool } from "../promptDocuments/tools/unmark_prompt_document.js";
 
 const identity = { surfaceId: surfaceIdSchema, todoId: cuid2Schema };
 const guard = { ...identity, version: resourceVersionSchema };
@@ -40,6 +44,8 @@ const textResult = (result: unknown) => [{ type: "text" as const, text: JSON.str
 const documentReadingSchema = Type.Object({
     document: Type.Object({ ...surfaceDocumentSchema.properties, seq: surfaceDocumentSeqSchema }),
     omitted: Type.Optional(Type.String()),
+    /** Present only when admins marked it as one of the installation's important documents. */
+    promptDocument: Type.Optional(surfacePromptDocumentSchema),
 });
 const documentWriteSchema = Type.Object({
     ...documentReadingSchema.properties,
@@ -112,7 +118,7 @@ export function surfaceTools(surfaces: SurfacesModule, scope: AgentModuleScope, 
             capabilities: ["Find shared Surfaces and their members."],
             searchKeywords: ["list surfaces", "shared todo lists", "sidebar members"],
             description:
-                "List shared Surface instances, their IDs, names, types, and joined people. Artifact, bot, and task Surfaces include their target's live name and ID while it is available, or an unavailable state without them. Each todo, document, calendar, or System Monitor tool requires a Surface ID. Results are paged.",
+                "List shared Surface instances, their IDs, names, types, and joined people. Artifact, bot, and task Surfaces include their target's live name and ID while it is available, or an unavailable state without them. Document Surfaces include promptDocument: null, or the description admins gave it as one of the installation's important documents. Each todo, document, calendar, or System Monitor tool requires a Surface ID. Results are paged.",
             parameters: Type.Object(page, { additionalProperties: false }),
             returnType: Type.Object({
                 surfaces: Type.Array(surfaceSchema),
@@ -382,7 +388,7 @@ export function surfaceTools(surfaces: SurfacesModule, scope: AgentModuleScope, 
             ],
             searchKeywords: ["read document", "surface markdown", "previous document text"],
             description:
-                "Read a document Surface as Markdown with the seq it was read at, or as of an optional earlier seq. People may be editing it at the same time. Keep the seq: update_document needs the seq your edit is based on. The result says when the document holds content Markdown cannot show, such as comments or colors.",
+                "Read a document Surface as Markdown with the seq it was read at, or as of an optional earlier seq. People may be editing it at the same time. Keep the seq: update_document needs the seq your edit is based on. The result says when the document holds content Markdown cannot show, such as comments or colors. When admins marked it as one of the installation's important documents, the result includes promptDocument with their description.",
             parameters: Type.Object(
                 {
                     surfaceId: surfaceIdSchema,
@@ -397,7 +403,12 @@ export function surfaceTools(surfaces: SurfacesModule, scope: AgentModuleScope, 
             shouldReviewInAutoMode: () => false,
             execute: async (ctx, input) => {
                 const reading = await surfaces.document(ctx, input.surfaceId, input.seq);
-                return { document: reading.document, ...omittedNote(reading.omitted) };
+                const promptDocument = await surfaces.promptDocumentEntry(ctx, input.surfaceId);
+                return {
+                    document: reading.document,
+                    ...omittedNote(reading.omitted),
+                    ...(promptDocument === null ? {} : { promptDocument }),
+                };
             },
             toLLM: textResult,
         }),
@@ -785,6 +796,9 @@ export function surfaceTools(surfaces: SurfacesModule, scope: AgentModuleScope, 
             },
             toLLM: textResult,
         }),
+        listPromptDocumentsTool(surfaces, scope.agent.id),
+        markPromptDocumentTool(surfaces, scope.agent.id),
+        unmarkPromptDocumentTool(surfaces, scope.agent.id),
     ];
     const calendars = calendarTools(surfaces, actor);
     return admin
