@@ -334,7 +334,12 @@ import {
     type Workspace,
     type WorkspaceEvent,
 } from "../workspaces/index.js";
-import { ApiArtifactData, ARTIFACT_DATA_ROUTE } from "./ApiArtifactData.js";
+import {
+    ApiArtifactData,
+    ARTIFACT_COMPONENTS_ROUTE,
+    ARTIFACT_DATA_ROUTE,
+    sendArtifactComponent,
+} from "./ApiArtifactData.js";
 import { ARTIFACT_FILE_ROUTE, artifactFileRequest, sendArtifactFile } from "./ApiArtifactFiles.js";
 import { sendStoredFile } from "./sendStoredFile.js";
 import { ApiError, invalidRequest, notFound, unsupported, type ApiErrorCode } from "./ApiError.js";
@@ -8203,6 +8208,11 @@ export class ApiModule implements AgentModule {
         response: ServerResponse,
         url: URL,
     ): Promise<boolean> {
+        if (ARTIFACT_COMPONENTS_ROUTE.test(url.pathname)) {
+            if (request.method !== "GET") return false;
+            sendArtifactComponent(request, response, url.pathname);
+            return true;
+        }
         const artifacts = this.#artifacts;
         if (artifacts === undefined) return false;
         if (this.#artifactData !== undefined && ARTIFACT_DATA_ROUTE.test(url.pathname)) {

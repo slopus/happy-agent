@@ -437,6 +437,25 @@ function apiError(error: unknown): unknown {
     return error;
 }
 
+/** `/v0/artifact-components/:file`, matched on a pathname. */
+export const ARTIFACT_COMPONENTS_ROUTE = /^\/v0\/artifact-components\/([^/]+)$/;
+
+/**
+ * Serves the standard styles, components, and diagram renderer named by `pathname` without an
+ * artifact, exactly as every artifact's `/api/v1/` serves them, for a client that draws a
+ * component outside any artifact.
+ */
+export function sendArtifactComponent(
+    request: IncomingMessage,
+    response: ServerResponse,
+    pathname: string,
+): void {
+    const route = ARTIFACT_COMPONENTS_ROUTE.exec(pathname)?.[1];
+    const standard = route === undefined ? undefined : artifactStandardFile(route);
+    if (standard === undefined) throw notFound("There is no such standard component file.");
+    sendCached(request, response, standard.bytes, standard.etag, standard.contentType);
+}
+
 /** A file served with its ETag, revalidated on every use, so it upgrades with the daemon. */
 function sendCached(
     request: IncomingMessage,

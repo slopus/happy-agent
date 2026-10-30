@@ -12598,6 +12598,14 @@ blank. The script is served like `style.css`, and so is the diagram renderer it 
 `GET /v0/artifacts/:artifactId/api/v1/diagrams.js`, which pages never load themselves. The set of
 elements may grow; an element the script does not define is left as the page wrote it.
 
+#### `GET /v0/artifact-components/:file`
+
+The same `style.css`, `components.js`, and `diagrams.js`, byte for byte and with the same headers,
+`ETag`, and `304`, without naming an artifact. A client that draws a standard component outside
+any artifact, such as a chart an agent wrote straight into a reply, serves these behind a page of
+its own at that page's `/api/v1/`, so the component looks and behaves exactly as in an artifact and
+upgrades with the agent. Any other `:file`, `code.js` among them, is `404`.
+
 #### `GET /v0/artifacts/:artifactId/api/v1/me`
 
 Response — `200`:
