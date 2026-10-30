@@ -539,6 +539,14 @@ describe("agents post stories to their own ring", () => {
                 "● ● [●] ○ Testing payments",
             "the stage cue",
         );
+
+        // One line break sets two lines one above the other; a \r\n break is written as \n.
+        const twoLines = "1. Ship new onboarding\n2. Submit iOS native build";
+        await call(agentId, "set_status", { text: twoLines.replace("\n", "\r\n") });
+        await gym.waitUntil(
+            async () => (await gym.client.getAgent(agentId)).agent.statusLine?.text === twoLines,
+            "the two-line status",
+        );
         expect(gym.errors).toEqual([]);
     }, 60_000);
 

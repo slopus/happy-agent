@@ -59,6 +59,13 @@ the prompt only, never a rejection or a truncation, and the model decides. The w
 is the only hard bound. Kirill kept the tiny stage cue (`● ● [●] ○ Testing payments`), but only
 when the current stage is one or two words and the whole status still fits in about 40 characters.
 
+Kirill wanted a status that shows two deliberately aligned lines, such as
+"1. Ship new onboarding\n2. Submit iOS native build", which a wrapped single line cannot. The
+status, on the wire and in `set_status`, now allows exactly one `\n` between two non-empty lines,
+since the row shows at most two. The tool reads `\r\n` as `\n` and refuses a lone `\r`, a second
+break, and any other control character. Whether to split is the model's call, guided by the
+description; clients that show one line put a space where the break is.
+
 The status almost always stays and states plainly where the conversation is, finished work
 included ("Shipped to preview", "On main"), and it changes only at key moments, never on every
 step. `null` is for a status that would otherwise be untrue.
