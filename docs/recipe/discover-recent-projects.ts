@@ -10,7 +10,7 @@ import {
     realpathSync,
     statSync,
 } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, userInfo } from "node:os";
 import { isAbsolute, join, parse } from "node:path";
 import { parseArgs } from "node:util";
 
@@ -33,31 +33,72 @@ let remainingEntries = 12_000;
 let partial = false;
 const candidates = new Map<string, { modified: number; assistant: string }>();
 const userHome = homedir();
+let accountHome: string | null = null;
+try {
+    accountHome = userInfo().homedir;
+} catch {
+    // A restricted account lookup cannot verify where default history lives.
+}
+const claudeHome = values["claude-home"] ?? (process.env.CLAUDE_CONFIG_DIR || undefined);
+const codexHome = values["codex-home"] ?? (process.env.CODEX_HOME || undefined);
+if ((!claudeHome || !codexHome) && accountHome !== userHome) partial = true;
 const sources = [
     {
         assistant: "Claude Code",
-        home: values["claude-home"] ?? process.env.CLAUDE_CONFIG_DIR ?? join(userHome, ".claude"),
+        home: claudeHome ?? join(userHome, ".claude"),
         folder: "projects",
         depth: 1,
     },
     {
         assistant: "Codex",
-        home: values["codex-home"] ?? process.env.CODEX_HOME ?? join(userHome, ".codex"),
+        home: codexHome ?? join(userHome, ".codex"),
         folder: "sessions",
         depth: 3,
     },
 ];
+type SourceResult = {
+    assistant: string;
+    path: string;
+    status: "scanned" | "missing" | "unavailable" | "skipped" | "partial";
+};
+const sourceResults: SourceResult[] = [];
 
 for (const source of sources) {
+    if (!source.home.trim() || !isAbsolute(source.home))
+        throw new Error(`${source.assistant} metadata home must be a nonempty absolute path.`);
+    const result: SourceResult = {
+        assistant: source.assistant,
+        path: join(source.home, source.folder),
+        status: "scanned",
+    };
+    sourceResults.push(result);
     try {
-        if (lstatSync(source.home).isSymbolicLink()) continue;
+        const home = lstatSync(source.home, { throwIfNoEntry: false });
+        if (home?.isSymbolicLink()) {
+            markPartial(result, "skipped");
+            continue;
+        }
+        const root = lstatSync(result.path, { throwIfNoEntry: false });
+        if (root?.isSymbolicLink()) {
+            markPartial(result, "skipped");
+            continue;
+        }
+        if (!home || !root) {
+            result.status = "missing";
+            continue;
+        }
+        if (!home.isDirectory() || !root.isDirectory()) {
+            markPartial(result, "unavailable");
+            continue;
+        }
     } catch {
+        markPartial(result, "unavailable");
         continue;
     }
-    const files = recentFiles(join(source.home, source.folder), source.depth);
+    const files = recentFiles(result, source.depth);
     for (const file of files) {
         if (performance.now() >= deadline) {
-            partial = true;
+            markPartial(result);
             break;
         }
         try {
@@ -76,14 +117,14 @@ for (const source of sources) {
                 let bytes = 0;
                 while (bytes < buffer.length) {
                     if (performance.now() >= deadline) {
-                        partial = true;
+                        markPartial(result);
                         break;
                     }
                     const count = readSync(descriptor, buffer, bytes, buffer.length - bytes, bytes);
                     if (count === 0) break;
                     bytes += count;
                 }
-                if (bytes < Math.min(opened.size, buffer.length)) partial = true;
+                if (bytes < Math.min(opened.size, buffer.length)) markPartial(result);
                 prefix = buffer.subarray(0, bytes);
             } finally {
                 closeSync(descriptor);
@@ -91,14 +132,15 @@ for (const source of sources) {
             const lines = prefix.toString("utf8").split("\n");
             if (prefix.length === 65_536) {
                 lines.pop();
-                partial = true;
+                markPartial(result);
             }
             for (const line of lines.slice(0, 16)) {
+                let cwd: string;
                 try {
                     // These are external, version-dependent log formats, not a Happy wire schema.
                     // Extract only explicit location metadata; never return the parsed record.
                     const record = JSON.parse(line);
-                    const cwd =
+                    cwd =
                         source.assistant === "Claude Code"
                             ? record?.cwd
                             : record?.type === "session_meta"
@@ -113,7 +155,12 @@ for (const source of sources) {
                         cwd.startsWith("//")
                     )
                         continue;
-                    if (!statSync(cwd).isDirectory()) continue;
+                } catch {
+                    // Malformed and non-location records are normal.
+                    continue;
+                }
+                try {
+                    if (!statSync(cwd, { throwIfNoEntry: false })?.isDirectory()) continue;
                     const canonical = realpathSync(cwd);
                     if (canonical === realpathSync(userHome) || canonical === parse(canonical).root)
                         continue;
@@ -125,11 +172,12 @@ for (const source of sources) {
                         });
                     break;
                 } catch {
-                    // Missing, malformed, non-location or stale records are normal.
+                    // Inaccessible project folders cannot establish an empty result.
+                    markPartial(result);
                 }
             }
         } catch {
-            partial = true;
+            markPartial(result);
         }
     }
 }
@@ -145,22 +193,32 @@ console.log(
                 lastSeen: new Date(metadata.modified).toISOString(),
             })),
         partial: partial || performance.now() >= deadline || remainingEntries <= 0,
+        home: { path: userHome, accountPath: accountHome },
+        sources: sourceResults,
     }),
 );
 
-function recentFiles(root: string, depth: number): { path: string; modified: number }[] {
+function markPartial(source: SourceResult, status: SourceResult["status"] = "partial"): void {
+    partial = true;
+    source.status = status;
+}
+
+function recentFiles(source: SourceResult, depth: number): { path: string; modified: number }[] {
     const files: { path: string; modified: number }[] = [];
-    const pending = [{ path: root, depth }];
+    const pending = [{ path: source.path, depth }];
     while (pending.length && performance.now() < deadline && remainingEntries > 0) {
         const directory = pending.pop()!;
         try {
-            if (lstatSync(directory.path).isSymbolicLink()) continue;
+            if (lstatSync(directory.path).isSymbolicLink()) {
+                markPartial(source);
+                continue;
+            }
             const handle = opendirSync(directory.path);
             const children: { path: string; depth: number }[] = [];
             try {
                 for (let entry = handle.readSync(); entry; entry = handle.readSync()) {
                     if (remainingEntries-- <= 0 || performance.now() >= deadline) {
-                        partial = true;
+                        markPartial(source);
                         break;
                     }
                     const path = join(directory.path, entry.name);
@@ -175,9 +233,9 @@ function recentFiles(root: string, depth: number): { path: string; modified: num
             // Codex year/month/day directories are visited newest first on the stack.
             pending.push(...children.sort((left, right) => left.path.localeCompare(right.path)));
         } catch {
-            partial = true;
+            markPartial(source, directory.path === source.path ? "unavailable" : "partial");
         }
     }
-    if (pending.length || files.length > 64) partial = true;
+    if (pending.length || files.length > 64) markPartial(source);
     return files.sort((left, right) => right.modified - left.modified).slice(0, 64);
 }

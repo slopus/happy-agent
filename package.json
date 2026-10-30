@@ -26,7 +26,7 @@
         "test:gym": "pnpm --filter @slopus/happy-agent-gym-tests test:gym",
         "test:gym:api": "pnpm --filter @slopus/happy-agent-gym-tests test:gym:api",
         "test:gym:node": "pnpm --filter @slopus/happy-agent-gym-tests test:gym:node",
-        "test:scripts": "TMPDIR=\"$PWD/.local\" tsx --test scripts/release/*.test.ts"
+        "test:scripts": "TMPDIR=\"$PWD/.local\" tsx --test scripts/release/*.test.ts scripts/recipes/*.test.ts"
     },
     "devDependencies": {
         "@types/node": "^24.0.10",
