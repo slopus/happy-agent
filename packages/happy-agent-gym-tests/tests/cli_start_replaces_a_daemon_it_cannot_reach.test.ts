@@ -1,11 +1,11 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 import { createGymHome, type GymHome } from "@slopus/happy-agent-gym";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 /**
  * A daemon still serves the socket after its token and PID files are gone, as happens after an
@@ -15,17 +15,39 @@ import { afterEach, describe, expect, it } from "vitest";
  *
  * The real CLI, crash supervisor, and daemon run as separate processes in a throwaway Happy home.
  * The executable is `HAPPY_AGENT_RELOAD_GYM_BINARY` when set, else the locally compiled binary
- * (`pnpm --filter @slopus/happy-agent build:bun`) when present, else the built CLI on the gym's
- * runtime.
+ * (`pnpm --filter @slopus/happy-agent build:bun`) when present. Otherwise a private copy of Bun
+ * named `happy-agent-gym` runs the built CLI, giving the real kernel identity checks a test-owned
+ * executable without adding source-mode recognition to production.
  */
 const PACKAGE = resolve(import.meta.dirname, "../../happy-agent");
 const COMPILED = join(PACKAGE, "dist", "bin", `happy-agent-${process.platform}-${process.arch}`);
-const COMMAND: readonly string[] =
+let COMMAND: readonly string[] =
     process.env.HAPPY_AGENT_RELOAD_GYM_BINARY !== undefined
         ? [resolve(process.env.HAPPY_AGENT_RELOAD_GYM_BINARY)]
         : existsSync(COMPILED)
           ? [COMPILED]
-          : [process.execPath, join(PACKAGE, "dist", "cli.js")];
+          : [];
+
+let launcherDirectory: string | undefined;
+beforeAll(async () => {
+    if (process.platform === "win32" || COMMAND.length > 0) return;
+    launcherDirectory = join(
+        PACKAGE,
+        "..",
+        "..",
+        ".local",
+        `takeover-launcher-${String(process.pid)}`,
+    );
+    await mkdir(launcherDirectory, { recursive: true });
+    const entry = join(PACKAGE, "dist", "cli.js");
+    const executable = join(launcherDirectory, "happy-agent-gym");
+    await copyFile(process.execPath, executable);
+    COMMAND = [executable, entry];
+}, 60_000);
+
+afterAll(async () => {
+    if (launcherDirectory) await rm(launcherDirectory, { recursive: true, force: true });
+});
 
 /** `EX_UNAVAILABLE`: another process serves the daemon socket. */
 const SOCKET_IN_USE_EXIT_CODE = 69;
@@ -39,7 +61,8 @@ afterEach(async () => {
 describe.skipIf(process.platform === "win32")("happy-agent start on a socket it cannot use", () => {
     it("stops a Happy Agent whose token and PID files are gone, then starts its own", async () => {
         const world = await installation();
-        expect((await world.cli(["start"])).code).toBe(0);
+        const initial = await world.cli(["start"]);
+        expect(initial.code, initial.output).toBe(0);
         const stranded = await world.daemonPid();
         const strandedSupervisor = await world.supervisorPid();
         await rm(world.tokenPath);
@@ -47,7 +70,7 @@ describe.skipIf(process.platform === "win32")("happy-agent start on a socket it 
 
         const started = await world.cli(["start"]);
 
-        expect(started.code).toBe(0);
+        expect(started.code, started.output).toBe(0);
         expect(started.output).toContain(
             `(PID ${String(stranded)}), which this installation could no longer reach.`,
         );
@@ -56,13 +79,12 @@ describe.skipIf(process.platform === "win32")("happy-agent start on a socket it 
         expect(isRunning(strandedSupervisor)).toBe(false);
         expect(await world.daemonPid()).not.toBe(stranded);
         expect((await world.cli(["status"])).output).toContain("Daemon is running at");
-        const log = await readFile(world.logPath, "utf8");
-        expect(log).toContain(`start: Stopped Happy Agent`);
     }, 120_000);
 
     it("stops a Happy Agent that rejects the token on disk", async () => {
         const world = await installation();
-        expect((await world.cli(["start"])).code).toBe(0);
+        const initial = await world.cli(["start"]);
+        expect(initial.code, initial.output).toBe(0);
         const stranded = await world.daemonPid();
         // A failed start wrote a fresh token the running daemon never knew.
         await writeFile(world.tokenPath, `${randomBytes(32).toString("base64url")}\n`, {
@@ -72,7 +94,7 @@ describe.skipIf(process.platform === "win32")("happy-agent start on a socket it 
 
         const started = await world.cli(["start"]);
 
-        expect(started.code).toBe(0);
+        expect(started.code, started.output).toBe(0);
         expect(started.output).toContain(`(PID ${String(stranded)})`);
         expect(isRunning(stranded)).toBe(false);
         expect((await world.cli(["status"])).output).toContain("Daemon is running at");
@@ -89,7 +111,7 @@ describe.skipIf(process.platform === "win32")("happy-agent start on a socket it 
         const begun = Date.now();
         const refused = await world.cli(["start"]);
 
-        expect(refused.code).toBe(SOCKET_IN_USE_EXIT_CODE);
+        expect(refused.code, refused.output).toBe(SOCKET_IN_USE_EXIT_CODE);
         expect(refused.output).toContain(`Process ${String(foreign.pid)} (`);
         expect(refused.output).toContain(
             `is serving ${world.socketPath}, and it is not Happy Agent.`,

@@ -1,39 +1,26 @@
-/** The process that listens on a Unix socket, as the kernel reports it to a connected client. */
-export interface SocketPeer {
-    readonly pid: number;
-    readonly uid: number;
-}
+import { execFile } from "node:child_process";
+import { readFile, readlink } from "node:fs/promises";
+import { promisify } from "node:util";
 
 type Libc = Record<string, (...args: unknown[]) => number>;
-
-export interface BunFfi {
-    readonly FFIType: Record<"i32" | "u32" | "ptr", number>;
+interface BunFfi {
+    FFIType: Record<"i32" | "u32" | "ptr", number>;
     dlopen(
         path: string,
-        symbols: Record<string, { readonly args: readonly number[]; readonly returns: number }>,
-    ): { readonly symbols: Libc; close(): void };
+        symbols: Record<string, { args: number[]; returns: number }>,
+    ): {
+        symbols: Libc;
+        close(): void;
+    };
 }
 
-const AF_UNIX = 1;
-const SOCK_STREAM = 1;
-
-/**
- * Asks the kernel which process listens on a Unix socket, by connecting to it and reading the
- * peer's credentials: `LOCAL_PEERPID` and `getpeereid` on macOS, `SO_PEERCRED` on Linux. Both
- * name the process that called `listen`, so the listener cannot forge the answer.
- *
- * Neither Node nor Bun exposes these options, so this calls libc through Bun's FFI. It answers
- * undefined when it cannot tell: under Node, on Windows, or when nothing accepts the connection.
- */
-export async function readSocketPeer(socketPath: string): Promise<SocketPeer | undefined> {
-    const platform = process.platform;
-    if (!("bun" in process.versions) || (platform !== "darwin" && platform !== "linux")) {
-        return undefined;
-    }
+/** Kernel peer credentials; unavailable on Node and Windows. */
+export async function readSocketPeer(socketPath: string) {
+    if (!("bun" in process.versions) || !["darwin", "linux"].includes(process.platform)) return;
     try {
         const ffi = (await import("bun:ffi" as string)) as BunFfi;
         const { i32, u32, ptr } = ffi.FFIType;
-        const darwin = platform === "darwin";
+        const darwin = process.platform === "darwin";
         const library = ffi.dlopen(darwin ? "libSystem.B.dylib" : "libc.so.6", {
             socket: { args: [i32, i32, i32], returns: i32 },
             connect: { args: [i32, ptr, u32], returns: i32 },
@@ -42,46 +29,88 @@ export async function readSocketPeer(socketPath: string): Promise<SocketPeer | u
             ...(darwin ? { getpeereid: { args: [i32, ptr, ptr], returns: i32 } } : {}),
         });
         const libc = library.symbols;
-        const fd = libc.socket!(AF_UNIX, SOCK_STREAM, 0);
+        const fd = libc.socket!(1, 1, 0);
         try {
-            const address = socketAddress(darwin, socketPath);
-            if (fd < 0 || address === undefined) return undefined;
-            if (libc.connect!(fd, address, address.byteLength) !== 0) return undefined;
-            const peer = darwin ? darwinPeer(libc, fd) : linuxPeer(libc, fd);
-            return (peer?.pid ?? 0) > 0 ? peer : undefined;
+            // sockaddr_un: macOS has length/family bytes; Linux has a u16 family.
+            const address = Buffer.alloc(darwin ? 106 : 110);
+            const path = Buffer.from(socketPath);
+            if (fd < 0 || path.length + 3 > address.length) return;
+            if (darwin) address.set([address.length, 1]);
+            else address.writeUInt16LE(1);
+            address.set(path, 2);
+            if (libc.connect!(fd, address, address.length) !== 0) return;
+            const credentials = new Uint32Array(3);
+            // LOCAL_PEERPID + getpeereid, or SO_PEERCRED's pid/uid/gid.
+            if (
+                libc.getsockopt!(
+                    fd,
+                    darwin ? 0 : 1,
+                    darwin ? 2 : 17,
+                    credentials,
+                    new Uint32Array([darwin ? 4 : 12]),
+                ) !== 0
+            )
+                return;
+            if (darwin && libc.getpeereid!(fd, credentials.subarray(1), new Uint32Array(1)) !== 0)
+                return;
+            if (credentials[0]! > 0) return { pid: credentials[0]!, uid: credentials[1]! };
         } finally {
             if (fd >= 0) libc.close!(fd);
             library.close();
         }
     } catch {
-        return undefined;
+        /* Unidentified listeners are left running. */
     }
+    return undefined;
 }
 
-/** `struct sockaddr_un`: macOS leads with a length byte and a family byte, Linux with a u16. */
-function socketAddress(darwin: boolean, socketPath: string): Uint8Array | undefined {
-    const path = Buffer.from(socketPath, "utf8");
-    const size = darwin ? 106 : 110;
-    if (path.byteLength + 3 > size) return undefined;
-    const address = new Uint8Array(size);
-    if (darwin) address.set([size, AF_UNIX]);
-    else new DataView(address.buffer).setUint16(0, AF_UNIX, true);
-    address.set(path, 2);
-    return address;
+/** The executable image, owner and parent; never trust the command-line process name. */
+export async function describeLocalProcess(pid: number) {
+    try {
+        if (process.platform === "linux") {
+            const [status, executable] = await Promise.all([
+                readFile(`/proc/${String(pid)}/status`, "utf8"),
+                readlink(`/proc/${String(pid)}/exe`),
+            ]);
+            const uid = /^Uid:\s+(\d+)/m.exec(status)?.[1];
+            const parentPid = /^PPid:\s+(\d+)/m.exec(status)?.[1];
+            if (uid !== undefined && parentPid !== undefined)
+                return {
+                    uid: Number(uid),
+                    parentPid: Number(parentPid),
+                    executable: executable.replace(/ \(deleted\)$/, ""),
+                };
+        } else if (process.platform === "darwin" && "bun" in process.versions) {
+            const ffi = (await import("bun:ffi" as string)) as BunFfi;
+            const { i32, u32, ptr } = ffi.FFIType;
+            const library = ffi.dlopen("libSystem.B.dylib", {
+                proc_pidpath: { args: [i32, ptr, u32], returns: i32 },
+            });
+            try {
+                const path = Buffer.alloc(4096);
+                const length = library.symbols.proc_pidpath!(pid, path, path.length);
+                const { stdout } = await promisify(execFile)(
+                    "/bin/ps",
+                    ["-p", String(pid), "-o", "uid=,ppid="],
+                    { timeout: 2000 },
+                );
+                const match = /^(\d+)\s+(\d+)$/.exec(stdout.trim());
+                if (length > 0 && match)
+                    return {
+                        uid: Number(match[1]),
+                        parentPid: Number(match[2]),
+                        executable: path.toString("utf8", 0, length),
+                    };
+            } finally {
+                library.close();
+            }
+        }
+    } catch {
+        /* The process may already have exited. */
+    }
+    return undefined;
 }
 
-/** `getsockopt(SOL_LOCAL, LOCAL_PEERPID)` names the process; `getpeereid` its user. */
-function darwinPeer(libc: Libc, fd: number): SocketPeer | undefined {
-    const pid = new Int32Array(1);
-    const uid = new Uint32Array(1);
-    if (libc.getsockopt!(fd, 0, 2, pid, new Uint32Array([4])) !== 0) return undefined;
-    if (libc.getpeereid!(fd, uid, new Uint32Array(1)) !== 0) return undefined;
-    return { pid: pid[0]!, uid: uid[0]! };
-}
-
-/** `getsockopt(SOL_SOCKET, SO_PEERCRED)` fills `struct ucred { pid_t pid; uid_t uid; gid_t gid; }`. */
-function linuxPeer(libc: Libc, fd: number): SocketPeer | undefined {
-    const credentials = new Int32Array(3);
-    if (libc.getsockopt!(fd, 1, 17, credentials, new Uint32Array([12])) !== 0) return undefined;
-    return { pid: credentials[0]!, uid: new Uint32Array(credentials.buffer)[1]! };
+export function isHappyAgentProcess(candidate: { executable: string }): boolean {
+    return /(?:^|[\\/])happy-agent(?:-[a-z0-9._-]+)?(?:\.exe)?$/i.test(candidate.executable);
 }

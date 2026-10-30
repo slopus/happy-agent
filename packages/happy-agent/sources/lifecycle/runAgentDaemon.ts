@@ -1,8 +1,6 @@
 import { HappyAgentNewerDataError } from "@slopus/happy-agent-modules";
 
 import { startHappyAgentDaemon, type HappyAgentDaemon } from "../main.js";
-import { isAgentSocketListening } from "../socket/agentSocketPaths.js";
-import { AgentSocketInUseError } from "../socket/AgentSocketInUseError.js";
 import { AgentDaemonError } from "./AgentDaemonError.js";
 import { syncHappyAgentDocs } from "../documentation/syncHappyAgentDocs.js";
 import { syncHappyAgentSkills } from "../nativeSkills/syncHappyAgentSkills.js";
@@ -30,11 +28,6 @@ export async function runAgentDaemon(
     const identity = getDaemonIdentity();
     const gymInference = createGymInferenceFromEnvironment();
     const paths = getHappyDaemonPaths();
-    // A daemon that cannot bind the socket must leave the token, database, and runtime settings
-    // alone; the bind repeats this check once the runtime is prepared.
-    if (await isAgentSocketListening(paths.socketPath).catch(() => false)) {
-        throw new AgentSocketInUseError(paths.socketPath);
-    }
     await syncHappyAgentDocs(paths.happyHome);
     await syncHappyAgentSkills(paths.happyHome);
     const persistPid = options.persistPid ?? true;

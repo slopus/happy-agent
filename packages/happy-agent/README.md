@@ -60,6 +60,13 @@ is doing in the owner-only `agent/supervisor.json` (`running`, `restarting` with
 `gave-up`, or `refused`, with the last exit's status, signal, and uptime), and `status` reports it. The next
 `start` begins a fresh supervisor.
 
+Before writing a token, `start` checks the existing socket. If its listener rejects the token or
+there is no token, Bun on macOS and Linux reads the listener's PID and user from the kernel. A
+standalone `happy-agent` executable owned by this user is stopped, supervisor first, and replaced;
+the CLI reports its PID. Any other listener is left running and `start` fails immediately with
+exit 69. Node and Windows cannot identify socket peers, so they leave an unreachable listener
+running too. A busy socket at bind time also exits 69 without supervisor retries.
+
 A daemon whose databases hold migrations this release does not know, which happens when a newer
 release migrated the data, refuses to start and exits with status 65. The message is
 `This data was written by a newer Happy Agent (version X); update to continue.` The supervisor never restarts it. It publishes

@@ -163,15 +163,19 @@ for minutes and then "Can't reach Happy Agent", blocking onboarding.
 token on disk, or answers while there is no token, is identified from the kernel's peer
 credentials on a connected socket (`LOCAL_PEERPID` and `getpeereid` on macOS, `SO_PEERCRED` on
 Linux, through Bun's FFI because neither runtime exposes them). It is stopped only when it belongs
-to this user and is a Happy Agent: a `happy-agent` executable, or Node or Bun running a
-`happy-agent` package's CLI entry. Its crash supervisor, the parent running the same executable,
-gets SIGTERM first; the daemon gets SIGTERM, then SIGKILL after five seconds. The CLI prints and
-logs which version and PID it stopped; the version comes from the release's install path, because
-running another process's binary to ask is not safe. Anything else, or a listener that cannot be
-identified (Node, Windows), is left running and `start` fails at once with exit 69
-(`EX_UNAVAILABLE`) and the PID when known. A daemon that finds its socket served also exits 69,
-before touching any state; the supervisor treats 69 as final, and `start` looks at the socket once
-more, since another start may simply have won the race.
+to this user and its executable is `happy-agent` or a platform build of it. Source-mode Node and
+Bun listeners are left running. Its crash supervisor, the parent running the same executable as
+the same user, is stopped first, then the daemon. Each gets SIGTERM, then SIGKILL after five
+seconds if needed, and its exit is confirmed before proceeding. The CLI prints the stopped PID.
+Anything else, or a listener that cannot be identified (Node, Windows), is left running and
+`start` fails at once with exit 69 (`EX_UNAVAILABLE`) and the PID when known. The socket bind
+also refuses a busy socket with exit 69; the supervisor treats 69 as final.
+
+Keep this recovery small: one inspection in `start` before writing, kernel process identity,
+and supervisor-before-daemon shutdown. Extra probes, race retries, command-line recognition,
+version parsing and notice plumbing obscured the fix without helping the observed reinstall
+failure. The takeover gym uses the release binary when available, otherwise its own named Bun
+executable to exercise kernel identity without restoring source-mode recognition.
 
 Recovery lives in `start` alone. `status`, `stop`, and `kill` keep reading `daemon.pid` and the
 token, and a running daemon does not shut itself down when its token file changes: nobody found

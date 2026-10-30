@@ -1,6 +1,6 @@
 import { ensurePrivateDirectory } from "@slopus/happy-agent-compute";
 import { spawn, type ChildProcess } from "node:child_process";
-import { appendFile, open } from "node:fs/promises";
+import { open } from "node:fs/promises";
 import { homedir } from "node:os";
 
 import {
@@ -46,8 +46,6 @@ export interface AgentDaemonConnection {
 export interface EnsureAgentDaemonOptions {
     confirmRestart?: (request: AgentDaemonRestartRequest) => Promise<boolean>;
     onStatus?: (message: string) => void;
-    /** Something a person should know was done along the way, such as a daemon that was stopped. */
-    onNotice?: (message: string) => void;
     /**
      * The script a replacement daemon process runs. Defaults to the current executable script;
      * a product that embeds this lifecycle names its own daemon entrypoint here. A compiled
@@ -77,12 +75,10 @@ export async function ensureAgentDaemon(
     await ensurePrivateDirectory(paths.directory);
 
     let replacedUnreachable = false;
-    let socketTakenWhileStarting = false;
     for (let attempt = 0; attempt < DAEMON_RESTART_ATTEMPTS; attempt += 1) {
         // Look before writing anything: a start that fails on a busy socket must not leave a
         // fresh token beside a daemon that never knew it.
         const decision = await inspectAgentSocket(paths);
-        if (decision.kind === "refuse") throw decision.error;
         if (decision.kind === "replace") {
             // One replacement per start: a second unreachable listener means something keeps
             // starting them, and stopping it again would only fight it.
@@ -93,14 +89,10 @@ export async function ensureAgentDaemon(
                 );
             }
             replacedUnreachable = true;
-            await stopUnreachableAgentDaemon(decision, paths.directory);
-            const version = decision.version === undefined ? "" : `${decision.version} `;
-            const notice = `Stopped Happy Agent ${version}(PID ${String(decision.pid)}), which this installation could no longer reach.`;
-            options.onNotice?.(notice);
-            // A desktop launch shows no output, so the daemon log keeps what was stopped.
-            await appendFile(paths.logPath, `${new Date().toISOString()} start: ${notice}\n`, {
-                mode: 0o600,
-            }).catch(() => undefined);
+            await stopUnreachableAgentDaemon(decision);
+            console.log(
+                `Stopped Happy Agent (PID ${String(decision.pid)}), which this installation could no longer reach.`,
+            );
             continue;
         }
         const observed = decision.kind === "connect" ? decision : undefined;
@@ -124,22 +116,7 @@ export async function ensureAgentDaemon(
         }
 
         options.onStatus?.("Starting local daemon.");
-        let connection: AgentDaemonConnection;
-        try {
-            connection = await startAgentDaemonProcess(paths, options);
-        } catch (error) {
-            // Another start may have bound the socket first. Look once more to connect to it, or
-            // to identify a listener this installation cannot use.
-            if (
-                !socketTakenWhileStarting &&
-                error instanceof AgentDaemonError &&
-                error.exitCode === AGENT_SOCKET_IN_USE_EXIT_CODE
-            ) {
-                socketTakenWhileStarting = true;
-                continue;
-            }
-            throw error;
-        }
+        const connection = await startAgentDaemonProcess(paths, options);
         const health = await readHealth(connection.client);
         // Another client may have won the race to start a daemon with a different identity;
         // observe again instead of handing back a connection to the wrong daemon.
