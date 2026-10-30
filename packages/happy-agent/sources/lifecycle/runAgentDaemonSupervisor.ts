@@ -10,6 +10,7 @@ import {
     readHappyAgentDataVersion,
 } from "@slopus/happy-agent-modules/data-version";
 
+import { AGENT_SOCKET_IN_USE_EXIT_CODE } from "../socket/AgentSocketInUseError.js";
 import { isDaemonProcessRunning, readDaemonPid } from "./daemonPid.js";
 import { daemonProcessIdentity } from "./daemonProcessIdentity.js";
 import { consumeDaemonStopIntent } from "./daemonStopIntent.js";
@@ -147,6 +148,7 @@ export async function runAgentDaemonSupervisor(
         }
     }
     if (outcome.kind === "refused") return HAPPY_AGENT_NEWER_DATA_EXIT_CODE;
+    if (outcome.kind === "socket-in-use") return AGENT_SOCKET_IN_USE_EXIT_CODE;
     return outcome.kind === "gave-up" ? 1 : 0;
 }
 

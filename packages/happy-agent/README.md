@@ -21,6 +21,7 @@ The agent is its own daemon. Products invoke these commands instead of managing 
 
 ```sh
 happy-agent start    # start the daemon when none is running, replacing one that does not match
+                     # or one of this user's Happy Agents that it can no longer reach
 happy-agent drain    # signal the local daemon, report progress, and wait without tokens or shutdown
 happy-agent stop     # ask the running daemon to shut down
 happy-agent kill     # immediately kill the daemon recorded in daemon.pid

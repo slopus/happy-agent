@@ -14,7 +14,8 @@ Options:
   -v, --version  Show the installed Happy Agent version.
 
 Commands:
-  start    Start the daemon when none is running, replacing one that does not match.
+  start    Start the daemon when none is running, replacing one that does not match
+           or a Happy Agent of this user that it can no longer reach.
   drain    Drain the local daemon and wait until it is idle, without shutdown.
   stop     Ask the running daemon to shut down.
   kill     Immediately kill the daemon process recorded in its PID file.

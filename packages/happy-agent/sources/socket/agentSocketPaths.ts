@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { lstat } from "node:fs/promises";
+import { connect } from "node:net";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
@@ -38,4 +39,26 @@ export async function readAgentSocketInformation(path: string): Promise<{
         }
         throw error;
     }
+}
+
+/**
+ * Whether some process accepts connections on this socket. It proves nothing about who that is:
+ * the listener may be a daemon this installation cannot authenticate with, or not Happy at all.
+ */
+export async function isAgentSocketListening(socketPath: string): Promise<boolean> {
+    return await new Promise<boolean>((resolve, reject) => {
+        const socket = connect(socketPath);
+        socket.once("connect", () => {
+            socket.destroy();
+            resolve(true);
+        });
+        socket.once("error", (error: NodeJS.ErrnoException) => {
+            socket.destroy();
+            if (error.code === "ECONNREFUSED" || error.code === "ENOENT") {
+                resolve(false);
+                return;
+            }
+            reject(error);
+        });
+    });
 }

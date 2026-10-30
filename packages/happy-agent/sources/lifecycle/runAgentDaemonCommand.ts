@@ -64,6 +64,7 @@ export async function runAgentDaemonCommand(
         return;
     }
     const ensureOptions = {
+        onNotice: log,
         ...(options.entrypoint === undefined ? {} : { entrypoint: options.entrypoint }),
         ...(options.runInProcess === undefined ? {} : { runInProcess: options.runInProcess }),
     };
