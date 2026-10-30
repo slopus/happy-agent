@@ -1,8 +1,13 @@
 import { chmod, mkdir, unlink } from "node:fs/promises";
 import { createServer, type Server, type ServerResponse } from "node:http";
-import { connect, type Socket } from "node:net";
+import type { Socket } from "node:net";
 import { dirname } from "node:path";
-import { isWindowsNamedPipe, readAgentSocketInformation } from "./agentSocketPaths.js";
+import {
+    isAgentSocketListening,
+    isWindowsNamedPipe,
+    readAgentSocketInformation,
+} from "./agentSocketPaths.js";
+import { AgentSocketInUseError } from "./AgentSocketInUseError.js";
 
 import {
     socketRejectionBody,
@@ -174,8 +179,8 @@ function endUnknownTunnel(socket: import("node:stream").Duplex): void {
 
 export async function prepareAgentSocketPath(socketPath: string): Promise<void> {
     if (isWindowsNamedPipe(socketPath)) {
-        if (await socketIsActive(socketPath)) {
-            throw new Error(`Another Happy agent is already listening on ${socketPath}.`);
+        if (await isAgentSocketListening(socketPath)) {
+            throw new AgentSocketInUseError(socketPath);
         }
         return;
     }
@@ -200,8 +205,8 @@ export async function prepareAgentSocketPath(socketPath: string): Promise<void> 
     ) {
         throw new Error(`Refusing to replace a socket owned by another user: ${socketPath}`);
     }
-    if (await socketIsActive(socketPath)) {
-        throw new Error(`Another Happy agent is already listening on ${socketPath}.`);
+    if (await isAgentSocketListening(socketPath)) {
+        throw new AgentSocketInUseError(socketPath);
     }
     await unlink(socketPath);
 }
@@ -224,28 +229,10 @@ export async function removeInactiveAgentSocket(socketPath: string): Promise<voi
     ) {
         throw new Error(`Refusing to remove a socket owned by another user: ${socketPath}`);
     }
-    if (await socketIsActive(socketPath)) {
-        throw new Error(`Another Happy agent is already listening on ${socketPath}.`);
+    if (await isAgentSocketListening(socketPath)) {
+        throw new AgentSocketInUseError(socketPath);
     }
     await unlink(socketPath);
-}
-
-async function socketIsActive(socketPath: string): Promise<boolean> {
-    return await new Promise<boolean>((resolve, reject) => {
-        const socket = connect(socketPath);
-        socket.once("connect", () => {
-            socket.destroy();
-            resolve(true);
-        });
-        socket.once("error", (error: NodeJS.ErrnoException) => {
-            socket.destroy();
-            if (error.code === "ECONNREFUSED" || error.code === "ENOENT") {
-                resolve(false);
-                return;
-            }
-            reject(error);
-        });
-    });
 }
 
 async function listenOnSocket(server: Server, socketPath: string): Promise<void> {

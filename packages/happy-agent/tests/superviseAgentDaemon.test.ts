@@ -173,6 +173,25 @@ describe("superviseAgentDaemon", () => {
         expect(fixture.released).toBe(0);
     });
 
+    it("never restarts a daemon that found its socket already served", async () => {
+        const fixture = arrange([
+            { code: 69, signal: null, afterMs: 500 },
+            { code: 69, signal: null, afterMs: 500 },
+        ]);
+
+        const outcome = await superviseAgentDaemon(fixture.dependencies, POLICY);
+
+        expect(outcome).toMatchObject({
+            kind: "socket-in-use",
+            lastExit: { code: 69, signal: null },
+        });
+        expect(fixture.spawned).toHaveLength(1);
+        expect(fixture.sleeps).toEqual([]);
+        expect(fixture.published.map((snapshot) => snapshot.phase)).toEqual(["running"]);
+        // Nothing is supervised any more; whoever serves the socket needs no record from here.
+        expect(fixture.released).toBe(1);
+    });
+
     it("treats a crash after a long healthy run as a fresh failure, not part of a loop", async () => {
         const fixture = arrange([
             { code: 1, signal: null, afterMs: 2_000 },

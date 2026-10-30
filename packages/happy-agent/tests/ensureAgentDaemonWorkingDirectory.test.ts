@@ -12,7 +12,10 @@ const mocks = vi.hoisted(() => ({
     spawn: vi.fn(),
 }));
 
-vi.mock("node:child_process", () => ({ spawn: mocks.spawn }));
+vi.mock("node:child_process", async (importOriginal) => ({
+    ...(await importOriginal<typeof import("node:child_process")>()),
+    spawn: mocks.spawn,
+}));
 vi.mock("@slopus/happy-agent-modules", () => ({
     loadHappyAgentConfiguration: mocks.loadHappyAgentConfiguration,
 }));

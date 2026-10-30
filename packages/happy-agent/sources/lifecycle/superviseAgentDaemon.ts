@@ -1,5 +1,6 @@
 import { HAPPY_AGENT_NEWER_DATA_EXIT_CODE } from "@slopus/happy-agent-modules/data-version";
 
+import { AGENT_SOCKET_IN_USE_EXIT_CODE } from "../socket/AgentSocketInUseError.js";
 import { describeDaemonExit, type DaemonExit } from "./daemonSupervisorState.js";
 
 /**
@@ -86,13 +87,15 @@ export type DaemonSupervisorOutcome =
           readonly reason: "clean-exit" | "stop-intent" | "supervisor-stopped" | "replaced";
       }
     | { readonly kind: "gave-up"; readonly lastExit: DaemonExit }
-    | { readonly kind: "refused"; readonly lastExit: DaemonExit };
+    | { readonly kind: "refused"; readonly lastExit: DaemonExit }
+    | { readonly kind: "socket-in-use"; readonly lastExit: DaemonExit };
 
 /**
  * Keeps one daemon process alive across unexpected exits.
  *
  * Only an abnormal exit restarts the daemon. A clean exit, or any exit after a recorded
- * intentional stop, ends supervision, and so does a daemon refusing data a newer release wrote, so `stop`, `kill`, `reload`, the shutdown API, and an
+ * intentional stop, ends supervision, and so does a daemon refusing data a newer release wrote
+ * or finding its socket already served, so `stop`, `kill`, `reload`, the shutdown API, and an
  * uninstall never fight a respawn. Restarts back off exponentially; after
  * `maxQuickFailures` consecutive exits that each came within `stableUptimeMs` of their start,
  * the supervisor publishes `gave-up` and exits instead of looping forever.
@@ -144,6 +147,16 @@ export async function superviseAgentDaemon(
             );
             await dependencies.publish({ phase: "refused", restarts, quickFailures, lastExit });
             return { kind: "refused", lastExit };
+        }
+        // Another process serves the socket, so a restart would only fail the same way. When it is
+        // a daemon this installation can use, it needs no supervisor from here; when it is not,
+        // `start` identifies it and reports or replaces it.
+        if (status.code === AGENT_SOCKET_IN_USE_EXIT_CODE && status.signal === null) {
+            dependencies.log(
+                "supervisor: another process already serves the daemon socket; not restarting.",
+            );
+            await dependencies.release();
+            return { kind: "socket-in-use", lastExit };
         }
         if (intended) return await stopped(dependencies, "stop-intent");
         quickFailures = uptimeMs >= policy.stableUptimeMs ? 1 : quickFailures + 1;

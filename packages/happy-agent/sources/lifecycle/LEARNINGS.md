@@ -150,3 +150,26 @@ shutdown through the API. Health, the stream hello, and `daemon.draining` carry 
 persisted. Desktop's own installer still drains without a body, so other clients see its restarts
 as shutdowns until the Electron host passes an intent. How long a client waits for a replacement
 is the client's policy; the daemon promises nothing about it.
+
+## Start replaces a Happy Agent it can no longer reach
+
+A reinstall left a 0.4.86 daemon serving `server.sock` after its `token` and `daemon.pid` were
+deleted. Every `start` then wrote a fresh token, database, and runtime settings, spawned a daemon
+that exited 1 on the busy socket, and gave up after five supervisor restarts; the old daemon
+rejected the new token with 401, `status` said "not running", and `kill` had no PID. Desktop
+showed "Starting…" for minutes and then "Can't reach Happy Agent", blocking onboarding.
+
+`start` and `reload` now inspect the socket before writing anything. A listener that rejects the
+token on disk, or answers while there is no token, is identified from the kernel's peer
+credentials on a connected socket (`LOCAL_PEERPID` and `getpeereid` on macOS, `SO_PEERCRED` on
+Linux, through Bun's FFI because neither runtime exposes them). It is stopped only when it belongs
+to this user and is a Happy Agent: a `happy-agent` executable, or Node or Bun running a
+`happy-agent` package's CLI entry. Its crash supervisor, the parent running the same executable,
+gets SIGTERM first; the daemon gets SIGTERM, then SIGKILL after five seconds. The CLI prints and
+logs "Stopped Happy Agent X (PID N), which this installation could no longer reach." Anything
+else, or a listener that cannot be identified (Node, Windows), is left running and `start` fails
+at once with exit 69 (`EX_UNAVAILABLE`) and the PID when known. A daemon that finds its socket
+served also exits 69, before touching any state; the supervisor treats 69 as final, and `start`
+looks at the socket once more, since another start may simply have won the race. `status`
+names an unreachable listener, `stop` refuses it, and `kill` falls back to it when `daemon.pid` is
+missing.

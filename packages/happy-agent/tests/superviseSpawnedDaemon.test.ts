@@ -87,3 +87,23 @@ it.skipIf(process.platform === "win32")(
         expect(refusal).toMatchObject({ message, exitCode: 65 });
     },
 );
+
+it.skipIf(process.platform === "win32")(
+    "a start ends at once when the daemon finds its socket already served",
+    async () => {
+        const supervisor = spawn("/bin/sh", ["-c", "exit 69"], { detached: true, stdio: "ignore" });
+
+        const refusal = await superviseSpawnedDaemon(
+            supervisor,
+            new Promise<never>(() => undefined),
+            30_000,
+        ).catch((error: unknown) => error);
+
+        expect(refusal).toBeInstanceOf(AgentDaemonError);
+        expect(refusal).toMatchObject({
+            message:
+                "The local daemon could not start because another process already serves its socket.",
+            exitCode: 69,
+        });
+    },
+);
