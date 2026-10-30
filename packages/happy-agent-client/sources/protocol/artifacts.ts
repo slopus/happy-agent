@@ -20,11 +20,6 @@ import { networkIdSchema } from "./workspaces.js";
 export const artifactTypeSchema = Type.Union([
     Type.Literal("markdown"),
     Type.Literal("html"),
-    Type.Literal("sidebar"),
-    /** A proposed sidebar the person may edit, accept, or decline; see the Spaces proposals. */
-    Type.Literal("sidebar_proposal"),
-    /** One story, written only through the story routes and `draft_story`; see Stories. */
-    Type.Literal("story"),
     Type.Literal("image"),
     Type.Literal("image_series"),
     Type.Literal("video"),
@@ -374,8 +369,6 @@ export type CreateArtifactRequest = Static<typeof createArtifactRequestSchema>;
  * takes paths out.
  */
 export const updateArtifactRequestSchema = Type.Object({
-    /** Required for sidebar artifacts; compares the immutable version number. */
-    baseVersion: Type.Optional(Type.Integer({ minimum: 1 })),
     /** A colour sets the new version's background, `null` clears it, and absent keeps it. */
     background: Type.Optional(artifactBackgroundInputSchema),
     files: Type.Optional(Type.Array(artifactFileInputSchema, { maxItems: 256 })),

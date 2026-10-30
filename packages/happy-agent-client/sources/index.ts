@@ -38,22 +38,6 @@ export * from "./happyLinksInMarkdown.js";
 export * from "./mediaLayoutBlocks.js";
 export * from "./mediaLayoutHtml.js";
 export {
-    formatSpaceSidebar,
-    parseSpaceSidebar,
-    SPACE_SIDEBAR_LIMITS,
-    SPACE_SIDEBAR_RESERVED_IDS,
-    SpaceSidebarError,
-} from "./spaceSidebarDocument.js";
-export {
-    applySpaceSidebarOperations,
-    locateSpaceSidebarNode,
-    spaceSidebarRunLength,
-    SpaceSidebarOperationError,
-    type SpaceSidebarApplication,
-    type SpaceSidebarLocation,
-} from "./applySpaceSidebarOperations.js";
-export { diffSpaceSidebar } from "./diffSpaceSidebar.js";
-export {
     artifactAddressPublic,
     artifactAddressLoopback,
     artifactNetworkHost,
@@ -65,7 +49,6 @@ export * from "./protocol/authentication.js";
 export * from "./protocol/bootstrap.js";
 export * from "./protocol/bots.js";
 export * from "./protocol/bridges.js";
-export * from "./protocol/spaces.js";
 export * from "./protocol/tasks.js";
 export * from "./protocol/surfaces.js";
 export * from "./protocol/cloud.js";
@@ -91,8 +74,6 @@ export * from "./protocol/secrets.js";
 export * from "./protocol/services.js";
 export * from "./protocol/skills.js";
 export * from "./protocol/slashCommands.js";
-export * from "./protocol/stickers.js";
-export * from "./protocol/stories.js";
 export * from "./protocol/terminals.js";
 export * from "./protocol/usage.js";
 export * from "./protocol/users.js";

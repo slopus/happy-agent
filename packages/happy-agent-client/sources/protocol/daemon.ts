@@ -151,25 +151,6 @@ export const healthResponseSchema = Type.Object({
             chatSurfaces: Type.Optional(Type.Boolean()),
             /** True when the daemon can rename Surfaces and change their images. */
             surfaceEditing: Type.Optional(Type.Boolean()),
-            /** True when new work accepts client-supplied `taskId`, `workspaceId`, and `agentId`. */
-            stemCellIdentities: Type.Optional(Type.Boolean()),
-            /**
-             * True when the sidebar document takes operations by node ID, holds widgets, and
-             * announces each version with `space.sidebar.changed`.
-             */
-            sidebarOperations: Type.Optional(Type.Boolean()),
-            /**
-             * True when a nested sidebar `happy-space` may name one of the person's spaces, an
-             * attachment, and conversations may attach to their row with `attach_to_my_row`.
-             */
-            sidebarAttachments: Type.Optional(Type.Boolean()),
-            /**
-             * True when Prioritizing has its own `"agent"` row and proposes larger sidebar changes
-             * as `sidebar_proposal` artifacts, served under `/v0/spaces/sidebar/proposals`.
-             */
-            sidebarProposals: Type.Optional(Type.Boolean()),
-            /** True when a sidebar separator may be pinned with `pin="top"` or `pin="bottom"`. */
-            sidebarSeparatorPins: Type.Optional(Type.Boolean()),
             /**
              * True when the daemon serves `/v0/provider-clis` and the `provider_cli.updated`
              * event, described under Provider CLIs.
@@ -177,18 +158,6 @@ export const healthResponseSchema = Type.Object({
             providerClis: Type.Optional(Type.Boolean()),
             /** True when the daemon serves `/v0/provider-routes`, described under Provider routes. */
             providerRoutes: Type.Optional(Type.Boolean()),
-            /**
-             * True when the daemon serves `/v0/stories`, the `story` artifact type, `draft_story`,
-             * and `story.*` events. A person with Stories off still receives `404` from them.
-             */
-            stories: Type.Optional(Type.Boolean()),
-            /**
-             * True when the daemon serves agents' stories: story rings, artifact frames and
-             * overlays, round videos, repost, feedback, `story.ended`, and agent status lines.
-             */
-            agentStories: Type.Optional(Type.Boolean()),
-            /** True when the daemon serves `/v0/stickers` and `sticker_recents.updated`. */
-            stickers: Type.Optional(Type.Boolean()),
         }),
     ),
     /** Always `true`; a daemon that cannot answer does not answer. */

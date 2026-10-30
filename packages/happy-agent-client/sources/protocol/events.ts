@@ -37,15 +37,6 @@ import type { HappyIntegration } from "./integrations.js";
 import type { Message, Run } from "./messages.js";
 import type { BackgroundProcess } from "./processes.js";
 import type { Profile } from "./profile.js";
-import type { StickerRecentsUpdatedPayload } from "./stickers.js";
-import type {
-    StoryDeletedPayload,
-    StoryEndedPayload,
-    StoryEventPayload,
-    StoryReactedPayload,
-    StorySeenPayload,
-    StoryUpdatedPayload,
-} from "./stories.js";
 import type { Project } from "./projects.js";
 import type { Question } from "./questions.js";
 import {
@@ -54,14 +45,6 @@ import {
     secretEnvironmentVariableNameSchema,
     secretSchema,
 } from "./secrets.js";
-import {
-    spaceBatchSchema,
-    spaceSchema,
-    spaceSectionSchema,
-    spaceSidebarAuthorSchema,
-    spaceSidebarOperationSchema,
-    spaceSidebarProposalSchema,
-} from "./spaces.js";
 import { taskMembershipSchema, taskSchema } from "./tasks.js";
 import {
     surfaceIdSchema,
@@ -261,70 +244,6 @@ export const taskMembershipPayloadSchema = Type.Object({
     mutationId: Type.Optional(mutationIdSchema),
 });
 export type TaskMembershipPayload = Static<typeof taskMembershipPayloadSchema>;
-
-/** A sidebar row was added or changed. Space events carry the whole row. */
-export const spacePayloadSchema = Type.Object({
-    mutationId: Type.Optional(mutationIdSchema),
-    space: spaceSchema,
-});
-export type SpacePayload = Static<typeof spacePayloadSchema>;
-
-/** A sidebar row was discarded, or its work was archived or left. */
-export const spaceRemovedPayloadSchema = Type.Object({
-    mutationId: Type.Optional(mutationIdSchema),
-    spaceId: cuid2Schema,
-});
-export type SpaceRemovedPayload = Static<typeof spaceRemovedPayloadSchema>;
-
-/** A sidebar section was added or changed. */
-export const spaceSectionPayloadSchema = Type.Object({
-    mutationId: Type.Optional(mutationIdSchema),
-    section: spaceSectionSchema,
-});
-export type SpaceSectionPayload = Static<typeof spaceSectionPayloadSchema>;
-
-export const spaceSectionRemovedPayloadSchema = Type.Object({
-    mutationId: Type.Optional(mutationIdSchema),
-    sectionId: cuid2Schema,
-});
-export type SpaceSectionRemovedPayload = Static<typeof spaceSectionRemovedPayloadSchema>;
-
-/** A batch applied, after its rows' and sections' own events. */
-export const spaceBatchAppliedPayloadSchema = Type.Object({
-    batch: spaceBatchSchema,
-    mutationId: Type.Optional(mutationIdSchema),
-});
-export type SpaceBatchAppliedPayload = Static<typeof spaceBatchAppliedPayloadSchema>;
-
-/**
- * The sidebar document has a new version. Applying `operations` to `previousVersion` with
- * `applySpaceSidebarOperations` gives `version`; a client holding another version reads it again.
- */
-export const spaceSidebarChangedPayloadSchema = Type.Object({
-    artifactId: cuid2Schema,
-    author: spaceSidebarAuthorSchema,
-    mutationId: Type.Optional(mutationIdSchema),
-    operations: Type.Array(spaceSidebarOperationSchema),
-    previousVersion: Type.Integer({ minimum: 1 }),
-    version: Type.Integer({ minimum: 1 }),
-});
-export type SpaceSidebarChangedPayload = Static<typeof spaceSidebarChangedPayloadSchema>;
-
-/**
- * A sidebar proposal has a new version or a new status. For a version, applying `operations` to
- * `previousVersion` gives `proposal.version`; for a status change `operations` is empty and
- * `previousVersion` equals `proposal.version`.
- */
-export const spaceSidebarProposalChangedPayloadSchema = Type.Object({
-    author: Type.Union([Type.Literal("person"), Type.Literal("prioritizing")]),
-    mutationId: Type.Optional(mutationIdSchema),
-    operations: Type.Array(spaceSidebarOperationSchema),
-    previousVersion: Type.Integer({ minimum: 1 }),
-    proposal: spaceSidebarProposalSchema,
-});
-export type SpaceSidebarProposalChangedPayload = Static<
-    typeof spaceSidebarProposalChangedPayloadSchema
->;
 
 /**
  * Members stay present on chat-only and edit-only changes. Chat association, `name`, and `image`
@@ -727,15 +646,6 @@ export type HappyAgentEvent =
     | EventEnvelope<"task.reordered", TaskMembershipPayload>
     | EventEnvelope<"task.left", TaskMembershipPayload>
     | EventEnvelope<"task.membership.updated", TaskMembershipPayload>
-    | EventEnvelope<"space.created", SpacePayload>
-    | EventEnvelope<"space.updated", SpacePayload>
-    | EventEnvelope<"space.removed", SpaceRemovedPayload>
-    | EventEnvelope<"space.section.created", SpaceSectionPayload>
-    | EventEnvelope<"space.section.updated", SpaceSectionPayload>
-    | EventEnvelope<"space.section.removed", SpaceSectionRemovedPayload>
-    | EventEnvelope<"space.batch.applied", SpaceBatchAppliedPayload>
-    | EventEnvelope<"space.sidebar.changed", SpaceSidebarChangedPayload>
-    | EventEnvelope<"space.sidebar.proposal.changed", SpaceSidebarProposalChangedPayload>
     | EventEnvelope<"surface.updated", SurfaceUpdatedPayload>
     | EventEnvelope<"surface.created", SurfaceCreatedPayload>
     | EventEnvelope<"todo.created", TodoCreatedPayload>
@@ -787,15 +697,7 @@ export type HappyAgentEvent =
     | EventEnvelope<"cloud.updated", CloudUpdatedPayload>
     | EventEnvelope<"happy.integration.updated", HappyIntegrationUpdatedPayload>
     | EventEnvelope<"user_settings.updated", UserSettingsUpdatedPayload>
-    | EventEnvelope<"mobile_connector.updated", MobileConnectorUpdatedPayload>
-    | EventEnvelope<"story.created", StoryEventPayload>
-    | EventEnvelope<"story.updated", StoryUpdatedPayload>
-    | EventEnvelope<"story.posted", StoryEventPayload>
-    | EventEnvelope<"story.deleted", StoryDeletedPayload>
-    | EventEnvelope<"story.seen", StorySeenPayload>
-    | EventEnvelope<"story.reacted", StoryReactedPayload>
-    | EventEnvelope<"story.ended", StoryEndedPayload>
-    | EventEnvelope<"sticker_recents.updated", StickerRecentsUpdatedPayload>;
+    | EventEnvelope<"mobile_connector.updated", MobileConnectorUpdatedPayload>;
 
 /** The name of an event this client build knows. */
 export type HappyAgentEventType = HappyAgentEvent["type"];
