@@ -5938,13 +5938,17 @@ Fields:
 - `unread` — set when the agent finished work the user has not looked at: why (`reason`) and
   since when. `null` when there is nothing unread. Cleared by `POST /v0/agents/:agentId/read`.
 - `statusLine` — optional additive object, emitted by daemons with `capabilities.agentStories`:
-  `null`, or `{ "text": "Testing with a few friends", "updatedAt": 1755400000000 }`, the one line
-  the agent last wrote about where its work stands, with its `set_status` tool (see "Agent
-  stories"). `text` is 1–120 characters with no line break, the only bound `set_status`
-  enforces; agents aim for a short phrase of about 40 characters so it fits. A client shows it
-  under the title of the agent's sidebar row or session, in place of what it would show otherwise, on up to two lines, truncated past them,
-  and shows nothing different while it is `null` or absent. Every change is an `agent.updated` event carrying
-  `statusLine` in `changes`. Archival keeps it.
+  `null`, or `{ "text": "Testing with a few friends", "updatedAt": 1755400000000 }`, what the
+  agent last wrote about where its work stands, with its `set_status` tool (see "Agent
+  stories"). `text` is 1–120 characters with at most one line break, a single `\n` between two
+  non-empty lines, and never a `\r`; that is the only bound `set_status` enforces. Agents aim
+  for a short phrase of about 40 characters so it fits, or two such lines deliberately set one
+  above the other, such as `"1. Ship new onboarding\n2. Submit iOS native build"`. A client
+  shows it under the title of the agent's sidebar row or session, in place of what it would show
+  otherwise, on up to two lines, truncated past them: a `\n` starts the second line, and a client
+  that shows one line puts a space in its place. It shows nothing different while it is `null`
+  or absent. Every change is an `agent.updated` event carrying `statusLine` in `changes`.
+  Archival keeps it. Daemons that predate the line break never send one.
 - `orderKey` — an opaque owner-local sort key, as on projects and workspaces; the list order is
   manual and moved with `reorder`. It is non-null for every user-visible root, including one
   managed from another workspace, and `null` for an ordinary hidden subagent or shared-filesystem
@@ -13542,7 +13546,7 @@ own agent is offered it. Subtasks, other subagents, and project or workspace ses
 | `post_story`     | `frames`, `caption`, `overlays` as for `draft_story`; `supersedes` | Posts an agent's story to this conversation's ring for its person       |
 | `withdraw_story` | `storyIds`, 1–10 live stories in this conversation's ring          | Ends them as withdrawn                                                  |
 | `list_stories`   | none                                                               | The ring's live stories: who posted each, caption, when, seen, reaction |
-| `set_status`     | `text`, 1–120 characters on one line, or `null` to clear           | Sets the `statusLine` shown under this agent's row or session title     |
+| `set_status`     | `text`, 1–120 characters on one line or two, or `null` to clear    | Sets the `statusLine` shown under this agent's row or session title     |
 
 `post_story` takes the frames `draft_story` takes, and one more kind: `{ "artifactId", "version" }`
 without `path`, an artifact this conversation presented, shown live as an artifact frame; without
@@ -13561,7 +13565,8 @@ call repeated after a restart posts, ends, or sets nothing a second time.
 `set_status` is always in the conversation's tool list rather than found through tool search, and
 the conversation's instructions ask the agent to set it early and change it at key moments, only
 where the tool is offered. How long to make it is guidance to the agent, never enforced: the call
-accepts any `text` the wire allows, and nothing is truncated.
+accepts any `text` the wire allows, and nothing is truncated. It reads a `\r\n` line break as `\n`
+and refuses any other control character, such as a tab or a lone `\r`.
 
 The tools' instructions decide when to post, and they are the product: post only when something
 real shipped that the person can see or try, never progress; supersede the agent's earlier story

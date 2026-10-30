@@ -241,12 +241,14 @@ describe("agent stories protocol", () => {
             archivedAt: null,
         };
         expect(Value.Errors(agentSchema, agent).First()).toBeUndefined();
-        expect(
-            Value.Check(agentSchema, {
-                ...agent,
-                statusLine: { text: "two\nlines", updatedAt: 1 },
-            }),
-        ).toBe(false);
+        const withText = (text: string) =>
+            Value.Check(agentSchema, { ...agent, statusLine: { text, updatedAt: 1 } });
+        expect(withText("1. Ship new onboarding\n2. Submit iOS native build")).toBe(true);
+        expect(withText("one\ntwo\nthree")).toBe(false);
+        expect(withText("one\n")).toBe(false);
+        expect(withText("\ntwo")).toBe(false);
+        expect(withText("one\r\ntwo")).toBe(false);
+        expect(withText("one\rtwo")).toBe(false);
     });
 
     it("sends repost and feedback to their routes", async () => {
