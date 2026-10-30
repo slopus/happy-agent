@@ -156,8 +156,8 @@ is the client's policy; the daemon promises nothing about it.
 A reinstall left a 0.4.86 daemon serving `server.sock` after its `token` and `daemon.pid` were
 deleted. Every `start` then wrote a fresh token, database, and runtime settings, spawned a daemon
 that exited 1 on the busy socket, and gave up after five supervisor restarts; the old daemon
-rejected the new token with 401, `status` said "not running", and `kill` had no PID. Desktop
-showed "Starting…" for minutes and then "Can't reach Happy Agent", blocking onboarding.
+rejected the new token with 401 and nothing could reach or replace it. Desktop showed "Starting…"
+for minutes and then "Can't reach Happy Agent", blocking onboarding.
 
 `start` and `reload` now inspect the socket before writing anything. A listener that rejects the
 token on disk, or answers while there is no token, is identified from the kernel's peer
@@ -166,10 +166,15 @@ Linux, through Bun's FFI because neither runtime exposes them). It is stopped on
 to this user and is a Happy Agent: a `happy-agent` executable, or Node or Bun running a
 `happy-agent` package's CLI entry. Its crash supervisor, the parent running the same executable,
 gets SIGTERM first; the daemon gets SIGTERM, then SIGKILL after five seconds. The CLI prints and
-logs "Stopped Happy Agent X (PID N), which this installation could no longer reach." Anything
-else, or a listener that cannot be identified (Node, Windows), is left running and `start` fails
-at once with exit 69 (`EX_UNAVAILABLE`) and the PID when known. A daemon that finds its socket
-served also exits 69, before touching any state; the supervisor treats 69 as final, and `start`
-looks at the socket once more, since another start may simply have won the race. `status`
-names an unreachable listener, `stop` refuses it, and `kill` falls back to it when `daemon.pid` is
-missing.
+logs which version and PID it stopped; the version comes from the release's install path, because
+running another process's binary to ask is not safe. Anything else, or a listener that cannot be
+identified (Node, Windows), is left running and `start` fails at once with exit 69
+(`EX_UNAVAILABLE`) and the PID when known. A daemon that finds its socket served also exits 69,
+before touching any state; the supervisor treats 69 as final, and `start` looks at the socket once
+more, since another start may simply have won the race.
+
+Recovery lives in `start` alone. `status`, `stop`, and `kill` keep reading `daemon.pid` and the
+token, and a running daemon does not shut itself down when its token file changes: nobody found
+what removed the token, and a healthy daemon ending its own sessions on any token rewrite is a
+worse failure than the one it would prevent. That watcher waits on the
+`worktree/daemon-ownership-watch` branch.

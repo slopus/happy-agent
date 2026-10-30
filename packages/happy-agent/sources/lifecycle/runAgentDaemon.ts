@@ -33,7 +33,7 @@ export async function runAgentDaemon(
     // A daemon that cannot bind the socket must leave the token, database, and runtime settings
     // alone; the bind repeats this check once the runtime is prepared.
     if (await isAgentSocketListening(paths.socketPath).catch(() => false)) {
-        throw socketInUse(new AgentSocketInUseError(paths.socketPath));
+        throw new AgentSocketInUseError(paths.socketPath);
     }
     await syncHappyAgentDocs(paths.happyHome);
     await syncHappyAgentSkills(paths.happyHome);
@@ -56,8 +56,6 @@ export async function runAgentDaemon(
         if (error instanceof HappyAgentNewerDataError) {
             throw new AgentDaemonError(error.message, { cause: error, exitCode: error.exitCode });
         }
-        // So is a socket another process already serves; `start` decides what to do about it.
-        if (error instanceof AgentSocketInUseError) throw socketInUse(error);
         throw error;
     }
     const stop = (signal: "SIGINT" | "SIGTERM") => {
@@ -108,12 +106,4 @@ export async function runAgentDaemon(
         void cleaned.catch(() => undefined);
     }
     return daemon;
-}
-
-function socketInUse(error: AgentSocketInUseError): AgentDaemonError {
-    return new AgentDaemonError(error.message, {
-        cause: error,
-        hint: "Run 'happy-agent start' to replace a Happy Agent that cannot be reached, or 'happy-agent status' to see what is serving it.",
-        exitCode: error.exitCode,
-    });
 }

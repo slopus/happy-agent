@@ -148,13 +148,10 @@ export async function superviseAgentDaemon(
             await dependencies.publish({ phase: "refused", restarts, quickFailures, lastExit });
             return { kind: "refused", lastExit };
         }
-        // Another process serves the socket, so a restart would only fail the same way. When it is
-        // a daemon this installation can use, it needs no supervisor from here; when it is not,
-        // `start` identifies it and reports or replaces it.
+        // Another process serves the socket, so a restart would only fail the same way; `start`
+        // identifies that process and replaces or reports it.
         if (status.code === AGENT_SOCKET_IN_USE_EXIT_CODE && status.signal === null) {
-            dependencies.log(
-                "supervisor: another process already serves the daemon socket; not restarting.",
-            );
+            dependencies.log("supervisor: the daemon socket is already served; not restarting.");
             await dependencies.release();
             return { kind: "socket-in-use", lastExit };
         }

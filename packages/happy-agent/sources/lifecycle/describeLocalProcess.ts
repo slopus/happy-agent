@@ -2,6 +2,8 @@ import { execFile } from "node:child_process";
 import { readFile, readlink } from "node:fs/promises";
 import { promisify } from "node:util";
 
+import type { BunFfi } from "./readSocketPeer.js";
+
 const execFileAsync = promisify(execFile);
 
 /** `happy-agent`, or a build named for its platform such as `happy-agent-darwin-arm64`. */
@@ -9,7 +11,6 @@ const HAPPY_AGENT_EXECUTABLE = /^happy-agent(?:-[a-z0-9._-]+)?(?:\.exe)?$/i;
 
 /** What the operating system says about one running process. */
 export interface LocalProcess {
-    readonly pid: number;
     readonly parentPid: number;
     readonly uid: number;
     /** The absolute path of the executable image. */
@@ -20,55 +21,66 @@ export interface LocalProcess {
 
 /** Reads a live process's owner, parent, executable, and command line; undefined when gone. */
 export async function describeLocalProcess(pid: number): Promise<LocalProcess | undefined> {
-    if (!Number.isSafeInteger(pid) || pid <= 0) return undefined;
     try {
-        if (process.platform === "linux") return await describeLinuxProcess(pid);
-        if (process.platform === "darwin") return await describeDarwinProcess(pid);
+        if (process.platform === "linux") {
+            const directory = `/proc/${String(pid)}`;
+            const [status, executable, commandLine] = await Promise.all([
+                readFile(`${directory}/status`, "utf8"),
+                readlink(`${directory}/exe`),
+                readFile(`${directory}/cmdline`, "utf8"),
+            ]);
+            const uid = /^Uid:\s+(\d+)/m.exec(status)?.[1];
+            const parentPid = /^PPid:\s+(\d+)/m.exec(status)?.[1];
+            if (uid === undefined || parentPid === undefined) return undefined;
+            return {
+                parentPid: Number(parentPid),
+                uid: Number(uid),
+                executable: executable.replace(/ \(deleted\)$/, ""),
+                commandLine: commandLine.split("\0").filter(Boolean).join(" "),
+            };
+        }
+        if (process.platform === "darwin") {
+            const [{ stdout }, executable] = await Promise.all([
+                execFileAsync("/bin/ps", ["-ww", "-p", String(pid), "-o", "uid=,ppid=,args="], {
+                    env: { ...process.env, LC_ALL: "C" },
+                    timeout: 2_000,
+                }),
+                darwinExecutable(pid),
+            ]);
+            const match = /^(\d+)\s+(\d+)\s+(.*)$/.exec(stdout.trim());
+            if (match === null || executable === undefined) return undefined;
+            const [, uid, parentPid, commandLine] = match;
+            return {
+                uid: Number(uid),
+                parentPid: Number(parentPid),
+                executable,
+                commandLine: commandLine!,
+            };
+        }
     } catch {
         return undefined;
     }
     return undefined;
 }
 
-async function describeLinuxProcess(pid: number): Promise<LocalProcess | undefined> {
-    const directory = `/proc/${String(pid)}`;
-    const [status, executable, commandLine] = await Promise.all([
-        readFile(`${directory}/status`, "utf8"),
-        readlink(`${directory}/exe`),
-        readFile(`${directory}/cmdline`, "utf8"),
-    ]);
-    const uid = /^Uid:\s+(\d+)/m.exec(status)?.[1];
-    const parentPid = /^PPid:\s+(\d+)/m.exec(status)?.[1];
-    if (uid === undefined || parentPid === undefined) return undefined;
-    return {
-        pid,
-        parentPid: Number(parentPid),
-        uid: Number(uid),
-        executable: executable.replace(/ \(deleted\)$/, ""),
-        commandLine: commandLine.split("\0").filter(Boolean).join(" "),
-    };
-}
-
-async function describeDarwinProcess(pid: number): Promise<LocalProcess | undefined> {
-    const ps = async (format: string) =>
-        (
-            await execFileAsync("/bin/ps", ["-p", String(pid), "-o", format], {
-                env: { ...process.env, LC_ALL: "C" },
-                timeout: 2_000,
-                maxBuffer: 65_536,
-            })
-        ).stdout.trim();
-    // `comm` is the full executable path only as the last column; ps truncates it elsewhere.
-    const [identity, commandLine] = await Promise.all([ps("uid=,ppid=,comm="), ps("args=")]);
-    const match = /^(\d+)\s+(\d+)\s+(.+)$/.exec(identity);
-    if (match === null) return undefined;
-    return {
-        pid,
-        uid: Number(match[1]),
-        parentPid: Number(match[2]),
-        executable: match[3]!,
-        commandLine,
-    };
+/**
+ * The executable image the kernel loaded, from `proc_pidpath`. `ps` reports only the name the
+ * process was started with, which may be bare, such as `node`.
+ */
+async function darwinExecutable(pid: number): Promise<string | undefined> {
+    if (!("bun" in process.versions)) return undefined;
+    const ffi = (await import("bun:ffi" as string)) as BunFfi;
+    const { i32, u32, ptr } = ffi.FFIType;
+    const library = ffi.dlopen("libSystem.B.dylib", {
+        proc_pidpath: { args: [i32, ptr, u32], returns: i32 },
+    });
+    try {
+        const path = new Uint8Array(4_096);
+        const length = library.symbols.proc_pidpath!(pid, path, path.byteLength);
+        return length > 0 ? Buffer.from(path.subarray(0, length)).toString("utf8") : undefined;
+    } finally {
+        library.close();
+    }
 }
 
 /**
@@ -78,29 +90,18 @@ async function describeDarwinProcess(pid: number): Promise<LocalProcess | undefi
 export function isHappyAgentProcess(
     candidate: Pick<LocalProcess, "executable" | "commandLine">,
 ): boolean {
-    if (HAPPY_AGENT_EXECUTABLE.test(fileName(candidate.executable))) return true;
-    if (!/^(?:node|bun)(?:\.exe)?$/i.test(fileName(candidate.executable))) return false;
-    return /[\\/]happy-agent[\\/](?:dist|sources)[\\/]cli\.(?:js|mjs|ts)(?:\s|$)/.test(
-        candidate.commandLine,
+    const name = candidate.executable.split(/[\\/]/).pop() ?? "";
+    if (HAPPY_AGENT_EXECUTABLE.test(name)) return true;
+    return (
+        /^(?:node|bun)(?:\.exe)?$/i.test(name) &&
+        /[\\/]happy-agent[\\/](?:dist|sources)[\\/]cli\.(?:js|mjs|ts)(?:\s|$)/.test(
+            candidate.commandLine,
+        )
     );
 }
 
-/** The version a standalone Happy Agent executable reports, when it reports one in time. */
-export async function readHappyAgentVersion(executable: string): Promise<string | undefined> {
-    if (!HAPPY_AGENT_EXECUTABLE.test(fileName(executable))) return undefined;
-    try {
-        const { stdout } = await execFileAsync(executable, ["--version"], {
-            timeout: 5_000,
-            maxBuffer: 16_384,
-            windowsHide: true,
-        });
-        return /^Happy Agent (\S+)$/m.exec(stdout)?.[1];
-    } catch {
-        return undefined;
-    }
-}
-
-/** The last path segment, whichever separator the path uses. */
-function fileName(path: string): string {
-    return path.split(/[\\/]/).pop() ?? "";
+/** The version of an installed release, from its `.../dist/version/<version>/happy-agent` path. */
+export function happyAgentVersionFromPath(executable: string): string | undefined {
+    const match = /[\\/]dist[\\/]version[\\/]([^\\/]+)[\\/]([^\\/]+)$/.exec(executable);
+    return match !== null && HAPPY_AGENT_EXECUTABLE.test(match[2]!) ? match[1] : undefined;
 }

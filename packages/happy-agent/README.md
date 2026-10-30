@@ -24,7 +24,7 @@ happy-agent start    # start the daemon when none is running, replacing one that
                      # or one of this user's Happy Agents that it can no longer reach
 happy-agent drain    # signal the local daemon, report progress, and wait without tokens or shutdown
 happy-agent stop     # ask the running daemon to shut down
-happy-agent kill     # immediately kill the daemon recorded in daemon.pid, or the one serving its socket
+happy-agent kill     # immediately kill the daemon recorded in daemon.pid
 happy-agent status   # report whether the daemon is running
 happy-agent reload   # stop the running daemon, then start a fresh one
 happy-agent reload --detach  # return at once; reload after this command exits (for agents)

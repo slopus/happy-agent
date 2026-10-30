@@ -19,8 +19,7 @@ import {
 import { AGENT_SOCKET_IN_USE_EXIT_CODE } from "../socket/AgentSocketInUseError.js";
 import { AgentDaemonError } from "./AgentDaemonError.js";
 import { createUnixSocketFetch } from "./createUnixSocketFetch.js";
-import { decideAgentSocketAction } from "./decideAgentSocketAction.js";
-import { inspectAgentSocket, type AgentSocketListener } from "./inspectAgentSocket.js";
+import { inspectAgentSocket, type AgentSocketDecision } from "./inspectAgentSocket.js";
 import { stopUnreachableAgentDaemon } from "./stopUnreachableAgentDaemon.js";
 import {
     readDaemonToken,
@@ -82,33 +81,29 @@ export async function ensureAgentDaemon(
     for (let attempt = 0; attempt < DAEMON_RESTART_ATTEMPTS; attempt += 1) {
         // Look before writing anything: a start that fails on a busy socket must not leave a
         // fresh token beside a daemon that never knew it.
-        const listener = await inspectAgentSocket(paths);
-        const action = decideAgentSocketAction(listener, paths.socketPath, {
-            pid: process.pid,
-            uid: process.getuid?.(),
-            platform: process.platform,
-        });
-        if (action.kind === "refuse") throw action.error;
-        if (action.kind === "replace") {
+        const decision = await inspectAgentSocket(paths);
+        if (decision.kind === "refuse") throw decision.error;
+        if (decision.kind === "replace") {
+            // One replacement per start: a second unreachable listener means something keeps
+            // starting them, and stopping it again would only fight it.
             if (replacedUnreachable) {
                 throw new AgentDaemonError(
                     `Another Happy Agent that this installation cannot reach started serving ${paths.socketPath}.`,
-                    {
-                        hint: "Run 'happy-agent status' to see what is serving it.",
-                        exitCode: AGENT_SOCKET_IN_USE_EXIT_CODE,
-                    },
+                    { exitCode: AGENT_SOCKET_IN_USE_EXIT_CODE },
                 );
             }
             replacedUnreachable = true;
-            await stopUnreachableAgentDaemon(action, paths.directory);
-            await reportNotice(
-                options,
-                paths,
-                `Stopped Happy Agent ${action.version === undefined ? "" : `${action.version} `}(PID ${String(action.pid)}), which this installation could no longer reach.`,
-            );
+            await stopUnreachableAgentDaemon(decision, paths.directory);
+            const version = decision.version === undefined ? "" : `${decision.version} `;
+            const notice = `Stopped Happy Agent ${version}(PID ${String(decision.pid)}), which this installation could no longer reach.`;
+            options.onNotice?.(notice);
+            // A desktop launch shows no output, so the daemon log keeps what was stopped.
+            await appendFile(paths.logPath, `${new Date().toISOString()} start: ${notice}\n`, {
+                mode: 0o600,
+            }).catch(() => undefined);
             continue;
         }
-        const observed = listener.kind === "authenticated" ? listener : undefined;
+        const observed = decision.kind === "connect" ? decision : undefined;
         if (observed !== undefined && daemonVersionsMatch(currentIdentity, observed.health)) {
             return await connectToObservedDaemon(observed, paths);
         }
@@ -163,20 +158,8 @@ export async function readTokenIfPresent(tokenPath: string): Promise<string | un
     return readDaemonTokenIfPresent(tokenPath);
 }
 
-/** Tells the person, and the daemon log that a desktop launch leaves behind. */
-async function reportNotice(
-    options: EnsureAgentDaemonOptions,
-    paths: HappyDaemonPaths,
-    message: string,
-): Promise<void> {
-    options.onNotice?.(message);
-    await appendFile(paths.logPath, `${new Date().toISOString()} start: ${message}\n`, {
-        mode: 0o600,
-    }).catch(() => undefined);
-}
-
 async function connectToObservedDaemon(
-    observed: Extract<AgentSocketListener, { kind: "authenticated" }>,
+    observed: Extract<AgentSocketDecision, { kind: "connect" }>,
     paths: HappyDaemonPaths,
 ): Promise<AgentDaemonConnection> {
     await resolveReadyHealth(observed.client, observed.health);
@@ -364,10 +347,7 @@ export async function superviseSpawnedDaemon<Result>(
                     reject(
                         new AgentDaemonError(
                             "The local daemon could not start because another process already serves its socket.",
-                            {
-                                hint: "Run 'happy-agent status' to see what is serving it.",
-                                exitCode: AGENT_SOCKET_IN_USE_EXIT_CODE,
-                            },
+                            { exitCode: AGENT_SOCKET_IN_USE_EXIT_CODE },
                         ),
                     );
                     return;

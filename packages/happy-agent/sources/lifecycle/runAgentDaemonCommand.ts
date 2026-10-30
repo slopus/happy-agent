@@ -2,18 +2,7 @@ import { HappyAgentClient, type HealthResponse } from "@slopus/happy-agent-clien
 
 import { AgentDaemonError } from "./AgentDaemonError.js";
 import { assertReloadCallerOutsideDaemon } from "./assertReloadCallerOutsideDaemon.js";
-import { isAgentSocketListening } from "../socket/agentSocketPaths.js";
 import { createUnixSocketFetch } from "./createUnixSocketFetch.js";
-import {
-    decideListenerReplacement,
-    type AgentSocketActionSelf,
-} from "./decideAgentSocketAction.js";
-import {
-    describeAgentSocketListener,
-    identifyAgentSocketListener,
-    inspectAgentSocket,
-} from "./inspectAgentSocket.js";
-import { stopUnreachableAgentDaemon } from "./stopUnreachableAgentDaemon.js";
 import { isDaemonProcessRunning, killDaemonFromPidFile, readDaemonPid } from "./daemonPid.js";
 import { consumeDaemonStopIntent, recordDaemonStopIntent } from "./daemonStopIntent.js";
 import { describeDaemonSupervisor, standDownDaemonSupervisor } from "./daemonSupervisorControl.js";
@@ -108,14 +97,11 @@ export async function runAgentDaemonCommand(
             // The supervisor was already stood down; the record has nothing left to explain.
             await consumeDaemonStopIntent(paths.directory, recordedPid);
         }
-        // Without a live recorded daemon, kill whichever Happy Agent of this user serves the
-        // socket, such as an older daemon whose PID file is gone.
-        const killedPid = result.killed ? result.pid : await killAgentSocketListener(paths);
-        if (killedPid === undefined) {
+        if (!result.killed) {
             log("Daemon is not running.");
             return;
         }
-        log(`Daemon process ${String(killedPid)} was killed.`);
+        log(`Daemon process ${String(result.pid)} was killed.`);
         return;
     }
 
@@ -178,11 +164,7 @@ export async function runAgentDaemonCommand(
     if (command === "status") {
         const pid = await readDaemonPid(paths.pidPath);
         if (connection === undefined) {
-            const unreachable = await describeUnreachableListener(paths, "start");
-            if (unreachable !== undefined) {
-                log(unreachable.message);
-                log(unreachable.hint);
-            } else if (pid !== undefined && (await isDaemonProcessRunning(pid))) {
+            if (pid !== undefined && (await isDaemonProcessRunning(pid))) {
                 log(`Daemon process ${String(pid)} is running but not responding.`);
             } else {
                 log("Daemon is not running.");
@@ -214,10 +196,6 @@ export async function runAgentDaemonCommand(
 
     if (connection === undefined) {
         await assertNoUnresponsiveDaemon(paths.pidPath);
-        const unreachable = await describeUnreachableListener(paths, "kill");
-        if (unreachable !== undefined) {
-            throw new AgentDaemonError(unreachable.message, { hint: unreachable.hint });
-        }
         // A daemon down between crash restarts stays down once stopped.
         await standDownDaemonSupervisor(paths.directory);
         log("Daemon is not running.");
@@ -250,48 +228,6 @@ async function recordStopIntentForRecordedDaemon(
     } catch {
         // Without the record a crash during the drain is judged by its exit status alone.
     }
-}
-
-const self = (): AgentSocketActionSelf => ({
-    pid: process.pid,
-    uid: process.getuid?.(),
-    platform: process.platform,
-});
-
-/**
- * A listener on the socket that this installation cannot authenticate with, explained with what
- * to do about it; undefined when there is none.
- */
-async function describeUnreachableListener(
-    paths: ReturnType<typeof getHappyDaemonPaths>,
-    remedy: "start" | "kill",
-): Promise<{ readonly message: string; readonly hint: string } | undefined> {
-    const listener = await inspectAgentSocket(paths);
-    if (listener.kind !== "unauthenticated") return undefined;
-    const message = `Daemon socket ${paths.socketPath} is served by ${describeAgentSocketListener(listener.identity)}, which this installation cannot authenticate with.`;
-    const replacement = decideListenerReplacement(listener.identity, paths.socketPath, self());
-    if (replacement.kind === "refuse") {
-        return { message, hint: replacement.error.hint ?? "Stop it, then try again." };
-    }
-    return {
-        message,
-        hint:
-            remedy === "start"
-                ? "Run 'happy-agent start' to replace it."
-                : "Run 'happy-agent kill' to stop it, or 'happy-agent start' to replace it.",
-    };
-}
-
-/** Kills the Happy Agent of this user that serves the socket, returning its PID. */
-async function killAgentSocketListener(
-    paths: ReturnType<typeof getHappyDaemonPaths>,
-): Promise<number | undefined> {
-    if (!(await isAgentSocketListening(paths.socketPath).catch(() => false))) return undefined;
-    const identity = await identifyAgentSocketListener(paths.socketPath);
-    const replacement = decideListenerReplacement(identity, paths.socketPath, self());
-    if (replacement.kind === "refuse") throw replacement.error;
-    await stopUnreachableAgentDaemon(replacement, paths.directory, { force: true });
-    return replacement.pid;
 }
 
 async function assertNoUnresponsiveDaemon(pidPath: string): Promise<void> {
