@@ -121,7 +121,7 @@ describe("artifacts published by agents", () => {
             updatedBy: { kind: "agent", agentId, botId: null },
         });
         expect(created.text).toContain(
-            `Reference it in chat as <happy-artifact id="${artifact.id}"/>.`,
+            `Mention it in chat as [Q3 revenue report](happy://artifacts/${artifact.id}).`,
         );
         const updated = await call(agentId, "update_artifact", {
             artifactId: artifact.id,
@@ -129,7 +129,7 @@ describe("artifacts published by agents", () => {
             major: 2,
         });
         expect(updated.text).toContain(`Artifact ${artifact.id} is now at version 5 (2.0)`);
-        expect(updated.text).toContain(`<happy-artifact id="${artifact.id}" version="5"/>`);
+        expect(updated.text).toContain(`](happy://artifacts/${artifact.id}?version=5)`);
 
         // The agent reads what it published back.
         const read = await call(agentId, "read_artifact", { artifactId: artifact.id });

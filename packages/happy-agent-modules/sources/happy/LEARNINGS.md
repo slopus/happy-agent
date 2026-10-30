@@ -43,29 +43,30 @@ failure notice under the same identity. The full content remains in local Histor
 events keep syncing. An optional relay projection must not permanently stall a session behind
 one message it cannot carry.
 
-## Reference tags and file links become plain text on the phone
+## Happy links become plain text on the phone
 
-Agents now mention artifacts, conversations, workspaces, projects, and Surfaces as
-`<happy-KIND id="…"/>` tags. The phone cannot render them, and API.md requires every integration to get plain Markdown,
-never a raw tag. The mapper stays synchronous and knows nothing of catalogs. After it runs, the
+Agents mention artifacts, conversations, workspaces, projects, Surfaces, and people with Happy
+links, `[label](happy://…)`, and older history holds `<happy-KIND id="…"/>` tags. The phone can
+open neither, and API.md requires every integration to get plain Markdown, never a raw link URL
+or tag. The mapper stays synchronous and knows nothing of catalogs. After it runs, the
 connection rewrites only agent-role text, service notices, and tool-call descriptions with the client package's own
 fallback renderer, resolving each distinct reference once and in order, inside the event's
 transaction. The module takes the artifacts, tasks, and Surfaces modules for this; bots,
 projects, workspaces, and the agent collection were already at hand. A Surface has no route of
 its own, so `SurfacesModule.get` reads it from the catalog and answers nothing for an unknown or
-withdrawn one. An inert reference, or a lookup
-that throws, becomes the placeholder, because naming optional context must never stall the
-outbox. History keeps the tags, so a later client still renders them as links.
+withdrawn one. An inert reference, or a lookup that throws, becomes the label the agent wrote, or
+the placeholder when the label is empty, because naming optional context must never stall the
+outbox. History keeps the text as written, so a later client still renders the links.
 
 The phone shows no page, artifact, or presented file, so the row of the call that showed one is
 all a person reading along there learns of it. Those rows say what was shown: the mapper writes
-an artifact as its reference tag in the tool-call description, and the same pass names it, as
-plain words rather than Markdown, because a description is not Markdown.
+an artifact as an empty-label Happy link in the tool-call description, and the same pass names
+it, as plain words rather than Markdown, because a description is not Markdown.
 
-File links, `[label](happy-file://…)`, get the same treatment for the same reason: the phone cannot
-open another workspace's file, and a raw `happy-file` URL means nothing there. The client
-package's `renderHappyFileLinksAsText` replaces each link with its label in the same agent text and
-service notices, before tags are named. It needs no lookup, so it can never stall the outbox.
+File links, `[label](happy://…/files/…)` or `[label](happy-file://…)`, get the same treatment for
+the same reason: the phone cannot open another workspace's file, and a raw URL means nothing
+there. The client package's `renderHappyLinksAsText` replaces each with its label in the same
+pass that names entities. A file link needs no lookup, so it can never stall the outbox.
 
 Media layout blocks, the HTML an agent writes in its reply to arrange images it already showed,
 are dropped from agent text in the same pass with the client package's `stripMediaLayoutBlocks`.

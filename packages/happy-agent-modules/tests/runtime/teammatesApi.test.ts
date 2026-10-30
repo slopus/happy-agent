@@ -114,7 +114,7 @@ describe("telling a teammate about a task", () => {
         const tools = await hooks.tools!(ctx, scope(task.agentId));
         expect(tools.map((tool) => tool.name)).toEqual(["list_teammates", "notify_teammate"]);
         expect(await hooks.instructions!(ctx, scope(task.agentId))).toContain(
-            '<happy-user id="…"/>',
+            "[their name](happy://users/<userId>)",
         );
         const notify = tools.find((tool) => tool.name === "notify_teammate")!;
         expect(notify.shouldReviewInAutoMode?.({} as never, {} as never)).toBe(false);
@@ -127,7 +127,7 @@ describe("telling a teammate about a task", () => {
             userId: steve!.id,
             name: "Steve",
             delivered: false,
-            mention: `<happy-user id="${steve!.id}"/>`,
+            mention: `[${steve!.name}](happy://users/${steve!.id})`,
         });
 
         // With it, his Focus hears the mention, his role and what he follows; still nothing joins.

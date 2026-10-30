@@ -11,7 +11,7 @@ import {
     type AgentSystemRef,
 } from "@slopus/happy-agent-base";
 import { Value } from "@sinclair/typebox/value";
-import { parseHappyFileLink } from "@slopus/happy-agent-client";
+import { parseHappyUrl } from "@slopus/happy-agent-client";
 import { createRootContext, type Context } from "@steve.kite/stdlib";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -1357,7 +1357,7 @@ describe("collaboration", () => {
 
         expect(instructions.split("\n")).toEqual([
             "Your Agent ID is parent.",
-            expect.stringContaining("happy-file://agents/parent/"),
+            expect.stringContaining("happy://agents/parent/files/"),
             "Collaborators you created: sibling, child. Each reports back on its own when it finishes; nothing waits for them.",
         ]);
     });
@@ -1378,20 +1378,25 @@ describe("collaboration", () => {
         const instructions = await hooks.instructions!(ctx, { agent: { id: "a1b2" } } as never);
 
         expect(instructions).toContain(
-            "link it as [Foo.tsx:42](happy-file://agents/a1b2/<path from your workspace root>#L42-L50)",
+            "link it as [Foo.tsx:42](happy://agents/a1b2/files/<path from your workspace root>#L42-L50)",
         );
-        expect(instructions).toContain("Copy happy-file links you receive unchanged.");
+        expect(instructions).toContain(
+            "Copy happy:// and happy-file:// links you receive unchanged.",
+        );
         expect(instructions).toContain("Otherwise keep writing path:line.");
         // The example the model copies, with its path filled in, is a link the shared parser accepts.
-        const example = /\(happy-file:\/\/[^)]*\)/.exec(instructions)?.[0].slice(1, -1) ?? "";
+        const example = /\(happy:\/\/[^)]*\)/.exec(instructions)?.[0].slice(1, -1) ?? "";
         expect(
-            parseHappyFileLink(
+            parseHappyUrl(
                 example.replace("<path from your workspace root>", "packages/app/Foo.tsx"),
             ),
         ).toEqual({
-            target: { type: "agent", agentId: "a1b2" },
-            path: "packages/app/Foo.tsx",
-            lines: { start: 42, end: 50 },
+            type: "file",
+            file: {
+                target: { type: "agent", agentId: "a1b2" },
+                path: "packages/app/Foo.tsx",
+                lines: { start: 42, end: 50 },
+            },
         });
     });
 

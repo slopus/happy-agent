@@ -164,9 +164,9 @@ class TaskAgents {
 }
 
 const TASK_REFERENCE_INSTRUCTIONS =
-    'When you mention a task in a reply, write <happy-agent id="…"/> with the task\'s agent ID, not its task ID; people see its live name as a link. The task tools give you the exact tag.';
+    "When you mention a task in a reply, link it as [its name](happy://agents/<agentId>) with the task's agent ID, not its task ID; people see its live name as the link text. The task tools give you the exact link.";
 const BOT_REFERENCE_INSTRUCTIONS =
-    'When you mention a bot in a reply, write <happy-agent id="…"/> with the bot\'s agent ID, not its bot ID; people see its live name as a link. The bot tools give you the exact tag.';
+    "When you mention a bot in a reply, link it as [its name](happy://agents/<agentId>) with the bot's agent ID, not its bot ID; people see its live name as the link text. The bot tools give you the exact link.";
 
 describe("TasksModule", () => {
     it("lets a bot create a task owned by its current team sender, in a dedicated folder", async () => {
@@ -436,7 +436,7 @@ describe("TasksModule", () => {
             expect(page.tasks[0]?.owner).toBe(`user ID \`${OWNER}\``);
             const text = JSON.stringify(list.toLLM(page as never));
             expect(text).toContain(`First — id ${first.id}, owner user ID`);
-            expect(text).toContain(`mention it as <happy-agent id=\\"${first.agentId}\\"/>`);
+            expect(text).toContain(`mention it as [First](happy://agents/${first.agentId})`);
             expect(text).toContain("continue with offset 1");
 
             const archived = (await list.execute(

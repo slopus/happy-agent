@@ -150,9 +150,9 @@ The tools exist only when both are true:
 
 When the tools are absent, a model has no project tools at all rather than a tool
 that fails when it is called. When they are present, the agent is also told to
-mention a project as `<happy-project id="…"/>`, and `create_project` and
-`clone_project` return that exact tag; clients show the project's live name as a
-link in its place.
+mention a project as `[name](happy://projects/<projectId>)`, and
+`create_project` and `clone_project` return that exact link; clients show the
+project's live name as the link text.
 
 ## Public API
 

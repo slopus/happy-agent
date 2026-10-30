@@ -162,7 +162,7 @@ export type ProjectCompute =
 const PRODUCT = computePermissions("full_access");
 /** How an agent offered the project tools mentions one, so people see its live name as a link. */
 const PROJECT_REFERENCE_INSTRUCTIONS =
-    'When you mention a project in a reply, write <happy-project id="…"/> with its project ID; people see its live name as a link.';
+    "When you mention a project in a reply, link it as [its name](happy://projects/<projectId>); people see its live name as the link text.";
 
 /** How many projects one page may carry, and how much text a page may spend on them. */
 export const PROJECT_PAGE_SIZE = 50;

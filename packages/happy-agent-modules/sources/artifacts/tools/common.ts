@@ -16,11 +16,11 @@ export const ARTIFACT_TOOL_CAPABILITY =
     "Publish Markdown documents and HTML pages with their images and other files, images, image series, videos, and documents as versioned artifacts, and list, read, update, and delete them.";
 
 /**
- * How a model mentions an artifact in a reply. Clients replace the tag with the artifact's live
- * title as a link, and surfaces that cannot show links get the title as plain text.
+ * How a model mentions an artifact in a reply. Clients show the link with the artifact's live
+ * title, and surfaces that cannot show links get the title as plain text.
  */
 export const ARTIFACT_REFERENCE_INSTRUCTIONS =
-    'When you mention an artifact in a reply, write its reference tag inline, such as <happy-artifact id="…"/> with the artifact\'s ID; add version="N" to point at one version. The artifact tools give you the exact tag. People see the artifact\'s current title as a link in its place, so do not repeat the title beside the tag or link the artifact yourself. A tag inside code stays literal.';
+    "When you mention an artifact in a reply, link it as [its title](happy://artifacts/<artifactId>); add ?version=N to point at one version. The artifact tools give you the exact link. People see the artifact's current title as the link text, so do not repeat the title beside the link. A link inside code stays literal.";
 
 /** How every writing tool describes `background`, which almost every artifact leaves out. */
 const ARTIFACT_BACKGROUND_DESCRIPTION =

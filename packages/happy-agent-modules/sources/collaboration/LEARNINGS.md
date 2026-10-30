@@ -105,8 +105,10 @@ asynchronous because the answer depends on the agent's bot.
 A subtask's report named files as `path:line`, and a parent relaying it showed paths that resolved
 against the parent's workspace, so they could not be opened. Agents are now told, next to their
 Agent ID, to write a file that will be read outside their own chat as
-`[name:line](happy-file://agents/<own ID>/<path>#L…)`, to use another agent's or a workspace's ID
-for files elsewhere, and to copy received links unchanged. Plain `path:line` remains the default
+`[name:line](happy://agents/<own ID>/files/<path>#L…)`, to use another agent's or a workspace's
+ID for files elsewhere, and to copy received links unchanged. Steve chose `happy://` for links
+agents write in Markdown, and kept `happy-file://` as the API's form; both stay valid, so a
+`happy-file` link an agent receives is copied as it is. Plain `path:line` remains the default
 inside the agent's own chat. The guidance lives here because the Agent ID it builds on does.
 
 ## A message carries the mutation its sending run answers

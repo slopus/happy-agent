@@ -85,7 +85,7 @@ export function listArtifactsTool(artifacts: ArtifactsModule, agentId: string) {
                         : [
                               ...(here === undefined ? [] : [`Artifacts made in ${here}:`]),
                               ...listed.map(formatArtifactLine),
-                              `Reference an artifact in chat by putting its ID in <happy-artifact id="..."/>.`,
+                              "Mention an artifact in chat as [its title](happy://artifacts/<artifactId>).",
                               ...(nextCursor === undefined
                                   ? []
                                   : [`More artifacts follow; pass cursor "${nextCursor}".`]),

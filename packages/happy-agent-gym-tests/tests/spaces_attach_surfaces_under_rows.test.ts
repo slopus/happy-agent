@@ -62,7 +62,7 @@ it("lets new work make a todo list that appears under its own row, and lifts it 
         );
         expect(made.text).toContain('Attached "Release checklist"');
         const surfaceId = /Surface ([a-z0-9]{24}) \(todo\)/.exec(made.text)![1]!;
-        expect(made.text).toContain(`<happy-surface id="${surfaceId}"/>`);
+        expect(made.text).toContain(`[Release checklist](happy://surfaces/${surfaceId})`);
         const todoRow = await surfaceRow(h, surfaceId);
         const attached = await h.read();
         // Under the row, expanded, and nowhere else, though the list is still empty.

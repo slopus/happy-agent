@@ -1,6 +1,5 @@
 import { agentPermissionMode, cuid2Schema, defineAgentTool } from "@slopus/happy-agent-base";
 import { Type, type Static } from "@sinclair/typebox";
-import { formatHappyReferenceTag } from "@slopus/happy-agent-client";
 
 import type { ComputeModule } from "../../compute/index.js";
 import {
@@ -16,7 +15,11 @@ import {
     requireWritableArtifact,
     shouldReviewArtifactWrite,
 } from "../impl/artifactWriteAccess.js";
-import { formatArtifactBackground, formatArtifactVersion } from "../impl/formatArtifact.js";
+import {
+    formatArtifactBackground,
+    formatArtifactLink,
+    formatArtifactVersion,
+} from "../impl/formatArtifact.js";
 import { normalizeArtifactUrl, requireFileArtifact } from "../impl/liveArtifact.js";
 import { quoteVisibleExact } from "../../impl/quoteVisibleExact.js";
 import {
@@ -200,7 +203,7 @@ export function updateArtifactTool(
                         : [
                               `Live content: ${JSON.stringify(artifact.live.url)}, through the original network ${JSON.stringify(artifact.live.networkId)}.`,
                           ]),
-                    `Reference it in chat as ${formatHappyReferenceTag({ kind: "artifact", id: artifact.id })}, or as ${formatHappyReferenceTag({ kind: "artifact", id: artifact.id, version: artifact.latestVersion })} for this version only.`,
+                    `Mention it in chat as ${formatArtifactLink(artifact.id, artifact.title)}, or as ${formatArtifactLink(artifact.id, artifact.title, artifact.latestVersion)} for this version only.`,
                 ].join(" "),
             },
         ],

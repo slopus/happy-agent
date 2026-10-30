@@ -126,10 +126,11 @@ the place it works in, found by `actorFor`.
 | `read_artifact_file`  | One file by path: text as numbered lines, 2,000 at a time from `offset`; raster images shown to the model scaled to 2,048 pixels; other binary files described only. | Never.                                                                                            | Reloadable.                                         |
 | `delete_artifact`     | Leaves a tombstone for everyone.                                                                                                                                     | Always, because deletion is final.                                                                | Durable and transactional.                          |
 
-Agents mention an artifact in their replies by its reference tag, `<happy-artifact id="…"/>`, with
-`version="N"` to point at one version. The module's instructions tell every agent so, and
-`create_artifact`, `update_artifact`, `read_artifact`, and `list_artifacts` hand back the exact tag.
-Clients show the artifact's live title as a link in its place (API.md, "Reference tags").
+Agents mention an artifact in their replies with a Happy link,
+`[title](happy://artifacts/<artifactId>)`, adding `?version=N` to point at one version. The
+module's instructions tell every agent so, and `create_artifact`, `update_artifact`,
+`read_artifact`, and `list_artifacts` hand back the exact link. Clients show the artifact's live
+title as the link text (API.md, "Happy links").
 
 A successful `create_artifact` or `update_artifact` result also carries an `artifact` presentation
 — the artifact's ID, type, title, and the version the call made — which History records with the

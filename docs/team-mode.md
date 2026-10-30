@@ -420,7 +420,7 @@ member's own task reads, joined lists, desktop bootstrap, and `task.joined` /
 `task.membership.updated` events, on every connection that member uses, the paired phone included.
 `POST /v0/tasks/:taskId/read` or `POST /v0/agents/:taskAgentId/read` clears it.
 
-Agents mention people as `<happy-user id="…"/>` with the Happy user ID. Clients resolve the name
+Agents mention people as `[name](happy://users/<userId>)` with the Happy user ID. Clients resolve the name
 with `GET /v0/users?ids=`.
 
 ## Shared profile updates

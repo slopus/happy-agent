@@ -2,7 +2,7 @@ import { createId } from "@paralleldrive/cuid2";
 import {
     botNameSchema,
     botUsernameSchema,
-    formatHappyReferenceTag,
+    formatHappyMarkdownLink,
 } from "@slopus/happy-agent-client";
 import { Type, type Static } from "@sinclair/typebox";
 import { defineAgentTool } from "@slopus/happy-agent-base";
@@ -48,7 +48,7 @@ export function createBotTool(bots: BotsModule, actingAgentId: string) {
         toLLM: (bot) => [
             {
                 type: "text",
-                text: `Bot created: ${bot.name} — id ${bot.id}, username ${bot.username}, folder ${bot.path}. Send it a message with send_bot_message. Mention it in chat as ${formatHappyReferenceTag({ kind: "agent", id: bot.agentId })}.`,
+                text: `Bot created: ${bot.name} — id ${bot.id}, username ${bot.username}, folder ${bot.path}. Send it a message with send_bot_message. Mention it in chat as ${formatHappyMarkdownLink({ type: "reference", reference: { kind: "agent", id: bot.agentId } }, bot.name)}.`,
             },
         ],
     });

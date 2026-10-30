@@ -73,7 +73,7 @@ describe("project creation tools", () => {
         expect(createProjectTool(projects).toLLM!(first)).toEqual([
             expect.objectContaining({
                 text: expect.stringContaining(
-                    `Project registered. Mention it in chat as <happy-project id="${first.id}"/>.`,
+                    `Project registered. Mention it in chat as [${first.name}](happy://projects/${first.id}).`,
                 ),
             }),
         ]);
@@ -113,7 +113,7 @@ describe("project creation tools", () => {
         ]);
         expect(cloneProjectTool(projects).toLLM!(first)).toEqual([
             expect.objectContaining({
-                text: expect.stringContaining(`<happy-project id="${first.id}"/>`),
+                text: expect.stringContaining(`](happy://projects/${first.id}).`),
             }),
         ]);
     });

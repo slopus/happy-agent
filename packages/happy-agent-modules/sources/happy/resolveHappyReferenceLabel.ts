@@ -22,10 +22,11 @@ export interface HappyReferenceCatalogs {
 }
 
 /**
- * The words the phone shows in place of a reference tag: the entity's current name, the same
- * label a client would put on its link. Nothing when the reference would render inert — an
+ * The words the phone shows in place of an entity link: the entity's current name, the same
+ * title a client would put on its link. Nothing when the reference would render inert — an
  * unknown kind, or an entity that is gone, deleted, or archived — so the caller shows the
- * shared placeholder instead. Services stay unresolved until clients render them.
+ * label the agent wrote, or the shared placeholder, instead. Services stay unresolved until
+ * clients render them.
  */
 export async function resolveHappyReferenceLabel(
     ctx: Context,

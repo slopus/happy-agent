@@ -90,8 +90,10 @@ describe("Surface chat prompt", () => {
 });
 
 describe("Surface reference instructions", () => {
-    it("tell agents to mention a Surface by tag, with the ID its tools take", () => {
-        expect(SURFACE_REFERENCE_INSTRUCTIONS).toContain('<happy-surface id="…"/>');
+    it("tell agents to mention a Surface by link, with the ID its tools take", () => {
+        expect(SURFACE_REFERENCE_INSTRUCTIONS).toContain(
+            "[its name](happy://surfaces/<surfaceId>)",
+        );
         expect(SURFACE_REFERENCE_INSTRUCTIONS).toContain("surfaceId");
         const names = new Set(
             surfaceTools({} as never, { agent: { id: "any" } } as never, false).map(

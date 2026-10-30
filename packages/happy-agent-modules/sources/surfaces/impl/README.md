@@ -7,4 +7,4 @@ the shared image-normalization function beside the other image utilities, not a 
 calls that read its current state, and how the chat works on it.
 
 `SURFACE_REFERENCE_INSTRUCTIONS` goes to every agent: it mentions a Surface as
-`<happy-surface id="…"/>`, whose ID is the `surfaceId` the Surface tools take.
+`[name](happy://surfaces/<surfaceId>)`, whose ID is the `surfaceId` the Surface tools take.

@@ -70,15 +70,17 @@ Pages reach it at `/api/*`, so `create_artifact` and `update_artifact` tell agen
 artifact apps recipe and to put no files under `api/`. Publishing such files stays allowed, so
 existing clients keep working.
 
-## Agents mention artifacts by tag, never by title
+## Agents mention artifacts by Happy link, and clients show the live title
 
 Kirill wanted artifacts mentioned in chat to open as live links, after ChatGPT's entity
-components. An agent writes `<happy-artifact id="…"/>` inline and never the title, because a
-title the model wrote goes stale when the artifact is renamed. Clients look up the live title and
-render a link. Surfaces that cannot do that get the title as plain text. The tools return the exact
-tag, and the module adds a short instruction, because the artifact tools are deferred and an agent
-may mention an artifact without loading them. Tags are written with the client's
-`formatHappyReferenceTag`, so this module never repeats the grammar.
+components. Steve then asked for ordinary Markdown links instead of custom `<happy-artifact/>`
+tags, so any Markdown renderer parses them. An agent writes `[title](happy://artifacts/<id>)`;
+the title it writes is only a fallback, because it goes stale when the artifact is renamed, so
+clients look up the live title and show that. Surfaces that cannot do that get the title as plain
+text. The tools return the exact link, and the module adds a short instruction, because the
+artifact tools are deferred and an agent may mention an artifact without loading them. Links are
+written with the client's `formatHappyMarkdownLink`, through `formatArtifactLink`, so this module
+never repeats the grammar.
 
 ## Writing calls show a card in the chat
 

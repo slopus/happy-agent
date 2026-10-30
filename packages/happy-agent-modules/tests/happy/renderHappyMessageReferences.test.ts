@@ -23,7 +23,34 @@ function textOf(rendered: readonly HappySessionProtocolMessage[]): string[] {
 }
 
 describe("renderHappyMessageReferences", () => {
-    it("names each tag in the agent's words once, and leaves everything else as written", async () => {
+    it("names each entity link by its live name, else its label, else the placeholder", async () => {
+        const asked: string[] = [];
+        const rendered = await renderHappyMessageReferences(
+            [
+                message("agent", {
+                    t: "text",
+                    text: "See [old title](happy://artifacts/known), [](happy://artifacts/known), [Kept *label*](happy://agents/gone), and [](happy://agents/gone).",
+                }),
+                message("agent", { t: "text", text: "Open [the app](happy://session/x)." }),
+                message("agent", { t: "text", text: "Code: `[x](happy://artifacts/known)`" }),
+                message("user", { t: "text", text: "[x](happy://artifacts/known)" }),
+            ],
+            async (reference) => {
+                asked.push(reference.id);
+                return reference.id === "known" ? "Q3 [draft]" : undefined;
+            },
+        );
+
+        expect(textOf(rendered)).toEqual([
+            "See Q3 \\[draft\\], Q3 \\[draft\\], Kept *label*, and an unavailable agent.",
+            "Open the app.",
+            "Code: `[x](happy://artifacts/known)`",
+            "[x](happy://artifacts/known)",
+        ]);
+        expect(asked).toEqual(["known", "gone"]);
+    });
+
+    it("names each legacy tag in the agent's words once, and leaves everything else as written", async () => {
         const asked: string[] = [];
         const label = async (reference: HappyReference) => {
             asked.push(reference.id);
@@ -71,9 +98,10 @@ describe("renderHappyMessageReferences", () => {
         const untouched = start("c3", "Listing artifacts");
         const rendered = await renderHappyMessageReferences(
             [
-                start("c1", 'Updating <happy-artifact id="known"/>'),
-                message("agent", { t: "text", text: 'Done: <happy-artifact id="known"/>.' }),
-                start("c2", 'Deleting <happy-artifact id="gone"/>'),
+                start("c1", "Updating [](happy://artifacts/known)"),
+                message("agent", { t: "text", text: "Done: [Q3](happy://artifacts/known)." }),
+                start("c2", "Deleting [](happy://artifacts/gone)"),
+                start("c4", 'Reading <happy-artifact id="gone"/>'),
                 untouched,
             ],
             async (reference) => {
@@ -90,38 +118,44 @@ describe("renderHappyMessageReferences", () => {
             "Updating Q3 [draft]",
             "Done: Q3 \\[draft\\].",
             "Deleting an unavailable artifact",
+            "Reading an unavailable artifact",
             "Listing artifacts",
         ]);
-        expect(rendered[3]).toBe(untouched);
+        expect(rendered[4]).toBe(untouched);
         expect(asked).toEqual(["known", "gone"]);
     });
 
-    it("turns the agent's file links into their labels, alongside its tags", async () => {
-        const link = "happy-file://agents/a1b2/packages/app/Foo.tsx#L42";
-        const original = message("agent", { t: "text", text: "Nothing to rewrite." });
-        const rendered = await renderHappyMessageReferences(
-            [
-                message("agent", {
-                    t: "text",
-                    text: `See [Foo.tsx:42](${link}) in <happy-agent id="known"/>.`,
-                }),
-                message("agent", { t: "service", text: `Report: [\`a.ts\`](${link})` }),
-                message("agent", { t: "text", text: `Code: \`[Foo](${link})\`` }),
-                message("user", { t: "text", text: `[Foo](${link})` }),
-                original,
-            ],
-            async () => "Fix login",
-        );
+    it.each([
+        ["happy://", "happy://agents/a1b2/files/packages/app/Foo.tsx#L42"],
+        ["happy-file://", "happy-file://agents/a1b2/packages/app/Foo.tsx#L42"],
+    ])(
+        "turns the agent's %s file links into their labels, alongside its tags",
+        async (_scheme, link) => {
+            const original = message("agent", { t: "text", text: "Nothing to rewrite." });
+            const rendered = await renderHappyMessageReferences(
+                [
+                    message("agent", {
+                        t: "text",
+                        text: `See [Foo.tsx:42](${link}) in <happy-agent id="known"/>.`,
+                    }),
+                    message("agent", { t: "service", text: `Report: [\`a.ts\`](${link})` }),
+                    message("agent", { t: "text", text: `Code: \`[Foo](${link})\`` }),
+                    message("user", { t: "text", text: `[Foo](${link})` }),
+                    original,
+                ],
+                async () => "Fix login",
+            );
 
-        expect(textOf(rendered)).toEqual([
-            "See Foo.tsx:42 in Fix login.",
-            "Report: `a.ts`",
-            `Code: \`[Foo](${link})\``,
-            `[Foo](${link})`,
-            "Nothing to rewrite.",
-        ]);
-        expect(rendered[4]).toBe(original);
-    });
+            expect(textOf(rendered)).toEqual([
+                "See Foo.tsx:42 in Fix login.",
+                "Report: `a.ts`",
+                `Code: \`[Foo](${link})\``,
+                `[Foo](${link})`,
+                "Nothing to rewrite.",
+            ]);
+            expect(rendered[4]).toBe(original);
+        },
+    );
 });
 
 describe("resolveHappyReferenceLabel", () => {
@@ -198,7 +232,6 @@ describe("resolveHappyReferenceLabel", () => {
             [{ kind: "service", id: "rig" }, undefined],
             [{ kind: "surface", id: "groceries" }, "Groceries"],
             [{ kind: "surface", id: "missing" }, undefined],
-            [{ kind: "future", id: "rig" }, undefined],
         ];
         for (const [reference, expected] of cases) {
             expect([reference, await label(reference)]).toEqual([reference, expected]);

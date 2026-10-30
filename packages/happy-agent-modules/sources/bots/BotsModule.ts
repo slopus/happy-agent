@@ -100,7 +100,7 @@ const namingArgumentsSchema = Type.Object({
 const PRODUCT = computePermissions("full_access");
 /** How an agent offered the bot tools mentions a bot, so people see its live name as a link. */
 const BOT_REFERENCE_INSTRUCTIONS =
-    'When you mention a bot in a reply, write <happy-agent id="…"/> with the bot\'s agent ID, not its bot ID; people see its live name as a link. The bot tools give you the exact tag.';
+    "When you mention a bot in a reply, link it as [its name](happy://agents/<agentId>) with the bot's agent ID, not its bot ID; people see its live name as the link text. The bot tools give you the exact link.";
 
 export class BotsModule implements AgentModule {
     readonly name = "bots";

@@ -516,7 +516,7 @@ export class CollaborationModule implements AgentModule {
             ]);
             const lines: string[] = [
                 `Your Agent ID is ${scope.agent.id}.`,
-                `When a file you mention will be read outside your own chat (a message to another agent, a report to your creator, or files from another agent's workspace), link it as [Foo.tsx:42](happy-file://agents/${scope.agent.id}/<path from your workspace root>#L42-L50), percent-encoding spaces and other special characters. For a file elsewhere, use its agent's ID, or happy-file://workspaces/<workspace ID>/<path>. Copy happy-file links you receive unchanged. Otherwise keep writing path:line.`,
+                `When a file you mention will be read outside your own chat (a message to another agent, a report to your creator, or files from another agent's workspace), link it as [Foo.tsx:42](happy://agents/${scope.agent.id}/files/<path from your workspace root>#L42-L50), percent-encoding spaces and other special characters. For a file elsewhere, use its agent's ID, or happy://workspaces/<workspace ID>/files/<path>. Copy happy:// and happy-file:// links you receive unchanged. Otherwise keep writing path:line.`,
             ];
             if (parent !== null) {
                 lines.push(

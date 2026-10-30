@@ -26,6 +26,7 @@ import {
 import {
     applySpaceSidebarOperations,
     diffSpaceSidebar,
+    formatHappyMarkdownLink,
     formatSpaceSidebar,
     locateSpaceSidebarNode,
     messageModeSchema,
@@ -2227,7 +2228,7 @@ export class SpacesModule implements AgentModule {
                     ? ""
                     : `\n\nNew rows, by the space ID each now has: ${newRows.reserved.map((row) => `${row.name} is ${row.id}`).join(", ")}.`;
             return {
-                text: `Proposal ${record.artifactId} is at version ${String(artifact.latestVersion)}. The person sees it as a card in your conversation; offer Good to go in your reply, and do not repeat the card or its tag.${reserved}${notes}`,
+                text: `Proposal ${record.artifactId} is at version ${String(artifact.latestVersion)}. The person sees it as a card in your conversation; offer Good to go in your reply, and do not repeat the card or link it.${reserved}${notes}`,
                 artifact,
             };
         });
@@ -3776,7 +3777,7 @@ export class SpacesModule implements AgentModule {
             const surface = await this.#surfaces.get(txCtx, surfaceId);
             return [
                 ...results,
-                `Surface ${surfaceId} (${surface?.type ?? "surface"}): <happy-surface id="${surfaceId}"/>. Fill it with the ordinary Surface tools.`,
+                `Surface ${surfaceId} (${surface?.type ?? "surface"}): ${formatHappyMarkdownLink({ type: "reference", reference: { kind: "surface", id: surfaceId } }, surface?.name ?? "")}. Fill it with the ordinary Surface tools.`,
             ].join("\n");
         });
     }

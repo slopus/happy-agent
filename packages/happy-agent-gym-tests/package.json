@@ -12,7 +12,7 @@
     "devDependencies": {
         "@modelcontextprotocol/sdk": "^1.29.0",
         "@sinclair/typebox": "^0.34.49",
-        "@slopus/happy-agent-client": "0.0.132",
+        "@slopus/happy-agent-client": "0.0.133",
         "@slopus/happy-agent-gym": "workspace:*",
         "@types/node": "^24.0.10",
         "@types/ws": "8.18.1",

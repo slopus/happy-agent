@@ -59,7 +59,7 @@ const SELECTION = {
     providerId: "codex",
 };
 
-/** Catalogs only reference tags are named from; these tests never mention anything. */
+/** Catalogs only Happy links are named from; these tests never mention anything. */
 const referenceArtifacts = { get: async () => undefined };
 const referenceSurfaces = { get: async () => undefined };
 const referenceTasks = {

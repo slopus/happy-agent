@@ -31,7 +31,7 @@ const TEAMMATES_INSTRUCTIONS = [
     "# Teammates",
     "",
     "Other people on the team may want to know about this task. list_teammates shows each one's user ID, name, role, and what they follow. When this work clearly concerns what a teammate does or follows, tell them with notify_teammate and say why in one sentence; their own Focus decides whether to add the task to their sidebar. Do not notify someone already working with you here, and do not notify people about work they would not care about.",
-    'When you mention a person in a reply, write <happy-user id="…"/> with their user ID; people see their name in its place. notify_teammate gives you the exact tag.',
+    "When you mention a person in a reply, link them as [their name](happy://users/<userId>); people see their current name as the link text. list_teammates and notify_teammate give you the exact link.",
 ].join("\n");
 
 /**

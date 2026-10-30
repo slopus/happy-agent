@@ -38,7 +38,7 @@ describe("cross-workspace Agent-ID messaging", () => {
                     senderCalls += 1;
                     expect(request.instructions).toContain(`Your Agent ID is ${senderAgentId}.`);
                     expect(request.instructions).toContain(
-                        `(happy-file://agents/${senderAgentId}/<path from your workspace root>#L42-L50)`,
+                        `(happy://agents/${senderAgentId}/files/<path from your workspace root>#L42-L50)`,
                     );
                     expect(request.instructions).toContain(
                         "Cross-workspace agent messaging is enabled",

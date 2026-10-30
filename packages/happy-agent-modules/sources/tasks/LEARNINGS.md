@@ -112,9 +112,10 @@ it records the creating agent's ID, and the bots module names the creating bot t
 
 ## A task is mentioned by its agent ID
 
-Kirill asked for tasks to be clickable in chat. A reference tag names the conversation a client
-opens, so a task is mentioned as `<happy-agent id="…"/>` with its agent ID, never its task ID,
-which no route opens as a conversation. `create_task` and `list_tasks` hand back the exact tag,
+Kirill asked for tasks to be clickable in chat. A Happy link names the conversation a client
+opens, so a task is mentioned as `[name](happy://agents/<agentId>)` with its agent ID, never its
+task ID, which no route opens as a conversation. `create_task` and `list_tasks` hand back the exact
+link,
 and the agents offered the task tools are told to use it, so a model never has to work out
 which of the two IDs goes in it.
 

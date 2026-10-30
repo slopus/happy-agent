@@ -252,10 +252,10 @@ the catalog on each inference so renaming a bot reaches its next turn immediatel
 
 ## A bot is mentioned by its agent ID
 
-Like tasks, a bot is mentioned in chat as `<happy-agent id="…"/>` with the bot's agent ID, not
-its bot ID, because the tag names the conversation a client opens. `create_bot` and `list_bots`
-give the exact tag, and every agent offered the bot tools, task agents included, is told to use
-it.
+Like tasks, a bot is mentioned in chat as `[name](happy://agents/<agentId>)` with the bot's agent
+ID, not its bot ID, because the link names the conversation a client opens. `create_bot` and
+`list_bots` give the exact link, and every agent offered the bot tools, task agents included, is
+told to use it.
 
 ## Admin bots manage bot settings; a restricted bot loses the roster
 

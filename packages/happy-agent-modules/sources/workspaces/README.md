@@ -150,8 +150,8 @@ They are offered to root agents while `features.workspaces` is on, except to an 
 keeps it inside the bot's own tree.
 
 Every agent offered these tools is also told to mention a workspace as
-`<happy-workspace id="…"/>`, and the two creation tools return that exact tag. Clients show the
-workspace's live name as a link in its place.
+`[name](happy://workspaces/<workspaceId>)`, and the two creation tools return that exact link.
+Clients show the workspace's live name as the link text.
 
 - **`create_child_workspace`** — `{ name, baseRef? }`. Creates a named workspace directly below the
   workspace that owns the calling agent. An agent attached to a project creates below that

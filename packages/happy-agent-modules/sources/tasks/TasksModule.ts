@@ -116,7 +116,7 @@ const ownerSchema = Type.Union([cuid2Schema, Type.Null()]);
 const PRODUCT = computePermissions("full_access");
 /** How an agent that manages tasks mentions one, so people see its live name as a link. */
 const TASK_REFERENCE_INSTRUCTIONS =
-    'When you mention a task in a reply, write <happy-agent id="…"/> with the task\'s agent ID, not its task ID; people see its live name as a link. The task tools give you the exact tag.';
+    "When you mention a task in a reply, link it as [its name](happy://agents/<agentId>) with the task's agent ID, not its task ID; people see its live name as the link text. The task tools give you the exact link.";
 
 /**
  * Persistent task conversations, each with a dedicated folder and an owner.

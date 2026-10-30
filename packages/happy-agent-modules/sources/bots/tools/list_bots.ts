@@ -1,6 +1,6 @@
 import { Type, type Static } from "@sinclair/typebox";
 import { defineAgentTool } from "@slopus/happy-agent-base";
-import { formatHappyReferenceTag } from "@slopus/happy-agent-client";
+import { formatHappyMarkdownLink } from "@slopus/happy-agent-client";
 
 import { botRecordSchema, type BotRecord } from "../Bot.js";
 import type { BotsModule } from "../BotsModule.js";
@@ -45,5 +45,5 @@ export function listBotsTool(bots: BotsModule) {
 function formatBotLine(bot: BotRecord): string {
     const status = bot.status === "archived" ? " (archived)" : "";
     const avatar = bot.avatar === undefined ? "no avatar" : "has avatar";
-    return `- ${bot.name}${status} — id ${bot.id}, username ${bot.username}, ${avatar}, folder ${bot.path}, mention it as ${formatHappyReferenceTag({ kind: "agent", id: bot.agentId })}`;
+    return `- ${bot.name}${status} — id ${bot.id}, username ${bot.username}, ${avatar}, folder ${bot.path}, mention it as ${formatHappyMarkdownLink({ type: "reference", reference: { kind: "agent", id: bot.agentId } }, bot.name)}`;
 }

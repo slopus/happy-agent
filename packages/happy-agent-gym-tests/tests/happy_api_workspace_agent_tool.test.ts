@@ -100,7 +100,7 @@ describe("workspace creation through the agent tool", () => {
             projectId: project.id,
         });
         expect(toolResult.text).toContain(
-            `Mention it in chat as <happy-workspace id="${workspace.id}"/>.`,
+            `Mention it in chat as [${workspace.name}](happy://workspaces/${workspace.id}).`,
         );
         expect(workspace.compute.type).toBe("host");
         if (workspace.compute.type !== "host") {

@@ -1,6 +1,5 @@
 import { cuid2Schema, defineAgentTool } from "@slopus/happy-agent-base";
 import { Type, type Static } from "@sinclair/typebox";
-import { formatHappyReferenceTag } from "@slopus/happy-agent-client";
 import type { Context } from "@steve.kite/stdlib";
 
 import {
@@ -16,6 +15,7 @@ import {
     formatArtifactAuthor,
     formatArtifactBackground,
     formatArtifactFile,
+    formatArtifactLink,
     formatArtifactSource,
     formatFileCount,
 } from "../impl/formatArtifact.js";
@@ -108,7 +108,7 @@ function formatArtifactRead({
     }
     lines.push(
         `Version ${String(version.number)} of ${String(artifact.latestVersion)}, made ${new Date(version.createdAt).toISOString()} by ${formatArtifactAuthor(version.createdBy)}${version.source === undefined ? "" : ` in ${formatArtifactSource(version.source)}`}: ${JSON.stringify(version.title)}.`,
-        `Reference it in chat as ${formatHappyReferenceTag({ kind: "artifact", id: artifact.id })}${version.number === artifact.latestVersion ? "" : `, or this version as ${formatHappyReferenceTag({ kind: "artifact", id: artifact.id, version: version.number })}`}.`,
+        `Mention it in chat as ${formatArtifactLink(artifact.id, artifact.title)}${version.number === artifact.latestVersion ? "" : `, or this version as ${formatArtifactLink(artifact.id, version.title, version.number)}`}.`,
         `${formatFileCount(version.files.length)}, opening ${JSON.stringify(version.entry.path)}${formatArtifactBackground(version.background)}:`,
         ...version.files.map(formatArtifactFile),
     );

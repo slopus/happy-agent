@@ -183,7 +183,7 @@ it("proposes a reorganisation the person edits and accepts, archives what it off
             ],
         });
         expect(proposed.text).toMatch(/^Proposal [a-z0-9]+ is at version 2\./);
-        expect(proposed.text).not.toContain("<happy-artifact");
+        expect(proposed.text).not.toContain("happy://artifacts/");
         const live = await h.read();
         expect(live.html).toBe(before.html);
         const { proposal } = await h.gym.http.ok<{

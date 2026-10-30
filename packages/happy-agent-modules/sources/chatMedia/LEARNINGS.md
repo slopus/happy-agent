@@ -15,7 +15,7 @@ and outside this module.
 A presentation belongs to the call that made it, in the conversation of the agent that ran it.
 Parents and children do not see it, so the module's instructions and every presenting tool's
 reply tell the model so: an agent working for another agent must hand over paths or artifact IDs.
-The parent links text files, presents media, and mentions artifacts by their reference tags.
+The parent links text files, presents media, and mentions artifacts by their Happy links.
 
 ## Text files stay live through file links
 

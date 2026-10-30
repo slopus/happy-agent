@@ -1,5 +1,18 @@
+import { formatHappyMarkdownLink } from "@slopus/happy-agent-client";
+
 import type { ArtifactAuthor, ArtifactFile, ArtifactRecord, ArtifactSource } from "../Artifact.js";
 import { ARTIFACT_TYPE_RULES, formatBytes } from "../ArtifactTypes.js";
+
+/** The ready-to-paste Markdown link to an artifact, or to one of its versions, labeled with `title`. */
+export function formatArtifactLink(id: string, title: string, version?: number): string {
+    return formatHappyMarkdownLink(
+        {
+            type: "reference",
+            reference: { kind: "artifact", id, ...(version === undefined ? {} : { version }) },
+        },
+        title,
+    );
+}
 
 /** One catalog line a model reads: identity, kind, title, latest version, size, and last change. */
 export function formatArtifactLine(artifact: ArtifactRecord): string {

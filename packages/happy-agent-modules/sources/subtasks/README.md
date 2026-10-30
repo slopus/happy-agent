@@ -33,5 +33,5 @@ records it with the durable start, because the start runs on a context that name
 Modules creating subtasks of their own, such as Voice and Prioritizing, get the product default.
 Archival is final: a subtask is never restored. Durable Functions owns post-commit compute
 cleanup. Agent Base remains unchanged.
-Coordinators are told to mention a subtask as `<happy-agent id="…"/>` with its agent ID, and
-`create_subtask` returns that exact tag; clients show the subtask's live title as a link.
+Coordinators are told to mention a subtask as `[title](happy://agents/<agentId>)`, and
+`create_subtask` returns that exact link; clients show the subtask's live title as the link text.

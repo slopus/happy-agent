@@ -1,6 +1,6 @@
 import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
-import { formatHappyReferenceTag, happyReferenceSchema } from "@slopus/happy-agent-client";
+import { formatHappyMarkdownLink, happyReferenceSchema } from "@slopus/happy-agent-client";
 import { posix } from "node:path";
 
 import {
@@ -542,7 +542,8 @@ const presentFilesArgumentsSchema = Type.Object(
 /**
  * What an agent shows in the chat, said in words, because the phone shows none of it: the row is
  * all a person reading along there learns of an artifact or a presented file. An
- * artifact is named by its reference tag, which the connection turns into its current title.
+ * artifact is named by an empty-label Happy link, which the connection turns into its current
+ * title.
  */
 function shownDescription(name: string, args: Record<string, unknown>): string | undefined {
     switch (name) {
@@ -588,7 +589,7 @@ function artifactDescription(action: string, args: Record<string, unknown>): str
     if (!Value.Check(artifactIdArgumentsSchema, args)) return `${action} an artifact`;
     const reference = { kind: "artifact", id: args.artifactId };
     return Value.Check(happyReferenceSchema, reference)
-        ? `${action} ${formatHappyReferenceTag(reference)}`
+        ? `${action} ${formatHappyMarkdownLink({ type: "reference", reference })}`
         : `${action} an artifact`;
 }
 

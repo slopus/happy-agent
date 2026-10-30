@@ -1,5 +1,5 @@
 import { cuid2Schema, defineAgentTool } from "@slopus/happy-agent-base";
-import { formatHappyReferenceTag } from "@slopus/happy-agent-client";
+import { formatHappyMarkdownLink } from "@slopus/happy-agent-client";
 import { Type, type Static } from "@sinclair/typebox";
 
 import { taskLoopInReasonSchema } from "../../tasks/index.js";
@@ -34,7 +34,7 @@ export function notifyTeammateTool(teammates: TeammatesModule, taskId: string) {
         description: [
             "Tell a teammate about this task, by their user ID from list_teammates. Their own Focus hears your reason and decides, from what they do and follow, whether to add the task to their sidebar and mark it new for them.",
             "",
-            "reason is one sentence saying why this concerns them. Write the returned mention tag in your reply so people see whom you told.",
+            "reason is one sentence saying why this concerns them. Write the returned mention link in your reply so people see whom you told.",
         ].join("\n"),
         parameters: notifyTeammateInputSchema,
         returnType: notifyTeammateResultSchema,
@@ -50,7 +50,10 @@ export function notifyTeammateTool(teammates: TeammatesModule, taskId: string) {
                 userId: result.teammate.id,
                 name: result.teammate.name,
                 delivered: result.delivered,
-                mention: formatHappyReferenceTag({ kind: "user", id: result.teammate.id }),
+                mention: formatHappyMarkdownLink(
+                    { type: "reference", reference: { kind: "user", id: result.teammate.id } },
+                    result.teammate.name,
+                ),
             };
         },
         toLLM: (result) => [

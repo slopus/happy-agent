@@ -1,4 +1,4 @@
-import { formatHappyReferenceTag } from "@slopus/happy-agent-client";
+import { formatHappyMarkdownLink } from "@slopus/happy-agent-client";
 
 import type { CleanupAgent, CleanupItem } from "../CleanupSearch.js";
 
@@ -16,9 +16,13 @@ export function formatCleanupItem(item: CleanupItem, now: number): string {
         `id ${item.id}`,
         ...(item.agentId === undefined
             ? []
-            : [`mention it as ${formatHappyReferenceTag({ kind: "agent", id: item.agentId })}`]),
+            : [
+                  `mention it as ${formatHappyMarkdownLink({ type: "reference", reference: { kind: "agent", id: item.agentId } }, item.name)}`,
+              ]),
         ...(item.kind === "workspace" || item.kind === "project"
-            ? [`mention it as ${formatHappyReferenceTag({ kind: item.kind, id: item.id })}`]
+            ? [
+                  `mention it as ${formatHappyMarkdownLink({ type: "reference", reference: { kind: item.kind, id: item.id } }, item.name)}`,
+              ]
             : []),
         item.running
             ? "running now"

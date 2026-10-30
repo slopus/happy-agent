@@ -1,7 +1,7 @@
 import { createId } from "@paralleldrive/cuid2";
 import { agentPermissionMode, defineAgentTool } from "@slopus/happy-agent-base";
 import { Type, type Static } from "@sinclair/typebox";
-import { formatHappyReferenceTag, type ArtifactLive } from "@slopus/happy-agent-client";
+import type { ArtifactLive } from "@slopus/happy-agent-client";
 
 import type { ComputeModule } from "../../compute/index.js";
 import { quoteVisibleExact } from "../../impl/quoteVisibleExact.js";
@@ -16,6 +16,7 @@ import { ARTIFACT_TYPE_RULES } from "../ArtifactTypes.js";
 import { LIVE_ARTIFACT_FALLBACK, normalizeArtifactUrl } from "../impl/liveArtifact.js";
 import {
     formatArtifactBackground,
+    formatArtifactLink,
     formatArtifactSource,
     formatArtifactVersion,
 } from "../impl/formatArtifact.js";
@@ -194,7 +195,7 @@ export function createArtifactTool(
                         ? `Write and change its files with write_artifact_file and edit_artifact_file, starting with ${JSON.stringify(artifact.entry.path)}; each call makes its next version.`
                         : `Live content: ${JSON.stringify(artifact.live.url)}, through network ${JSON.stringify(artifact.live.networkId)}. Change its URL with update_artifact; its network stays fixed and its fallback file cannot be edited.`,
                     ARTIFACT_PRESENTED_NOTICE,
-                    `Reference it in chat as ${formatHappyReferenceTag({ kind: "artifact", id: artifact.id })}.`,
+                    `Mention it in chat as ${formatArtifactLink(artifact.id, artifact.title)}.`,
                 ].join(" "),
             },
         ],

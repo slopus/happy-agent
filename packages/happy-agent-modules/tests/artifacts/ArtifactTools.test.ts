@@ -329,11 +329,11 @@ describe("the artifact tools", () => {
         expect((await w.artifacts.list(w.ctx)).artifacts).toHaveLength(1);
     });
 
-    it("tells every agent to mention artifacts by their reference tags", async () => {
+    it("tells every agent to mention artifacts by their Happy links", async () => {
         const w = await world("artifact-tools-references");
         const instructions = await w.instructions(AGENT);
-        expect(instructions).toContain('<happy-artifact id="…"/>');
-        expect(instructions).toContain('version="N"');
+        expect(instructions).toContain("[its title](happy://artifacts/<artifactId>)");
+        expect(instructions).toContain("?version=N");
     });
 
     it("creates an artifact with an entry to start from and the files copied in", async () => {
@@ -392,7 +392,9 @@ describe("the artifact tools", () => {
         expect(text).toContain(
             "The user now sees it in this chat — an html artifact where its display preference puts it",
         );
-        expect(text).toContain(`Reference it in chat as <happy-artifact id="${artifact.id}"/>.`);
+        expect(text).toContain(
+            `Mention it in chat as [Launch \\<page\\>](happy://artifacts/${artifact.id}).`,
+        );
 
         // A call repeated after an interruption returns what it made, staging nothing again.
         const uploadsBefore = await w.uploadRows();
@@ -605,7 +607,7 @@ describe("the artifact tools", () => {
         const overview = textOf(read, await call(w.ctx, read, { artifactId: artifact.id }));
         expect(overview).toContain('6 files, opening "index.md"');
         expect(overview).toContain(
-            `Reference it in chat as <happy-artifact id="${artifact.id}"/>.`,
+            `Mention it in chat as [Readable](happy://artifacts/${artifact.id}).`,
         );
         expect(overview).toContain('- "images/chart.png" · image/png');
         expect(overview).toContain("![Chart](images/chart.png)");
@@ -754,7 +756,7 @@ describe("the artifact tools", () => {
             },
         });
         expect(textOf(update, retitled)).toContain(
-            `Reference it in chat as <happy-artifact id="${artifact.id}"/>, or as <happy-artifact id="${artifact.id}" version="2"/> for this version only.`,
+            `Mention it in chat as [Invoice 42](happy://artifacts/${artifact.id}), or as [Invoice 42](happy://artifacts/${artifact.id}?version=2) for this version only.`,
         );
         // The call's own ID keys the version, so repeating it makes no other.
         await expect(
@@ -843,7 +845,7 @@ describe("the artifact tools", () => {
         ]);
         expect(textOf(list, here)).toContain(`Artifacts made in bot ${BOT}:`);
         expect(textOf(list, here)).toContain(
-            'Reference an artifact in chat by putting its ID in <happy-artifact id="..."/>.',
+            "Mention an artifact in chat as [its title](happy://artifacts/<artifactId>).",
         );
         expect(textOf(list, here)).toContain("version 1 (1.0)");
     });

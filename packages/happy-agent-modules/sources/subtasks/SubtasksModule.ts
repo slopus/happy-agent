@@ -49,7 +49,7 @@ import { archiveSubtaskTool } from "./tools/archive_subtask.js";
 
 /** How a coordinator mentions a subtask, so people see its live title as a link. */
 const SUBTASK_REFERENCE_INSTRUCTIONS =
-    'When you mention a subtask in a reply, write <happy-agent id="…"/> with its agent ID; people see its live title as a link. create_subtask gives you the exact tag.';
+    "When you mention a subtask in a reply, link it as [its title](happy://agents/<agentId>); people see its live title as the link text. create_subtask gives you the exact link.";
 
 /**
  * Subtasks pile up and are never cleaned out unless their coordinator archives them, so each

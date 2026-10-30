@@ -139,16 +139,19 @@ The queue is bounded, and reaching a bound is a decision rather than a failure:
   because sending what came after it would show the phone a conversation that
   never happened.
 
-Agents mention artifacts, conversations, workspaces, and projects with reference
-tags such as `<happy-artifact id="…"/>`, which the phone cannot render as links.
+Agents mention artifacts, conversations, workspaces, and projects with Happy
+links such as `[title](happy://artifacts/<id>)`, and older history holds legacy
+`<happy-artifact id="…"/>` tags; the phone can open neither.
 Before the agent's text and service notices are queued, live and backfilled
-alike, each tag becomes its entity's current name, read from the artifacts,
-bots, tasks, projects, and workspaces modules and the agent's own title. A tag
-whose entity is gone, deleted, or archived, or whose kind is unknown or a
-service, becomes the shared placeholder, such as "an unavailable artifact". A
-lookup that fails falls back to the placeholder and never holds up the sync.
-History keeps the tags exactly as the agent wrote them. Tags in code, user
-messages, and tool output are left as they are.
+alike, each entity link or tag becomes its entity's current name, read from the
+artifacts, bots, tasks, projects, workspaces, and Surfaces modules and the
+agent's own title. One whose entity is gone, deleted, or archived, or that names
+a service or user, becomes the label the agent wrote, or the shared placeholder,
+such as "an unavailable artifact", when there is none. A lookup that fails falls
+back the same way and never holds up the sync. File links, in either the
+`happy://` or the `happy-file://` form, become their labels. History keeps the
+text exactly as the agent wrote it. Links in code, user messages, and tool
+output are left as they are.
 
 Media layout blocks, the plain HTML an agent writes to arrange images it already
 showed, are dropped from the agent's text before it is queued, and a text that

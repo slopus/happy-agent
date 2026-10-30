@@ -228,27 +228,27 @@ describe("Happy mobile tool-call normalization", () => {
         [
             "update_artifact",
             { artifactId: "e2q1jay4th45phqmlucbljaj", title: "Q3" },
-            'Updating <happy-artifact id="e2q1jay4th45phqmlucbljaj"/>',
+            "Updating [](happy://artifacts/e2q1jay4th45phqmlucbljaj)",
         ],
         [
             "write_artifact_file",
             { artifactId: "e2q1jay4th45phqmlucbljaj", path: "index.html", content: "<p>" },
-            'Writing <happy-artifact id="e2q1jay4th45phqmlucbljaj"/>',
+            "Writing [](happy://artifacts/e2q1jay4th45phqmlucbljaj)",
         ],
         [
             "edit_artifact_file",
             { artifactId: "e2q1jay4th45phqmlucbljaj", path: "index.html" },
-            'Editing <happy-artifact id="e2q1jay4th45phqmlucbljaj"/>',
+            "Editing [](happy://artifacts/e2q1jay4th45phqmlucbljaj)",
         ],
         [
             "read_artifact_logs",
             { artifactId: "e2q1jay4th45phqmlucbljaj", level: "warn" },
-            'Checking for errors in <happy-artifact id="e2q1jay4th45phqmlucbljaj"/>',
+            "Checking for errors in [](happy://artifacts/e2q1jay4th45phqmlucbljaj)",
         ],
         [
             "write_artifact_data",
             { artifactId: "e2q1jay4th45phqmlucbljaj", key: "steps/1", value: "true" },
-            'Changing the shared data of <happy-artifact id="e2q1jay4th45phqmlucbljaj"/>',
+            "Changing the shared data of [](happy://artifacts/e2q1jay4th45phqmlucbljaj)",
         ],
         ["delete_artifact", { artifactId: "not a valid id!" }, "Deleting an artifact"],
         ["edit_artifact_file", {}, "Editing an artifact"],

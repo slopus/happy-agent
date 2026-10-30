@@ -230,7 +230,7 @@ describe("ProjectsModule", () => {
             );
         };
         expect(await instructions(await projectsModule(), "agent-a")).toBe(
-            'When you mention a project in a reply, write <happy-project id="…"/> with its project ID; people see its live name as a link.',
+            "When you mention a project in a reply, link it as [its name](happy://projects/<projectId>); people see its live name as the link text.",
         );
         expect(await instructions(await projectsModule(), "subagent-a")).toBe("");
         expect(await instructions(await projectsModule(NO_CROSS_WORKSPACE_TOML), "agent-a")).toBe(

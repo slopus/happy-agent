@@ -97,8 +97,8 @@ async function messages(client: HappyAgentClient, agentId: string): Promise<stri
     return JSON.stringify(history.runs.flatMap((run) => run.messages));
 }
 
-describe("reference tags and file links on the phone", () => {
-    it("relays an agent's reference tags as the names they refer to, and file links as their labels", async () => {
+describe("Happy links on the phone", () => {
+    it("relays an agent's entity links as the names they refer to, and file links as their labels", async () => {
         const script: ScriptedTurn[] = [];
         const { bot, client, relay, sessionOf } = await linkedDaemon({ script });
         const { artifact } = await client.createArtifact({
@@ -107,12 +107,14 @@ describe("reference tags and file links on the phone", () => {
             title: "Q3 *revenue* report",
             files: [{ path: "index.md", text: "# Q3 revenue\n" }],
         });
-        const fileLink = `[index.ts:3](happy-file://agents/${bot.agent.id}/src/index.ts#L3)`;
+        const fileLink = `[index.ts:3](happy://agents/${bot.agent.id}/files/src/index.ts#L3)`;
+        const apiFileLink = `[index.ts:4](happy-file://agents/${bot.agent.id}/src/index.ts#L4)`;
         const reply = [
-            `Published <happy-artifact id="${artifact.id}"/> for <happy-agent id="${bot.agent.id}"/>.`,
-            `It starts in ${fileLink}.`,
-            'The old one, <happy-artifact id="missingartifact"/>, is gone.',
-            'Write tags like `<happy-artifact id="x"/>`.',
+            `Published [an old title](happy://artifacts/${artifact.id}) for [](happy://agents/${bot.agent.id}).`,
+            `It starts in ${fileLink} and ${apiFileLink}.`,
+            "The old one, [Q2 report](happy://artifacts/missingartifact), is gone,",
+            'and so is <happy-artifact id="missingartifact"/>.',
+            "Write links like `[x](happy://artifacts/x)`.",
         ].join(" ");
         script.push([
             { type: "text_start" },
@@ -128,7 +130,7 @@ describe("reference tags and file links on the phone", () => {
                 const sent = JSON.stringify(relay.outgoing.get(sid) ?? []);
                 expect(sent).toContain(
                     JSON.stringify(
-                        `Published Q3 \\*revenue\\* report for ${bot.name}. It starts in index.ts:3. The old one, an unavailable artifact, is gone. Write tags like \`<happy-artifact id="x"/>\`.`,
+                        `Published Q3 \\*revenue\\* report for ${bot.name}. It starts in index.ts:3 and index.ts:4. The old one, Q2 report, is gone, and so is an unavailable artifact. Write links like \`[x](happy://artifacts/x)\`.`,
                     ).slice(1, -1),
                 );
             },
@@ -137,7 +139,7 @@ describe("reference tags and file links on the phone", () => {
         // The daemon's own history keeps exactly what the agent wrote.
         const history = await messages(client, bot.agent.id);
         expect(history).toContain(
-            JSON.stringify(`<happy-artifact id="${artifact.id}"/>`).slice(1, -1),
+            JSON.stringify(`[an old title](happy://artifacts/${artifact.id})`).slice(1, -1),
         );
         expect(history).toContain(fileLink);
     }, 30_000);

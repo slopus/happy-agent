@@ -97,7 +97,7 @@ class BotAgents {
 }
 
 const BOT_REFERENCE_INSTRUCTIONS =
-    'When you mention a bot in a reply, write <happy-agent id="…"/> with the bot\'s agent ID, not its bot ID; people see its live name as a link. The bot tools give you the exact tag.';
+    "When you mention a bot in a reply, link it as [its name](happy://agents/<agentId>) with the bot's agent ID, not its bot ID; people see its live name as the link text. The bot tools give you the exact link.";
 
 describe("BotsModule", () => {
     it.each(["Release Steward", "New Bot"])(
@@ -883,7 +883,7 @@ describe("BotsModule", () => {
                 {
                     type: "text",
                     text: expect.stringContaining(
-                        `mention it as <happy-agent id="${pictured.agentId}"/>`,
+                        `mention it as [${pictured.name}](happy://agents/${pictured.agentId})`,
                     ),
                 },
             ]);
@@ -950,7 +950,7 @@ describe("BotsModule", () => {
                 {
                     type: "text",
                     text: expect.stringContaining(
-                        `Mention it in chat as <happy-agent id="${child.agentId}"/>.`,
+                        `Mention it in chat as [${child.name}](happy://agents/${child.agentId}).`,
                     ),
                 },
             ]);
