@@ -277,6 +277,9 @@ const TASK = {
     text: "Review the parser change.",
 } as const;
 
+/** The sending agent a tool is built for, on the Codex route. */
+const CREATOR = { provider: "codex", model: undefined } as const;
+
 const NO_CROSS_WORKSPACE_TOML = "[features]\ncross_workspace = false\n";
 
 describe("collaboration", () => {
@@ -308,7 +311,7 @@ describe("collaboration", () => {
         collection.seed("parent", null);
         collection.seed("child", "parent", { metadata: { subtask: true, archivedAt: 1 } });
         const { module, ctx } = await started(collection);
-        const tool = sendMessageTool(module, "parent", true);
+        const tool = sendMessageTool(module, "parent", true, CREATOR);
         expect(tool.transactional).toBe(true);
         expect(
             await tool.shouldReviewInAutoMode(
@@ -452,7 +455,7 @@ describe("collaboration", () => {
         });
     });
 
-    it("never lets a later message change what a collaborator runs on", async () => {
+    it("leaves what a collaborator runs on alone when a later message names no model", async () => {
         const collection = new Collection();
         const { module, hooks, ctx } = await started(collection);
         await module.createAgent(ctx, "parent", TASK, "child");
@@ -1748,7 +1751,7 @@ describe("collaboration", () => {
             5,
             3,
         );
-        const send = sendMessageTool(module, "parent", false);
+        const send = sendMessageTool(module, "parent", false, CREATOR);
         const interrupt = interruptAgentTool(module, "parent");
 
         expect(create.shouldReviewInAutoMode(TASK, ctx)).toBe(false);
@@ -1777,7 +1780,7 @@ describe("collaboration", () => {
             5,
             3,
         );
-        const send = sendMessageTool(module, "parent", false);
+        const send = sendMessageTool(module, "parent", false, CREATOR);
         const interrupt = interruptAgentTool(module, "parent");
 
         await expect(create.execute(ctx, TASK, toolCall("created"))).resolves.toEqual({
@@ -2357,5 +2360,253 @@ describe("collaborator permission modes", () => {
         expect(collection.configs.get("child")?.metadata?.["lastMode"]).toMatchObject({
             permissionMode: "workspace_write",
         });
+    });
+});
+
+describe("switching a direct child's model with a message", () => {
+    /** A parent with a collaborator on GPT-5.6 Sol, as its opening task left it. */
+    async function withChild(childMode: AgentPermissionMode = "workspace_write") {
+        const collection = new Collection();
+        collection.seed("parent", null);
+        collection.seed("child", "parent", {
+            metadata: {
+                lastMode: {
+                    providerId: "codex",
+                    modelId: "gpt-5.6-sol",
+                    effort: "high",
+                    serviceTier: "priority",
+                    permissionMode: childMode,
+                },
+            },
+        });
+        collection.seed("grandchild", "child");
+        collection.seed("sibling", "parent");
+        collection.seed("stranger", null);
+        return { collection, ...(await started(collection)) };
+    }
+
+    it("delivers the new model on the message, the way a person's composer selection travels", async () => {
+        const { collection, module, ctx } = await withChild();
+
+        await module.sendMessage(
+            ctx,
+            "parent",
+            { toAgentId: "child", text: "Take another look on Opus.", explanation: "Second look" },
+            "m1",
+            { model: "opus-5", effort: "high", provider: "claude" },
+            CREATOR,
+        );
+
+        const mode = {
+            effort: "high",
+            modelId: "opus-5",
+            permissionMode: "workspace_write",
+            providerId: "claude",
+            serviceTier: null,
+        };
+        expect(collection.steered).toHaveLength(1);
+        expect(collection.steered[0]).toMatchObject({
+            toAgentId: "child",
+            text: "Message from agent parent:\n\nTake another look on Opus.",
+            options: {
+                id: "m1",
+                model: "opus-5",
+                effort: "high",
+                provider: "claude",
+                // Null leaves the priority tier the child was on, as a person's message does.
+                serviceTier: null,
+                permissionMode: "workspace_write",
+                metadata: expect.objectContaining({ mode, senderAgentExplanation: "Second look" }),
+            },
+        });
+        expect(collection.configs.get("child")?.metadata?.["lastMode"]).toEqual(mode);
+    });
+
+    it.each(PERMISSION_MODES)(
+        "keeps a %s child's own permission mode whatever its creator runs in",
+        async (childMode) => {
+            const { collection, module, ctx } = await withChild(childMode);
+            const sender = withAgentContext(ctx, {
+                id: "parent",
+                provider: "codex",
+                permissionMode: "full_access",
+            });
+
+            await module.sendMessage(
+                sender,
+                "parent",
+                { toAgentId: "child", text: "Switch." },
+                "m1",
+                { model: "gpt-5.6-sol", effort: "low" },
+                CREATOR,
+            );
+
+            expect(collection.steered[0]!.options.permissionMode).toBe(childMode);
+        },
+    );
+
+    it("starts a never-run child no wider than its creator's own mode", async () => {
+        const collection = new Collection();
+        collection.seed("parent", null);
+        collection.seed("child", "parent");
+        const { module, ctx } = await started(collection);
+        const sender = withAgentContext(ctx, {
+            id: "parent",
+            provider: "codex",
+            permissionMode: "read_only",
+        });
+
+        await module.sendMessage(
+            sender,
+            "parent",
+            { toAgentId: "child", text: "Start." },
+            "m1",
+            { model: "gpt-5.6-sol", effort: "medium" },
+            CREATOR,
+        );
+
+        expect(collection.steered[0]!.options.permissionMode).toBe("read_only");
+    });
+
+    it.each([
+        ["its own creator", "child", "parent"],
+        ["a grandchild", "parent", "grandchild"],
+        ["a sibling", "sibling", "child"],
+        ["an unrelated agent reachable by ID", "parent", "stranger"],
+    ])("refuses to switch %s and delivers nothing", async (_label, from, to) => {
+        const { collection, module, ctx } = await withChild();
+
+        await expect(
+            module.sendMessage(
+                ctx,
+                from,
+                { toAgentId: to, text: "Switch." },
+                "m1",
+                { model: "opus-5", effort: "high", provider: "claude" },
+                CREATOR,
+            ),
+        ).rejects.toThrow(`may switch the model only of agents it created directly`);
+        expect(collection.delivered).toEqual([]);
+        // The same message without a model choice is ordinary cross-workspace messaging.
+        await module.sendMessage(ctx, from, { toAgentId: to, text: "Hello." }, "m2");
+        expect(collection.delivered[0]!.options).not.toHaveProperty("model");
+    });
+
+    it.each([
+        [{ model: "unavailable", effort: "high" }, "not available"],
+        [{ model: "opus-5", effort: "low", provider: "claude" }, 'Effort "low" is not available'],
+        [{ model: "opus-5", effort: "medium" }, "Provider is required"],
+        [{ model: "opus-5", effort: "high", serviceTier: "priority", provider: "claude" }, "tier"],
+    ] as const)("validates %j against what new agents are offered", async (choice, error) => {
+        const { collection, module, ctx } = await withChild();
+
+        await expect(
+            module.sendMessage(
+                ctx,
+                "parent",
+                { toAgentId: "child", text: "Switch." },
+                "m1",
+                choice,
+                CREATOR,
+            ),
+        ).rejects.toThrow(error);
+        expect(collection.delivered).toEqual([]);
+        expect(collection.configs.get("child")?.metadata?.["lastMode"]).toMatchObject({
+            modelId: "gpt-5.6-sol",
+        });
+    });
+
+    it("defaults the provider to the sender's own when it serves the model", async () => {
+        const { collection, module, ctx } = await withChild();
+
+        await module.sendMessage(
+            ctx,
+            "parent",
+            { toAgentId: "child", text: "Switch." },
+            "m1",
+            { model: "opus-5", effort: "medium" },
+            { provider: "bedrock", model: "opus-5" },
+        );
+
+        expect(collection.steered[0]!.options.provider).toBe("bedrock");
+    });
+
+    it("refuses to switch an archived child", async () => {
+        const { collection, module, ctx } = await withChild();
+        await collection.updateMetadata(ctx, "child", { archivedAt: 1 });
+
+        await expect(
+            module.sendMessage(
+                ctx,
+                "parent",
+                { toAgentId: "child", text: "Switch." },
+                "m1",
+                { model: "gpt-5.6-sol", effort: "low" },
+                CREATOR,
+            ),
+        ).rejects.toThrow("archived");
+        expect(collection.delivered).toEqual([]);
+    });
+
+    it("switches through send_agent_message's model fields and needs model and effort together", async () => {
+        const { collection, module, ctx } = await withChild();
+        const send = sendMessageTool(module, "parent", true, CREATOR);
+        const input = {
+            toAgentId: "child",
+            explanation: "Switching to Opus",
+            text: "Continue on Opus.",
+            model: "opus-5",
+            effort: "high",
+            provider: "claude",
+        } as const;
+
+        expect(Value.Check(collaborationSendToolInputSchema, input)).toBe(true);
+        expect(send.description).toContain("To switch a collaborator or subtask you created");
+        expect(send.description).toContain("Any other recipient is refused.");
+        await expect(
+            send.execute(
+                ctx,
+                { toAgentId: "child", explanation: "Think harder", text: "Go.", effort: "high" },
+                toolCall("partial"),
+            ),
+        ).rejects.toThrow("give both model and effort");
+        await send.execute(ctx, input, toolCall("switch"));
+
+        expect(collection.steered).toHaveLength(1);
+        expect(collection.steered[0]!.options).toMatchObject({
+            id: "switch",
+            model: "opus-5",
+            provider: "claude",
+            effort: "high",
+        });
+    });
+
+    it("never lets a foreign harness switch a child onto a harness it cannot reach", async () => {
+        const collection = new ForeignCollection();
+        collection.seed("parent", null);
+        collection.seed("child", "parent");
+        const { module, ctx } = await started(collection, await harnessConfig());
+
+        await expect(
+            module.sendMessage(
+                ctx,
+                "parent",
+                { toAgentId: "child", text: "Switch." },
+                "m1",
+                { model: "opus-5", effort: "medium" },
+                ON_ANTIGRAVITY,
+            ),
+        ).rejects.toThrow('cannot create sub-agents on harness "happy"');
+        await module.sendMessage(
+            ctx,
+            "parent",
+            { toAgentId: "child", text: "Switch." },
+            "m2",
+            { model: "claude-code/sonnet", effort: "high" },
+            ON_ANTIGRAVITY,
+        );
+        expect(collection.steered.map(({ options }) => options.model)).toEqual([
+            "claude-code/sonnet",
+        ]);
     });
 });

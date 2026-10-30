@@ -4,4 +4,6 @@ export type {
     CreateConversationSubtaskInput,
     CreateSubtaskInput,
     SubtaskResult,
+    SwitchSubtaskModelInput,
+    SwitchSubtaskModelResult,
 } from "./Subtask.js";

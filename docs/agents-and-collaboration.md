@@ -146,6 +146,22 @@ of the conversation's start; a hidden notice carries what changes later, and `ag
 the current models (with `usage: true`, each account's quota). Which harnesses an agent
 reaches is set per harness; see [Harnesses](recipe/harnesses.md#sub-agents).
 
+## Switching a child's model
+
+An agent may switch a collaborator or subtask it created directly to another model, effort,
+provider, or service tier. `send_agent_message` takes optional `model`, `effort`, `harness`,
+`provider`, and `serviceTier` fields; `model` and `effort` go together, and the choice is checked
+against the same list `create_agent`, `create_subtask`, and `agent_options` offer.
+`switch_subtask_model` does the same for a direct subtask without new instructions: it sends the
+subtask a short note from its coordinator carrying the new model.
+
+The switch rides on the message exactly as a person's composer selection does. The child changes
+model when it reads the message, after its current response and tool batch if it is working, its
+recorded mode follows so a person opening it composes on the new model, and a model that cannot
+read the old conversation starts fresh with the usual model-switch notice. The child keeps its own
+permission mode. Model fields aimed at a sibling, parent, grandchild, or any other agent are
+refused before anything is delivered.
+
 ## Talking to any agent: `agent_me`, `agent_info`, `agent_send`
 
 Subagent tools only reach your own children. To reach _any_ agent in the system —

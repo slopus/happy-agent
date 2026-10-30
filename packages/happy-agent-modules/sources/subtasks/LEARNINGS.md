@@ -65,6 +65,19 @@ projects, while small steps stay inline and hidden subagents handle internal res
 subtask requests are honored within eligibility and depth limits. Second-level subtasks should
 usually be explicitly requested by the user. These are prompt defaults, not new runtime restrictions.
 
+## Coordinators can switch a subtask's model
+
+Steve asked that tasks be able to change the provider and model of their subtasks, which until then
+were fixed by `create_subtask`. `switch_subtask_model` lets the direct coordinator (bot, task, or
+subtask) switch an active direct subtask, with the same choices and validation as creation. It
+reuses the person-facing switch rather than adding one: Agent Base switches models only on a
+consumed message, and the API's mode is the mode of the last submitted message, so the tool sends
+a short coordinator message carrying the new model. A working subtask switches after its current
+step; an idle one wakes and answers briefly, and that report doubles as proof the new model works.
+Siblings, parents, grandchildren, ordinary collaborators, and archived subtasks are refused. The
+guidance asks coordinators to switch only when a model is failing or wrong for the work, because
+master plan 7 discourages changing an existing agent's model.
+
 ## Coordinators archive done subtasks at once
 
 Kirill: subtasks "tend to explode and never cleaned out". Every coordinator (bot, task, or

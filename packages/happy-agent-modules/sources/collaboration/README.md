@@ -160,13 +160,25 @@ it when `features.cross_workspace` is off.
 
 ### What a collaborator runs on
 
-Chosen once, on the message that starts it working, and never again.
+Chosen on the message that starts it working; only its creator may switch the model later.
 
 `create_agent` creates the agent and sends its opening task in one call, because that first message
 is the only place a model, effort, provider, service tier, and permission mode can be expressed —
-`AgentCreateOptions` carries no selection. Every later message carries none of them, so an agent
-that can talk to a collaborator cannot turn it into a different model, make it think harder, or
-widen its permissions.
+`AgentCreateOptions` carries no selection. A later message carries a selection only when the agent
+that created the recipient directly asks for a switch, and it never carries the sender's permission
+mode, so nobody can widen a collaborator's permissions by talking to it.
+
+`send_agent_message` takes optional `model`, `effort`, `harness`, `provider`, and `serviceTier`;
+`model` and `effort` come together. They switch a direct child — a collaborator or a subtask — and
+are refused for any other recipient, cross-workspace ones included, before anything is delivered.
+The choice resolves exactly as `create_agent`'s does, with the sender as creator, and the message
+carries it the way a person's message carries their composer selection: stamped as the message's
+`mode`, recorded as the recipient's `lastMode`, and applied by Agent Base when the recipient
+consumes the message, after its current response and tool batch. An incompatible model resets the
+context and receives the Model switch module's notice. The recorded permission mode is the
+recipient's own `lastMode` one; a recipient that never ran starts no wider than the sender. The
+service tier is sent as `null` when none is chosen, so a switch leaves priority service the way a
+person's message without a tier does.
 
 The permission mode is the creator's own persistent mode, read from the module scope the tool is
 built with, so Full access an Auto review lends one call never counts. `read_only: true` hands the
@@ -195,8 +207,8 @@ creation has no `create_agent` call to present and continues through its own ope
 `max_collaborators` in `[settings]` controls how many collaborators created through `create_agent`
 one root agent tree retains across all branches and defaults to five. Collaborators are durable and
 reusable, so completed agents still count and accept later work through `send_agent_message`.
-A collaborator's model cannot change, so one whose provider stopped working can only be archived:
-`archive_agent` lets its creator do that, and an archived collaborator no longer counts. The
+A collaborator whose provider stopped working can be switched to a working model with a message, or
+archived: `archive_agent` lets its creator do that, and an archived collaborator no longer counts. The
 collaborators below it are not archived and still count.
 Parallel tool calls share one reservation path and cannot race past the configured limit.
 Workflows call the module operation directly instead of going through the tool and remain under the
@@ -218,12 +230,12 @@ own — so whatever shows a person their agents names it the same way it names e
 
 ## Tools
 
-| Tool                 | Effect                                                       |
-| -------------------- | ------------------------------------------------------------ |
-| `create_agent`       | Creates a capped collaborator and delivers its opening task. |
-| `send_agent_message` | Delivers one message to an allowed agent by Agent ID.        |
-| `interrupt_agent`    | Aborts a collaborator subtree and hard-kills its processes.  |
-| `archive_agent`      | Stops and archives a collaborator, freeing its limit slot.   |
+| Tool                 | Effect                                                                                       |
+| -------------------- | -------------------------------------------------------------------------------------------- |
+| `create_agent`       | Creates a capped collaborator and delivers its opening task.                                 |
+| `send_agent_message` | Delivers one message to an allowed agent by Agent ID, and may switch a direct child's model. |
+| `interrupt_agent`    | Aborts a collaborator subtree and hard-kills its processes.                                  |
+| `archive_agent`      | Stops and archives a collaborator, freeing its limit slot.                                   |
 
 `interrupt_agent` and `archive_agent` are reviewed in Auto mode; the other two are not.
 `archive_agent` accepts only an ordinary collaborator the caller created directly. Subtasks use

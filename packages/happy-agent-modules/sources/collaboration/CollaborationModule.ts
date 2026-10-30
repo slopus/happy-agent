@@ -1,6 +1,7 @@
 import {
     agentConfig,
     agentDatabase,
+    agentPermissionMode,
     DEFAULT_AGENT_PERMISSION_MODE,
     type AgentBaseAcceptedMessage,
     type AgentBasePersistedEvent,
@@ -18,6 +19,7 @@ import {
     type AnyAgentTool,
 } from "@slopus/happy-agent-base";
 import { createId } from "@paralleldrive/cuid2";
+import { messageModeSchema, type MessageMode } from "@slopus/happy-agent-client";
 import { Type, type TSchema } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import { afterCommit, type Context } from "@steve.kite/stdlib";
@@ -28,7 +30,10 @@ import type { ComputeModule } from "../compute/index.js";
 import { HistoryModule } from "../history/index.js";
 import type { ConfigModule } from "../config/index.js";
 import { agentDeliveryMode } from "../impl/agentDeliveryMode.js";
-import { delegatedPermissionMode } from "../impl/delegatedPermissionMode.js";
+import {
+    delegatedPermissionMode,
+    narrowerPermissionMode,
+} from "../impl/delegatedPermissionMode.js";
 import {
     senderAgentExplanationFromTitle,
     senderAgentExplanationMetadata,
@@ -80,9 +85,10 @@ import { sendMessageTool } from "./tools/send_message.js";
  * later message between a creator and collaborator steers the recipient's active turn. An agent
  * that wants to keep working while a collaborator thinks just keeps working.
  *
- * What a collaborator runs on is settled once, on the message that starts it, and no later message
- * carries a model, an effort, or a permission mode. Its permission mode is its creator's own unless
- * `read_only` hands it less; `full_mode` asks for Full access, which only a creator in Full access has.
+ * What a collaborator runs on is settled on the message that starts it. Only its creator may switch
+ * its model later, on a message that carries the new choice, and no later message carries a
+ * permission mode of the sender's. Its permission mode is its creator's own unless `read_only`
+ * hands it less; `full_mode` asks for Full access, which only a creator in Full access has.
  */
 export class CollaborationModule implements AgentModule {
     readonly name = "collaboration";
@@ -412,16 +418,37 @@ export class CollaborationModule implements AgentModule {
         return { agentId };
     }
 
-    /** Send text to an Agent ID allowed by the installation's collaboration boundary. */
+    /**
+     * Send text to an Agent ID allowed by the installation's collaboration boundary.
+     *
+     * `switchTo` also switches the recipient to another model, which only the agent that created
+     * it directly may do. It travels on the message the way a person's composer selection does, so
+     * the recipient changes model when it reads the message, after its current response and tool
+     * batch, and Agent Base hands an incompatible model the usual model-switch notice. `creator`
+     * is the sender, whose provider and harness resolve the choice exactly as for `create_agent`.
+     */
     async sendMessage(
         ctx: Context,
         actingAgentId: string,
         input: CollaborationSendInput,
         messageId: string,
+        switchTo?: CollaborationModelChoice,
+        creator?: CollaborationCreator,
     ): Promise<void> {
         this.#assert(collaborationAgentIdSchema, actingAgentId, "acting agent ID");
         this.#assert(collaborationSendInputSchema, input, "send message");
-        await this.#authorizeMessage(ctx, actingAgentId, input.toAgentId);
+        let selection: OpeningSelection | undefined;
+        if (switchTo === undefined) {
+            await this.#authorizeMessage(ctx, actingAgentId, input.toAgentId);
+        } else {
+            selection = await this.#switchSelection(
+                ctx,
+                actingAgentId,
+                input.toAgentId,
+                switchTo,
+                creator,
+            );
+        }
         await this.#deliver(
             ctx,
             actingAgentId,
@@ -429,10 +456,45 @@ export class CollaborationModule implements AgentModule {
             input.text,
             messageId,
             "steer",
-            undefined,
+            selection,
             await this.#history.runMutationId(ctx, actingAgentId),
             input.explanation,
         );
+    }
+
+    /**
+     * What a creator's message switches its direct collaborator or subtask to. The choice is
+     * checked against the same offered models as `create_agent`. The permission mode stays the
+     * recipient's own, as its last message set it; a conversation that has never run starts no
+     * wider than the sender's mode, as any first message does.
+     */
+    async #switchSelection(
+        ctx: Context,
+        actingAgentId: string,
+        targetAgentId: string,
+        choice: CollaborationModelChoice,
+        creator: CollaborationCreator | undefined,
+    ): Promise<OpeningSelection> {
+        this.#assert(collaborationModelChoiceSchema, choice, "model choice");
+        const agents = this.#requireAgents();
+        if ((await agents.parentOf(ctx, targetAgentId)) !== actingAgentId) {
+            throw new Error(
+                `Agent "${actingAgentId}" may switch the model only of agents it created directly, and "${targetAgentId}" is not one of them. Send the message without model, effort, harness, provider, or serviceTier.`,
+            );
+        }
+        const selection = this.selectAgentModel(choice, creator);
+        const metadata = (await agents.config(ctx, targetAgentId))?.metadata;
+        const lastMode = metadata?.["lastMode"];
+        const initialMode = metadata?.["initialMode"];
+        const permissionMode = Value.Check(messageModeSchema, lastMode)
+            ? (lastMode as MessageMode).permissionMode
+            : narrowerPermissionMode(
+                  Value.Check(messageModeSchema, initialMode)
+                      ? (initialMode as MessageMode).permissionMode
+                      : DEFAULT_AGENT_PERMISSION_MODE,
+                  agentPermissionMode(ctx),
+              );
+        return { ...selection, permissionMode };
     }
 
     /** Immediately abort a collaborator and every descendant without waiting for settlement. */
@@ -451,9 +513,9 @@ export class CollaborationModule implements AgentModule {
      * Archive a collaborator this agent created, giving its place in the tree's collaborator
      * budget back.
      *
-     * A collaborator's model is fixed when it is created, so one whose provider stopped working
-     * cannot be repaired by talking to it, and it held its slot forever: a tree of such
-     * collaborators could create nothing at all. Archival is the explicit way out. It stops the
+     * A collaborator whose provider stopped working held its slot forever, so a tree of such
+     * collaborators could create nothing at all. Its creator may switch it to a working model with
+     * a message; archival is the explicit way out when it is no longer wanted. It stops the
      * collaborator and its running descendants the way an interruption does, marks only the
      * collaborator archived, and keeps its conversation. Archived agents refuse further messages.
      *
@@ -649,6 +711,7 @@ export class CollaborationModule implements AgentModule {
                     this,
                     scope.agent.id,
                     await this.#reachesAcrossWorkspaces(ctx, scope.agent.id),
+                    creator,
                 ),
                 interruptAgentTool(this, scope.agent.id),
                 archiveAgentTool(this, scope.agent.id),
@@ -780,11 +843,12 @@ export class CollaborationModule implements AgentModule {
                 ],
             };
             // The opening task is the collaborator's first message, so its selection is the mode
-            // the collaborator runs with. It is stamped on the message the way an API message
-            // carries its mode, and recorded as the agent's last mode, so a person who joins a
-            // user-visible collaborator composes on top of the coordinator's choice instead of the
-            // daemon defaults. The permission mode is the one creation settled, sent explicitly so
-            // the recorded mode is what the collaborator actually runs with.
+            // the collaborator runs with; a creator's switch is a later message carrying a new
+            // one. It is stamped on the message the way an API message carries its mode, and
+            // recorded as the agent's last mode, so a person who joins a user-visible collaborator
+            // composes on top of the coordinator's choice instead of the daemon defaults. The
+            // permission mode is the one creation settled or the recipient already had, sent
+            // explicitly so the recorded mode is what the collaborator actually runs with.
             const mode =
                 selection === undefined
                     ? fallback?.mode
@@ -813,9 +877,9 @@ export class CollaborationModule implements AgentModule {
                           effort: selection.effort,
                           permissionMode: selection.permissionMode,
                           provider: selection.provider,
-                          ...(selection.serviceTier === undefined
-                              ? {}
-                              : { serviceTier: selection.serviceTier }),
+                          // Null returns a switched agent to ordinary service, as a person's
+                          // message without a tier does.
+                          serviceTier: selection.serviceTier ?? null,
                       }),
             };
             const accepted =
@@ -1118,7 +1182,10 @@ function vendorUsageWindows(usage: ProviderUsage | null): AgentOptionsUsageWindo
     );
 }
 
-/** What a collaborator's opening task runs on: its model selection and its permission mode. */
+/**
+ * What a delivered message makes its recipient run on: a collaborator's opening task, or a
+ * creator's switch. The model selection and the permission mode it records.
+ */
 type OpeningSelection = CollaborationAgentSelection & {
     readonly provider: string;
     readonly permissionMode: AgentPermissionMode;

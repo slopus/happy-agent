@@ -20,7 +20,7 @@ export function archiveAgentTool(collaboration: CollaborationModule, actingAgent
         capabilities: ["Create, message, and coordinate coding subagents."],
         searchKeywords: ["archive subagent", "remove collaborator", "free collaborator slot"],
         description:
-            "Archive a collaborator you created, for example one that failed because its model or provider no longer works. Its model cannot be changed, so archiving it and creating a new collaborator is the way to retry the work elsewhere. Stops its current work and running descendants, but marks only that collaborator archived. It no longer counts toward the collaborator limit and can no longer receive messages. Conversation history remains, and repeating archival is harmless. Use archive_subtask for subtasks.",
+            "Archive a collaborator you created, for example one that failed because its model or provider no longer works. To retry its work on a working model, switch it with model fields on send_agent_message, or archive it and create a new collaborator. Stops its current work and running descendants, but marks only that collaborator archived. It no longer counts toward the collaborator limit and can no longer receive messages. Conversation history remains, and repeating archival is harmless. Use archive_subtask for subtasks.",
         parameters: archiveAgentInputSchema,
         returnType: Type.Void(),
         durable: true,

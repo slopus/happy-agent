@@ -106,6 +106,34 @@ export const archiveSubtaskInputSchema = Type.Object(
 );
 export type ArchiveSubtaskInput = Static<typeof archiveSubtaskInputSchema>;
 
+/** A direct subtask and the model its coordinator switches it to, chosen as for creation. */
+export const switchSubtaskModelInputSchema = Type.Object(
+    {
+        agentId: subtaskIdSchema,
+        model: createSubtaskInputSchema.properties.model,
+        effort: createSubtaskInputSchema.properties.effort,
+        harness: createSubtaskInputSchema.properties.harness,
+        provider: createSubtaskInputSchema.properties.provider,
+        serviceTier: createSubtaskInputSchema.properties.serviceTier,
+    },
+    { additionalProperties: false },
+);
+export type SwitchSubtaskModelInput = Static<typeof switchSubtaskModelInputSchema>;
+
+/** What the subtask now runs on, with the route resolved. */
+export const switchSubtaskModelResultSchema = Type.Object(
+    {
+        agentId: subtaskIdSchema,
+        model: Type.String({ minLength: 1, maxLength: 256 }),
+        modelName: Type.String({ minLength: 1, maxLength: 256 }),
+        effort: createSubtaskInputSchema.properties.effort,
+        provider: Type.String({ minLength: 1, maxLength: 256 }),
+        serviceTier: createSubtaskInputSchema.properties.serviceTier,
+    },
+    { additionalProperties: false },
+);
+export type SwitchSubtaskModelResult = Static<typeof switchSubtaskModelResultSchema>;
+
 export const SUBTASK_START_FUNCTION = "subtasks.start";
 export const SUBTASK_ARCHIVE_FUNCTION = "subtasks.archive";
 

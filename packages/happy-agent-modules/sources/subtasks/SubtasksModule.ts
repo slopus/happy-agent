@@ -19,6 +19,7 @@ import { CollaborationModule, type CollaborationCreator } from "../collaboration
 import { ComputeModule } from "../compute/index.js";
 import { DurableFunctionsModule } from "../durableFunctions/index.js";
 import { delegatedPermissionMode } from "../impl/delegatedPermissionMode.js";
+import { senderAgentExplanationFromTitle } from "../impl/messageOrigin.js";
 import { TasksModule } from "../tasks/index.js";
 import { WorkspacesModule } from "../workspaces/index.js";
 import {
@@ -36,16 +37,20 @@ import {
     subtaskMetadataSchema,
     subtaskStartSchema,
     SubtaskInputError,
+    switchSubtaskModelInputSchema,
     workspaceSubtaskMetadataSchema,
     type CreateConversationSubtaskInput,
     type CreateSubtaskInput,
     type ArchiveSubtaskInput,
     type SubtaskResult,
     type SubtaskStart,
+    type SwitchSubtaskModelInput,
+    type SwitchSubtaskModelResult,
 } from "./Subtask.js";
 import { subtaskOrderKeyBetween } from "./subtaskOrderKeyBetween.js";
 import { createSubtaskTool } from "./tools/create_subtask.js";
 import { archiveSubtaskTool } from "./tools/archive_subtask.js";
+import { switchSubtaskModelTool } from "./tools/switch_subtask_model.js";
 
 /** How a coordinator mentions a subtask, so people see its live title as a link. */
 const SUBTASK_REFERENCE_INSTRUCTIONS =
@@ -504,22 +509,15 @@ export class SubtasksModule implements AgentModule {
         }
         const agents = this.#requireAgents();
         return await ctx.inTx(async (txCtx) => {
-            const actor = await agents.config(txCtx, actingAgentId);
-            const target = await agents.config(txCtx, agentId);
-            if (
-                actor === undefined ||
-                Value.Check(archivedMetadataSchema, actor.metadata) ||
-                (!this.isSubtask(actor) && !(await this.#isActiveRoot(txCtx, actingAgentId))) ||
-                !this.isSubtask(target) ||
-                (await agents.parentOf(txCtx, agentId)) !== actingAgentId
-            ) {
-                throw new SubtaskInputError(
-                    "Only a subtask's direct coordinating bot, task, or subtask may archive it.",
-                );
-            }
-            if (Value.Check(archivedMetadataSchema, target?.metadata)) return { agentId };
+            const target = await this.#assertCoordinator(
+                txCtx,
+                actingAgentId,
+                agentId,
+                "archive it",
+            );
+            if (Value.Check(archivedMetadataSchema, target.metadata)) return { agentId };
             const now = Date.now();
-            const version = Value.Check(versionedMetadataSchema, target?.metadata)
+            const version = Value.Check(versionedMetadataSchema, target.metadata)
                 ? target.metadata.version
                 : 1;
             await agents.updateMetadata(txCtx, agentId, {
@@ -528,6 +526,74 @@ export class SubtasksModule implements AgentModule {
                 version: version + 1,
             });
             return { agentId };
+        });
+    }
+
+    /**
+     * Switch a direct subtask to another model. Only its coordinating bot, task, or subtask may,
+     * and the choice is checked against the same offered models as `create_subtask`, with the
+     * coordinator's provider and harness as defaults. The switch rides on a short message from the
+     * coordinator through collaboration's ordinary delivery, so it is the same switch a person
+     * makes from the subtask's composer: the subtask changes model when it reads the message,
+     * after its current response and tool batch, its recorded mode follows, and a model that
+     * cannot read the old conversation starts from the usual model-switch notice. An idle subtask
+     * wakes to read it, and its brief answer reaches the coordinator as its ordinary report.
+     */
+    async switchModel(
+        ctx: Context,
+        actingAgentId: string,
+        input: SwitchSubtaskModelInput,
+        messageId: string,
+        creator?: CollaborationCreator,
+    ): Promise<SwitchSubtaskModelResult> {
+        if (
+            !Value.Check(subtaskIdSchema, actingAgentId) ||
+            !Value.Check(switchSubtaskModelInputSchema, input)
+        ) {
+            throw new SubtaskInputError("The subtask model switch request is invalid.");
+        }
+        const { agentId, ...choice } = input;
+        return await ctx.inTx(async (txCtx) => {
+            const target = await this.#assertCoordinator(
+                txCtx,
+                actingAgentId,
+                agentId,
+                "switch its model",
+            );
+            if (Value.Check(archivedMetadataSchema, target.metadata)) {
+                throw new SubtaskInputError("An archived subtask cannot switch models.");
+            }
+            const selection = this.#collaboration.selectAgentModel(choice, creator);
+            const modelName =
+                this.#collaboration
+                    .availableModels()
+                    .find(
+                        (model) =>
+                            model.id === selection.model && model.providerId === selection.provider,
+                    )?.name ?? selection.model;
+            const explanation = senderAgentExplanationFromTitle(`Switched model to ${modelName}`);
+            await this.#collaboration.sendMessage(
+                txCtx,
+                actingAgentId,
+                {
+                    toAgentId: agentId,
+                    text: `I switched you to ${modelName} at ${selection.effort} effort. Carry on with your current work; if you have none, reply in one line that you are ready.`,
+                    ...(explanation === undefined ? {} : { explanation }),
+                },
+                messageId,
+                { ...choice, provider: selection.provider },
+                creator,
+            );
+            return {
+                agentId,
+                model: selection.model,
+                modelName,
+                effort: selection.effort,
+                provider: selection.provider,
+                ...(selection.serviceTier === undefined
+                    ? {}
+                    : { serviceTier: selection.serviceTier }),
+            };
         });
     }
 
@@ -617,6 +683,7 @@ export class SubtasksModule implements AgentModule {
                         await this.#collaboration.shownAgentOptions(toolCtx, scope.kv, creator),
                     ),
                     archiveSubtaskTool(this, scope.agent.id),
+                    switchSubtaskModelTool(this, scope.agent.id, creator),
                 ];
             },
             instructions: async (ctx, scope) => {
@@ -627,14 +694,14 @@ export class SubtasksModule implements AgentModule {
                     const role = Value.Check(conversationSubtaskMetadataSchema, config?.metadata)
                         ? "You are a user-visible subtask holding one conversation for your parent; users may talk to you directly."
                         : "You are a user-visible subtask managed by your parent; users may talk to you directly. Keep your assigned work in this subtask and its workspace, and report progress, findings, diffs, and verification to your parent through send_agent_message.";
-                    return `${role} Prefer create_subtask by default only for substantial, distinct workstreams, such as changes across projects; handle small steps inline. Usually create second-level subtasks only on explicit user request. If the user explicitly asks for a subtask, use create_subtask within the two-level limit below your bot or task; explain if blocked. Use create_agent for internal research. Coordinate via send_agent_message and archive_subtask; do not wait for subtasks. Keep delegated work in the child subtask: ask its agent for progress, findings, diffs, verification, or follow-up changes instead of directly inspecting or modifying its files or running commands in its workspace. Direct access to another workspace often requires elevated permissions and review by the reviewer model; talking to its agent avoids unnecessary permission reviews. Archival stops the task and descendants and archives the task with its own workspace, if it has one; a shared folder stays. History is kept, but archival is final. ${SUBTASK_CLEANUP_INSTRUCTIONS}\n\n${SUBTASK_REFERENCE_INSTRUCTIONS}`;
+                    return `${role} Prefer create_subtask by default only for substantial, distinct workstreams, such as changes across projects; handle small steps inline. Usually create second-level subtasks only on explicit user request. If the user explicitly asks for a subtask, use create_subtask within the two-level limit below your bot or task; explain if blocked. Use create_agent for internal research. Coordinate via send_agent_message and archive_subtask; do not wait for subtasks. Switch a subtask's model with switch_subtask_model only when its model is failing or wrong for the work. Keep delegated work in the child subtask: ask its agent for progress, findings, diffs, verification, or follow-up changes instead of directly inspecting or modifying its files or running commands in its workspace. Direct access to another workspace often requires elevated permissions and review by the reviewer model; talking to its agent avoids unnecessary permission reviews. Archival stops the task and descendants and archives the task with its own workspace, if it has one; a shared folder stays. History is kept, but archival is final. ${SUBTASK_CLEANUP_INSTRUCTIONS}\n\n${SUBTASK_REFERENCE_INSTRUCTIONS}`;
                 }
                 if (
                     (await this.#bots.forAgent(ctx, scope.agent.id)) !== undefined ||
                     (await this.#tasks.forAgent(ctx, scope.agent.id)) !== undefined
                 ) {
                     return (
-                        "Reserve subtasks for substantial, distinct workstreams, such as changes across projects; handle small steps inline. Usually create second-level subtasks only on explicit user request. Subtasks share your folder or use new project workspaces. Only bots, tasks, and subtasks create them: at most two levels below a bot or task, not two siblings. Coordinate via send_agent_message and archive_subtask; do not wait. Keep delegated work in its subtask: ask its agent for progress, findings, diffs, verification, or follow-up changes instead of directly inspecting or modifying its files or running commands in its workspace. Direct access to another workspace often requires elevated permissions and review by the reviewer model; talking to its agent avoids unnecessary permission reviews. Archival stops the task and descendants and archives the task with its own workspace, if it has one; a shared folder stays. History is kept, but archival is final. " +
+                        "Reserve subtasks for substantial, distinct workstreams, such as changes across projects; handle small steps inline. Usually create second-level subtasks only on explicit user request. Subtasks share your folder or use new project workspaces. Only bots, tasks, and subtasks create them: at most two levels below a bot or task, not two siblings. Coordinate via send_agent_message and archive_subtask; do not wait. Switch a subtask's model with switch_subtask_model only when its model is failing or wrong for the work. Keep delegated work in its subtask: ask its agent for progress, findings, diffs, verification, or follow-up changes instead of directly inspecting or modifying its files or running commands in its workspace. Direct access to another workspace often requires elevated permissions and review by the reviewer model; talking to its agent avoids unnecessary permission reviews. Archival stops the task and descendants and archives the task with its own workspace, if it has one; a shared folder stays. History is kept, but archival is final. " +
                         SUBTASK_CLEANUP_INSTRUCTIONS +
                         "\n\n" +
                         SUBTASK_REFERENCE_INSTRUCTIONS
@@ -644,6 +711,35 @@ export class SubtasksModule implements AgentModule {
             },
         };
     };
+
+    /**
+     * The subtask `agentId`, once `actingAgentId` is shown to be its direct coordinator: an active
+     * bot, task, or subtask that is its parent. Archived targets are returned for the caller to
+     * judge.
+     */
+    async #assertCoordinator(
+        ctx: Context,
+        actingAgentId: string,
+        agentId: string,
+        action: string,
+    ): Promise<AgentConfig> {
+        const agents = this.#requireAgents();
+        const actor = await agents.config(ctx, actingAgentId);
+        const target = await agents.config(ctx, agentId);
+        if (
+            actor === undefined ||
+            Value.Check(archivedMetadataSchema, actor.metadata) ||
+            (!this.isSubtask(actor) && !(await this.#isActiveRoot(ctx, actingAgentId))) ||
+            target === undefined ||
+            !this.isSubtask(target) ||
+            (await agents.parentOf(ctx, agentId)) !== actingAgentId
+        ) {
+            throw new SubtaskInputError(
+                `Only a subtask's direct coordinating bot, task, or subtask may ${action}.`,
+            );
+        }
+        return target;
+    }
 
     async #assertCanCreate(ctx: Context, agentId: string): Promise<AgentConfig> {
         const agents = this.#requireAgents();

@@ -25,6 +25,21 @@ subtask itself is never counted toward `max_collaborators` and adds no level tow
 `max_collaboration_depth`. The check reads a local schema of the `subtask` marker because the
 subtasks module depends on this one, not the other way round.
 
+## Creators may switch a direct child's model on a message
+
+A collaborator's model used to be fixed at creation, so a parent could not move a subtask or
+collaborator off a failing or unsuitable model. Steve asked that tasks change their subtasks'
+provider and model, including while sending them a message. `send_agent_message` now takes
+optional `model`, `effort`, `harness`, `provider`, and `serviceTier`, accepted only when the
+recipient's parent is the sender and refused for every other recipient, cross-workspace ones
+included. There is no separate switching mechanism: the choice is validated like `create_agent`'s
+and rides on the message as its mode, exactly as a person's composer selection does, so Agent Base
+switches when the message is consumed (after the current tool batch for a working child), `lastMode`
+follows, and an incompatible model gets the model-switch notice. A switch never changes the
+child's permission mode: it records the child's own, and a child that never ran starts no wider
+than the sender. Master plan 7 discourages switching an existing agent's model, so the tool
+guidance says to switch only when the model is failing or wrong for the work.
+
 ## Broken collaborators can be archived to free their slot
 
 Five collaborators created on a provider whose API key was invalid all failed at once. Their

@@ -41,10 +41,9 @@ export const collaborationMessageTextSchema = Type.String({
  * Everything one call needs to put a collaborator to work: what it runs on, what to call it, and
  * the first thing it is asked to do.
  *
- * Creating and asking are one operation because what a collaborator runs on can only be said on
- * the message that starts it working. A later message carries no selection at all, so a
- * collaborator cannot be turned into a different model, made to think harder, or given wider
- * permissions by anyone who can talk to it.
+ * Creating and asking are one operation because what a collaborator starts on can only be said on
+ * the message that starts it working. A later message carries a selection only when its creator
+ * switches it to another model, and never a wider permission mode.
  *
  * `title` is written to the agent's real metadata, so whatever shows a person their agents names
  * this one the same way it names every other. A collaborator otherwise inherits its creator's
@@ -83,9 +82,8 @@ export const collaborationModelChoiceSchema = Type.Object(
 );
 
 /**
- * What a collaborator runs on. It is chosen once, when the collaborator is created, and never
- * again: a later message may ask a collaborator to do something, but not to become a different
- * model, think harder, or run with wider permissions.
+ * What a collaborator runs on. It is chosen when the collaborator is created, and only its creator
+ * may change it later, on a message that switches it. No message widens its permissions.
  */
 export const collaborationAgentSelectionSchema = Type.Object(
     {
@@ -142,12 +140,28 @@ export const collaborationSendInputSchema = Type.Object(
     { additionalProperties: false },
 );
 
-/** What `send_agent_message` takes: a model always says in one line what its message is. */
+/**
+ * What `send_agent_message` takes: a model always says in one line what its message is. The model
+ * fields switch a direct collaborator or subtask to another model with the message, the way a
+ * person's message carries the model their composer shows; `model` and `effort` come together.
+ */
 export const collaborationSendToolInputSchema = Type.Object(
     {
         toAgentId: collaborationAgentIdSchema,
         explanation: senderAgentExplanationArgumentSchema,
         text: collaborationMessageTextSchema,
+        model: Type.Optional(
+            Type.String({
+                minLength: 1,
+                maxLength: 256,
+                description:
+                    "Switch an agent you created directly to this model with the message. Requires effort. Omit to leave its model alone.",
+            }),
+        ),
+        effort: Type.Optional(collaborationEffortSchema),
+        harness: Type.Optional(Type.String({ minLength: 1, maxLength: 256 })),
+        provider: Type.Optional(Type.String({ minLength: 1, maxLength: 256 })),
+        serviceTier: Type.Optional(collaborationServiceTierSchema),
     },
     { additionalProperties: false },
 );

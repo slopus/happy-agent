@@ -1,7 +1,8 @@
 # Subtasks
 
-User-visible, parent-managed conversations. `create_subtask` creates them and `archive_subtask`
-lets their direct coordinator archive them. Existing collaboration messaging and the agent API
+User-visible, parent-managed conversations. `create_subtask` creates them, `archive_subtask`
+lets their direct coordinator archive them, and `switch_subtask_model` lets it move one to another
+model. Existing collaboration messaging and the agent API
 handle interaction; users may also archive through the API.
 
 ```text
@@ -31,6 +32,15 @@ A subtask runs in its coordinator's persistent permission mode unless `read_only
 `full_mode`, from a coordinator in Full access, asks for Full access. Creation settles the mode and
 records it with the durable start, because the start runs on a context that names no agent.
 Modules creating subtasks of their own, such as Voice and Prioritizing, get the product default.
+`switch_subtask_model` takes the same model, effort, harness, provider, and service-tier choices
+as creation, checked by collaboration against what new agents are offered. Only the direct
+coordinator may use it, on an active subtask. It sends the subtask a short message from the
+coordinator through collaboration's `sendMessage` with the new model, so it is the same switch a
+person makes from the subtask's conversation: applied when the message is read, after the current
+response and tool batch, recorded as the subtask's mode, and introduced by the model-switch notice
+when the new model cannot read the old context. An idle subtask wakes on the new model and replies
+briefly, which reaches the coordinator as its ordinary report. `send_agent_message` carries the
+same fields for a switch that comes with new instructions.
 Archival is final: a subtask is never restored. Durable Functions owns post-commit compute
 cleanup. Agent Base remains unchanged.
 Coordinators are told to mention a subtask as `[title](happy://agents/<agentId>)`, and
