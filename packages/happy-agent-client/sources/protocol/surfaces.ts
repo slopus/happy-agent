@@ -82,6 +82,19 @@ export const surfaceTargetSchema = Type.Union([
 ]);
 export type SurfaceTarget = Static<typeof surfaceTargetSchema>;
 
+/**
+ * A document Surface's place among the installation's important documents: the admin's
+ * description, and the display name agents see when the admin gave one.
+ */
+export const surfacePromptDocumentSchema = Type.Object(
+    {
+        description: Type.String({ minLength: 1, maxLength: 1_024, pattern: "\\S" }),
+        name: Type.Optional(surfaceNameSchema),
+    },
+    { additionalProperties: false },
+);
+export type SurfacePromptDocument = Static<typeof surfacePromptDocumentSchema>;
+
 export const surfaceSchema = Type.Object({
     /** One persistent contextual chat, or null before first open; older daemons omit it. */
     chatAgentId: Type.Optional(Nullable(cuid2Schema)),
@@ -92,6 +105,11 @@ export const surfaceSchema = Type.Object({
     type: Type.String({ minLength: 1 }),
     members: Type.Array(surfaceMemberSchema),
     name: surfaceNameSchema,
+    /**
+     * Document Surfaces only: null when not an important document. Resolved on read, so events
+     * omit it; older daemons omit it too.
+     */
+    promptDocument: Type.Optional(Nullable(surfacePromptDocumentSchema)),
     target: Type.Optional(surfaceTargetSchema),
     updatedAt: timestampSchema,
     version: resourceVersionSchema,

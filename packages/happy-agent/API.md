@@ -400,6 +400,11 @@ changes. The optional `name` and `image` fields of `surface.updated` `changes` a
 older compatible daemons. A client that does not know them keeps showing the earlier name or
 image until it next reads the catalog.
 
+Important documents are additive and do not increment the protocol version. The optional Surface
+`promptDocument` field is absent on older compatible daemons; clients treat a missing field as a
+document that is not an important document. The admin-bot tools that manage the list are agent
+tools with no HTTP route or event.
+
 Collaborative documents and the removal of the `separator` Surface type are a one-off exception
 to additive compatibility, approved for client and daemon together; the protocol number does not
 change. A daemon that serves collaborative documents reports `capabilities.collaborativeDocuments:
@@ -9056,6 +9061,16 @@ or nullable member field in responses, and no duplicate `userIds` list. The Surf
 covers its name, image, and all its member records. Its identity and type never change; its name
 and image change only through `PATCH /v0/surfaces/:surfaceId`.
 `name` is 1–256 nonblank characters without ASCII control characters.
+Document Surfaces have optional additive `promptDocument`: `null` when the document is not one of
+the installation's important documents (see [Document Surfaces](#document-surfaces)), or
+`{ "description": "...", "name": "..." }` when it is. `description` is the admin's description of
+what the document covers and when to read it. `name` is present only when the admin gave the
+document its own display name for agents' instructions; otherwise agents see the Surface's `name`.
+Current daemons include it on caller-facing catalog, desktop bootstrap, and single-Surface
+responses for document Surfaces; other types omit it, and older daemons may omit it. It is
+resolved when the Surface is read and is not part of the Surface's stored version chain: marking
+or unmarking a document changes no Surface version, and shared `surface.created` and
+`surface.updated` events omit it. Clients refetch the catalog to see a change.
 
 Each member has `userId`, `orderKey`, and `joinedAt`. In standalone mode `userId` is `null`,
 matching the existing profile and task identity convention; in team mode it is the
@@ -9287,7 +9302,7 @@ returns headings in their ordinary list positions; summaries of outstanding work
 heading rows from the task count.
 Todo mutation tools supply the current version they read, and receive an explicit conflict on a
 stale version rather than silently overwriting. `list_surfaces` lists instance IDs, types, names,
-and nested members.
+nested members, and `promptDocument` for document Surfaces.
 Every ordinary agent model also receives `update_surface`, accepting `surfaceId`, optional
 `name`, and optional `imagePath`: an absolute PNG, JPEG, or WebP path (8 MiB maximum) that
 replaces the image, or `null` to remove it. At least one of `name` and `imagePath` is required.
@@ -9521,11 +9536,12 @@ read it on demand. Document content and history are not included in desktop boot
 Ordinary models receive `read_document` (`surfaceId`, optional `seq` to read an older version),
 `update_document` (`surfaceId`, the `seq` it read, and full replacement Markdown `text`), and
 `list_document_versions` (`surfaceId`, optional `afterSeq`, optional `limit` from 1 through 20,
-default 10). `read_document` returns the Markdown and the `seq` it was read at, and says when
-content Markdown cannot show was left out. `update_document` compares the agent's Markdown with
-the version at that `seq`, block by block, and applies only the difference to the current
-document as one change, inside the write transaction. Edits people made after that version are
-kept, and unchanged text appends nothing. A `seq` outside 1 through the latest is invalid, except
+default 10). `read_document` returns the Markdown and the `seq` it was read at, says when
+content Markdown cannot show was left out, and, when the document is one of the installation's
+important documents, includes its `promptDocument`. `update_document` compares the agent's
+Markdown with the version at that `seq`, block by block, and applies only the difference to the
+current document as one change, inside the write transaction. Edits people made after that
+version are kept, and unchanged text appends nothing. A `seq` outside 1 through the latest is invalid, except
 0 for an empty document. A document containing content outside the content model refuses the
 write with an error telling the agent why. `list_document_versions` lists log entries.
 Reading needs no review; updates are durable and own ordinary shared-data Auto review with no
@@ -9534,6 +9550,26 @@ accepting `name`, required explicit `creatorUserId`, optional initial Markdown `
 optional absolute `imagePath`. Its authority, attribution, creator join rules, image handling,
 and permission boundaries match `create_todo_surface`. Creation follows the catalog's default
 team membership policy; reading or editing document content never joins anyone.
+
+Active admin bots also receive `list_prompt_documents`, `mark_prompt_document`, and
+`unmark_prompt_document`, which manage the installation's important documents: one
+installation-wide list of document Surfaces that every agent's instructions name, with a
+description, as standing guidance to read with `read_document` before acting on work it covers.
+`mark_prompt_document` accepts `surfaceId`, a required non-blank `description` of at most 1,024
+characters, and an optional `name`. It accepts only an existing document Surface, allows at most
+32 marked documents, and leaves the document unchanged. Marking an already marked document
+replaces its description and name but keeps its original mark time; an identical mark changes
+nothing. `unmark_prompt_document` accepts `surfaceId`; unmarking a document that is not marked
+changes nothing. `list_prompt_documents` returns every marked document with its description,
+name, mark time, and marking agent, including documents agents can no longer read. Agents see
+the list ordered by mark time, oldest first, ties broken by Surface ID. Each entry shows the given
+`name`, or else the Surface's live name, together with its `surfaceId` and
+`happy://surfaces/<surfaceId>` link. A marked Surface that is missing or no longer a document is
+left out. Changes apply from each agent's next model request. Authority is checked at tool
+selection and again at execution. Mark and unmark are durable, require Auto or Full access, and
+always own Auto review as an installation-wide instruction change with no filesystem elevation.
+Listing needs no review. Marking and unmarking change the document Surface's `promptDocument`
+field but no Surface version, and emit no event.
 
 ### Calendar Surfaces
 

@@ -14,6 +14,10 @@ shared `surface.updated` and use its normal version chain to reconcile the compl
 When health reports `capabilities.surfaceEditing`, `updateSurface(surfaceId, { name, image })`
 renames a Surface or replaces its image, and `image: null` removes it. `surface.updated` then
 carries the new `name` or `image`; refetch the image bytes when `image` is present.
+A document Surface may carry `promptDocument`: `null`, or `{ description, name? }` when admin bots
+marked it as one of the installation's important documents that every agent is told to read.
+It is resolved when the catalog is read, so events never carry it; refetch to see a change.
+Older daemons omit it, which means not an important document.
 
 The first Surface type is Todo, served at `/v0/surfaces/todo/:surfaceId`. Every todo method takes
 the Surface ID first. `listTodos(surfaceId)` loads every active todo

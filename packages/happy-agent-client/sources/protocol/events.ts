@@ -347,6 +347,7 @@ export type SurfaceUpdatedPayload = Static<typeof surfaceUpdatedPayloadSchema>;
 export const surfaceCreatedPayloadSchema = Type.Object({
     surface: Type.Object({
         ...surfaceSchema.properties,
+        promptDocument: Type.Optional(Type.Never()),
         target: Type.Optional(Type.Never()),
     }),
     mutationId: Type.Optional(mutationIdSchema),
