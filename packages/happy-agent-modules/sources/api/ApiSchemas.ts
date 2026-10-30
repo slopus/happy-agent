@@ -198,24 +198,8 @@ const messageSendImageBlockSchema = Type.Object(
     { additionalProperties: false },
 );
 
-/** The person pressing one inline action control; see "Action messages" in API.md. */
-export const messageSendActionBlockSchema = Type.Object(
-    {
-        type: Type.Literal("action"),
-        messageId: apiIdSchema,
-        blockIndex: Type.Integer({ minimum: 0, maximum: 1_000 }),
-        actionId: Type.String({ minLength: 1, maxLength: 128 }),
-        params: Type.Record(Type.String({ maxLength: 64 }), Type.String({ maxLength: 2_000 }), {
-            maxProperties: 32,
-        }),
-        values: Type.Optional(Type.Array(Type.String({ maxLength: 2_000 }), { maxItems: 200 })),
-    },
-    { additionalProperties: false },
-);
-
 /**
- * Ordinary content is text and images. A message may add at most one tool request. An action
- * message is one action block and nothing else. The two
+ * Ordinary content is text and images. A message may add at most one tool request. The two
  * shapes are separate arrays because TypeBox rejects any `contains` array with zero matches
  * even when `minContains` is 0, which would refuse every plain text or image message.
  */
@@ -236,7 +220,6 @@ const messageSendContentSchema = Type.Union([
             maxContains: 1,
         },
     ),
-    Type.Array(messageSendActionBlockSchema, { minItems: 1, maxItems: 1 }),
 ]);
 
 export const messageSendBodySchema = Type.Object(
@@ -245,11 +228,9 @@ export const messageSendBodySchema = Type.Object(
         content: Type.Optional(messageSendContentSchema),
         delivery: Type.Optional(Type.Union([Type.Literal("queue"), Type.Literal("steer")])),
         id: Type.Optional(apiIdSchema),
-        /** Required, except in an action message, which runs on the current selection. */
-        mode: Type.Optional(requestedAgentModeSchema),
+        mode: requestedAgentModeSchema,
         profile: Type.Optional(agentRequestProfileSchema),
-        /** Required, except in an action message, which has none. */
-        text: Type.Optional(Type.String({ minLength: 1, maxLength: 1_000_000 })),
+        text: Type.String({ minLength: 1, maxLength: 1_000_000 }),
     },
     { additionalProperties: false },
 );

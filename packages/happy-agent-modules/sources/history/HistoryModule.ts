@@ -59,6 +59,7 @@ import type {
 import type { ProviderUsageModule } from "../providerUsage/index.js";
 import { executionConfigurationChanged } from "./impl/executionConfigurationChanged.js";
 import { executionFailure } from "./impl/executionFailure.js";
+import { rewriteInlineActionMessages } from "./impl/rewriteInlineActionMessages.js";
 import { messageFailure } from "./impl/messageFailure.js";
 import { ExecutionConfigurationReservations } from "./impl/ExecutionConfigurationReservations.js";
 import { queryToolCallMessage } from "./persistence/queryToolCallMessage.js";
@@ -401,6 +402,13 @@ export class HistoryModule implements AgentModule {
                         WHERE json_extract(block.value, '$.type') = 'tool_call'
                     `),
                 );
+            },
+        ],
+        [
+            "004-history-inline-actions-as-text",
+            async (_ctx, database) => {
+                await rewriteInlineActionMessages(database, HISTORY_TABLE, true);
+                await rewriteInlineActionMessages(database, HISTORY_PENDING_TABLE, false);
             },
         ],
     ];
@@ -2614,15 +2622,10 @@ export class HistoryModule implements AgentModule {
             // A message from another agent may carry the reasoning that agent exposed. It is
             // recorded as thinking, the way this module records any other reasoning; reasoning
             // that is only an opaque provider payload has nothing to show and is left out.
-            // An action message reaches the model as words, and stays the person's press here.
-            const blocks = pending?.blocks.some((block) => block.type === "action")
-                ? pending.blocks
-                : accepted.message.content.flatMap((block): HistoryBlock[] => {
-                      if (block.type !== "reasoning") return [toHistoryInputBlock(block)];
-                      return block.text === undefined
-                          ? []
-                          : [{ type: "thinking", thinking: block.text }];
-                  });
+            const blocks = accepted.message.content.flatMap((block): HistoryBlock[] => {
+                if (block.type !== "reasoning") return [toHistoryInputBlock(block)];
+                return block.text === undefined ? [] : [{ type: "thinking", thinking: block.text }];
+            });
             await this.#append(ctx, scope.agent.id, {
                 at: acceptedAt,
                 blocks,

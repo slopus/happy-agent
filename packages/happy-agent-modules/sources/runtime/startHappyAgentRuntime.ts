@@ -77,7 +77,6 @@ import { ProviderUsageModule } from "../providerUsage/index.js";
 import { ProviderScanModule } from "../providerScan/index.js";
 import { ProviderClisModule } from "../providerClis/index.js";
 import { ProviderRoutesModule } from "../providerRoutes/index.js";
-import { OnboardingModule } from "../onboarding/index.js";
 import { SchedulingModule } from "../scheduling/index.js";
 import { SearchModule } from "../search/index.js";
 import { SecretsModule } from "../secrets/index.js";
@@ -204,7 +203,6 @@ export interface HappyAgentRuntimeModules {
     readonly providerScan: ProviderScanModule;
     readonly providerClis: ProviderClisModule;
     readonly providerRoutes: ProviderRoutesModule;
-    readonly onboarding: OnboardingModule;
     readonly scheduling: SchedulingModule;
     readonly search: SearchModule;
     readonly secrets: SecretsModule;
@@ -762,18 +760,6 @@ export async function startHappyAgentRuntime(
             tasks,
         );
         const stickers = new StickersModule(config, team, stories);
-        const onboarding = new OnboardingModule(
-            config,
-            durableFunctions,
-            history,
-            bots,
-            profile,
-            providerClis,
-            providerRoutes,
-            providerScan,
-            spaces,
-            mobileConnector,
-        );
         const apiModule = new ApiModule(
             abort,
             config,
@@ -819,7 +805,6 @@ export async function startHappyAgentRuntime(
             stickers,
             providerClis,
             providerRoutes,
-            onboarding,
         );
         api = apiModule;
 
@@ -870,7 +855,6 @@ export async function startHappyAgentRuntime(
             providerScan,
             providerClis,
             providerRoutes,
-            onboarding,
             providerUsage,
             scheduling,
             search,
@@ -940,7 +924,6 @@ export async function startHappyAgentRuntime(
             bots,
             tasks,
             spaces,
-            onboarding,
             artifacts,
             artifactData,
             node,

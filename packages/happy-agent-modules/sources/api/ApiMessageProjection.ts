@@ -99,9 +99,6 @@ export function messageResource(
         ...(role === "user" && message.clientMetadata !== undefined
             ? { clientMetadata: message.clientMetadata }
             : {}),
-        ...(role === "agent" && message.actionChoices !== undefined
-            ? { actionChoices: structuredClone(message.actionChoices) }
-            : {}),
         ...(role === "user"
             ? {
                   status: "accepted",
@@ -189,7 +186,6 @@ function historyBlocks(
         .map((block): Record<string, unknown> => {
             if (block.type === "configuration") return structuredClone(block);
             if (block.type === "tool_call_request") return structuredClone(block);
-            if (block.type === "action") return structuredClone(block);
             if (block.type === "text") return { type: "text", text: block.text };
             if (block.type === "thinking") {
                 return { type: "reasoning", text: block.thinking };

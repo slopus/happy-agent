@@ -657,10 +657,6 @@ export async function agentResource(
         userVisible: state.userVisible ?? state.orderKey != null,
         managedByAnotherAgent,
         canSendMessages: (!managedByAnotherAgent || state.subtask === true) && archivedAt === null,
-        composerPlaceholder:
-            typeof metadata["composerPlaceholder"] === "string"
-                ? metadata["composerPlaceholder"]
-                : null,
         title: typeof metadata.title === "string" ? metadata.title : null,
         titleStatus: typeof metadata.title === "string" ? "ready" : "idle",
         status: state.working === true ? "working" : "idle",

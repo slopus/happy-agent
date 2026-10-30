@@ -44,8 +44,6 @@ export function formatHistoryMessage(
                     ? "Thinking: [redacted]"
                     : `Thinking: ${truncate(block.thinking, textLimit)}`,
             );
-        } else if (block.type === "action") {
-            lines.push(`Pressed "${truncate(block.label, textLimit)}"`);
         } else if (block.type === "tool_call_request") {
             lines.push(`Requested tool: ${block.name} ${truncateJson(block.arguments ?? {})}`);
         } else if (block.type === "tool_call") {

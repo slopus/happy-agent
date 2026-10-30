@@ -493,37 +493,9 @@ export const historyCompactionBlockSchema = Type.Union([
     historyFailedCompactionBlockSchema,
 ]);
 
-/**
- * The person pressing one inline action control, as their own message: which control, what the
- * work did, and what it returned. Only in a user message, and its only block.
- */
-export const historyActionBlockSchema = Type.Object(
-    {
-        type: Type.Literal("action"),
-        messageId: Type.String({ minLength: 1, maxLength: 128 }),
-        blockIndex: Type.Integer({ minimum: 0, maximum: 1_000 }),
-        actionId: Type.String({ minLength: 1, maxLength: 128 }),
-        params: Type.Record(Type.String({ maxLength: 64 }), Type.String({ maxLength: 2_000 }), {
-            maxProperties: 32,
-        }),
-        values: Type.Array(Type.String({ maxLength: 2_000 }), { maxItems: 200 }),
-        /** The words on the control pressed, as the person read them. */
-        label: Type.String({ maxLength: 2_000 }),
-        /** A submitted checklist's ticked labels, in the order it shows them. */
-        ticked: Type.Optional(Type.Array(Type.String({ maxLength: 2_000 }), { maxItems: 200 })),
-        /** What the work did, as the agent's model reads it; absent when no model reads it. */
-        outcome: Type.Optional(Type.String({ maxLength: 20_000 })),
-        /** What the action returns to clients. */
-        result: Type.Unknown(),
-    },
-    { additionalProperties: false },
-);
-export type HistoryActionBlock = Static<typeof historyActionBlockSchema>;
-
 /** One piece of a recorded message. */
 export const historyBlockSchema = Type.Union([
     toolCallRequestBlockSchema,
-    historyActionBlockSchema,
     historyTextBlockSchema,
     historyThinkingBlockSchema,
     historyImageBlockSchema,
@@ -535,31 +507,6 @@ export const historyBlockSchema = Type.Union([
 
 /** The TypeScript type inferred from {@link historyBlockSchema}. */
 export type HistoryBlock = Static<typeof historyBlockSchema>;
-
-/** What a person did with one inline action block of an agent message; never model input. */
-export const historyActionChoiceSchema = Type.Union([
-    Type.Object(
-        { kind: Type.Literal("button"), index: Type.Integer({ minimum: 0, maximum: 1_000 }) },
-        { additionalProperties: false },
-    ),
-    Type.Object(
-        {
-            kind: Type.Literal("checklist"),
-            values: Type.Array(Type.String({ minLength: 1, maxLength: 500 }), { maxItems: 200 }),
-        },
-        { additionalProperties: false },
-    ),
-    Type.Object({ kind: Type.Literal("submitted") }, { additionalProperties: false }),
-]);
-export type HistoryActionChoice = Static<typeof historyActionChoiceSchema>;
-
-/** Each chosen block's choice, by its block index as a decimal string. */
-export const historyActionChoicesSchema = Type.Record(
-    Type.String({ pattern: "^(0|[1-9][0-9]{0,3})$" }),
-    historyActionChoiceSchema,
-    { maxProperties: 200 },
-);
-export type HistoryActionChoices = Static<typeof historyActionChoicesSchema>;
 
 const historyMessageFields = {
     role: historyRoleSchema,
@@ -599,8 +546,6 @@ const historyMessageFields = {
     clientMetadata: Type.Optional(historyClientMetadataSchema),
     /** Keep this operational message out of person-facing transcript projection. */
     hideFromUser: Type.Optional(Type.Boolean()),
-    /** The person's choices on this agent message's inline action blocks. */
-    actionChoices: Type.Optional(historyActionChoicesSchema),
     /** Happy's source identity, used to suppress a remote message echo. */
     remoteMessageId: Type.Optional(historyRemoteMessageIdSchema),
     /** When it was recorded, in epoch milliseconds. */

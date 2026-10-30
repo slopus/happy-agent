@@ -20,12 +20,9 @@ const eagerDirectories = [
 ];
 /**
  * Prioritizing's and Voice's whole tool arrays, which they receive without tool search,
- * set_status and post_story, which agents never used while they were deferred, and onboarding's
- * tools, which Happy has only while it guides onboarding and calls at once.
+ * and set_status and post_story, which agents never used while they were deferred.
  */
 const eagerFiles = [
-    "onboarding/tools/save_profile.ts",
-    "onboarding/tools/set_default_model.ts",
     "spaces/tools/prioritizingTools.ts",
     "live/impl/liveDesktopTools.ts",
     "stories/tools/set_status.ts",
