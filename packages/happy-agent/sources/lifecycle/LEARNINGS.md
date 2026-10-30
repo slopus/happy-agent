@@ -173,8 +173,3 @@ served also exits 69, before touching any state; the supervisor treats 69 as fin
 looks at the socket once more, since another start may simply have won the race. `status`
 names an unreachable listener, `stop` refuses it, and `kill` falls back to it when `daemon.pid` is
 missing.
-
-A running daemon also checks every 30 seconds that `server.sock` is still the file it bound and
-the token file still holds its token. When either is gone or replaced, nobody can reach it, so it
-shuts down and its supervisor stands down with the clean exit. Releases before this one have no
-such check, which is why `start` must still be able to replace them.

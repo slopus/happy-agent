@@ -18,10 +18,6 @@ import {
     type BoundAgentHttpServer,
     type BoundAgentSocket,
 } from "./socket/AgentSocket.js";
-import {
-    watchAgentSocketOwnership,
-    type AgentSocketOwnershipWatch,
-} from "./socket/watchAgentSocketOwnership.js";
 const SLOW_SHUTDOWN_STEP_MS = 1_000;
 
 export interface StartHappyAgentDaemonOptions extends Omit<
@@ -145,10 +141,8 @@ export async function startHappyAgentDaemon(
     }
 
     let closing: Promise<void> | undefined;
-    let ownership: AgentSocketOwnershipWatch | undefined;
     closeDaemon = (reason = "requested") => {
         if (closing === undefined) {
-            ownership?.stop();
             const stopIntentDirectory =
                 pidWritten && pidPath !== undefined ? dirname(pidPath) : undefined;
             // Every shutdown is intentional. Recording it first means a crash supervisor never
@@ -177,25 +171,6 @@ export async function startHappyAgentDaemon(
         return closing;
     };
     if (shutdownRequested) void closeDaemon("api");
-    if (!("url" in bound) && closing === undefined) {
-        // A daemon whose socket path or token file now belongs to someone else keeps the socket
-        // busy while no client can reach or replace it, so it shuts down instead.
-        const ownershipContext = withLogContext(runtime.ctx.named("daemon-socket-ownership"), {
-            module: "daemon",
-            pid: process.pid,
-        });
-        const close = closeDaemon;
-        ownership = await watchAgentSocketOwnership({
-            socketPath: bound.socketPath,
-            tokenPath: runtime.configuration.paths.tokenPath,
-            onLost: (loss) => {
-                ownershipContext.log.warn(
-                    `daemon:socket-ownership-lost reason=${loss}; this daemon can no longer be reached, so it is shutting down.`,
-                );
-                void close("requested").catch(() => undefined);
-            },
-        }).catch(() => undefined);
-    }
 
     const startedRuntime = runtime;
     const drainContext = runtime.ctx.named("daemon-local-drain");
