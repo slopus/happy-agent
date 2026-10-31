@@ -4,12 +4,13 @@ The short status line under a task's or bot's title in the sidebar, kept by that
 own agent.
 
 ```ts
-const agentStatus = new AgentStatusModule(durableFunctions, bots, tasks);
+const agentStatus = new AgentStatusModule(durableFunctions, bots, tasks, richTasks);
 ```
 
 A task's or bot's own agent gets `set_status` with its other tools, not deferred, and a short
-instruction to keep the line current. Subtasks, helpers, and project or workspace sessions have
-no row of their own and get neither. The tool takes one short phrase, two lines split by one line
+instruction to keep the line current, while the person it works for has `tasks.rich` on (see
+`RichTasksModule`). Subtasks, helpers, and project or workspace sessions have no row of their own
+and get neither. Withholding the tool never clears a line already set. The tool takes one short phrase, two lines split by one line
 break, or `null` to clear it; the wire limit is the only hard bound.
 
 ```text

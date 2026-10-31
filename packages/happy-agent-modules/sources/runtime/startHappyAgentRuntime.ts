@@ -740,7 +740,7 @@ export async function startHappyAgentRuntime(
             events,
             team,
         );
-        const agentStatus = new AgentStatusModule(durableFunctions, bots, tasks);
+        const agentStatus = new AgentStatusModule(durableFunctions, bots, tasks, richTasks);
         const apiModule = new ApiModule(
             abort,
             config,

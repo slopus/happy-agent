@@ -16,6 +16,7 @@
         "@slopus/happy-agent-gym": "workspace:*",
         "@types/node": "^24.0.10",
         "@types/ws": "8.18.1",
+        "happy-agent-client-0.0.136": "npm:@slopus/happy-agent-client@0.0.136",
         "tweetnacl": "0.14.5",
         "typescript": "^5.8.3",
         "vitest": "^3.2.4",

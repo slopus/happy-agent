@@ -27,6 +27,8 @@ async function harness() {
         },
     });
     running.push(gym);
+    // Agents keep a sidebar status only while the person sees rich tasks.
+    await gym.client.saveUserSetting("tasks.rich", { value: true });
     // A bot's own agent, which keeps a sidebar status.
     const target = (await gym.client.createBot({ name: "Activity" })).bot.agent.id;
     const sender = (await gym.createSession({ title: "Sender" })).id;

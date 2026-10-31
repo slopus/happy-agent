@@ -14,6 +14,7 @@ import type { Context } from "@steve.kite/stdlib";
 
 import { BotsModule } from "../bots/index.js";
 import { DurableFunctionsModule } from "../durableFunctions/index.js";
+import { RichTasksModule } from "../richTasks/index.js";
 import { TasksModule } from "../tasks/index.js";
 import { setStatusTool } from "./tools/set_status.js";
 
@@ -29,7 +30,8 @@ const SET_STATUS_INSTRUCTIONS =
 /**
  * Agent status: the short line under a task's or bot's title in the sidebar, which that task's or
  * bot's own agent keeps with `set_status`. Subtasks, helpers, and project or workspace sessions
- * have no row of their own, so they get neither the tool nor the instructions.
+ * have no row of their own, so they get neither the tool nor the instructions, and neither does a
+ * task or bot whose person has rich tasks off.
  *
  * The line is agent metadata (`statusLine`), which reaches clients on the agent resource.
  */
@@ -39,14 +41,21 @@ export class AgentStatusModule implements AgentModule {
     readonly #durableFunctions: DurableFunctionsModule;
     readonly #bots: BotsModule;
     readonly #tasks: TasksModule;
+    readonly #richTasks: RichTasksModule;
     /** Status lines are written from outside the agent loop that asked for them. */
     readonly #backgroundScope = new AsyncResource("happy-agent-status-line");
     #agents: AgentSystemRef | undefined;
 
-    constructor(durableFunctions: DurableFunctionsModule, bots: BotsModule, tasks: TasksModule) {
+    constructor(
+        durableFunctions: DurableFunctionsModule,
+        bots: BotsModule,
+        tasks: TasksModule,
+        richTasks: RichTasksModule,
+    ) {
         this.#durableFunctions = durableFunctions;
         this.#bots = bots;
         this.#tasks = tasks;
+        this.#richTasks = richTasks;
         // A status line is agent metadata, which an agent cannot change from inside its own turn;
         // the write follows the tool call's commit and survives a restart in between.
         durableFunctions.register({
@@ -76,6 +85,8 @@ export class AgentStatusModule implements AgentModule {
         // Agents left their rows empty until told to keep them.
         instructions: async (ctx: Context, scope: AgentModuleScope): Promise<string> =>
             (await this.#keepsStatus(ctx, scope)) ? SET_STATUS_INSTRUCTIONS : "",
+        messageAcceptedTransact: async (ctx, scope, accepted) =>
+            await this.#richTasks.notePerson(ctx, scope.kv, accepted),
     };
 
     readonly beforeStart = (_ctx: Context, agents: AgentSystemRef): AgentModuleHooks => {
@@ -102,11 +113,12 @@ export class AgentStatusModule implements AgentModule {
         });
     }
 
-    /** Only a task's or a bot's own agent keeps a sidebar status. */
+    /** Only a task's or a bot's own agent keeps a sidebar status, while its person has rich tasks. */
     async #keepsStatus(ctx: Context, scope: AgentModuleScope): Promise<boolean> {
         return (
-            (await this.#tasks.forAgent(ctx, scope.agent.id)) !== undefined ||
-            (await this.#bots.forAgent(ctx, scope.agent.id)) !== undefined
+            ((await this.#tasks.forAgent(ctx, scope.agent.id)) !== undefined ||
+                (await this.#bots.forAgent(ctx, scope.agent.id)) !== undefined) &&
+            (await this.#richTasks.isOnForAgent(ctx, scope))
         );
     }
 }
