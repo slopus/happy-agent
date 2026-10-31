@@ -24,15 +24,31 @@ export type MediaLayoutBlockSegment =
     | { type: "markdown"; text: string }
     | { type: "layout"; html: string; complete: boolean };
 
-const BLOCK_TAGS = ["div", "section", "figure", "p", "img"] as const;
-const BLOCK_START = /^ {0,3}<(div|section|figure|p|img)(?=[\t\n\f\r />]|$)/iu;
+/** Markdown split around its `<menu>` blocks, complete or not, as for layouts. */
+export type ChatActionBlockSegment =
+    | { type: "markdown"; text: string }
+    | { type: "action"; html: string; complete: boolean };
+
+type BlockSegment = MediaLayoutBlockSegment | ChatActionBlockSegment;
+
+const LAYOUT_TAGS = ["div", "section", "figure", "p", "img"];
 const PARTIAL_START = /^ {0,3}<([a-z]*)$/iu;
 const BLANK_LINE = /^[ \t\r]*$/u;
 const TAG_NAME = /[A-Za-z][A-Za-z0-9-]*/uy;
 
 /** Splits Markdown into Markdown and the layout blocks in it. Empty Markdown is omitted. */
 export function splitMediaLayoutBlocks(markdown: string): MediaLayoutBlockSegment[] {
-    const segments: MediaLayoutBlockSegment[] = [];
+    return splitBlocks(markdown, "layout", LAYOUT_TAGS) as MediaLayoutBlockSegment[];
+}
+
+/** Splits Markdown into its `<menu>` blocks; run on the Markdown between layouts. */
+export function splitChatActionBlocks(markdown: string): ChatActionBlockSegment[] {
+    return splitBlocks(markdown, "action", ["menu"]) as ChatActionBlockSegment[];
+}
+
+function splitBlocks(markdown: string, type: "layout" | "action", tags: string[]): BlockSegment[] {
+    const blockStart = new RegExp(`^ {0,3}<(${tags.join("|")})(?=[\\t\\n\\f\\r />]|$)`, "iu");
+    const segments: BlockSegment[] = [];
     const pushMarkdown = (text: string): void => {
         if (text === "") return;
         const last = segments[segments.length - 1];
@@ -65,7 +81,7 @@ export function splitMediaLayoutBlocks(markdown: string): MediaLayoutBlockSegmen
             continue;
         }
         if (lineStart >= codeUntil) {
-            const start = BLOCK_START.exec(line);
+            const start = blockStart.exec(line);
             if (start !== null) {
                 const tag = (start[1] ?? "").toLowerCase();
                 const block = scanBlock(
@@ -76,18 +92,18 @@ export function splitMediaLayoutBlocks(markdown: string): MediaLayoutBlockSegmen
                 pushMarkdown(markdown.slice(markdownStart, lineStart));
                 const html = markdown.slice(lineStart, block.end);
                 if (!block.complete) {
-                    segments.push({ type: "layout", html, complete: false });
+                    segments.push({ type, html, complete: false });
                     return segments;
                 }
-                if (block.image) segments.push({ type: "layout", html, complete: true });
+                if (type === "action" || block.image) segments.push({ type, html, complete: true });
                 else pushMarkdown(html);
                 markdownStart = block.end;
                 lineStart = block.end;
                 continue;
             }
-            if (newline === -1 && isPartialStart(line)) {
+            if (newline === -1 && isPartialStart(line, tags)) {
                 pushMarkdown(markdown.slice(markdownStart, lineStart));
-                segments.push({ type: "layout", html: line, complete: false });
+                segments.push({ type, html: line, complete: false });
                 return segments;
             }
         }
@@ -104,10 +120,19 @@ export function splitMediaLayoutBlocks(markdown: string): MediaLayoutBlockSegmen
  * An incomplete block is broken HTML rather than a layout, so it stays as written.
  */
 export function stripMediaLayoutBlocks(markdown: string): string {
+    return stripBlocks(splitMediaLayoutBlocks(markdown));
+}
+
+/** Markdown without its complete `<menu>` blocks, closed up as `stripMediaLayoutBlocks` does. */
+export function stripChatActionBlocks(markdown: string): string {
+    return stripBlocks(splitChatActionBlocks(markdown));
+}
+
+function stripBlocks(segments: readonly BlockSegment[]): string {
     const parts: string[] = [];
     let removed = false;
-    for (const segment of splitMediaLayoutBlocks(markdown)) {
-        if (segment.type === "layout" && segment.complete) {
+    for (const segment of segments) {
+        if (segment.type !== "markdown" && segment.complete) {
             removed = true;
             continue;
         }
@@ -164,9 +189,9 @@ export function mediaSourceMatches(source: MediaItemSource | undefined, src: str
 }
 
 /** Whether a final line without its newline could still become a block start. */
-function isPartialStart(line: string): boolean {
+function isPartialStart(line: string, tags: readonly string[]): boolean {
     const name = PARTIAL_START.exec(line)?.[1]?.toLowerCase();
-    return name !== undefined && BLOCK_TAGS.some((tag) => tag.startsWith(name));
+    return name !== undefined && tags.some((tag) => tag.startsWith(name));
 }
 
 /**

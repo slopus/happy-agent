@@ -302,8 +302,8 @@ Each part is detected through its own health capability, never through the proto
 so an older client ignores it and draws the list it always did, in the same order, with hidden
 tasks still shown. Story artifacts never reach an older client: they are left out of
 `GET /v0/artifacts`, every other artifact route answers `404` for them, and they emit no
-`artifact.*` events. Action blocks never reach one either: an action message reads as the
-person's words unless the read asks for `include=actions`. An older daemon ignores or rejects every new
+`artifact.*` events. A press of an inline action is stored as the person's text, so every reader
+draws it as an ordinary message. An older daemon ignores or rejects every new
 request field and answers every new route with `404`, so a client sends none of them unless the
 matching capability is present. The reserved settings `tasks.rich`, `tasks.sections`,
 `tasks.focus`, and `onboarding.chat` are off unless set to JSON `true`; with all of them off, a
@@ -6173,7 +6173,7 @@ See `send` for its context-reset semantics.
 message. The kind set may grow; a client draws an unknown `replyTo` as no quote.
 
 `actionChoices` — optional on an agent message, on daemons with `capabilities.chatActions`;
-present once a person has pressed one of its inline action controls (see "Inline actions").
+present once a person has pressed one of its inline action buttons (see "Inline actions").
 
 **Roles** say who produced the message:
 
@@ -7337,203 +7337,66 @@ the HTML as its Markdown renderer does.
 
 #### Inline actions
 
-Any agent's reply may hold inline action blocks: a small, closed subset of HTML, without scripts
-or styles, that clients draw as controls where it was written, so a person can answer with a
-click instead of typing. A press is the person's own action message, described under `send`. A
-daemon that accepts presses reports `capabilities.chatActions: true` from health.
+Any agent's reply may hold `<menu>` blocks: buttons that clients draw where they were written, so a
+person can answer with a press instead of typing. A press is the person's own action message,
+described under `send`. A daemon that accepts presses reports `capabilities.chatActions: true` from
+health. Questions an agent asks with its question tool keep their own route; they are not menus.
 
 ```markdown
 Ready to push?
 
 <menu>
   <button data-action="reply" data-emphasis>Push it</button>
-  <button data-action="reply">Not yet</button>
+  <button data-action="reply" data-text="Not yet, run the tests first">Not yet</button>
 </menu>
 ```
 
 A block is recognized only when it starts a line, with at most three spaces of indentation,
-outside a code fence and outside a code span. It ends on the line where its root element closes.
-A block still open at the end of the text is held back while the message streams, and stays inert
-text once the message is final. Its root is one of:
+outside a code fence and outside a code span. It ends on the line where its `</menu>` closes. A
+block still open at the end of the text is held back while the message streams, and stays inert
+text once the message is final.
 
-- `<menu>` — buttons, each `<button data-action="ID" …>Label</button>`.
-- `<form data-action="ID">` — a checklist: `<label>` rows, each holding one
-  `<input type="checkbox" value="V" [checked] [disabled]>`, its label, and optional `<small>`
-  details; then exactly one `<button type="submit">` and optional
-  `<button type="button" data-action="ID">` others.
-- `<ol data-steps>` — steps, each
-  `<li data-status="pending|running|done|failed">Label <small>detail</small></li>`.
-- `<output data-status="info|running|done|failed">Text <small>detail</small></output>` — one
-  status line.
-- `<figure data-provider-cli="ID"></figure>` — one provider CLI, by its `id`, drawn live from
-  `GET /v0/provider-clis/:cliId` and `provider_cli.updated`: install, sign in, a sign-in code
-  field, cancel, and the signed-in account. Every control calls the provider CLI routes; none is a
-  press. A figure appearing never opens a browser.
-- `<figure data-setting="NAME"></figure>` — one setting, drawn live: `default-model` (the default
-  model and effort from `GET /v0/config` `defaults`, changed through `PATCH /v0/config`), and the
-  onboarding figures `tasks-style` and `focus` (see "Onboarding in the built-in bot's
-  conversation"). Any other name draws as an unknown figure does: not at all.
+A menu holds only `<button>` elements and blank text, and each button holds only text: its label,
+with whitespace collapsed. The HTML is read as a browser reads it, entities included. A menu that
+breaks this, holds no button, or shares its block with anything else is not a block; it is drawn
+as the inert text it was written as.
 
-The only elements are `menu`, `form`, `output`, `ol`, `figure`, `li`, `button`, `label`, `input`,
-`small`, and `br`. The only entities are `amp`, `lt`, `gt`, `quot`, `apos`, `nbsp`, `middot`,
-`hellip`, `mdash`, `ndash`, and numeric references. Optional presentation attributes are
-`data-emphasis` (the first in a block counts), `data-mark` (`claude`, `openai`, `grok`, or
-`gemini`), `data-icon` (a task icon slug), and, on a checklist's submit, `data-empty-label`, its
-label while nothing is ticked. A block with any other element, any `on*` or `style` attribute,
-mismatched nesting, stray text between elements, or more than one root is not a block; it is
-drawn as the inert text it was written as.
+A button's action is its `data-action`. The only action is `reply`: pressing it answers the agent
+with the button's `data-text`, or its label when it has none, as if the person had typed it. A
+button with any other action, or none, is drawn but cannot be pressed. Every other `data-X`
+attribute is the action's parameter `X`, except the presentation attributes `data-emphasis` (drawn
+as the menu's main choice), `data-mark` (`claude`, `openai`, `grok`, or `gemini`), and `data-icon`
+(a task icon slug), which are never parameters.
 
-Every other `data-X` attribute of a control, or of its form, is the action's parameter `X`. An
-action is known by its ID:
-
-- `reply` — usable by every agent in every conversation. Pressing answers the agent with the
-  control's label, as if the person had typed it; a checklist's ticked labels go with it.
-- `onboarding.*` — the onboarding actions, live only in the built-in bot's conversation while
-  onboarding runs.
-
-An action ID the daemon does not know, or a control whose parameters do not check, is drawn but
-cannot be pressed; nothing is inferred from a label. A checklist's ticked values are the
-action's `values` and cannot come from an attribute.
-
-Blocks are numbered by `blockIndex`: the zero-based position of a valid action block among the
-valid action blocks of the message's text, in order. Steps, status lines, and figures count.
-Media layout blocks are split out first, so a `<figure>` holding an `<img>` stays a layout.
-Within a block, controls are numbered by `controlIndex`, from 0: a menu's buttons in order, and a
-checklist's submit first, then its other buttons in order. Two controls with the same action and
-parameters are told apart only by it.
+Blocks are numbered by `blockIndex`: the zero-based position of a `<menu>` block among the
+message's complete `<menu>` blocks, in order, across its text blocks; a menu that breaks the
+grammar still counts. Media layout blocks are split out first, so a `<menu>` inside a layout is
+never a block. Within a menu, buttons are numbered by `controlIndex`, from 0, in order. Two
+buttons with the same action and parameters are told apart only by it.
 
 `actionChoices` maps a `blockIndex`, as a string, to that block's one choice:
+`{ "kind": "button", "index": 1 }`, the button pressed, by its `controlIndex`. The kind set may
+grow; a client draws a block with an unknown choice as chosen, with nothing emphasized. A block
+with a choice is locked: clients draw the chosen button as pressed and accept no further press.
+Recording a choice is announced as `message.updated` with the whole pressed message, so every
+client and every reload draws the same choice. The choice itself is never model input; the
+person's message is.
 
-- `{ "kind": "button", "index": 1 }` — the button pressed, by its `controlIndex`.
-- `{ "kind": "checklist", "values": ["t1", "t3"] }` — a checklist submitted with these values.
-
-The kind set may grow; a client draws a block with an unknown choice as chosen, with nothing
-emphasized. A block with a choice is locked: clients draw the chosen control as pressed and accept
-no further press. Recording a choice is announced as `message.updated` with the whole pressed
-message, so every client and every reload draws the same choice. The choice itself is never model
-input; the action message is.
-
-**Fallback.** A surface that cannot draw action blocks drops each complete block, closing up the
-blank lines around it. The daemon applies this to agent text it relays to exported bots and to
-the Happy mobile app. A client without inline actions shows the HTML as its Markdown renderer
-does.
+**Fallback.** A surface that cannot draw menus drops each complete block, closing up the blank
+lines around it. The daemon applies this to agent text it relays to exported bots and to the
+Happy mobile app. A client without inline actions shows the HTML as its Markdown renderer does.
 
 **One implementation.** `@slopus/happy-agent-client` exports the block splitter, parser, and
-fallback, used after `splitMediaLayoutBlocks`, by clients and the daemon alike:
+fallback, used by clients and the daemon alike. `splitChatActionBlocks` runs on the Markdown that
+`splitMediaLayoutBlocks` leaves; `chatActionBlocksOf` does both and numbers the blocks:
 
 ```ts
 splitChatActionBlocks(markdown: string):
     ({ type: "markdown"; text: string } | { type: "action"; html: string; complete: boolean })[];
 parseChatActionBlock(html: string): ChatActionBlock | null; // null: not a block, draw as text
+chatActionBlocksOf(markdown: string): (ChatActionBlock | null)[]; // by blockIndex
 stripChatActionBlocks(markdown: string): string;
 ```
-
-#### File links
-
-A bare `path:line` is read against the workspace of the conversation that shows it. That is the
-wrong workspace whenever the text is read somewhere else: a subtask's report relayed by its
-parent, or a message from an agent that works in another folder. A **file link** names the
-workspace explicitly. It is a Happy link, an ordinary Markdown inline link, whose destination is a
-file URL in one of two equally valid forms:
-
-```markdown
-The loop starts in [Foo.tsx:42](happy://agents/a1b2c3d4/files/packages/app/Foo.tsx#L42-L50).
-The setup steps are in [README](happy-file://workspaces/k2h4j5l6/README.md).
-```
-
-The `happy://…/files/…` form is the one agents write in Markdown, alongside entity links. The
-`happy-file://` form, which puts the path straight after the target, is the API's canonical file
-URL. Readers accept both everywhere, and both name the same file. The label is ordinary Markdown
-that the agent writes, and the daemon stores and returns message text exactly as written. An agent
-keeps writing plain `path:line` for a file in the reader's own workspace.
-
-**Grammar.** In ABNF, with `ALPHA`, `DIGIT`, and `HEXDIG` as in RFC 5234:
-
-```text
-file-url    = happy-form / file-form
-happy-form  = "happy://" target "/files/" path [ "#" lines ]
-file-form   = "happy-file://" target "/" path [ "#" lines ]
-target      = "agents/" id / "workspaces/" id
-id          = 1*128( ALPHA / DIGIT / "_" / "-" )
-path        = segment *( "/" segment )
-segment     = 1*( unreserved / pct-encoded / "!" / "$" / "&" / "'" / "*" / "+" / "," / ";" /
-                  "=" / ":" / "@" )
-unreserved  = ALPHA / DIGIT / "-" / "." / "_" / "~"
-pct-encoded = "%" HEXDIG HEXDIG
-lines       = "L" line [ "-L" line ]
-line        = %x31-39 *8DIGIT
-```
-
-- A URL is at most 4,096 characters.
-- Matching is case-sensitive. `happy://`, `happy-file://`, `agents/`, `workspaces/`, `/files/`,
-  and `L` are written exactly as shown. Only the hex digits of `pct-encoded` may be either case.
-- `agents/<id>` names an agent, and the file lives in that agent's workspace, its `workspaceId`.
-  `workspaces/<id>` names a workspace directly. A project's files are linked through its root
-  workspace's ID, as under "Files".
-- `path` is relative to that workspace's root. Each segment is percent-decoded on its own, and
-  its bytes must be valid UTF-8. A decoded segment must not be `.` or `..` and must not contain
-  `/`, `\`, or a control character (U+0000–U+001F or U+007F–U+009F). An encoded `%2F` is never a
-  separator. There is no leading or trailing `/` and no empty segment.
-- Every character outside the grammar is percent-encoded as UTF-8: spaces, parentheses, `?`, `#`,
-  `[`, `]`, a `%` that does not start an escape, and every non-ASCII character. Literal
-  parentheses are excluded so a link never needs Markdown escaping.
-- `#L12` selects line 12 and `#L12-L20` lines 12 through 20. Lines count from 1, a line number has
-  no leading zeros and at most nine digits, and the end is never before the start. `#L12-L12`
-  equals `#L12`.
-- Anything else makes the link malformed: a query, an empty or other fragment, a missing path, an
-  invalid escape, or a broken rule above. A malformed link is never partly interpreted. It is
-  unresolvable as a whole.
-- The canonical form percent-encodes every byte of a segment except `unreserved`, writes
-  uppercase hex digits, and writes a single line as `#L12`. Readers accept every well-formed link,
-  canonical or not.
-
-A file link inside an inline code span or a fenced code block is literal text, as in Markdown.
-
-**Resolution.** A file link resolves through routes that already exist:
-
-1. For `agents/<agentId>`, `GET /v0/agents/:agentId` gives the agent's `workspaceId`. An unknown
-   agent, or one whose `archivedAt` is not `null`, makes the link unresolvable.
-2. `GET /v0/workspaces/:workspaceId` must answer with a workspace whose `status` is `"active"`.
-   An unknown workspace, or one that is archiving or archived, makes the link unresolvable.
-3. `GET /v0/workspaces/:workspaceId/file` with the decoded `path` reads the file. Any answer other
-   than `200`, such as a missing file or a path escaping the root, makes the link unresolvable.
-
-A link is resolved only when it is opened. A client does not have to check every link it renders.
-
-**Rendering.** A client that renders file links shows each one as an ordinary Markdown link with
-the agent's label. Opening it shows the file read-only, from the linked workspace, inside the
-reader's own conversation. The reader does not move to the other agent or workspace. When `lines`
-is present, the client shows those lines and SHOULD highlight them. A range past the end of the
-file shows the file without a selection. When a link is malformed or unresolvable, the client
-shows its usual "could not open" treatment. A client never hands a file URL to the operating
-system or a browser.
-
-**Fallback.** A surface that cannot open file links gets plain Markdown in which each inline link
-whose destination starts with `happy:` or `happy-file:`, in any letter case and whether or not it
-is well-formed, is replaced as "Happy links" describes. A file link becomes its label, kept as the
-Markdown written between the brackets. An image, `![alt](happy-file://…)`, becomes its alt text
-the same way. When the label is empty or blank, the link becomes its decoded path, escaped as
-literal text, or nothing when the link is malformed.
-
-**One implementation.** `@slopus/happy-agent-client` exports the file grammar with the rest of
-the Happy links: `HAPPY_URL_SCHEME`, `HAPPY_FILE_URL_SCHEME`, `MAX_HAPPY_URL_LENGTH`,
-`happyFileLinkSchema` with its `HappyFileLink` type, `parseHappyUrl`, and `formatHappyFileUrl`.
-A parsed link has this shape, with `path` decoded:
-
-```ts
-{
-    target: { type: "agent"; agentId: string } | { type: "workspace"; workspaceId: string };
-    path: string; // "packages/app/Foo.tsx"
-    lines?: { start: number; end: number }; // #L42 is { start: 42, end: 42 }
-}
-```
-
-`formatHappyFileUrl(file, scheme?)` writes the `happy://` form by default and the `happy-file://`
-form when `scheme` is `"happy-file"`. Clients and the daemon use these rather than their own
-parsers, so every surface agrees on exactly what a file link names.
-
-File links are additive and do not increment the protocol version. Request and response schemas
-are unchanged.
 
 ### `POST /v0/agents/:agentId/send`
 
@@ -7635,7 +7498,7 @@ the matching capability is present.
 
 #### Action messages
 
-On daemons with `capabilities.chatActions`, pressing an inline action control sends the person's
+On daemons with `capabilities.chatActions`, pressing an inline action button sends the person's
 own message: an action message, whose `content` is exactly one `action` block and which has no
 `text`.
 
@@ -7649,8 +7512,7 @@ own message: an action message, whose `content` is exactly one `action` block an
             "blockIndex": 0,
             "controlIndex": 1,
             "actionId": "reply",
-            "params": {},
-            "values": []
+            "params": { "text": "Not yet, run the tests first" }
         }
     ],
     "delivery": "queue",
@@ -7658,48 +7520,23 @@ own message: an action message, whose `content` is exactly one `action` block an
 }
 ```
 
-- `messageId` — the agent message in this conversation that holds the control.
-- `blockIndex` — the block, numbered as under "Inline actions".
-- `controlIndex` — the control pressed within that block, numbered as under "Inline actions".
-- `actionId`, `params` — the control's action ID and its parameters as written, every value a
-  string, never a presentation attribute such as `data-emphasis`.
-- `values` — a checklist's ticked values; omitted or empty otherwise.
+- `messageId` — the agent message in this conversation that holds the menu.
+- `blockIndex`, `controlIndex` — the menu and the button pressed, numbered as under "Inline
+  actions".
+- `actionId`, `params` — the button's action and its parameters as written, every value a string,
+  never a presentation attribute.
 
-The daemon reads the block from its own copy of the message and checks that the block exists, that
-its control at `controlIndex` has exactly that action ID and those parameters, and that every value is one the
-checklist offers and the person could change; otherwise the send is `400 invalid_request`. A block
-that already has a choice, including from another action message still waiting, or one superseded
-because a later agent message in the conversation offers a control with the same action ID and
-parameters, is `409 conflict`. Then, in one transaction, it records the choice in the pressed
-message's `actionChoices`, as `{ "kind": "button", "index": controlIndex }` for a button or
-`{ "kind": "checklist", "values" }` for a submit, does the action's work, and queues or accepts the
-action message like any other. Sending the same `id` again returns the message as it stands.
-
-The stored block adds what the daemon decided:
-
-- `label` — the words on the control pressed, as the person read them; for a checklist submitted
-  with nothing ticked, its empty label when it has one.
-- `ticked` — only for a submitted checklist: the labels of the options ticked, in the order shown,
-  and `[]` when none was.
-- `outcome` — what the action's work did, in English, as the agent's model reads it; absent when
-  there was none.
-
-The agent's model reads an action message as an ordinary person turn: `[Pressed "Push it" in your
-message]`, or `[Pressed "Continue" with "Desktop", "Phone" ticked in your message]`, then the
-outcome. The pressed control shows chosen in place, from the pressed message's `actionChoices`.
-
-**What older readers see.** The stored action message's `content` is a `text` block holding the
-press as the person's words — `label`, or for a submitted checklist `label`, a colon, and `ticked`
-joined with ", ", such as `Continue: Desktop, Phone` — followed by the `action` block. Clients draw
-the message from that text, as any message of the person's. A read that does not opt in never
-contains an `action` block: `GET /v0/agents/:agentId/messages`, `GET /v0/agents/:agentId/bootstrap`,
-`GET /v0/events`, and `GET /v0/events/stream`, with every message they carry in history, pending
-state, and `message.*` and `run.*` events, leave it out and keep the text, so a client that
-predates inline actions draws the person's words in an ordinary bubble. A read opts in with the
-query parameter `include=actions`, which a client sends only to a daemon with
-`capabilities.chatActions`; the event stream takes it on each connection. The response to the
-`send` that made the action message always includes the block. `actionChoices` is an optional
-field that older clients ignore, so it is present whatever the read asks for.
+The daemon reads the menu from its own copy of the message. A `messageId` that is not an agent
+message in this conversation is `404 not_found`. A missing menu at `blockIndex` or button at
+`controlIndex`, an `actionId` that is not that button's action or not `reply`, or `params` that are
+not exactly its parameters is `400 invalid_request`. A block that already has a choice is
+`409 conflict`. Then, in one transaction, the daemon records
+`{ "kind": "button", "index": controlIndex }` in the pressed message's `actionChoices`, announces it
+with `message.updated`, and sends the person's message whose `content` is one `text` block: the
+button's `data-text`, or its label. That message is an ordinary person's message in every way: it
+is what the model reads, it wakes the agent as any message does, and every read draws it as the
+person's words. No `action` block is stored or returned. The response is the ordinary
+`{ message, cursor }`. Sending the same `id` again returns the message as it stands.
 
 ### `GET /v0/agents/:agentId/messages`
 
@@ -7719,8 +7556,6 @@ Query parameters:
   progress is always returned whole. A page can therefore overflow well past `limit` — a single
   run with hundreds of tool calls comes back in one piece regardless. Clients must size their
   buffers for the runs they receive, not for the limit they asked for.
-- `include` — optional; `actions` keeps `action` blocks in action messages, as described under
-  "Action messages". Sent only to a daemon with `capabilities.chatActions`.
 - `omitToolData` — optional, default `false`. When `true`, tool-call blocks that carry a
   `presentation` come back without `arguments` and `result` — the client renders the
   presentation, and the page stays small even when runs carried large tool output. Blocks
@@ -13056,9 +12891,6 @@ Query parameters:
 - `until` — optional, inclusive upper bound: pull the changes between two cursors, such as the
   `cursor` a mutation answered with and the point a client last processed.
 - `limit` — optional, default 100.
-- `include` — optional; `actions` keeps `action` blocks in the messages events carry, as described
-  under "Action messages". `GET /v0/events/stream` takes it too. Sent only to a daemon with
-  `capabilities.chatActions`.
 
 Response — `200`:
 
@@ -13152,9 +12984,7 @@ One bounded snapshot for opening a conversation. It composes the exact agent obj
 `mode`, `context`, and `usage` fields from the focused agent endpoints, the agent's complete
 background-process and subagent activity, and every durable queue or steering message that
 inference has not accepted yet. It also captures the event cursor before reading, so a client can
-render the snapshot and follow every concurrent change without a snapshot-to-stream gap. The
-optional query `include=actions` keeps `action` blocks in its pending messages, as under "Action
-messages". Accepted
+render the snapshot and follow every concurrent change without a snapshot-to-stream gap. Accepted
 messages, including compaction messages, come from the pageable history endpoint. The current
 slash-command catalog is included directly so autocomplete is ready with the rest of the composer.
 

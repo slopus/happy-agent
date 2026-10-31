@@ -3043,12 +3043,11 @@ export class HappyAgentClient {
     /** `GET /v0/agents/:agentId/bootstrap` — current agent state, activity, and cursor. */
     async getAgentBootstrap(
         agentId: Cuid2,
-        options: RequestOptions & { readonly includeActions?: boolean } = {},
+        options: RequestOptions = {},
     ): Promise<AgentBootstrapResponse> {
         return await this.#json({
             method: "GET",
             path: `v0/agents/${encodeURIComponent(agentId)}/bootstrap`,
-            query: { include: includeActions(options.includeActions) },
             signal: options.signal,
         });
     }
@@ -3093,7 +3092,6 @@ export class HappyAgentClient {
                 after: query.after,
                 limit: query.limit,
                 omitToolData: query.omitToolData,
-                include: includeActions(query.includeActions),
             },
             signal: options.signal,
         });
@@ -3427,7 +3425,6 @@ export class HappyAgentClient {
                 after: query.after,
                 until: query.until,
                 limit: query.limit,
-                include: includeActions(query.includeActions),
             },
             signal: options.signal,
         });
@@ -3446,7 +3443,7 @@ export class HappyAgentClient {
         const response = await this.#send({
             method: "GET",
             path: "v0/events/stream",
-            query: { after: options.after, include: includeActions(options.includeActions) },
+            query: { after: options.after },
             accept: "text/event-stream",
             lastEventId: options.lastEventId,
             signal: options.signal,
@@ -3561,11 +3558,6 @@ export class HappyAgentClient {
  */
 function bodyOf(options: { mutationId?: string }): { mutationId?: string } {
     return options.mutationId === undefined ? {} : { mutationId: options.mutationId };
-}
-
-/** The `include=actions` opt-in that keeps `action` blocks in message reads. */
-function includeActions(include: boolean | undefined): "actions" | undefined {
-    return include === true ? "actions" : undefined;
 }
 
 function taskChildPath(taskId: Cuid2, ref: TaskChildRef): string {

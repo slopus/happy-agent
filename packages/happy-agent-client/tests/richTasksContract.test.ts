@@ -161,7 +161,7 @@ function responses(c: typeof current | typeof published): [string, TSchema, unkn
 }
 
 describe("rich tasks contract", () => {
-    it("opts in to story artifacts and action blocks only when asked", async () => {
+    it("opts in to story artifacts only when asked", async () => {
         const urls: string[] = [];
         const fetch = async (input: RequestInfo | URL) => {
             urls.push(String(input instanceof Request ? input.url : input));
@@ -177,10 +177,8 @@ describe("rich tasks contract", () => {
             "type=story",
         );
         expect(client.artifactFileUrl(id, 1, "story.json")).not.toContain("type=");
-        await client.getMessages(agent.id, { includeActions: true });
         await client.getMessages(agent.id);
-        expect(urls[0]).toContain("include=actions");
-        expect(urls[1]).not.toContain("include=");
+        expect(urls[0]).not.toContain("include=");
     });
 
     it.each(

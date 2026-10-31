@@ -35,6 +35,7 @@ export type { MessageDeltaApplication } from "./applyMessageDelta.js";
 export * from "./requestOptions.js";
 export * from "./happyLinks.js";
 export * from "./happyLinksInMarkdown.js";
+export * from "./chatActionBlocks.js";
 export * from "./mediaLayoutBlocks.js";
 export * from "./mediaLayoutHtml.js";
 export {

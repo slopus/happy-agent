@@ -778,39 +778,23 @@ export const toolCallRequestBlockSchema = Type.Object(
 export type ToolCallRequestBlock = Static<typeof toolCallRequestBlockSchema>;
 
 /**
- * A press of an inline action control, the one block of an action message, with
- * `capabilities.chatActions`. `params` are the control's parameters as written; `values` a
- * checklist's ticked values.
+ * A press of an inline action button, the one block of an action message, with
+ * `capabilities.chatActions`. `params` are the button's parameters as written. The daemon
+ * stores the press as the person's text, so reads never carry this block.
  */
 export const actionBlockSchema = Type.Object({
     actionId: Type.String({ maxLength: 128, minLength: 1 }),
     blockIndex: Type.Integer({ minimum: 0 }),
-    /** The control pressed, by its place in the block: a menu's buttons in order, a submit first. */
+    /** The button pressed, by its place in the menu. */
     controlIndex: Type.Integer({ minimum: 0 }),
     messageId: cuid2Schema,
     params: Type.Record(Type.String(), Type.String()),
     type: Type.Literal("action"),
-    values: Type.Optional(Type.Array(Type.String(), { maxItems: 64 })),
 });
-
-/** An action block as stored: what the daemon decided is added to the press. */
-export const storedActionBlockSchema = Type.Composite([
-    actionBlockSchema,
-    Type.Object({
-        /** The words on the control pressed, as the person read them. */
-        label: Type.Optional(Type.String()),
-        /** What the action's work did, in English, as the agent's model reads it. */
-        outcome: Type.Optional(Type.String()),
-        /** A submitted checklist's ticked labels, in the order shown. */
-        ticked: Type.Optional(Type.Array(Type.String())),
-    }),
-]);
-export type ActionBlock = Static<typeof storedActionBlockSchema>;
 
 /** One block's choice; the kind set may grow, and an unknown kind still locks the block. */
 export const actionChoiceSchema = Type.Union([
     Type.Object({ index: Type.Integer({ minimum: 0 }), kind: Type.Literal("button") }),
-    Type.Object({ kind: Type.Literal("checklist"), values: Type.Array(Type.String()) }),
 ]);
 export type ActionChoice = Static<typeof actionChoiceSchema>;
 
@@ -822,8 +806,7 @@ export type MessageBlock =
     | ReasoningBlock
     | ToolCallBlock
     | ConfigurationBlock
-    | CompactionBlock
-    | ActionBlock;
+    | CompactionBlock;
 
 /** Plain text. */
 export interface TextBlock {
@@ -1110,8 +1093,6 @@ export interface MessageHistoryQuery {
     limit?: number;
     /** Drop raw data for presented calls, except `agent_spawn` keeps older-client fallback. */
     omitToolData?: boolean;
-    /** Keep `action` blocks in action messages; send only with `capabilities.chatActions`. */
-    includeActions?: boolean;
 }
 
 /** `GET /v0/agents/:agentId/messages` */
