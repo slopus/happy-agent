@@ -80,6 +80,8 @@ export class StoriesModule implements AgentModule {
     readonly #richTasks: RichTasksModule;
     readonly #focus: FocusModule;
     readonly #listeners = new Set<StoryListener>();
+    /** Each task's and bot's agent, and the member its latest turn works for. */
+    readonly #people = new Map<string, string>();
     #agents: AgentSystemRef | undefined;
     #ctx: Context | undefined;
 
@@ -102,8 +104,11 @@ export class StoriesModule implements AgentModule {
             const story = await store.readStory(ctx, artifactId);
             if (story === undefined) return false;
             if ("memberId" in reader) return canSee(story, reader.memberId);
+            // An agent, as the person its current turn works for: a shared bot never shows one
+            // person's own story in another's turn.
             const poster = story.poster.kind === "agent" ? story.poster.agentId : undefined;
-            return reader.agentId === poster || reader.agentId === story.replyAgentId;
+            if (reader.agentId !== poster && reader.agentId !== story.replyAgentId) return false;
+            return story.audience === "team" || this.#people.get(reader.agentId) === story.person;
         });
     }
 
@@ -117,7 +122,7 @@ export class StoriesModule implements AgentModule {
         const posts = async (hookCtx: Context, scope: AgentModuleScope) =>
             ((await this.#tasks.forAgent(hookCtx, scope.agent.id)) !== undefined ||
                 (await this.#bots.forAgent(hookCtx, scope.agent.id)) !== undefined) &&
-            (await this.#richTasks.isOnForAgent(hookCtx, scope));
+            (await this.#richTasks.isOn(hookCtx, await this.#personOf(hookCtx, scope)));
         return {
             tools: async (hookCtx, scope) =>
                 (await posts(hookCtx, scope))
@@ -166,7 +171,7 @@ export class StoriesModule implements AgentModule {
             throw new ArtifactInputError("A story shows an image or video file of an artifact.");
         const task = await this.#tasks.forAgent(ctx, agentId);
         const bot = task === undefined ? await this.#bots.forAgent(ctx, agentId) : undefined;
-        const person = this.#tasks.memberFor(await this.#richTasks.personFor(ctx, scope));
+        const person = await this.#personOf(ctx, scope);
         if (person === undefined) throw new ArtifactInputError("No person to post this story for.");
         const actor = await this.#artifacts.actorFor(ctx, agentId);
         const draft: StoryDraft = {
@@ -274,8 +279,19 @@ export class StoriesModule implements AgentModule {
 
     /** The agent's own stories that the person its turn works for may see, for its card. */
     async ofAgent(ctx: Context, scope: AgentModuleScope): Promise<Story[]> {
-        const memberId = this.#tasks.memberFor(await this.#richTasks.personFor(ctx, scope)) ?? "";
+        const memberId = (await this.#personOf(ctx, scope)) ?? "";
         return await this.list(ctx, { memberId, agentId: scope.agent.id });
+    }
+
+    /**
+     * The member an agent's turn works for, kept for the artifact gate, which reads the agent's
+     * stories as them. Every turn of a task's or bot's agent sets it while its tools are chosen.
+     */
+    async #personOf(ctx: Context, scope: AgentModuleScope): Promise<string | undefined> {
+        const member = this.#tasks.memberFor(await this.#richTasks.personFor(ctx, scope));
+        if (member === undefined) this.#people.delete(scope.agent.id);
+        else this.#people.set(scope.agent.id, member);
+        return member;
     }
 
     /** Whether the member may read this story artifact; `undefined` when it is no story. */
@@ -331,7 +347,9 @@ export class StoriesModule implements AgentModule {
                 if ((await this.#bots.membership(tx, botId!, memberId)).hidden)
                     await this.#bots.updateMembership(tx, botId!, memberId, { hidden: false });
             }
-            if (taskId) await this.#focus.noticeTask(tx, taskId, `${taskId} posted a story`);
+            // An owner-only story is news only for its person's Focus.
+            const only = audience === "owner" ? story.person : undefined;
+            if (taskId) await this.#focus.noticeTask(tx, taskId, `${taskId} posted a story`, only);
             return { story, replaced: replaced?.artifactId ?? null };
         });
     }

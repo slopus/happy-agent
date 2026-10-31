@@ -209,11 +209,12 @@ export class FocusModule implements AgentModule {
     }
 
     /**
-     * Tell every person with Focus whose list holds the task, once this transaction commits. Other
-     * modules call it for news Focus should weigh, such as a story posted.
+     * Tell every person with Focus whose list holds the task, or only `only`, once this
+     * transaction commits. Other modules call it for news Focus should weigh, such as a story.
      */
-    async noticeTask(ctx: Context, taskId: string, change: string): Promise<void> {
+    async noticeTask(ctx: Context, taskId: string, change: string, only?: string): Promise<void> {
         for (const memberId of this.#focus.keys()) {
+            if (only !== undefined && memberId !== only) continue;
             if ((await this.#tasks.membership(ctx, taskId, memberId)) !== undefined)
                 this.#notice(ctx, memberId, change);
         }

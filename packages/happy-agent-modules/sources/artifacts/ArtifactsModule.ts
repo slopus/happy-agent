@@ -829,7 +829,7 @@ export class ArtifactsModule implements AgentModule {
     ): Promise<ArtifactRecord | undefined> {
         return await ctx.inTx(async (txCtx) => {
             const current = await queryArtifact(txCtx, artifactId);
-            if (current === undefined) return undefined;
+            if (current === undefined || current.type === "story") return undefined;
             const made = await queryArtifactVersionForOperation(txCtx, artifactId, operationId);
             return made === undefined ? undefined : structuredClone(current);
         });

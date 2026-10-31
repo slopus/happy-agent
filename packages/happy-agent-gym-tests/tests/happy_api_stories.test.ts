@@ -192,7 +192,14 @@ describe("stories", () => {
         expect([await hidden(alice), await hidden(bob)]).toEqual([false, true]);
         // Alice's own bot story stays off the card the bot reads in Bob's turn.
         await bob.saveUserSetting("tasks.rich", { value: true });
-        turns.set(bot.agent.id, [call("get_card", {}), text("Read it.")]);
+        const botStory = (await alice.listStories({ scope: "mine" })).stories.find(
+            (story) => story.poster.kind === "agent" && story.poster.botId === bot.id,
+        )!;
+        turns.set(bot.agent.id, [
+            call("get_card", {}),
+            call("read_artifact", { artifactId: botStory.artifactId }),
+            text("Read it."),
+        ]);
         const cardsBefore = gym.inference.toolResults().length;
         const mode = { ...gym.selection, permissionMode: "full_access" as const };
         await bob.sendMessage(bot.agent.id, { text: "What is on your card?", mode });
@@ -201,6 +208,11 @@ describe("stories", () => {
             "the bot's card in Bob's turn",
         );
         expect(JSON.parse(bobsCard.text).stories).toEqual([]);
+        const bobsRead = await gym.waitUntil(
+            async () => gym.inference.toolResults().slice(cardsBefore)[1],
+            "the bot's read in Bob's turn",
+        );
+        expect(bobsRead.text).toMatch(/not found/i);
         expect(gym.errors).toEqual([]);
     }, 120_000);
 });
