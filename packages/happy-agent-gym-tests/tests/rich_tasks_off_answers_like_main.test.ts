@@ -22,6 +22,7 @@ const ADDED = new Set([
     "sections",
     "taskSections",
     "storyArtifacts",
+    "chatActions",
     "taskArtifacts",
     "protocol",
 ]);

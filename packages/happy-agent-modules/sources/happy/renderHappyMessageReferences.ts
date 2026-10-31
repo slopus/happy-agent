@@ -3,6 +3,7 @@ import {
     parseHappyLinks,
     renderHappyLinksAsText,
     replaceHappyLinks,
+    stripChatActionBlocks,
     stripMediaLayoutBlocks,
     type HappyLinkMatch,
     type HappyReference,
@@ -62,7 +63,8 @@ export async function renderHappyMessageReferences(
             continue;
         }
         // Layout blocks arrange media the phone already shows in order; their HTML would show raw.
-        const laidOut = ev.t === "text" ? stripMediaLayoutBlocks(ev.text) : ev.text;
+        const laidOut =
+            ev.t === "text" ? stripChatActionBlocks(stripMediaLayoutBlocks(ev.text)) : ev.text;
         if (laidOut.trim() === "") continue;
         const text = (await resolve(laidOut)) ? renderHappyLinksAsText(laidOut, named) : laidOut;
         rendered.push(

@@ -1,6 +1,7 @@
 import { Type } from "@sinclair/typebox";
 import { agentRequestProfileSchema, cuid2Schema } from "@slopus/happy-agent-base";
 import {
+    actionBlockSchema,
     clientMetadataSchema,
     messageModeSchema,
     messageReplyToSchema,
@@ -221,6 +222,7 @@ const messageSendContentSchema = Type.Union([
             maxContains: 1,
         },
     ),
+    Type.Array(actionBlockSchema, { minItems: 1, maxItems: 1 }),
 ]);
 
 export const messageSendBodySchema = Type.Object(
@@ -232,7 +234,8 @@ export const messageSendBodySchema = Type.Object(
         mode: requestedAgentModeSchema,
         profile: Type.Optional(agentRequestProfileSchema),
         replyTo: Type.Optional(messageReplyToSchema),
-        text: Type.String({ minLength: 1, maxLength: 1_000_000 }),
+        /** Required, except in an action message, which has none. */
+        text: Type.Optional(Type.String({ minLength: 1, maxLength: 1_000_000 })),
     },
     { additionalProperties: false },
 );

@@ -17,6 +17,7 @@ import {
 } from "@slopus/happy-agent-base";
 import {
     messageModeSchema,
+    stripChatActionBlocks,
     stripMediaLayoutBlocks,
     type MessageMode,
 } from "@slopus/happy-agent-client";
@@ -375,7 +376,9 @@ export class ExportedBotsModule implements AgentModule {
             // Layout blocks arrange media for chats that show them; the service gets the media
             // itself with the answer, so the block's HTML would only be noise there.
             const text =
-                event.type === "text_end" ? stripMediaLayoutBlocks(event.block.text).trim() : "";
+                event.type === "text_end"
+                    ? stripChatActionBlocks(stripMediaLayoutBlocks(event.block.text)).trim()
+                    : "";
             if (event.type === "text_end" && text === "") return;
             const pending = await scope.runKV.read(ctx, REPLY_KEY);
             if (typeof pending === "string" && pending !== NO_REPLY) {

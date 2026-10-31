@@ -100,6 +100,7 @@ export function messageResource(
             ? { clientMetadata: message.clientMetadata }
             : {}),
         ...(role === "user" && message.replyTo && { replyTo: message.replyTo }),
+        ...(role === "agent" && message.actionChoices && { actionChoices: message.actionChoices }),
         ...(role === "user"
             ? {
                   status: "accepted",

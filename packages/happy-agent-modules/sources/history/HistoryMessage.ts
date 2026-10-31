@@ -1,6 +1,7 @@
 import { Type, type Static, type TSchema } from "@sinclair/typebox";
 import { agentRequestProfileSchema, cuid2Schema } from "@slopus/happy-agent-base";
 import {
+    actionChoiceSchema,
     agentSpawnPresentationSchema,
     clientMetadataSchema,
     clientMetadataValueSchema,
@@ -548,6 +549,8 @@ const historyMessageFields = {
     clientMetadata: Type.Optional(historyClientMetadataSchema),
     /** The story a user message answers, set at send. */
     replyTo: Type.Optional(messageReplyToSchema),
+    /** The person's press on each of an agent message's `<menu>` blocks, by block index. */
+    actionChoices: Type.Optional(Type.Record(Type.String(), actionChoiceSchema)),
     /** Keep this operational message out of person-facing transcript projection. */
     hideFromUser: Type.Optional(Type.Boolean()),
     /** Happy's source identity, used to suppress a remote message echo. */

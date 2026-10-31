@@ -303,6 +303,10 @@ conversation unreadable for anyone who had tried it in a preview. Migration
 `004-history-inline-actions-as-text` rewrites each press as a text block holding the words on the
 control and drops the choices, reading only the rows whose JSON mentions either.
 
+Rich tasks brought `actionChoices` back on agent messages, but never the `action` block: a press is
+stored as the person's plain text, so the model, history, and every older client read it as an
+ordinary message. Any message the 004 migration already rewrote stays valid under the new schema.
+
 ## Story replies are indexed without parsing every write
 
 A user message may carry `replyTo`, which is set at send like `clientMetadata`. Every story served counts its replies, so

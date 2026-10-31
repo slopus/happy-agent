@@ -5,6 +5,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { AsyncLocalStorage, AsyncResource } from "node:async_hooks";
 import type { Socket } from "node:net";
 import { dirname, join } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import {
     BridgeError,
     BridgesModule,
@@ -118,6 +119,8 @@ import {
     type AgentUnread,
     repostStoryRequestSchema,
     storyMutationRequestSchema,
+    chatActionBlocksOf,
+    type SendActionMessageRequest,
 } from "@slopus/happy-agent-client";
 import {
     cuid2Schema,
@@ -5197,6 +5200,27 @@ export class ApiModule implements AgentModule {
         sendJson(response, 202, await this.#sendUserMessage(ctx, agentId, body));
     }
 
+    /** The words a press sends, checked against this agent's own menu; `record` locks the menu. */
+    async #press(ctx: Context, agentId: string, press: Press, record = false): Promise<string> {
+        const message = await this.#history.message(ctx, agentId, press.messageId);
+        if (message?.role !== "assistant") throw notFound("The message was not found.");
+        const menus = message.blocks.flatMap((block) =>
+            block.type === "text" ? chatActionBlocksOf(block.text) : [],
+        );
+        const action = menus[press.blockIndex]?.buttons[press.controlIndex]?.action;
+        if (action?.id !== press.actionId || !isDeepStrictEqual(action.params, press.params)) {
+            throw invalidRequest("No button in that message has that action.");
+        }
+        const choices = { ...message.actionChoices };
+        if (choices[press.blockIndex]) throw new ApiError(409, "conflict", "Menu already chosen.");
+        choices[press.blockIndex] = { kind: "button", index: press.controlIndex };
+        const chosen = { ...message, actionChoices: choices };
+        if (record) await this.#history.replace(ctx, agentId, chosen);
+        const updated = { agentId, runId: chosen.runId ?? null, message: messageResource(chosen) };
+        if (record) afterCommit(ctx, () => void this.#journal.append("message.updated", updated));
+        return action.text;
+    }
+
     /**
      * Send a person's message to an agent, as `send` does: a repeated `id` sends nothing new and
      * answers with the message as it stands.
@@ -5214,6 +5238,10 @@ export class ApiModule implements AgentModule {
                 async (txCtx) => await this.#sentUserMessage(txCtx, agentId, id),
             );
             if (existing !== undefined) return { message: existing, cursor };
+            const press = body.content?.[0]?.type === "action" ? body.content[0] : undefined;
+            const text = press ? await this.#press(ctx, agentId, press) : body.text;
+            if (text === undefined || (press && body.text))
+                throw invalidRequest("Send text or a press.");
             if (body.replyTo !== undefined) {
                 const story = body.replyTo.artifactId;
                 const to = await this.#stories?.replyAgentOf(ctx, story, this.#taskMember(ctx));
@@ -5249,7 +5277,10 @@ export class ApiModule implements AgentModule {
             if (serviceTier === undefined) {
                 throw invalidRequest("The selected service tier is unavailable.");
             }
-            const content = [{ type: "text" as const, text: body.text }, ...(body.content ?? [])];
+            const content = [
+                { type: "text" as const, text },
+                ...(body.content ?? []).filter((block) => block.type !== "action"),
+            ];
             const userId = this.#team.enabled ? teamUser(ctx)?.id : undefined;
             const profile = decodeRequestProfile(body.profile);
             const options: AgentBaseMessageOptions = {
@@ -5305,6 +5336,7 @@ export class ApiModule implements AgentModule {
             try {
                 await ctx.inTx(async (txCtx) => {
                     await this.#assertUserControlledAgent(txCtx, agentId);
+                    if (press) await this.#press(txCtx, agentId, press, true);
                     await this.#history.queuePending(txCtx, pending);
                     if (delivery === "steer") {
                         await agents.steer(txCtx, agentId, { role: "user", content }, options);
@@ -9864,6 +9896,7 @@ export class ApiModule implements AgentModule {
             status: this.#ready ? "ready" : "starting",
             capabilities: {
                 desktopLiveControl: this.#live !== undefined,
+                chatActions: true,
                 ...(this.#providerClis === undefined || this.#team.enabled
                     ? {}
                     : { providerClis: true }),
@@ -10466,6 +10499,7 @@ function documentQuery<const Key extends "seq" | "afterSeq" | "limit" | "stateVe
 
 /** Anything on the mobile connector's socket that closes when its phone is removed. */
 type MobileConnection = import("node:stream").Duplex;
+type Press = SendActionMessageRequest["content"][0];
 
 /** Every phone pairing route; only the mobile connector's socket serves it. */
 const MOBILE_HANDSHAKE_ROUTE = "/v0/mobile-connector/handshake";
