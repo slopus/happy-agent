@@ -41,7 +41,6 @@ type ArtifactRead = Static<typeof artifactReadSchema>;
 
 /** Read one version of an artifact: who made it, where, every file, and a page's entry text. */
 export function readArtifactTool(artifacts: ArtifactsModule, agentId: string) {
-    // A story is missing unless this agent posted it or receives its replies.
     const reader = { agentId };
     return defineAgentTool({
         name: "read_artifact",

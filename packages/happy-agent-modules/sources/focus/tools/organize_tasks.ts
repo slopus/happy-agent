@@ -4,7 +4,6 @@ import { Type, type Static } from "@sinclair/typebox";
 
 import type { FocusModule } from "../FocusModule.js";
 
-// Creating, renaming, and removing sections, and child visibility, are deferred.
 export const focusOpSchema = Type.Union([
     Type.Object({ op: Type.Literal("move"), taskId: cuid2Schema, after: taskSectionAnchorSchema }),
     Type.Object({ op: Type.Literal("hide"), taskId: cuid2Schema, hidden: Type.Boolean() }),
@@ -38,7 +37,6 @@ export type OrganizeTasksResult = Static<typeof organizeTasksResultSchema>;
 export function organizeTasksTool(focus: FocusModule, memberId: string) {
     return defineAgentTool({
         name: "organize_tasks",
-        // Focus's whole array, which it receives without tool search.
         defer: false,
         capabilities: ["Move and hide tasks in the person's task list."],
         description: [

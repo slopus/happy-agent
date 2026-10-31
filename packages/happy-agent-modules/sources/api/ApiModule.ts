@@ -4760,7 +4760,6 @@ export class ApiModule implements AgentModule {
                     if (task !== undefined) {
                         await this.#tasks!.markRead(ctx, task.id, this.#taskMember(ctx));
                     }
-                    // A bot's unread mark for this person clears the same way.
                     const bot = await this.#bots.forAgent(ctx, agentId);
                     const member = this.#tasks?.memberFor(teamUser(ctx)?.id);
                     if (bot !== undefined && member !== undefined)

@@ -73,7 +73,6 @@ type ArtifactFileRead = Static<typeof artifactFileReadSchema>;
 
 /** Read one file of an artifact version: text a page at a time, or an image to look at. */
 export function readArtifactFileTool(artifacts: ArtifactsModule, agentId: string) {
-    // A story is missing unless this agent posted it or receives its replies.
     const reader = { agentId };
     return defineAgentTool({
         name: "read_artifact_file",

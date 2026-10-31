@@ -147,6 +147,10 @@ describe("a rich task chooses its own identity", () => {
         await gym.client.updateTask(own.id, { icon: null }, { ifMatch: iconed.version });
         await act(own.agent.id, call("set_task_title_icon", { icon: "login" }));
         expect((await gym.client.getTask(own.id)).task.icon).toBeNull();
+        const last = gym.inference.requests.filter((r) => r.sessionId === own.agent.id).at(-1)!;
+        expect(last.instructions).toContain(
+            "A person chose this task's title and icon; leave both.",
+        );
         await act(
             own.agent.id,
             call("set_task_title_icon", { taskId: other.id, title: "Intrusion" }),

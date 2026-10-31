@@ -16,6 +16,11 @@ turn ends", which was untrue, so its text now says the change applies within mom
 choices are checked before queueing and again in the write transaction. A later human choice
 makes the queued change a completed no-op.
 
+The instructions once told every task to set its title and icon, even after a person had named
+it. On every task the person had named, the agent's first call was refused, and the refusal showed
+in the chat as a failed tool call. The instructions now say which fields a person already chose,
+and ask for nothing when both are chosen. The person's choice is still enforced by the write.
+
 ## The daemon owns the artwork and its digest
 
 Bundling a separate catalog in every client limited the available icons and coupled UI releases

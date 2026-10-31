@@ -268,7 +268,6 @@ export class FocusModule implements AgentModule {
         const pending = this.#pending.get(memberId);
         if (pending === undefined) return;
         pending.timer = undefined;
-        // A Focus mid-turn is briefed when that turn ends.
         if (this.#busy.has(this.#focus.get(memberId)!)) return;
         this.#pending.delete(memberId);
         const ctx = this.#context();
@@ -322,7 +321,6 @@ export class FocusModule implements AgentModule {
             await store.saveFocusAgent(tx, memberId, agentId);
             // Its opening turn may start before this transaction's other callbacks run.
             this.#focus.set(memberId, agentId);
-            // Happy hears nothing from Focus; its work shows in the person's list.
             await this.#subtasks.create(tx, happy.agentId, input, agentId, undefined, undefined, {
                 unreported: true,
             });

@@ -71,14 +71,21 @@ export class TaskIconsModule implements AgentModule<AnyAgentTool> {
                       searchTaskIconsTool(this, scope.agent.id),
                       setTaskTitleIconTool(this, scope.agent.id),
                   ],
-        instructions: async (ctx, scope) =>
-            (await this.#eligible(ctx, scope.agent.id)) === undefined
-                ? ""
-                : [
-                      "Choose this task's title and icon yourself early in the work, alongside your other tools.",
-                      "Search with search_task_icons using a few concrete words about the task. Inspect its top ten candidates, choose the best fitting slug, and call set_task_title_icon with a short title and that icon.",
-                      "You can update them as the work changes. A person's title or icon choice is final for that field; if refused, keep their choice and continue the task.",
-                  ].join("\n"),
+        instructions: async (ctx, scope) => {
+            const task = await this.#eligible(ctx, scope.agent.id);
+            if (task === undefined) return "";
+            const kept = [
+                ...(task.nameConfigured && task.nameAgentChosen !== true ? ["title"] : []),
+                ...(task.iconConfigured === true ? ["icon"] : []),
+            ];
+            if (kept.length === 2) return "A person chose this task's title and icon; leave both.";
+            return [
+                "Choose this task's title and icon yourself early in the work, alongside your other tools.",
+                "Search with search_task_icons using a few concrete words about the task. Inspect its top ten candidates, choose the best fitting slug, and call set_task_title_icon with a short title and that icon.",
+                "You can update them as the work changes. A person's title or icon choice is final for that field; if refused, keep their choice and continue the task.",
+                ...kept.map((field) => `A person chose this task's ${field}; leave it out.`),
+            ].join("\n");
+        },
     });
 
     async assertEligible(ctx: Context, agentId: string): Promise<void> {
