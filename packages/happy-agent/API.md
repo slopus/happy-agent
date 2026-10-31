@@ -2305,7 +2305,7 @@ opaque.
 | Key               | Capability       | While JSON `true`                                                              |
 | ----------------- | ---------------- | ------------------------------------------------------------------------------ |
 | `tasks.rich`      | `taskSections`   | Rich task cards, sub-rows, and stories; the person's agents get the card tools |
-| `tasks.sections`  | `taskSections`   | Named sections in the person's task list; Focus may create them                |
+| `tasks.sections`  | `taskSections`   | Named sections in the person's task list; Focus files tasks under them         |
 | `tasks.focus`     | `taskSections`   | Focus arranges the person's task list                                          |
 | `onboarding.chat` | `chatOnboarding` | Onboarding runs in the built-in bot's conversation                             |
 
@@ -10332,21 +10332,22 @@ wakes, at most once per short burst, when a task is created or first messaged, a
 pending question changes, a story is posted, someone writes to a task's agent, the person moves,
 hides, or sections a row, or a task is archived. Its own writes never wake it. A row the person
 moved, hid, or sectioned is held: Focus does not move or hide it until its status line changes
-again. Focus creates sections only while `tasks.sections` is on. Turning `tasks.focus` off stops
-Focus; the arrangement it made stays.
+again. Focus sees the person's sections only while `tasks.sections` is on and files tasks under
+them; it does not create, rename, move, or remove sections, and it does not set child choices.
+Turning `tasks.focus` off stops Focus; the arrangement it made stays.
 
 **Agent tools.** Tools follow the setting of the person an agent works for: a task's owner, or,
 for a bot, the person whose message the turn answers; in standalone mode, the installation's one
 person. With `tasks.rich` off, a task or bot agent gets none of the first four, so its tools
 equal a protocol-33 daemon's apart from `set_status`.
 
-| Tool             | Given to                             | Does                                                                                      |
-| ---------------- | ------------------------------------ | ----------------------------------------------------------------------------------------- |
-| `get_card`       | Task and bot agents, `tasks.rich` on | Reads its own card: title and icon with who set them, status, stories, children           |
-| `set_status`     | Task and bot agents, `tasks.rich` on | Unchanged: sets or clears its status line                                                 |
-| `set_story`      | Task and bot agents, `tasks.rich` on | Posts its one live story for an audience, replacing the last; `null` takes it down        |
-| `set_visibility` | Task agents, `tasks.rich` on         | Sets a child choice on its own task: `"shown"`, `"hidden"`, or `"default"`                |
-| `organize_tasks` | Focus only                           | Moves tasks and sections, hides, sets child choices, creates, renames, and drops sections |
+| Tool             | Given to                             | Does                                                                               |
+| ---------------- | ------------------------------------ | ---------------------------------------------------------------------------------- |
+| `get_card`       | Task and bot agents, `tasks.rich` on | Reads its own card: title and icon with who set them, status, stories, children    |
+| `set_status`     | Task and bot agents, `tasks.rich` on | Unchanged: sets or clears its status line                                          |
+| `set_story`      | Task and bot agents, `tasks.rich` on | Posts its one live story for an audience, replacing the last; `null` takes it down |
+| `set_visibility` | Task agents, `tasks.rich` on         | Sets a child choice on its own task: `"shown"`, `"hidden"`, or `"default"`         |
+| `organize_tasks` | Focus only                           | Moves tasks, including to the top of a section, and hides or shows them            |
 
 `set_story` with `audience: "team"` is always reviewed in Auto mode, and the review allows it only
 when a person asked for a team post, in the conversation or as a standing instruction; otherwise
