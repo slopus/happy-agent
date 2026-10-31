@@ -96,6 +96,9 @@ describe("inline actions", () => {
         const repeated = await press(0, {}, { id: sent.id });
         expect(repeated.status).toBe(202);
         expect(repeated.body).toMatchObject({ message: { id: sent.id } });
+        const mode = { ...gym.selection, permissionMode: "workspace_write" };
+        const empty = await gym.http.post(`/v0/agents/${agentId}/send`, { id: sent.id, mode });
+        expect(empty.status).toBe(400);
 
         // The choice is durable.
         await gym.restart();

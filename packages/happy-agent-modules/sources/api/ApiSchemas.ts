@@ -234,7 +234,6 @@ export const messageSendBodySchema = Type.Object(
         mode: requestedAgentModeSchema,
         profile: Type.Optional(agentRequestProfileSchema),
         replyTo: Type.Optional(messageReplyToSchema),
-        /** Required, except in an action message, which has none. */
         text: Type.Optional(Type.String({ minLength: 1, maxLength: 1_000_000 })),
     },
     { additionalProperties: false },

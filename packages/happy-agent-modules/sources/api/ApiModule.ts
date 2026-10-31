@@ -5203,7 +5203,8 @@ export class ApiModule implements AgentModule {
     /** The words a press sends, checked against this agent's own menu; `record` locks the menu. */
     async #press(ctx: Context, agentId: string, press: Press, record = false): Promise<string> {
         const message = await this.#history.message(ctx, agentId, press.messageId);
-        if (message?.role !== "assistant") throw notFound("The message was not found.");
+        if (message?.role !== "assistant" && message?.role !== "agent")
+            throw notFound("The message was not found.");
         const menus = message.blocks.flatMap((block) =>
             block.type === "text" ? chatActionBlocksOf(block.text) : [],
         );
@@ -5232,16 +5233,16 @@ export class ApiModule implements AgentModule {
     ): Promise<{ readonly message: unknown; readonly cursor: string | null }> {
         body.mode = requestedAgentMode(body.mode);
         const id = body.id ?? createId();
+        const press = body.content?.[0]?.type === "action" ? body.content[0] : undefined;
+        if ((press === undefined) === (body.text === undefined))
+            throw invalidRequest("Send text or a press.");
         return await this.#serializeMessageSend(id, async () => {
             const cursor = this.#journal.cursor();
             const existing = await ctx.inTx(
                 async (txCtx) => await this.#sentUserMessage(txCtx, agentId, id),
             );
             if (existing !== undefined) return { message: existing, cursor };
-            const press = body.content?.[0]?.type === "action" ? body.content[0] : undefined;
-            const text = press ? await this.#press(ctx, agentId, press) : body.text;
-            if (text === undefined || (press && body.text))
-                throw invalidRequest("Send text or a press.");
+            const text = press ? await this.#press(ctx, agentId, press) : (body.text ?? "");
             if (body.replyTo !== undefined) {
                 const story = body.replyTo.artifactId;
                 const to = await this.#stories?.replyAgentOf(ctx, story, this.#taskMember(ctx));

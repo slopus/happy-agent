@@ -53,7 +53,7 @@ export function fenceOpening(line: string): MarkdownFence | undefined {
     if (marker !== "`" && marker !== "~") return undefined;
     const length = runLength(line, start, marker);
     if (length < 3) return undefined;
-    const info = line.slice(start + length);
+    const info = line.slice(start + length).replace(/\r$/u, "");
     // A line terminator is not part of an info string, so a line holding one opens nothing.
     if (/[\r\u2028\u2029]/u.test(info)) return undefined;
     if (marker === "`" && info.includes("`")) return undefined;
