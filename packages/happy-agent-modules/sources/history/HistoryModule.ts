@@ -188,6 +188,9 @@ const HISTORY_TABLE = "happy_agent_module_history";
 const HISTORY_RUNS_TABLE = "happy_agent_module_history_runs";
 const HISTORY_PENDING_TABLE = "happy_agent_module_history_pending";
 const HISTORY_TOOL_CALLS_TABLE = "happy_agent_module_history_tool_calls";
+const REPLY_TO = "json_extract(message_json, '$.replyTo.artifactId')";
+// The reply index parses only rows whose JSON names a `replyTo`, so other writes never parse.
+const HAS_REPLY_TO = `instr(message_json, '"replyTo":') > 0`;
 
 /**
  * What a subscriber is handed once an append has committed.
@@ -405,6 +408,17 @@ export class HistoryModule implements AgentModule {
             async (_ctx, database) => {
                 await rewriteInlineActionMessages(database, HISTORY_TABLE, true);
                 await rewriteInlineActionMessages(database, HISTORY_PENDING_TABLE, false);
+            },
+        ],
+        [
+            // A story's replies are counted for every story served, so they are found by index.
+            "005-history-story-replies",
+            async (_ctx, database) => {
+                await agentDatabaseRun(
+                    database,
+                    sql.raw(`CREATE INDEX happy_agent_module_history_reply_to ON ${HISTORY_TABLE}
+                        (agent_id, ${REPLY_TO}, position) WHERE ${HAS_REPLY_TO}`),
+                );
             },
         ],
     ];
@@ -673,6 +687,34 @@ export class HistoryModule implements AgentModule {
             );
             return rows[0] === undefined ? undefined : toHistoryRecord(rows[0]).message;
         });
+    }
+
+    /** The accepted messages replying to a story, newest first, before the named one. */
+    async replies(
+        ctx: Context,
+        agentId: string,
+        artifactId: string,
+        page: { readonly before: string | undefined; readonly limit: number },
+    ): Promise<HistoryMessage[]> {
+        const before = sql`AND position < (SELECT position FROM ${sql.raw(HISTORY_TABLE)}
+            WHERE agent_id = ${agentId} AND record_id = ${page.before})`;
+        const rows = await agentDatabaseRows<HistoryRow>(
+            ctx.db,
+            sql`SELECT ${sql.raw(HISTORY_ROW_COLUMNS)} FROM ${sql.raw(HISTORY_TABLE)}
+                WHERE agent_id = ${agentId} AND ${sql.raw(`${HAS_REPLY_TO} AND ${REPLY_TO}`)} = ${artifactId}
+                ${page.before === undefined ? sql`` : before}
+                ORDER BY position DESC LIMIT ${page.limit}`,
+        );
+        return rows.map((row) => toHistoryRecord(row).message);
+    }
+
+    async countReplies(ctx: Context, agentId: string, artifactId: string): Promise<number> {
+        const rows = await agentDatabaseRows<{ count: number | string }>(
+            ctx.db,
+            sql`SELECT COUNT(*) AS count FROM ${sql.raw(HISTORY_TABLE)}
+                WHERE agent_id = ${agentId} AND ${sql.raw(`${HAS_REPLY_TO} AND ${REPLY_TO}`)} = ${artifactId}`,
+        );
+        return Number(rows[0]?.count ?? 0);
     }
 
     /**
@@ -2617,6 +2659,7 @@ export class HistoryModule implements AgentModule {
                           ...(mode === undefined ? {} : { mode }),
                           profile: pending?.profile ?? accepted.profile,
                           ...(clientMetadata === undefined ? {} : { clientMetadata }),
+                          ...(pending?.replyTo && { replyTo: pending.replyTo }),
                           ...(userId === undefined ? {} : { userId }),
                       }
                     : {}),

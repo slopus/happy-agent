@@ -9,6 +9,7 @@ import {
 } from "@slopus/happy-agent-base";
 import {
     agentStatusLineSchema,
+    messageReplyToSchema,
     type AgentStatusLine,
     type RepostStoryRequest,
     type Story,
@@ -29,6 +30,7 @@ import {
 } from "../artifacts/index.js";
 import { BotsModule } from "../bots/index.js";
 import { FocusModule } from "../focus/index.js";
+import { HistoryModule } from "../history/index.js";
 import { RichTasksModule } from "../richTasks/index.js";
 import { STANDALONE_TASK_MEMBER, TasksModule } from "../tasks/index.js";
 import { TeamModule } from "../team/index.js";
@@ -79,6 +81,7 @@ export class StoriesModule implements AgentModule {
     readonly #team: TeamModule;
     readonly #richTasks: RichTasksModule;
     readonly #focus: FocusModule;
+    readonly #history: HistoryModule;
     readonly #listeners = new Set<StoryListener>();
     /** Each task's and bot's agent, and the member its latest turn works for. */
     readonly #people = new Map<string, string>();
@@ -92,7 +95,9 @@ export class StoriesModule implements AgentModule {
         team: TeamModule,
         richTasks: RichTasksModule,
         focus: FocusModule,
+        history: HistoryModule,
     ) {
+        this.#history = history;
         this.#artifacts = artifacts;
         this.#tasks = tasks;
         this.#bots = bots;
@@ -130,8 +135,20 @@ export class StoriesModule implements AgentModule {
                     : [],
             instructions: async (hookCtx, scope) =>
                 (await posts(hookCtx, scope)) ? STORY_INSTRUCTIONS : "",
-            messageAcceptedTransact: async (hookCtx, scope, accepted) =>
-                await this.#richTasks.notePerson(hookCtx, scope.kv, accepted),
+            messageAcceptedTransact: async (hookCtx, scope, accepted) => {
+                const replyTo = accepted.metadata?.["replyTo"];
+                if (Value.Check(messageReplyToSchema, replyTo))
+                    this.#changed(hookCtx, replyTo.artifactId);
+                await this.#richTasks.notePerson(hookCtx, scope.kv, accepted);
+            },
+            // A reply tells the agent which story it answers, just before the message.
+            systemNotificationsTransact: async (hookCtx, _scope, boundary) => {
+                const replyTo = boundary.type === "message" && boundary.accepted.metadata?.replyTo;
+                if (!Value.Check(messageReplyToSchema, replyTo)) return undefined;
+                const story = await store.readStory(hookCtx, replyTo.artifactId);
+                const text = `The person's next message replies to your story "${story?.caption ?? ""}" (artifact ${replyTo.artifactId}).`;
+                return [{ role: "system", content: [{ type: "text", text }] }];
+            },
         };
     };
 
@@ -294,6 +311,12 @@ export class StoriesModule implements AgentModule {
         return member;
     }
 
+    /** The agent a member's reply to the story goes to; `undefined` when they may not see it. */
+    async replyAgentOf(ctx: Context, artifactId: string, memberId: string) {
+        const story = await store.readStory(ctx, artifactId);
+        return story && canSee(story, memberId) ? story.replyAgentId : undefined;
+    }
+
     /** Whether the member may read this story artifact; `undefined` when it is no story. */
     async canSee(ctx: Context, artifactId: string, memberId: string): Promise<boolean | undefined> {
         const story = await store.readStory(ctx, artifactId);
@@ -410,7 +433,7 @@ export class StoriesModule implements AgentModule {
                 userId: memberId === STANDALONE_TASK_MEMBER ? null : memberId,
                 seenAt,
             })),
-            replies: 0,
+            replies: await this.#history.countReplies(ctx, story.replyAgentId, story.artifactId),
         };
     }
 

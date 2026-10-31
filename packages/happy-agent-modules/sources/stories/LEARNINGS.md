@@ -33,3 +33,13 @@ create that hits another type's ID is a conflict, and a story create that finds 
 artifact fails. A take-down keeps its target in the call's store and ends only a live story,
 inside one transaction, so a replay never ends a newer one. `get_card` shows a bot's owner stories
 only to the person its turn answers.
+
+## A reply is an ordinary message, found by index
+
+Replies are not a separate store. A reply is the replier's own user message to the reply agent,
+carrying `replyTo` in History, so it wakes the agent like any message and keeps who wrote it.
+The model learns which story a reply answers from one system line written just before the
+message. The prompt, the message text, and the agent loop do not change. Every story served counts its replies,
+so History indexes `replyTo.artifactId` instead of scanning a whole conversation for each story.
+`unread.from` grows with every person's message while the agent is unread, not only replies. A
+finished turn keeps it, so the agent waking to a reply does not erase the replier's face.

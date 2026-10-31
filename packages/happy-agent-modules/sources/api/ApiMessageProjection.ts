@@ -99,6 +99,7 @@ export function messageResource(
         ...(role === "user" && message.clientMetadata !== undefined
             ? { clientMetadata: message.clientMetadata }
             : {}),
+        ...(role === "user" && message.replyTo && { replyTo: message.replyTo }),
         ...(role === "user"
             ? {
                   status: "accepted",

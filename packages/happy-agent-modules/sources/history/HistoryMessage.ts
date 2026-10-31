@@ -9,6 +9,7 @@ import {
     mediaLayoutSchema,
     messageErrorSchema,
     messageFailureSchema,
+    messageReplyToSchema,
     serviceNoticeSchema,
     toolCallRequestBlockSchema,
     userIdSchema,
@@ -545,6 +546,8 @@ const historyMessageFields = {
     mutationId: Type.Optional(historyMutationIdSchema),
     /** Opaque JSON owned by the client that submitted this user message. */
     clientMetadata: Type.Optional(historyClientMetadataSchema),
+    /** The story a user message answers, set at send. */
+    replyTo: Type.Optional(messageReplyToSchema),
     /** Keep this operational message out of person-facing transcript projection. */
     hideFromUser: Type.Optional(Type.Boolean()),
     /** Happy's source identity, used to suppress a remote message echo. */

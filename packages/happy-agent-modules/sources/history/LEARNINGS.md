@@ -302,3 +302,11 @@ for the stable release, those records would have failed run-page validation and 
 conversation unreadable for anyone who had tried it in a preview. Migration
 `004-history-inline-actions-as-text` rewrites each press as a text block holding the words on the
 control and drops the choices, reading only the rows whose JSON mentions either.
+
+## Story replies are indexed without parsing every write
+
+A user message may carry `replyTo`, which is set at send like `clientMetadata`. Every story served counts its replies, so
+migration `005-history-story-replies` adds a partial index on `replyTo.artifactId`. The partial
+condition is a plain `instr` match for `"replyTo":`, so only rows that name a reply are parsed
+on write. An index on `json_extract` alone made every append parse its JSON, and a malformed row
+could no longer be written. Reply queries repeat the same condition so SQLite uses the index.

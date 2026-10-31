@@ -114,6 +114,8 @@ import {
     type TaskChild,
     type TaskChildRef,
     agentWaitSchema,
+    agentUnreadSchema,
+    type AgentUnread,
     repostStoryRequestSchema,
     storyMutationRequestSchema,
 } from "@slopus/happy-agent-client";
@@ -5192,6 +5194,12 @@ export class ApiModule implements AgentModule {
     ): Promise<void> {
         await this.#assertUserControlledAgent(ctx, agentId);
         const body = await bodyAs(request, messageSendBodySchema, "agent message");
+        if (body.replyTo !== undefined) {
+            const id = body.replyTo.artifactId;
+            const to = await this.#stories?.replyAgentOf(ctx, id, this.#taskMember(ctx));
+            if (to === undefined) throw notFound("The story was not found.");
+            if (to !== agentId) throw new ApiError(409, "conflict", "Replies go to another agent.");
+        }
         sendJson(response, 202, await this.#sendUserMessage(ctx, agentId, body));
     }
 
@@ -5261,6 +5269,7 @@ export class ApiModule implements AgentModule {
                     ...(body.clientMetadata === undefined
                         ? {}
                         : { clientMetadata: body.clientMetadata }),
+                    ...(body.replyTo && { replyTo: body.replyTo }),
                 },
             };
             const agents = this.#agentSystem();
@@ -5280,6 +5289,7 @@ export class ApiModule implements AgentModule {
                 ...(body.clientMetadata === undefined
                     ? {}
                     : { clientMetadata: body.clientMetadata }),
+                ...(body.replyTo && { replyTo: body.replyTo }),
                 runId: null,
             };
             this.#announcedPendingMessages.add(id);
@@ -5315,9 +5325,19 @@ export class ApiModule implements AgentModule {
                 accepted === undefined
                     ? pendingMessageResource(pending)
                     : messageResource(accepted);
+            // While unread, a person's message adds their face; a story reply marks it unread.
+            const was = await this.#unread(ctx, agentId);
+            const from = userId === undefined ? undefined : [userId];
+            const unread =
+                from === undefined || this.#stories === undefined
+                    ? undefined
+                    : was !== undefined
+                      ? { ...was, from: [...new Set([...from, ...(was.from ?? [])])].slice(0, 8) }
+                      : body.replyTo && { reason: "story_reply", since: createdAt, from };
             await this.#updateAgentMetadata(ctx, agentId, {
                 lastMode: body.mode,
                 initialMode: null,
+                ...(unread && { unread }),
             });
             this.#journal.append("message.created", {
                 agentId,
@@ -5928,14 +5948,21 @@ export class ApiModule implements AgentModule {
         void task.finally(() => this.#backgroundMetadataUpdates.delete(task));
     }
 
+    async #unread(ctx: Context, agentId: string): Promise<AgentUnread | undefined> {
+        const unread = (await this.#agentSystem().config(ctx, agentId))?.metadata?.["unread"];
+        return Value.Check(agentUnreadSchema, unread) ? unread : undefined;
+    }
+
     #scheduleUnreadUpdate(ctx: Context, agentId: string, since: number): void {
         const task = (async () => {
             for (let attempt = 0; attempt < 8; attempt += 1) {
                 await new Promise<void>((resolve) => setImmediate(resolve));
                 if (this.#closed) return;
                 try {
+                    // The faces of people who wrote while it was unread stay.
+                    const from = (await this.#unread(ctx, agentId))?.from;
                     await this.#updateAgentMetadata(ctx, agentId, {
-                        unread: { reason: "turn_finished", since },
+                        unread: { ...(from && { from }), reason: "turn_finished", since },
                     });
                     return;
                 } catch (error: unknown) {
@@ -7624,9 +7651,16 @@ export class ApiModule implements AgentModule {
         const id = route[1] as string;
         if (route[2] === "replies") {
             if (request.method !== "GET") return false;
-            // Replies are read back from the reply agent's conversation once they can be sent.
-            const story = await stories.get(ctx, id, member);
-            sendJson(response, 200, { agentId: story.replyAgentId, messages: [], hasMore: false });
+            // Replies are messages in the reply agent's own chat, read by whoever sees the story.
+            const agentId = (await stories.get(ctx, id, member)).replyAgentId;
+            const limit = integerParameter(url.searchParams.get("limit"), 50, 1, 100);
+            const before = url.searchParams.get("before") ?? undefined;
+            const page = await this.#history.replies(ctx, agentId, id, {
+                before,
+                limit: limit + 1,
+            });
+            const messages = page.slice(0, limit).map((m) => messageResource(m));
+            sendJson(response, 200, { agentId, messages, hasMore: page.length > limit });
             return true;
         }
         if (request.method !== "POST") return false;
@@ -10949,6 +10983,7 @@ function pendingMessageResource(pending: HistoryPendingMessage): Record<string, 
             ...(pending.clientMetadata === undefined
                 ? {}
                 : { clientMetadata: pending.clientMetadata }),
+            ...(pending.replyTo && { replyTo: pending.replyTo }),
             delivery: pending.delivery,
             mode: pending.mode,
             profile: pending.profile ?? null,

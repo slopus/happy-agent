@@ -755,7 +755,7 @@ export async function startHappyAgentRuntime(
             subtasks,
             userSettings,
         );
-        const stories = new StoriesModule(artifacts, tasks, bots, team, richTasks, focus);
+        const stories = new StoriesModule(artifacts, tasks, bots, team, richTasks, focus, history);
         const apiModule = new ApiModule(
             abort,
             config,

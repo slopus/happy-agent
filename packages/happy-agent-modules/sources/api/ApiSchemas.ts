@@ -3,6 +3,7 @@ import { agentRequestProfileSchema, cuid2Schema } from "@slopus/happy-agent-base
 import {
     clientMetadataSchema,
     messageModeSchema,
+    messageReplyToSchema,
     toolCallRequestBlockSchema,
 } from "@slopus/happy-agent-client";
 
@@ -230,6 +231,7 @@ export const messageSendBodySchema = Type.Object(
         id: Type.Optional(apiIdSchema),
         mode: requestedAgentModeSchema,
         profile: Type.Optional(agentRequestProfileSchema),
+        replyTo: Type.Optional(messageReplyToSchema),
         text: Type.String({ minLength: 1, maxLength: 1_000_000 }),
     },
     { additionalProperties: false },
