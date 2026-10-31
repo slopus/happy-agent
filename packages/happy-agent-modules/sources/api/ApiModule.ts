@@ -7131,7 +7131,13 @@ export class ApiModule implements AgentModule {
             const by = { agentId: null, userId: teamUser(ctx)?.id ?? null };
             try {
                 await this.#withMutationId(body.mutationId, async () => {
-                    await tasks.setChild(ctx, taskId, ref, put?.visibility ?? null, by);
+                    await ctx.inTx(async (txCtx) => {
+                        // Choices about children that are gone never hold a place under the limit.
+                        const all = await tasks.children(txCtx, taskId);
+                        const live = new Set(await this.#liveTaskChildren(txCtx, all));
+                        const gone = all.filter((c) => !live.has(c)).map((c) => c.ref);
+                        await tasks.setChild(txCtx, taskId, ref, put?.visibility ?? null, by, gone);
+                    });
                 });
             } catch (error: unknown) {
                 if (error instanceof TaskNotFoundError) throw notFound("The task was not found.");
@@ -7546,12 +7552,27 @@ export class ApiModule implements AgentModule {
         return children.filter((_, index) => live[index]);
     }
 
+    /** A child the daemon cannot resolve counts as gone, so it never fails a task response. */
     async #taskChildExists(ctx: Context, ref: TaskChildRef): Promise<boolean> {
-        if (ref.kind === "workspace")
-            return (await this.#workspaces.get(ctx, ref.id)) !== undefined;
-        if (ref.kind === "agent")
-            return (await this.#agentSystem().config(ctx, ref.id)) !== undefined;
-        return (await this.#artifacts?.get(ctx, ref.id))?.status === "active";
+        try {
+            if (ref.kind === "workspace") return await this.#workspaceExists(ctx, ref.id);
+            if (ref.kind === "agent")
+                return (await this.#agentSystem().config(ctx, ref.id)) !== undefined;
+            return (await this.#artifacts?.get(ctx, ref.id))?.status === "active";
+        } catch (error: unknown) {
+            ctx.log.warn("A task's child could not be resolved.", { ref }, error);
+            return false;
+        }
+    }
+
+    /** Any workspace the workspace routes resolve: a bot's, a task's, a chat's, a root, or a child. */
+    async #workspaceExists(ctx: Context, workspaceId: string): Promise<boolean> {
+        if ((await this.#bots.forWorkspace(ctx, workspaceId)) !== undefined) return true;
+        if ((await this.#tasks?.forWorkspace(ctx, workspaceId)) !== undefined) return true;
+        if ((await this.#surfaces?.chatForWorkspace(ctx, workspaceId)) !== undefined) return true;
+        if ((await this.#projects.get(ctx, workspaceId)) !== undefined) return true;
+        if (this.#config.configuration.values.features.workspaces === false) return false;
+        return (await this.#workspaces.get(ctx, workspaceId)) !== undefined;
     }
 
     async #taskResponse(ctx: Context, task: TaskRecord): Promise<Record<string, unknown>> {

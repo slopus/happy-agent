@@ -221,6 +221,17 @@ export const artifactMigrations = [
             await withdrawArtifactTypes(database, ["sidebar", "sidebar_proposal", "story"]);
         },
     ],
+    [
+        // Each agent's most recently changed artifacts, read newest first for task sub-rows.
+        "008-artifact-source-agent-updated",
+        async (_ctx: Context, database: AgentDatabaseFacade<AgentDatabase>): Promise<void> => {
+            await agentDatabaseRun(
+                database,
+                sql`CREATE INDEX IF NOT EXISTS ${sql.raw(`${ARTIFACTS_TABLE}_source_agent_updated`)}
+                    ON ${sql.raw(ARTIFACTS_TABLE)} (source_agent_id, updated_at, id)`,
+            );
+        },
+    ],
 ] as const;
 
 /**

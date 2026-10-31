@@ -695,6 +695,7 @@ export class TasksModule implements AgentModule {
     /**
      * Show or hide one child under the task for every member, or forget the choice (`null`) so the
      * child returns to its default. A change advances the task's version; the latest one wins.
+     * `gone` names choices whose child no longer exists: they are dropped and never count.
      */
     async setChild(
         ctx: Context,
@@ -702,13 +703,19 @@ export class TasksModule implements AgentModule {
         ref: TaskChildRef,
         visibility: TaskChildVisibility | null,
         by: TaskActor,
+        gone: readonly TaskChildRef[] = [],
     ): Promise<TaskRecord> {
         return await ctx.inTx(async (txCtx) => {
             const current = await this.#required(txCtx, taskId);
             const all = await readTaskChildren(txCtx, taskId);
             const existing = all.find((c) => c.ref.kind === ref.kind && c.ref.id === ref.id);
             if ((existing?.visibility ?? null) === visibility) return current;
-            const others = all.filter((child) => child !== existing);
+            const stale = (c: TaskChild) =>
+                gone.some((g) => g.kind === c.ref.kind && g.id === c.ref.id);
+            for (const { ref: dropped } of all.filter(stale)) {
+                await writeTaskChild(txCtx, taskId, dropped, undefined);
+            }
+            const others = all.filter((child) => child !== existing && !stale(child));
             if (visibility !== null && others.length >= MAX_TASK_CHILDREN) {
                 throw new TaskConflictError(
                     `A task holds at most ${String(MAX_TASK_CHILDREN)} child choices.`,

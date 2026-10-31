@@ -190,6 +190,8 @@ entry path, background, display, author, source, and the operation ID that made 
 version file keyed by path, indexed by digest; and one row per upload, whose size, digest, and
 UTF-8 flag stay empty until its bytes arrive. The artifact and version rows carry the `major.minor`
 labels.
+Migration `008-artifact-source-agent-updated` indexes artifacts by source agent and last change, so
+`recentForAgents` reads each agent's newest few without sorting.
 
 An upload is recorded together with the durable call that removes it before any of its bytes are
 written. The bytes are written, synced, hashed, and checked for UTF-8; the digest is recorded; and

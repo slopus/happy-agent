@@ -156,23 +156,22 @@ export async function queryRecentAgentArtifacts(
     agentIds: readonly string[],
     limit: number,
 ): Promise<ArtifactRecord[]> {
-    if (agentIds.length === 0) return [];
-    const ids = sql.join(
-        agentIds.map((id) => sql`${id}`),
-        sql`, `,
-    );
-    const rows = await agentDatabaseRows<ArtifactRow>(
-        ctx.db,
-        sql`SELECT * FROM (
-                SELECT *, ROW_NUMBER() OVER (
-                    PARTITION BY source_agent_id ORDER BY updated_at DESC, id DESC
-                ) AS agent_rank
-                FROM ${sql.raw(ARTIFACTS_TABLE)}
-                WHERE status = 'active' AND type <> 'story' AND source_agent_id IN (${ids})
-            ) AS ranked
-            WHERE agent_rank <= ${limit} ORDER BY updated_at DESC, id DESC`,
-    );
-    return rows.map(artifactFromRow);
+    const artifacts: ArtifactRecord[] = [];
+    for (const agentId of agentIds) {
+        const rows = await agentDatabaseRows<ArtifactRow>(
+            ctx.db,
+            recentAgentArtifactsQuery(agentId, limit),
+        );
+        artifacts.push(...rows.map(artifactFromRow));
+    }
+    return artifacts.sort((a, b) => b.updatedAt - a.updatedAt || (b.id > a.id ? 1 : -1));
+}
+
+/** One agent's read, walking its source-agent index newest first and stopping at `limit`. */
+export function recentAgentArtifactsQuery(agentId: string, limit: number): SQL {
+    return sql`SELECT * FROM ${sql.raw(ARTIFACTS_TABLE)}
+        WHERE source_agent_id = ${agentId} AND status = 'active' AND type <> 'story'
+        ORDER BY updated_at DESC, id DESC LIMIT ${limit}`;
 }
 
 export async function queryArtifactVersion(

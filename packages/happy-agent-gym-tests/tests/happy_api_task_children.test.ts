@@ -1,4 +1,4 @@
-import { createAgentGym, type AgentGym } from "@slopus/happy-agent-gym";
+import { createAgentGym, runGymSql, type AgentGym } from "@slopus/happy-agent-gym";
 import { afterEach, describe, expect, it } from "vitest";
 
 const running = new Set<AgentGym>();
@@ -82,6 +82,37 @@ describe("task child choices", () => {
         ).toBe(404);
         const missingTask = `/v0/tasks/t0000000000000000000000x/children/workspace/${shared.id}`;
         expect(await put(missingTask, { visibility: "shown" })).toBe(404);
+        expect(gym.errors).toEqual([]);
+    }, 60_000);
+
+    it("resolve every kind of workspace, and neither fail reads nor fill the limit once gone", async () => {
+        const gym = await createAgentGym({ config: "[features]\nworkspaces = false\n" });
+        running.add(gym);
+        const a = (await gym.client.createTask({ name: "A" })).task;
+        const b = (await gym.client.createTask({ name: "B" })).task;
+        // 200 choices about children that are gone, among them a project workspace.
+        const rows = Array.from({ length: 200 }, (_, index) => {
+            const kind = index === 0 ? "workspace" : "artifact";
+            const id = `r${String(index).padStart(23, "0")}`;
+            return `('${a.id}', '${kind}', '${id}', 'hidden', NULL, NULL, ${String(index + 1)})`;
+        });
+        await gym.restart({
+            whileStopped: async () =>
+                await runGymSql(gym.happyHome, [
+                    `INSERT INTO happy_agent_module_task_children VALUES ${rows.join(", ")}`,
+                ]),
+        });
+        expect((await gym.client.getTask(a.id)).task.children).toEqual([]);
+        expect((await gym.client.listTasks()).tasks).toHaveLength(2);
+        expect((await gym.client.getDesktopBootstrap()).tasks).toHaveLength(2);
+
+        // A task's workspace and a project root are workspaces; the gone choices make room.
+        const root = (await gym.getSession()).workspaceId;
+        const show = async (id: string) =>
+            await gym.client.setTaskChild(a.id, { kind: "workspace", id }, { visibility: "shown" });
+        await show(b.workspaceId);
+        const both = await show(root);
+        expect(both.task.children?.map((child) => child.ref.id)).toEqual([b.workspaceId, root]);
         expect(gym.errors).toEqual([]);
     }, 60_000);
 

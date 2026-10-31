@@ -7,6 +7,7 @@ import {
     artifactMigrations,
     ARTIFACTS_TABLE,
 } from "../../sources/artifacts/index.js";
+import { recentAgentArtifactsQuery } from "../../sources/artifacts/ArtifactStore.js";
 import { moduleDatabase } from "../support/moduleDatabase.js";
 
 describe("the artifact migrations", () => {
@@ -68,6 +69,19 @@ describe("the artifact migrations", () => {
                 sql`SELECT live_json FROM ${sql.raw(ARTIFACT_VERSIONS_TABLE)} ORDER BY number`,
             ),
         ).toEqual([{ live_json: null }, { live_json: null }, { live_json: null }]);
+        database.close();
+    });
+
+    it("reads each agent's newest artifacts for task sub-rows through one index, unsorted", async () => {
+        const database = moduleDatabase(artifactMigrations, "artifact-recent-by-agent");
+        await database.ready;
+        const plan = await agentDatabaseRows<{ detail: string }>(
+            database.database,
+            sql`EXPLAIN QUERY PLAN ${recentAgentArtifactsQuery("agentone", 20)}`,
+        );
+        const details = plan.map((row) => row.detail).join("\n");
+        expect(details).toContain(`USING INDEX ${ARTIFACTS_TABLE}_source_agent_updated`);
+        expect(details).not.toContain("TEMP B-TREE");
         database.close();
     });
 });
