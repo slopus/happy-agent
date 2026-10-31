@@ -594,7 +594,8 @@ export class TasksModule implements AgentModule {
             }
             const rows = taskListRows(
                 await readMemberships(txCtx, memberId),
-                await readTaskSections(txCtx, memberId),
+                // Sections stored while rich tasks were served take no part once they are not.
+                this.#config.taskSections ? await readTaskSections(txCtx, memberId) : [],
             );
             const position = rows.findIndex((row) => row.kind === "task" && row.id === taskId);
             const ordered = rows.filter((_, index) => index !== position);
@@ -1057,7 +1058,11 @@ export class TasksModule implements AgentModule {
         memberId: TaskMemberId,
         unread?: TaskMembershipUnread,
     ): Promise<TaskMembership> {
-        const firstOrderKey = await queryFirstTaskOrderKey(ctx, memberId);
+        const firstOrderKey = await queryFirstTaskOrderKey(
+            ctx,
+            memberId,
+            this.#config.taskSections,
+        );
         const membership: TaskMembership = {
             taskId,
             memberId,

@@ -56,19 +56,22 @@ export async function clearTaskLeave(
 }
 
 /**
- * Only the first order key is needed to place a new membership at the top, above any section
- * header, which shares the key space.
+ * Only the first order key is needed to place a new membership at the top: above any section
+ * header too, which shares the key space, while sections are served.
  */
 export async function queryFirstTaskOrderKey(
     ctx: Context,
     memberId: string,
+    withSections: boolean,
 ): Promise<string | undefined> {
+    const sections = withSections
+        ? sql`UNION ALL SELECT order_key FROM ${sql.raw(TASK_SECTIONS_TABLE)} WHERE member_id = ${memberId}`
+        : sql``;
     const rows = await agentDatabaseRows<{ readonly order_key: string }>(
         ctx.db,
         sql`SELECT order_key FROM (
                 SELECT order_key FROM ${sql.raw(TASK_MEMBERS_TABLE)} WHERE member_id = ${memberId}
-                UNION ALL
-                SELECT order_key FROM ${sql.raw(TASK_SECTIONS_TABLE)} WHERE member_id = ${memberId}
+                ${sections}
             ) AS list ORDER BY order_key LIMIT 1`,
     );
     return rows[0]?.order_key;

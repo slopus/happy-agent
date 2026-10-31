@@ -112,9 +112,28 @@ describe("task sections and hidden tasks", () => {
         expect(gym.errors).toEqual([]);
     }, 60_000);
 
-    it("are neither served nor accepted until the daemon serves rich tasks", async () => {
-        const { gym, tasks } = await gymWith({});
+    it("are neither served nor accepted, nor order anything, until the daemon serves rich tasks", async () => {
+        // A header stored while rich tasks were served sits above every task.
+        const environment: Record<string, string> = { HAPPY_AGENT_TASK_SECTIONS: "1" };
+        const { gym, tasks } = await gymWith(environment);
+        const { sections } = await gym.client.replaceTaskSections({
+            sections: [{ id: LATER, name: "Later", collapsed: false, after: null }],
+        });
+        delete environment["HAPPY_AGENT_TASK_SECTIONS"];
+        await gym.restart();
         const listed = await gym.client.listTasks({ scope: "joined" });
+
+        // As on main: the first task is already first, and a new task keys off the first task alone.
+        const cursor = (await gym.client.getEvents()).latestCursor;
+        await gym.client.reorderTask(tasks["D"]!, { afterId: null });
+        expect((await gym.client.listTasks({ scope: "joined" })).memberships).toEqual(
+            listed.memberships,
+        );
+        const types = (await gym.client.getEvents({ after: cursor })).events.map((e) => e.type);
+        expect(types).not.toContain("task.reordered");
+        // Main places it just before the first task, where the stored header happens to sit.
+        const joined = await gym.client.createTask({ name: "E" });
+        expect(joined.membership?.orderKey).toBe(sections[0]!.orderKey);
         expect("sections" in listed).toBe(false);
         expect("hidden" in listed.memberships[0]!).toBe(false);
         expect("taskSections" in (await gym.client.getDesktopBootstrap())).toBe(false);
