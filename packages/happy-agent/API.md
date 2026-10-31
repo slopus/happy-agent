@@ -2485,31 +2485,11 @@ read the flag on next bootstrap.
 
 ### Onboarding in the built-in bot's conversation
 
-A daemon that reports `capabilities.chatOnboarding: true` can run onboarding as a conversation
-with the built-in bot (`systemKey: "chief_of_staff"`) instead of leaving it to the client. It does
-so only for a person whose reserved `onboarding.chat` setting is JSON `true` while `completed` is
-`false`. A client that wants it writes the setting, then opens the built-in bot's conversation
-in place of its own setup screens. Without the setting, onboarding is exactly as described above.
-
-The conversation is ordinary agent messages with inline actions (see "Inline actions"), in four
-steps, each answered by a press:
-
-1. **Welcome** — a `<menu>` that starts.
-2. **AI connection** — one `<figure data-provider-cli="ID">` per assistant. The step is done
-   when `steps.providers.done` is `true`.
-3. **Task list** — `<figure data-setting="tasks-style"></figure>`: two live previews of the
-   person's list, rich and minimal, each one control of the action `onboarding.tasksStyle` with
-   the parameter `choice`, `"rich"` or `"minimal"`.
-4. **Focus** — `<figure data-setting="focus"></figure>`: on or off, each one control of the
-   action `onboarding.focus` with `choice` `"on"` or `"off"`.
-
-A press is the person's action message. The daemon checks it like any press, then in the same
-transaction writes `tasks.rich` (`true` for rich, `false` for minimal) or `tasks.focus`, emitting
-`user_settings.updated`, so the client switches its list at once, without a restart. The last
-press records installation completion as `POST /v0/onboarding/complete` does, and emits
-`config.updated` once so clients read the onboarding state again. Closing the conversation early
-leaves `completed` `false`; the next open continues from the step it reached. The flow's wording
-and pace are the daemon's; clients draw only what the messages hold.
+Deferred. `chatOnboarding` and the `onboarding.chat` setting are reserved for running onboarding
+as a conversation with the built-in bot (`systemKey: "chief_of_staff"`). No daemon reports the
+capability yet, so a client never writes the setting, and onboarding is exactly as described
+above. The conversation's steps, and any inline actions it uses, will be specified here when it
+ships.
 
 ## Provider CLIs
 
