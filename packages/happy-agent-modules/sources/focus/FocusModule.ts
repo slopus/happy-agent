@@ -17,7 +17,7 @@ import { ConfigModule } from "../config/index.js";
 import { DurableFunctionsModule } from "../durableFunctions/index.js";
 import { AGENT_MESSAGE_ORIGIN_METADATA, isUserOriginMetadata } from "../impl/messageOrigin.js";
 import { RichTasksModule, TASK_FOCUS_SETTING, TASK_SECTIONS_SETTING } from "../richTasks/index.js";
-import { SubtasksModule, type CreateSubtaskInput } from "../subtasks/index.js";
+import { CollaborationModule, type CollaborationCreateInput } from "../collaboration/index.js";
 import { TaskConflictError, TaskNotFoundError, TasksModule } from "../tasks/index.js";
 import { UserSettingsModule } from "../userSettings/index.js";
 import { FOCUS_INSTRUCTIONS } from "./impl/focusInstructions.js";
@@ -37,9 +37,9 @@ const focusWrite = createContextNamespace("focus.write", false);
 const statusText = (line: unknown) => (Value.Check(agentStatusLineSchema, line) ? line.text : null);
 
 /**
- * Focus arranges a person's task list while they have `tasks.focus` on: one long-running subtask
- * of Happy per person, briefed with the whole list when something on it changes, whose only tool
- * is `organize_tasks`. Rows the person moved or hid stay theirs until the task's status changes.
+ * Focus arranges a person's task list while they have `tasks.focus` on: one long-running unlisted
+ * agent of Happy per person, briefed with the whole list when something on it changes, whose only
+ * tool is `organize_tasks`. Rows the person moved or hid stay theirs until the task's status changes.
  */
 export class FocusModule implements AgentModule {
     readonly name = "focus";
@@ -49,7 +49,7 @@ export class FocusModule implements AgentModule {
     readonly #richTasks: RichTasksModule;
     readonly #tasks: TasksModule;
     readonly #bots: BotsModule;
-    readonly #subtasks: SubtasksModule;
+    readonly #collaboration: CollaborationModule;
     /** Each person's Focus agent, by person. */
     readonly #focus = new Map<string, string>();
     /** Focus agents in the middle of a turn; their notices wait for it to end. */
@@ -64,7 +64,7 @@ export class FocusModule implements AgentModule {
         richTasks: RichTasksModule,
         tasks: TasksModule,
         bots: BotsModule,
-        subtasks: SubtasksModule,
+        collaboration: CollaborationModule,
         settings: UserSettingsModule,
     ) {
         this.#config = config;
@@ -72,7 +72,7 @@ export class FocusModule implements AgentModule {
         this.#richTasks = richTasks;
         this.#tasks = tasks;
         this.#bots = bots;
-        this.#subtasks = subtasks;
+        this.#collaboration = collaboration;
         durable.register({
             name: BRIEF_FUNCTION,
             argumentsSchema: Type.Object({
@@ -315,14 +315,15 @@ export class FocusModule implements AgentModule {
         const model = this.#config.models[0];
         if (happy === undefined || model === undefined) return;
         const agentId = await kv.getOrCreate(ctx, "agent", () => createId());
-        const effort = model.defaultEffort as CreateSubtaskInput["effort"];
+        const effort = model.defaultEffort as CollaborationCreateInput["effort"];
         const input = { title: "Focus", text, provider: model.providerId, model: model.id, effort };
         await ctx.inTx(async (tx) => {
             await store.saveFocusAgent(tx, memberId, agentId);
             // Its opening turn may start before this transaction's other callbacks run.
             this.#focus.set(memberId, agentId);
-            await this.#subtasks.create(tx, happy.agentId, input, agentId, undefined, undefined, {
-                unreported: true,
+            // Not a subtask: a shared bot's subtasks are every member's sub-rows.
+            await this.#collaboration.createAgent(tx, happy.agentId, input, agentId, {
+                reportToCreator: false,
             });
         });
     }

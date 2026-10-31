@@ -1,7 +1,7 @@
 # Focus
 
 Focus arranges one person's task list while they have `tasks.focus` on: one long-running,
-unreported subtask of Happy per person, whose instructions are `FOCUS_INSTRUCTIONS` and whose only
+unlisted agent of Happy per person, whose instructions are `FOCUS_INSTRUCTIONS` and whose only
 tool is `organize_tasks`. What to move or hide is Focus's decision, made through its prompt; the
 code enforces only that a person's own placement wins.
 
@@ -12,7 +12,7 @@ const focus = new FocusModule(
     richTasks,
     tasks,
     bots,
-    subtasks,
+    collaboration,
     userSettings,
 );
 ```
@@ -24,7 +24,7 @@ const focus = new FocusModule(
 | `RichTasksModule`        | `tasks.focus`, and `tasks.sections` for showing sections       |
 | `TasksModule`            | The list it reads and arranges, and the events that wake Focus |
 | `BotsModule`             | Happy, Focus's parent, and telling bots apart from tasks       |
-| `SubtasksModule`         | Creating Focus as Happy's subtask                              |
+| `CollaborationModule`    | Creating Focus as an unlisted agent of Happy                   |
 | `UserSettingsModule`     | Turning Focus on and off                                       |
 
 ## Waking

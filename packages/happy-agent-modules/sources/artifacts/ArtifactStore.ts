@@ -129,7 +129,6 @@ export async function queryArtifactPage(
         );
     }
     if (query.includeDeleted !== true) conditions.push(sql`status = 'active'`);
-    // Stories are listed only to a caller that asks for them by type.
     conditions.push(query.type === undefined ? sql`type <> 'story'` : sql`type = ${query.type}`);
     if (query.sourceKind !== undefined) conditions.push(sql`source_kind = ${query.sourceKind}`);
     if (query.sourceId !== undefined) conditions.push(sql`source_id = ${query.sourceId}`);

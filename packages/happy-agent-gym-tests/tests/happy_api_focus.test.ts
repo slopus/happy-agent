@@ -28,7 +28,7 @@ describe("Focus", () => {
                     turns.delete(request.sessionId);
                     return turn ?? text("Done.");
                 }
-                // Focus is a subtask, so it never gets a task's or bot's card tools.
+                // Focus is neither a task nor a bot, so it never gets their card tools.
                 focusTools.push(...request.tools.map((tool) => tool.name));
                 // Focus opens on a message from Happy; later briefs arrive as notices.
                 if (last?.role === "tool") return text("Moved what needed you up.");
@@ -51,7 +51,7 @@ describe("Focus", () => {
             await gym.waitUntil(async () => briefs[count - 1], `Focus brief ${String(count)}`);
         expect(await order()).toEqual(["Charlie", "Bravo", "Alpha"]);
 
-        // Focus starts as Happy's subtask with the whole list.
+        // Focus starts as an unlisted agent of Happy with the whole list: no one's sub-row.
         await gym.client.saveUserSetting("tasks.rich", { value: true });
         await gym.client.saveUserSetting("tasks.focus", { value: true });
         const first = await briefed(1);
@@ -60,7 +60,7 @@ describe("Focus", () => {
             (bot) => bot.username === "chief_of_staff",
         )!;
         const tree = (await gym.client.getAgent(happy.agent.id)).agent.subtasks ?? [];
-        expect(tree.map((agent) => [agent.id, agent.title])).toEqual([[first.agentId, "Focus"]]);
+        expect(tree).toEqual([]);
         await gym.waitUntil(
             async () =>
                 (await gym.client.getAgent(first.agentId)).agent.status === "idle"

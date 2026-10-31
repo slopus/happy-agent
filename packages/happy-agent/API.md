@@ -10182,7 +10182,7 @@ section ID on a membership, so moving a task between sections changes only its o
 older client sees the same order as before, without the headers.
 
 **Focus.** While a person has `tasks.focus` on, Focus arranges their list: one long-running
-subtask of the built-in bot per person, appearing in its `subtasks` tree like any subtask. It
+agent of the built-in bot per person, not a subtask, so it is in no one's `subtasks` tree. It
 wakes, at most once per short burst, when a task is created or first messaged, a status line or
 pending question changes, a story is posted, someone writes to a task's agent, the person moves,
 hides, or sections a row, or a task is archived. Its own writes never wake it. A row the person
