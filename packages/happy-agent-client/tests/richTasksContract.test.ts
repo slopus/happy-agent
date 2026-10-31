@@ -152,6 +152,28 @@ function responses(c: typeof current | typeof published): [string, TSchema, unkn
 }
 
 describe("rich tasks contract", () => {
+    it("opts in to story artifacts and action blocks only when asked", async () => {
+        const urls: string[] = [];
+        const fetch = async (input: RequestInfo | URL) => {
+            urls.push(String(input instanceof Request ? input.url : input));
+            return Response.json({ runs: [], hasMore: false, cursor: version });
+        };
+        const client = new current.HappyAgentClient({
+            endpoint: "http://agent.local",
+            token: "t",
+            fetch,
+        });
+        const id = "r1t2y3u4i5o6p7a8s9d0f1g2";
+        expect(client.artifactFileUrl(id, 1, "story.json", { type: "story" })).toContain(
+            "type=story",
+        );
+        expect(client.artifactFileUrl(id, 1, "story.json")).not.toContain("type=");
+        await client.getMessages(agent.id, { includeActions: true });
+        await client.getMessages(agent.id);
+        expect(urls[0]).toContain("include=actions");
+        expect(urls[1]).not.toContain("include=");
+    });
+
     it.each(
         responses(published).map((row, i) => [row[0], row[1], responses(current)[i]![1], row[2]]),
     )(
@@ -225,10 +247,21 @@ describe("rich tasks contract", () => {
                 type: "action",
                 messageId: "tz4a98xxat96iws9zmbrgj3a",
                 blockIndex: 0,
+                controlIndex: 1,
                 actionId: "reply",
                 params: {},
             }),
         ).toBe(true);
+        // Two buttons with the same action and parameters differ only by `controlIndex`.
+        const press = { type: "action", messageId: "tz4a98xxat96iws9zmbrgj3a", blockIndex: 0 };
+        expect(
+            Value.Check(current.actionBlockSchema, { ...press, actionId: "reply", params: {} }),
+        ).toBe(false);
+        // Exactly one reorder anchor, and a name beside an icon must still be a name.
+        const both = { afterId: null, afterSectionId: section.id };
+        expect(Value.Check(current.reorderTaskRequestSchema, both)).toBe(false);
+        expect(Value.Check(current.reorderTaskAfterSectionRequestSchema, both)).toBe(false);
+        expect(Value.Check(current.updateTaskRequestSchema, { name: 42, icon: null })).toBe(false);
         // An older daemon's request schemas refuse what only a protocol-34 daemon accepts.
         expect(
             Value.Check(published.reorderTaskRequestSchema, { afterSectionId: section.id }),

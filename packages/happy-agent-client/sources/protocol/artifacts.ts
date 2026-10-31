@@ -294,6 +294,8 @@ export type ArtifactResponse = Static<typeof artifactResponseSchema>;
 
 /** `GET /v0/artifacts/:artifactId/versions` query parameters. */
 export const artifactVersionListQuerySchema = Type.Object({
+    /** `story` is required to read a story artifact; see `StoryArtifactOptions`. */
+    type: Type.Optional(Type.Literal("story")),
     limit: Type.Optional(Type.Integer({ maximum: 100, minimum: 1 })),
     pageCursor: Type.Optional(Type.String()),
 });

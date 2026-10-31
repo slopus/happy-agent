@@ -18,6 +18,7 @@ import type {
     ImageUpload,
     OptionallyVersionedRequestOptions,
     RequestOptions,
+    StoryArtifactOptions,
     ToolCallMediaContent,
     ToolCallMediaRequestOptions,
     VersionedRequestOptions,
@@ -2401,10 +2402,14 @@ export class HappyAgentClient {
     }
 
     /** `GET /v0/artifacts/:artifactId` — a deleted artifact answers as its tombstone. */
-    async getArtifact(artifactId: Cuid2, options: RequestOptions = {}): Promise<ArtifactResponse> {
+    async getArtifact(
+        artifactId: Cuid2,
+        options: RequestOptions & StoryArtifactOptions = {},
+    ): Promise<ArtifactResponse> {
         return await this.#json({
             method: "GET",
             path: `v0/artifacts/${encodeURIComponent(artifactId)}`,
+            query: { type: options.type },
             signal: options.signal,
         });
     }
@@ -2430,11 +2435,12 @@ export class HappyAgentClient {
     async getArtifactVersion(
         artifactId: Cuid2,
         version: ArtifactVersionSelector,
-        options: RequestOptions = {},
+        options: RequestOptions & StoryArtifactOptions = {},
     ): Promise<ArtifactVersionResponse> {
         return await this.#json({
             method: "GET",
             path: artifactVersionPath(artifactId, version),
+            query: { type: options.type },
             signal: options.signal,
         });
     }
@@ -2452,6 +2458,7 @@ export class HappyAgentClient {
         const response = await this.#send({
             method: "GET",
             path: artifactFilePath(artifactId, version, path),
+            query: { type: options.type },
             accept: "*/*",
             ifNoneMatch: options.ifNoneMatch,
             range: options.range === undefined ? undefined : rangeHeader(options.range),
@@ -2479,8 +2486,11 @@ export class HappyAgentClient {
         artifactId: Cuid2,
         version: ArtifactVersionSelector,
         path: ArtifactPath,
+        options: StoryArtifactOptions = {},
     ): string {
-        return endpointUrl(this.#endpoint, artifactFilePath(artifactId, version, path));
+        return endpointUrl(this.#endpoint, artifactFilePath(artifactId, version, path), {
+            type: options.type,
+        });
     }
 
     /**
@@ -3009,11 +3019,12 @@ export class HappyAgentClient {
     /** `GET /v0/agents/:agentId/bootstrap` — current agent state, activity, and cursor. */
     async getAgentBootstrap(
         agentId: Cuid2,
-        options: RequestOptions = {},
+        options: RequestOptions & { readonly includeActions?: boolean } = {},
     ): Promise<AgentBootstrapResponse> {
         return await this.#json({
             method: "GET",
             path: `v0/agents/${encodeURIComponent(agentId)}/bootstrap`,
+            query: { include: includeActions(options.includeActions) },
             signal: options.signal,
         });
     }
@@ -3058,6 +3069,7 @@ export class HappyAgentClient {
                 after: query.after,
                 limit: query.limit,
                 omitToolData: query.omitToolData,
+                include: includeActions(query.includeActions),
             },
             signal: options.signal,
         });
@@ -3387,7 +3399,12 @@ export class HappyAgentClient {
         return await this.#json({
             method: "GET",
             path: "v0/events",
-            query: { after: query.after, until: query.until, limit: query.limit },
+            query: {
+                after: query.after,
+                until: query.until,
+                limit: query.limit,
+                include: includeActions(query.includeActions),
+            },
             signal: options.signal,
         });
     }
@@ -3405,7 +3422,7 @@ export class HappyAgentClient {
         const response = await this.#send({
             method: "GET",
             path: "v0/events/stream",
-            query: { after: options.after },
+            query: { after: options.after, include: includeActions(options.includeActions) },
             accept: "text/event-stream",
             lastEventId: options.lastEventId,
             signal: options.signal,
@@ -3520,6 +3537,11 @@ export class HappyAgentClient {
  */
 function bodyOf(options: { mutationId?: string }): { mutationId?: string } {
     return options.mutationId === undefined ? {} : { mutationId: options.mutationId };
+}
+
+/** The `include=actions` opt-in that keeps `action` blocks in message reads. */
+function includeActions(include: boolean | undefined): "actions" | undefined {
+    return include === true ? "actions" : undefined;
 }
 
 function taskChildPath(taskId: Cuid2, ref: TaskChildRef): string {

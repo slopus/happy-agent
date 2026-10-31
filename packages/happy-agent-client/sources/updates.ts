@@ -20,6 +20,8 @@ export interface HappyAgentUpdatesOptions {
     after?: EventCursor | undefined;
     /** Stops reconnecting and ends the iteration. */
     signal?: AbortSignal | undefined;
+    /** Keep `action` blocks in messages; send only with `capabilities.chatActions`. */
+    includeActions?: boolean | undefined;
 }
 
 /** One item from the client's reconnecting event feed. */
@@ -77,6 +79,7 @@ export async function* reconnectingUpdates(
             for await (const frame of openEventStream({
                 ...(cursor === undefined ? {} : { after: cursor }),
                 ...(options.signal === undefined ? {} : { signal: options.signal }),
+                ...(options.includeActions === true ? { includeActions: true } : {}),
             })) {
                 if (isAborted(options.signal)) return;
 

@@ -206,6 +206,7 @@ export const updateTaskRequestSchema = Type.Union([
         folderName: Type.Optional(Type.Never()),
         icon: Nullable(taskIconSchema),
         mutationId: Type.Optional(mutationIdSchema),
+        name: Type.Optional(taskNameSchema),
     }),
 ]);
 export type UpdateTaskRequest = Static<typeof updateTaskRequestSchema>;
@@ -226,12 +227,15 @@ export type LeaveTaskRequest = Static<typeof leaveTaskRequestSchema>;
 export const reorderTaskRequestSchema = Type.Object({
     /** The joined task to place this one after, or `null` to move it first. */
     afterId: Nullable(cuid2Schema),
+    /** Belongs to the other variant; exactly one anchor is present. */
+    afterSectionId: Type.Optional(Type.Never()),
     mutationId: Type.Optional(mutationIdSchema),
 });
 export type ReorderTaskRequest = Static<typeof reorderTaskRequestSchema>;
 
 /** `POST /v0/tasks/:taskId/reorder` with `capabilities.taskSections`: first in that section. */
 export const reorderTaskAfterSectionRequestSchema = Type.Object({
+    afterId: Type.Optional(Type.Never()),
     afterSectionId: cuid2Schema,
     mutationId: Type.Optional(mutationIdSchema),
 });

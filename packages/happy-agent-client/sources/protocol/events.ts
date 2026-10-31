@@ -727,6 +727,8 @@ export interface EventPageQuery {
     until?: EventCursor;
     /** Default 100. */
     limit?: number;
+    /** Keep `action` blocks in messages; send only with `capabilities.chatActions`. */
+    includeActions?: boolean;
 }
 
 /** `GET /v0/events` */
@@ -788,4 +790,6 @@ export interface EventStreamOptions {
     lastEventId?: EventCursor | undefined;
     /** Closes the connection and ends the iteration. */
     signal?: AbortSignal | undefined;
+    /** Keep `action` blocks in messages; send only with `capabilities.chatActions`. */
+    includeActions?: boolean | undefined;
 }

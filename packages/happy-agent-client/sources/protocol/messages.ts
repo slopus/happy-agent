@@ -785,6 +785,8 @@ export type ToolCallRequestBlock = Static<typeof toolCallRequestBlockSchema>;
 export const actionBlockSchema = Type.Object({
     actionId: Type.String({ maxLength: 128, minLength: 1 }),
     blockIndex: Type.Integer({ minimum: 0 }),
+    /** The control pressed, by its place in the block: a menu's buttons in order, a submit first. */
+    controlIndex: Type.Integer({ minimum: 0 }),
     messageId: cuid2Schema,
     params: Type.Record(Type.String(), Type.String()),
     type: Type.Literal("action"),
@@ -1108,6 +1110,8 @@ export interface MessageHistoryQuery {
     limit?: number;
     /** Drop raw data for presented calls, except `agent_spawn` keeps older-client fallback. */
     omitToolData?: boolean;
+    /** Keep `action` blocks in action messages; send only with `capabilities.chatActions`. */
+    includeActions?: boolean;
 }
 
 /** `GET /v0/agents/:agentId/messages` */

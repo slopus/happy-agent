@@ -64,7 +64,16 @@ export type ByteRange =
     | { suffix: number; start?: never; end?: never };
 
 /** Options for reading one artifact file. */
-export interface ArtifactFileRequestOptions extends ConditionalRequestOptions {
+/**
+ * Every route under `/v0/artifacts/:artifactId` answers `404` for a story artifact unless the
+ * request names `type: "story"`; send it only with `capabilities.storyArtifacts`.
+ */
+export interface StoryArtifactOptions {
+    type?: "story" | undefined;
+}
+
+export interface ArtifactFileRequestOptions
+    extends ConditionalRequestOptions, StoryArtifactOptions {
     /** Read only these bytes, as a video player does to seek. */
     range?: ByteRange | undefined;
 }

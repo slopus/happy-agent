@@ -301,7 +301,9 @@ Each part is detected through its own health capability, never through the proto
 `chatOnboarding` (the reserved `onboarding.chat` setting). Every new response field is optional,
 so an older client ignores it and draws the list it always did, in the same order, with hidden
 tasks still shown. Story artifacts never reach an older client: they are left out of
-`GET /v0/artifacts` and emit no `artifact.*` events. An older daemon ignores or rejects every new
+`GET /v0/artifacts`, every other artifact route answers `404` for them, and they emit no
+`artifact.*` events. Action blocks never reach one either: an action message reads as the
+person's words unless the read asks for `include=actions`. An older daemon ignores or rejects every new
 request field and answers every new route with `404`, so a client sends none of them unless the
 matching capability is present. The reserved settings `tasks.rich`, `tasks.sections`,
 `tasks.focus`, and `onboarding.chat` are off unless set to JSON `true`; with all of them off, a
@@ -7396,11 +7398,13 @@ action's `values` and cannot come from an attribute.
 Blocks are numbered by `blockIndex`: the zero-based position of a valid action block among the
 valid action blocks of the message's text, in order. Steps, status lines, and figures count.
 Media layout blocks are split out first, so a `<figure>` holding an `<img>` stays a layout.
+Within a block, controls are numbered by `controlIndex`, from 0: a menu's buttons in order, and a
+checklist's submit first, then its other buttons in order. Two controls with the same action and
+parameters are told apart only by it.
 
 `actionChoices` maps a `blockIndex`, as a string, to that block's one choice:
 
-- `{ "kind": "button", "index": 1 }` — the button pressed, by its zero-based position among the
-  block's buttons; a checklist's other buttons count after its submit, which is `0`.
+- `{ "kind": "button", "index": 1 }` — the button pressed, by its `controlIndex`.
 - `{ "kind": "checklist", "values": ["t1", "t3"] }` — a checklist submitted with these values.
 
 The kind set may grow; a client draws a block with an unknown choice as chosen, with nothing
@@ -7643,6 +7647,7 @@ own message: an action message, whose `content` is exactly one `action` block an
             "type": "action",
             "messageId": "tz4a98xxat96iws9zmbrgj3a",
             "blockIndex": 0,
+            "controlIndex": 1,
             "actionId": "reply",
             "params": {},
             "values": []
@@ -7655,18 +7660,20 @@ own message: an action message, whose `content` is exactly one `action` block an
 
 - `messageId` — the agent message in this conversation that holds the control.
 - `blockIndex` — the block, numbered as under "Inline actions".
+- `controlIndex` — the control pressed within that block, numbered as under "Inline actions".
 - `actionId`, `params` — the control's action ID and its parameters as written, every value a
   string, never a presentation attribute such as `data-emphasis`.
 - `values` — a checklist's ticked values; omitted or empty otherwise.
 
-The daemon reads the block from its own copy of the message and checks that the block exists and
-holds a control with exactly that action ID and those parameters, and that every value is one the
+The daemon reads the block from its own copy of the message and checks that the block exists, that
+its control at `controlIndex` has exactly that action ID and those parameters, and that every value is one the
 checklist offers and the person could change; otherwise the send is `400 invalid_request`. A block
 that already has a choice, including from another action message still waiting, or one superseded
 because a later agent message in the conversation offers a control with the same action ID and
 parameters, is `409 conflict`. Then, in one transaction, it records the choice in the pressed
-message's `actionChoices`, does the action's work, and queues or accepts the action message like
-any other. Sending the same `id` again returns the message as it stands.
+message's `actionChoices`, as `{ "kind": "button", "index": controlIndex }` for a button or
+`{ "kind": "checklist", "values" }` for a submit, does the action's work, and queues or accepts the
+action message like any other. Sending the same `id` again returns the message as it stands.
 
 The stored block adds what the daemon decided:
 
@@ -7679,9 +7686,20 @@ The stored block adds what the daemon decided:
 
 The agent's model reads an action message as an ordinary person turn: `[Pressed "Push it" in your
 message]`, or `[Pressed "Continue" with "Desktop", "Phone" ticked in your message]`, then the
-outcome. Clients draw it as the person's own message, from its stored block: `label`, or for a
-submitted checklist `label`, a colon, and `ticked` joined with ", ". The pressed control also
-shows chosen in place, from the pressed message's `actionChoices`.
+outcome. The pressed control shows chosen in place, from the pressed message's `actionChoices`.
+
+**What older readers see.** The stored action message's `content` is a `text` block holding the
+press as the person's words — `label`, or for a submitted checklist `label`, a colon, and `ticked`
+joined with ", ", such as `Continue: Desktop, Phone` — followed by the `action` block. Clients draw
+the message from that text, as any message of the person's. A read that does not opt in never
+contains an `action` block: `GET /v0/agents/:agentId/messages`, `GET /v0/agents/:agentId/bootstrap`,
+`GET /v0/events`, and `GET /v0/events/stream`, with every message they carry in history, pending
+state, and `message.*` and `run.*` events, leave it out and keep the text, so a client that
+predates inline actions draws the person's words in an ordinary bubble. A read opts in with the
+query parameter `include=actions`, which a client sends only to a daemon with
+`capabilities.chatActions`; the event stream takes it on each connection. The response to the
+`send` that made the action message always includes the block. `actionChoices` is an optional
+field that older clients ignore, so it is present whatever the read asks for.
 
 ### `GET /v0/agents/:agentId/messages`
 
@@ -7701,6 +7719,8 @@ Query parameters:
   progress is always returned whole. A page can therefore overflow well past `limit` — a single
   run with hundreds of tool calls comes back in one piece regardless. Clients must size their
   buffers for the runs they receive, not for the limit they asked for.
+- `include` — optional; `actions` keeps `action` blocks in action messages, as described under
+  "Action messages". Sent only to a daemon with `capabilities.chatActions`.
 - `omitToolData` — optional, default `false`. When `true`, tool-call blocks that carry a
   `presentation` come back without `arguments` and `result` — the client renders the
   presentation, and the page stays small even when runs carried large tool output. Blocks
@@ -10866,8 +10886,14 @@ the story routes and `set_story`: `POST /v0/artifacts` with `type: "story"` is
 `400 invalid_request`, and `PATCH` or delete on one is `409 conflict`. They are kept out of the
 catalog for every client that did not ask for them: `GET /v0/artifacts` and the `list_artifacts`
 tool list them only when `type` is `story`, they emit no `artifact.*` events, and they never
-appear in a tool-call presentation. The single-artifact, version, and file routes serve them by
-ID, so a story's files are read like any artifact's.
+appear in a tool-call presentation. Every other route under `/v0/artifacts/:artifactId` — the
+artifact, its versions, one version, its files, the proxy, and the artifact data API — answers
+`404 not_found` for a story artifact, exactly as for an artifact that does not exist, unless the
+request carries the query parameter `type=story`; with it, the route serves the story artifact as
+it serves any other. A shared `happy://artifacts/<id>` link to a story therefore opens as a
+missing artifact in an older client, which never receives a `type` it cannot parse. A client with
+`capabilities.storyArtifacts` reads stories through `/v0/stories` and a story artifact's own files
+with `type=story`.
 
 **Sources.** `source` says where an artifact was created, as an object discriminated by `kind`:
 
@@ -11767,7 +11793,8 @@ agent unread (`"story_reply"`) with the replier in `unread.from`. `replies` coun
 - `caption` — up to 140 characters of plain text, or `null`.
 - `media` — what the frame shows: `{ "artifactId", "version", "path" }`, a file of another
   artifact's version, its entry when `path` is absent; or `{ "path" }`, a file of the story
-  artifact itself. Read either through `GET /v0/artifacts/:artifactId/versions/:number/files/*path`.
+  artifact itself. Read either through `GET /v0/artifacts/:artifactId/versions/:number/files/*path`,
+  adding `type=story` for a file of the story artifact (see "Story artifacts" under Artifacts).
 - `round` — `{ "path" }`, a round video of the story artifact, shown over the frame of a repost,
   or `null`.
 - `repostOf` — the `artifactId` of the story this one reposts, or `null`.
@@ -12923,6 +12950,9 @@ Query parameters:
 - `until` — optional, inclusive upper bound: pull the changes between two cursors, such as the
   `cursor` a mutation answered with and the point a client last processed.
 - `limit` — optional, default 100.
+- `include` — optional; `actions` keeps `action` blocks in the messages events carry, as described
+  under "Action messages". `GET /v0/events/stream` takes it too. Sent only to a daemon with
+  `capabilities.chatActions`.
 
 Response — `200`:
 
@@ -13016,7 +13046,9 @@ One bounded snapshot for opening a conversation. It composes the exact agent obj
 `mode`, `context`, and `usage` fields from the focused agent endpoints, the agent's complete
 background-process and subagent activity, and every durable queue or steering message that
 inference has not accepted yet. It also captures the event cursor before reading, so a client can
-render the snapshot and follow every concurrent change without a snapshot-to-stream gap. Accepted
+render the snapshot and follow every concurrent change without a snapshot-to-stream gap. The
+optional query `include=actions` keeps `action` blocks in its pending messages, as under "Action
+messages". Accepted
 messages, including compaction messages, come from the pageable history endpoint. The current
 slash-command catalog is included directly so autocomplete is ready with the rest of the composer.
 
