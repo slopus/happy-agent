@@ -81,6 +81,7 @@ import {
     queryArtifactVersion,
     queryArtifactVersionForOperation,
     queryArtifactVersionPage,
+    queryRecentAgentArtifacts,
     queryRecentAgentVersionCount,
     updateArtifactDeleted,
     updateArtifactUploadReceived,
@@ -280,6 +281,15 @@ export class ArtifactsModule implements AgentModule {
             artifacts: page.artifacts,
             ...(page.hasMore && last !== undefined ? { nextAfter: last.id } : {}),
         });
+    }
+
+    /** At most `limit` of each agent's most recently changed active artifacts, newest first. */
+    async recentForAgents(
+        ctx: Context,
+        agentIds: readonly string[],
+        limit: number,
+    ): Promise<ArtifactRecord[]> {
+        return await queryRecentAgentArtifacts(ctx, agentIds, limit);
     }
 
     /** One page of an active artifact's versions, newest first. */

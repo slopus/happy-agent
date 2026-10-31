@@ -13,6 +13,7 @@ export const TASKS_TABLE = "happy_agent_module_tasks";
 export const TASK_MEMBERS_TABLE = "happy_agent_module_task_members";
 export const TASK_LEAVES_TABLE = "happy_agent_module_task_leaves";
 export const TASK_SECTIONS_TABLE = "happy_agent_module_task_sections";
+export const TASK_CHILDREN_TABLE = "happy_agent_module_task_children";
 
 /**
  * The `tasks` module's migrations.
@@ -179,6 +180,25 @@ export const taskMigrations = [
                 database,
                 sql`CREATE INDEX ${sql.raw(`${TASK_SECTIONS_TABLE}_order`)}
                     ON ${sql.raw(TASK_SECTIONS_TABLE)} (member_id, order_key, id)`,
+            );
+        },
+    ],
+    [
+        // Whether one child shows under a task, shared by its members; no row is the default.
+        "010-task-children",
+        async (_ctx: Context, database: AgentDatabaseFacade<AgentDatabase>): Promise<void> => {
+            await agentDatabaseRun(
+                database,
+                sql`CREATE TABLE ${sql.raw(TASK_CHILDREN_TABLE)} (
+                    task_id TEXT NOT NULL,
+                    ref_kind TEXT NOT NULL,
+                    ref_id TEXT NOT NULL,
+                    visibility TEXT NOT NULL,
+                    by_agent_id TEXT,
+                    by_user_id TEXT,
+                    updated_at INTEGER NOT NULL,
+                    PRIMARY KEY (task_id, ref_kind, ref_id)
+                )`,
             );
         },
     ],

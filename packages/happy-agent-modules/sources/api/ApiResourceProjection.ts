@@ -3,6 +3,7 @@ import {
     agentStatusLineSchema,
     type AgentRetrying,
     type AgentWait,
+    type TaskChild,
 } from "@slopus/happy-agent-client";
 import type { Context } from "@steve.kite/stdlib";
 import { Type } from "@sinclair/typebox";
@@ -227,14 +228,14 @@ export function botResource(
 
 /**
  * One task as the API shows it. `canArchive` depends on who is asking, so it is supplied only for
- * a caller's own response and left out of events, which reach every member alike. `icon` is
- * served only with `capabilities.taskSections`.
+ * a caller's own response and left out of events, which reach every member alike. `children` is
+ * left out of events that do not change it.
  */
 export function taskResource(
     task: TaskRecord,
     agent: Readonly<Record<string, unknown>>,
     canArchive: boolean | undefined,
-    taskSections: boolean,
+    children: readonly TaskChild[] | undefined,
 ): Record<string, unknown> {
     return {
         id: task.id,
@@ -249,9 +250,8 @@ export function taskResource(
                 : { type: "runner", runnerId: task.runnerId, path: task.path },
         status: task.status,
         ...(canArchive === undefined ? {} : { canArchive }),
-        ...(taskSections
-            ? { icon: task.icon === undefined ? null : { type: "library", slug: task.icon } }
-            : {}),
+        icon: task.icon === undefined ? null : { type: "library", slug: task.icon },
+        ...(children === undefined ? {} : { children }),
         agent,
         version: apiResourceVersion(task.updatedAt, task.version, task.id),
         createdAt: task.createdAt,
@@ -330,21 +330,15 @@ export function surfaceWorkspaceResource(
     };
 }
 
-/**
- * A person's place in one task. The standalone installation's one person has no user ID.
- * `hidden` is served only with `capabilities.taskSections`.
- */
-export function taskMembershipResource(
-    membership: TaskMembership,
-    taskSections: boolean,
-): Record<string, unknown> {
+/** A person's place in one task. The standalone installation's one person has no user ID. */
+export function taskMembershipResource(membership: TaskMembership): Record<string, unknown> {
     return {
         taskId: membership.taskId,
         userId: membership.memberId === STANDALONE_TASK_MEMBER ? null : membership.memberId,
         orderKey: membership.orderKey,
         joinedAt: membership.joinedAt,
         unread: membership.unread ?? null,
-        ...(taskSections ? { hidden: membership.hidden === true } : {}),
+        hidden: membership.hidden === true,
     };
 }
 

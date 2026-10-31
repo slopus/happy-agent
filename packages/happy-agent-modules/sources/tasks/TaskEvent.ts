@@ -1,3 +1,4 @@
+import { taskChildSchema } from "@slopus/happy-agent-client";
 import { Type, type Static } from "@sinclair/typebox";
 import type { Context } from "@steve.kite/stdlib";
 
@@ -25,6 +26,8 @@ export const taskEventSchema = Type.Union([
             type: Type.Literal("task_updated"),
             task: taskRecordSchema,
             previousTask: taskRecordSchema,
+            /** The task's child choices, oldest first, when one of them changed. */
+            children: Type.Optional(Type.Array(taskChildSchema)),
         },
         { additionalProperties: false },
     ),

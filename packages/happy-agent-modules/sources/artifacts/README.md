@@ -164,6 +164,8 @@ type accepts before it is read.
   it changes nothing.
 - `get`, `list`, `listVersions`, and `getVersion(ctx, artifactId, number | "latest")` read the
   catalog. Versions of a deleted artifact are not served.
+- `recentForAgents(ctx, agentIds, limit)` reads at most `limit` of each agent's most recently
+  changed active artifacts, never stories, newest first, for task sub-rows in desktop bootstrap.
 - `storedFile(ctx, artifactId, number | "latest", path)` returns one file and where its bytes
   are, matching only an exact manifest path; `readFile` reads a bounded window of it.
 - `actorFor(ctx, agentId)` decides an agent's author and source; `resolveSource(ctx, input)` checks

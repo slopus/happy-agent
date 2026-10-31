@@ -74,11 +74,17 @@ section changes only the moved task's key, and an older client sees the same ord
 takes the tasks under it along; removing one leaves every key alone. New memberships go above the
 first header.
 
+A task's child choices (`children`, `setChild`) say whether one workspace, agent, or artifact shows
+under it: `"shown"`, `"hidden"`, or `null` to forget the choice and return to the default. They are
+shared by every member, at most 200 per task, and a change advances the task's version and publishes
+`task_updated` with the whole `children` array. The module stores them without checking that the
+child exists; `ApiModule` checks on a choice and leaves out choices whose child is gone.
+
 ## Name and icon
 
 An unnamed task is `New Task` until its first text-bearing message starts the durable
 `tasks.name` job. When `decideIconsWith` says the task's person wants icons (`RichTasksModule`
-does, for an owner with `tasks.rich` on while rich tasks are served), the same request also picks
+does, for an owner with `tasks.rich` on), the same request also picks
 an icon slug from the titles module's library, and a named task gets that job for its icon alone.
 Otherwise the request is exactly the title-only one. `update` renames, picks an icon (`null` for
 none), or both in one version; each ends automatic choice of its own part for good, and the job
@@ -116,7 +122,7 @@ so the task reports back to it. `SubtasksModule` gives it the same coordinator g
 ## Public operations
 
 `list`, `listForMember`, `get`, `membership`, `memberFor`, `forAgent`, `forWorkspace`,
-`hasIdentity`, `create`, `createWithResult`, `sendMessage`, `update`, `decideIconsWith`, `join`, `joinAutomatically`, `leave`, `reorder`, `setHidden`, `sections`, `replaceSections`,
+`hasIdentity`, `create`, `createWithResult`, `sendMessage`, `update`, `decideIconsWith`, `join`, `joinAutomatically`, `leave`, `reorder`, `setHidden`, `sections`, `replaceSections`, `children`, `setChild`,
 `archive`, `archiveForAgent`, `unarchive`, `purge`, and `onEvent`. Task mutations take an expected version
 and raise `TaskConflictError` when the row moved; memberships are unversioned because each list
 has one writer. `task_created`, `task_updated`, `task_joined`, `task_reordered`, `task_left`,
@@ -143,6 +149,8 @@ Migration `008-task-icon` adds the nullable `icon` slug and `icon_configured`, s
 picks the icon.
 Migration `009-task-sections` adds the nullable membership `hidden` flag and
 `happy_agent_module_task_sections`, one row per section with its member and order key.
+Migration `010-task-children` adds `happy_agent_module_task_children`, one row per task and child
+with its visibility, who chose it, and when.
 
 The HTTP contract for tasks is specified in the Tasks chapter of `packages/happy-agent/API.md`
 and typed in `@slopus/happy-agent-client`. `ApiModule` serves it from this module's public

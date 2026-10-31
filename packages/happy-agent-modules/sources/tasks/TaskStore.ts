@@ -9,7 +9,12 @@ import {
     type TaskMembership,
     type TaskRecord,
 } from "./Task.js";
-import { TASK_LEAVES_TABLE, TASK_MEMBERS_TABLE, TASKS_TABLE } from "./TaskMigrations.js";
+import {
+    TASK_CHILDREN_TABLE,
+    TASK_LEAVES_TABLE,
+    TASK_MEMBERS_TABLE,
+    TASKS_TABLE,
+} from "./TaskMigrations.js";
 
 interface TaskRow {
     readonly id: string;
@@ -210,6 +215,10 @@ export async function deleteTask(ctx: Context, taskId: string): Promise<void> {
     await agentDatabaseRun(
         ctx.db,
         sql`DELETE FROM ${sql.raw(TASK_LEAVES_TABLE)} WHERE task_id = ${taskId}`,
+    );
+    await agentDatabaseRun(
+        ctx.db,
+        sql`DELETE FROM ${sql.raw(TASK_CHILDREN_TABLE)} WHERE task_id = ${taskId}`,
     );
     await agentDatabaseRun(ctx.db, sql`DELETE FROM ${sql.raw(TASKS_TABLE)} WHERE id = ${taskId}`);
 }

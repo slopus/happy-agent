@@ -77,6 +77,7 @@ describe("tasks over the API", () => {
                 orderKey: expect.any(String),
                 joinedAt: expect.any(Number),
                 unread: null,
+                hidden: false,
             },
         ]);
         expect(

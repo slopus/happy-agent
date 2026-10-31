@@ -71,13 +71,14 @@ import {
     createArtifactRequestSchema as publishedCreateArtifactRequestSchema,
     createBotRequestSchema,
     createTaskRequestSchema,
-    renameTaskRequestSchema,
     updateTaskRequestSchema,
     joinTaskRequestSchema,
     leaveTaskRequestSchema,
     reorderTaskAfterSectionRequestSchema,
     reorderTaskRequestSchema,
     replaceTaskSectionsRequestSchema,
+    setTaskChildRequestSchema,
+    taskChildRefSchema,
     updateTaskMembershipRequestSchema,
     taskListScopeSchema,
     unarchiveTaskRequestSchema,
@@ -109,6 +110,8 @@ import {
     type MessageFailure,
     type MessageMode,
     type ServiceTierOption,
+    type TaskChild,
+    type TaskChildRef,
     agentWaitSchema,
 } from "@slopus/happy-agent-client";
 import {
@@ -391,7 +394,9 @@ import {
 } from "./projectCredentialDiagnostics.js";
 import { SubtaskInputError, SubtasksModule } from "../subtasks/index.js";
 
-const API_PROTOCOL_VERSION = 33;
+const API_PROTOCOL_VERSION = 34;
+/** The most artifacts desktop bootstrap lists for one task's sub-rows. */
+const TASK_ARTIFACTS = 20;
 const createArtifactRequestSchema = Type.Composite([
     Type.Omit(publishedCreateArtifactRequestSchema, ["type"]),
     Type.Object({ type: artifactTypeSchema }),
@@ -3351,7 +3356,7 @@ export class ApiModule implements AgentModule {
             const memberId = event.membership.memberId;
             this.#journal.append(
                 type,
-                { membership: taskMembershipResource(event.membership, this.#config.taskSections) },
+                { membership: taskMembershipResource(event.membership) },
                 event.at,
                 memberId === STANDALONE_TASK_MEMBER ? undefined : memberId,
             );
@@ -3379,13 +3384,15 @@ export class ApiModule implements AgentModule {
             { userVisible: true },
         );
         if (agent === undefined) throw new Error("The task event has no agent.");
-        const sections = this.#config.taskSections;
-        const resource = taskResource(event.task, agent, undefined, sections);
+        // Only a child choice carries `children`; a new task has none.
+        const listed = event.type === "task_created" ? [] : event.children;
+        const children = listed && (await this.#liveTaskChildren(ctx, listed));
+        const resource = taskResource(event.task, agent, undefined, children);
         if (event.type === "task_created") {
             this.#journal.append("task.created", { task: resource }, event.at);
             return;
         }
-        const previous = taskResource(event.previousTask, agent, undefined, sections);
+        const previous = taskResource(event.previousTask, agent, undefined, undefined);
         const changes = resourceChanges(previous, resource);
         delete changes["agent"];
         this.#journal.append(
@@ -6987,15 +6994,12 @@ export class ApiModule implements AgentModule {
                 tasks: await Promise.all(
                     listed.map(async (task) => await this.#taskResource(ctx, task)),
                 ),
-                memberships: joined.map(({ membership }) =>
-                    taskMembershipResource(membership, this.#config.taskSections),
-                ),
+                memberships: joined.map(({ membership }) => taskMembershipResource(membership)),
                 ...(await this.#taskSections(ctx, "sections")),
             });
             return true;
         }
         if (request.method === "PUT" && url.pathname === "/v0/tasks/sections") {
-            if (!this.#config.taskSections) return false;
             const body = await bodyAs(request, replaceTaskSectionsRequestSchema, "task sections");
             try {
                 await this.#withMutationId(body.mutationId, async () => {
@@ -7070,12 +7074,8 @@ export class ApiModule implements AgentModule {
         }
         if (direct !== null && request.method === "PATCH") {
             const taskId = direct[1] as string;
-            const body = this.#config.taskSections
-                ? await bodyAs(request, updateTaskRequestSchema, "task update")
-                : await bodyAs(request, renameTaskRequestSchema, "task rename");
-            // Without `capabilities.taskSections` an icon is no part of the request, even beside
-            // a name.
-            const icon = this.#config.taskSections && "icon" in body ? body.icon : undefined;
+            const body = await bodyAs(request, updateTaskRequestSchema, "task update");
+            const icon = "icon" in body ? body.icon : undefined;
             const change = { name: body.name, icon: icon === null ? null : icon?.slug };
             const current = await tasks.get(ctx, taskId);
             if (current === undefined) throw notFound("The task was not found.");
@@ -7104,6 +7104,47 @@ export class ApiModule implements AgentModule {
             sendJson(response, 200, await this.#taskResponse(ctx, renamed));
             return true;
         }
+        const child = /^\/v0\/tasks\/([a-z][a-z0-9]*)\/children\/([^/]+)\/([^/]+)$/.exec(
+            url.pathname,
+        );
+        if (child !== null && (request.method === "PUT" || request.method === "DELETE")) {
+            const taskId = child[1] as string;
+            const ref = { kind: child[2], id: child[3] };
+            if (!Value.Check(taskChildRefSchema, ref)) {
+                throw invalidRequest(
+                    "A child is a workspace, agent, or artifact, named by its ID.",
+                );
+            }
+            const put =
+                request.method === "PUT"
+                    ? await bodyAs(request, setTaskChildRequestSchema, "task child")
+                    : undefined;
+            const body = put ?? (await bodyAs(request, joinTaskRequestSchema, "task child"));
+            if ((await tasks.get(ctx, taskId)) === undefined) {
+                throw notFound("The task was not found.");
+            }
+            if (put !== undefined && !(await this.#taskChildExists(ctx, ref))) {
+                throw notFound("The child was not found.");
+            }
+            // Any person may choose; the choice names them and is shared by every member.
+            this.#taskMember(ctx);
+            const by = { agentId: null, userId: teamUser(ctx)?.id ?? null };
+            try {
+                await this.#withMutationId(body.mutationId, async () => {
+                    await tasks.setChild(ctx, taskId, ref, put?.visibility ?? null, by);
+                });
+            } catch (error: unknown) {
+                if (error instanceof TaskNotFoundError) throw notFound("The task was not found.");
+                if (error instanceof TaskConflictError) {
+                    throw new ApiError(409, "conflict", error.message);
+                }
+                throw error;
+            }
+            const task = await tasks.get(ctx, taskId);
+            if (task === undefined) throw notFound("The task was not found.");
+            sendJson(response, 200, await this.#taskResponse(ctx, task));
+            return true;
+        }
         const action =
             /^\/v0\/tasks\/([a-z][a-z0-9]*)\/(join|leave|read|reorder|archive|unarchive|membership)$/.exec(
                 url.pathname,
@@ -7118,8 +7159,6 @@ export class ApiModule implements AgentModule {
             | "archive"
             | "unarchive"
             | "membership";
-        // A member changes their own membership in place only while rich tasks are served.
-        if (operation === "membership" && !this.#config.taskSections) return false;
         if (request.method !== (operation === "membership" ? "PATCH" : "POST")) return false;
         const member = this.#taskMember(ctx);
         try {
@@ -7152,10 +7191,11 @@ export class ApiModule implements AgentModule {
                         : await tasks.leave(ctx, taskId, member),
                 );
             } else if (operation === "reorder") {
-                // Without `capabilities.taskSections` a section is no anchor for a move.
-                const body = this.#config.taskSections
-                    ? await bodyAs(request, reorderTaskWithSectionsRequestSchema, "task reorder")
-                    : await bodyAs(request, reorderTaskRequestSchema, "task reorder");
+                const body = await bodyAs(
+                    request,
+                    reorderTaskWithSectionsRequestSchema,
+                    "task reorder",
+                );
                 const after =
                     body.afterSectionId === undefined
                         ? (body.afterId ?? null)
@@ -7491,22 +7531,34 @@ export class ApiModule implements AgentModule {
             userVisible: true,
         });
         if (agent === undefined) throw new Error("The task has no agent.");
-        return taskResource(
-            task,
-            agent,
-            this.#canArchiveTask(ctx, task),
-            this.#config.taskSections,
+        const children = await this.#liveTaskChildren(
+            ctx,
+            (await this.#tasks?.children(ctx, task.id)) ?? [],
         );
+        return taskResource(task, agent, this.#canArchiveTask(ctx, task), children);
+    }
+
+    /** The child choices whose child still exists; one about a child that is gone is left out. */
+    async #liveTaskChildren(ctx: Context, children: readonly TaskChild[]): Promise<TaskChild[]> {
+        const live = await Promise.all(
+            children.map(async ({ ref }) => await this.#taskChildExists(ctx, ref)),
+        );
+        return children.filter((_, index) => live[index]);
+    }
+
+    async #taskChildExists(ctx: Context, ref: TaskChildRef): Promise<boolean> {
+        if (ref.kind === "workspace")
+            return (await this.#workspaces.get(ctx, ref.id)) !== undefined;
+        if (ref.kind === "agent")
+            return (await this.#agentSystem().config(ctx, ref.id)) !== undefined;
+        return (await this.#artifacts?.get(ctx, ref.id))?.status === "active";
     }
 
     async #taskResponse(ctx: Context, task: TaskRecord): Promise<Record<string, unknown>> {
         const membership = await this.#tasks?.membership(ctx, task.id, this.#taskMember(ctx));
         return {
             task: await this.#taskResource(ctx, task),
-            membership:
-                membership === undefined
-                    ? null
-                    : taskMembershipResource(membership, this.#config.taskSections),
+            membership: membership === undefined ? null : taskMembershipResource(membership),
         };
     }
 
@@ -9184,8 +9236,14 @@ export class ApiModule implements AgentModule {
                 : Promise.resolve([]),
             this.#bots.list(ctx),
         ]);
+        const tasks = await this.#taskBootstrap(ctx);
+        // Beside the first two levels, every workspace a task's agents made, for its sub-rows.
+        const madeByTask = (agentId: string | undefined) => tasks.agents.has(agentId ?? "");
         const shallow = workspaces.filter(
-            (workspace: Workspace) => workspace.parentId === workspace.projectRef,
+            (workspace: Workspace) =>
+                workspace.parentId === workspace.projectRef ||
+                madeByTask(workspace.creatorSessionId) ||
+                madeByTask(workspace.subtaskAgentId),
         );
         // Every owner series built below drops its archived agents in here, so the history the
         // desktop shows is drawn from the same single configuration read that filtered them out.
@@ -9224,7 +9282,7 @@ export class ApiModule implements AgentModule {
                 ...shallowResources,
             ],
             archivedAgents: await this.#archivedAgentResources(ctx, archived),
-            ...(await this.#taskBootstrap(ctx)),
+            ...tasks.fields,
             ...(this.#surfaces === undefined ? {} : { surfaces: await this.#surfaces.list(ctx) }),
             ...(this.#userSettings === undefined
                 ? {}
@@ -9233,27 +9291,58 @@ export class ApiModule implements AgentModule {
         };
     }
 
-    /** Every task oldest first, and the caller's own memberships in the caller's order. */
-    async #taskBootstrap(ctx: Context): Promise<Record<string, unknown>> {
+    /**
+     * Every task oldest first, the caller's own memberships in the caller's order and sections, and
+     * the newest artifacts each active task made; `agents` holds every active task's agents.
+     */
+    async #taskBootstrap(
+        ctx: Context,
+    ): Promise<{ fields: Record<string, unknown>; agents: ReadonlySet<string> }> {
         const tasks = this.#tasks;
-        if (tasks === undefined) return {};
+        if (tasks === undefined) return { fields: {}, agents: new Set() };
         const member = this.#taskMember(ctx);
         const [all, joined] = await Promise.all([
             tasks.list(ctx),
             tasks.listForMember(ctx, member),
         ]);
+        const resources = await Promise.all(
+            all.map(async (task) => await this.#taskResource(ctx, task)),
+        );
+        // Each active task's agent and its subtasks, by the task they work in.
+        const owners = new Map<string, string>();
+        all.forEach((task, index) => {
+            if (task.status !== "active") return;
+            for (const id of agentTreeIds(resources[index]?.["agent"])) owners.set(id, task.id);
+        });
+        const made = await this.#artifacts?.recentForAgents(
+            ctx,
+            [...owners.keys()],
+            TASK_ARTIFACTS,
+        );
+        const counts = new Map<string, number>();
+        const taskArtifacts = (made ?? []).flatMap((artifact) => {
+            const agentId = artifact.source?.agentId ?? "";
+            const taskId = owners.get(agentId) ?? "";
+            const count = counts.get(taskId) ?? 0;
+            counts.set(taskId, count + 1);
+            if (count >= TASK_ARTIFACTS) return [];
+            const { id: artifactId, title, type, updatedAt } = artifact;
+            return [{ artifactId, taskId, agentId, title, type, updatedAt }];
+        });
         return {
-            tasks: await Promise.all(all.map(async (task) => await this.#taskResource(ctx, task))),
-            taskMemberships: joined.map(({ membership }) =>
-                taskMembershipResource(membership, this.#config.taskSections),
-            ),
-            ...(await this.#taskSections(ctx, "taskSections")),
+            fields: {
+                tasks: resources,
+                taskMemberships: joined.map(({ membership }) => taskMembershipResource(membership)),
+                ...(await this.#taskSections(ctx, "taskSections")),
+                taskArtifacts,
+            },
+            agents: new Set(owners.keys()),
         };
     }
 
-    /** The caller's sections under `key`, only while the daemon serves rich tasks. */
+    /** The caller's sections under `key`. */
     async #taskSections(ctx: Context, key: string): Promise<Record<string, unknown>> {
-        if (this.#tasks === undefined || !this.#config.taskSections) return {};
+        if (this.#tasks === undefined) return {};
         const sections = await this.#tasks.sections(ctx, this.#taskMember(ctx));
         return { [key]: sections.map(taskSectionResource) };
     }
@@ -9553,6 +9642,7 @@ export class ApiModule implements AgentModule {
                     ? {}
                     : { providerRoutes: true }),
                 ...(this.#bridges === undefined ? {} : { workspaceBridges: true }),
+                ...(this.#tasks === undefined ? {} : { taskSections: true }),
                 ...(this.#live === undefined
                     ? {}
                     : { desktopLiveCapabilities: [...this.#live.desktopCapabilities] }),
@@ -10781,6 +10871,12 @@ function resourceChanges(
     }
     if (Object.hasOwn(current, "updatedAt")) changes["updatedAt"] = current["updatedAt"];
     return changes;
+}
+
+/** An agent resource's ID and those of every subtask in its tree. */
+function agentTreeIds(agent: unknown): string[] {
+    const { id, subtasks } = agent as { id: string; subtasks?: unknown[] };
+    return [id, ...(subtasks ?? []).flatMap(agentTreeIds)];
 }
 
 function sameJsonValue(left: unknown, right: unknown): boolean {

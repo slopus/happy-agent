@@ -3,22 +3,21 @@
 `RichTasksModule` interprets the reserved `tasks.rich` user setting, so the settings store stays
 opaque and Tasks needs no path to it. Work follows the setting of the person it belongs to: a
 task's owner in team mode, or the standalone installation's one person. Only JSON `true` turns it
-on, and only while the daemon serves rich tasks.
+on.
 
 ```ts
-const richTasks = new RichTasksModule(config, tasks, team, userSettings);
+const richTasks = new RichTasksModule(tasks, team, userSettings);
 ```
 
 | Module               | Why                                                       |
 | -------------------- | --------------------------------------------------------- |
-| `ConfigModule`       | `taskSections`: whether rich tasks are served at all      |
 | `TasksModule`        | Asks this module whether naming should pick a task's icon |
 | `TeamModule`         | Reads a team member's settings as that member             |
 | `UserSettingsModule` | The setting itself                                        |
 
-Rich tasks are built in steps and switched on together with `capabilities.taskSections`. Until
-then `ConfigModule.taskSections` is false unless `HAPPY_AGENT_TASK_SECTIONS=1`, and with it off
-nothing here changes what the daemon does.
+The daemon serves the rich-task fields and routes to every client with `capabilities.taskSections`;
+this setting alone decides what a person's agents are given and asked, and with it off they get
+exactly what they got before rich tasks.
 
 ## Public methods
 

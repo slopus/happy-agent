@@ -184,7 +184,7 @@ access agent does not pass Full access on; the person picks the mode once they o
 Rich tasks show an icon on every task card, chosen by the naming job in the same cheap request as
 the title, as one more `<icon>` tag limited to the restored clay library. Asking for it changes
 the naming prompt, and a named task would gain a request it never made, so the icon is asked for
-only when the owner has `tasks.rich` on and the daemon serves rich tasks; everyone else gets
+only when the owner has `tasks.rich` on; everyone else gets
 today's request byte for byte. Tasks cannot read settings (settings depend on Team, which depends
 on Tasks), so `RichTasksModule` answers through `decideIconsWith`. The name and the icon end
 separately: a person's rename leaves the icon to naming, and a person's pick, `null` included,
@@ -205,5 +205,20 @@ its key. Creating, renaming, folding, or removing a header changes no membership
 task between sections changes only that task's key. Only moving a section changes the keys of
 the tasks under it, which travel with it in order. Joining places a task above the first header,
 because the top of the list is above every section. Hidden is a flag on the membership that
-keeps its key, so a client that ignores it shows the task where it always was. Both are served,
-and their routes answered, only with `capabilities.taskSections`.
+keeps its key, so a client that ignores it shows the task where it always was.
+
+## What shows under a task is a fact about the pair
+
+One workspace or artifact can sit under several tasks, so whether it shows under one is stored on
+the edge between that task and the child, never on the child: a child choice keyed by task, kind,
+and ID, shared by every member, where the latest write wins and no row means the client's derived
+default. The daemon never computes sub-rows; it serves the choices and, in desktop bootstrap, what a
+client needs to derive the rest. A choice is part of the task, so it advances the task's version.
+
+## Rich tasks are served on the capability alone
+
+The icon, hidden, sections, and children were built behind an internal switch,
+`HAPPY_AGENT_TASK_SECTIONS`, and served once all of them existed. API.md ties these fields to
+`capabilities.taskSections`, so the switch is gone: the daemon advertises the capability and
+always serves them. Old clients ignore the extra fields. What stays off by default is each
+person's `tasks.rich` setting, which alone changes what agents are given and asked.

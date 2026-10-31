@@ -572,7 +572,7 @@ export async function startHappyAgentRuntime(
         registerShutdown("team", async () => team.close());
         const userSettings = new UserSettingsModule(team);
         const taskAutoJoin = new TaskAutoJoinModule(tasks, team, userSettings, durableFunctions);
-        const richTasks = new RichTasksModule(config, tasks, team, userSettings);
+        const richTasks = new RichTasksModule(tasks, team, userSettings);
         const surfaces = new SurfacesModule(
             durableFunctions,
             team,

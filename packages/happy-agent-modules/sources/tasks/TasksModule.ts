@@ -17,7 +17,13 @@ import {
 import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import { computePermissions, RunnerUnavailableError } from "@slopus/happy-agent-compute";
-import { type MessageMode } from "@slopus/happy-agent-client";
+import {
+    type MessageMode,
+    type TaskActor,
+    type TaskChild,
+    type TaskChildRef,
+    type TaskChildVisibility,
+} from "@slopus/happy-agent-client";
 import type { SessionReasoningEffort, SessionServiceTier } from "@slopus/happy-providers";
 import { afterCommit, backoff, type Context } from "@steve.kite/stdlib";
 
@@ -101,6 +107,7 @@ import {
 } from "./persistence/taskAutomaticMembership.js";
 import { formatTaskIdentityPrompt } from "./impl/formatTaskIdentityPrompt.js";
 import { planTaskSections, taskListRows } from "./impl/planTaskSections.js";
+import { MAX_TASK_CHILDREN, readTaskChildren, writeTaskChild } from "./persistence/taskChildren.js";
 import {
     readTaskSections,
     taskSectionIdTaken,
@@ -594,8 +601,7 @@ export class TasksModule implements AgentModule {
             }
             const rows = taskListRows(
                 await readMemberships(txCtx, memberId),
-                // Sections stored while rich tasks were served take no part once they are not.
-                this.#config.taskSections ? await readTaskSections(txCtx, memberId) : [],
+                await readTaskSections(txCtx, memberId),
             );
             const position = rows.findIndex((row) => row.kind === "task" && row.id === taskId);
             const ordered = rows.filter((_, index) => index !== position);
@@ -678,6 +684,41 @@ export class TasksModule implements AgentModule {
                 sections,
             });
             return structuredClone(sections);
+        });
+    }
+
+    /** The task's child choices, shared by its members, oldest first. */
+    async children(ctx: Context, taskId: string): Promise<TaskChild[]> {
+        return await readTaskChildren(ctx, taskId);
+    }
+
+    /**
+     * Show or hide one child under the task for every member, or forget the choice (`null`) so the
+     * child returns to its default. A change advances the task's version; the latest one wins.
+     */
+    async setChild(
+        ctx: Context,
+        taskId: string,
+        ref: TaskChildRef,
+        visibility: TaskChildVisibility | null,
+        by: TaskActor,
+    ): Promise<TaskRecord> {
+        return await ctx.inTx(async (txCtx) => {
+            const current = await this.#required(txCtx, taskId);
+            const all = await readTaskChildren(txCtx, taskId);
+            const existing = all.find((c) => c.ref.kind === ref.kind && c.ref.id === ref.id);
+            if ((existing?.visibility ?? null) === visibility) return current;
+            const others = all.filter((child) => child !== existing);
+            if (visibility !== null && others.length >= MAX_TASK_CHILDREN) {
+                throw new TaskConflictError(
+                    `A task holds at most ${String(MAX_TASK_CHILDREN)} child choices.`,
+                );
+            }
+            const updatedAt = Math.max(Date.now(), current.updatedAt + 1);
+            const child = visibility === null ? undefined : { ref, visibility, by, updatedAt };
+            await writeTaskChild(txCtx, taskId, ref, child);
+            const children = child === undefined ? others : [...others, child];
+            return await this.#change(txCtx, current, (task) => task, children);
         });
     }
 
@@ -1058,11 +1099,7 @@ export class TasksModule implements AgentModule {
         memberId: TaskMemberId,
         unread?: TaskMembershipUnread,
     ): Promise<TaskMembership> {
-        const firstOrderKey = await queryFirstTaskOrderKey(
-            ctx,
-            memberId,
-            this.#config.taskSections,
-        );
+        const firstOrderKey = await queryFirstTaskOrderKey(ctx, memberId);
         const membership: TaskMembership = {
             taskId,
             memberId,
@@ -1186,6 +1223,7 @@ export class TasksModule implements AgentModule {
         ctx: Context,
         current: TaskRecord,
         decide: (task: TaskRecord) => TaskRecord | undefined,
+        children?: readonly TaskChild[],
     ): Promise<TaskRecord> {
         const decided = decide(structuredClone(current));
         if (decided === undefined) return current;
@@ -1206,6 +1244,7 @@ export class TasksModule implements AgentModule {
             type: "task_updated",
             task: stored,
             previousTask: current,
+            ...(children === undefined ? {} : { children: [...children] }),
         });
         return stored;
     }

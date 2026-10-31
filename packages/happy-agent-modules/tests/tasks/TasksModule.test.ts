@@ -725,6 +725,40 @@ describe("TasksModule", () => {
         }
     });
 
+    it("holds at most 200 child choices per task, and forgets them with the task", async () => {
+        const fixture = await started("tasks-children");
+        try {
+            const ctx = fixture.database.context;
+            const task = await fixture.tasks.create(ctx, { name: "Children" });
+            const by = { agentId: null, userId: null };
+            const ref = (index: number) => ({
+                kind: "artifact" as const,
+                id: `r${String(index).padStart(23, "0")}`,
+            });
+            for (let index = 0; index < 200; index += 1) {
+                await fixture.tasks.setChild(ctx, task.id, ref(index), "hidden", by);
+            }
+            await expect(
+                fixture.tasks.setChild(ctx, task.id, ref(200), "shown", by),
+            ).rejects.toBeInstanceOf(TaskConflictError);
+            // Changing or forgetting a choice it holds is still allowed.
+            await fixture.tasks.setChild(ctx, task.id, ref(0), "shown", by);
+            await fixture.tasks.setChild(ctx, task.id, ref(1), null, by);
+            const children = await fixture.tasks.children(ctx, task.id);
+            expect(children).toHaveLength(199);
+            expect(children.at(-1)).toMatchObject({ ref: ref(0), visibility: "shown" });
+            await fixture.tasks.archive(
+                ctx,
+                task.id,
+                (await fixture.tasks.get(ctx, task.id))!.version,
+            );
+            await fixture.tasks.purge(ctx, task.id);
+            expect(await fixture.tasks.children(ctx, task.id)).toEqual([]);
+        } finally {
+            await fixture.close();
+        }
+    });
+
     it("names an unnamed task once from its first message, and lets a rename win", async () => {
         const fixture = await started("tasks-naming");
         try {
@@ -1858,6 +1892,7 @@ describe("TasksModule", () => {
                 "007-task-member-unread",
                 "008-task-icon",
                 "009-task-sections",
+                "010-task-children",
             ]);
         } finally {
             database.close();

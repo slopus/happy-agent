@@ -1,7 +1,6 @@
 import type { AgentModule } from "@slopus/happy-agent-base";
 import type { Context } from "@steve.kite/stdlib";
 
-import { ConfigModule } from "../config/index.js";
 import { TasksModule } from "../tasks/index.js";
 import { TeamModule } from "../team/index.js";
 import { UserSettingsModule } from "../userSettings/index.js";
@@ -16,17 +15,10 @@ export const RICH_TASKS_SETTING = "tasks.rich";
  */
 export class RichTasksModule implements AgentModule {
     readonly name = "richTasks";
-    readonly #config: ConfigModule;
     readonly #team: TeamModule;
     readonly #settings: UserSettingsModule;
 
-    constructor(
-        config: ConfigModule,
-        tasks: TasksModule,
-        team: TeamModule,
-        settings: UserSettingsModule,
-    ) {
-        this.#config = config;
+    constructor(tasks: TasksModule, team: TeamModule, settings: UserSettingsModule) {
         this.#team = team;
         this.#settings = settings;
         // Naming picks an icon only for people who see rich tasks; everyone else keeps today's
@@ -36,7 +28,6 @@ export class RichTasksModule implements AgentModule {
 
     /** Whether rich tasks are on for a person: a team member's ID, or nobody when standalone. */
     async isOn(ctx: Context, userId: string | undefined): Promise<boolean> {
-        if (!this.#config.taskSections) return false;
         let ownerCtx = ctx;
         if (this.#team.enabled) {
             const user = userId === undefined ? undefined : await this.#team.getUser(ctx, userId);

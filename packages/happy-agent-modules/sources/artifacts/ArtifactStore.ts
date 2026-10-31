@@ -150,6 +150,31 @@ export async function queryArtifactPage(
     };
 }
 
+/** At most `limit` of each agent's newest-changed active artifacts, never stories, newest first. */
+export async function queryRecentAgentArtifacts(
+    ctx: Context,
+    agentIds: readonly string[],
+    limit: number,
+): Promise<ArtifactRecord[]> {
+    if (agentIds.length === 0) return [];
+    const ids = sql.join(
+        agentIds.map((id) => sql`${id}`),
+        sql`, `,
+    );
+    const rows = await agentDatabaseRows<ArtifactRow>(
+        ctx.db,
+        sql`SELECT * FROM (
+                SELECT *, ROW_NUMBER() OVER (
+                    PARTITION BY source_agent_id ORDER BY updated_at DESC, id DESC
+                ) AS agent_rank
+                FROM ${sql.raw(ARTIFACTS_TABLE)}
+                WHERE status = 'active' AND type <> 'story' AND source_agent_id IN (${ids})
+            ) AS ranked
+            WHERE agent_rank <= ${limit} ORDER BY updated_at DESC, id DESC`,
+    );
+    return rows.map(artifactFromRow);
+}
+
 export async function queryArtifactVersion(
     ctx: Context,
     artifactId: string,

@@ -8,11 +8,10 @@ afterEach(async () => {
 });
 
 /** A gym whose naming requests wait for `release`, so a person can act while one runs. */
-async function iconGym(environment: Record<string, string>) {
+async function iconGym() {
     const naming: string[] = [];
     const held = { gate: Promise.resolve(), release: () => {} };
     const gym = await createAgentGym({
-        environment,
         inference: async (request) => {
             if (!request.sessionId.startsWith("naming:")) {
                 return { content: [{ type: "text", text: "On it." }] };
@@ -40,9 +39,7 @@ async function iconGym(environment: Record<string, string>) {
 
 describe("task icons", () => {
     it("are picked by the naming request, and a person's pick or rename always wins", async () => {
-        const { gym, naming, hold, release, started, named } = await iconGym({
-            HAPPY_AGENT_TASK_SECTIONS: "1",
-        });
+        const { gym, naming, hold, release, started, named } = await iconGym();
         // Rich tasks off: today's naming request, and no icon.
         const plain = (await gym.client.createTask({})).task;
         expect(plain.icon).toBeNull();
@@ -105,19 +102,4 @@ describe("task icons", () => {
         expect((await gym.client.getTask(picked.id)).task.icon?.slug).toBe("crash");
         expect(gym.errors).toEqual([]);
     }, 60_000);
-
-    it("are neither served nor accepted until the daemon serves rich tasks", async () => {
-        const { gym, naming, started } = await iconGym({});
-        await gym.client.saveUserSetting("tasks.rich", { value: true });
-        const { task } = await gym.client.createTask({});
-        expect("icon" in task).toBe(false);
-        await gym.send("Fix the login redirect.", { sessionId: task.agent.id });
-        await started(1);
-        expect(naming[0]).not.toContain("<icon>");
-        const response = await gym.http.patch(`/v0/tasks/${task.id}`, {
-            icon: { type: "library", slug: "crash" },
-        });
-        expect(response.status).toBe(400);
-        expect(gym.errors).toEqual([]);
-    }, 30_000);
 });
