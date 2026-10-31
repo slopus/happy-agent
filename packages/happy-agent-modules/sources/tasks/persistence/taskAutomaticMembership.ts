@@ -2,7 +2,12 @@ import { agentDatabaseRows, agentDatabaseRun } from "@slopus/happy-agent-base";
 import { sql } from "drizzle-orm";
 import type { Context } from "@steve.kite/stdlib";
 
-import { TASK_LEAVES_TABLE, TASK_MEMBERS_TABLE, TASKS_TABLE } from "../TaskMigrations.js";
+import {
+    TASK_LEAVES_TABLE,
+    TASK_MEMBERS_TABLE,
+    TASK_SECTIONS_TABLE,
+    TASKS_TABLE,
+} from "../TaskMigrations.js";
 
 /** Missing active memberships, excluding tasks the person explicitly left. */
 export async function queryAutomaticTaskIds(
@@ -50,15 +55,21 @@ export async function clearTaskLeave(
     );
 }
 
-/** Only the first order key is needed to place a new membership at the top. */
+/**
+ * Only the first order key is needed to place a new membership at the top, above any section
+ * header, which shares the key space.
+ */
 export async function queryFirstTaskOrderKey(
     ctx: Context,
     memberId: string,
 ): Promise<string | undefined> {
     const rows = await agentDatabaseRows<{ readonly order_key: string }>(
         ctx.db,
-        sql`SELECT order_key FROM ${sql.raw(TASK_MEMBERS_TABLE)}
-            WHERE member_id = ${memberId} ORDER BY order_key, task_id LIMIT 1`,
+        sql`SELECT order_key FROM (
+                SELECT order_key FROM ${sql.raw(TASK_MEMBERS_TABLE)} WHERE member_id = ${memberId}
+                UNION ALL
+                SELECT order_key FROM ${sql.raw(TASK_SECTIONS_TABLE)} WHERE member_id = ${memberId}
+            ) AS list ORDER BY order_key LIMIT 1`,
     );
     return rows[0]?.order_key;
 }

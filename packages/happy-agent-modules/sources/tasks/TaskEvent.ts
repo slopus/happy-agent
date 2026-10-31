@@ -1,7 +1,13 @@
 import { Type, type Static } from "@sinclair/typebox";
 import type { Context } from "@steve.kite/stdlib";
 
-import { taskMembershipSchema, taskRecordSchema, taskTimestampSchema } from "./Task.js";
+import {
+    taskMemberIdSchema,
+    taskMembershipSchema,
+    taskRecordSchema,
+    taskSectionRecordSchema,
+    taskTimestampSchema,
+} from "./Task.js";
 
 const envelope = {
     eventId: Type.String({ minLength: 1, maxLength: 128 }),
@@ -45,6 +51,16 @@ export const taskEventSchema = Type.Union([
             ...envelope,
             type: Type.Literal("task_membership_updated"),
             membership: taskMembershipSchema,
+        },
+        { additionalProperties: false },
+    ),
+    /** The member's whole set of sections, in key order, after any change to it. */
+    Type.Object(
+        {
+            ...envelope,
+            type: Type.Literal("task_sections_updated"),
+            memberId: taskMemberIdSchema,
+            sections: Type.Array(taskSectionRecordSchema),
         },
         { additionalProperties: false },
     ),

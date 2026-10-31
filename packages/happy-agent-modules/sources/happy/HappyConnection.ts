@@ -516,8 +516,9 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
     #watchCatalog(ctx: Context): void {
         this.#unwatchCatalog.push(
             this.#taskCatalog.onEvent((_eventCtx, event) => {
-                // Creation publishes task_joined in the same transaction; it is the list edge.
-                if (event.type === "task_created") return;
+                // Creation publishes task_joined in the same transaction; it is the list edge. Sections
+                // name no task.
+                if (event.type === "task_created" || event.type === "task_sections_updated") return;
                 if ("membership" in event && event.membership.memberId !== this.#taskMember())
                     return;
                 const taskId = "task" in event ? event.task.id : event.membership.taskId;

@@ -12,6 +12,7 @@ import { MAX_TASK_ORDER_KEY_LENGTH } from "./Task.js";
 export const TASKS_TABLE = "happy_agent_module_tasks";
 export const TASK_MEMBERS_TABLE = "happy_agent_module_task_members";
 export const TASK_LEAVES_TABLE = "happy_agent_module_task_leaves";
+export const TASK_SECTIONS_TABLE = "happy_agent_module_task_sections";
 
 /**
  * The `tasks` module's migrations.
@@ -152,6 +153,32 @@ export const taskMigrations = [
             await agentDatabaseRun(
                 database,
                 sql`ALTER TABLE ${sql.raw(TASKS_TABLE)} ADD COLUMN icon_configured INTEGER`,
+            );
+        },
+    ],
+    [
+        // A member may hide a task they joined, and head parts of their list with sections keyed
+        // in the same space as their memberships; nothing existing is hidden or sectioned.
+        "009-task-sections",
+        async (_ctx: Context, database: AgentDatabaseFacade<AgentDatabase>): Promise<void> => {
+            await agentDatabaseRun(
+                database,
+                sql`ALTER TABLE ${sql.raw(TASK_MEMBERS_TABLE)} ADD COLUMN hidden INTEGER`,
+            );
+            await agentDatabaseRun(
+                database,
+                sql`CREATE TABLE ${sql.raw(TASK_SECTIONS_TABLE)} (
+                    id TEXT PRIMARY KEY,
+                    member_id TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    order_key TEXT NOT NULL,
+                    collapsed INTEGER NOT NULL
+                )`,
+            );
+            await agentDatabaseRun(
+                database,
+                sql`CREATE INDEX ${sql.raw(`${TASK_SECTIONS_TABLE}_order`)}
+                    ON ${sql.raw(TASK_SECTIONS_TABLE)} (member_id, order_key, id)`,
             );
         },
     ],

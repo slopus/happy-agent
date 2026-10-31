@@ -119,6 +119,7 @@ interface MembershipRow {
     readonly order_key: string;
     readonly joined_at: number | string;
     readonly unread: string | null;
+    readonly hidden: number | string | null;
 }
 
 export async function readMembership(
@@ -158,15 +159,16 @@ export async function insertMembership(ctx: Context, membership: TaskMembership)
     );
 }
 
-/** Store or clear a member's unread mark without touching their place in the list. */
-export async function updateMembershipUnread(
+/** Store a member's unread mark and whether they hid the task, without touching its place. */
+export async function updateMembershipState(
     ctx: Context,
     membership: TaskMembership,
 ): Promise<void> {
     assertMembership(membership);
     await agentDatabaseRun(
         ctx.db,
-        sql`UPDATE ${sql.raw(TASK_MEMBERS_TABLE)} SET unread = ${unreadColumn(membership)}
+        sql`UPDATE ${sql.raw(TASK_MEMBERS_TABLE)} SET unread = ${unreadColumn(membership)},
+                hidden = ${membership.hidden === true ? 1 : null}
             WHERE task_id = ${membership.taskId} AND member_id = ${membership.memberId}`,
     );
 }
@@ -219,6 +221,7 @@ function membershipFromRow(row: MembershipRow): TaskMembership {
         orderKey: row.order_key,
         joinedAt: Number(row.joined_at),
         ...(row.unread === null ? {} : { unread: JSON.parse(row.unread) as never }),
+        ...(Number(row.hidden) === 1 ? { hidden: true as const } : {}),
     };
     assertMembership(membership);
     return membership;

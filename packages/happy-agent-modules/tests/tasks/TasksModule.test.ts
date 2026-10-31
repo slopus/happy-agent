@@ -1857,6 +1857,7 @@ describe("TasksModule", () => {
                 "006-task-order-keys-renumbered",
                 "007-task-member-unread",
                 "008-task-icon",
+                "009-task-sections",
             ]);
         } finally {
             database.close();

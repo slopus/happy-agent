@@ -20,7 +20,12 @@ import { LAST_PERSON_MESSAGE_AT_METADATA_KEY } from "../activity/index.js";
 import type { BotRecord } from "../bots/index.js";
 import type { Profile } from "../profile/index.js";
 import type { SurfaceChat } from "../surfaces/index.js";
-import { STANDALONE_TASK_MEMBER, type TaskMembership, type TaskRecord } from "../tasks/index.js";
+import {
+    STANDALONE_TASK_MEMBER,
+    type TaskMembership,
+    type TaskRecord,
+    type TaskSectionRecord,
+} from "../tasks/index.js";
 import {
     ProjectsModule,
     type Project,
@@ -325,15 +330,28 @@ export function surfaceWorkspaceResource(
     };
 }
 
-/** A person's place in one task. The standalone installation's one person has no user ID. */
-export function taskMembershipResource(membership: TaskMembership): Record<string, unknown> {
+/**
+ * A person's place in one task. The standalone installation's one person has no user ID.
+ * `hidden` is served only with `capabilities.taskSections`.
+ */
+export function taskMembershipResource(
+    membership: TaskMembership,
+    taskSections: boolean,
+): Record<string, unknown> {
     return {
         taskId: membership.taskId,
         userId: membership.memberId === STANDALONE_TASK_MEMBER ? null : membership.memberId,
         orderKey: membership.orderKey,
         joinedAt: membership.joinedAt,
         unread: membership.unread ?? null,
+        ...(taskSections ? { hidden: membership.hidden === true } : {}),
     };
+}
+
+/** A section header in one person's task list. */
+export function taskSectionResource(section: TaskSectionRecord): Record<string, unknown> {
+    const { id, name, orderKey, collapsed } = section;
+    return { id, name, orderKey, collapsed };
 }
 
 /** One artifact as the API shows it: its latest version, creation, latest change, and deletion. */

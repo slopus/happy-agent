@@ -22,6 +22,7 @@ export {
     type TaskMembership,
     type TaskMembershipUnread,
     type TaskRecord,
+    type TaskSectionRecord,
     type TaskStatus,
 } from "./Task.js";
 export {

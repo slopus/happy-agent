@@ -67,6 +67,7 @@ import {
     type TaskMembership,
     type TaskMembershipUnread,
     type TaskRecord,
+    type TaskSectionRecord,
 } from "./Task.js";
 import {
     taskEventSchema,
@@ -88,7 +89,7 @@ import {
     readTaskByWorkspace,
     readTasks,
     updateMembershipOrder,
-    updateMembershipUnread,
+    updateMembershipState,
     updateTask,
 } from "./TaskStore.js";
 import { deriveTaskFolderName } from "./impl/deriveTaskFolderName.js";
@@ -99,6 +100,12 @@ import {
     saveTaskLeave,
 } from "./persistence/taskAutomaticMembership.js";
 import { formatTaskIdentityPrompt } from "./impl/formatTaskIdentityPrompt.js";
+import { planTaskSections, taskListRows } from "./impl/planTaskSections.js";
+import {
+    readTaskSections,
+    taskSectionIdTaken,
+    writeTaskSections,
+} from "./persistence/taskSections.js";
 import { taskOrderKeyBetween } from "./impl/taskOrderKeyBetween.js";
 import { archiveTaskTool } from "./tools/archive_task.js";
 import { createTaskTool } from "./tools/create_task.js";
@@ -495,8 +502,31 @@ export class TasksModule implements AgentModule {
         unread: TaskMembershipUnread | undefined,
     ): Promise<TaskMembership> {
         const { unread: _previous, ...rest } = membership;
-        const updated: TaskMembership = unread === undefined ? rest : { ...rest, unread };
-        await updateMembershipUnread(ctx, updated);
+        return await this.#updateMembership(ctx, unread === undefined ? rest : { ...rest, unread });
+    }
+
+    /** Hide the task in the member's own list, or show it again; it keeps its place either way. */
+    async setHidden(
+        ctx: Context,
+        taskId: string,
+        memberId: TaskMemberId,
+        hidden: boolean,
+    ): Promise<TaskMembership> {
+        this.#assertMember(memberId);
+        return await ctx.inTx(async (txCtx) => {
+            await this.#required(txCtx, taskId);
+            const existing = await readMembership(txCtx, taskId, memberId);
+            if (existing === undefined) {
+                throw new TaskConflictError("Join the task before hiding it in your list.");
+            }
+            if ((existing.hidden === true) === hidden) return existing;
+            const { hidden: _previous, ...rest } = existing;
+            return await this.#updateMembership(txCtx, hidden ? { ...rest, hidden: true } : rest);
+        });
+    }
+
+    async #updateMembership(ctx: Context, updated: TaskMembership): Promise<TaskMembership> {
+        await updateMembershipState(ctx, updated);
         await this.#publish(ctx, {
             eventId: globalThis.crypto.randomUUID(),
             at: Date.now(),
@@ -544,40 +574,49 @@ export class TasksModule implements AgentModule {
     }
 
     /**
-     * Move a task within one member's list, after another task that member joined or first. Only
-     * that member's order key changes; every other member's list stays as it was.
+     * Move a task within one member's list, after another task that member joined, first in one
+     * of their sections, or first. Only that member's order key changes; every other member's
+     * list, and every section, stays as it was.
      */
     async reorder(
         ctx: Context,
         taskId: string,
         memberId: TaskMemberId,
-        afterId: string | null,
+        after: string | null | { readonly sectionId: string },
     ): Promise<TaskMembership> {
         this.#assertMember(memberId);
-        if (afterId === taskId)
-            throw new TaskConflictError("A task cannot be placed after itself.");
+        if (after === taskId) throw new TaskConflictError("A task cannot be placed after itself.");
         return await ctx.inTx(async (txCtx) => {
             await this.#required(txCtx, taskId);
             const current = await readMembership(txCtx, taskId, memberId);
             if (current === undefined) {
                 throw new TaskConflictError("Join the task before moving it in your list.");
             }
-            const all = await readMemberships(txCtx, memberId);
-            const position = all.findIndex((membership) => membership.taskId === taskId);
-            // Already in place: a key between the same neighbours would only churn the order.
-            if ((afterId === null ? undefined : afterId) === all[position - 1]?.taskId) {
-                return current;
-            }
-            const ordered = all.filter((membership) => membership.taskId !== taskId);
+            const rows = taskListRows(
+                await readMemberships(txCtx, memberId),
+                await readTaskSections(txCtx, memberId),
+            );
+            const position = rows.findIndex((row) => row.kind === "task" && row.id === taskId);
+            const ordered = rows.filter((_, index) => index !== position);
             const afterIndex =
-                afterId === null
+                after === null
                     ? -1
-                    : ordered.findIndex((membership) => membership.taskId === afterId);
-            if (afterId !== null && afterIndex < 0) {
-                throw new TaskConflictError("The task to place after is not in your list.");
+                    : ordered.findIndex((row) =>
+                          typeof after === "string"
+                              ? row.kind === "task" && row.id === after
+                              : row.kind === "section" && row.id === after.sectionId,
+                      );
+            if (after !== null && afterIndex < 0) {
+                throw new TaskConflictError(
+                    typeof after === "string"
+                        ? "The task to place after is not in your list."
+                        : "The section is not in your list.",
+                );
             }
+            // Already in place: a key between the same neighbours would only churn the order.
+            if (afterIndex === position - 1) return current;
             const orderKey = taskOrderKeyBetween(
-                afterIndex < 0 ? null : (ordered[afterIndex]?.orderKey ?? null),
+                ordered[afterIndex]?.orderKey ?? null,
                 ordered[afterIndex + 1]?.orderKey ?? null,
             );
             const moved: TaskMembership = { ...current, orderKey };
@@ -589,6 +628,55 @@ export class TasksModule implements AgentModule {
                 membership: moved,
             });
             return structuredClone(moved);
+        });
+    }
+
+    /** One member's section headers, in key order. */
+    async sections(ctx: Context, memberId: TaskMemberId): Promise<readonly TaskSectionRecord[]> {
+        this.#assertMember(memberId);
+        return await readTaskSections(ctx, memberId);
+    }
+
+    /**
+     * Replace one member's sections, applied in order. A section left out is removed and its
+     * tasks keep their keys; moving one takes the tasks under it along, each publishing its move.
+     */
+    async replaceSections(
+        ctx: Context,
+        memberId: TaskMemberId,
+        entries: Parameters<typeof planTaskSections>[3],
+    ): Promise<readonly TaskSectionRecord[]> {
+        this.#assertMember(memberId);
+        return await ctx.inTx(async (txCtx) => {
+            const current = await readTaskSections(txCtx, memberId);
+            for (const { id } of entries.filter(
+                (entry) => !current.some((s) => s.id === entry.id),
+            )) {
+                if (await taskSectionIdTaken(txCtx, id)) {
+                    throw new TaskConflictError("That section ID is already in use.");
+                }
+            }
+            const memberships = await readMemberships(txCtx, memberId);
+            const { sections, moved } = planTaskSections(memberships, current, memberId, entries);
+            for (const membership of moved) {
+                await updateMembershipOrder(txCtx, membership);
+                await this.#publish(txCtx, {
+                    eventId: globalThis.crypto.randomUUID(),
+                    at: Date.now(),
+                    type: "task_reordered",
+                    membership,
+                });
+            }
+            if (JSON.stringify(sections) === JSON.stringify(current)) return current;
+            await writeTaskSections(txCtx, memberId, sections);
+            await this.#publish(txCtx, {
+                eventId: globalThis.crypto.randomUUID(),
+                at: Date.now(),
+                type: "task_sections_updated",
+                memberId,
+                sections,
+            });
+            return structuredClone(sections);
         });
     }
 

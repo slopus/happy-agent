@@ -195,3 +195,15 @@ with, so turning `tasks.rich` off, or restarting without rich tasks, still bough
 icon; the job now asks again before every attempt and inside its writing transaction. And an
 automatic icon left no settled mark, so a job replayed after its write but before Durable
 Functions removed it picked a second icon; any icon a task already has now settles that part.
+
+## Sections share the memberships' key space
+
+Rich tasks add named sections to a person's list, and today's clients must keep drawing the same
+list in the same order. A section is therefore its own row keyed in the same space as that
+person's memberships, never a section ID on a membership: a task belongs to the last header below
+its key. Creating, renaming, folding, or removing a header changes no membership, and moving a
+task between sections changes only that task's key. Only moving a section changes the keys of
+the tasks under it, which travel with it in order. Joining places a task above the first header,
+because the top of the list is above every section. Hidden is a flag on the membership that
+keeps its key, so a client that ignores it shows the task where it always was. Both are served,
+and their routes answered, only with `capabilities.taskSections`.

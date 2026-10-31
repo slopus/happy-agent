@@ -75,7 +75,10 @@ import {
     updateTaskRequestSchema,
     joinTaskRequestSchema,
     leaveTaskRequestSchema,
+    reorderTaskAfterSectionRequestSchema,
     reorderTaskRequestSchema,
+    replaceTaskSectionsRequestSchema,
+    updateTaskMembershipRequestSchema,
     taskListScopeSchema,
     unarchiveTaskRequestSchema,
     renameBotRequestSchema,
@@ -339,6 +342,7 @@ import {
     rootWorkspaceResource,
     taskMembershipResource,
     taskResource,
+    taskSectionResource,
     taskWorkspaceResource,
     surfaceWorkspaceResource,
     terminalResource,
@@ -3320,6 +3324,15 @@ export class ApiModule implements AgentModule {
     }
 
     async #convertTaskEvent(ctx: Context, event: TaskEvent): Promise<void> {
+        if (event.type === "task_sections_updated") {
+            this.#journal.append(
+                "task.sections.updated",
+                { sections: event.sections.map(taskSectionResource) },
+                event.at,
+                event.memberId === STANDALONE_TASK_MEMBER ? undefined : event.memberId,
+            );
+            return;
+        }
         if (
             event.type === "task_joined" ||
             event.type === "task_reordered" ||
@@ -3338,7 +3351,7 @@ export class ApiModule implements AgentModule {
             const memberId = event.membership.memberId;
             this.#journal.append(
                 type,
-                { membership: taskMembershipResource(event.membership) },
+                { membership: taskMembershipResource(event.membership, this.#config.taskSections) },
                 event.at,
                 memberId === STANDALONE_TASK_MEMBER ? undefined : memberId,
             );
@@ -6974,8 +6987,28 @@ export class ApiModule implements AgentModule {
                 tasks: await Promise.all(
                     listed.map(async (task) => await this.#taskResource(ctx, task)),
                 ),
-                memberships: joined.map(({ membership }) => taskMembershipResource(membership)),
+                memberships: joined.map(({ membership }) =>
+                    taskMembershipResource(membership, this.#config.taskSections),
+                ),
+                ...(await this.#taskSections(ctx, "sections")),
             });
+            return true;
+        }
+        if (request.method === "PUT" && url.pathname === "/v0/tasks/sections") {
+            if (!this.#config.taskSections) return false;
+            const body = await bodyAs(request, replaceTaskSectionsRequestSchema, "task sections");
+            try {
+                await this.#withMutationId(body.mutationId, async () => {
+                    await tasks.replaceSections(ctx, this.#taskMember(ctx), body.sections);
+                });
+            } catch (error: unknown) {
+                if (error instanceof TaskInputError) throw invalidRequest(error.message);
+                if (error instanceof TaskConflictError) {
+                    throw new ApiError(409, "conflict", error.message);
+                }
+                throw error;
+            }
+            sendJson(response, 200, await this.#taskSections(ctx, "sections"));
             return true;
         }
         if (request.method === "POST" && url.pathname === "/v0/tasks") {
@@ -7072,10 +7105,10 @@ export class ApiModule implements AgentModule {
             return true;
         }
         const action =
-            /^\/v0\/tasks\/([a-z][a-z0-9]*)\/(join|leave|read|reorder|archive|unarchive)$/.exec(
+            /^\/v0\/tasks\/([a-z][a-z0-9]*)\/(join|leave|read|reorder|archive|unarchive|membership)$/.exec(
                 url.pathname,
             );
-        if (action === null || request.method !== "POST") return false;
+        if (action === null) return false;
         const taskId = action[1] as string;
         const operation = action[2] as
             | "join"
@@ -7083,10 +7116,24 @@ export class ApiModule implements AgentModule {
             | "read"
             | "reorder"
             | "archive"
-            | "unarchive";
+            | "unarchive"
+            | "membership";
+        // A member changes their own membership in place only while rich tasks are served.
+        if (operation === "membership" && !this.#config.taskSections) return false;
+        if (request.method !== (operation === "membership" ? "PATCH" : "POST")) return false;
         const member = this.#taskMember(ctx);
         try {
-            if (operation === "read") {
+            if (operation === "membership") {
+                const body = await bodyAs(
+                    request,
+                    updateTaskMembershipRequestSchema,
+                    "task membership",
+                );
+                await this.#withMutationId(
+                    body.mutationId,
+                    async () => await tasks.setHidden(ctx, taskId, member, body.hidden),
+                );
+            } else if (operation === "read") {
                 // The same empty body as a join: only an optional mutation ID.
                 const body = await bodyAs(request, joinTaskRequestSchema, "task read");
                 await this.#withMutationId(
@@ -7105,10 +7152,17 @@ export class ApiModule implements AgentModule {
                         : await tasks.leave(ctx, taskId, member),
                 );
             } else if (operation === "reorder") {
-                const body = await bodyAs(request, reorderTaskRequestSchema, "task reorder");
+                // Without `capabilities.taskSections` a section is no anchor for a move.
+                const body = this.#config.taskSections
+                    ? await bodyAs(request, reorderTaskWithSectionsRequestSchema, "task reorder")
+                    : await bodyAs(request, reorderTaskRequestSchema, "task reorder");
+                const after =
+                    body.afterSectionId === undefined
+                        ? (body.afterId ?? null)
+                        : { sectionId: body.afterSectionId };
                 await this.#withMutationId(
                     body.mutationId,
-                    async () => await tasks.reorder(ctx, taskId, member, body.afterId),
+                    async () => await tasks.reorder(ctx, taskId, member, after),
                 );
             } else {
                 const body = await bodyAs(
@@ -7449,7 +7503,10 @@ export class ApiModule implements AgentModule {
         const membership = await this.#tasks?.membership(ctx, task.id, this.#taskMember(ctx));
         return {
             task: await this.#taskResource(ctx, task),
-            membership: membership === undefined ? null : taskMembershipResource(membership),
+            membership:
+                membership === undefined
+                    ? null
+                    : taskMembershipResource(membership, this.#config.taskSections),
         };
     }
 
@@ -9187,8 +9244,18 @@ export class ApiModule implements AgentModule {
         ]);
         return {
             tasks: await Promise.all(all.map(async (task) => await this.#taskResource(ctx, task))),
-            taskMemberships: joined.map(({ membership }) => taskMembershipResource(membership)),
+            taskMemberships: joined.map(({ membership }) =>
+                taskMembershipResource(membership, this.#config.taskSections),
+            ),
+            ...(await this.#taskSections(ctx, "taskSections")),
         };
+    }
+
+    /** The caller's sections under `key`, only while the daemon serves rich tasks. */
+    async #taskSections(ctx: Context, key: string): Promise<Record<string, unknown>> {
+        if (this.#tasks === undefined || !this.#config.taskSections) return {};
+        const sections = await this.#tasks.sections(ctx, this.#taskMember(ctx));
+        return { [key]: sections.map(taskSectionResource) };
     }
 
     async #daemonUsage(ctx: Context): Promise<Record<string, unknown>> {
@@ -10029,6 +10096,11 @@ async function readJson(
 }
 
 const agentWaitStateSchema = Type.Union([agentWaitSchema, Type.Null()]);
+/** A task reorder with `capabilities.taskSections`: after a task, or first in a section. */
+const reorderTaskWithSectionsRequestSchema = Type.Union([
+    reorderTaskRequestSchema,
+    reorderTaskAfterSectionRequestSchema,
+]);
 
 const runtimeConfigPatchSchema = Type.Object(
     {

@@ -67,6 +67,13 @@ never reverses one, across restarts or preference changes; an explicit join clea
 existing order untouched. Startup catch-up invokes it in bounded transactions, while live task,
 profile, and preference mutations compose participation inside their originating transaction.
 
+A member may also hide a task (`setHidden`): it keeps its place and stays in every list. Sections
+(`sections`, `replaceSections`) are a member's own headers, keyed in the same space as their
+memberships: a task belongs to the last header below its key, so `reorder` after a task or into a
+section changes only the moved task's key, and an older client sees the same order. Moving a section
+takes the tasks under it along; removing one leaves every key alone. New memberships go above the
+first header.
+
 ## Name and icon
 
 An unnamed task is `New Task` until its first text-bearing message starts the durable
@@ -109,11 +116,11 @@ so the task reports back to it. `SubtasksModule` gives it the same coordinator g
 ## Public operations
 
 `list`, `listForMember`, `get`, `membership`, `memberFor`, `forAgent`, `forWorkspace`,
-`hasIdentity`, `create`, `createWithResult`, `sendMessage`, `update`, `decideIconsWith`, `join`, `joinAutomatically`, `leave`, `reorder`,
+`hasIdentity`, `create`, `createWithResult`, `sendMessage`, `update`, `decideIconsWith`, `join`, `joinAutomatically`, `leave`, `reorder`, `setHidden`, `sections`, `replaceSections`,
 `archive`, `archiveForAgent`, `unarchive`, `purge`, and `onEvent`. Task mutations take an expected version
 and raise `TaskConflictError` when the row moved; memberships are unversioned because each list
-has one writer. `task_created`, `task_updated`, `task_joined`, `task_reordered`, and `task_left`
-events are published after commit.
+has one writer. `task_created`, `task_updated`, `task_joined`, `task_reordered`, `task_left`,
+`task_membership_updated`, and `task_sections_updated` events are published after commit.
 
 Archival aborts the task's agent and descendants, marks the agent archived, and invokes the
 `tasks.archive` durable function, all in one transaction; the function ends the archived agent's
@@ -134,6 +141,8 @@ released `001-task-state` migration stays first, `002-task-list-removed` drops t
 Migration `005-task-explicit-leaves` adds a per-member/task exclusion table for automatic joining.
 Migration `008-task-icon` adds the nullable `icon` slug and `icon_configured`, set once a person
 picks the icon.
+Migration `009-task-sections` adds the nullable membership `hidden` flag and
+`happy_agent_module_task_sections`, one row per section with its member and order key.
 
 The HTTP contract for tasks is specified in the Tasks chapter of `packages/happy-agent/API.md`
 and typed in `@slopus/happy-agent-client`. `ApiModule` serves it from this module's public

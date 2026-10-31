@@ -1,5 +1,5 @@
 import { cuid2Schema } from "@slopus/happy-agent-base";
-import { messageModeSchema } from "@slopus/happy-agent-client";
+import { messageModeSchema, taskSectionNameSchema } from "@slopus/happy-agent-client";
 import { Type, type Static } from "@sinclair/typebox";
 
 export const taskStatusSchema = Type.Union([Type.Literal("active"), Type.Literal("archived")]);
@@ -114,6 +114,23 @@ export const taskMembershipSchema = Type.Object(
         orderKey: taskOrderKeySchema,
         joinedAt: taskTimestampSchema,
         unread: Type.Optional(taskMembershipUnreadSchema),
+        /** The member took the task out of their list; it keeps its place. */
+        hidden: Type.Optional(Type.Literal(true)),
+    },
+    { additionalProperties: false },
+);
+
+/**
+ * A header in one member's list, keyed in the same space as their memberships: a task belongs to
+ * the last section whose key is below its own, so moving between sections changes one key.
+ */
+export const taskSectionRecordSchema = Type.Object(
+    {
+        id: cuid2Schema,
+        memberId: taskMemberIdSchema,
+        name: taskSectionNameSchema,
+        orderKey: taskOrderKeySchema,
+        collapsed: Type.Boolean(),
     },
     { additionalProperties: false },
 );
@@ -140,6 +157,7 @@ export type TaskRecord = Static<typeof taskRecordSchema>;
 export type TaskMemberId = Static<typeof taskMemberIdSchema>;
 export type TaskMembership = Static<typeof taskMembershipSchema>;
 export type TaskMembershipUnread = Static<typeof taskMembershipUnreadSchema>;
+export type TaskSectionRecord = Static<typeof taskSectionRecordSchema>;
 export type TaskStatus = Static<typeof taskStatusSchema>;
 export type CreateTaskInput = Static<typeof createTaskInputSchema>;
 export const taskCreationSchema = Type.Object({ task: taskRecordSchema, created: Type.Boolean() });
