@@ -126,7 +126,8 @@ so the task reports back to it. `SubtasksModule` gives it the same coordinator g
 `archive`, `archiveForAgent`, `unarchive`, `purge`, and `onEvent`. Task mutations take an expected version
 and raise `TaskConflictError` when the row moved; memberships are unversioned because each list
 has one writer. `task_created`, `task_updated`, `task_joined`, `task_reordered`, `task_left`,
-`task_membership_updated`, and `task_sections_updated` events are published after commit.
+`task_membership_updated` (with the membership before and after), and `task_sections_updated` events
+are published after commit.
 
 Archival aborts the task's agent and descendants, marks the agent archived, and invokes the
 `tasks.archive` durable function, all in one transaction; the function ends the archived agent's

@@ -509,7 +509,8 @@ export class TasksModule implements AgentModule {
         unread: TaskMembershipUnread | undefined,
     ): Promise<TaskMembership> {
         const { unread: _previous, ...rest } = membership;
-        return await this.#updateMembership(ctx, unread === undefined ? rest : { ...rest, unread });
+        const updated = unread === undefined ? rest : { ...rest, unread };
+        return await this.#updateMembership(ctx, updated, membership);
     }
 
     /** Hide the task in the member's own list, or show it again; it keeps its place either way. */
@@ -528,17 +529,26 @@ export class TasksModule implements AgentModule {
             }
             if ((existing.hidden === true) === hidden) return existing;
             const { hidden: _previous, ...rest } = existing;
-            return await this.#updateMembership(txCtx, hidden ? { ...rest, hidden: true } : rest);
+            return await this.#updateMembership(
+                txCtx,
+                hidden ? { ...rest, hidden: true } : rest,
+                existing,
+            );
         });
     }
 
-    async #updateMembership(ctx: Context, updated: TaskMembership): Promise<TaskMembership> {
+    async #updateMembership(
+        ctx: Context,
+        updated: TaskMembership,
+        previousMembership: TaskMembership,
+    ): Promise<TaskMembership> {
         await updateMembershipState(ctx, updated);
         await this.#publish(ctx, {
             eventId: globalThis.crypto.randomUUID(),
             at: Date.now(),
             type: "task_membership_updated",
             membership: updated,
+            previousMembership,
         });
         return structuredClone(updated);
     }

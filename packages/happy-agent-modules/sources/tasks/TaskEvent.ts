@@ -54,6 +54,7 @@ export const taskEventSchema = Type.Union([
             ...envelope,
             type: Type.Literal("task_membership_updated"),
             membership: taskMembershipSchema,
+            previousMembership: taskMembershipSchema,
         },
         { additionalProperties: false },
     ),
