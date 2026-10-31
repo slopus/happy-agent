@@ -126,9 +126,6 @@ import {
     type MessageMode,
     type ServiceTierOption,
     agentWaitSchema,
-    spaceSidebarOperationsRequestSchema,
-    acceptSpaceSidebarProposalRequestSchema,
-    declineSpaceSidebarProposalRequestSchema,
 } from "@slopus/happy-agent-client";
 import {
     cuid2Schema,
@@ -163,7 +160,6 @@ import {
     ArtifactNotFoundError,
     ArtifactsModule,
     ArtifactTooLargeError,
-    SidebarValidationError,
     artifactTypeSchema,
     DEFAULT_ARTIFACT_PAGE_SIZE,
     MAX_ARTIFACT_PAGE_SIZE,
@@ -408,28 +404,6 @@ import {
     projectEventDiagnostics,
     projectMessageDiagnostics,
 } from "./projectCredentialDiagnostics.js";
-import {
-    SpaceConflictError,
-    SidebarConflictError,
-    SpaceInputError,
-    SpaceNotFoundError,
-    SpaceStorageError,
-    SpacesModule,
-    type SpaceEvent,
-    type SpaceOwnerId,
-    type SpaceRecord,
-} from "../spaces/index.js";
-import {
-    createStemCellRequestSchema,
-    updateSpaceSidebarRequestSchema,
-    updateSpaceRequestSchema,
-    updateSpaceSectionRequestSchema,
-    spaceBatchResource,
-    spaceAttentionRequestSchema,
-    spaceResource,
-    spaceSectionResource,
-    spaceTidyRequestSchema,
-} from "./ApiSpaceProjection.js";
 import { SubtaskInputError, SubtasksModule } from "../subtasks/index.js";
 
 const API_PROTOCOL_VERSION = 33;
@@ -644,7 +618,6 @@ export class ApiModule implements AgentModule {
     readonly #userSettings: UserSettingsModule | undefined;
     readonly #surfaces: SurfacesModule | undefined;
     readonly #mobileConnector: MobileConnectorModule | undefined;
-    readonly #spaces: SpacesModule | undefined;
     readonly #stories: StoriesModule | undefined;
     readonly #stickers: StickersModule | undefined;
     readonly #providerClis: ProviderClisModule | undefined;
@@ -809,7 +782,6 @@ export class ApiModule implements AgentModule {
         userSettings?: UserSettingsModule,
         surfaces?: SurfacesModule,
         mobileConnector?: MobileConnectorModule,
-        spaces?: SpacesModule,
         stories?: StoriesModule,
         stickers?: StickersModule,
         providerClis?: ProviderClisModule,
@@ -857,7 +829,6 @@ export class ApiModule implements AgentModule {
         this.#userSettings = userSettings;
         this.#surfaces = surfaces;
         this.#mobileConnector = mobileConnector;
-        this.#spaces = spaces;
         this.#stories = stories;
         this.#stickers = stickers;
         this.#providerClis = providerClis;
@@ -1917,7 +1888,6 @@ export class ApiModule implements AgentModule {
             }
             if (await this.#handleBotRoute(ctx, request, response, url)) return;
             if (await this.#handleTaskRoute(ctx, request, response, url)) return;
-            if (await this.#handleSpaceRoute(ctx, request, response, url)) return;
             if (await this.#handleSurfaceRoute(ctx, request, response, url)) return;
             if (await this.#handleArtifactRoute(ctx, request, response, url)) return;
             if (await this.#handleStoryRoute(ctx, request, response, url)) return;
@@ -2831,13 +2801,6 @@ export class ApiModule implements AgentModule {
                 : [
                       this.#tasks.onEvent(async (_eventCtx, event) => {
                           await this.#convertTaskEvent(ctx, event);
-                      }),
-                  ]),
-            ...(this.#spaces === undefined
-                ? []
-                : [
-                      this.#spaces.onEvent(async (_eventCtx, event) => {
-                          await this.#convertSpaceEvent(ctx, event);
                       }),
                   ]),
             ...(this.#artifacts === undefined
@@ -7253,75 +7216,6 @@ export class ApiModule implements AgentModule {
         return true;
     }
 
-    /** The caller as a sidebar owner: the standalone person, or the authenticated team member. */
-    #spaceOwner(ctx: Context): SpaceOwnerId {
-        const owner = this.#spaces?.ownerFor(teamUser(ctx)?.id);
-        if (owner === undefined) throw new TeamAuthenticationError();
-        return owner;
-    }
-
-    /** A row as clients see it, or `undefined` for a row with nothing to open. */
-    async #spaceResource(
-        ctx: Context,
-        space: SpaceRecord,
-    ): Promise<Record<string, unknown> | undefined> {
-        const spaces = this.#spaces;
-        if (spaces === undefined) throw new Error("Spaces are not available.");
-        return spaceResource(space, await spaces.describe(ctx, space));
-    }
-
-    async #convertSpaceEvent(ctx: Context, event: SpaceEvent): Promise<void> {
-        // A person's sidebar is private: in team mode only its owner sees its changes.
-        const owner = event.ownerUserId === "standalone" ? undefined : event.ownerUserId;
-        const echo = event.mutationId === undefined ? {} : { mutationId: event.mutationId };
-        const append = (type: string, payload: Record<string, unknown>): void => {
-            this.#journal.append(type, { ...payload, ...echo }, event.at, owner);
-        };
-        switch (event.type) {
-            case "space_created":
-            case "space_updated": {
-                const space = await this.#spaceResource(ctx, event.space);
-                if (space === undefined) return;
-                append(event.type === "space_created" ? "space.created" : "space.updated", {
-                    space,
-                });
-                return;
-            }
-            case "space_removed":
-                append("space.removed", { spaceId: event.spaceId });
-                return;
-            case "section_created":
-                append("space.section.created", { section: spaceSectionResource(event.section) });
-                return;
-            case "section_updated":
-                append("space.section.updated", { section: spaceSectionResource(event.section) });
-                return;
-            case "section_removed":
-                append("space.section.removed", { sectionId: event.sectionId });
-                return;
-            case "batch_applied":
-                append("space.batch.applied", { batch: spaceBatchResource(event.batch) });
-                return;
-            case "proposal_changed":
-                append("space.sidebar.proposal.changed", {
-                    proposal: event.proposal,
-                    previousVersion: event.previousVersion,
-                    author: event.author,
-                    operations: event.operations,
-                });
-                return;
-            case "sidebar_changed":
-                append("space.sidebar.changed", {
-                    artifactId: event.artifactId,
-                    previousVersion: event.previousVersion,
-                    version: event.version,
-                    author: event.author,
-                    operations: event.operations,
-                });
-                return;
-        }
-    }
-
     /**
      * `/v0/stories` routes. For a caller with Stories off every one of them answers `404`, exactly
      * as on a daemon without Stories, before anything is read from the request.
@@ -7667,383 +7561,6 @@ export class ApiModule implements AgentModule {
         }
     }
 
-    async #handleSpaceRoute(
-        ctx: Context,
-        request: IncomingMessage,
-        response: ServerResponse,
-        url: URL,
-    ): Promise<boolean> {
-        const spaces = this.#spaces;
-        if (spaces === undefined || !url.pathname.startsWith("/v0/spaces")) return false;
-        const owner = this.#spaceOwner(ctx);
-        try {
-            const proposal =
-                /^\/v0\/spaces\/sidebar\/proposals\/([a-z][a-z0-9]*)(?:\/(operations|accept|decline))?$/.exec(
-                    url.pathname,
-                );
-            if (proposal !== null) {
-                const artifactId = proposal[1] as string;
-                const action = proposal[2];
-                if (action === undefined && request.method === "GET") {
-                    sendJson(response, 200, await spaces.sidebarProposal(ctx, owner, artifactId));
-                    return true;
-                }
-                if (action === "operations" && request.method === "POST") {
-                    const body = await bodyAs(
-                        request,
-                        spaceSidebarOperationsRequestSchema,
-                        "proposal operations",
-                    );
-                    sendJson(
-                        response,
-                        200,
-                        await this.#withMutationId(
-                            body.mutationId,
-                            async () =>
-                                await spaces.applyProposalOperations(ctx, owner, artifactId, body),
-                        ),
-                    );
-                    return true;
-                }
-                if (action === "accept" && request.method === "POST") {
-                    const body = await bodyAs(
-                        request,
-                        acceptSpaceSidebarProposalRequestSchema,
-                        "proposal acceptance",
-                    );
-                    sendJson(
-                        response,
-                        200,
-                        await this.#withMutationId(
-                            body.mutationId,
-                            async () =>
-                                await spaces.acceptProposal(
-                                    ctx,
-                                    owner,
-                                    artifactId,
-                                    body.mutationId,
-                                ),
-                        ),
-                    );
-                    return true;
-                }
-                if (action === "decline" && request.method === "POST") {
-                    const body = await bodyAs(
-                        request,
-                        declineSpaceSidebarProposalRequestSchema,
-                        "proposal decline",
-                    );
-                    sendJson(
-                        response,
-                        200,
-                        await this.#withMutationId(
-                            body.mutationId,
-                            async () =>
-                                await spaces.declineProposal(
-                                    ctx,
-                                    owner,
-                                    artifactId,
-                                    body.mutationId,
-                                ),
-                        ),
-                    );
-                    return true;
-                }
-            }
-            if (request.method === "POST" && url.pathname === "/v0/spaces/sidebar/operations") {
-                const body = await bodyAs(
-                    request,
-                    spaceSidebarOperationsRequestSchema,
-                    "sidebar operations",
-                );
-                sendJson(
-                    response,
-                    200,
-                    await this.#withMutationId(
-                        body.mutationId,
-                        async () => await spaces.applySidebarOperations(ctx, owner, body),
-                    ),
-                );
-                return true;
-            }
-            if (
-                url.pathname === "/v0/spaces/sidebar" &&
-                (request.method === "GET" || request.method === "PUT")
-            ) {
-                const widgets = url.searchParams.get("widgets");
-                if (widgets !== null && (request.method !== "GET" || widgets !== "true"))
-                    throw invalidRequest('The widgets query takes only "true".');
-                const document =
-                    request.method === "GET"
-                        ? await spaces.sidebar(ctx, owner, { widgets: widgets === "true" })
-                        : await this.#withMutationId(undefined, async () => {
-                              const body = await bodyAs(
-                                  request,
-                                  updateSpaceSidebarRequestSchema,
-                                  "sidebar update",
-                              );
-                              return await this.#withMutationId(
-                                  body.mutationId,
-                                  async () => await spaces.updateSidebar(ctx, owner, body),
-                              );
-                          });
-                const rows: Record<string, unknown>[] = [];
-                for (const row of document.spaces) {
-                    const resource = await this.#spaceResource(ctx, row);
-                    if (resource !== undefined) rows.push(resource);
-                }
-                sendJson(response, 200, { ...document, spaces: rows });
-                return true;
-            }
-            if (request.method === "GET" && url.pathname === "/v0/spaces") {
-                const cursor = this.#journal.cursor();
-                const snapshot = await spaces.snapshot(ctx, owner);
-                const rows: Record<string, unknown>[] = [];
-                for (const space of snapshot.spaces) {
-                    const resource = await this.#spaceResource(ctx, space);
-                    if (resource !== undefined) rows.push(resource);
-                }
-                sendJson(response, 200, {
-                    spaces: rows,
-                    sections: snapshot.sections.map(spaceSectionResource),
-                    cursor,
-                });
-                return true;
-            }
-            if (request.method === "GET" && url.pathname === "/v0/spaces/batches") {
-                const limit = Number(url.searchParams.get("limit") ?? "20");
-                if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
-                    throw invalidRequest("The batch limit must be between 1 and 100.");
-                }
-                sendJson(response, 200, {
-                    batches: (await spaces.batches(ctx, owner, limit)).map(spaceBatchResource),
-                });
-                return true;
-            }
-            if (request.method === "POST" && url.pathname === "/v0/spaces/stem-cells") {
-                const body = await bodyAs(request, createStemCellRequestSchema, "stem cell");
-                return await this.#createStemCell(ctx, response, owner, body);
-            }
-            if (request.method === "POST" && url.pathname === "/v0/spaces/attention") {
-                const body = await bodyAs(request, spaceAttentionRequestSchema, "attention report");
-                const batch = await spaces.reportAttention(ctx, owner, body.state);
-                sendJson(response, 200, {
-                    batch: batch === undefined ? null : spaceBatchResource(batch),
-                });
-                return true;
-            }
-            if (request.method === "POST" && url.pathname === "/v0/spaces/tidy") {
-                const body = await bodyAs(request, spaceTidyRequestSchema, "tidy request");
-                await this.#withMutationId(
-                    body.mutationId,
-                    async () => await spaces.requestTidy(ctx, owner),
-                );
-                response.writeHead(202).end();
-                return true;
-            }
-            const section = /^\/v0\/spaces\/sections\/([a-z][a-z0-9]*)$/.exec(url.pathname);
-            if (section !== null && request.method === "PATCH") {
-                const body = await bodyAs(request, updateSpaceSectionRequestSchema, "section");
-                if (body.collapsed === undefined && body.tailExpanded === undefined) {
-                    throw invalidRequest("Say whether the section or its tail is open.");
-                }
-                const next = await spaces.setSectionDisclosure(
-                    ctx,
-                    owner,
-                    section[1] as string,
-                    {
-                        ...(body.collapsed === undefined ? {} : { collapsed: body.collapsed }),
-                        ...(body.tailExpanded === undefined
-                            ? {}
-                            : { tailExpanded: body.tailExpanded }),
-                    },
-                    body.mutationId,
-                );
-                sendJson(response, 200, { section: spaceSectionResource(next) });
-                return true;
-            }
-            const row = /^\/v0\/spaces\/([a-z][a-z0-9]*)$/.exec(url.pathname);
-            if (row !== null && request.method === "PATCH") {
-                const { mutationId, removed, ...change } = await bodyAs(
-                    request,
-                    updateSpaceRequestSchema,
-                    "space",
-                );
-                const changing = Object.keys(change).length > 0;
-                if (removed === true) {
-                    if (changing) throw invalidRequest("A removed row cannot also be changed.");
-                    await ctx.inTx(async (txCtx) => {
-                        const space = await spaces.get(txCtx, row[1] as string);
-                        if (space !== undefined && space.ownerUserId !== owner) {
-                            throw notFound("The space was not found.");
-                        }
-                        const target = space?.contents[0];
-                        const task =
-                            target?.kind === "task"
-                                ? await this.#tasks?.get(txCtx, target.taskId)
-                                : undefined;
-                        if (task !== undefined && !this.#canArchiveTask(txCtx, task)) {
-                            throw new ApiError(
-                                403,
-                                "forbidden",
-                                "Only the task's owner or the team owner can archive this task.",
-                            );
-                        }
-                        await spaces.remove(txCtx, owner, row[1] as string, mutationId);
-                    });
-                    response.writeHead(204).end();
-                    return true;
-                }
-                if (!changing) throw invalidRequest("Say how the row changes.");
-                const space = await spaces.update(ctx, owner, row[1] as string, change, mutationId);
-                sendJson(response, 200, { space: await this.#spaceResource(ctx, space) });
-                return true;
-            }
-        } catch (error: unknown) {
-            if (error instanceof SpaceNotFoundError) throw notFound(error.message);
-            if (error instanceof SidebarValidationError)
-                throw new ApiError(400, "invalid_request", error.message, {
-                    diagnostics: error.diagnostics,
-                    ...(error.operationIndex === undefined
-                        ? {}
-                        : { operationIndex: error.operationIndex }),
-                });
-            if (error instanceof SidebarConflictError)
-                throw new ApiError(409, "conflict", error.message, {
-                    currentVersion: error.currentVersion,
-                    ...(error.operationIndex === undefined
-                        ? {}
-                        : { operationIndex: error.operationIndex }),
-                });
-            if (error instanceof ArtifactConflictError)
-                throw new ApiError(409, "conflict", error.message, {
-                    currentVersion: error.artifact?.latestVersion,
-                });
-            if (error instanceof ArtifactInputError) throw invalidRequest(error.message);
-            if (error instanceof SpaceInputError) throw invalidRequest(error.message);
-            if (error instanceof SpaceConflictError) {
-                throw new ApiError(409, "conflict", error.message);
-            }
-            throw error;
-        }
-        return false;
-    }
-
-    /**
-     * New work: a fresh unnamed task with its own folder and no project, wrapped in a stem-cell
-     * row in the same transaction. A repeated ID answers with the row it already made. The client
-     * may name the task, workspace, and agent too, so it can show the conversation before this
-     * answers; a repeated ID must then name the same ones.
-     */
-    async #createStemCell(
-        ctx: Context,
-        response: ServerResponse,
-        owner: SpaceOwnerId,
-        body: {
-            readonly id?: string;
-            readonly taskId?: string;
-            readonly workspaceId?: string;
-            readonly agentId?: string;
-            readonly sectionId?: string | null;
-            readonly mutationId?: string;
-        },
-    ): Promise<boolean> {
-        const spaces = this.#spaces;
-        const tasks = this.#tasks;
-        if (spaces === undefined || tasks === undefined) {
-            throw notFound("New work is unavailable on this daemon.");
-        }
-        const { mutationId } = body;
-        const spaceId = body.id ?? createId();
-        const ownerUserId = this.#team.enabled ? teamUser(ctx)?.id : undefined;
-        const { task, space, created } = await this.#withMutationId(
-            mutationId,
-            async () =>
-                await ctx.inTx(async (txCtx) => {
-                    // The database transaction reserves the ID before any task is created.
-                    // A competing retry must read the winner's row and its actual conversation.
-                    const existing = await spaces.get(txCtx, spaceId);
-                    if (existing !== undefined) {
-                        if (existing.ownerUserId !== owner)
-                            throw notFound("The space was not found.");
-                        const target = existing.contents[0];
-                        const task =
-                            target?.kind === "task"
-                                ? await tasks.get(txCtx, target.taskId)
-                                : undefined;
-                        if (
-                            (body.taskId !== undefined && body.taskId !== task?.id) ||
-                            (body.workspaceId !== undefined &&
-                                body.workspaceId !== task?.workspaceId) ||
-                            (body.agentId !== undefined && body.agentId !== task?.agentId)
-                        ) {
-                            throw new ApiError(
-                                409,
-                                "conflict",
-                                "The requested identities do not match this new work.",
-                            );
-                        }
-                        return { task, space: existing, created: false as const };
-                    }
-                    const creation = await tasks.createWithResult(txCtx, {
-                        ...(body.taskId === undefined ? {} : { id: body.taskId }),
-                        ...(body.workspaceId === undefined
-                            ? {}
-                            : { workspaceId: body.workspaceId }),
-                        ...(body.agentId === undefined ? {} : { agentId: body.agentId }),
-                        ...(ownerUserId === undefined ? {} : { ownerUserId }),
-                    });
-                    // A new row never takes over a task that already exists: the space ID is
-                    // the retry key, so an existing task ID is someone else's.
-                    if (!creation.created) {
-                        throw new ApiError(
-                            409,
-                            "conflict",
-                            "A requested identity is already in use.",
-                        );
-                    }
-                    const space = await spaces.createStemCell(txCtx, owner, {
-                        spaceId,
-                        task: creation.task,
-                        ...(body.sectionId === undefined || body.sectionId === null
-                            ? {}
-                            : { sectionId: body.sectionId }),
-                        ...(mutationId === undefined ? {} : { mutationId }),
-                    });
-                    return { task: creation.task, space, created: true as const };
-                }),
-        );
-        if (!created) {
-            sendJson(response, 200, {
-                space: await this.#spaceResource(ctx, space),
-                agent: task === undefined ? null : await this.#stemCellAgent(ctx, task),
-            });
-            return true;
-        }
-        // As for tasks: initial slash-command discovery belongs to the settled agent snapshot.
-        if (created) await this.#slashCommands.catalog(ctx, task.agentId);
-        await this.#agentEventChains.get(task.agentId);
-        await this.#queueAgentWork(ctx, task.agentId, undefined, async () => undefined);
-        const agent = await this.#stemCellAgent(ctx, task);
-        if (created && !this.#announcedAgentCreations.has(task.agentId)) {
-            boundedAdd(this.#announcedAgentCreations, task.agentId, MAX_ANNOUNCED_AGENT_CREATIONS);
-            this.#journal.append("agent.created", {
-                agent,
-                ...(mutationId === undefined ? {} : { mutationId }),
-            });
-        }
-        sendJson(response, 201, { space: await this.#spaceResource(ctx, space), agent });
-        return true;
-    }
-
-    async #stemCellAgent(ctx: Context, task: TaskRecord): Promise<Record<string, unknown>> {
-        const agent = await this.#buildAgentResource(ctx, task.agentId, task.workspaceId, null, {
-            userVisible: true,
-        });
-        if (agent === undefined) throw new Error("The new work has no agent.");
-        return agent;
-    }
-
     /**
      * A story's artifact is not there for anyone who may not read the story, and nobody writes
      * one through the artifact routes.
@@ -8279,11 +7796,6 @@ export class ApiModule implements AgentModule {
             }
             return false;
         } catch (error: unknown) {
-            if (error instanceof SidebarValidationError)
-                throw new ApiError(400, "invalid_request", error.message, {
-                    diagnostics: error.diagnostics,
-                });
-            if (error instanceof SpaceNotFoundError) throw notFound(error.message);
             if (error instanceof ArtifactInputError) throw invalidRequest(error.message);
             if (error instanceof ArtifactNotFoundError) throw notFound(error.message);
             if (error instanceof ArtifactTooLargeError) {
@@ -8299,10 +7811,7 @@ export class ApiModule implements AgentModule {
                     artifact === undefined
                         ? {}
                         : {
-                              currentVersion:
-                                  error.artifact?.type === "sidebar"
-                                      ? error.artifact.latestVersion
-                                      : artifact["version"],
+                              currentVersion: artifact["version"],
                               artifact,
                           },
                 );
@@ -10400,17 +9909,6 @@ export class ApiModule implements AgentModule {
                     ? {}
                     : { providerRoutes: true }),
                 ...(this.#bridges === undefined ? {} : { workspaceBridges: true }),
-                ...(this.#spaces === undefined || this.#tasks === undefined
-                    ? {}
-                    : { stemCellIdentities: true }),
-                ...(this.#spaces === undefined
-                    ? {}
-                    : {
-                          sidebarOperations: true,
-                          sidebarAttachments: true,
-                          sidebarProposals: true,
-                          sidebarSeparatorPins: true,
-                      }),
                 ...(this.#live === undefined
                     ? {}
                     : { desktopLiveCapabilities: [...this.#live.desktopCapabilities] }),
@@ -10830,14 +10328,6 @@ export class ApiModule implements AgentModule {
                 currentVersion: profile["version"],
                 profile,
             });
-            return;
-        }
-        if (error instanceof SpaceStorageError) {
-            // The person's sidebar state is unreadable: say so plainly instead of a generic error.
-            ctx.log.error("A person's sidebar state could not be read.", {
-                ownerUserId: error.ownerUserId,
-            });
-            sendJson(response, 500, { error: error.message, code: "internal" });
             return;
         }
         ctx.log.error("The Happy Agent API request failed.", {}, error);

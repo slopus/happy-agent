@@ -3,7 +3,7 @@
 ## Voice belongs to one desktop window
 
 Binding voice to a coding agent exposed the wrong tools and hid desktop navigation. A call acts only
-in the window that started it, through fixed tool arrays: Spaces' read-only sidebar tools, five
+in the window that started it, through fixed tool arrays: read-only sidebar tools, five
 desktop actions, plus `taskCreate` and `sessionModelChange` only when the desktop negotiated them.
 Workspace, conversation and bot creation were removed from the surface (they remain in the wire
 union for compatibility) because voice should open what exists, start work as a task with an unsent
@@ -16,9 +16,9 @@ permission answers, private reasoning, or arbitrary execution enters Live.
 Each call used to open its own hidden controller conversation. It forgot everything when the call
 ended, could not read the sidebar or other conversations, and its work was invisible. Voice is now
 one long-running, unreported subtask of Happy per person, created with their first call through
-`SubtasksModule.create`, the path every subtask takes, and given its own settled sidebar row by
-Spaces. A conversation subtask without an opening task was considered and dropped: Kirill had
-already rejected that shape for Prioritizing as not a true subtask. Voice's opening task only
+`SubtasksModule.create`, the path every subtask takes. A conversation subtask without an opening
+task was considered and dropped: Kirill had already rejected that shape as not a true subtask.
+Voice's opening task only
 confirms it is set up, and runs on the voice settings' controller as new agents are offered it,
 because a pool's frozen member is hidden from new agents. Every later call hands
 requests to the same Voice until the person archives it; the next call creates a new one. Live
@@ -90,9 +90,9 @@ received Markdown AppState with statuses, activity times and the focused convers
 message, pushed as diffs and refreshed every ten minutes. That pushed text on every navigation and
 streaming change, and voice treated some pushes as something to talk about.
 
-GPT-Live is now told only the person's sidebar as names: sections, separators, rows, the sessions
-under expanded rows, and folded counts, without status, activity, messages or IDs. Startup is
-bounded to 8 KiB with a count of omitted entries. A Spaces event re-reads it; only changed text is
+GPT-Live is now told only the person's sidebar as names: Happy, the other bots, the person's tasks
+and the Surfaces they joined, without status, activity, messages or IDs. Startup is bounded to
+8 KiB with a count of omitted entries. A bot, task or Surface event re-reads it; only changed text is
 pushed, coalesced for 250 ms with one push in flight and split into appends of at most 500 bytes,
 and voice counts as told only after every part is appended. Anything deeper, such as what a
 conversation said, is a request for Voice. AppState is never pushed; it only resolves names and
@@ -391,3 +391,12 @@ Sending the Realtime voice `marin` made every subscription call connect and then
 `Voice session access denied.` (`forbidden`), which looked like a missing entitlement. Official
 Codex succeeded with the same account because it sends a GPT-Live voice (`cove`). GPT-Live voices
 are juniper, maple, spruce, ember, vale, breeze, arbor, sol and cove; Live sends `cove`.
+
+## Voice reads the classic sidebar on its own
+
+Voice's outline, `list_sidebar` and `read_conversations` came from the Spaces sidebar, along with
+a Voice row, `request_space_placement` and `request_sidebar_tidy`. When Spaces and stem cells were
+removed before a stable release, Live took over its own reads: the outline is Happy, the other
+bots, the person's tasks and joined Surfaces, read straight from those modules, and
+`read_conversations` reads any live conversation on a standalone machine, or with a team only a
+sidebar row's conversation or a session under one. Voice no longer rearranges the sidebar.

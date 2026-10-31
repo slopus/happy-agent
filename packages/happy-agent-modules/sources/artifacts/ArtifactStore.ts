@@ -28,7 +28,7 @@ import {
 import { compareArtifactPaths } from "./ArtifactTypes.js";
 import { artifactAuthorId, artifactSourceId } from "./impl/artifactIdentities.js";
 
-/** Small daemon-authored sidebar entries compose with their caller's transaction. */
+/** Small daemon-authored entries compose with their caller's transaction. */
 export async function insertArtifactInline(
     ctx: Context,
     sha256: string,

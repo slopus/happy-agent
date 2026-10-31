@@ -18,7 +18,6 @@ import {
     titleNameRequestSchema,
     titleRefineRequestSchema,
     titleWorkspaceIdSchema,
-    type NamingStyle,
     type TitleNameRequest,
     type TitleNames,
     type TitleRefineRequest,
@@ -40,30 +39,12 @@ import { selectNamingRoute } from "./impl/selectNamingRoute.js";
  * How long one name may take.
  *
  * Naming is detached from the agent's work, but an abandoned provider request must still have a
- * bound. A standard name from the cheapest model at no reasoning effort is seconds of work; ten of
- * them is already an account that is not going to answer. A subject name comes from the chat's
- * own model at its default effort, which may think for a while before three words, and the new
- * sidebar row stays a stem cell meanwhile; a minute is an account that is not going to answer.
+ * bound. A title from the cheapest model at no reasoning effort is seconds of work; ten of
+ * them is already an account that is not going to answer.
  */
-const NAMING_TIMEOUT_MS: Readonly<Record<NamingStyle, number>> = {
-    standard: 10_000,
-    subject: 60_000,
-};
+const NAMING_TIMEOUT_MS = 10_000;
 const USER_MESSAGE_COUNT_KEY = "title-user-messages";
 const titleUserMessageCountSchema = Type.Union([Type.Literal(1), Type.Literal(2)]);
-
-/** The account and model a chat runs on, which pick what writes its names. */
-type NamingChat = { readonly providerId?: string; readonly modelId?: string };
-
-function chatOf(agent: {
-    readonly provider: string;
-    readonly model: string | undefined;
-}): NamingChat {
-    return {
-        providerId: agent.provider,
-        ...(agent.model === undefined ? {} : { modelId: agent.model }),
-    };
-}
 
 /**
  * Titles generated from accepted user-role messages, outside the agent's own inference path.
@@ -97,7 +78,8 @@ export class TitlesModule implements AgentModule<AnyAgentTool> {
     #store: AgentKV | undefined;
 
     /**
-     * @param config The accounts a name may be written on, and the catalog its model comes from.
+     * @param config The accounts a name may be written on, and the catalog it picks a cheap model
+     * from.
      * @param history The committed conversation read by the one title refinement.
      * @param workspaces The catalog a named workspace is renamed through.
      */
@@ -170,11 +152,11 @@ export class TitlesModule implements AgentModule<AnyAgentTool> {
                 const committedTranscript = transcript;
                 afterCommit(hookCtx, () => {
                     if (next === 1) {
-                        this.#startInitialNaming(scope.agent.id, chatOf(scope.agent), message);
+                        this.#startInitialNaming(scope.agent.id, scope.agent.provider, message);
                     } else if (committedTranscript !== undefined) {
                         this.#startTitleRefinement(
                             scope.agent.id,
-                            chatOf(scope.agent),
+                            scope.agent.provider,
                             committedTranscript,
                         );
                     }
@@ -199,7 +181,7 @@ export class TitlesModule implements AgentModule<AnyAgentTool> {
         ctx: Context,
         agentId: string,
         message: string,
-        chat: NamingChat,
+        providerId: string,
     ): Promise<void> {
         try {
             const agents = this.#agents;
@@ -218,8 +200,7 @@ export class TitlesModule implements AgentModule<AnyAgentTool> {
             }
             const names = await this.nameFromFirstMessage(ctx, {
                 firstMessage: message,
-                ...chat,
-                style: await this.namingStyle(ctx, agentId),
+                providerId,
                 sessionNamed: typeof config.metadata?.title === "string",
                 ...(workspace === undefined ? {} : { workspace }),
             });
@@ -263,7 +244,7 @@ export class TitlesModule implements AgentModule<AnyAgentTool> {
     async #refineFromSecondUserMessage(
         ctx: Context,
         agentId: string,
-        chat: NamingChat,
+        providerId: string,
         transcript: string,
     ): Promise<void> {
         try {
@@ -285,8 +266,7 @@ export class TitlesModule implements AgentModule<AnyAgentTool> {
             }
             const title = await this.refineChat(ctx, {
                 transcript,
-                ...chat,
-                style: await this.namingStyle(ctx, agentId),
+                providerId,
                 ...(typeof currentTitle === "string" ? { currentTitle } : {}),
             });
             if (this.#closed || title === undefined || title === currentTitle) return;
@@ -304,16 +284,16 @@ export class TitlesModule implements AgentModule<AnyAgentTool> {
     }
 
     /** Start detached initial naming, preserving any task already queued for this agent. */
-    #startInitialNaming(agentId: string, chat: NamingChat, message: string): void {
+    #startInitialNaming(agentId: string, providerId: string, message: string): void {
         this.#enqueueNamingTask(agentId, "initial-naming", async (ctx) => {
-            await this.#nameFromFirstUserMessage(ctx, agentId, message, chat);
+            await this.#nameFromFirstUserMessage(ctx, agentId, message, providerId);
         });
     }
 
     /** Start the one detached refinement after any initial naming task finishes. */
-    #startTitleRefinement(agentId: string, chat: NamingChat, transcript: string): void {
+    #startTitleRefinement(agentId: string, providerId: string, transcript: string): void {
         this.#enqueueNamingTask(agentId, "title-refinement", async (ctx) => {
-            await this.#refineFromSecondUserMessage(ctx, agentId, chat, transcript);
+            await this.#refineFromSecondUserMessage(ctx, agentId, providerId, transcript);
         });
     }
 
@@ -355,8 +335,6 @@ export class TitlesModule implements AgentModule<AnyAgentTool> {
         request: {
             readonly firstMessage: string;
             readonly providerId?: string;
-            readonly modelId?: string;
-            readonly style?: NamingStyle;
             readonly sessionNamed?: boolean;
             readonly workspace?: { readonly projectId: string; readonly workspaceId: string };
         },
@@ -372,8 +350,6 @@ export class TitlesModule implements AgentModule<AnyAgentTool> {
                 firstMessage: request.firstMessage,
                 wanted: { slug: wantSlug, title: wantTitle },
                 ...(request.providerId === undefined ? {} : { providerId: request.providerId }),
-                ...(request.modelId === undefined ? {} : { modelId: request.modelId }),
-                ...(request.style === undefined ? {} : { style: request.style }),
             });
             const renamed =
                 current === undefined || names.slug === undefined
@@ -412,19 +388,18 @@ export class TitlesModule implements AgentModule<AnyAgentTool> {
         }
         if (request.firstMessage.trim().length === 0) return {};
         if (wantedNames(request.wanted).length === 0) return {};
-        const style = request.style ?? "standard";
-        const route = this.#route(request, style);
+        const route = this.#route(request.providerId);
         if (route === undefined) return {};
-        const text = createNamingRequest(request.wanted, request.firstMessage, style);
+        const text = createNamingRequest(request.wanted, request.firstMessage);
         const answer = await runNamingInference(ctx, {
             instructions: text.instructions,
             prompt: text.prompt,
             providers: this.#config.providers,
             route,
-            timeoutMs: NAMING_TIMEOUT_MS[style],
+            timeoutMs: NAMING_TIMEOUT_MS,
             ...(options.signal === undefined ? {} : { signal: options.signal }),
         });
-        return parseSuggestedNames(answer, request.wanted, style);
+        return parseSuggestedNames(answer, request.wanted);
     }
 
     /** Suggest a short, role-like identity for a bot from its first user message. */
@@ -435,7 +410,7 @@ export class TitlesModule implements AgentModule<AnyAgentTool> {
         options: { readonly signal?: AbortSignal } = {},
     ): Promise<string | undefined> {
         if (firstMessage.trim().length === 0) return undefined;
-        const route = this.#route(providerId === undefined ? {} : { providerId }, "standard");
+        const route = this.#route(providerId);
         if (route === undefined) return undefined;
         const text = createBotNamingRequest(firstMessage);
         const answer = await runNamingInference(ctx, {
@@ -443,7 +418,7 @@ export class TitlesModule implements AgentModule<AnyAgentTool> {
             prompt: text.prompt,
             providers: this.#config.providers,
             route,
-            timeoutMs: NAMING_TIMEOUT_MS.standard,
+            timeoutMs: NAMING_TIMEOUT_MS,
             ...(options.signal === undefined ? {} : { signal: options.signal }),
         });
         const title = parseSuggestedNames(answer, { title: true }).title;
@@ -451,11 +426,7 @@ export class TitlesModule implements AgentModule<AnyAgentTool> {
     }
 
     /** A useful bounded first-message name when all provider attempts failed. Never reads history. */
-    fallbackName(
-        message: string,
-        style: NamingStyle = "standard",
-        bot = false,
-    ): string | undefined {
+    fallbackName(message: string, bot = false): string | undefined {
         const text = message
             .replace(/\[([^\]]+)\]\([^)]*\)/gu, "$1")
             .replace(/https?:\/\/\S+/gu, " ")
@@ -463,7 +434,7 @@ export class TitlesModule implements AgentModule<AnyAgentTool> {
             .replace(/\s+/gu, " ")
             .trim();
         if (!/[\p{L}\p{N}]/u.test(text)) return undefined;
-        const title = parseSuggestedNames(text, { title: true }, style).title;
+        const title = parseSuggestedNames(text, { title: true }).title;
         return bot ? title?.split(/\s+/u).slice(0, 3).join(" ").slice(0, 40).trimEnd() : title;
     }
 
@@ -471,8 +442,8 @@ export class TitlesModule implements AgentModule<AnyAgentTool> {
      * A second look at a chat's title, once the chat is a conversation rather than one message.
      *
      * The first message is a request, and a request often turns out to be about something else:
-     * a question that became a rewrite, a bug report that became a design. This asks the model
-     * that named the chat whether the name still fits, and it answers with the name it already had unless
+     * a question that became a rewrite, a bug report that became a design. This asks the same
+     * cheap model whether the name still fits, and it answers with the name it already had unless
      * the conversation plainly says otherwise. Nothing back means the title stands.
      */
     async refineChat(
@@ -484,19 +455,18 @@ export class TitlesModule implements AgentModule<AnyAgentTool> {
             throw new Error("Title refinement request is invalid.");
         }
         if (request.transcript.trim().length === 0) return undefined;
-        const style = request.style ?? "standard";
-        const route = this.#route(request, style);
+        const route = this.#route(request.providerId);
         if (route === undefined) return undefined;
-        const text = createRefinementRequest(request.transcript, request.currentTitle, style);
+        const text = createRefinementRequest(request.transcript, request.currentTitle);
         const answer = await runNamingInference(ctx, {
             instructions: text.instructions,
             prompt: text.prompt,
             providers: this.#config.providers,
             route,
-            timeoutMs: NAMING_TIMEOUT_MS[style],
+            timeoutMs: NAMING_TIMEOUT_MS,
             ...(options.signal === undefined ? {} : { signal: options.signal }),
         });
-        return parseSuggestedNames(answer, { title: true }, style).title;
+        return parseSuggestedNames(answer, { title: true }).title;
     }
 
     /** Record the exact generated title that remains eligible for one later refinement. */
@@ -542,44 +512,15 @@ export class TitlesModule implements AgentModule<AnyAgentTool> {
     }
 
     /**
-     * Names this chat and every chat under it the subject way.
+     * The cheapest model of the account the chat is already on, or of the configured default.
      *
-     * Work a person starts from the Spaces sidebar is a row with room for a few words, so its
-     * names name the subject; every other chat keeps standard names. The mark commits with the
-     * caller's transaction, before the chat's first message can be named.
+     * Naming is a side question about a conversation, not part of it, so it is asked of the least
+     * expensive model that can answer — and of the same account, because that is the credential
+     * this installation is known to have.
      */
-    async nameBySubject(ctx: Context, agentId: string): Promise<void> {
-        await this.#subjectNamed().write(ctx, agentId, { at: Date.now() });
-    }
-
-    /**
-     * How a chat is named: the subject way when it or an ancestor was marked, else standard. A
-     * mark that cannot be read leaves the chat named the standard way rather than unnamed.
-     */
-    async namingStyle(ctx: Context, agentId: string): Promise<NamingStyle> {
-        const agents = this.#agents;
-        if (this.#store === undefined || agents === undefined) return "standard";
-        try {
-            let current: string | null = agentId;
-            for (let depth = 0; current !== null && depth < 64; depth += 1) {
-                if ((await this.#subjectNamed().read(ctx, current)) !== undefined) {
-                    return "subject";
-                }
-                current = await agents.parentOf(ctx, current);
-            }
-        } catch (error) {
-            ctx.log.debug("How to name a chat could not be read.", { agentId }, error);
-        }
-        return "standard";
-    }
-
-    /**
-     * What writes a name: the cheapest model of the chat's account for a standard name, the chat's
-     * own model for a subject name; see `selectNamingRoute`.
-     */
-    #route(chat: NamingChat, style: NamingStyle): ReturnType<typeof selectNamingRoute> {
+    #route(providerId: string | undefined): ReturnType<typeof selectNamingRoute> {
         const models = this.#config.models;
-        return selectNamingRoute(models, chat, models[0]?.providerId, style);
+        return selectNamingRoute(models, providerId, models[0]?.providerId);
     }
 
     /**
@@ -611,11 +552,6 @@ export class TitlesModule implements AgentModule<AnyAgentTool> {
             workspaceId: current.id,
             name: this.#workspaces.nameWithPreservedPrefix(current.name, slug),
         });
-    }
-
-    /** The chats marked to be named the subject way, keyed by agent. */
-    #subjectNamed(): AgentKV {
-        return this.#requireStore().scoped("subject-named");
     }
 
     /** The workspaces that have taken a name, keyed by workspace. */

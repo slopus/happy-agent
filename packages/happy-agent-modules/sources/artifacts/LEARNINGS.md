@@ -1,13 +1,5 @@
 # Artifacts — learnings
 
-## Sidebar lifecycle bytes belong to the caller's transaction
-
-Creating or archiving a space also edits its sidebar artifact. Ordinary upload staging writes
-files outside a transaction and cannot safely serve that path: a caller rollback would leave
-unowned bytes. Bounded sidebar text is stored by digest in the artifact database with its upload
-intent, and rolls back with the space. File serving materializes an immutable cache through the
-ordinary atomic content-file path. Other artifact uploads keep their existing staging behavior.
-
 ## An artifact is a bundle of files, not one file
 
 The first design held one file per Markdown or HTML artifact and told HTML to inline everything.
@@ -272,3 +264,10 @@ artifacts out, the artifact tools answer not found, and the API journal carries 
 Stories writes them with `createStory`, `commitStory`, and `deleteStory`. The `story` type is
 also kept out of the tool schemas (`artifactToolTypeSchema`), so people without Stories see the
 artifact tools exactly as before.
+
+## Withdrawn types are removed from storage
+
+`sidebar` and `sidebar_proposal` artifacts belonged to the Spaces sidebar, which was removed
+before a stable release. Leaving their rows would make every read that validates a record throw,
+so a migration deletes those artifacts with their versions and files, and inline text no remaining
+file uses. Content files on disk stay, as they do for any deleted artifact.

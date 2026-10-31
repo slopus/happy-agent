@@ -215,4 +215,44 @@ export const artifactMigrations = [
             );
         },
     ],
+    [
+        "007-withdraw-sidebar-artifacts",
+        async (_ctx: Context, database: AgentDatabaseFacade<AgentDatabase>): Promise<void> => {
+            await withdrawArtifactTypes(database, ["sidebar", "sidebar_proposal"]);
+        },
+    ],
 ] as const;
+
+/**
+ * Delete every artifact of types the catalog no longer has, with its versions and files, and the
+ * inline text no remaining file or pending upload uses. Their records would otherwise fail validation on every read.
+ */
+async function withdrawArtifactTypes(
+    database: AgentDatabaseFacade<AgentDatabase>,
+    types: readonly string[],
+): Promise<void> {
+    const withdrawn = sql`SELECT id FROM ${sql.raw(ARTIFACTS_TABLE)} WHERE type IN (${sql.join(
+        types.map((type) => sql`${type}`),
+        sql`, `,
+    )})`;
+    await agentDatabaseRun(
+        database,
+        sql`DELETE FROM ${sql.raw(ARTIFACT_FILES_TABLE)} WHERE artifact_id IN (${withdrawn})`,
+    );
+    await agentDatabaseRun(
+        database,
+        sql`DELETE FROM ${sql.raw(ARTIFACT_VERSIONS_TABLE)} WHERE artifact_id IN (${withdrawn})`,
+    );
+    await agentDatabaseRun(
+        database,
+        sql`DELETE FROM ${sql.raw(ARTIFACTS_TABLE)} WHERE id IN (${withdrawn})`,
+    );
+    await agentDatabaseRun(
+        database,
+        sql`DELETE FROM happy_agent_module_artifact_inline
+            WHERE sha256 NOT IN (SELECT sha256 FROM ${sql.raw(ARTIFACT_FILES_TABLE)})
+            AND sha256 NOT IN (
+                SELECT sha256 FROM ${sql.raw(ARTIFACT_UPLOADS_TABLE)} WHERE sha256 IS NOT NULL
+            )`,
+    );
+}

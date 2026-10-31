@@ -22,7 +22,7 @@ it("logs safe timing fields for a proxied request slower than one second", async
     const gateway = await proxy(mintForOrganization);
     try {
         const slow = await fetch(
-            `${gateway.url}/team/v0/spaces/sidebar?widgets=private-value&cursor=abc&widgets=b`,
+            `${gateway.url}/team/v0/artifacts?source=private-value&cursor=abc&source=b`,
         );
         expect(slow.status).toBe(200);
         await slow.text();
@@ -30,11 +30,11 @@ it("logs safe timing fields for a proxied request slower than one second", async
         expect(logs[0]).toEqual({
             level: "info",
             message:
-                "connections:forward:slow connection=team method=GET path=/v0/spaces/sidebar?widgets&cursor status=200 totalMs=1400 responseMs=1400 tokenMs=1400 stream=false",
+                "connections:forward:slow connection=team method=GET path=/v0/artifacts?source&cursor status=200 totalMs=1400 responseMs=1400 tokenMs=1400 stream=false",
         });
 
         // A fast request is not logged; a request whose token wait fails reports Cloud's status.
-        const fast = await fetch(`${gateway.url}/bearer/v0/spaces`);
+        const fast = await fetch(`${gateway.url}/bearer/v0/artifacts`);
         expect(fast.status).toBe(200);
         await fast.text();
         mintForOrganization.mockImplementationOnce(async () => {

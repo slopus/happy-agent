@@ -44,7 +44,7 @@ describe.skipIf(process.platform === "win32")("happy-agent start on newer data",
 
         // A newer release added a migration to a module this build knows, and stamped itself.
         await recordGymMigration(world.home.happyHome, {
-            module: "spaces",
+            module: "surfaces",
             key: "999-written-by-a-newer-release",
         });
         await writeFile(

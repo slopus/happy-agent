@@ -21,7 +21,7 @@ export function formatConversationReads(
     }
     if (left.length > 0)
         parts.push(
-            `Left out to keep this answer short: ${left.join("; ")}. Read them with read_conversations before deciding where they go.`,
+            `Left out to keep this answer short: ${left.join("; ")}. Read them with read_conversations on their own.`,
         );
     return parts.join("\n\n---\n\n");
 }

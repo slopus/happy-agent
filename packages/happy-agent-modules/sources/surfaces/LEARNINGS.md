@@ -10,14 +10,6 @@ notification before transactional membership callbacks and returns the final sto
 creation, derived version events, and the response consistent. Startup reads missing memberships
 in bounded SQL batches rather than decoding historical content.
 
-## Content notifications are independent of editor streams
-
-Spaces asks Surfaces whether current shared content exists instead of reading storage or
-inferring it from versions. Todo and calendar existence checks select current records in SQL;
-documents use the editor's Markdown projection. Document edits notify internal consumers through
-a durable callback committed with the edit, even when no editor stream follows the document.
-This callback adds no public event or catalog version.
-
 ## A Surface is an instance, not a singleton feature
 
 The initial design used `todo` as a singleton ID. Each Surface instead has a CUID2 identity and

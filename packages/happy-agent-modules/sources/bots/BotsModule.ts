@@ -177,7 +177,7 @@ export class BotsModule implements AgentModule {
                         },
                     );
                     if (name === null) return null;
-                    const title = name ?? this.#titles.fallbackName(message, "standard", true);
+                    const title = name ?? this.#titles.fallbackName(message, true);
                     ctx.lifetime?.throwIfAborted();
                     if (title === undefined) return null;
                     await ctx.inTx(async (txCtx) => {

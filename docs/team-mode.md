@@ -409,19 +409,14 @@ Startup creates each listed member who has no user yet and fills only the email,
 an existing member has not set; a member's own edits are never overwritten. `auto_join_tasks =
 false` starts the member with `tasks.autoJoin` off, through the same setting they can change.
 
-A task's agent sees the team through `list_teammates` and mentions someone with
-`notify_teammate`, which forwards the task and the agent's reason to that member's own Focus
-(Prioritizing). Their Focus decides from their role and what they follow. When the task concerns
-them it calls `join_task`. They join whatever their automatic joining says, and their membership
-carries `unread: { reason: "looped_in", since, agentId, note }`.
-
-A member without Stem Cells has no Focus, so nothing is added for them. The mark appears in the
-member's own task reads, joined lists, desktop bootstrap, and `task.joined` /
-`task.membership.updated` events, on every connection that member uses, the paired phone included.
-`POST /v0/tasks/:taskId/read` or `POST /v0/agents/:taskAgentId/read` clears it.
-
-Agents mention people as `[name](happy://users/<userId>)` with the Happy user ID. Clients resolve the name
-with `GET /v0/users?ids=`.
+A task's agent sees the team through `list_teammates` and adds someone with
+`loop_in_teammate`: they join the task whatever their automatic joining says, and their membership
+carries `unread: { reason: "looped_in", since, agentId, note }`. The mark appears on their own task
+reads, joined lists, desktop bootstrap, and `task.joined` / `task.membership.updated` events, on
+every connection that member uses, the paired phone included. `POST /v0/tasks/:taskId/read` or
+`POST /v0/agents/:taskAgentId/read` clears it. Agents mention people as
+`[name](happy://users/<userId>)` with the Happy user ID; clients resolve the name with
+`GET /v0/users?ids=`.
 
 ## Shared profile updates
 

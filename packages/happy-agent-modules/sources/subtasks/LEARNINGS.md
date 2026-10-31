@@ -100,9 +100,7 @@ new list.
 
 Subtask session titles were too long for the sidebar. The creation tool now asks for 2–3 words,
 with 4 at most and only as a last resort, and directs task details into the message text. This is
-loose prompt guidance, not a runtime word-count limit or automatic truncation. Tightening it to
-"1–3 words naming the subject" for the Spaces sidebar was reverted, because the tool description
-reaches every person, including those who never opened that sidebar.
+loose prompt guidance, not a runtime word-count limit or automatic truncation.
 
 ## Conversation subtasks have no opening task
 
@@ -125,9 +123,8 @@ gated, so `#assertCanCreate` itself stays independent of reach.
 
 ## A module that speaks for its subtask can silence its reports
 
-Prioritizing, the sidebar's organiser, is an ordinary subtask of Happy, but each of its turns
-reported a one-line reply into Happy's chat beside the sidebar's own batch note, so Happy's chat
-got narration and duplicates. `create` takes `unreported`, which stores the same "do not report to
+A module-owned subtask of Happy, such as Voice, reported every turn's reply into Happy's chat,
+which filled it with narration and duplicates. `create` takes `unreported`, which stores the same "do not report to
 the creator" collaboration flag `createConversation` uses; the subtask is otherwise identical, and
 the calling module writes the one message its coordinator should see.
 
@@ -137,5 +134,5 @@ Subtasks always started in Auto. `create_subtask` now settles the mode from the 
 persistent mode, with the same `read_only` and `full_mode` rules as `create_agent`, when the tool runs,
 and records it with the durable start: the start runs later on a context that names no agent, so
 it cannot read the coordinator's mode itself. A start recorded before modes were kept uses the
-product default. Module-owned subtasks (Voice, Prioritizing) and exported-bot conversations keep
+product default. Module-owned subtasks (Voice) and exported-bot conversations keep
 their own modes. A person may still pick any mode in a subtask's own conversation.

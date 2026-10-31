@@ -43,26 +43,3 @@ means chosen for compatibility; an explicit false keeps the workspace eligible f
 naming. Names supplied by the workspace-creation agent tool are deliberate. Eligibility is checked
 again by the workspaces catalog when the generated slug is applied, so a user rename that races
 naming still wins.
-
-## Subject names are for work started in the sidebar, not for everyone
-
-For the Spaces sidebar, naming was changed for every chat: one to three words naming the subject,
-at most 32 characters, written by the chat's own model at its default effort with a one-minute
-bound. Six-word titles such as "Sidebar UI fixes and draggable spaces" were too long for a sidebar
-row, and a cheap model at the lowest effort misread what the work was. That regressed everyone who
-never opened the sidebar: Kirill asked that tasks, bots and workspaces outside it keep naming
-themselves exactly as before.
-
-There are now two naming styles. `standard` is the original naming and the default for every
-chat: two to six words (six words and 80 characters kept), bot names of three words and 40
-characters, written by the cheapest model of the chat's account at the least effort it accepts,
-with a ten-second bound. `subject` is the Spaces naming above, with a trailing joining word such
-as "and" or "&" dropped so a cut never reads as unfinished.
-
-Only Spaces decides who gets subject names, and it does so without Titles reading Spaces or
-Settings, which would be a construction cycle (`SpacesModule` and `UserSettingsModule` both sit
-above `TasksModule`, which takes `TitlesModule`). When Spaces makes a stem cell, the only way a
-person who opted in starts new work in the sidebar, it calls `nameBySubject` for the stem cell's
-agent in the same transaction. `namingStyle` answers `subject` for that agent and every chat under
-it, and `standard` for everything else, including a person's other tasks and bots. Tasks and
-Titles both ask `namingStyle` before naming, so the task name and the chat title agree.

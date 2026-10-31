@@ -19,11 +19,11 @@ const eagerDirectories = [
     "userInput",
 ];
 /**
- * Prioritizing's and Voice's whole tool arrays, which they receive without tool search,
- * and set_status and post_story, which agents never used while they were deferred.
+ * Voice's whole tool arrays, which it receives without tool search, and set_status and
+ * post_story, which agents never used while they were deferred.
  */
 const eagerFiles = [
-    "spaces/tools/prioritizingTools.ts",
+    "live/impl/voiceSidebarTools.ts",
     "live/impl/liveDesktopTools.ts",
     "stories/tools/set_status.ts",
     "stories/tools/post_story.ts",

@@ -47,9 +47,13 @@ import {
     type VoiceSettingsUpdate,
 } from "../config/index.js";
 import { DurableFunctionsModule } from "../durableFunctions/index.js";
+import { EventsModule } from "../events/index.js";
+import { HistoryModule } from "../history/index.js";
 import { AGENT_MESSAGE_ORIGIN_METADATA } from "../impl/messageOrigin.js";
-import { SpacesModule, type SpaceSidebarOutline } from "../spaces/index.js";
 import { SubtasksModule, type CreateSubtaskInput } from "../subtasks/index.js";
+import { SurfacesModule } from "../surfaces/index.js";
+import { TasksModule } from "../tasks/index.js";
+import { TeamModule } from "../team/index.js";
 import { liveVersion } from "./impl/liveVersion.js";
 import { LiveError } from "./LiveError.js";
 import {
@@ -88,7 +92,12 @@ import {
 } from "./impl/liveAppState.js";
 import { liveFixedOutcome } from "./impl/liveOutcome.js";
 import { liveMentionedTarget } from "./impl/liveMentionedTarget.js";
+import { formatConversationReads } from "./impl/formatConversationReads.js";
+import { readVoiceConversation } from "./impl/readVoiceConversation.js";
+import { readVoiceOutline } from "./impl/readVoiceOutline.js";
 import { renderVoiceOutline, VOICE_OUTLINE_TITLE } from "./impl/renderVoiceOutline.js";
+import type { VoiceOutline } from "./impl/VoiceOutline.js";
+import { voiceSidebarTools } from "./impl/voiceSidebarTools.js";
 import { getVoiceSettingsTool } from "./tools/get_voice_settings.js";
 import { setVoiceSettingsTool } from "./tools/set_voice_settings.js";
 import { LiveControllerError } from "./impl/LiveControllerError.js";
@@ -114,6 +123,8 @@ const OUTCOME_CHARACTERS = 8192;
 /** How long a request may run in Voice, excluding queue time, and how many inferences. */
 const REQUEST_DEADLINE_MS = 120_000;
 const REQUEST_ROUNDS = 8;
+/** One `read_conversations` answer stays cheap however many conversations it reads. */
+const CONVERSATIONS_TEXT_LIMIT = 24_000;
 /** How long a stopped Voice turn is given to settle before the next request reaches Voice. */
 const SETTLE_GRACE_MS = 10_000;
 type Transport = Awaited<ReturnType<typeof createLiveProviderTransport>>;
@@ -164,7 +175,7 @@ interface Call {
     voiceInstructions: string;
     appState?: LiveAppState;
     /** The latest sidebar outline, and the text GPT-Live was last fully told. */
-    outline?: SpaceSidebarOutline;
+    outline?: VoiceOutline;
     outlineText?: string;
     outlineTimer?: ReturnType<typeof setTimeout>;
     outlineSending?: true;
@@ -222,7 +233,11 @@ export class LiveModule implements AgentModule {
     readonly #durable: DurableFunctionsModule;
     readonly #bots: BotsModule;
     readonly #subtasks: SubtasksModule;
-    readonly #spaces: SpacesModule;
+    readonly #tasks: TasksModule;
+    readonly #surfaces: SurfacesModule;
+    readonly #history: HistoryModule;
+    readonly #events: EventsModule;
+    readonly #team: TeamModule;
     readonly #calls = new Map<string, Call>();
     readonly #listeners = new Set<(event: LiveEvent) => void>();
     readonly #settingsListeners = new Set<() => void>();
@@ -235,7 +250,7 @@ export class LiveModule implements AgentModule {
     /** Voice turns a restart interrupted; they are stopped, never resumed. */
     readonly #interrupted = new Set<string>();
     #agents: AgentSystemRef | undefined;
-    #unsubscribe: (() => void) | undefined;
+    #unsubscribe: (() => void)[] = [];
     #ctx: Context | undefined;
     #stopped = false;
 
@@ -244,13 +259,21 @@ export class LiveModule implements AgentModule {
         durable: DurableFunctionsModule,
         bots: BotsModule,
         subtasks: SubtasksModule,
-        spaces: SpacesModule,
+        tasks: TasksModule,
+        surfaces: SurfacesModule,
+        history: HistoryModule,
+        events: EventsModule,
+        team: TeamModule,
     ) {
         this.#config = config;
         this.#durable = durable;
         this.#bots = bots;
         this.#subtasks = subtasks;
-        this.#spaces = spaces;
+        this.#tasks = tasks;
+        this.#surfaces = surfaces;
+        this.#history = history;
+        this.#events = events;
+        this.#team = team;
         durable.register({
             name: START,
             argumentsSchema: Type.Object({ id: Type.String() }, { additionalProperties: false }),
@@ -292,10 +315,16 @@ export class LiveModule implements AgentModule {
             for (const voice of await voiceAgents(tx))
                 this.#voiceOwners.set(voice.agentId, voice.ownerId);
         });
-        this.#unsubscribe = this.#spaces.onEvent((_eventCtx, event) => {
-            for (const call of this.#calls.values())
-                if (call.ownerId === event.ownerUserId) this.#queueOutline(call);
-        });
+        // Any bot, task, or Surface change may rename, add, or remove a row; an unchanged outline
+        // pushes nothing.
+        const outlineChanged = () => {
+            for (const call of this.#calls.values()) this.#queueOutline(call);
+        };
+        this.#unsubscribe = [
+            this.#bots.onEvent(outlineChanged),
+            this.#tasks.onEvent(outlineChanged),
+            this.#surfaces.onEvent(outlineChanged),
+        ];
         return {
             tools: async (toolCtx, scope) =>
                 (await this.#isAdmin(toolCtx, scope.agent.id))
@@ -455,6 +484,42 @@ export class LiveModule implements AgentModule {
     ): Promise<VoiceConfig> {
         await this.#requireAdmin(ctx, agentId);
         return await this.updateVoiceSettings(ctx, patch);
+    }
+
+    /** The person's sidebar as Voice reads it: names in order, with agent IDs for targeting. */
+    async voiceOutline(ctx: Context, ownerId: string): Promise<VoiceOutline> {
+        return await readVoiceOutline(
+            ctx,
+            { bots: this.#bots, tasks: this.#tasks, surfaces: this.#surfaces },
+            ownerId,
+        );
+    }
+
+    /** Several conversations at once, bounded so reading many stays cheap. */
+    async readConversations(
+        ctx: Context,
+        ownerId: string,
+        input: {
+            readonly ids: readonly string[];
+            readonly turns: number;
+            readonly replies: number;
+        },
+    ): Promise<string> {
+        const agents = this.#requireAgents();
+        const outline = await this.voiceOutline(ctx, ownerId);
+        const modules = {
+            agents,
+            history: this.#history,
+            events: this.#events,
+            team: this.#team,
+        };
+        const reads = [];
+        for (const id of input.ids)
+            reads.push({
+                id,
+                text: await readVoiceConversation(ctx, modules, outline, id, input),
+            });
+        return formatConversationReads(reads, CONVERSATIONS_TEXT_LIMIT);
     }
 
     /** The person's Voice agent, if they have made a call; an archived one is still reported. */
@@ -755,7 +820,7 @@ export class LiveModule implements AgentModule {
 
     async stop(): Promise<void> {
         this.#stopped = true;
-        this.#unsubscribe?.();
+        for (const unsubscribe of this.#unsubscribe.splice(0)) unsubscribe();
         await Promise.all(
             [...this.#calls.values()].map(async (call) => {
                 await this.close(this.#context(), call.ownerId, call.session.id);
@@ -880,7 +945,7 @@ export class LiveModule implements AgentModule {
 
     /**
      * The person's one Voice: an unreported subtask of Happy, made the way Happy makes any subtask,
-     * with its own conversation and row. It is made with their first call and again with the next
+     * with its own conversation. It is made with their first call and again with the next
      * call after they archived it. Its opening turn runs on the voice settings' controller as new
      * agents are offered it; each request then runs on its call's frozen route.
      */
@@ -889,10 +954,8 @@ export class LiveModule implements AgentModule {
         const stored = await readVoiceAgent(ctx, ownerId);
         if (stored !== undefined) {
             const config = await agents.config(ctx, stored.agentId);
-            if (config !== undefined && typeof config.metadata?.["archivedAt"] !== "number") {
-                await this.#spaces.ensureVoiceRow(ctx, ownerId, stored.agentId);
+            if (config !== undefined && typeof config.metadata?.["archivedAt"] !== "number")
                 return stored.agentId;
-            }
         }
         const happy = await this.#bots.chiefOfStaff(ctx);
         if (happy === undefined)
@@ -920,7 +983,6 @@ export class LiveModule implements AgentModule {
             { unreported: true },
         );
         await saveVoiceAgent(ctx, ownerId, agentId, Date.now());
-        await this.#spaces.ensureVoiceRow(ctx, ownerId, agentId);
         return agentId;
     }
 
@@ -928,7 +990,7 @@ export class LiveModule implements AgentModule {
     #voiceTools(ownerId: string, agentId: string): AnyAgentTool[] {
         const capabilities = this.#requests.get(agentId)?.call.capabilities ?? [];
         return [
-            ...this.#spaces.voiceSidebarTools(ownerId, agentId),
+            ...voiceSidebarTools(this, ownerId),
             ...liveDesktopTools(this, agentId),
             ...(capabilities.includes("taskCreate") ? liveTaskCreateTools(this, agentId) : []),
             ...(capabilities.includes("sessionModelChange")
@@ -1306,14 +1368,9 @@ export class LiveModule implements AgentModule {
         )
             return undefined;
         const names = new Map<string, string>();
-        const visit = (rows: SpaceSidebarOutline["groups"][number]["rows"]) => {
-            for (const row of rows) {
-                if (row.agentId !== undefined && !names.has(row.agentId))
-                    names.set(row.agentId, row.name);
-                visit(row.children);
-            }
-        };
-        for (const group of request.call.outline?.groups ?? []) visit(group.rows);
+        for (const row of request.call.outline?.rows ?? [])
+            if (row.agentId !== undefined && !names.has(row.agentId))
+                names.set(row.agentId, row.name);
         return liveFixedOutcome(
             request.executed.map(({ action }) => action),
             this.#view(request.call),
@@ -1658,7 +1715,7 @@ export class LiveModule implements AgentModule {
     /** The outline voice is told, or a fixed line when the sidebar cannot be read. */
     async #readOutline(call: Call): Promise<string> {
         try {
-            call.outline = await this.#spaces.sidebarOutline(this.#context(), call.ownerId);
+            call.outline = await this.voiceOutline(this.#context(), call.ownerId);
             return renderVoiceOutline(call.outline);
         } catch {
             return `# ${VOICE_OUTLINE_TITLE}\n\nThe sidebar could not be read.`;

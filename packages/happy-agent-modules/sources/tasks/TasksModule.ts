@@ -107,7 +107,6 @@ const NAMING_FUNCTION = "tasks.name";
 const namingArgumentsSchema = Type.Object({
     taskId: cuid2Schema,
     providerId: Type.String(),
-    modelId: Type.Optional(Type.String()),
     message: Type.String({ minLength: 1, maxLength: MAX_NAMING_MESSAGE_CHARS }),
 });
 const ownerSchema = Type.Union([cuid2Schema, Type.Null()]);
@@ -179,7 +178,7 @@ export class TasksModule implements AgentModule {
             resultSchema: Type.Null(),
             executor: (ctx, call) =>
                 this.#backgroundScope.runInAsyncScope(async () => {
-                    const { taskId, providerId, modelId, message } = call.arguments;
+                    const { taskId, providerId, message } = call.arguments;
                     const initial = await readTask(ctx, taskId);
                     if (
                         initial === undefined ||
@@ -187,7 +186,6 @@ export class TasksModule implements AgentModule {
                         initial.status !== "active"
                     )
                         return null;
-                    const style = await this.#titles.namingStyle(ctx, initial.agentId);
                     const name = await runNamingAttempts(
                         ctx,
                         call.kv,
@@ -207,8 +205,6 @@ export class TasksModule implements AgentModule {
                                         firstMessage: message,
                                         wanted: { title: true },
                                         providerId,
-                                        ...(modelId === undefined ? {} : { modelId }),
-                                        style,
                                     },
                                     ctx.lifetime === undefined ? {} : { signal: ctx.lifetime },
                                 )
@@ -216,7 +212,7 @@ export class TasksModule implements AgentModule {
                         },
                     );
                     if (name === null) return null;
-                    const chosen = name ?? this.#titles.fallbackName(message, style);
+                    const chosen = name ?? this.#titles.fallbackName(message);
                     const title = chosen
                         ?.split(/\s+/u)
                         .slice(0, 6)
@@ -310,7 +306,6 @@ export class TasksModule implements AgentModule {
                     arguments: {
                         taskId: task.id,
                         providerId: scope.agent.provider,
-                        ...(scope.agent.model === undefined ? {} : { modelId: scope.agent.model }),
                         message,
                     },
                 });

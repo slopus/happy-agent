@@ -2,9 +2,6 @@ import {
     MAX_CHAT_TITLE_CHARS,
     MAX_CHAT_TITLE_WORDS,
     MAX_SLUG_CHARS,
-    MAX_SUBJECT_TITLE_CHARS,
-    MAX_SUBJECT_TITLE_WORDS,
-    type NamingStyle,
     type TitleNames,
     type TitleNamesWanted,
 } from "../Title.js";
@@ -21,11 +18,7 @@ import { wantedNames } from "./createNamingRequest.js";
  * model that simply wrote the name has also answered. When both were asked for there is nothing to
  * fall back on — an untagged blob cannot be split into two names without guessing which is which.
  */
-export function parseSuggestedNames(
-    text: string,
-    wanted: TitleNamesWanted,
-    style: NamingStyle = "standard",
-): TitleNames {
+export function parseSuggestedNames(text: string, wanted: TitleNamesWanted): TitleNames {
     const names = wantedNames(wanted);
     const untagged = names.length === 1 ? stripFences(text) : undefined;
     const read = (name: keyof TitleNamesWanted): string | undefined => {
@@ -33,9 +26,7 @@ export function parseSuggestedNames(
         const answer = normalizeLine(readTag(text, name) ?? untagged ?? "");
         return answer.length === 0 ? undefined : answer;
     };
-    const title = keep(read("title"), (value) =>
-        style === "subject" ? shortenSubject(value) : shortenTitle(value),
-    );
+    const title = keep(read("title"), shortenTitle);
     const slug = keep(read("slug"), toSlug);
     return {
         ...(slug === undefined ? {} : { slug }),
@@ -55,29 +46,16 @@ function readTag(text: string, tag: string): string | undefined {
 }
 
 function shortenTitle(title: string): string {
-    const shortened = titleWords(title).slice(0, MAX_CHAT_TITLE_WORDS).join(" ");
-    return shortened.length <= MAX_CHAT_TITLE_CHARS
-        ? shortened
-        : `${shortened.slice(0, MAX_CHAT_TITLE_CHARS - 1).trimEnd()}…`;
-}
-
-function shortenSubject(title: string): string {
-    const words = titleWords(title).slice(0, MAX_SUBJECT_TITLE_WORDS);
-    // A cut that ends on a joining word reads as unfinished ("Sidebar fixes &").
-    while (words.length > 1 && /^(?:and|or|&|\+|with|for|of|to|the|a)$/iu.test(words.at(-1)!))
-        words.pop();
-    const shortened = words.join(" ");
-    return shortened.length <= MAX_SUBJECT_TITLE_CHARS
-        ? shortened
-        : `${shortened.slice(0, MAX_SUBJECT_TITLE_CHARS - 1).trimEnd()}…`;
-}
-
-function titleWords(title: string): string[] {
-    return title
+    const words = title
         .replace(/^#+\s*/u, "")
         .replace(/^["'`]+|["'`.!?:;,\s]+$/gu, "")
         .split(/\s+/u)
-        .filter(Boolean);
+        .filter(Boolean)
+        .slice(0, MAX_CHAT_TITLE_WORDS);
+    const shortened = words.join(" ");
+    return shortened.length <= MAX_CHAT_TITLE_CHARS
+        ? shortened
+        : `${shortened.slice(0, MAX_CHAT_TITLE_CHARS - 1).trimEnd()}…`;
 }
 
 /**

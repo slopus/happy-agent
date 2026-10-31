@@ -1,6 +1,7 @@
 # Desktop Live
 
-`LiveModule(ConfigModule, DurableFunctionsModule, BotsModule, SubtasksModule, SpacesModule)` owns
+`LiveModule(ConfigModule, DurableFunctionsModule, BotsModule, SubtasksModule, TasksModule,
+SurfacesModule, HistoryModule, EventsModule, TeamModule)` owns
 window-scoped voice sessions, the machine's voice settings, and each person's Voice. The browser
 owns WebRTC media; this module owns one credential-selected provider call, its sideband, durable
 status, and a typed desktop control socket. GPT-Live is the voice; Voice is the text agent it hands
@@ -15,14 +16,11 @@ Voice is one long-running, unreported subtask of Happy per person, created throu
 archive it; the next call then creates a new one. Its opening task only confirms it is set up, on
 the voice settings' controller as new agents are offered it; each request runs on its call's frozen
 route. `happy_live_voice_agents` maps the
-person to Voice and holds the hash of the sidebar outline Voice was last given. Spaces gives Voice
-its own settled row (`role: "voice"`, below Happy or below Prioritizing's row when that follows
-Happy) through `SpacesModule.ensureVoiceRow`, inside the reservation's transaction.
+person to Voice and holds the hash of the sidebar outline Voice was last given.
 
 Live's hooks make Voice one job: `VOICE_AGENT_INSTRUCTIONS` replace its instructions, and its tools
-are fixed arrays merged in order: Spaces' read-only sidebar tools (`list_sidebar`,
-`read_conversations` with the machine scope, `get_sidebar_styles`, `request_space_placement`,
-`request_sidebar_tidy`), the five desktop actions in `impl/liveDesktopTools.ts`, then `taskCreate`
+are fixed arrays merged in order: the read-only sidebar tools in `impl/voiceSidebarTools.ts`
+(`list_sidebar` and `read_conversations`), the five desktop actions in `impl/liveDesktopTools.ts`, then `taskCreate`
 and `sessionModelChange` only when the serving call negotiated them. Desktop tools are never
 durable and need no review: the desktop verifies each action, and an interrupted one is never run
 again. A person typing to Voice gets a text answer; without an active call its desktop tools refuse.
@@ -82,9 +80,9 @@ is refused, and an agent target (`{ kind: "agent" }`) needs the `agentTargets` c
 needs `appState` and the desktop's `localConnectionId`.
 
 GPT-Live is told the sidebar as an outline of names (`impl/renderVoiceOutline.ts` over
-`SpacesModule.sidebarOutline`): sections, separators, rows and the sessions under expanded rows,
-with folded counts and no status, activity, messages or IDs. Startup is bounded to 8 KiB with a
-count of omitted entries. A Spaces event re-reads it; only changed text is pushed, coalesced for 250
+`impl/readVoiceOutline.ts`): Happy, the other bots, the person's tasks and the Surfaces they joined,
+with no status, activity, messages or IDs. Startup is bounded to 8 KiB with a count of omitted
+entries. A bot, task or Surface event re-reads it; only changed text is pushed, coalesced for 250
 milliseconds with one push in flight, split into appends of at most 500 bytes, and held while a
 request lacks its delivered outcome. AppState is never pushed: it only resolves names and targets
 and validates models. Desktop context revisions are accepted for actions, and `sessionUpdate` frames

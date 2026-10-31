@@ -356,37 +356,8 @@ through `getUsers()` and `getUserPhoto()`. `createTask()` creates a task the cal
 left to name itself from its first message, and `renameTask()` renames it. A task's
 `workspaceId` works with every workspace route, files, terminals, and Git included. Follow `task.created` and `task.updated` for the tasks, and `task.joined`,
 `task.reordered`, `task.left`, and `task.membership.updated` for the caller's memberships. A
-membership's `unread` is set when the caller's Prioritizing added the task for them after a
-teammate's agent mentioned them; `markTaskRead()`, or `markAgentRead()` on the task's agent,
-clears it. Older daemons omit `unread`.
-
-Spaces, the sidebar, are additive without a protocol bump. Detect support through `listSpaces()`:
-`404` means the daemon has no Spaces. It returns the caller's rows, sections, and the event cursor
-to follow `space.*` events from. `createStemCell()` starts new work; when `getHealth()` reports
-`capabilities.stemCellIdentities`, it also takes the new conversation's `taskId`, `workspaceId`,
-and `agentId`, so a client can show and select it before the daemon answers, and repeating the
-same `id` with the same IDs is a safe retry. `updateSpace()` and
-`updateSpaceSection()` apply the person's own changes at once, and `removeSpace()` drops new work
-nobody wrote in. Prioritizing, a subtask of Happy, organises the rest; its changes apply in
-batches. `reportSpaceAttention()` holds them back while the person is `interacting` and lets one
-apply when `calm`, and `tidySpaces()` posts "Tidy the sidebar now" into its conversation. `listSpaceBatches()` reads the applied batches with their notes.
-`getSpaceSidebar()` reads the sidebar document with the session icons Prioritizing chose
-(`agentIcons`, empty when an older daemon omits it) and `seed: true` while it still mirrors the
-classic sidebar.
-
-When `getHealth()` reports `capabilities.sidebarOperations`, change the document with
-`applySpaceSidebarOperations()`: a batch of `insert`, `move`, `remove`, and `set` operations keyed
-by node ID, sent with a `mutationId` retry key and the `baseVersion` it was made against. The
-daemon rebases it onto the current version and answers `409` with `operationIndex` only for a real
-conflict. Read with `getSpaceSidebar({ widgets: true })` to receive `<happy-widget>` cards, and
-follow `space.sidebar.changed`, which carries each new version's operations. The package exports
-the very functions the daemon uses: `parseSpaceSidebar()` and `formatSpaceSidebar()` read and write
-the document's canonical form, `applySpaceSidebarOperations()` applies a batch (apply unconfirmed
-batches on top of the last confirmed version to draw optimistically, and replay change events with
-it), and `diffSpaceSidebar()` turns a whole edited document into operations. Older daemons take
-whole documents through `updateSpaceSidebar()`. When health also reports
-`capabilities.sidebarSeparatorPins`, a separator may carry `pin: "top"` or `pin: "bottom"`, set
-with `{ type: "set", id, pin }` and cleared with `pin: null`; the pin is the person's.
+membership's `unread` is set when a teammate's agent looped the caller into the task;
+`markTaskRead()`, or `markAgentRead()` on the task's agent, clears it. Older daemons omit `unread`.
 
 Artifacts are additive without a protocol bump. Detect support through `listArtifacts()`: `404`
 means the daemon has no artifacts. The catalog is global and pages newest-created first; filter it by

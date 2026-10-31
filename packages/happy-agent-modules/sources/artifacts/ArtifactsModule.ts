@@ -23,9 +23,6 @@ import { DurableFunctionsModule } from "../durableFunctions/index.js";
 import { ProjectsModule } from "../projects/index.js";
 import { TasksModule } from "../tasks/index.js";
 import { WorkspacesModule } from "../workspaces/index.js";
-import type { SpacesModule } from "../spaces/index.js";
-import { readSidebarDocument, SidebarValidationError } from "./SidebarDocument.js";
-import { readFile } from "node:fs/promises";
 import {
     insertArtifactInline,
     queryArtifactInline,
@@ -182,32 +179,6 @@ export class ArtifactsModule implements AgentModule {
     readonly #listeners = new Set<ArtifactEventListener>();
     #agents: AgentSystemRef | undefined;
     #home: Promise<void> | undefined;
-    #spaces: SpacesModule | undefined;
-
-    /** Spaces owns identity and author authority; Artifacts owns validation and immutable bytes. */
-    bindSpaces(spaces: SpacesModule): void {
-        this.#spaces = spaces;
-    }
-
-    /** An immutable committed operation, used by document transport retries. */
-    async versionForOperation(
-        ctx: Context,
-        artifactId: string,
-        operationId: string,
-    ): Promise<ArtifactVersion | undefined> {
-        const number = await queryArtifactVersionForOperation(ctx, artifactId, operationId);
-        return number === undefined
-            ? undefined
-            : await queryArtifactVersion(ctx, artifactId, number);
-    }
-
-    sidebarTools(agentId: string): AnyAgentTool[] {
-        return [
-            readArtifactTool(this),
-            readArtifactFileTool(this),
-            updateArtifactTool(this, this.#compute, agentId),
-        ].map((tool) => ({ ...tool, defer: false }));
-    }
 
     constructor(
         config: ConfigModule,
@@ -500,34 +471,8 @@ export class ArtifactsModule implements AgentModule {
         return await this.stageUpload(ctx, new TextEncoder().encode(text));
     }
 
-    /** No filesystem writes: safe inside a lifecycle/owner transaction, including rollback. */
-    async stageSidebarText(ctx: Context, text: string): Promise<ArtifactUpload> {
-        readSidebarDocument(text);
-        const now = Date.now();
-        const bytes = new TextEncoder().encode(text);
-        const upload = {
-            id: createId(),
-            size: bytes.byteLength,
-            sha256: createHash("sha256").update(bytes).digest("hex"),
-            utf8: true,
-            createdAt: now,
-            expiresAt: now + ARTIFACT_UPLOAD_LIFETIME_MS,
-        };
-        await ctx.inTx(async (txCtx) => {
-            await insertArtifactUpload(txCtx, upload);
-            await updateArtifactUploadReceived(txCtx, upload);
-            await insertArtifactInline(txCtx, upload.sha256, text);
-            await this.#durableFunctions.invoke(txCtx, {
-                function: ARTIFACT_UPLOAD_EXPIRY_FUNCTION,
-                arguments: { uploadId: upload.id, expiresAt: upload.expiresAt },
-                operationId: uploadOperationId(upload.id),
-            });
-        });
-        return upload;
-    }
-
     /**
-     * Stage a story's `story.json` held in the database, like a sidebar's text, so Stories can
+     * Stage a story's `story.json` held in the database, so Stories can
      * write a version inside the transaction that changes the story.
      */
     async stageStoryEntry(ctx: Context, text: string): Promise<ArtifactUpload> {
@@ -576,13 +521,6 @@ export class ArtifactsModule implements AgentModule {
         const contentPath = this.#config.artifactContentPath(upload.sha256);
         if (!(await artifactFileExists(contentPath))) return undefined;
         return { upload: structuredClone(upload), contentPath };
-    }
-
-    async #sidebarText(ctx: Context, digest: string): Promise<string> {
-        return (
-            (await queryArtifactInline(ctx, digest)) ??
-            (await readFile(this.#config.artifactContentPath(digest), "utf8"))
-        );
     }
 
     /**
@@ -669,19 +607,6 @@ export class ArtifactsModule implements AgentModule {
                     );
                 }
             }
-            if (input.type === "sidebar_proposal") {
-                readSidebarDocument(await this.#sidebarText(txCtx, entry.sha256));
-                if (this.#spaces === undefined || input.id === undefined)
-                    throw new ArtifactInputError("Sidebar proposals are made by Prioritizing.");
-                await this.#spaces.validateProposalWrite(txCtx, input.id);
-            }
-            if (input.type === "sidebar") {
-                const html = await this.#sidebarText(txCtx, entry.sha256);
-                readSidebarDocument(html);
-                if (this.#spaces === undefined || input.id === undefined)
-                    throw new ArtifactInputError("Sidebar artifacts are created by Spaces.");
-                await this.#spaces.validateSidebarWrite(txCtx, input.id, html);
-            }
             const background = input.background?.toLowerCase();
             const display = input.display;
             const now = Date.now();
@@ -745,21 +670,15 @@ export class ArtifactsModule implements AgentModule {
         return await this.#update(ctx, input, false);
     }
 
-    /** Spaces calls this only after the calm check and revalidation of its durable proposal. */
-    async commitSidebar(ctx: Context, input: UpdateArtifactInput): Promise<ArtifactRecord> {
-        return await this.#update(ctx, input, true);
-    }
-
     /** Stories makes a story's next version here, after its own checks of the story. */
     async commitStory(ctx: Context, input: UpdateArtifactInput): Promise<ArtifactRecord> {
-        return await this.#update(ctx, input, false, true);
+        return await this.#update(ctx, input, true);
     }
 
     async #update(
         ctx: Context,
         input: UpdateArtifactInput,
-        sidebarBatch: boolean,
-        story = false,
+        story: boolean,
     ): Promise<ArtifactRecord> {
         if (!Value.Check(updateArtifactInputSchema, input)) {
             throw new ArtifactInputError(
@@ -837,30 +756,6 @@ export class ArtifactsModule implements AgentModule {
                     );
                 }
             }
-            // A proposal changes only through Prioritizing's proposals and the person's routes.
-            if (current.type === "sidebar_proposal") {
-                if (!sidebarBatch)
-                    throw new ArtifactInputError(
-                        "A sidebar proposal is changed only by Prioritizing and the proposal routes.",
-                    );
-                if (input.baseVersion !== current.latestVersion)
-                    throw new ArtifactConflictError(
-                        "The proposal changed. Read its current version before editing.",
-                        current,
-                    );
-            }
-            if (current.type === "sidebar") {
-                if (input.baseVersion === undefined)
-                    throw new ArtifactInputError("Sidebar writes require baseVersion.");
-                if (
-                    (sidebarBatch || input.author.kind !== "agent") &&
-                    input.baseVersion !== current.latestVersion
-                )
-                    throw new ArtifactConflictError(
-                        "The sidebar changed. Read its current version before editing.",
-                        current,
-                    );
-            }
             const latest = await queryArtifactVersion(txCtx, current.id, current.latestVersion);
             if (latest === undefined) throw new Error("Artifact storage lost the latest version.");
             const kept = new Map(
@@ -880,36 +775,8 @@ export class ArtifactsModule implements AgentModule {
                 current.type,
                 [...kept.values()],
                 input.files ?? [],
-                current.type !== "sidebar" || sidebarBatch || input.author.kind !== "agent",
             );
             const now = Math.max(Date.now(), current.updatedAt + 1);
-            if (current.type === "sidebar_proposal")
-                readSidebarDocument(await this.#sidebarText(txCtx, entry.sha256));
-            if (current.type === "sidebar") {
-                const html = await this.#sidebarText(txCtx, entry.sha256);
-                readSidebarDocument(html);
-                if (this.#spaces === undefined)
-                    throw new ArtifactInputError("Spaces is unavailable.");
-                // An ordinary update goes through Spaces, which turns it into operations and
-                // commits them, or queues Prioritizing's, through this method's batch path.
-                if (!sidebarBatch) {
-                    await this.#spaces.writeSidebarArtifact(txCtx, current.id, {
-                        html: (input.files ?? []).some((file) => file.path === "index.html")
-                            ? html
-                            : undefined,
-                        author: input.author,
-                        baseVersion: input.baseVersion!,
-                        operationId: input.operationId ?? createId(),
-                        metadata: {
-                            ...(input.title === undefined ? {} : { title: input.title }),
-                            ...(input.background === undefined
-                                ? {}
-                                : { background: input.background }),
-                        },
-                    });
-                    return await this.#required(txCtx, current.id);
-                }
-            }
             const title = input.title ?? current.title;
             const background =
                 input.background === undefined
@@ -1288,7 +1155,6 @@ export class ArtifactsModule implements AgentModule {
         type: ArtifactType,
         kept: readonly ArtifactFile[],
         placements: readonly ArtifactPlacement[],
-        consume = true,
     ): Promise<{ readonly files: ArtifactFile[]; readonly entry: ArtifactFile }> {
         if (new Set(placements.map((placement) => placement.path)).size !== placements.length) {
             throw new ArtifactInputError("Each path can be written only once per version.");
@@ -1325,18 +1191,8 @@ export class ArtifactsModule implements AgentModule {
         const files = [...byPath.values()].sort((left, right) =>
             compareArtifactPaths(left.path, right.path),
         );
-        let entry: ArtifactFile;
-        try {
-            entry = checkArtifactFiles(type, files, notUtf8);
-        } catch (error: unknown) {
-            if (
-                (type === "sidebar" || type === "sidebar_proposal") &&
-                error instanceof ArtifactInputError
-            )
-                throw new SidebarValidationError(error.message);
-            throw error;
-        }
-        for (const placement of consume ? placements : []) {
+        const entry = checkArtifactFiles(type, files, notUtf8);
+        for (const placement of placements) {
             await deleteArtifactUpload(ctx, placement.uploadId);
             await this.#durableFunctions.cancel(ctx, uploadOperationId(placement.uploadId));
         }

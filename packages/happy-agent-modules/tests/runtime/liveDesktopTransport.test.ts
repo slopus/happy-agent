@@ -612,9 +612,6 @@ it.each([
         expect(captured?.options.tools?.map((tool) => tool.name)).toEqual([
             "list_sidebar",
             "read_conversations",
-            "get_sidebar_styles",
-            "request_space_placement",
-            "request_sidebar_tidy",
             "desktopState",
             "desktopOpen",
             "sessionRead",

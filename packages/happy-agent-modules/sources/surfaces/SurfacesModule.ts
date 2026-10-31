@@ -132,7 +132,6 @@ const CHAT_TYPES: ReadonlySet<string> = new Set([
     "task",
 ]);
 const PREPARE_CHAT = "surfaces.prepareChat";
-const DOCUMENT_CHANGED = "surfaces.documentChanged";
 /** How long a person's request waits for a chat's folder and agent before reporting 503. */
 const CHAT_READY_TIMEOUT_MS = 20_000;
 /** The catalog manages chat folders; the agent sandbox does not apply to that work. */
@@ -149,9 +148,6 @@ export class SurfacesModule implements AgentModule {
     readonly migrations = surfacesMigrations;
     readonly #listeners = new Set<Listener>();
     readonly #transactional = new Set<Listener>();
-    readonly #documentChanged = new Set<
-        (ctx: Context, surfaceId: string) => Promise<void> | void
-    >();
     readonly #chatWaiters = new Map<string, Set<() => void>>();
     readonly #live = new SurfaceDocumentLive();
     #store!: SurfacesPersistence;
@@ -190,16 +186,6 @@ export class SurfacesModule implements AgentModule {
             resultSchema: Type.Null(),
             executor: async (ctx, call) => {
                 await this.#prepareChat(ctx, call.arguments.surfaceId);
-                return null;
-            },
-        });
-        durable.register({
-            name: DOCUMENT_CHANGED,
-            argumentsSchema: Type.Object({ surfaceId: surfaceIdSchema }),
-            resultSchema: Type.Null(),
-            executor: async (ctx, call) => {
-                for (const listener of this.#documentChanged)
-                    await listener(ctx, call.arguments.surfaceId);
                 return null;
             },
         });
@@ -253,15 +239,6 @@ export class SurfacesModule implements AgentModule {
         this.#transactional.add(listener);
         return () => {
             this.#transactional.delete(listener);
-        };
-    }
-    /** Internal durable notification, independent of editor streams and the public API journal. */
-    onDocumentChanged(
-        listener: (ctx: Context, surfaceId: string) => Promise<void> | void,
-    ): () => void {
-        this.#documentChanged.add(listener);
-        return () => {
-            this.#documentChanged.delete(listener);
         };
     }
     /**
@@ -387,25 +364,6 @@ export class SurfacesModule implements AgentModule {
             } catch (error) {
                 if (error instanceof SurfaceError && error.code === "not_found") return undefined;
                 throw error;
-            }
-        });
-    }
-    /** Whether this supported feature currently holds useful shared content. */
-    async hasContent(ctx: Context, surfaceId: string): Promise<boolean> {
-        return ctx.inTx(async (tx) => {
-            const surface = await this.#surface(tx, surfaceId);
-            switch (surface.type) {
-                case "todo":
-                    return this.#store.hasTodoContent(tx, surfaceId);
-                case "document":
-                    return (
-                        (await this.#documents.projection(tx, surface)).document.text.trim()
-                            .length > 0
-                    );
-                case "calendar":
-                    return this.#store.hasCalendarContent(tx, surfaceId);
-                default:
-                    return false;
             }
         });
     }
@@ -1024,14 +982,13 @@ export class SurfacesModule implements AgentModule {
     ): Promise<{ seq: number }> {
         return ctx.inTx(async (tx) => {
             const surface = await this.#surface(tx, surfaceId, "document");
-            const { seq, appended } = await this.#documents.change(
+            const { seq } = await this.#documents.change(
                 tx,
                 surface,
                 new Uint8Array(Buffer.from(update, "base64")),
                 actor,
                 mutationId,
             );
-            if (appended) await this.#notifyDocumentChanged(tx, surfaceId);
             return { seq };
         });
     }
@@ -1046,7 +1003,6 @@ export class SurfacesModule implements AgentModule {
         return ctx.inTx(async (tx) => {
             const surface = await this.#surface(tx, surfaceId, "document");
             const result = await this.#documents.agentChange(tx, surface, seq, text, actor);
-            if (result.appended) await this.#notifyDocumentChanged(tx, surfaceId);
             return {
                 ...(await this.#documents.projection(tx, surface)),
                 changed: result.appended,
@@ -1378,13 +1334,6 @@ export class SurfacesModule implements AgentModule {
             lockKeys: ["surfaces.notify"],
         });
         for (const listener of this.#transactional) await listener(ctx, structuredClone(event));
-    }
-    async #notifyDocumentChanged(ctx: Context, surfaceId: string): Promise<void> {
-        await this.durable.invoke(ctx, {
-            function: DOCUMENT_CHANGED,
-            arguments: { surfaceId },
-            lockKeys: [DOCUMENT_CHANGED],
-        });
     }
 }
 

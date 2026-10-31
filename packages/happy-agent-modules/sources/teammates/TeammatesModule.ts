@@ -6,11 +6,10 @@ import type {
 } from "@slopus/happy-agent-base";
 import type { Context } from "@steve.kite/stdlib";
 
-import { SpacesModule } from "../spaces/index.js";
-import { TasksModule } from "../tasks/index.js";
+import { TasksModule, type TaskMembership } from "../tasks/index.js";
 import { TeamModule, type TeamUser } from "../team/index.js";
 import { listTeammatesTool } from "./tools/list_teammates.js";
-import { notifyTeammateTool } from "./tools/notify_teammate.js";
+import { loopInTeammateTool } from "./tools/loop_in_teammate.js";
 
 /** What an agent may say about one person on the team. */
 export interface Teammate {
@@ -30,28 +29,25 @@ export class TeammateNotFoundError extends Error {
 const TEAMMATES_INSTRUCTIONS = [
     "# Teammates",
     "",
-    "Other people on the team may want to know about this task. list_teammates shows each one's user ID, name, role, and what they follow. When this work clearly concerns what a teammate does or follows, tell them with notify_teammate and say why in one sentence; their own Focus decides whether to add the task to their sidebar. Do not notify someone already working with you here, and do not notify people about work they would not care about.",
-    "When you mention a person in a reply, link them as [their name](happy://users/<userId>); people see their current name as the link text. list_teammates and notify_teammate give you the exact link.",
+    "Other people on the team can join this task. list_teammates shows each one's user ID, name, role, and what they follow. When this work clearly concerns what a teammate follows or does, loop them in with loop_in_teammate and say why in one sentence; it adds the task to their list and highlights it for them. Do not loop in someone already working with you here, and do not loop people in for work they would not care about.",
+    "When you mention a person in a reply, link them as [their name](happy://users/<userId>); people see their current name as the link text. list_teammates and loop_in_teammate give you the exact link.",
 ].join("\n");
 
 /**
- * The people on the team, as agents see them, and telling one of them about a task.
+ * The people on the team, as agents see them, and looping one of them into a task.
  *
- * A task's agent reads the directory and mentions a teammate to that teammate's own Prioritizing,
- * which decides whether the task belongs in their sidebar. Nothing here joins anyone: only a
- * person's Prioritizing changes how their sidebar is organized. Team mode only, because a
- * standalone installation is one person.
+ * A task's agent reads the directory and adds a teammate to its own task: the teammate joins it
+ * even when their automatic joining is off, and the task is marked unread for them. Team mode
+ * only, because a standalone installation is one person.
  */
 export class TeammatesModule implements AgentModule {
     readonly name = "teammates";
     readonly #tasks: TasksModule;
     readonly #team: TeamModule;
-    readonly #spaces: SpacesModule;
 
-    constructor(tasks: TasksModule, team: TeamModule, spaces: SpacesModule) {
+    constructor(tasks: TasksModule, team: TeamModule) {
         this.#tasks = tasks;
         this.#team = team;
-        this.#spaces = spaces;
     }
 
     readonly #hooks: AgentModuleHooks = {
@@ -62,7 +58,7 @@ export class TeammatesModule implements AgentModule {
                 ? await this.#tasks.forAgent(ctx, scope.agent.id)
                 : undefined;
             if (task === undefined) return [];
-            return [listTeammatesTool(this), notifyTeammateTool(this, task.id)];
+            return [listTeammatesTool(this), loopInTeammateTool(this, task.id, scope.agent.id)];
         },
     };
 
@@ -79,14 +75,20 @@ export class TeammatesModule implements AgentModule {
             );
     }
 
-    /**
-     * Tell a teammate's Prioritizing that this task concerns them. `delivered` is false when they
-     * have no Prioritizing to hear it, because Stem Cells is off for them.
-     */
-    async notify(
+    /** Add a teammate to the task and mark it unread for them with the agent's reason. */
+    async loopIn(
         ctx: Context,
-        input: { readonly taskId: string; readonly userId: string; readonly reason: string },
-    ): Promise<{ readonly teammate: Teammate; readonly delivered: boolean }> {
+        input: {
+            readonly taskId: string;
+            readonly agentId: string;
+            readonly userId: string;
+            readonly reason: string;
+        },
+    ): Promise<{
+        readonly teammate: Teammate;
+        readonly membership: TaskMembership;
+        readonly joined: boolean;
+    }> {
         return await ctx.inTx(async (txCtx) => {
             const user = this.#team.enabled
                 ? await this.#team.getUser(txCtx, input.userId)
@@ -94,18 +96,11 @@ export class TeammatesModule implements AgentModule {
             if (user === undefined || user.authentication === "guest") {
                 throw new TeammateNotFoundError();
             }
-            const task = await this.#tasks.get(txCtx, input.taskId);
-            const owner =
-                task?.ownerUserId === undefined
-                    ? undefined
-                    : await this.#team.getUser(txCtx, task.ownerUserId);
-            const delivered = await this.#spaces.forwardMention(txCtx, {
-                userId: user.id,
-                taskId: input.taskId,
-                reason: input.reason,
-                ...(owner === undefined ? {} : { fromName: teammate(owner).name }),
+            const result = await this.#tasks.loopIn(txCtx, input.taskId, user.id, {
+                agentId: input.agentId,
+                note: input.reason,
             });
-            return { teammate: teammate(user), delivered };
+            return { teammate: teammate(user), ...result };
         });
     }
 

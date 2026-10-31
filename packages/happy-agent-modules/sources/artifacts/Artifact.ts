@@ -5,8 +5,6 @@ import { artifactLiveSchema } from "@slopus/happy-agent-client";
 const ordinaryArtifactTypes = [
     Type.Literal("markdown"),
     Type.Literal("html"),
-    Type.Literal("sidebar"),
-    Type.Literal("sidebar_proposal"),
     Type.Literal("image"),
     Type.Literal("image_series"),
     Type.Literal("video"),
@@ -276,7 +274,6 @@ export const createArtifactInputSchema = Type.Object(
 export const updateArtifactInputSchema = Type.Object(
     {
         artifactId: cuid2Schema,
-        baseVersion: Type.Optional(artifactCounterSchema),
         /** Refuse the change unless the artifact is still at this revision. */
         expectedRevision: Type.Optional(artifactCounterSchema),
         /** A retry key: a version already made under it is not made again. */

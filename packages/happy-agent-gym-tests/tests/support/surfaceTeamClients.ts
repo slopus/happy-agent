@@ -60,39 +60,6 @@ ${pem}"""
     };
     const alice = clientFor("alice");
     const bob = clientFor("bob");
-    // Spaces is local to this prototype and absent from the published client.
-    const httpFor = (subject: string) => {
-        const request = async <Body>(method: string, path: string, body?: unknown) => {
-            const endpoint = gym.daemon.httpUrl;
-            if (endpoint === undefined) throw new Error("The team fixture has no HTTP endpoint.");
-            const response = await fetch(new URL(path, endpoint), {
-                method,
-                signal: AbortSignal.timeout(30_000),
-                headers: {
-                    authorization: `Bearer ${tokenFor(subject)}`,
-                    "content-type": "application/json",
-                },
-                ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-            });
-            const text = await response.text();
-            return {
-                status: response.status,
-                body: (text.length === 0 ? undefined : JSON.parse(text)) as Body,
-            };
-        };
-        return {
-            request,
-            async ok<Body>(method: string, path: string, body?: unknown): Promise<Body> {
-                const response = await request<Body>(method, path, body);
-                if (response.status < 200 || response.status >= 300) {
-                    throw new Error(
-                        `The team API answered ${response.status} to ${method} ${path}: ${JSON.stringify(response.body)}`,
-                    );
-                }
-                return response.body;
-            },
-        };
-    };
     const onboard = async (client: HappyAgentClient, name: string) => {
         const initial = (await client.getProfile()).profile;
         return (await client.updateProfile({ name }, { ifMatch: initial.version })).profile.userId!;
@@ -102,8 +69,6 @@ ${pem}"""
             gym,
             alice,
             bob,
-            aliceHttp: httpFor("alice"),
-            bobHttp: httpFor("bob"),
             aliceId: (await alice.getProfile()).profile.userId!,
             bobId: await onboard(bob, "Bob"),
             clientFor,

@@ -19,7 +19,6 @@ export const nodeLaneScenarios: readonly string[] = [
     "happy_api_transcript_runs.test.ts",
     "monty_workers_end_with_their_daemon.test.ts",
     "new_task_and_bot_names_survive_transient_failures.test.ts",
-    "prioritizing_requires_each_person_to_enable_stem_cells.test.ts",
     // A representative core sample.
     "happy_api_platform.test.ts",
     "happy_api_workspaces.test.ts",

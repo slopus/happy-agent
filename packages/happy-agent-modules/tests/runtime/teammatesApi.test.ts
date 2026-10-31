@@ -18,7 +18,6 @@ import {
     startHappyAgentRuntime,
     type HappyAgentRuntime,
 } from "../../sources/runtime/startHappyAgentRuntime.js";
-import { queryOwnerState } from "../../sources/spaces/persistence/SpacesPersistence.js";
 import { TeammateNotFoundError } from "../../sources/teammates/index.js";
 import { ScriptedProvider } from "../support/ScriptedProvider.js";
 
@@ -29,7 +28,7 @@ afterEach(async () => {
     vi.unstubAllGlobals();
 });
 
-describe("telling a teammate about a task", () => {
+describe("looping in a teammate", () => {
     it("seeds the configured members, owner included, and starts opted-out members out of new tasks", async () => {
         const { runtime, endpoint, token } = await start();
         const ctx = withAgentDatabase(runtime.ctx.named("test.teammates-seed"), runtime.database);
@@ -88,10 +87,13 @@ describe("telling a teammate about a task", () => {
         ).rejects.toMatchObject({ status: 400 });
     }, 60_000);
 
-    it("tells a teammate's Focus about a task, and lets that Focus add it as new on their connections until they read it", async () => {
+    it("lets a task's agent loop a teammate in as unread on their connections, and clears it when they read it", async () => {
         const { runtime, endpoint, token } = await start();
-        const ctx = withAgentDatabase(runtime.ctx.named("test.teammates-notify"), runtime.database);
-        const { spaces, tasks, teammates, team } = runtime.modules;
+        const ctx = withAgentDatabase(
+            runtime.ctx.named("test.teammates-loop-in"),
+            runtime.database,
+        );
+        const { tasks, teammates, team } = runtime.modules;
         const [alice, steve] = await teammates.list(ctx);
         const steveClient = new HappyAgentClient({ endpoint, token: await token("user_steve") });
         const aliceClient = new HappyAgentClient({ endpoint, token: await token("user_alice") });
@@ -112,46 +114,31 @@ describe("telling a teammate about a task", () => {
         expect(await hooks.tools!(ctx, scope("someotheragent"))).toEqual([]);
         expect(await hooks.instructions!(ctx, scope("someotheragent"))).toBe("");
         const tools = await hooks.tools!(ctx, scope(task.agentId));
-        expect(tools.map((tool) => tool.name)).toEqual(["list_teammates", "notify_teammate"]);
+        expect(tools.map((tool) => tool.name)).toEqual(["list_teammates", "loop_in_teammate"]);
         expect(await hooks.instructions!(ctx, scope(task.agentId))).toContain(
             "[their name](happy://users/<userId>)",
         );
-        const notify = tools.find((tool) => tool.name === "notify_teammate")!;
-        expect(notify.shouldReviewInAutoMode?.({} as never, {} as never)).toBe(false);
-        const reason = "This changes how refunds hit Stripe.";
+        const loopIn = tools.find((tool) => tool.name === "loop_in_teammate")!;
+        expect(loopIn.shouldReviewInAutoMode?.({} as never, {} as never)).toBe(false);
 
-        // Without Stem Cells Steve has no Focus to tell, and nothing joins him.
-        await expect(
-            notify.execute(ctx, { userId: steve!.id, reason }, {} as never),
-        ).resolves.toEqual({
+        const looped = await loopIn.execute(
+            ctx,
+            { userId: steve!.id, reason: "This changes how refunds hit Stripe." },
+            {} as never,
+        );
+        expect(looped).toEqual({
             userId: steve!.id,
             name: "Steve",
-            delivered: false,
+            joined: true,
             mention: `[${steve!.name}](happy://users/${steve!.id})`,
         });
 
-        // With it, his Focus hears the mention, his role and what he follows; still nothing joins.
-        await steveClient.saveUserSetting("happy-desktop.experiments.stemCells", { value: true });
-        await expect(
-            notify.execute(ctx, { userId: steve!.id, reason }, {} as never),
-        ).resolves.toMatchObject({ delivered: true });
-        const state = (await queryOwnerState(ctx, steve!.id))!;
-        const notices = [...(state.sidebarBrief ?? []), ...(state.sidebarBriefSent ?? [])];
-        expect(notices).toContainEqual(
-            `Alice Owner's agent mentioned the person in task ${task.id} "Refund flow": ${reason} The person's role: Billing engineer. They follow: Billing, invoices, and Stripe webhooks. If it concerns what they do or follow, add it with join_task; otherwise leave it.`,
-        );
-        expect(await tasks.membership(ctx, task.id, steve!.id)).toBeUndefined();
-
-        // Steve's Focus decides it concerns him: he joins, marked new on his views alone.
-        const focus = state.prioritizingAgentId!;
-        await expect(
-            spaces.joinTask(ctx, steve!.id, focus, task.id, "Refunds go through Stripe."),
-        ).resolves.toContain("Joined");
+        // Steve's own views carry the mark; nobody else's do.
         const unread = {
             reason: "looped_in",
             since: expect.any(Number),
-            agentId: focus,
-            note: "Refunds go through Stripe.",
+            agentId: task.agentId,
+            note: "This changes how refunds hit Stripe.",
         };
         expect((await steveClient.getTask(task.id)).membership).toMatchObject({ unread });
         expect((await steveClient.listTasks({ scope: "joined" })).memberships).toMatchObject([
@@ -188,25 +175,40 @@ describe("telling a teammate about a task", () => {
             "task.membership.updated",
         );
 
-        // Marking the task's chat read clears the mark too.
-        await spaces.joinTask(ctx, steve!.id, focus, task.id, "One more look, please.");
+        // Marking the task's chat read clears a loop-in mark too.
+        await teammates.loopIn(ctx, {
+            taskId: task.id,
+            agentId: task.agentId,
+            userId: steve!.id,
+            reason: "One more look, please.",
+        });
         expect((await steveClient.getTask(task.id)).membership).toMatchObject({
             unread: { note: "One more look, please." },
         });
         await steveClient.markAgentRead(task.agentId);
         expect((await steveClient.getTask(task.id)).membership).toMatchObject({ unread: null });
 
-        // Unknown people and guests cannot be told, and archived tasks take nobody new.
+        // Unknown people and guests cannot be looped in, and archived tasks take nobody new.
         const guest = await team.createGuest(ctx, { name: "Exported bot guest" });
         for (const userId of ["nosuchuser1234", guest.id]) {
             await expect(
-                teammates.notify(ctx, { taskId: task.id, userId, reason }),
+                teammates.loopIn(ctx, {
+                    taskId: task.id,
+                    agentId: task.agentId,
+                    userId,
+                    reason: "Just because.",
+                }),
             ).rejects.toBeInstanceOf(TeammateNotFoundError);
         }
         const current = (await tasks.get(ctx, task.id))!;
         await tasks.archive(ctx, task.id, current.version);
         await expect(
-            spaces.joinTask(ctx, steve!.id, focus, task.id, "Too late."),
+            teammates.loopIn(ctx, {
+                taskId: task.id,
+                agentId: task.agentId,
+                userId: alice!.id,
+                reason: "Too late.",
+            }),
         ).rejects.toMatchObject({ name: "TaskConflictError" });
     }, 60_000);
 });

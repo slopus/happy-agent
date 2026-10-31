@@ -241,7 +241,7 @@ New jobs persist a three-attempt budget, with one then five seconds of backoff, 
 restart. Exhausting inference uses a short cleaned excerpt of that same first message, so a
 provider outage cannot leave meaningful new work unnamed. A manual rename or archival wins over
 both inference and fallback. Old attempted names are deliberately not backfilled or retried; the
-user asked to fix new work only. Naming is independent of the person's Stem Cells setting.
+user asked to fix new work only.
 
 ## Bot agents receive their live bot identity
 

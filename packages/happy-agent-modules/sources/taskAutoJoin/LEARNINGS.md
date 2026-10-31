@@ -18,6 +18,5 @@ opaque. Startup catch-up uses Durable Functions and bounded batches that recheck
 A demo team needed a member who does not join every task. A member listed under
 `[feature.team.members]` with `auto_join_tasks = false` gets `tasks.autoJoin = false` saved when
 their profile is first created, only if the setting was never written, before the first catch-up
-join. It is the ordinary setting afterwards, so the member can turn it back on. Their own Focus can
-still add them to a task with `join_task` after a teammate's agent mentions them: that is a choice
-made for them, not automatic joining.
+join. It is the ordinary setting afterwards, so the member can turn it back on. An agent's
+`loop_in_teammate` still adds them to a task: looping in is a direct choice, not automatic joining.

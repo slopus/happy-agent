@@ -117,12 +117,7 @@ describe("TitlesModule naming", () => {
         expect(test.module.fallbackName("One two three four five six seven")).toBe(
             "One two three four five six",
         );
-        expect(test.module.fallbackName("One two three four five", "subject")).toBe(
-            "One two three",
-        );
-        expect(test.module.fallbackName("One two three four five", "standard", true)).toBe(
-            "One two three",
-        );
+        expect(test.module.fallbackName("One two three four five", true)).toBe("One two three");
         expect(test.module.fallbackName("``` !!! ")).toBeUndefined();
     });
     it("asks for a short functional bot identity using the cheapest account model", async () => {
@@ -492,120 +487,6 @@ describe("TitlesModule second look at a title", () => {
 
         await expect(test.module.refineChat(ctx, { transcript: "   " })).resolves.toBeUndefined();
         expect(test.provider.sessions).toHaveLength(0);
-    });
-});
-
-describe("TitlesModule subject naming", () => {
-    it("asks for two to six words on standard naming, and one to three on subject naming", async () => {
-        const test = await titles([
-            textTurn("<title>Retry policy rewrite</title>"),
-            textTurn("<title>Retry policy</title>"),
-        ]);
-
-        await nameChat(test.module, { firstMessage: "rewrite retries" });
-        await test.module.suggestNames(ctx, {
-            firstMessage: "rewrite retries",
-            wanted: { title: true },
-            style: "subject",
-        });
-
-        const [standard, subject] = test.provider.sessions.map((session) =>
-            JSON.stringify(session.requests[0]),
-        );
-        expect(standard).toContain("two to six words");
-        expect(standard).not.toContain("one to three words");
-        expect(subject).toContain("one to three words, at most 32 characters");
-    });
-
-    it("names a subject on the chat's own model at that model's default effort", async () => {
-        const test = await titles([textTurn("<title>Retry policy</title>")]);
-
-        await expect(
-            test.module.suggestNames(ctx, {
-                firstMessage: "Rewrite how the outer loop retries provider requests.",
-                wanted: { title: true },
-                providerId: "scripted",
-                modelId: "openai/gpt-5.6-max",
-                style: "subject",
-            }),
-        ).resolves.toEqual({ title: "Retry policy" });
-        const request = test.provider.sessions[0]!.requests[0]!;
-        expect(request.model).toBe("openai/gpt-5.6-max");
-        expect(request.effort).toBe("medium");
-    });
-
-    it("falls back to its account's first model when the chat's model is no longer served", async () => {
-        const test = await titles([textTurn("<title>Retry policy</title>")]);
-
-        await test.module.suggestNames(ctx, {
-            firstMessage: "rewrite retries",
-            wanted: { title: true },
-            providerId: "scripted",
-            modelId: "anthropic/retired",
-            style: "subject",
-        });
-        const request = test.provider.sessions[0]!.requests[0]!;
-        expect(request.model).toBe("openai/gpt-5.6-max");
-        expect(request.effort).toBe("medium");
-    });
-
-    it.each([
-        ["one two three four five six", "one two three"],
-        ["Sidebar fixes and draggable spaces", "Sidebar fixes"],
-        ["a".repeat(60), `${"a".repeat(31)}…`],
-    ])(
-        "bounds a subject to three words without a trailing joining word: %s",
-        async (answer, expected) => {
-            const test = await titles([textTurn(`<title>${answer}</title>`)]);
-
-            await expect(
-                test.module.suggestNames(ctx, {
-                    firstMessage: "anything",
-                    wanted: { title: true },
-                    style: "subject",
-                }),
-            ).resolves.toEqual({ title: expected });
-        },
-    );
-
-    it("takes a second look at a subject on the chat's own model", async () => {
-        const test = await titles([textTurn("<title>Retry policy</title>")]);
-
-        await expect(
-            test.module.refineChat(ctx, {
-                currentTitle: "Flaky requests",
-                providerId: "scripted",
-                modelId: "openai/gpt-5.6-max",
-                style: "subject",
-                transcript:
-                    "User: this keeps failing\nAssistant: the outer loop retries too eagerly",
-            }),
-        ).resolves.toBe("Retry policy");
-        const request = test.provider.sessions[0]!.requests[0]!;
-        expect(request.model).toBe("openai/gpt-5.6-max");
-        expect(request.effort).toBe("medium");
-        expect(JSON.stringify(request)).toContain("one to three words");
-    });
-
-    it("names a marked chat and the chats under it by subject, and every other chat the standard way", async () => {
-        const { module } = await titles([]);
-        const parents: Record<string, string> = { subtask: "stem-cell", nested: "subtask" };
-        const agents = {
-            parentOf: (_ctx: unknown, agentId: string) => Promise.resolve(parents[agentId] ?? null),
-        } as unknown as AgentSystemRef;
-        const hooks = await resolveModuleHooks(lifecycleDatabase.context, module, agents);
-        await hooks.agentCreatedTransact?.(
-            ctx,
-            { agents, sharedKV: sharedKV() },
-            { id: "stem-cell", metadata: undefined },
-        );
-
-        await expect(module.namingStyle(ctx, "stem-cell")).resolves.toBe("standard");
-        await module.nameBySubject(ctx, "stem-cell");
-
-        await expect(module.namingStyle(ctx, "stem-cell")).resolves.toBe("subject");
-        await expect(module.namingStyle(ctx, "nested")).resolves.toBe("subject");
-        await expect(module.namingStyle(ctx, "elsewhere")).resolves.toBe("standard");
     });
 });
 

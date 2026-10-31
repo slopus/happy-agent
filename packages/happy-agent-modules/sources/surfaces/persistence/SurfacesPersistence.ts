@@ -149,22 +149,6 @@ export class SurfacesPersistence implements AgentPersistence {
         );
         return rows[0] === undefined ? undefined : (JSON.parse(rows[0].event_json) as unknown);
     }
-    /** Content checks read current records only, never permanent history or expanded ranges. */
-    async hasCalendarContent(ctx: Context, surfaceId: string): Promise<boolean> {
-        const rows = await agentDatabaseRows<{ present: number }>(
-            ctx.db,
-            sql`SELECT 1 AS present FROM happy_agent_surface_calendar_events WHERE surface_id = ${surfaceId} AND status = 'active' LIMIT 1`,
-        );
-        return rows.length > 0;
-    }
-    async hasTodoContent(ctx: Context, surfaceId: string): Promise<boolean> {
-        const prefix = `todo.${surfaceId}.`;
-        const rows = await agentDatabaseRows<{ present: number }>(
-            ctx.db,
-            sql`SELECT 1 AS present FROM happy_agent_surfaces WHERE key >= ${prefix} AND key < ${prefix + "\uffff"} AND json_extract(value_json, '$.status') != 'deleted' LIMIT 1`,
-        );
-        return rows.length > 0;
-    }
     /** Active events whose bounds overlap `[from, to)`; only these are decoded and expanded. */
     async calendarEventsOverlapping(
         ctx: Context,

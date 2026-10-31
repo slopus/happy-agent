@@ -96,7 +96,6 @@ import { UserSettingsModule } from "../userSettings/index.js";
 import { TaskAutoJoinModule } from "../taskAutoJoin/index.js";
 import { TeammatesModule } from "../teammates/index.js";
 import { SurfaceAutoJoinModule } from "../surfaceAutoJoin/index.js";
-import { SpacesModule } from "../spaces/index.js";
 import { StickersModule } from "../stickers/index.js";
 import { StoriesModule } from "../stories/index.js";
 import { SurfacesModule } from "../surfaces/index.js";
@@ -223,7 +222,6 @@ export interface HappyAgentRuntimeModules {
     readonly userInput: UserInputModule;
     readonly userSettings: UserSettingsModule;
     readonly surfaces: SurfacesModule;
-    readonly spaces: SpacesModule;
     readonly workflows: WorkflowsModule;
     readonly workspaces: WorkspacesModule;
 }
@@ -730,24 +728,18 @@ export async function startHappyAgentRuntime(
             await system?.close(shutdownCtx);
             await codeMode.close();
         });
-        const spaces = new SpacesModule(
+        const teammates = new TeammatesModule(tasks, team);
+        const live = new LiveModule(
             config,
-            tasks,
+            durableFunctions,
             bots,
+            subtasks,
+            tasks,
             surfaces,
             history,
             events,
-            durableFunctions,
-            subtasks,
             team,
-            userSettings,
-            titles,
-            artifacts,
-            collaboration,
         );
-        registerShutdown("spaces", async () => await spaces.close());
-        const teammates = new TeammatesModule(tasks, team, spaces);
-        const live = new LiveModule(config, durableFunctions, bots, subtasks, spaces);
         const stories = new StoriesModule(
             team,
             profile,
@@ -800,7 +792,6 @@ export async function startHappyAgentRuntime(
             userSettings,
             surfaces,
             mobileConnector,
-            spaces,
             stories,
             stickers,
             providerClis,
@@ -876,7 +867,6 @@ export async function startHappyAgentRuntime(
             userInput,
             userSettings,
             surfaces,
-            spaces,
             stickers,
             stories,
             workflows,
@@ -923,7 +913,6 @@ export async function startHappyAgentRuntime(
             live,
             bots,
             tasks,
-            spaces,
             artifacts,
             artifactData,
             node,

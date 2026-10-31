@@ -31,7 +31,7 @@ guest's chat this way.
 A subtask runs in its coordinator's persistent permission mode unless `read_only` hands it less or
 `full_mode`, from a coordinator in Full access, asks for Full access. Creation settles the mode and
 records it with the durable start, because the start runs on a context that names no agent.
-Modules creating subtasks of their own, such as Voice and Prioritizing, get the product default.
+Modules creating subtasks of their own, such as Voice, get the product default.
 `switch_subtask_model` takes the same model, effort, harness, provider, and service-tier choices
 as creation, checked by collaboration against what new agents are offered. Only the direct
 coordinator may use it, on an active subtask. It sends the subtask a short message from the

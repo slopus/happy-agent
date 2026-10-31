@@ -2,7 +2,6 @@ import {
     DEFAULT_AGENT_PERMISSION_MODE,
     ensureAgentDatabaseConnection,
     type AgentModuleHooks,
-    type AnyAgentTool,
 } from "@slopus/happy-agent-base";
 import type {
     CreateLiveSessionRequest,
@@ -32,8 +31,12 @@ import type {
     LiveProviderOptions,
     LiveProviderTransport,
 } from "../sources/live/impl/liveProviderTransport.js";
-import type { SpaceSidebarOutline, SpacesModule } from "../sources/spaces/index.js";
+import type { EventsModule } from "../sources/events/index.js";
+import type { HistoryModule } from "../sources/history/index.js";
 import type { SubtasksModule } from "../sources/subtasks/index.js";
+import type { SurfacesModule } from "../sources/surfaces/index.js";
+import type { TasksModule } from "../sources/tasks/index.js";
+import type { TeamModule } from "../sources/team/index.js";
 import { moduleDatabase } from "./support/moduleDatabase.js";
 
 const transport = vi.hoisted(() => ({ create: vi.fn() }));
@@ -68,21 +71,6 @@ const request = (id = "liveone", windowId = "window-one"): CreateLiveSessionRequ
         truncated: false,
     },
 });
-
-const happyOutline = (): SpaceSidebarOutline => ({
-    groups: [
-        {
-            label: undefined,
-            folded: false,
-            rows: [{ name: "Happy", agentId: "happy-agent", children: [], foldedChildren: 0 }],
-        },
-    ],
-});
-
-const withGroup = (
-    outline: SpaceSidebarOutline,
-    group: SpaceSidebarOutline["groups"][number],
-): SpaceSidebarOutline => ({ groups: [...outline.groups, group] });
 
 /** One inference of Voice's scripted turn. */
 interface Round {
@@ -122,10 +110,33 @@ async function fixture(startDurable = true) {
             notice: null,
         })),
     } as unknown as ConfigModule;
+    // The sidebar outline is Happy and the bots after it; tests add bots to change it.
+    const outline = { rows: [] as { name: string; agentId: string }[] };
+    const outlineListeners = new Set<() => void>();
+    const onEvent = vi.fn((listener: () => void) => {
+        outlineListeners.add(listener);
+        return () => outlineListeners.delete(listener);
+    });
+    const happy = { id: "happy-bot", name: "Happy", agentId: "happy-agent", status: "active" };
     const bots = {
         forAgent: vi.fn(async () => undefined),
-        chiefOfStaff: vi.fn(async () => ({ agentId: "happy-agent" })),
+        chiefOfStaff: vi.fn(async () => happy),
+        list: vi.fn(async () => [
+            happy,
+            ...outline.rows.map((row, index) => ({
+                id: `bot-${String(index)}`,
+                name: row.name,
+                agentId: row.agentId,
+                status: "active",
+            })),
+        ]),
+        onEvent,
     } as unknown as BotsModule;
+    const tasks = { listForMember: vi.fn(async () => []), onEvent } as unknown as TasksModule;
+    const surfaces = { list: vi.fn(async () => []), onEvent } as unknown as SurfacesModule;
+    const history = {} as unknown as HistoryModule;
+    const eventsModule = {} as unknown as EventsModule;
+    const team = { enabled: false } as unknown as TeamModule;
     const created = new Set<string>();
     const archived = new Set<string>();
     const subtasks = {
@@ -134,22 +145,6 @@ async function fixture(startDurable = true) {
             return { agentId };
         }),
     } as unknown as SubtasksModule;
-    const outline = { current: happyOutline() };
-    const spaceListeners = new Set<(ctx: unknown, event: { ownerUserId: string }) => void>();
-    const sidebarTool = (name: string) => ({ name }) as unknown as AnyAgentTool;
-    const spaces = {
-        onEvent: vi.fn((listener: (ctx: unknown, event: { ownerUserId: string }) => void) => {
-            spaceListeners.add(listener);
-            return () => spaceListeners.delete(listener);
-        }),
-        sidebarOutline: vi.fn(async () => structuredClone(outline.current)),
-        ensureVoiceRow: vi.fn(async () => undefined),
-        voiceSidebarTools: vi.fn(() => [
-            sidebarTool("list_sidebar"),
-            sidebarTool("read_conversations"),
-        ]),
-    } as unknown as SpacesModule;
-
     const turns: Record<string, Round[]> = {};
     const sends: { agentId: string; text: string; options: Record<string, unknown> }[] = [];
     const toolResults: { name: string; text: string }[] = [];
@@ -157,7 +152,17 @@ async function fixture(startDurable = true) {
     const turnsEnded: Promise<void>[] = [];
     let hooks!: AgentModuleHooks;
     const durable = new DurableFunctionsModule();
-    const live = new LiveModule(config, durable, bots, subtasks, spaces);
+    const live = new LiveModule(
+        config,
+        durable,
+        bots,
+        subtasks,
+        tasks,
+        surfaces,
+        history,
+        eventsModule,
+        team,
+    );
     const db = moduleDatabase([...durable.migrations, ...live.migrations], "live-test");
     ensureAgentDatabaseConnection(db.database);
     await db.ready;
@@ -335,14 +340,18 @@ async function fixture(startDurable = true) {
         config,
         bots,
         subtasks,
-        spaces,
+        tasks,
+        surfaces,
+        history,
+        eventsModule,
+        team,
         agents,
         hooks,
         scope,
         outline,
         archived,
-        emitSidebar: (owner = "owner") => {
-            for (const listener of spaceListeners) listener(db.context, { ownerUserId: owner });
+        emitSidebar: () => {
+            for (const listener of outlineListeners) listener();
         },
         turns,
         sends,
@@ -521,14 +530,12 @@ describe("the person's Voice", () => {
             { provider: "fixture", model: "fixture" },
             { unreported: true },
         );
-        expect(f.spaces.ensureVoiceRow).toHaveBeenLastCalledWith(expect.anything(), "owner", voice);
         await f.live.close(f.db.context, "owner", "liveone");
         await expect.poll(() => first.status()).toBe("closed");
 
         await activeCall(f, request("livetwo", "window-two"));
         expect(await voiceId(f)).toBe(voice);
         expect(f.subtasks.create).toHaveBeenCalledOnce();
-        expect(f.spaces.ensureVoiceRow).toHaveBeenCalledTimes(2);
 
         await activeCall(f, request("liveother", "window-other"), undefined, "other");
         const others = await voiceId(f, "other");
@@ -540,7 +547,6 @@ describe("the person's Voice", () => {
         const next = await voiceId(f);
         expect(next).not.toBe(voice);
         expect(f.subtasks.create).toHaveBeenCalledTimes(3);
-        expect(f.spaces.ensureVoiceRow).toHaveBeenLastCalledWith(expect.anything(), "owner", next);
     });
 
     it("refuses a call when Happy is missing, before anything is created", async () => {
@@ -1033,18 +1039,7 @@ describe("the person's Voice", () => {
 describe("Voice's targets", () => {
     const agentTarget = { kind: "agent", connectionId: "local", agentId: "release-agent" };
     const withRelease = (f: Fixture) => {
-        f.outline.current = withGroup(f.outline.current, {
-            label: "Shipping",
-            folded: false,
-            rows: [
-                {
-                    name: "Release notes",
-                    agentId: "release-agent",
-                    children: [],
-                    foldedChildren: 0,
-                },
-            ],
-        });
+        f.outline.rows = [{ name: "Release notes", agentId: "release-agent" }];
     };
 
     it("refuses an agent target in a window that cannot open one, without asking the desktop", async () => {
@@ -1167,29 +1162,25 @@ describe("what voice is told", () => {
         ];
         const call = await activeCall(f);
         f.emitSidebar();
-        f.emitSidebar("other");
+        f.emitSidebar();
         await new Promise((resolve) => setTimeout(resolve, 300));
         expect(quiet(f)).toEqual([]);
 
-        f.outline.current = withGroup(f.outline.current, {
-            label: "Distractions",
-            folded: true,
-            rows: [
-                { name: "One", agentId: "one", children: [], foldedChildren: 0 },
-                { name: "Two", agentId: "two", children: [], foldedChildren: 0 },
-            ],
-        });
+        f.outline.rows = [
+            { name: "One", agentId: "one" },
+            { name: "Two", agentId: "two" },
+        ];
         f.emitSidebar();
         await expect.poll(() => quiet(f).length).toBe(1);
         expect(quiet(f)[0]).toEqual({
             delegationId: null,
-            text: "# Sidebar\n\n- Happy\n\n## Distractions (folded, 2 rows)",
+            text: "# Sidebar\n\n- Happy\n- One\n- Two",
             speakable: false,
         });
 
         call.delegate("hold", "hold");
         await expect.poll(() => f.sends.length).toBe(1);
-        f.outline.current = happyOutline();
+        f.outline.rows = [];
         f.emitSidebar();
         await new Promise((resolve) => setTimeout(resolve, 300));
         expect(quiet(f)).toHaveLength(1);
@@ -1454,7 +1445,11 @@ describe("window-owned Live sessions", () => {
             new DurableFunctionsModule(),
             f.bots,
             f.subtasks,
-            f.spaces,
+            f.tasks,
+            f.surfaces,
+            f.history,
+            f.eventsModule,
+            f.team,
         );
         const hooks = (await restored.beforeStart(
             f.db.context,

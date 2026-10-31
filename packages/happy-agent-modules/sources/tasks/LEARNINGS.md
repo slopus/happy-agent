@@ -36,8 +36,7 @@ together, only while the task is active and its name remains unconfigured. Eligi
 database writes are outside the provider-error retry boundary.
 
 The user explicitly asked to leave existing names alone: no startup scan, backfill, or clearing of
-old attempt flags. Later messages never start another job. Stem Cells controls Prioritizing, not
-ordinary task naming; turning it off does not disable this path.
+old attempt flags. Later messages never start another job.
 
 ## A conversation an agent opens runs on that agent's model
 
@@ -166,7 +165,7 @@ callers.
 
 Every new task joins its member's list one key before the first task. The shared key helper took the
 midpoint below that key, so each join added a digit every three joins; after about 190 tasks the key
-passed the 64-character bound, and the next join, or `POST /v0/spaces/stem-cells`, failed with "Task
+passed the 64-character bound, and the next join failed with "Task
 storage contains an invalid membership". A key at an open end of a list now steps one unit past its
 neighbour, so a list taking work at the top grows keys with the logarithm of its length.
 `006-task-order-keys-renumbered` gives a list that already holds a key past half the bound fresh,

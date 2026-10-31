@@ -56,24 +56,6 @@ export interface ArtifactTypeRule {
 }
 
 export const ARTIFACT_TYPE_RULES: Readonly<Record<ArtifactType, ArtifactTypeRule>> = {
-    sidebar: {
-        label: "sidebar",
-        article: "a",
-        entry: { path: "index.html", maxBytes: 128 * 1024 },
-        minFiles: 1,
-        maxFiles: 1,
-        maxFileBytes: 128 * 1024,
-        maxTotalBytes: 128 * 1024,
-    },
-    sidebar_proposal: {
-        label: "sidebar proposal",
-        article: "a",
-        entry: { path: "index.html", maxBytes: 128 * 1024 },
-        minFiles: 1,
-        maxFiles: 1,
-        maxFileBytes: 128 * 1024,
-        maxTotalBytes: 128 * 1024,
-    },
     markdown: {
         label: "Markdown document",
         article: "a",
