@@ -152,8 +152,8 @@ Exporting a bot lets people reach it from a chat service. There are two kinds: `
 in, and `bridge`, which a bridge program serves for any other service over the
 [bridge protocol](exported-bot-protocol.md). A bot can be exported at most once of each kind.
 
-Export a bot of its own, not Happy. Exports are not configuration: an active admin
-bot, normally Happy, creates and changes them for that bot with
+Export a bot of its own, not the Chief of Staff. Exports are not configuration: an active admin
+bot, normally the Chief of Staff, creates and changes them for that bot with
 `set_telegram_exported_bot` or `set_bridge_exported_bot`, removes them with
 `remove_exported_bot`, and reads them with `get_exported_bot_status`, and Happy Agent keeps them
 in its database. Every change applies immediately, without a reload. The
@@ -168,7 +168,7 @@ review, and they always run in Auto; the bot still works for them with whatever 
 allow only people trusted with the bot. A Telegram user is one guest on every bot exported to
 Telegram; a bridge's users are guests of that one export. Someone not on the allowlist is asked
 about by default (`unknownSenders = "ask"`): their first message is held, they get one fixed
-notice, and Happy is told who is asking, never what they wrote. It lets them in with
+notice, and the Chief of Staff is told who is asking, never what they wrote. It lets them in with
 `approve_exported_bot_user`, which delivers the held message, or turns them away with
 `deny_exported_bot_user`, once the user decides. With `unknownSenders = "ignore"`, strangers are
 dropped silently. Messages from other bots and from groups are always ignored.

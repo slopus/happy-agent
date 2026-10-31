@@ -12,7 +12,7 @@ This document is the normative specification of protocol version 1. The
 
 ## Connecting
 
-An admin bot, normally Happy, exports another bot with `set_bridge_exported_bot`,
+An admin bot, normally the Chief of Staff, exports another bot with `set_bridge_exported_bot`,
 which writes a new bridge token to a file the admin bot names. The daemon keeps only the token's
 SHA-256 digest, so the token cannot be shown again; rotating it writes a new one. A bridge token
 identifies exactly one exported bot and is accepted nowhere else in the API.
@@ -152,7 +152,7 @@ given up on it for good. The daemon then forgets the reply.
 A message from someone not on the allowlist is acknowledged like any other, and the export's
 `unknownSenders` setting decides the rest:
 
-- `ask`, the default: the first message from that person is held, Happy is told who
+- `ask`, the default: the first message from that person is held, the Chief of Staff is told who
   is asking, never what they wrote, and the person is sent one `reply` with a fixed notice that
   their request was passed on. Until someone approves them, later messages are acknowledged and
   dropped. On approval, the person becomes a guest and the held message goes to the bot, which answers it.

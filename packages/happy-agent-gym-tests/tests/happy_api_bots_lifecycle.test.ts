@@ -11,7 +11,7 @@ afterEach(async () => {
 });
 
 describe("persistent bots through the public API", () => {
-    it("seeds one updatable Happy bot and honors its archival across restarts", async () => {
+    it("seeds one updatable Chief of Staff and honors its archival across restarts", async () => {
         const gym = await createAgentGym({
             inference: [{ content: [{ text: "Chief ready.", type: "text" }] }],
             timeoutMs: 20_000,
@@ -19,24 +19,24 @@ describe("persistent bots through the public API", () => {
         running.add(gym);
 
         const chiefs = (await gym.client.listBots()).bots.filter(
-            (bot) => bot.systemKey === "chief_of_staff",
+            (bot) => bot.username === "chief_of_staff",
         );
         expect(chiefs).toHaveLength(1);
         const chief = chiefs[0];
         expect(chief).toMatchObject({
             isAdmin: true,
-            name: "Happy",
+            name: "Chief of Staff",
             status: "active",
             systemKey: "chief_of_staff",
         });
-        if (chief === undefined) throw new Error("The Happy bot was not seeded.");
+        if (chief === undefined) throw new Error("The Chief of Staff bot was not seeded.");
 
         await gym.send("Confirm your role.", { sessionId: chief.agent.id });
         const chiefRequest = gym.inference.requests.find(
             (request) => request.sessionId === chief.agent.id,
         );
         expect(chiefRequest?.instructions).toContain(
-            "# Happy\n\nYou are Happy, the user's main agent.",
+            "# Chief of Staff\n\nYou are the user's persistent chief of staff.",
         );
 
         const archived = (
@@ -48,7 +48,7 @@ describe("persistent bots through the public API", () => {
         await gym.restart();
 
         const restartedChiefs = (await gym.client.listBots()).bots.filter(
-            (bot) => bot.systemKey === "chief_of_staff",
+            (bot) => bot.username === "chief_of_staff",
         );
         expect(restartedChiefs).toHaveLength(1);
         expect(restartedChiefs[0]).toMatchObject({
@@ -371,13 +371,13 @@ describe("persistent bots through the public API", () => {
                 gym.inference
                     .toolResults()
                     .find((result) => result.callId === "denied-bot-creation")?.text,
-            ).toContain("- Happy — id ");
+            ).toContain("- Chief of Staff — id ");
             const listed = (await gym.client.listBots()).bots;
             expect(listed).toHaveLength(2);
             expect(listed).toEqual(
                 expect.arrayContaining([
                     expect.objectContaining({ id: created.id }),
-                    expect.objectContaining({ name: "Happy" }),
+                    expect.objectContaining({ name: "Chief of Staff" }),
                 ]),
             );
             expect(gym.errors).toEqual([]);

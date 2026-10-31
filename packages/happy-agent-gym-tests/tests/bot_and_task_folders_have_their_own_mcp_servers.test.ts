@@ -175,7 +175,7 @@ describe("bot and task folders", () => {
 
         // A person reaching Scout from outside talks to Scout's folder servers too.
         const chief = (await gym.client.listBots()).bots.find(
-            (bot) => bot.systemKey === "chief_of_staff",
+            (bot) => bot.username === "chief_of_staff",
         )!;
         const exported = await run(chief.agent.id, "set_bridge_exported_bot", {
             botId: scout.id,

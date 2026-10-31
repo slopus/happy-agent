@@ -396,7 +396,7 @@ are juniper, maple, spruce, ember, vale, breeze, arbor, sol and cove; Live sends
 
 Voice's outline, `list_sidebar` and `read_conversations` came from the Spaces sidebar, along with
 a Voice row, `request_space_placement` and `request_sidebar_tidy`. When Spaces and stem cells were
-removed before a stable release, Live took over its own reads: the outline is Happy, the other
+removed before a stable release, Live took over its own reads: the outline is the built-in bot, the other
 bots, the person's tasks and joined Surfaces, read straight from those modules, and
 `read_conversations` reads any live conversation on a standalone machine, or with a team only a
 sidebar row's conversation or a session under one. Voice no longer rearranges the sidebar.

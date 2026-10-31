@@ -8,10 +8,10 @@ is `API_P2P.md`, installed beside the Happy Agent docs; in a source checkout it 
 
 ## Reach both installations for administration
 
-The Happy bot on either installation coordinates both sides using existing
+The Chief of Staff on either installation coordinates both sides using existing
 authorized SSH/deployment access or an existing managed connection. Peer messaging
 does not expose configuration endpoints. For a managed connection, send an
-authorized setup request to the remote Happy bot through the ordinary API:
+authorized setup request to the remote Chief of Staff through the ordinary API:
 
 ```text
 POST /v0/connections/<existing-connection>/api/v0/agents/<remote-chief-agent-id>/send
@@ -38,7 +38,7 @@ peers require different tokens. `<PAIR_TOKEN>` below denotes that value.
 
 ## Configure the server, then the outbound-only desktop
 
-Have the server's active admin Happy bot invoke `configure_peer_messaging`:
+Have the server's active admin Chief of Staff invoke `configure_peer_messaging`:
 
 ```json
 { "enabled": true, "node_id": "server", "listen": true, "host": "100.80.0.20", "port": 24780 }

@@ -130,7 +130,7 @@ describe("user-wide MCP servers", () => {
         expect(await echoed("project")).toEqual(expected("project"));
 
         const chief = (await gym.client.listBots()).bots.find(
-            (bot) => bot.systemKey === "chief_of_staff",
+            (bot) => bot.username === "chief_of_staff",
         )!;
         await gym.send(`${ASK}chief`, { sessionId: chief.agent.id, permissionMode: "auto" });
         expect(await echoed("chief")).toEqual(expected("chief"));

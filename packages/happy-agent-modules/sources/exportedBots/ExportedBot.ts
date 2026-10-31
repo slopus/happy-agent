@@ -37,7 +37,7 @@ export const allowedUsersSchema = Type.Array(serviceIdSchema, {
 
 /**
  * What happens when someone outside the allowlist writes: `ask` holds their first message and
- * asks Happy whether to let them in; `ignore` drops it.
+ * asks the Chief of Staff whether to let them in; `ignore` drops it.
  */
 export const unknownSendersSchema = Type.Union([Type.Literal("ask"), Type.Literal("ignore")]);
 export type UnknownSenders = Static<typeof unknownSendersSchema>;

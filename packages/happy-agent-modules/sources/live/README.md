@@ -80,7 +80,7 @@ is refused, and an agent target (`{ kind: "agent" }`) needs the `agentTargets` c
 needs `appState` and the desktop's `localConnectionId`.
 
 GPT-Live is told the sidebar as an outline of names (`impl/renderVoiceOutline.ts` over
-`impl/readVoiceOutline.ts`): Happy, the other bots, the person's tasks and the Surfaces they joined,
+`impl/readVoiceOutline.ts`): the built-in bot first, the other bots, the person's tasks and the Surfaces they joined,
 with no status, activity, messages or IDs. Startup is bounded to 8 KiB with a count of omitted
 entries. A bot, task or Surface event re-reads it; only changed text is pushed, coalesced for 250
 milliseconds with one push in flight, split into appends of at most 500 bytes, and held while a

@@ -243,7 +243,7 @@ describe("BotsModule", () => {
         }
     });
 
-    it("seeds one marked Happy bot and never replaces it after archive or deletion", async () => {
+    it("seeds one marked Chief of Staff and never replaces it after archive or deletion", async () => {
         const fixture = await started("bots-chief-of-staff", true);
         try {
             await fixture.start();
@@ -255,13 +255,13 @@ describe("BotsModule", () => {
                     thumbhash: expect.any(String),
                 },
                 isAdmin: true,
-                name: "Happy",
+                name: "Chief of Staff",
                 status: "active",
                 systemKey: "chief_of_staff",
-                username: "happy",
+                username: "chief_of_staff",
                 version: 1,
             });
-            if (chief === undefined) throw new Error("The Happy bot was not seeded.");
+            if (chief === undefined) throw new Error("The Chief of Staff bot was not seeded.");
             const avatar = await fixture.bots.avatar(fixture.database.context, chief.id);
             expect(avatar).toMatchObject({
                 contentHash: expect.stringMatching(/^[a-f0-9]{64}$/u),
@@ -279,7 +279,7 @@ describe("BotsModule", () => {
                 }),
             ]);
             await expect(fixture.instructions(chief.agentId)).resolves.toContain(
-                "# Happy\n\nYou are Happy, the user's main agent.",
+                "# Chief of Staff\n\nYou are the user's persistent chief of staff.",
             );
             await expect(fixture.instructions(chief.agentId)).resolves.toContain(
                 "the user asks you.",
@@ -322,63 +322,27 @@ describe("BotsModule", () => {
         }
     });
 
-    it("renames a Chief of Staff seeded by an earlier release to Happy once, keeping its identity", async () => {
-        const fixture = await started("bots-happy-rename", true);
+    it("keeps the name an earlier release gave the built-in bot", async () => {
+        const fixture = await started("bots-chief-of-staff-name-kept", true);
         try {
             await fixture.start();
             const [seeded] = await fixture.bots.list(fixture.database.context);
-            if (seeded === undefined) throw new Error("The Happy bot was not seeded.");
-            // An earlier release seeded the same bot under its old name and knew no renames.
+            if (seeded === undefined) throw new Error("The Chief of Staff bot was not seeded.");
+            // A release that named the built-in bot Happy, and recorded that it did.
             await agentDatabaseRun(
                 fixture.database.database,
-                sql`UPDATE ${sql.raw(BOTS_TABLE)} SET name = 'Chief of Staff' WHERE id = ${seeded.id}`,
+                sql`UPDATE ${sql.raw(BOTS_TABLE)} SET name = 'Happy' WHERE id = ${seeded.id}`,
             );
             await agentDatabaseRun(
                 fixture.database.database,
-                sql`DELETE FROM happy_agent_module_bot_system_renames`,
+                sql`INSERT INTO happy_agent_module_bot_system_renames (system_key, name)
+                    VALUES ('chief_of_staff', 'Happy')`,
             );
+            const [before] = await fixture.bots.list(fixture.database.context);
 
             await fixture.start();
-            const [renamed] = await fixture.bots.list(fixture.database.context);
-            expect(renamed).toMatchObject({
-                id: seeded.id,
-                agentId: seeded.agentId,
-                name: "Happy",
-                systemKey: "chief_of_staff",
-                username: seeded.username,
-            });
-
-            // A person who names it "Chief of Staff" again keeps that name across restarts.
-            const chosen = await fixture.bots.rename(
-                fixture.database.context,
-                seeded.id,
-                "Chief of Staff",
-                renamed!.version,
-            );
-            await fixture.start();
-            await expect(fixture.bots.list(fixture.database.context)).resolves.toEqual([chosen]);
-        } finally {
-            await fixture.close();
-        }
-    });
-
-    it("leaves a renamed earlier Chief of Staff with the name its person chose", async () => {
-        const fixture = await started("bots-happy-rename-chosen", true);
-        try {
-            await fixture.start();
-            const [seeded] = await fixture.bots.list(fixture.database.context);
-            if (seeded === undefined) throw new Error("The Happy bot was not seeded.");
-            await agentDatabaseRun(
-                fixture.database.database,
-                sql`UPDATE ${sql.raw(BOTS_TABLE)} SET name = 'Release coordinator' WHERE id = ${seeded.id}`,
-            );
-            await agentDatabaseRun(
-                fixture.database.database,
-                sql`DELETE FROM happy_agent_module_bot_system_renames`,
-            );
-            await fixture.start();
-            const [kept] = await fixture.bots.list(fixture.database.context);
-            expect(kept).toMatchObject({ id: seeded.id, name: "Release coordinator" });
+            await expect(fixture.bots.list(fixture.database.context)).resolves.toEqual([before]);
+            expect(before).toMatchObject({ id: seeded.id, name: "Happy" });
         } finally {
             await fixture.close();
         }

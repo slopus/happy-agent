@@ -317,7 +317,7 @@ async function telegramGym() {
     });
     running.add(gym);
     const chief = (await gym.client.listBots()).bots.find(
-        (bot) => bot.systemKey === "chief_of_staff",
+        (bot) => bot.username === "chief_of_staff",
     )!;
     const scout = (await gym.client.createBot({ name: "Scout" })).bot;
     let calls = 0;

@@ -5,8 +5,8 @@ living in Happy, and people talk to it from somewhere else. There are two kinds,
 built in, and `bridge`, which an outside bridge program serves for any other service. A bot is
 exported at most once per kind, and one service account serves at most one bot.
 
-An export is meant for a bot of its own, created for the job, not for the Happy bot. Happy
-only holds the admin tools: it exports other bots, and it is where every access
+An export is meant for a bot of its own, created for the job, not for the Chief of Staff. The
+Chief of Staff only holds the admin tools: it exports other bots, and it is where every access
 request arrives.
 
 ## Kinds
@@ -31,7 +31,7 @@ decimal strings.
 
 Every tool goes only to an active admin bot. Every tool that changes an export requires `botId`,
 the bot people will talk to, with no default to the calling bot, so an export never lands on the
-Happy bot by omission. `get_exported_bot_status` takes it as an optional filter, and lists
+Chief of Staff by omission. `get_exported_bot_status` takes it as an optional filter, and lists
 every export, with everyone waiting to be let in, without it.
 
 | Tool                        | What it does                                                                             |
@@ -106,7 +106,7 @@ their ID. With `ask`, the default:
 
 1. Their first message is held in `happy_agent_module_exported_bot_senders` as a pending request:
    at most 32,000 characters and a count of its attachments. Their files are never opened.
-2. The active Happy bot is sent one message, with the agent origin, naming the kind, the bot,
+2. The active Chief of Staff is sent one message, with the agent origin, naming the kind, the bot,
    and the person's ID, username, and display name, never what they wrote. While the Chief of
    Staff is archived or missing, the request is only recorded.
 3. The person is sent one fixed notice, written in source rather than by a model, through the
@@ -120,7 +120,7 @@ the allowlist; their later messages are dropped silently. Approving a refused pe
 and taking someone off the allowlist does not refuse them. An export holds at most 20 requests and
 remembers 1,000 refusals.
 
-Whenever any export exists, the Happy bot's instructions tell it to tell the user who is
+Whenever any export exists, the Chief of Staff's instructions tell it to tell the user who is
 asking and ask, unless the user already decided, and never to approve on its own judgment.
 
 ## Delivery

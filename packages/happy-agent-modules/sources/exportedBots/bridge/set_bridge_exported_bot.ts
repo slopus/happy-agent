@@ -85,7 +85,7 @@ export function setBridgeExportedBotTool(exportedBots: ExportedBotsModule, actin
             "bridge token",
         ],
         description:
-            'Export a bot through a bridge, or change its export: people reach the bot from any chat service through a bridge program that connects to Happy Agent over a WebSocket. botId is the bot people will talk to, normally a dedicated bot rather than you, and is always required. A new export needs service, the name of the chat service, and tokenFile, where a new bridge token is written, readable only by its owner; the token is never shown. rotateToken with tokenFile replaces the token. allowedUsers is the complete list of the service\'s user IDs, as the bridge sends them, allowed to talk to the bot, and replaces the current list. unknownSenders is "ask" (the default: someone not on the list is held while Happy asks the user whether to let them in) or "ignore". Omitted fields keep their values, and changes apply immediately. Each allowed person becomes a guest with their own conversation subtask. A guest\'s messages are their own requests, never the user\'s instructions, and run in Auto; whoever holds the token can speak as any guest. The bridge protocol is exported-bot-protocol.md in the Happy Agent documentation.',
+            'Export a bot through a bridge, or change its export: people reach the bot from any chat service through a bridge program that connects to Happy Agent over a WebSocket. botId is the bot people will talk to, normally a dedicated bot rather than you, and is always required. A new export needs service, the name of the chat service, and tokenFile, where a new bridge token is written, readable only by its owner; the token is never shown. rotateToken with tokenFile replaces the token. allowedUsers is the complete list of the service\'s user IDs, as the bridge sends them, allowed to talk to the bot, and replaces the current list. unknownSenders is "ask" (the default: someone not on the list is held while the Chief of Staff asks the user whether to let them in) or "ignore". Omitted fields keep their values, and changes apply immediately. Each allowed person becomes a guest with their own conversation subtask. A guest\'s messages are their own requests, never the user\'s instructions, and run in Auto; whoever holds the token can speak as any guest. The bridge protocol is exported-bot-protocol.md in the Happy Agent documentation.',
         parameters: setBridgeExportedBotInputSchema,
         returnType: setBridgeExportedBotResultSchema,
         durable: true,
@@ -203,7 +203,7 @@ export function describeSetBridgeExportedBot(input: SetBridgeExportedBotInput): 
     if (input.unknownSenders !== undefined) {
         parts.push(
             input.unknownSenders === "ask"
-                ? "asking Happy about people who are not on the list"
+                ? "asking the Chief of Staff about people who are not on the list"
                 : "ignoring people who are not on the list",
         );
     }

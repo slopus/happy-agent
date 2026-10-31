@@ -1,6 +1,6 @@
 # Start with one project
 
-Use this recipe when someone asks Happy to help them get started, discover recent
+Use this recipe when someone asks the Chief of Staff to help set up Happy, discover recent
 projects, or import their first project. Recommend starting small: one existing project (or one
 brand-new project), then one useful, reviewable change. A larger goal is welcome; find its first
 small step rather than importing everything or creating a fleet of bots.
@@ -103,7 +103,7 @@ unrelated changes, and verify in proportion to risk. Do not automatically commit
 deploy, or release. Do not spin up extra agents until the agreed task actually benefits from it.
 
 Finish by pointing to the imported project and the change for review. Remind the user that they
-can return to Happy to set up more of their environment when they need it.
+can return to the Chief of Staff to set up more of their environment when they need it.
 
 ## Completion checks
 

@@ -22,7 +22,7 @@ export async function readVoiceOutline(
 ): Promise<VoiceOutline> {
     const happy = await modules.bots.chiefOfStaff(ctx);
     const rows: VoiceOutlineRow[] = [];
-    if (happy?.status === "active") rows.push({ name: "Happy", agentId: happy.agentId });
+    if (happy?.status === "active") rows.push({ name: happy.name, agentId: happy.agentId });
     for (const bot of await modules.bots.list(ctx))
         if (bot.status === "active" && bot.id !== happy?.id)
             rows.push({ name: bot.name, agentId: bot.agentId });

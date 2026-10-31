@@ -47,13 +47,12 @@ import {
     type BotRecord,
     type CreateBotInput,
 } from "./Bot.js";
+import { insertSystemBotSeed, readSystemBotSeed } from "./BotSystemSeedStore.js";
 import {
-    hasSystemBotRename,
-    insertSystemBotRename,
-    insertSystemBotSeed,
-    readSystemBotSeed,
-} from "./BotSystemSeedStore.js";
-import { CHIEF_OF_STAFF_SYSTEM_KEY, HAPPY_BOT_NAME, type BotSystemKey } from "./BotSystemKey.js";
+    CHIEF_OF_STAFF_BOT_NAME,
+    CHIEF_OF_STAFF_SYSTEM_KEY,
+    type BotSystemKey,
+} from "./BotSystemKey.js";
 import { normalizeManagedImage } from "../impl/images/normalizeManagedImage.js";
 import {
     botEventSchema,
@@ -327,7 +326,7 @@ export class BotsModule implements AgentModule {
         return structuredClone(await readBotByAgent(ctx, agentId));
     }
 
-    /** The built-in Happy bot, whatever it is named now, or undefined when it is absent. */
+    /** The built-in Chief of Staff, whatever it is named now, or undefined when it is absent. */
     async chiefOfStaff(ctx: Context): Promise<BotRecord | undefined> {
         const bots = await readBots(ctx);
         return structuredClone(bots.find((bot) => bot.systemKey === CHIEF_OF_STAFF_SYSTEM_KEY));
@@ -506,7 +505,7 @@ export class BotsModule implements AgentModule {
             await this.#ensureChiefOfStaff(ctx);
         } catch (error) {
             if (!(error instanceof RunnerUnavailableError)) throw error;
-            ctx.log.info("Happy will be created once the default runner connects.");
+            ctx.log.info("The Chief of Staff will be created once the default runner connects.");
             const unsubscribe = this.#runners.onUpdated(() => {
                 const lifetime = this.#lifetime;
                 if (this.#closed || lifetime === undefined) {
@@ -518,7 +517,11 @@ export class BotsModule implements AgentModule {
                     (seedError: unknown) => {
                         if (!(seedError instanceof RunnerUnavailableError)) {
                             unsubscribe();
-                            lifetime.log.warn("Happy could not be created.", {}, seedError);
+                            lifetime.log.warn(
+                                "The Chief of Staff could not be created.",
+                                {},
+                                seedError,
+                            );
                         }
                     },
                 );
@@ -530,10 +533,7 @@ export class BotsModule implements AgentModule {
     async #ensureChiefOfStaff(ctx: Context): Promise<void> {
         // This first read is only an optimization: image decoding stays off every startup after
         // the seed is present. The transaction repeats the read before it decides to create.
-        if ((await readSystemBotSeed(ctx, CHIEF_OF_STAFF_SYSTEM_KEY)) !== undefined) {
-            await this.#renameChiefOfStaffToHappy(ctx);
-            return;
-        }
+        if ((await readSystemBotSeed(ctx, CHIEF_OF_STAFF_SYSTEM_KEY)) !== undefined) return;
         const avatar = await normalizeManagedImage(await loadChiefOfStaffAvatar(), {
             maxPixels: 25_000_000,
             contentType: "image/webp",
@@ -544,31 +544,12 @@ export class BotsModule implements AgentModule {
                 txCtx,
                 {
                     isAdmin: true,
-                    name: HAPPY_BOT_NAME,
+                    name: CHIEF_OF_STAFF_BOT_NAME,
                 },
                 CHIEF_OF_STAFF_SYSTEM_KEY,
                 { asset: avatar, source: "generated" },
             );
             await insertSystemBotSeed(txCtx, CHIEF_OF_STAFF_SYSTEM_KEY, created.bot.id);
-            await insertSystemBotRename(txCtx, CHIEF_OF_STAFF_SYSTEM_KEY, HAPPY_BOT_NAME);
-        });
-    }
-
-    /**
-     * The built-in bot was seeded as "Chief of Staff" before it became Happy. Rename it once,
-     * only while it still has that seeded name, keeping its ID, system key, folder, and
-     * conversation; a name the person chose is theirs. The applied rename is recorded, so a
-     * person may later name it "Chief of Staff" again and keep that name.
-     */
-    async #renameChiefOfStaffToHappy(ctx: Context): Promise<void> {
-        await ctx.inTx(async (txCtx) => {
-            if (await hasSystemBotRename(txCtx, CHIEF_OF_STAFF_SYSTEM_KEY, HAPPY_BOT_NAME)) return;
-            const botId = await readSystemBotSeed(txCtx, CHIEF_OF_STAFF_SYSTEM_KEY);
-            const bot = botId === undefined ? undefined : await readBot(txCtx, botId);
-            if (bot !== undefined && bot.name === "Chief of Staff") {
-                await this.#rename(txCtx, bot, HAPPY_BOT_NAME);
-            }
-            await insertSystemBotRename(txCtx, CHIEF_OF_STAFF_SYSTEM_KEY, HAPPY_BOT_NAME);
         });
     }
 
