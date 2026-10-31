@@ -113,6 +113,9 @@ describe("story replies", () => {
         const reply = (to: string, story: typeof replyTo) =>
             bob.sendMessage(to, { text: "Hm?", mode, replyTo: story });
         expect(await status(reply(agentId, hidden))).toBe(404);
+        // A resend of the reply's ID answers with the reply as sent, whatever it now names.
+        const again = { id: sent.message.id, text: "Hm?", mode, replyTo: hidden };
+        expect((await bob.sendMessage(agentId, again)).message).toMatchObject({ replyTo });
         expect(await status(reply(gym.defaultSessionId, replyTo))).toBe(409);
         expect(await status(bob.listStoryReplies(owner.artifactId))).toBe(404);
         expect(gym.errors).toEqual([]);

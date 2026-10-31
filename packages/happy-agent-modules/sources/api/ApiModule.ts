@@ -5194,12 +5194,6 @@ export class ApiModule implements AgentModule {
     ): Promise<void> {
         await this.#assertUserControlledAgent(ctx, agentId);
         const body = await bodyAs(request, messageSendBodySchema, "agent message");
-        if (body.replyTo !== undefined) {
-            const id = body.replyTo.artifactId;
-            const to = await this.#stories?.replyAgentOf(ctx, id, this.#taskMember(ctx));
-            if (to === undefined) throw notFound("The story was not found.");
-            if (to !== agentId) throw new ApiError(409, "conflict", "Replies go to another agent.");
-        }
         sendJson(response, 202, await this.#sendUserMessage(ctx, agentId, body));
     }
 
@@ -5220,6 +5214,13 @@ export class ApiModule implements AgentModule {
                 async (txCtx) => await this.#sentUserMessage(txCtx, agentId, id),
             );
             if (existing !== undefined) return { message: existing, cursor };
+            if (body.replyTo !== undefined) {
+                const story = body.replyTo.artifactId;
+                const to = await this.#stories?.replyAgentOf(ctx, story, this.#taskMember(ctx));
+                if (to === undefined) throw notFound("The story was not found.");
+                if (to !== agentId)
+                    throw new ApiError(409, "conflict", "Replies go to another agent.");
+            }
 
             const selected = this.#config.models.find(
                 (model) =>
@@ -5310,6 +5311,21 @@ export class ApiModule implements AgentModule {
                     } else {
                         await agents.send(txCtx, agentId, { role: "user", content }, options);
                     }
+                    // While unread, a person's message adds their face; a reply marks it unread.
+                    const was = await this.#unread(txCtx, agentId);
+                    const unread =
+                        was === undefined
+                            ? body.replyTo && {
+                                  ...(userId && { from: [userId] }),
+                                  reason: "story_reply",
+                                  since: createdAt,
+                              }
+                            : userId && {
+                                  ...was,
+                                  from: [...new Set([userId, ...(was.from ?? [])])].slice(0, 8),
+                              };
+                    if (unread && this.#stories)
+                        await this.#updateAgentMetadata(txCtx, agentId, { unread });
                     afterCommit(txCtx, (postCommitCtx) =>
                         this.#scheduling?.interruptWaits(postCommitCtx, agentId),
                     );
@@ -5325,19 +5341,9 @@ export class ApiModule implements AgentModule {
                 accepted === undefined
                     ? pendingMessageResource(pending)
                     : messageResource(accepted);
-            // While unread, a person's message adds their face; a story reply marks it unread.
-            const was = await this.#unread(ctx, agentId);
-            const from = userId === undefined ? undefined : [userId];
-            const unread =
-                from === undefined || this.#stories === undefined
-                    ? undefined
-                    : was !== undefined
-                      ? { ...was, from: [...new Set([...from, ...(was.from ?? [])])].slice(0, 8) }
-                      : body.replyTo && { reason: "story_reply", since: createdAt, from };
             await this.#updateAgentMetadata(ctx, agentId, {
                 lastMode: body.mode,
                 initialMode: null,
-                ...(unread && { unread }),
             });
             this.#journal.append("message.created", {
                 agentId,
@@ -5960,9 +5966,11 @@ export class ApiModule implements AgentModule {
                 if (this.#closed) return;
                 try {
                     // The faces of people who wrote while it was unread stay.
-                    const from = (await this.#unread(ctx, agentId))?.from;
-                    await this.#updateAgentMetadata(ctx, agentId, {
-                        unread: { ...(from && { from }), reason: "turn_finished", since },
+                    await ctx.inTx(async (tx) => {
+                        const from = (await this.#unread(tx, agentId))?.from;
+                        await this.#updateAgentMetadata(tx, agentId, {
+                            unread: { ...(from && { from }), reason: "turn_finished", since },
+                        });
                     });
                     return;
                 } catch (error: unknown) {
