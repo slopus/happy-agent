@@ -6,10 +6,9 @@ Voice is a spoken conversation with one desktop window. GPT-Live carries the
 audio. It has no direct tools of its own, so it hands every request to Voice
 through client delegation.
 
-Voice is one agent per person, a long-running subtask of Happy set up the same
-way as Prioritizing: created through `SubtasksModule.create`, unreported, with a
-conversation and a row of its own, and recognised by an agent ID stored in the
-person's bookkeeping. The same Voice serves every call. There is never a new
+Voice is one agent per person, a long-running subtask of Happy: created through
+`SubtasksModule.create`, unreported, with a conversation of its own, and
+recognised by an agent ID stored in the person's bookkeeping. The same Voice serves every call. There is never a new
 Voice or a new controller per call, and never more than one per person. It runs
 GPT-6.1 Sol at low effort by default; the existing voice settings may override
 the provider, model, effort and fast mode.
@@ -19,10 +18,8 @@ connections and peers are out of scope.
 
 ## What Voice can do
 
-Voice has the same context and read tools as Prioritizing: it lists the
-sidebar and reads any conversation's public user and assistant text on this
-machine, on demand. It reads the sidebar but never writes it; any
-rearrangement goes to Prioritizing as a placement request or a tidy.
+Voice lists the sidebar and reads any conversation's public user and assistant
+text on this machine, on demand. It reads the sidebar but never writes it.
 
 Voice can do everything the person does by clicking in the window of the
 active call: open and navigate, create tasks with drafts, stage messages,
@@ -69,10 +66,10 @@ is set only on Voice.
 
 ## Order and criteria
 
-1. Make Voice the person's long-running subtask of Happy, with its own row,
-   serving every call through one queue.
-2. Give Voice Prioritizing's read context and tools, its read-only sidebar, and
-   the full set of desktop actions for the active call's window.
+1. Make Voice the person's long-running subtask of Happy, serving every call
+   through one queue.
+2. Give Voice its read-only sidebar, its conversation reads, and the full set
+   of desktop actions for the active call's window.
 3. Push the sidebar outline to Voice and GPT-Live at call start and only when
    the sidebar changes, and stop every other background push.
 4. Verify with real calls in which Voice calls tools. Opus 5.5 reviews the
