@@ -114,6 +114,8 @@ import {
     type TaskChild,
     type TaskChildRef,
     agentWaitSchema,
+    repostStoryRequestSchema,
+    storyMutationRequestSchema,
 } from "@slopus/happy-agent-client";
 import {
     cuid2Schema,
@@ -185,6 +187,7 @@ import {
     type TaskMemberId,
     type TaskRecord,
 } from "../tasks/index.js";
+import { StoryAccessError, StoriesModule } from "../stories/index.js";
 import {
     CompactionAgentBusyError,
     CompactionAlreadyRunningError,
@@ -604,6 +607,7 @@ export class ApiModule implements AgentModule {
     readonly #subtasks: SubtasksModule | undefined;
     readonly #tasks: TasksModule | undefined;
     readonly #taskIcons: TaskIconsModule | undefined;
+    readonly #stories: StoriesModule | undefined;
     readonly #artifacts: ArtifactsModule | undefined;
     readonly #artifactData: ApiArtifactData | undefined;
     readonly #chatMedia: ChatMediaModule | undefined;
@@ -776,6 +780,7 @@ export class ApiModule implements AgentModule {
         providerClis?: ProviderClisModule,
         providerRoutes?: ProviderRoutesModule,
         taskIcons?: TaskIconsModule,
+        stories?: StoriesModule,
     ) {
         this.#abort = abort;
         this.#config = config;
@@ -809,6 +814,7 @@ export class ApiModule implements AgentModule {
         this.#runners = runners;
         this.#tasks = tasks;
         this.#taskIcons = taskIcons;
+        this.#stories = stories;
         this.#artifacts = artifacts;
         this.#artifactData =
             artifactData === undefined
@@ -2795,6 +2801,14 @@ export class ApiModule implements AgentModule {
                 : [
                       this.#artifacts.onEvent((_eventCtx, event) => {
                           this.#convertArtifactEvent(event);
+                      }),
+                  ]),
+            ...(this.#stories === undefined
+                ? []
+                : [
+                      // An owner-audience story reaches only its person; a team story, everyone.
+                      this.#stories.onEvent((story, viewer) => {
+                          this.#journal.append("story.changed", { story }, Date.now(), viewer);
                       }),
                   ]),
             ...(this.#providerClis === undefined
@@ -7184,6 +7198,11 @@ export class ApiModule implements AgentModule {
             if ((await tasks.get(ctx, taskId)) === undefined) {
                 throw notFound("The task was not found.");
             }
+            if (
+                ref.kind === "artifact" &&
+                (await this.#artifacts?.get(ctx, ref.id))?.type === "story"
+            )
+                throw invalidRequest("A story is never shown under a task.");
             if (put !== undefined && !(await this.#taskChildExists(ctx, ref))) {
                 throw notFound("The child was not found.");
             }
@@ -7327,11 +7346,27 @@ export class ApiModule implements AgentModule {
     ): Promise<boolean> {
         const artifacts = this.#artifacts;
         if (artifacts === undefined) return false;
+        // A story answers as missing unless asked for by type and the caller may see it.
+        const storyId = /^\/v0\/artifacts\/([a-z][a-z0-9]*)(?:\/|$)/.exec(url.pathname)?.[1];
+        const viewer = this.#tasks?.memberFor(teamUser(ctx)?.id) ?? "";
+        const story = storyId && (await this.#stories?.canSee(ctx, storyId, viewer));
+        if (typeof story === "boolean") {
+            if (!story || url.searchParams.get("type") !== "story")
+                throw notFound("The artifact was not found.");
+            if (request.method === "PATCH" || url.pathname.endsWith("/delete"))
+                throw new ApiError(
+                    409,
+                    "conflict",
+                    "A story changes only by posting or taking it down.",
+                );
+        }
         if (this.#artifactData !== undefined && ARTIFACT_DATA_ROUTE.test(url.pathname)) {
             await this.#artifactData.handle(ctx, request, response);
             return true;
         }
         try {
+            if (this.#stories !== undefined && url.pathname.startsWith("/v0/stories"))
+                return await this.#handleStoryRoute(ctx, request, response, url, this.#stories);
             if (url.pathname === "/v0/artifact-uploads") {
                 if (request.method !== "POST") return false;
                 const upload = await artifacts.stageUpload(ctx, request);
@@ -7343,8 +7378,15 @@ export class ApiModule implements AgentModule {
                     const query = artifactListQuery(url);
                     const cursor = this.#journal.cursor();
                     const page = await artifacts.list(ctx, query);
+                    const seen = await Promise.all(
+                        page.artifacts.map(
+                            async ({ id, type }) =>
+                                type !== "story" ||
+                                (await this.#stories?.canSee(ctx, id, viewer)) === true,
+                        ),
+                    );
                     sendJson(response, 200, {
-                        artifacts: page.artifacts.map(artifactResource),
+                        artifacts: page.artifacts.filter((_, at) => seen[at]).map(artifactResource),
                         nextPageCursor: page.nextAfter ?? null,
                         cursor,
                     });
@@ -7531,6 +7573,10 @@ export class ApiModule implements AgentModule {
             }
             return false;
         } catch (error: unknown) {
+            if (error instanceof StoryAccessError)
+                throw error.status === 404
+                    ? notFound(error.message)
+                    : new ApiError(403, "forbidden", error.message);
             if (error instanceof ArtifactInputError) throw invalidRequest(error.message);
             if (error instanceof ArtifactNotFoundError) throw notFound(error.message);
             if (error instanceof ArtifactTooLargeError) {
@@ -7553,6 +7599,64 @@ export class ApiModule implements AgentModule {
             }
             throw error;
         }
+    }
+
+    /** `/v0/stories`: the caller's stories, and seeing, taking down, and reposting one. */
+    async #handleStoryRoute(
+        ctx: Context,
+        request: IncomingMessage,
+        response: ServerResponse,
+        url: URL,
+        stories: StoriesModule,
+    ): Promise<boolean> {
+        const member = this.#taskMember(ctx);
+        if (url.pathname === "/v0/stories" && request.method === "GET") {
+            const scope = url.searchParams.get("scope") ?? "feed";
+            if (scope !== "feed" && scope !== "mine")
+                throw invalidRequest("scope is feed or mine.");
+            const cursor = this.#journal.cursor();
+            sendJson(response, 200, {
+                stories: await stories.list(ctx, { memberId: member, scope }),
+                cursor,
+            });
+            return true;
+        }
+        const one = /^\/v0\/stories\/([a-z][a-z0-9]*)$/.exec(url.pathname);
+        if (one !== null && request.method === "GET") {
+            sendJson(response, 200, { story: await stories.get(ctx, one[1] as string, member) });
+            return true;
+        }
+        const route = /^\/v0\/stories\/([a-z][a-z0-9]*)\/(seen|take-down|repost|replies)$/.exec(
+            url.pathname,
+        );
+        if (route === null) return false;
+        const id = route[1] as string;
+        if (route[2] === "replies") {
+            if (request.method !== "GET") return false;
+            // Replies are read back from the reply agent's conversation once they can be sent.
+            const story = await stories.get(ctx, id, member);
+            sendJson(response, 200, { agentId: story.replyAgentId, messages: [], hasMore: false });
+            return true;
+        }
+        if (request.method !== "POST") return false;
+        if (route[2] === "repost") {
+            const body = await bodyAs(request, repostStoryRequestSchema, "story repost");
+            const story = await this.#withMutationId(
+                body.mutationId,
+                async () => await stories.repost(ctx, id, member, body),
+            );
+            sendJson(response, 201, { story });
+            return true;
+        }
+        const body = await bodyAs(request, storyMutationRequestSchema, "story change");
+        const by = { agentId: null, userId: teamUser(ctx)?.id ?? null };
+        const story = await this.#withMutationId(body.mutationId, async () =>
+            route[2] === "seen"
+                ? await stories.markSeen(ctx, id, member)
+                : await stories.takeDown(ctx, id, member, by),
+        );
+        sendJson(response, 200, { story });
+        return true;
     }
 
     /** The person making an artifact change: a team member, or the standalone installation's one. */
@@ -9735,6 +9839,7 @@ export class ApiModule implements AgentModule {
                     : { providerRoutes: true }),
                 ...(this.#bridges === undefined ? {} : { workspaceBridges: true }),
                 ...(this.#tasks === undefined ? {} : { taskSections: true }),
+                ...(this.#stories === undefined ? {} : { storyArtifacts: true }),
                 ...(this.#live === undefined
                     ? {}
                     : { desktopLiveCapabilities: [...this.#live.desktopCapabilities] }),

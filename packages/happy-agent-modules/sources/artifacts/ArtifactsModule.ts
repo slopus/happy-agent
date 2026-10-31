@@ -618,7 +618,7 @@ export class ArtifactsModule implements AgentModule {
         }
         const url = input.url === undefined ? undefined : normalizeArtifactUrl(input.url);
         return await ctx.inTx(async (txCtx) => {
-            const current = await this.#required(txCtx, input.artifactId);
+            const current = refuseStory(await this.#required(txCtx, input.artifactId));
             if (
                 input.operationId !== undefined &&
                 (await queryArtifactVersionForOperation(txCtx, current.id, input.operationId)) !==
@@ -758,7 +758,7 @@ export class ArtifactsModule implements AgentModule {
             throw new ArtifactInputError("The artifact deletion is invalid.");
         }
         return await ctx.inTx(async (txCtx) => {
-            const current = await this.#required(txCtx, input.artifactId);
+            const current = refuseStory(await this.#required(txCtx, input.artifactId));
             if (current.status === "deleted") return current;
             this.#assertRevision(current, input.expectedRevision);
             const now = Math.max(Date.now(), current.updatedAt + 1);
@@ -854,7 +854,7 @@ export class ArtifactsModule implements AgentModule {
         const done = await this.madeByOperation(ctx, changes.artifactId, changes.operationId);
         if (done !== undefined) return { artifact: done, changed: true };
         const current = await this.#requiredActiveOutsideTx(ctx, changes.artifactId);
-        requireFileArtifact(current);
+        requireFileArtifact(refuseStory(current));
         if (
             changes.expectedRevision !== undefined &&
             current.revision !== changes.expectedRevision
@@ -1156,6 +1156,8 @@ export class ArtifactsModule implements AgentModule {
         if (!Value.Check(artifactEventSchema, event)) {
             throw new Error("The artifact event is invalid.");
         }
+        // Stories reach only the people who may see them, through their own events.
+        if (event.artifact.type === "story") return;
         const frozen = deepFreeze(structuredClone(event));
         afterCommit(ctx, async (eventCtx) => {
             for (const listener of [...this.#listeners]) {
@@ -1176,6 +1178,12 @@ export class ArtifactsModule implements AgentModule {
         if (this.#agents === undefined) throw new Error("The artifacts module has not started.");
         return this.#agents;
     }
+}
+
+/** A story changes only through the Stories module, never as an ordinary artifact. */
+function refuseStory(artifact: ArtifactRecord): ArtifactRecord {
+    if (artifact.type !== "story") return artifact;
+    throw new ArtifactConflictError("A story changes only by posting or taking it down.", artifact);
 }
 
 /** The durable removal of one upload, cancelled when the upload is used. */

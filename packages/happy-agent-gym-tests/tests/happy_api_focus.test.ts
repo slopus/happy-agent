@@ -17,6 +17,7 @@ describe("Focus", () => {
         const briefs: { at: number; agentId: string; text: string }[] = [];
         const plans: GymTurn[] = [];
         const turns = new Map<string, GymTurn>();
+        const focusTools: string[] = [];
         const gym = await createAgentGym({
             timeoutMs: 20_000,
             inference: (request) => {
@@ -27,6 +28,8 @@ describe("Focus", () => {
                     turns.delete(request.sessionId);
                     return turn ?? text("Done.");
                 }
+                // Focus is a subtask, so it never gets a task's or bot's card tools.
+                focusTools.push(...request.tools.map((tool) => tool.name));
                 // Focus opens on a message from Happy; later briefs arrive as notices.
                 if (last?.role === "tool") return text("Moved what needed you up.");
                 briefs.push({
@@ -114,6 +117,8 @@ describe("Focus", () => {
         expect((await briefed(4)).agentId).toBe(first.agentId);
         expect(briefs).toHaveLength(4);
         expect(gym.inference.unscripted).toEqual([]);
+        expect(focusTools).not.toContain("set_story");
+        expect(focusTools).not.toContain("get_card");
         expect(gym.errors).toEqual([]);
     }, 90_000);
 });

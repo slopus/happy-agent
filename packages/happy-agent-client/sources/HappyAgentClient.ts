@@ -1780,6 +1780,15 @@ export class HappyAgentClient {
         });
     }
 
+    /** `GET /v0/stories/:artifactId` — one story in any state, to anyone who could see it live. */
+    async getStory(artifactId: Cuid2, options: RequestOptions = {}): Promise<StoryResponse> {
+        return await this.#json({
+            method: "GET",
+            path: `v0/stories/${encodeURIComponent(artifactId)}`,
+            signal: options.signal,
+        });
+    }
+
     /** `POST /v0/stories/:artifactId/seen` — idempotent. */
     async markStorySeen(
         artifactId: Cuid2,

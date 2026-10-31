@@ -21,6 +21,7 @@ const ADDED = new Set([
     "hidden",
     "sections",
     "taskSections",
+    "storyArtifacts",
     "taskArtifacts",
     "protocol",
 ]);
@@ -154,6 +155,13 @@ describe("with every rich-task setting off", () => {
             }
             const rich = (bits & 1) === 1;
             const sets = await toolSets();
+            // Rich tasks give task and bot agents, Happy included, their card tools; never a subtask.
+            for (const [kind, tools] of Object.entries(sets)) {
+                const { get_card: card, set_story: story, ...others } = tools;
+                const given = rich && kind !== "subtask";
+                expect([card !== undefined, story !== undefined], kind).toEqual([given, given]);
+                sets[kind] = others;
+            }
             // Rich tasks also give a task, and only a task, its own title and icon tools.
             const {
                 search_task_icons: search,

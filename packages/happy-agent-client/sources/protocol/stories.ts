@@ -45,15 +45,23 @@ export const storyMediaSchema = Type.Union([
 ]);
 export type StoryMedia = Static<typeof storyMediaSchema>;
 
+/** The task's name, the bot's name, or the person's display name, as served; older daemons omit it. */
+const storyPosterNameSchema = Type.Optional(Type.String({ minLength: 1 }));
+
 /** An agent posted it, under its task or bot, or a person reposted another story. */
 export const storyPosterSchema = Type.Union([
     Type.Object({
         agentId: cuid2Schema,
         botId: Nullable(cuid2Schema),
         kind: Type.Literal("agent"),
+        name: storyPosterNameSchema,
         taskId: Nullable(cuid2Schema),
     }),
-    Type.Object({ kind: Type.Literal("user"), userId: Nullable(userIdSchema) }),
+    Type.Object({
+        kind: Type.Literal("user"),
+        name: storyPosterNameSchema,
+        userId: Nullable(userIdSchema),
+    }),
 ]);
 export type StoryPoster = Static<typeof storyPosterSchema>;
 

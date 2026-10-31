@@ -10976,10 +10976,14 @@ appear in a tool-call presentation. Every other route under `/v0/artifacts/:arti
 artifact, its versions, one version, its files, the proxy, and the artifact data API — answers
 `404 not_found` for a story artifact, exactly as for an artifact that does not exist, unless the
 request carries the query parameter `type=story`; with it, the route serves the story artifact as
-it serves any other. A shared `happy://artifacts/<id>` link to a story therefore opens as a
-missing artifact in an older client, which never receives a `type` it cannot parse. A client with
-`capabilities.storyArtifacts` reads stories through `/v0/stories` and a story artifact's own files
-with `type=story`.
+it serves any other, provided the caller may see the story: a team-audience story, a person's
+repost included, is readable by every member, and an owner-audience story only by the person it
+was posted for; anyone else receives `404 not_found` even with `type=story`. `type=story` never
+hides an artifact that is not a story. A shared `happy://artifacts/<id>` link to a story therefore
+opens as a missing artifact in an older client, which never receives a `type` it cannot parse. A
+client with `capabilities.storyArtifacts` always adds `type=story` when it opens a
+`happy://artifacts` link, and opens the story viewer when the artifact it receives is a story. It
+reads stories through `/v0/stories` and a story artifact's own files with `type=story`.
 
 **Sources.** `source` says where an artifact was created, as an object discriminated by `kind`:
 
@@ -11252,7 +11256,8 @@ Lists the catalog, newest `createdAt` first with the artifact ID as the tie-brea
 
 Query parameters, all optional:
 
-- `type` — only artifacts of this type. Story artifacts are listed only with `type=story`.
+- `type` — only artifacts of this type. Story artifacts are listed only with `type=story`, and
+  then only those the caller may see.
 - `sourceKind` — only artifacts whose `source.kind` is this. `sourceId` additionally narrows to one
   place: the source's `botId`, `taskId`, `projectId`, `workspaceId`, or, for an `agent` source,
   `agentId`. `sourceId` without `sourceKind` is `400`.
@@ -11817,7 +11822,8 @@ from health. Stories are part of rich tasks: an agent posts only while the perso
 has `tasks.rich` on, and clients draw them only then.
 
 Each story is one frame: one artifact of type `story` whose entry is `story.json`, with the
-story's own files beside it. Agents post with `set_story`; people repost an agent's story.
+story's own files beside it. Agents post with `set_story`, naming an image or video artifact's
+file as the frame; people repost an agent's story.
 
 **Posters and audiences.** Each poster has at most one live story per audience; posting replaces
 it.
@@ -11852,7 +11858,8 @@ agent unread (`"story_reply"`) with the replier in `unread.from`. `replies` coun
         "kind": "agent",
         "agentId": "a9b8c7d6e5f4g3h2i1j0k9l8",
         "taskId": "t4k8m2q9w1e5r7y3u6i0o2p4",
-        "botId": null
+        "botId": null,
+        "name": "Onboarding v2"
     },
     "replyAgentId": "a9b8c7d6e5f4g3h2i1j0k9l8",
     "audience": "owner",
@@ -11871,9 +11878,12 @@ agent unread (`"story_reply"`) with the replier in `unread.from`. `replies` coun
 ```
 
 - `artifactId`, `artifactVersion` — the story artifact and the version holding this story.
-- `poster` — `{ "kind": "agent", "agentId", "taskId", "botId" }`, with `taskId` or `botId` naming
-  the task or bot the agent works under, or `null`; or `{ "kind": "user", "userId" }` for a
-  person's repost.
+- `poster` — `{ "kind": "agent", "agentId", "taskId", "botId", "name" }`, with `taskId` or
+  `botId` naming the task or bot the agent works under, or `null`; or
+  `{ "kind": "user", "userId", "name" }` for a person's repost. `name` is optional: the task's
+  name, the bot's name, or the person's display name as they are when the story is served. It is
+  absent when there is none to show, such as a standalone installation's person, and older
+  daemons omit it; clients then name the poster from their own data.
 - `replyAgentId` — the agent replies go to; see "Replies".
 - `audience` — `"owner"` or `"team"`.
 - `caption` — up to 140 characters of plain text, or `null`.
@@ -11905,6 +11915,12 @@ live and ended in the last 7 days. Any other value is `400 invalid_request`.
 Response — `200`: `{ "stories": [ /* story objects, newest postedAt first */ ], "cursor": "..." }`,
 `cursor` being the event cursor captured before the read. Clients draw one ring per poster, split
 into one segment per live story.
+
+### `GET /v0/stories/:artifactId`
+
+Reads one story in any state — live, replaced, taken down, or expired — so a client can quote the
+story an older reply answers. Response — `200`: `{ "story": { ... } }`. `404` when the caller
+could not see the story while it was live, exactly as for a story that does not exist.
 
 ### `POST /v0/stories/:artifactId/seen`
 

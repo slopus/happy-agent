@@ -263,3 +263,10 @@ validates a record throw, so a migration deletes those artifacts with their vers
 and inline text no remaining file uses. Content files on disk stay, as they do for any deleted
 artifact. History still parses an older call's presentation of a withdrawn type, and the API shows
 that call as a plain tool instead of a card no client can open.
+
+## Stories came back as a hidden type
+
+Rich tasks brought `story` back as a type made only by the Stories module. It is a stored type,
+not a creatable one, so `create_artifact` and `list_artifacts` keep main's schemas. Stories are
+left out of every list unless `type=story` is asked for, publish no `artifact.*` event, and refuse
+update, delete, and file edits, so no client that does not know the type ever meets one.

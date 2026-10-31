@@ -110,6 +110,17 @@ export const ARTIFACT_TYPE_RULES: Readonly<Record<ArtifactType, ArtifactTypeRule
         maxFileBytes: 64 * MIB,
         maxTotalBytes: 64 * MIB,
     },
+    // One frame: `story.json`, with the frame's own image or video and a repost's round video.
+    story: {
+        label: "story",
+        article: "a",
+        entry: { path: "story.json", maxBytes: 64 * 1024 },
+        mimeTypes: [...ARTIFACT_IMAGE_MIME_TYPES, ...ARTIFACT_VIDEO_MIME_TYPES, "application/json"],
+        minFiles: 1,
+        maxFiles: 3,
+        maxFileBytes: 256 * MIB,
+        maxTotalBytes: 512 * MIB,
+    },
 };
 
 /** The largest single file any type accepts, and so the largest upload. */

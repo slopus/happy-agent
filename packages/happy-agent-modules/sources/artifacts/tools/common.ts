@@ -6,7 +6,7 @@ import {
     artifactPathSchema,
     artifactRecordSchema,
     artifactTitleSchema,
-    artifactTypeSchema,
+    artifactStoredTypeSchema,
     MAX_ARTIFACT_FILES,
     type ArtifactRecord,
 } from "../Artifact.js";
@@ -98,7 +98,7 @@ const artifactToolPresentationSchema = Type.Object(
         type: Type.Literal("artifact"),
         artifactId: artifactRecordSchema.properties.id,
         version: Type.Integer({ minimum: 1 }),
-        artifactType: artifactTypeSchema,
+        artifactType: artifactStoredTypeSchema,
         title: artifactTitleSchema,
         shows: Type.Union([Type.Literal("latest"), Type.Literal("version")]),
     },

@@ -29,14 +29,15 @@ client opens. Every file of a version is served under one URL prefix, so a relat
 an entry — `![](images/chart.png)` or `<img src="img/hero.jpg">` — resolves to its file without
 rewriting.
 
-| Type           | Entry               | Files                                           |
-| -------------- | ------------------- | ----------------------------------------------- |
-| `markdown`     | `index.md`, UTF-8   | the entry and up to 255 other files of any kind |
-| `html`         | `index.html`, UTF-8 | the entry and up to 255 other files of any kind |
-| `image`        | its one file        | one image                                       |
-| `image_series` | the first file      | 1–64 images, shown in path order                |
-| `video`        | its one file        | one video                                       |
-| `document`     | its one file        | one document                                    |
+| Type           | Entry               | Files                                                |
+| -------------- | ------------------- | ---------------------------------------------------- |
+| `markdown`     | `index.md`, UTF-8   | the entry and up to 255 other files of any kind      |
+| `html`         | `index.html`, UTF-8 | the entry and up to 255 other files of any kind      |
+| `image`        | its one file        | one image                                            |
+| `image_series` | the first file      | 1–64 images, shown in path order                     |
+| `video`        | its one file        | one video                                            |
+| `document`     | its one file        | one document                                         |
+| `story`        | `story.json`        | the entry and up to 2 images or videos; Stories only |
 
 `ARTIFACT_TYPE_RULES` holds each type's entry, media types, file counts, and size limits; a new
 type is one more entry there. A file's media type comes from its path's extension alone

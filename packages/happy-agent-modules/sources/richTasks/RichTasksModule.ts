@@ -79,8 +79,13 @@ export class RichTasksModule implements AgentModule {
         scope: AgentModuleScope,
         setting: RichTasksSetting = RICH_TASKS_SETTING,
     ): Promise<boolean> {
+        return await this.isOn(ctx, await this.personFor(ctx, scope), setting);
+    }
+
+    /** The team member an agent works for: a task's owner, or a bot's person for the turn. */
+    async personFor(ctx: Context, scope: AgentModuleScope): Promise<string | undefined> {
         const task = await this.#tasks.forAgent(ctx, scope.agent.id);
         const person = task === undefined ? await scope.kv.read(ctx, PERSON_KEY) : task.ownerUserId;
-        return await this.isOn(ctx, typeof person === "string" ? person : undefined, setting);
+        return typeof person === "string" ? person : undefined;
     }
 }

@@ -728,7 +728,6 @@ export class BotsModule implements AgentModule {
     /**
      * Change one person's own state on a bot; `unread: null` clears it. A change to what they see
      * publishes one event carrying both `hidden` and `unread`, so neither shows without the other.
-     * TODO(stories): a story this bot posts that the person can see shows it to them here too.
      */
     async updateMembership(
         ctx: Context,

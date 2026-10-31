@@ -11,6 +11,8 @@ const artifactTypes = [
     Type.Literal("document"),
 ];
 export const artifactTypeSchema = Type.Union(artifactTypes);
+/** Every type a stored artifact may have: the creatable ones, and `story`, made only by Stories. */
+export const artifactStoredTypeSchema = Type.Union([...artifactTypes, Type.Literal("story")]);
 export const artifactStatusSchema = Type.Union([Type.Literal("active"), Type.Literal("deleted")]);
 export const artifactTimestampSchema = Type.Integer({
     minimum: 0,
@@ -157,7 +159,7 @@ export const MAX_ARTIFACT_FILES = 256;
 export const artifactRecordSchema = Type.Object(
     {
         id: cuid2Schema,
-        type: artifactTypeSchema,
+        type: artifactStoredTypeSchema,
         title: artifactTitleSchema,
         status: artifactStatusSchema,
         latestVersion: artifactCounterSchema,
@@ -251,7 +253,7 @@ export const createArtifactInputSchema = Type.Object(
     {
         /** The retry key: an artifact that already has this ID is returned unchanged. */
         id: Type.Optional(cuid2Schema),
-        type: artifactTypeSchema,
+        type: artifactStoredTypeSchema,
         title: artifactTitleSchema,
         /** Every file of the first version; each upload is used up by the creation. */
         files: Type.Array(artifactPlacementSchema, { minItems: 1, maxItems: MAX_ARTIFACT_FILES }),
@@ -340,7 +342,7 @@ export const artifactVersionQuerySchema = Type.Object(
     { additionalProperties: false },
 );
 
-export type ArtifactType = Static<typeof artifactTypeSchema>;
+export type ArtifactType = Static<typeof artifactStoredTypeSchema>;
 export type ArtifactStatus = Static<typeof artifactStatusSchema>;
 export type ArtifactDisplay = Static<typeof artifactDisplaySchema>;
 export type ArtifactFile = Static<typeof artifactFileSchema>;

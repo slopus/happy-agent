@@ -47,6 +47,7 @@ export * from "./tasks/index.js";
 export * from "./taskAutoJoin/index.js";
 export * from "./richTasks/index.js";
 export * from "./focus/index.js";
+export * from "./stories/index.js";
 export * from "./taskIcons/index.js";
 export * from "./teammates/index.js";
 export * from "./surfaceAutoJoin/index.js";

@@ -59,6 +59,7 @@ import { ProjectFilesModule } from "../files/index.js";
 import { ChatMediaModule } from "../chatMedia/index.js";
 import { CleanupModule } from "../cleanup/index.js";
 import { FocusModule } from "../focus/index.js";
+import { StoriesModule } from "../stories/index.js";
 import { GeminiModule } from "../gemini/index.js";
 import { GitModule } from "../git/index.js";
 import { GoalModule } from "../goal/index.js";
@@ -754,6 +755,7 @@ export async function startHappyAgentRuntime(
             subtasks,
             userSettings,
         );
+        const stories = new StoriesModule(artifacts, tasks, bots, team, richTasks, focus);
         const apiModule = new ApiModule(
             abort,
             config,
@@ -797,6 +799,7 @@ export async function startHappyAgentRuntime(
             providerClis,
             providerRoutes,
             taskIcons,
+            stories,
         );
         api = apiModule;
 
@@ -946,6 +949,7 @@ export async function startHappyAgentRuntime(
             imageGeneration,
             agentStatus,
             focus,
+            stories,
             compute.skillsModule,
             compute.computeModule,
             happy,

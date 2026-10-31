@@ -72,6 +72,7 @@ ${pem}"""
             aliceId: (await alice.getProfile()).profile.userId!,
             bobId: await onboard(bob, "Bob"),
             clientFor,
+            tokenFor,
             onboard,
         };
     } catch (error) {
