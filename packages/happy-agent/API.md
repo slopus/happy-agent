@@ -10408,9 +10408,13 @@ Fields:
   `changes`. It never changes for a given caller and task, so a client keeps the value it read; a
   client that learns of a task only from `task.created` reads `GET /v0/tasks/:taskId` before
   offering archival. Older compatible daemons omit it.
-- `icon` — the task's icon, or `null` until one is chosen: `{ "type": "library", "slug": "..." }`,
+- `icon` — the task's icon, or `null` until one is chosen: `{ "type": "library", "slug": "...", "hash": "..." }`,
   a slug of 1–64 lowercase ASCII letters, digits, and single hyphens, from Happy's icon library.
-  The type set may grow; a client shows its default icon for an unknown type or slug. Additive;
+  `hash` is optional for compatibility and, when present, is the lowercase SHA-256 hex digest of
+  the bundled 128px WebP bytes. Clients fetch those bytes from
+  `GET /v0/task-icons/:slug?v=:hash` through the same authenticated daemon transport and cache
+  them by hash; they do not need a bundled icon catalog. Older slug-only icons remain readable.
+  The type set may grow; a client shows its default icon for an unknown type or missing asset. Additive;
   daemons without `capabilities.taskSections` omit it.
 - `children` — the task's child choices, oldest first, `[]` when there are none; see "Sub-rows".
   Each holds `ref` (`kind` `"workspace"`, `"agent"`, or `"artifact"`, and its `id`), `visibility`
@@ -10561,9 +10565,38 @@ of, `name`: `{ "icon": { "type": "library", "slug": "bug" } }`, or `null` for no
 of the two is required. An icon permanently ends automatic icon choice, even when it equals the
 current one. An older daemon ignores `icon` beside a name and rejects a request without one.
 
+The daemon validates the slug against its bundled catalog and supplies the authoritative `hash`
+in the response; a caller cannot choose the bytes or their hash. A person's title or icon choice
+is final for that field, including choosing no icon, and a task agent cannot replace it.
+
+When the task owner's `tasks.rich` setting is on, the top-level task agent chooses its own title
+and icon through `search_task_icons` and `set_task_title_icon`. Search returns at most ten BM25
+matches from the bundled catalog, with each candidate's slug, label, description, category, hash,
+and score. A query with no matching terms returns no candidates. The setter has no task or agent ID:
+it changes only the calling task through the same canonical task mutation path. It refuses a
+change to a field already chosen by a person. The tool durably queues its change, reports that it
+applies when the turn ends, and rechecks the current setting and each person's choice in the write
+transaction. A person choosing a field, disabling rich tasks, or archiving the task before that
+write cancels the queued change. The tools are absent when rich tasks are off and
+are not offered to bots or subtasks. Automatic naming skips rich tasks; with rich tasks off,
+existing first-message title generation is unchanged.
+
 Response — `200`: `{ "task": { ... }, "membership": { ... } }` with the change, and a
 `task.updated` event after commit, echoing `mutationId`. `404` when no such task exists, and the
 usual `409` when `If-Match` names an older version.
+
+### `GET /v0/task-icons/:slug`
+
+Returns the bundled 128px task icon as raw `image/webp` bytes, using the ordinary authentication
+and transport. This route serves only catalog assets, never arbitrary paths or remote URLs.
+`ETag` is the quoted lowercase SHA-256 digest of the bytes. A matching `If-None-Match` returns
+`304` without a body. Unknown or malformed slugs return `404`.
+
+An optional `v` query parameter must equal the current hash exactly; a wrong or stale value
+returns `404`. A matching version responds with
+`Cache-Control: public, max-age=31536000, immutable`; an unversioned request uses
+`Cache-Control: no-cache` so clients revalidate. The same cache headers apply to `304` responses.
+There is no public catalog route.
 
 ### `GET /v0/tasks/:taskId`
 

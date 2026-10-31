@@ -179,22 +179,18 @@ ignored. Both now use the mode chosen at creation, or else Auto, narrowed to the
 sending agent's mode. A task is a person's own root rather than the agent's child, so a Full
 access agent does not pass Full access on; the person picks the mode once they open it.
 
-## A task's icon comes from its naming request, and only for people who see rich tasks
+## Rich tasks choose their own title and icon; a person's choice stays final
 
-Rich tasks show an icon on every task card, chosen by the naming job in the same cheap request as
-the title, as one more `<icon>` tag limited to the restored clay library. Asking for it changes
-the naming prompt, and a named task would gain a request it never made, so the icon is asked for
-only when the owner has `tasks.rich` on; everyone else gets
-today's request byte for byte. Tasks cannot read settings (settings depend on Team, which depends
-on Tasks), so `RichTasksModule` answers through `decideIconsWith`. The name and the icon end
-separately: a person's rename leaves the icon to naming, and a person's pick, `null` included,
-ends automatic icon choice even when it races the job.
+The naming job previously chose an icon from a small enum alongside the title. Each rich top-level
+task now searches the full bundled catalog with BM25 and chooses its own title and icon through
+ordinary tools. `RichTasksModule` supplies the owner's setting through `decideIdentityWith`, since
+settings depend on Team, which depends on Tasks. Rich tasks skip automatic naming altogether;
+ordinary tasks keep the same title-only request. A running job rechecks the setting before writing.
 
-Review found two holes in the first version. A queued job trusted the icon flag it was invoked
-with, so turning `tasks.rich` off, or restarting without rich tasks, still bought and wrote an
-icon; the job now asks again before every attempt and inside its writing transaction. And an
-automatic icon left no settled mark, so a job replayed after its write but before Durable
-Functions removed it picked a second icon; any icon a task already has now settles that part.
+Both human updates and the scoped agent setter share one mutation path. A human's choice is final
+for that field, including an unchanged title or `null` icon. `name_agent_chosen` distinguishes a
+task's own title, which it can refine, from a human choice; a human PATCH clears it. Icons stay
+slugs in storage so updating artwork does not leave a permanently stale digest in a task row.
 
 ## Sections share the memberships' key space
 

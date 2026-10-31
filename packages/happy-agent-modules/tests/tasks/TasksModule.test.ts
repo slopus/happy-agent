@@ -833,52 +833,87 @@ describe("TasksModule", () => {
         }
     });
 
-    it("picks an icon only while it is wanted, and never a second one", async () => {
+    it("leaves rich task identity to its agent and stops a racing naming job", async () => {
         const fixture = await started("tasks-icon-settled");
         try {
             const ctx = fixture.database.context;
             let wanted = true;
-            fixture.tasks.decideIconsWith(async () => wanted);
+            fixture.tasks.decideIdentityWith(async () => wanted);
             fixture.naming.mockResolvedValue({ title: "Login loop", icon: "login" });
             const task = await fixture.tasks.create(ctx, {});
             await fixture.acceptText(task.agentId, "user", "The login page loops.");
-            await vi.waitFor(async () => {
-                expect((await fixture.tasks.get(ctx, task.id))?.icon).toBe("login");
+            expect(fixture.naming).not.toHaveBeenCalled();
+            expect((await fixture.tasks.get(ctx, task.id))?.name).toBe("New Task");
+            const chosen = await fixture.tasks.setIdentityForAgent(ctx, task.agentId, {
+                title: "Agent title",
+                icon: "login",
             });
-            const named = (await fixture.tasks.get(ctx, task.id))!;
-            // Replayed after its write but before the call was removed, the job finds both settled.
-            const runs = fixture.finished.length;
-            await ctx.inTx(async (txCtx) => {
-                await fixture.durable.invoke(txCtx, {
-                    function: "tasks.name",
-                    operationId: "tasks.name:replay",
-                    arguments: {
-                        taskId: task.id,
-                        providerId: "scripted",
-                        message: "Loops.",
-                        icon: true,
-                    },
-                });
+            expect(chosen).toMatchObject({
+                name: "Agent title",
+                nameAgentChosen: true,
+                icon: "login",
             });
-            await vi.waitFor(() => expect(fixture.finished).toHaveLength(runs + 1));
-            expect(fixture.naming).toHaveBeenCalledTimes(1);
-            expect((await fixture.tasks.get(ctx, task.id))?.version).toBe(named.version);
-
-            // Turned off while the request runs, the icon is not written; the title still is.
+            await fixture.tasks.setIdentityForAgent(ctx, task.agentId, { title: "Refined title" });
+            // The ordinary job was already running when rich tasks became enabled.
+            wanted = false;
             let answer!: (names: { title?: string; icon?: string }) => void;
             fixture.naming.mockReturnValueOnce(new Promise((resolve) => (answer = resolve)));
             const later = await fixture.tasks.create(ctx, {});
             await fixture.acceptText(later.agentId, "user", "Login fails.");
-            await vi.waitFor(() => expect(fixture.naming).toHaveBeenCalledTimes(2));
-            expect(fixture.naming.mock.calls[1]?.[1]).toMatchObject({
-                wanted: { title: true, icon: true },
+            await vi.waitFor(() => expect(fixture.naming).toHaveBeenCalledTimes(1));
+            expect(fixture.naming.mock.calls[0]?.[1]).toMatchObject({
+                wanted: { title: true },
             });
-            wanted = false;
+            wanted = true;
+            await fixture.tasks.setIdentityForAgent(ctx, later.agentId, {
+                title: "Task owns the title",
+                icon: "testing",
+            });
+            const runs = fixture.finished.length;
             answer({ title: "Login fails", icon: "crash" });
-            await vi.waitFor(async () => {
-                expect((await fixture.tasks.get(ctx, later.id))?.name).toBe("Login fails");
+            await vi.waitFor(() => expect(fixture.finished.length).toBeGreaterThan(runs));
+            expect((await fixture.tasks.get(ctx, later.id))?.name).toBe("Task owns the title");
+            expect((await fixture.tasks.get(ctx, later.id))?.icon).toBe("testing");
+        } finally {
+            await fixture.close();
+        }
+    });
+
+    it("keeps each person's identity choice final, including an unchanged title and a cleared icon", async () => {
+        const fixture = await started("tasks-self-identity");
+        try {
+            const ctx = fixture.database.context;
+            fixture.tasks.decideIdentityWith(async () => true);
+            const task = await fixture.tasks.create(ctx, {});
+            const first = await fixture.tasks.setIdentityForAgent(ctx, task.agentId, {
+                title: "Own title",
+                icon: "login",
             });
-            expect((await fixture.tasks.get(ctx, later.id))?.icon).toBeUndefined();
+            const chosen = await fixture.tasks.update(
+                ctx,
+                task.id,
+                { name: first.name },
+                first.version,
+            );
+            expect(chosen.nameAgentChosen).toBeUndefined();
+            await expect(
+                fixture.tasks.setIdentityForAgent(ctx, task.agentId, { title: "Override" }),
+            ).rejects.toThrow("person");
+            const iconed = await fixture.tasks.setIdentityForAgent(ctx, task.agentId, {
+                icon: "testing",
+            });
+            await fixture.tasks.update(ctx, task.id, { icon: null }, iconed.version);
+            await expect(
+                fixture.tasks.setIdentityForAgent(ctx, task.agentId, { icon: "login" }),
+            ).rejects.toThrow("person");
+            await expect(
+                fixture.tasks.setIdentityForAgent(ctx, "unrelatedagent", { title: "Override" }),
+            ).rejects.toThrow("active task");
+            expect((await fixture.tasks.get(ctx, task.id))?.icon).toBeUndefined();
+            fixture.tasks.decideIdentityWith(async () => false);
+            await expect(
+                fixture.tasks.setIdentityForAgent(ctx, task.agentId, { icon: "testing" }),
+            ).rejects.toThrow("Enable rich tasks");
         } finally {
             await fixture.close();
         }
@@ -1893,6 +1928,7 @@ describe("TasksModule", () => {
                 "008-task-icon",
                 "009-task-sections",
                 "010-task-children",
+                "011-task-agent-title-choice",
             ]);
         } finally {
             database.close();

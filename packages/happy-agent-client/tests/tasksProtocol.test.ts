@@ -1,4 +1,5 @@
 import { Value } from "@sinclair/typebox/value";
+import { taskSchema as publishedTaskSchema } from "happy-agent-client-0.0.136";
 import { describe, expect, it } from "vitest";
 
 import { HappyAgentClient } from "../sources/HappyAgentClient.js";
@@ -70,6 +71,21 @@ const membership: TaskMembership = {
 };
 
 describe("tasks protocol", () => {
+    it("parses catalog slugs and artwork hashes with both the new and published client schemas", () => {
+        const iconed = {
+            ...task,
+            icon: { type: "library", slug: "kubernetes-deployments", hash: "a".repeat(64) },
+        };
+        expect(() => Value.Parse(taskSchema, iconed)).not.toThrow();
+        expect(() => Value.Parse(publishedTaskSchema, iconed)).not.toThrow();
+        expect(
+            Value.Check(taskSchema, {
+                ...iconed,
+                icon: { ...iconed.icon, slug: "future-catalog-topic" },
+            }),
+        ).toBe(true);
+    });
+
     it("validates tasks without an avatar or catalog order, and per-person memberships", () => {
         expect(Value.Check(taskSchema, task)).toBe(true);
         expect(Value.Check(taskSchema, { ...task, ownerUserId: null, creatorAgentId: null })).toBe(

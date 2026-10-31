@@ -393,6 +393,7 @@ import {
     projectMessageDiagnostics,
 } from "./projectCredentialDiagnostics.js";
 import { SubtaskInputError, SubtasksModule } from "../subtasks/index.js";
+import type { TaskIconsModule } from "../taskIcons/index.js";
 
 const API_PROTOCOL_VERSION = 34;
 /** The most artifacts desktop bootstrap lists for one task's sub-rows. */
@@ -601,6 +602,7 @@ export class ApiModule implements AgentModule {
     readonly #bots: BotsModule;
     readonly #subtasks: SubtasksModule | undefined;
     readonly #tasks: TasksModule | undefined;
+    readonly #taskIcons: TaskIconsModule | undefined;
     readonly #artifacts: ArtifactsModule | undefined;
     readonly #artifactData: ApiArtifactData | undefined;
     readonly #chatMedia: ChatMediaModule | undefined;
@@ -772,6 +774,7 @@ export class ApiModule implements AgentModule {
         mobileConnector?: MobileConnectorModule,
         providerClis?: ProviderClisModule,
         providerRoutes?: ProviderRoutesModule,
+        taskIcons?: TaskIconsModule,
     ) {
         this.#abort = abort;
         this.#config = config;
@@ -804,6 +807,7 @@ export class ApiModule implements AgentModule {
         this.#live = live;
         this.#runners = runners;
         this.#tasks = tasks;
+        this.#taskIcons = taskIcons;
         this.#artifacts = artifacts;
         this.#artifactData =
             artifactData === undefined
@@ -3387,12 +3391,18 @@ export class ApiModule implements AgentModule {
         // Only a child choice carries `children`; a new task has none.
         const listed = event.type === "task_created" ? [] : event.children;
         const children = listed && (await this.#liveTaskChildren(ctx, listed));
-        const resource = taskResource(event.task, agent, undefined, children);
+        const resource = taskResource(event.task, agent, undefined, children, this.#taskIcons);
         if (event.type === "task_created") {
             this.#journal.append("task.created", { task: resource }, event.at);
             return;
         }
-        const previous = taskResource(event.previousTask, agent, undefined, undefined);
+        const previous = taskResource(
+            event.previousTask,
+            agent,
+            undefined,
+            undefined,
+            this.#taskIcons,
+        );
         const changes = resourceChanges(previous, resource);
         delete changes["agent"];
         this.#journal.append(
@@ -4941,6 +4951,16 @@ export class ApiModule implements AgentModule {
                 return true;
             }
             return false;
+        }
+        const taskIcon = /^\/v0\/task-icons\/([a-z0-9]+(?:-[a-z0-9]+)*)$/.exec(url.pathname);
+        if (taskIcon !== null && request.method === "GET") {
+            const asset = this.#taskIcons?.asset(
+                taskIcon[1]!,
+                url.searchParams.get("v") ?? undefined,
+            );
+            if (asset === undefined) throw notFound("The task icon was not found.");
+            await sendStoredFile(request, response, asset);
+            return true;
         }
         const toolCallMedia =
             /^\/v0\/agents\/([a-z][a-z0-9]*)\/tool-calls\/([a-z][a-z0-9]*)\/media\/(0|[1-9][0-9]{0,8})$/.exec(
@@ -7076,6 +7096,13 @@ export class ApiModule implements AgentModule {
             const taskId = direct[1] as string;
             const body = await bodyAs(request, updateTaskRequestSchema, "task update");
             const icon = "icon" in body ? body.icon : undefined;
+            if (
+                icon !== undefined &&
+                icon !== null &&
+                this.#taskIcons?.asset(icon.slug) === undefined
+            ) {
+                throw invalidRequest("Choose a task icon from the bundled catalog.");
+            }
             const change = { name: body.name, icon: icon === null ? null : icon?.slug };
             const current = await tasks.get(ctx, taskId);
             if (current === undefined) throw notFound("The task was not found.");
@@ -7541,7 +7568,13 @@ export class ApiModule implements AgentModule {
             ctx,
             (await this.#tasks?.children(ctx, task.id)) ?? [],
         );
-        return taskResource(task, agent, this.#canArchiveTask(ctx, task), children);
+        return taskResource(
+            task,
+            agent,
+            this.#canArchiveTask(ctx, task),
+            children,
+            this.#taskIcons,
+        );
     }
 
     /** The child choices whose child still exists; one about a child that is gone is left out. */

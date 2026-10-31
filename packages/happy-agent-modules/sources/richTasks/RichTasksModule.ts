@@ -40,9 +40,8 @@ export class RichTasksModule implements AgentModule {
         this.#tasks = tasks;
         this.#team = team;
         this.#settings = settings;
-        // Naming picks an icon only for people who see rich tasks; everyone else keeps today's
-        // naming request exactly as it was.
-        tasks.decideIconsWith(async (ctx, task) => await this.isOn(ctx, task.ownerUserId));
+        // Rich tasks choose their own title and icon; everyone else keeps ordinary naming.
+        tasks.decideIdentityWith(async (ctx, task) => await this.isOn(ctx, task.ownerUserId));
     }
 
     /** Whether a setting is on for a person: a team member's ID, or nobody when standalone. */

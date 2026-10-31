@@ -21,6 +21,7 @@ import { LAST_PERSON_MESSAGE_AT_METADATA_KEY } from "../activity/index.js";
 import type { BotRecord } from "../bots/index.js";
 import type { Profile } from "../profile/index.js";
 import type { SurfaceChat } from "../surfaces/index.js";
+import type { TaskIconsModule } from "../taskIcons/index.js";
 import {
     STANDALONE_TASK_MEMBER,
     type TaskMembership,
@@ -236,6 +237,7 @@ export function taskResource(
     agent: Readonly<Record<string, unknown>>,
     canArchive: boolean | undefined,
     children: readonly TaskChild[] | undefined,
+    icons?: TaskIconsModule,
 ): Record<string, unknown> {
     return {
         id: task.id,
@@ -250,7 +252,10 @@ export function taskResource(
                 : { type: "runner", runnerId: task.runnerId, path: task.path },
         status: task.status,
         ...(canArchive === undefined ? {} : { canArchive }),
-        icon: task.icon === undefined ? null : { type: "library", slug: task.icon },
+        icon:
+            task.icon === undefined
+                ? null
+                : (icons?.icon(task.icon) ?? { type: "library", slug: task.icon }),
         ...(children === undefined ? {} : { children }),
         agent,
         version: apiResourceVersion(task.updatedAt, task.version, task.id),

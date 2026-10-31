@@ -2,6 +2,8 @@ export {
     createTaskInputSchema,
     STANDALONE_TASK_MEMBER,
     taskFolderNameSchema,
+    taskIconSlugSchema,
+    taskIdentityChangeSchema,
     taskMemberIdSchema,
     taskLoopInReasonSchema,
     taskMembershipSchema,
@@ -22,6 +24,7 @@ export {
     type TaskMembership,
     type TaskMembershipUnread,
     type TaskRecord,
+    type TaskIdentityChange,
     type TaskSectionRecord,
     type TaskStatus,
 } from "./Task.js";

@@ -82,13 +82,16 @@ child exists; `ApiModule` checks on a choice and leaves out choices whose child 
 
 ## Name and icon
 
-An unnamed task is `New Task` until its first text-bearing message starts the durable
-`tasks.name` job. When `decideIconsWith` says the task's person wants icons (`RichTasksModule`
-does, for an owner with `tasks.rich` on), the same request also picks
-an icon slug from the titles module's library, and a named task gets that job for its icon alone.
-Otherwise the request is exactly the title-only one. `update` renames, picks an icon (`null` for
-none), or both in one version; each ends automatic choice of its own part for good, and the job
-rechecks both in its writing transaction, so a person's choice made while it runs always wins.
+An unnamed task starts as `New Task`. With rich tasks off, its first text-bearing message starts
+the ordinary durable `tasks.name` title job. `RichTasksModule` supplies the current owner setting
+through `decideIdentityWith`: a rich task chooses both fields itself with the ordinary tools
+owned by `TaskIconsModule`, and no naming job runs. An already-running job rechecks before writing.
+
+`update` applies a person's title, icon (`null` for none), or both. `setIdentityForAgent` resolves
+the calling agent's own task and uses the same write path. A person's choice is final for that
+field, including submitting the same title or clearing an icon. `nameAgentChosen` lets the task
+refine its own title until a person chooses it. Icons remain logical slugs in storage; the API
+derives the artwork digest from the current bundled catalog.
 
 ## Tools
 
@@ -122,7 +125,7 @@ so the task reports back to it. `SubtasksModule` gives it the same coordinator g
 ## Public operations
 
 `list`, `listForMember`, `get`, `membership`, `memberFor`, `forAgent`, `forWorkspace`,
-`hasIdentity`, `create`, `createWithResult`, `sendMessage`, `update`, `decideIconsWith`, `join`, `joinAutomatically`, `leave`, `reorder`, `setHidden`, `sections`, `replaceSections`, `children`, `setChild`,
+`hasIdentity`, `create`, `createWithResult`, `sendMessage`, `update`, `setIdentityForAgent`, `decideIdentityWith`, `join`, `joinAutomatically`, `leave`, `reorder`, `setHidden`, `sections`, `replaceSections`, `children`, `setChild`,
 `archive`, `archiveForAgent`, `unarchive`, `purge`, and `onEvent`. Task mutations take an expected version
 and raise `TaskConflictError` when the row moved; memberships are unversioned because each list
 has one writer. `task_created`, `task_updated`, `task_joined`, `task_reordered`, `task_left`,
@@ -148,6 +151,7 @@ released `001-task-state` migration stays first, `002-task-list-removed` drops t
 Migration `005-task-explicit-leaves` adds a per-member/task exclusion table for automatic joining.
 Migration `008-task-icon` adds the nullable `icon` slug and `icon_configured`, set once a person
 picks the icon.
+Migration `011-task-agent-title-choice` adds `name_agent_chosen`; a person's title update clears it.
 Migration `009-task-sections` adds the nullable membership `hidden` flag and
 `happy_agent_module_task_sections`, one row per section with its member and order key.
 Migration `010-task-children` adds `happy_agent_module_task_children`, one row per task and child

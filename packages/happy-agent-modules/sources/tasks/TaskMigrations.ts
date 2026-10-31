@@ -202,4 +202,13 @@ export const taskMigrations = [
             );
         },
     ],
+    [
+        "011-task-agent-title-choice",
+        async (_ctx: Context, database: AgentDatabaseFacade<AgentDatabase>): Promise<void> => {
+            await agentDatabaseRun(
+                database,
+                sql`ALTER TABLE ${sql.raw(TASKS_TABLE)} ADD COLUMN name_agent_chosen INTEGER`,
+            );
+        },
+    ],
 ] as const;

@@ -20,6 +20,7 @@ interface TaskRow {
     readonly id: string;
     readonly name: string;
     readonly name_configured: number | string | boolean;
+    readonly name_agent_chosen: number | string | boolean | null;
     readonly icon: string | null;
     readonly icon_configured: number | string | boolean | null;
     readonly folder_name: string;
@@ -76,12 +77,12 @@ export async function insertTask(ctx: Context, task: TaskRecord): Promise<void> 
     await agentDatabaseRun(
         ctx.db,
         sql`INSERT INTO ${sql.raw(TASKS_TABLE)} (
-            id, name, name_configured, icon, icon_configured, folder_name, owner_user_id,
+            id, name, name_configured, name_agent_chosen, icon, icon_configured, folder_name, owner_user_id,
             creator_agent_id, workspace_id, workspace_version, workspace_updated_at,
             agent_id, path, runner_id, status, version,
             created_at, updated_at, archived_at
         ) VALUES (
-            ${task.id}, ${task.name}, ${task.nameConfigured ? 1 : 0}, ${task.icon ?? null},
+            ${task.id}, ${task.name}, ${task.nameConfigured ? 1 : 0}, ${task.nameAgentChosen === true ? 1 : null}, ${task.icon ?? null},
             ${task.iconConfigured === true ? 1 : null}, ${task.folderName},
             ${task.ownerUserId ?? null},
             ${task.creatorAgentId ?? null}, ${task.workspaceId}, ${task.workspaceVersion},
@@ -103,6 +104,7 @@ export async function updateTask(
         ctx.db,
         sql`UPDATE ${sql.raw(TASKS_TABLE)} SET
             name = ${task.name}, name_configured = ${task.nameConfigured ? 1 : 0},
+            name_agent_chosen = ${task.nameAgentChosen === true ? 1 : null},
             icon = ${task.icon ?? null}, icon_configured = ${task.iconConfigured === true ? 1 : null},
             status = ${task.status},
             workspace_version = ${task.workspaceVersion},
@@ -255,6 +257,7 @@ function taskFromRow(row: TaskRow): TaskRecord {
         id: row.id,
         name: row.name,
         nameConfigured: Number(row.name_configured) === 1 || row.name_configured === true,
+        ...(Number(row.name_agent_chosen) === 1 ? { nameAgentChosen: true as const } : {}),
         ...(row.icon === null ? {} : { icon: row.icon }),
         ...(Number(row.icon_configured) === 1 ? { iconConfigured: true as const } : {}),
         folderName: row.folder_name,

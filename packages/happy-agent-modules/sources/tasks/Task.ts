@@ -47,6 +47,8 @@ export const taskRecordSchema = Type.Object(
          * once, from the task's first message; a rename settles it for good.
          */
         nameConfigured: Type.Boolean(),
+        /** The task itself chose its title; a person's update clears this provenance. */
+        nameAgentChosen: Type.Optional(Type.Literal(true)),
         /** The icon's slug from the library; absent until one is chosen. */
         icon: Type.Optional(taskIconSlugSchema),
         /** Set once a person picks the icon, which ends automatic icon choice for good. */
@@ -160,6 +162,14 @@ export type TaskMembershipUnread = Static<typeof taskMembershipUnreadSchema>;
 export type TaskSectionRecord = Static<typeof taskSectionRecordSchema>;
 export type TaskStatus = Static<typeof taskStatusSchema>;
 export type CreateTaskInput = Static<typeof createTaskInputSchema>;
+export const taskIdentityChangeSchema = Type.Object(
+    {
+        title: Type.Optional(taskNameSchema),
+        icon: Type.Optional(Type.Union([taskIconSlugSchema, Type.Null()])),
+    },
+    { additionalProperties: false, minProperties: 1 },
+);
+export type TaskIdentityChange = Static<typeof taskIdentityChangeSchema>;
 export const taskCreationSchema = Type.Object({ task: taskRecordSchema, created: Type.Boolean() });
 export type TaskCreation = Static<typeof taskCreationSchema>;
 

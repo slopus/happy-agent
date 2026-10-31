@@ -60,6 +60,7 @@ import {
     taskMemberIdSchema,
     taskMembershipUnreadSchema,
     taskIconSlugSchema,
+    taskIdentityChangeSchema,
     taskNameSchema,
     taskRecordSchema,
     TASK_ARCHIVE_FUNCTION,
@@ -73,6 +74,7 @@ import {
     type TaskMembership,
     type TaskMembershipUnread,
     type TaskRecord,
+    type TaskIdentityChange,
     type TaskSectionRecord,
 } from "./Task.js";
 import {
@@ -128,8 +130,6 @@ const namingArgumentsSchema = Type.Object({
     taskId: cuid2Schema,
     providerId: Type.String(),
     message: Type.String({ minLength: 1, maxLength: MAX_NAMING_MESSAGE_CHARS }),
-    /** Whether the same request also picks the task's icon. */
-    icon: Type.Optional(Type.Literal(true)),
 });
 const ownerSchema = Type.Union([cuid2Schema, Type.Null()]);
 
@@ -168,7 +168,7 @@ export class TasksModule implements AgentModule {
     /** The mutation the sending run answers, carried on each message into a task. */
     readonly #history: HistoryModule | undefined;
     #agents: AgentSystemRef | undefined;
-    #iconsWanted: ((ctx: Context, task: TaskRecord) => Promise<boolean>) | undefined;
+    #agentChoosesIdentity: ((ctx: Context, task: TaskRecord) => Promise<boolean>) | undefined;
     #closed = false;
 
     constructor(
@@ -202,19 +202,16 @@ export class TasksModule implements AgentModule {
             executor: (ctx, call) =>
                 this.#backgroundScope.runInAsyncScope(async () => {
                     const { taskId, providerId, message } = call.arguments;
-                    // The name and the icon end separately: each is wanted until it is settled.
-                    // The icon is asked again each time, since the owner may have turned it off.
                     const wanted = async (
                         wantCtx: Context,
                         task: TaskRecord | undefined,
                     ): Promise<TitleNamesWanted> =>
-                        task === undefined || task.status !== "active"
+                        task === undefined ||
+                        task.status !== "active" ||
+                        (await this.#choosesIdentity(wantCtx, task))
                             ? {}
                             : {
                                   ...(task.nameConfigured ? {} : { title: true }),
-                                  ...(call.arguments.icon && (await this.#wantsIcon(wantCtx, task))
-                                      ? { icon: true }
-                                      : {}),
                               };
                     const eligible = async () =>
                         Object.keys(await wanted(ctx, await readTask(ctx, taskId))).length > 0;
@@ -227,8 +224,7 @@ export class TasksModule implements AgentModule {
                             { firstMessage: message, wanted: asked, providerId },
                             ctx.lifetime === undefined ? {} : { signal: ctx.lifetime },
                         );
-                        // A missing title is worth another attempt; an icon rides along.
-                        return asked.title === true ? names.title : names.icon;
+                        return names.title;
                     });
                     if (answer === null) return null;
                     const chosen =
@@ -241,13 +237,12 @@ export class TasksModule implements AgentModule {
                         .trimEnd();
                     ctx.lifetime?.throwIfAborted();
                     const named = Value.Check(taskNameSchema, title) ? title : undefined;
-                    if (named === undefined && names.icon === undefined) return null;
+                    if (named === undefined) return null;
                     await ctx.inTx(async (txCtx) => {
                         const current = await this.#required(txCtx, taskId);
                         const still = await wanted(txCtx, current);
                         const name = still.title === true ? named : undefined;
-                        const icon = still.icon === true ? names.icon : undefined;
-                        if (name === undefined && icon === undefined) return;
+                        if (name === undefined) return;
                         if (name !== undefined) {
                             await this.#updateAgentMetadata(txCtx, current.agentId, {
                                 title: name,
@@ -256,7 +251,6 @@ export class TasksModule implements AgentModule {
                         await this.#change(txCtx, current, (value) => ({
                             ...value,
                             ...(name === undefined ? {} : { name, nameConfigured: true }),
-                            ...(icon === undefined ? {} : { icon }),
                         }));
                     });
                     return null;
@@ -320,12 +314,11 @@ export class TasksModule implements AgentModule {
         },
         messageAcceptedTransact: async (hookCtx, scope, accepted) => {
             // An unnamed task takes its name from the first request it is given: a person's
-            // message, or the opening message from the agent that created it. When icons are
-            // wanted, the same request picks the icon, and a named task gets it alone.
+            // message, or the opening message from the agent that created it. Rich tasks choose
+            // their own identity through ordinary tools instead of a detached naming request.
             const task = await readTaskByAgent(hookCtx, scope.agent.id);
             if (task !== undefined) {
-                const icon = await this.#wantsIcon(hookCtx, task);
-                if (task.nameConfigured && !icon) return;
+                if (task.nameConfigured || (await this.#choosesIdentity(hookCtx, task))) return;
                 const message = namingText(accepted, task);
                 if (message.length === 0) return;
                 if ((await scope.kv.read(hookCtx, NAME_ATTEMPTED_KEY)) !== undefined) return;
@@ -337,7 +330,6 @@ export class TasksModule implements AgentModule {
                         taskId: task.id,
                         providerId: scope.agent.provider,
                         message,
-                        ...(icon ? { icon: true as const } : {}),
                     },
                 });
                 return;
@@ -367,17 +359,15 @@ export class TasksModule implements AgentModule {
     }
 
     /**
-     * Lets the module that reads people's settings decide whether naming also picks a task's
-     * icon. Tasks cannot read settings itself: they depend on Team, which depends on Tasks.
+     * The settings owner decides which tasks choose their own identity. Tasks cannot read
+     * settings itself: they depend on Team, which depends on Tasks.
      */
-    decideIconsWith(wanted: (ctx: Context, task: TaskRecord) => Promise<boolean>): void {
-        this.#iconsWanted = wanted;
+    decideIdentityWith(wanted: (ctx: Context, task: TaskRecord) => Promise<boolean>): void {
+        this.#agentChoosesIdentity = wanted;
     }
 
-    /** Any icon the task has, automatic or a person's, is settled: naming never picks another. */
-    async #wantsIcon(ctx: Context, task: TaskRecord): Promise<boolean> {
-        if (task.icon !== undefined || task.iconConfigured === true) return false;
-        return (await this.#iconsWanted?.(ctx, task)) === true;
+    async #choosesIdentity(ctx: Context, task: TaskRecord): Promise<boolean> {
+        return (await this.#agentChoosesIdentity?.(ctx, task)) === true;
     }
 
     onEventTransactional(listener: TaskEventListener): TaskUnsubscribe {
@@ -1001,21 +991,91 @@ export class TasksModule implements AgentModule {
         return await ctx.inTx(async (txCtx) => {
             const current = await this.#required(txCtx, taskId);
             this.#assertVersion(current, expectedVersion);
-            const renames =
-                name !== undefined && !(current.name === name && current.nameConfigured);
-            const picks =
-                icon !== undefined &&
-                !(current.icon === (icon ?? undefined) && current.iconConfigured === true);
-            if (!renames && !picks) return current;
-            if (renames && current.name !== name) {
-                await this.#updateAgentMetadata(txCtx, current.agentId, { title: name });
+            return await this.#updateIdentity(txCtx, current, change, "person");
+        });
+    }
+
+    /** No caller-supplied target: the acting agent can change only its own active task. */
+    async setIdentityForAgent(
+        ctx: Context,
+        agentId: string,
+        change: TaskIdentityChange,
+    ): Promise<TaskRecord> {
+        return await ctx.inTx(async (txCtx) => {
+            const current = await this.checkIdentityForAgent(txCtx, agentId, change);
+            return await this.#updateIdentity(
+                txCtx,
+                current,
+                { name: change.title, icon: change.icon },
+                "agent",
+            );
+        });
+    }
+
+    /** Validate a durable intent before queueing it, and again in its eventual write transaction. */
+    async checkIdentityForAgent(
+        ctx: Context,
+        agentId: string,
+        change: TaskIdentityChange,
+    ): Promise<TaskRecord> {
+        if (!Value.Check(taskIdentityChangeSchema, change))
+            throw new TaskInputError("Choose a valid task title or icon.");
+        const current = await readTaskByAgent(ctx, agentId);
+        if (current === undefined || current.status !== "active") {
+            throw new TaskConflictError("Only an active task may change its own identity.");
+        }
+        if (!(await this.#choosesIdentity(ctx, current))) {
+            throw new TaskConflictError("Enable rich tasks before changing your task identity.");
+        }
+        if (
+            change.title !== undefined &&
+            current.nameConfigured &&
+            current.nameAgentChosen !== true
+        ) {
+            throw new TaskConflictError(
+                "A person has chosen this task's title. Keep their choice.",
+            );
+        }
+        if (change.icon !== undefined && current.iconConfigured === true) {
+            throw new TaskConflictError("A person has chosen this task's icon. Keep their choice.");
+        }
+        return current;
+    }
+
+    /** The single write path for API and scoped agent identity changes. */
+    async #updateIdentity(
+        ctx: Context,
+        current: TaskRecord,
+        change: { readonly name?: string | undefined; readonly icon?: string | null | undefined },
+        by: "person" | "agent",
+    ): Promise<TaskRecord> {
+        const { name, icon } = change;
+        const renames =
+            name !== undefined &&
+            (current.name !== name ||
+                !current.nameConfigured ||
+                (by === "person"
+                    ? current.nameAgentChosen === true
+                    : current.nameAgentChosen !== true));
+        const picks =
+            icon !== undefined &&
+            (current.icon !== (icon ?? undefined) ||
+                (by === "person" && current.iconConfigured !== true));
+        if (!renames && !picks) return current;
+        if (renames && current.name !== name)
+            await this.#updateAgentMetadata(ctx, current.agentId, { title: name });
+        return await this.#change(ctx, current, (task) => {
+            if (renames) {
+                Object.assign(task, { name, nameConfigured: true });
+                delete task.nameAgentChosen;
+                if (by === "agent") task.nameAgentChosen = true;
             }
-            return await this.#change(txCtx, current, (task) => {
-                if (renames) Object.assign(task, { name, nameConfigured: true });
-                if (!picks) return task;
+            if (picks) {
                 delete task.icon;
-                return { ...task, ...(icon === null ? {} : { icon }), iconConfigured: true };
-            });
+                if (icon !== null && icon !== undefined) task.icon = icon;
+                if (by === "person") task.iconConfigured = true;
+            }
+            return task;
         });
     }
 

@@ -7,99 +7,66 @@ afterEach(async () => {
     running.clear();
 });
 
-/** A gym whose naming requests wait for `release`, so a person can act while one runs. */
-async function iconGym() {
-    const naming: string[] = [];
-    const held = { gate: Promise.resolve(), release: () => {} };
-    const gym = await createAgentGym({
-        inference: async (request) => {
-            if (!request.sessionId.startsWith("naming:")) {
-                return { content: [{ type: "text", text: "On it." }] };
-            }
-            naming.push(request.instructions);
-            await held.gate;
-            const text = "<title>Fix the login redirect</title><icon>login</icon>";
-            return { content: [{ type: "text", text }] };
-        },
-    });
-    running.add(gym);
-    const hold = () => (held.gate = new Promise((resolve) => (held.release = resolve)));
-    const started = async (count: number) =>
-        await gym.waitUntil(() => (naming.length === count ? true : undefined), "naming");
-    /** The task once its one naming request, the `count`th, has written a name and an icon. */
-    const named = async (taskId: string, count: number) => {
-        await started(count);
-        return await gym.waitUntil(async () => {
-            const { task } = await gym.client.getTask(taskId);
-            return task.name !== "New Task" && task.icon !== null ? task : undefined;
-        }, "the naming job to finish");
-    };
-    return { gym, naming, hold, release: () => held.release(), started, named };
-}
-
-describe("task icons", () => {
-    it("are picked by the naming request, and a person's pick or rename always wins", async () => {
-        const { gym, naming, hold, release, started, named } = await iconGym();
-        // Rich tasks off: today's naming request, and no icon.
-        const plain = (await gym.client.createTask({})).task;
-        expect(plain.icon).toBeNull();
-        await gym.send("Fix the login redirect.", { sessionId: plain.agent.id });
-        await gym.waitUntil(async () => {
-            const { task } = await gym.client.getTask(plain.id);
-            return task.name === "Fix the login redirect" ? task : undefined;
-        }, "the plain task to be named");
-        expect((await gym.client.getTask(plain.id)).task.icon).toBeNull();
-        expect(naming[0]).not.toContain("<icon>");
-
-        await gym.client.saveUserSetting("tasks.rich", { value: true });
-        const fresh = (await gym.client.createTask({})).task;
-        await gym.send("The login page loops.", { sessionId: fresh.agent.id });
-        const iconed = await named(fresh.id, 2);
-        expect(iconed).toMatchObject({ name: "Fix the login redirect" });
-        expect(iconed.icon).toEqual({ type: "library", slug: "login" });
-        expect(naming[1]).toContain("<title>");
-        expect(naming[1]).toContain("<icon>");
-
-        // A named task gets its icon alone, from the same job.
-        const titled = (await gym.client.createTask({ name: "Release notes" })).task;
-        await gym.send("Write them.", { sessionId: titled.agent.id });
-        expect(await named(titled.id, 3)).toMatchObject({ name: "Release notes" });
-        expect(naming[2]).not.toContain("<title>");
-
-        // A person's icon, committed while naming runs, survives it.
-        hold();
-        const picked = (await gym.client.createTask({})).task;
-        await gym.send("Login breaks.", { sessionId: picked.agent.id });
-        await started(4);
-        const pick = await gym.client.updateTask(
-            picked.id,
-            { icon: { type: "library", slug: "crash" } },
-            { ifMatch: picked.version },
+describe("task icon API", () => {
+    it("serves a current digest for a stored slug and ignores a caller's stale digest", async () => {
+        const gym = await createAgentGym();
+        running.add(gym);
+        const fresh = (await gym.client.createTask({ name: "Review" })).task;
+        const chosen = await gym.client.updateTask(
+            fresh.id,
+            {
+                icon: { type: "library", slug: "code-review", hash: "0".repeat(64) },
+            },
+            { ifMatch: fresh.version },
         );
-        release();
-        expect(await named(picked.id, 4)).toMatchObject({
-            name: "Fix the login redirect",
-            icon: { type: "library", slug: "crash" },
+        expect(chosen.task.icon).toMatchObject({
+            type: "library",
+            slug: "code-review",
+            hash: expect.stringMatching(/^[a-f0-9]{64}$/),
         });
-        expect(pick.task.icon).toEqual({ type: "library", slug: "crash" });
-
-        // So does a rename, while the icon still comes from naming.
-        hold();
-        const renamed = (await gym.client.createTask({})).task;
-        await gym.send("Login breaks again.", { sessionId: renamed.agent.id });
-        await started(5);
-        await gym.client.updateTask(
-            renamed.id,
-            { name: "My own name" },
-            { ifMatch: renamed.version },
-        );
-        release();
-        expect(await named(renamed.id, 5)).toMatchObject({
-            name: "My own name",
-            icon: { type: "library", slug: "login" },
-        });
+        expect(chosen.task.icon?.hash).not.toBe("0".repeat(64));
+        const hash = chosen.task.icon!.hash!;
+        expect((await gym.http.get(`/v0/task-icons/code-review?v=${hash}`)).status).toBe(200);
         await gym.restart();
-        expect((await gym.client.getTask(picked.id)).task.icon?.slug).toBe("crash");
+        expect((await gym.client.getTask(fresh.id)).task.icon).toEqual(chosen.task.icon);
+        const invalid = await gym.http.patch(`/v0/tasks/${fresh.id}`, {
+            icon: { type: "library", slug: "invented-topic" },
+        });
+        expect(invalid.status).toBe(400);
+        expect((await gym.client.getTask(fresh.id)).task.icon).toEqual(chosen.task.icon);
         expect(gym.errors).toEqual([]);
-    }, 60_000);
+    }, 30_000);
+
+    it("leaves ordinary title naming unchanged and skips both fields when rich tasks are enabled", async () => {
+        let naming = 0;
+        const gym = await createAgentGym({
+            inference: (request) => {
+                if (request.sessionId.startsWith("naming:")) {
+                    naming += 1;
+                    expect(request.instructions).not.toContain("<icon>");
+                    return { content: [{ type: "text", text: "<title>Login redirect</title>" }] };
+                }
+                return { content: [{ type: "text", text: "On it." }] };
+            },
+        });
+        running.add(gym);
+        const plain = (await gym.client.createTask({})).task;
+        await gym.send("Fix the login redirect.", { sessionId: plain.agent.id });
+        await gym.waitUntil(
+            async () =>
+                (await gym.client.getTask(plain.id)).task.name === "Login redirect"
+                    ? true
+                    : undefined,
+            "ordinary task naming",
+        );
+        expect((await gym.client.getTask(plain.id)).task.icon).toBeNull();
+        await gym.client.saveUserSetting("tasks.rich", { value: true });
+        const rich = (await gym.client.createTask({})).task;
+        const before = naming;
+        await gym.send("Fix the login redirect.", { sessionId: rich.agent.id });
+        expect((await gym.client.getTask(rich.id)).task.name).toBe("New Task");
+        expect((await gym.client.getTask(rich.id)).task.icon).toBeNull();
+        expect(naming).toBe(before);
+        expect(gym.errors).toEqual([]);
+    }, 30_000);
 });

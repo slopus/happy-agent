@@ -97,6 +97,7 @@ import { UserInputModule } from "../userInput/index.js";
 import { UserSettingsModule } from "../userSettings/index.js";
 import { TaskAutoJoinModule } from "../taskAutoJoin/index.js";
 import { RichTasksModule } from "../richTasks/index.js";
+import { TaskIconsModule } from "../taskIcons/index.js";
 import { TeammatesModule } from "../teammates/index.js";
 import { SurfaceAutoJoinModule } from "../surfaceAutoJoin/index.js";
 import { SurfacesModule } from "../surfaces/index.js";
@@ -213,6 +214,7 @@ export interface HappyAgentRuntimeModules {
     readonly tailcat: TailcatModule;
     readonly mobileConnector: MobileConnectorModule;
     readonly tasks: TasksModule;
+    readonly taskIcons: TaskIconsModule;
     readonly team: TeamModule<LibSQLDatabase>;
     readonly teammates: TeammatesModule;
     readonly terminals: TerminalsModule;
@@ -574,6 +576,7 @@ export async function startHappyAgentRuntime(
         const userSettings = new UserSettingsModule(team);
         const taskAutoJoin = new TaskAutoJoinModule(tasks, team, userSettings, durableFunctions);
         const richTasks = new RichTasksModule(tasks, team, userSettings);
+        const taskIcons = new TaskIconsModule(tasks, richTasks, durableFunctions);
         const surfaces = new SurfacesModule(
             durableFunctions,
             team,
@@ -793,10 +796,12 @@ export async function startHappyAgentRuntime(
             mobileConnector,
             providerClis,
             providerRoutes,
+            taskIcons,
         );
         api = apiModule;
 
         const modules: HappyAgentRuntimeModules = {
+            taskIcons,
             live,
             abort,
             activity,
@@ -902,6 +907,7 @@ export async function startHappyAgentRuntime(
             durableFunctions,
             taskAutoJoin,
             richTasks,
+            taskIcons,
             teammates,
             surfaces,
             surfaceAutoJoin,

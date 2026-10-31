@@ -45,6 +45,7 @@ interface JustBashWorkerGroup {
 
 interface BinaryAssets {
     assets: EmbeddedAsset[];
+    taskIconVariables: Record<string, string>;
     chiefOfStaffAvatarVariable: string;
     claudeRelativePath: string;
     fffRelativePath: string;
@@ -451,6 +452,16 @@ export const { getQuickJS } = QJS;
             "node_modules/sql.js/dist/sql-wasm.wasm",
         ),
     ];
+    const taskIconVariables: Record<string, string> = {};
+    const taskIconDirectory = join(modulesRoot, "dist", "taskIcons", "assets");
+    for (const filename of readdirSync(taskIconDirectory)
+        .filter((name) => name.endsWith(".webp"))
+        .sort()) {
+        const slug = basename(filename, ".webp");
+        const variable = `taskIconAsset${Object.keys(taskIconVariables).length}`;
+        taskIconVariables[slug] = variable;
+        assets.push(asset(variable, join(taskIconDirectory, filename), `task-icons/${filename}`));
+    }
 
     assets.push(
         asset(
@@ -536,6 +547,7 @@ export const { getQuickJS } = QJS;
 
     return {
         assets,
+        taskIconVariables,
         chiefOfStaffAvatarVariable: "chiefOfStaffAvatarAsset",
         claudeRelativePath: `claude${executableSuffix}`,
         fffRelativePath: basename(fffSource),
@@ -675,6 +687,11 @@ export async function getImageProcessor() { return imageProcessor; }
         required: true,
         adapt: () =>
             `export { loadChiefOfStaffAvatar } from ${JSON.stringify(VIRTUAL_ASSETS_MODULE)};\n`,
+    });
+    addAdapter(adapters, join(modulesRoot, "dist", "taskIcons", "impl", "taskIconPath.js"), {
+        name: "Bundled task icon assets",
+        required: true,
+        adapt: () => `export { taskIconPath } from ${JSON.stringify(VIRTUAL_ASSETS_MODULE)};\n`,
     });
     addAdapter(adapters, join(montyRoot, "native-addon.js"), {
         name: "Monty native loader",
@@ -989,6 +1006,14 @@ export function loadGhosttyWasm() {
 }
 export async function loadChiefOfStaffAvatar() {
     return Uint8Array.from(readFileSync(${binaryAssets.chiefOfStaffAvatarVariable}));
+}
+const taskIconAssets = new Map([${Object.entries(binaryAssets.taskIconVariables)
+        .map(([slug, variable]) => `[${JSON.stringify(slug)}, ${variable}]`)
+        .join(",")}]);
+export function taskIconPath(slug) {
+    const path = taskIconAssets.get(slug);
+    if (path === undefined) throw new Error("Unknown bundled task icon.");
+    return path;
 }
 function justBashWorker(kind) {
     switch (kind) {

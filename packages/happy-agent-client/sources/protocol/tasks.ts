@@ -31,6 +31,7 @@ export type TaskFolderName = Static<typeof taskFolderNameSchema>;
 
 /** An icon from Happy's icon library; clients show their default for an unknown type or slug. */
 export const taskIconSchema = Type.Object({
+    hash: Type.Optional(Type.String({ pattern: "^[a-f0-9]{64}$" })),
     slug: Type.String({ maxLength: 64, minLength: 1, pattern: "^[a-z0-9]+(?:-[a-z0-9]+)*$" }),
     type: Type.Literal("library"),
 });

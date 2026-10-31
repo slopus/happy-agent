@@ -1,6 +1,7 @@
 {
     "$schema": "./node_modules/oxfmt/configuration_schema.json",
     "ignorePatterns": [
+        "packages/happy-agent-modules/sources/taskIcons/assets/index.json",
         "packages/rig-codemode-codex/native/**",
         "packages/happy-agent-modules/sources/artifactData/impl/artifactDiagramsScript.ts",
         "skills/**"
