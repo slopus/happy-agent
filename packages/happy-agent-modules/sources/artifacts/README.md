@@ -175,12 +175,6 @@ type accepts before it is read.
 Every mutation composes with a caller's transaction and publishes its event only after the
 outermost commit.
 
-`stageStoryEntry` keeps a story's bounded daemon-authored `story.json` in an artifact-owned content table,
-with its upload and expiry intent in the caller's transaction. Lifecycle rollback therefore
-leaves neither uploads nor filesystem bytes. Reads use that authoritative text directly; file
-serving materializes an immutable content-addressed file through the ordinary atomic file path.
-Ordinary file uploads keep their existing staging path.
-
 ## Storage
 
 Content lives under the daemon's private `artifacts/` folder, which Config owns:

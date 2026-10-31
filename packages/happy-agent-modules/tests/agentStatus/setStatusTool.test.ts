@@ -3,19 +3,19 @@ import { Value } from "@sinclair/typebox/value";
 import { createRootContext } from "@steve.kite/stdlib";
 import { describe, expect, it } from "vitest";
 
-import type { StoriesModule } from "../../sources/stories/StoriesModule.js";
-import { setStatusTool } from "../../sources/stories/tools/set_status.js";
+import type { AgentStatusModule } from "../../sources/agentStatus/AgentStatusModule.js";
+import { setStatusTool } from "../../sources/agentStatus/tools/set_status.js";
 
-/** The tool, with a stories module that only records what it was asked to write. */
+/** The tool, with an agent status module that only records what it was asked to write. */
 function statusTool() {
     const written: (string | null)[] = [];
-    const stories = {
+    const status = {
         setStatus: async (_ctx: unknown, call: { readonly text: string | null }) => {
             written.push(call.text);
         },
-    } as unknown as StoriesModule;
+    } as unknown as AgentStatusModule;
     const scope = { agent: { id: "agentstatus" } } as unknown as AgentModuleScope;
-    return { tool: setStatusTool(stories, scope), written };
+    return { tool: setStatusTool(status, scope), written };
 }
 
 describe("set_status", () => {

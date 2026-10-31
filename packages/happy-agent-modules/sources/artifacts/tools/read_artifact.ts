@@ -54,10 +54,7 @@ export function readArtifactTool(artifacts: ArtifactsModule) {
         shouldReviewInAutoMode: () => false,
         execute: async (ctx: Context, input: ReadArtifactToolInput): Promise<ArtifactRead> => {
             const artifact = await artifacts.get(ctx, input.artifactId);
-            // A story is read through Stories, which knows who may read it.
-            if (artifact === undefined || artifact.type === "story") {
-                throw new ArtifactNotFoundError();
-            }
+            if (artifact === undefined) throw new ArtifactNotFoundError();
             if (artifact.status === "deleted") return { artifact };
             const version = await artifacts.getVersion(
                 ctx,

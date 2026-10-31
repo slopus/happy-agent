@@ -26,7 +26,7 @@ import {
     chatMediaName,
     type ChatMediaCandidate,
 } from "./impl/chatMediaKind.js";
-import { measureChatImage, type MeasuredChatImage } from "./impl/measureChatImage.js";
+import { measureChatImage } from "./impl/measureChatImage.js";
 import { parseMediaLayout, type ParsedMediaLayout } from "./impl/parseMediaLayout.js";
 import { writeChatMediaContent } from "./impl/writeChatMediaContent.js";
 
@@ -108,18 +108,6 @@ export class ChatMediaModule implements AgentModule {
         }
         await writeChatMediaContent(this.#config.chatMediaContentPath(sha256), bytes);
         return item;
-    }
-
-    /**
-     * Measure an image the way a chat measures what it shows: its served media type, size after
-     * EXIF orientation, density, and ThumbHash. Undefined when the bytes are not a picture a
-     * client can show.
-     */
-    async measureImage(
-        bytes: Uint8Array,
-        declaredMimeType: string,
-    ): Promise<MeasuredChatImage | undefined> {
-        return await measureChatImage(bytes, declaredMimeType);
     }
 
     /**

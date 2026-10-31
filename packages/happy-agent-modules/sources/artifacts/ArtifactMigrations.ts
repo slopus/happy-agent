@@ -216,9 +216,9 @@ export const artifactMigrations = [
         },
     ],
     [
-        "007-withdraw-sidebar-artifacts",
+        "007-withdraw-removed-artifact-types",
         async (_ctx: Context, database: AgentDatabaseFacade<AgentDatabase>): Promise<void> => {
-            await withdrawArtifactTypes(database, ["sidebar", "sidebar_proposal"]);
+            await withdrawArtifactTypes(database, ["sidebar", "sidebar_proposal", "story"]);
         },
     ],
 ] as const;

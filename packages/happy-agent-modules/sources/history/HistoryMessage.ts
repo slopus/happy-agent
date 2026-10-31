@@ -333,6 +333,7 @@ const historyArtifactPresentationSchema = Type.Object(
         type: Type.Literal("artifact"),
         artifactId: cuid2Schema,
         version: Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
+        /** `sidebar_proposal` and `story` are withdrawn; they stay so older records still parse. */
         artifactType: Type.Union([
             Type.Literal("markdown"),
             Type.Literal("html"),

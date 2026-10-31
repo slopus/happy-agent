@@ -5,10 +5,10 @@ import { describe, expect, it } from "vitest";
 import { artifactMigrations } from "../../sources/artifacts/ArtifactMigrations.js";
 import { moduleDatabase } from "../support/moduleDatabase.js";
 
-const WITHDRAW = "007-withdraw-sidebar-artifacts";
+const WITHDRAW = "007-withdraw-removed-artifact-types";
 
 describe("artifact withdrawn types migration", () => {
-    it("deletes sidebar artifacts with their versions, files, and unused inline text", async () => {
+    it("deletes sidebar and story artifacts with their versions, files, and unused inline text", async () => {
         const earlier = artifactMigrations.filter(([key]) => key !== WITHDRAW);
         const migration = artifactMigrations.find(([key]) => key === WITHDRAW);
         if (migration === undefined) throw new Error("Expected the withdrawal migration.");
@@ -20,6 +20,7 @@ describe("artifact withdrawn types migration", () => {
             for (const [id, type, digest] of [
                 ["sidebarone", "sidebar", "sidebardigest"],
                 ["proposalone", "sidebar_proposal", "proposaldigest"],
+                ["storyone", "story", "storydigest"],
                 ["notesone", "markdown", "notesdigest"],
             ] as const) {
                 await run(sql`INSERT INTO happy_agent_module_artifacts

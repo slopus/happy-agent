@@ -671,6 +671,49 @@ describe("messageResource", () => {
         ]);
     });
 
+    it("shows a call that presented a withdrawn artifact type as a plain tool", () => {
+        const historyMessage: HistoryMessage = {
+            at: 100,
+            blocks: [
+                {
+                    type: "tool_call",
+                    callId: "callstory",
+                    name: "draft_story",
+                    arguments: { text: "Shipped" },
+                },
+                {
+                    type: "tool_result",
+                    callId: "callstory",
+                    toolName: "draft_story",
+                    output: "Story drafted.",
+                    presentation: {
+                        type: "artifact",
+                        artifactId: "r7k2m9q4w1e5t8y3u6i0o2p5",
+                        version: 1,
+                        artifactType: "story",
+                        title: "Shipped",
+                    },
+                },
+            ],
+            recordId: "message-story",
+            role: "assistant",
+        };
+        // Older records keep parsing after the type is withdrawn.
+        expect(Value.Check(historyMessageSchema, historyMessage)).toBe(true);
+
+        expect(toolResultPresentations(historyMessage).size).toBe(0);
+        expect(messageResource(historyMessage, { omitToolData: true }).content).toEqual([
+            {
+                type: "tool_call",
+                id: "callstory",
+                name: "draft_story",
+                status: "completed",
+                arguments: { text: "Shipped" },
+                result: { output: "Story drafted." },
+            },
+        ]);
+    });
+
     it("passes a media layout through and shows a completed image read as media", () => {
         const sha256 = "b".repeat(64);
         const image = {

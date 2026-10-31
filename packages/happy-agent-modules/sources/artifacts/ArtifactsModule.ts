@@ -23,11 +23,7 @@ import { DurableFunctionsModule } from "../durableFunctions/index.js";
 import { ProjectsModule } from "../projects/index.js";
 import { TasksModule } from "../tasks/index.js";
 import { WorkspacesModule } from "../workspaces/index.js";
-import {
-    insertArtifactInline,
-    queryArtifactInline,
-    deleteArtifactInline,
-} from "./ArtifactStore.js";
+import {} from "./ArtifactStore.js";
 
 import {
     ARTIFACT_UPLOAD_EXPIRY_FUNCTION,
@@ -39,7 +35,6 @@ import {
     ArtifactConflictError,
     ArtifactInputError,
     ArtifactNotFoundError,
-    ArtifactTooLargeError,
     createArtifactInputSchema,
     DEFAULT_ARTIFACT_PAGE_SIZE,
     deleteArtifactInputSchema,
@@ -91,7 +86,6 @@ import {
     updateArtifactUploadReceived,
 } from "./ArtifactStore.js";
 import {
-    ARTIFACT_TYPE_RULES,
     ARTIFACT_UPLOAD_LIFETIME_MS,
     artifactMimeTypeForPath,
     checkArtifactFiles,
@@ -343,24 +337,6 @@ export class ArtifactsModule implements AgentModule {
         selector: ArtifactVersionSelector,
         path: string,
     ): Promise<ArtifactStoredFile> {
-        const stored = await this.#storedFile(ctx, artifactId, selector, path);
-        const inline = await queryArtifactInline(ctx, stored.file.sha256);
-        if (inline !== undefined && !(await artifactFileExists(stored.contentPath))) {
-            // The database is authoritative. This immutable file is only a serving cache.
-            await this.#ensureHome();
-            const temporary = this.#config.artifactUploadPath(createId());
-            await receiveArtifactContent(temporary, new TextEncoder().encode(inline), 128 * 1024);
-            await storeArtifactContent(temporary, stored.contentPath);
-        }
-        return stored;
-    }
-
-    async #storedFile(
-        ctx: Context,
-        artifactId: string,
-        selector: ArtifactVersionSelector,
-        path: string,
-    ): Promise<ArtifactStoredFile> {
         return await ctx.inTx(async (txCtx) => {
             const artifact = await this.#requiredActive(txCtx, artifactId);
             const number = selector === "latest" ? artifact.latestVersion : selector;
@@ -396,17 +372,13 @@ export class ArtifactsModule implements AgentModule {
         readonly bytes: Uint8Array;
         readonly more: boolean;
     }> {
-        const stored = await this.#storedFile(ctx, artifactId, selector, path);
+        const stored = await this.storedFile(ctx, artifactId, selector, path);
         const offset = Math.min(Math.max(0, window.offset ?? 0), stored.file.size);
-        const inline = await queryArtifactInline(ctx, stored.file.sha256);
-        const bytes =
-            inline === undefined
-                ? await readArtifactContent(
-                      stored.contentPath,
-                      offset,
-                      Math.max(0, Math.min(window.maxBytes, stored.file.size - offset)),
-                  )
-                : new TextEncoder().encode(inline).slice(offset, offset + window.maxBytes);
+        const bytes = await readArtifactContent(
+            stored.contentPath,
+            offset,
+            Math.max(0, Math.min(window.maxBytes, stored.file.size - offset)),
+        );
         return {
             file: stored.file,
             version: stored.version,
@@ -472,42 +444,6 @@ export class ArtifactsModule implements AgentModule {
     }
 
     /**
-     * Stage a story's `story.json` held in the database, so Stories can
-     * write a version inside the transaction that changes the story.
-     */
-    async stageStoryEntry(ctx: Context, text: string): Promise<ArtifactUpload> {
-        const now = Date.now();
-        const bytes = new TextEncoder().encode(text);
-        const entry = ARTIFACT_TYPE_RULES.story.entry;
-        if (entry !== undefined && bytes.byteLength > entry.maxBytes) {
-            throw new ArtifactTooLargeError(
-                `A story may be at most ${formatBytes(entry.maxBytes)} without its media.`,
-            );
-        }
-        const upload = {
-            id: createId(),
-            size: bytes.byteLength,
-            sha256: createHash("sha256").update(bytes).digest("hex"),
-            utf8: true,
-            createdAt: now,
-            expiresAt: now + ARTIFACT_UPLOAD_LIFETIME_MS,
-        };
-        await ctx.inTx(async (txCtx) => {
-            await insertArtifactUpload(txCtx, upload);
-            await updateArtifactUploadReceived(txCtx, upload);
-            if ((await queryArtifactInline(txCtx, upload.sha256)) === undefined) {
-                await insertArtifactInline(txCtx, upload.sha256, text);
-            }
-            await this.#durableFunctions.invoke(txCtx, {
-                function: ARTIFACT_UPLOAD_EXPIRY_FUNCTION,
-                arguments: { uploadId: upload.id, expiresAt: upload.expiresAt },
-                operationId: uploadOperationId(upload.id),
-            });
-        });
-        return upload;
-    }
-
-    /**
      * A received, unexpired upload and where its bytes are, for a caller that must look at them
      * before placing it. Undefined when the upload is unknown, expired, used, or lost its bytes.
      */
@@ -565,31 +501,15 @@ export class ArtifactsModule implements AgentModule {
      * returned unchanged.
      */
     async create(ctx: Context, input: CreateArtifactInput): Promise<ArtifactCreation> {
-        return await this.#create(ctx, input, false);
-    }
-
-    /** Stories alone writes story artifacts; every other writer is refused one. */
-    async createStory(ctx: Context, input: CreateArtifactInput): Promise<ArtifactCreation> {
-        if (input.type !== "story") throw new ArtifactInputError("Stories write only stories.");
-        return await this.#create(ctx, input, true);
-    }
-
-    async #create(
-        ctx: Context,
-        input: CreateArtifactInput,
-        story: boolean,
-    ): Promise<ArtifactCreation> {
         if (!Value.Check(createArtifactInputSchema, input)) {
             throw new ArtifactInputError(
                 "The artifact creation request is invalid. Check its title, type, and file paths.",
             );
         }
-        if (input.type === "story" && !story) throw storyWriteRefused();
         return await ctx.inTx(async (txCtx) => {
             if (input.id !== undefined) {
                 const existing = await queryArtifact(txCtx, input.id);
                 if (existing !== undefined) {
-                    if (existing.type === "story" && !story) throw storyWriteRefused();
                     return { artifact: structuredClone(existing), created: false };
                 }
             }
@@ -667,19 +587,6 @@ export class ArtifactsModule implements AgentModule {
      * is not made again.
      */
     async update(ctx: Context, input: UpdateArtifactInput): Promise<ArtifactRecord> {
-        return await this.#update(ctx, input, false);
-    }
-
-    /** Stories makes a story's next version here, after its own checks of the story. */
-    async commitStory(ctx: Context, input: UpdateArtifactInput): Promise<ArtifactRecord> {
-        return await this.#update(ctx, input, true);
-    }
-
-    async #update(
-        ctx: Context,
-        input: UpdateArtifactInput,
-        story: boolean,
-    ): Promise<ArtifactRecord> {
         if (!Value.Check(updateArtifactInputSchema, input)) {
             throw new ArtifactInputError(
                 "The artifact update is invalid. Check its title and file paths.",
@@ -702,10 +609,6 @@ export class ArtifactsModule implements AgentModule {
         const url = input.url === undefined ? undefined : normalizeArtifactUrl(input.url);
         return await ctx.inTx(async (txCtx) => {
             const current = await this.#required(txCtx, input.artifactId);
-            if ((current.type === "story") !== story) {
-                if (story) throw new ArtifactInputError("Stories write only stories.");
-                throw storyWriteRefused();
-            }
             if (
                 input.operationId !== undefined &&
                 (await queryArtifactVersionForOperation(txCtx, current.id, input.operationId)) !==
@@ -841,28 +744,11 @@ export class ArtifactsModule implements AgentModule {
      * the stored content stays on disk. Deleting a tombstone again changes nothing.
      */
     async delete(ctx: Context, input: DeleteArtifactInput): Promise<ArtifactRecord> {
-        return await this.#delete(ctx, input, false);
-    }
-
-    /** Stories leaves a deleted story's artifact as a tombstone here. */
-    async deleteStory(ctx: Context, input: DeleteArtifactInput): Promise<ArtifactRecord> {
-        return await this.#delete(ctx, input, true);
-    }
-
-    async #delete(
-        ctx: Context,
-        input: DeleteArtifactInput,
-        story: boolean,
-    ): Promise<ArtifactRecord> {
         if (!Value.Check(deleteArtifactInputSchema, input)) {
             throw new ArtifactInputError("The artifact deletion is invalid.");
         }
         return await ctx.inTx(async (txCtx) => {
             const current = await this.#required(txCtx, input.artifactId);
-            if ((current.type === "story") !== story) {
-                if (story) throw new ArtifactInputError("Stories delete only stories.");
-                throw storyWriteRefused();
-            }
             if (current.status === "deleted") return current;
             this.#assertRevision(current, input.expectedRevision);
             const now = Math.max(Date.now(), current.updatedAt + 1);
@@ -1172,10 +1058,7 @@ export class ArtifactsModule implements AgentModule {
                     `The upload for "${placement.path}" was not found. It may have expired or been used already; upload the file again.`,
                 );
             }
-            if (
-                !(await artifactFileExists(this.#config.artifactContentPath(upload.sha256))) &&
-                (await queryArtifactInline(ctx, upload.sha256)) === undefined
-            ) {
+            if (!(await artifactFileExists(this.#config.artifactContentPath(upload.sha256)))) {
                 throw new ArtifactNotFoundError(
                     `The content uploaded for "${placement.path}" is missing; upload the file again.`,
                 );
@@ -1216,7 +1099,6 @@ export class ArtifactsModule implements AgentModule {
                 !(await queryArtifactContentInUse(txCtx, received.sha256, uploadId))
             ) {
                 await removeArtifactFile(this.#config.artifactContentPath(received.sha256));
-                await deleteArtifactInline(txCtx, received.sha256);
             }
         });
     }
@@ -1284,13 +1166,6 @@ export class ArtifactsModule implements AgentModule {
         if (this.#agents === undefined) throw new Error("The artifacts module has not started.");
         return this.#agents;
     }
-}
-
-/** A story is written only through Stories, whose routes and tool check what a story is. */
-function storyWriteRefused(): ArtifactInputError {
-    return new ArtifactInputError(
-        "A story is changed only through Stories, not with the artifact routes or tools.",
-    );
 }
 
 /** The durable removal of one upload, cancelled when the upload is used. */

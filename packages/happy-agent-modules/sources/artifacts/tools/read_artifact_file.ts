@@ -6,12 +6,7 @@ import type { Context } from "@steve.kite/stdlib";
 import { ImageProcessingError } from "../../impl/images/ImageProcessingError.js";
 import { prepareImageForPrompt } from "../../impl/images/prepareImageForPrompt.js";
 import { MAX_PROMPT_IMAGE_INPUT_BYTES } from "../../impl/images/referenceImageLimits.js";
-import {
-    ArtifactNotFoundError,
-    artifactCounterSchema,
-    artifactFileSchema,
-    artifactPathSchema,
-} from "../Artifact.js";
+import { artifactCounterSchema, artifactFileSchema, artifactPathSchema } from "../Artifact.js";
 import { MAX_ARTIFACT_TEXT_BYTES, type ArtifactsModule } from "../ArtifactsModule.js";
 import { formatBytes } from "../ArtifactTypes.js";
 import { decodeArtifactText } from "../impl/decodeArtifactText.js";
@@ -93,10 +88,6 @@ export function readArtifactFileTool(artifacts: ArtifactsModule) {
             ctx: Context,
             input: ReadArtifactFileToolInput,
         ): Promise<ArtifactFileRead> => {
-            if ((await artifacts.get(ctx, input.artifactId))?.type === "story") {
-                // A story is read through Stories, which knows who may read it.
-                throw new ArtifactNotFoundError();
-            }
             const selector = input.version ?? "latest";
             const stored = await artifacts.storedFile(ctx, input.artifactId, selector, input.path);
             const base = {

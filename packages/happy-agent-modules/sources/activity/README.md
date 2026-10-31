@@ -18,5 +18,5 @@ person's message accepted -> durable intent (same transaction)
     -> API: agent.lastActivityAt = max(lastPersonMessageAt, statusLine.updatedAt) ?? createdAt
 ```
 
-The API projects the agent's `lastActivityAt` from this key and the status line Stories writes,
+The API projects the agent's `lastActivityAt` from this key and the status line `set_status` writes,
 and emits it in `agent.updated` whenever either changes.

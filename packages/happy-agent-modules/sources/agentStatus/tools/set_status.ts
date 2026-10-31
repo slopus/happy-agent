@@ -2,7 +2,7 @@ import { defineAgentTool, type AgentModuleScope } from "@slopus/happy-agent-base
 import { MAX_AGENT_STATUS_LINE_LENGTH } from "@slopus/happy-agent-client";
 import { Type, type Static } from "@sinclair/typebox";
 
-import type { StoriesModule } from "../StoriesModule.js";
+import type { AgentStatusModule } from "../AgentStatusModule.js";
 
 const setStatusToolInputSchema = Type.Object(
     {
@@ -34,7 +34,7 @@ const setStatusResultSchema = Type.Object(
 );
 
 /** Set the second line of this conversation's sidebar row. */
-export function setStatusTool(stories: StoriesModule, scope: AgentModuleScope) {
+export function setStatusTool(status: AgentStatusModule, scope: AgentModuleScope) {
     return defineAgentTool({
         name: "set_status",
         // Loaded with the conversation's tools: deferred, agents never went looking for it.
@@ -56,7 +56,7 @@ export function setStatusTool(stories: StoriesModule, scope: AgentModuleScope) {
         shouldReviewInAutoMode: () => false,
         execute: async (ctx, input: SetStatusToolInput, call) => {
             const text = input.text === null ? null : input.text.replace("\r\n", "\n");
-            await stories.setStatus(ctx, { agentId: scope.agent.id, toolCallId: call.id, text });
+            await status.setStatus(ctx, { agentId: scope.agent.id, toolCallId: call.id, text });
             return { text };
         },
         toLLM: (result) => [

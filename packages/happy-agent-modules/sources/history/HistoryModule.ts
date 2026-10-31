@@ -63,10 +63,6 @@ import { rewriteInlineActionMessages } from "./impl/rewriteInlineActionMessages.
 import { messageFailure } from "./impl/messageFailure.js";
 import { ExecutionConfigurationReservations } from "./impl/ExecutionConfigurationReservations.js";
 import { queryToolCallMessage } from "./persistence/queryToolCallMessage.js";
-import {
-    queryToolPresentations,
-    type HistoryPresentedResult,
-} from "./persistence/queryToolPresentations.js";
 import { queryRecordToolSpawnPresentation } from "./persistence/queryToolSpawnPresentation.js";
 import {
     toolPermissionReviewSchema,
@@ -829,25 +825,6 @@ export class HistoryModule implements AgentModule {
                 ? result.presentation
                 : undefined;
         });
-    }
-
-    /**
-     * The media and artifacts a conversation's successful tool calls showed, newest first, at
-     * most `limit` results from messages before `beforePosition`, optionally of one artifact.
-     */
-    async presentedResults(
-        ctx: Context,
-        agentId: string,
-        options: {
-            readonly beforePosition?: number;
-            readonly limit: number;
-            readonly artifactId?: string;
-        },
-    ): Promise<HistoryPresentedResult[]> {
-        return await this.#direct(
-            ctx,
-            async (txCtx) => await queryToolPresentations(txCtx, agentId, options),
-        );
     }
 
     async recordToolSpawnPresentation(

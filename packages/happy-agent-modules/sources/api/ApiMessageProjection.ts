@@ -210,7 +210,7 @@ function historyBlocks(
                 };
             }
             const result = results.get(block.callId);
-            const presentation = block.spawnPresentation ?? result?.presentation;
+            const presentation = block.spawnPresentation ?? served(result?.presentation);
             return toolCallResource(
                 {
                     id: block.callId,
@@ -259,11 +259,25 @@ export function toolResultPresentations(
         if (block.type === "tool_call" && block.spawnPresentation !== undefined) {
             presentations.set(block.callId, block.spawnPresentation);
         }
-        if (block.type === "tool_result" && block.presentation !== undefined) {
-            presentations.set(block.callId, block.presentation);
+        const presentation = block.type === "tool_result" ? served(block.presentation) : undefined;
+        if (block.type === "tool_result" && presentation !== undefined) {
+            presentations.set(block.callId, presentation);
         }
     }
     return presentations;
+}
+
+/** Withdrawn artifact types are no longer part of the API; their calls show as plain tools. */
+function served(
+    presentation: HistoryToolPresentation | undefined,
+): HistoryToolPresentation | undefined {
+    if (
+        presentation?.type === "artifact" &&
+        (presentation.artifactType === "sidebar_proposal" || presentation.artifactType === "story")
+    ) {
+        return undefined;
+    }
+    return presentation;
 }
 
 function providerToolOutput(result: Static<typeof providerToolResultBlockSchema>): string {

@@ -255,19 +255,11 @@ desktop's two diff colours are `--happy-diff-added` and `--happy-diff-removed`, 
 text colours `--happy-added` and `--happy-removed`, which must stay readable as text. Long lines
 wrap by default, because an inline page never scrolls inside, and `nowrap` scrolls them instead.
 
-## Story artifacts are written only through Stories
-
-Stories version their content as `story` artifacts, but a story has rules an ordinary artifact
-write would bypass: drafts only its author reads, Post naming the version the person saw, and an
-audience. So `create`, `update`, and `delete` refuse a story artifact, the catalog leaves story
-artifacts out, the artifact tools answer not found, and the API journal carries no `artifact.*` event for one.
-Stories writes them with `createStory`, `commitStory`, and `deleteStory`. The `story` type is
-also kept out of the tool schemas (`artifactToolTypeSchema`), so people without Stories see the
-artifact tools exactly as before.
-
 ## Withdrawn types are removed from storage
 
-`sidebar` and `sidebar_proposal` artifacts belonged to the Spaces sidebar, which was removed
-before a stable release. Leaving their rows would make every read that validates a record throw,
-so a migration deletes those artifacts with their versions and files, and inline text no remaining
-file uses. Content files on disk stay, as they do for any deleted artifact.
+`sidebar` and `sidebar_proposal` artifacts belonged to the Spaces sidebar, and `story` artifacts to
+Stories; both were removed before a stable release. Leaving their rows would make every read that
+validates a record throw, so a migration deletes those artifacts with their versions and files,
+and inline text no remaining file uses. Content files on disk stay, as they do for any deleted
+artifact. History still parses an older call's presentation of a withdrawn type, and the API shows
+that call as a plain tool instead of a card no client can open.

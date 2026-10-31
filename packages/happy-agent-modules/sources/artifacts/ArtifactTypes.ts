@@ -110,16 +110,6 @@ export const ARTIFACT_TYPE_RULES: Readonly<Record<ArtifactType, ArtifactTypeRule
         maxFileBytes: 64 * MIB,
         maxTotalBytes: 64 * MIB,
     },
-    // Stories checks each media file's kind and size limit itself before it places one.
-    story: {
-        label: "story",
-        article: "a",
-        entry: { path: "story.json", maxBytes: 256 * 1024 },
-        minFiles: 1,
-        maxFiles: 11,
-        maxFileBytes: 256 * MIB,
-        maxTotalBytes: 10 * 256 * MIB,
-    },
 };
 
 /** The largest single file any type accepts, and so the largest upload. */

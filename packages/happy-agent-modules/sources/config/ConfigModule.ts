@@ -2053,22 +2053,6 @@ export class ConfigModule implements AgentModule {
     }
 
     /**
-     * The folder of sticker packs the story editor offers, one folder per pack. Nothing ships in
-     * it: whoever runs the installation puts packs there.
-     */
-    get stickersHome(): string {
-        return join(this.configuration.paths.agentHome, "stickers");
-    }
-
-    /** A sticker's Lottie JSON, decompressed once from its `tgs` file of this digest. */
-    stickerLottieCachePath(sha256: string): string {
-        if (!/^[0-9a-f]{64}$/.test(sha256)) {
-            throw new Error("The sticker digest cannot name a file.");
-        }
-        return join(this.configuration.paths.agentHome, "cache", "stickers", `${sha256}.json`);
-    }
-
-    /**
      * The private folder where an exported bot keeps files people sent until they are taken in,
      * one per export kind and account.
      */

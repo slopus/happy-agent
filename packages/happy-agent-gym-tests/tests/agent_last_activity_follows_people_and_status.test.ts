@@ -1,8 +1,6 @@
 import { createAgentGym, type AgentGym, type GymTurn } from "@slopus/happy-agent-gym";
 import { afterEach, describe, expect, it } from "vitest";
 
-const STORIES = "happy-desktop.experiments.stories";
-
 const running: AgentGym[] = [];
 afterEach(async () => {
     await Promise.all(running.splice(0).map((gym) => gym.dispose()));
@@ -97,7 +95,6 @@ async function cursor(gym: AgentGym): Promise<string> {
 describe("an agent's last activity", () => {
     it("moves with a person's message and the status line, and with nothing else", async () => {
         const { gym, target, viaAgent, lastActivityAt, lastActivityChanges } = await harness();
-        await gym.client.saveUserSetting(STORIES, { value: true });
 
         // Nobody has written yet, so it is when the conversation began.
         const created = (await gym.client.getAgent(target)).agent;
@@ -120,7 +117,7 @@ describe("an agent's last activity", () => {
         // Another agent's message, the run and tool call it starts, a read marker, and a draft
         // move nothing.
         const beforeBookkeeping = await cursor(gym);
-        await viaAgent("list_stories", {});
+        await viaAgent("list_artifacts", {});
         await gym.client.markAgentRead(target);
         await gym.client.saveAgentDraft(target, { draft: null });
         expect(await lastActivityAt()).toBe(afterMessage);

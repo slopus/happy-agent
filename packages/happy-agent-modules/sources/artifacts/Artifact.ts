@@ -2,7 +2,7 @@ import { cuid2Schema } from "@slopus/happy-agent-base";
 import { Type, type Static } from "@sinclair/typebox";
 import { artifactLiveSchema } from "@slopus/happy-agent-client";
 
-const ordinaryArtifactTypes = [
+const artifactTypes = [
     Type.Literal("markdown"),
     Type.Literal("html"),
     Type.Literal("image"),
@@ -10,12 +10,7 @@ const ordinaryArtifactTypes = [
     Type.Literal("video"),
     Type.Literal("document"),
 ];
-/**
- * The types an artifact tool may name. A story is written only by Stories, and naming it here
- * would change every agent's tool schema whether or not its person has Stories on.
- */
-export const artifactToolTypeSchema = Type.Union(ordinaryArtifactTypes);
-export const artifactTypeSchema = Type.Union([...ordinaryArtifactTypes, Type.Literal("story")]);
+export const artifactTypeSchema = Type.Union(artifactTypes);
 export const artifactStatusSchema = Type.Union([Type.Literal("active"), Type.Literal("deleted")]);
 export const artifactTimestampSchema = Type.Integer({
     minimum: 0,

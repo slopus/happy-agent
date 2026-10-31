@@ -25,19 +25,6 @@ import {
 
 import { createId } from "@paralleldrive/cuid2";
 import {
-    createStoryRequestSchema,
-    postStoryRequestSchema,
-    repostStoryRequestSchema,
-    setStoryReactionRequestSchema,
-    storyFeedbackRequestSchema,
-    updateStoryRequestSchema,
-    useStickerRequestSchema,
-    type StoryAsset,
-    type StoryFrameInput,
-    type StoryStatus,
-} from "@slopus/happy-agent-client";
-import { StickerNotFoundError, StickersModule } from "../stickers/index.js";
-import {
     ProviderCliRequestError,
     ProviderClisModule,
     providerCliIdSchema,
@@ -52,13 +39,6 @@ import {
     providerRouteIdSchema,
     providerRouteUseRequestSchema,
 } from "../providerRoutes/index.js";
-import {
-    StoriesModule,
-    StoryConflictError,
-    StoryForbiddenError,
-    StoryInputError,
-    StoryNotFoundError,
-} from "../stories/index.js";
 import {
     closeWorkspaceBridgeRequestSchema,
     createSurfaceRequestSchema,
@@ -618,8 +598,6 @@ export class ApiModule implements AgentModule {
     readonly #userSettings: UserSettingsModule | undefined;
     readonly #surfaces: SurfacesModule | undefined;
     readonly #mobileConnector: MobileConnectorModule | undefined;
-    readonly #stories: StoriesModule | undefined;
-    readonly #stickers: StickersModule | undefined;
     readonly #providerClis: ProviderClisModule | undefined;
     readonly #providerRoutes: ProviderRoutesModule | undefined;
     /** The revocation signals each mobile connection already closes on. */
@@ -782,8 +760,6 @@ export class ApiModule implements AgentModule {
         userSettings?: UserSettingsModule,
         surfaces?: SurfacesModule,
         mobileConnector?: MobileConnectorModule,
-        stories?: StoriesModule,
-        stickers?: StickersModule,
         providerClis?: ProviderClisModule,
         providerRoutes?: ProviderRoutesModule,
     ) {
@@ -829,8 +805,6 @@ export class ApiModule implements AgentModule {
         this.#userSettings = userSettings;
         this.#surfaces = surfaces;
         this.#mobileConnector = mobileConnector;
-        this.#stories = stories;
-        this.#stickers = stickers;
         this.#providerClis = providerClis;
         this.#providerRoutes = providerRoutes;
     }
@@ -1890,8 +1864,6 @@ export class ApiModule implements AgentModule {
             if (await this.#handleTaskRoute(ctx, request, response, url)) return;
             if (await this.#handleSurfaceRoute(ctx, request, response, url)) return;
             if (await this.#handleArtifactRoute(ctx, request, response, url)) return;
-            if (await this.#handleStoryRoute(ctx, request, response, url)) return;
-            if (await this.#handleStickerRoute(ctx, request, response, url)) return;
             if (request.method === "GET" && url.pathname === "/v0/projects") {
                 const projects = await this.#allProjects(ctx, true);
                 sendJson(response, 200, {
@@ -2810,42 +2782,6 @@ export class ApiModule implements AgentModule {
                           this.#convertArtifactEvent(event);
                       }),
                   ]),
-            ...(this.#stories === undefined
-                ? []
-                : [
-                      // Each delivery is one person's view of the change, carrying its own mutation.
-                      this.#stories.onEvent((event) => {
-                          for (const delivery of event.deliveries) {
-                              this.#mutationIds.exit(() =>
-                                  this.#journal.append(
-                                      event.type,
-                                      delivery.payload,
-                                      event.at,
-                                      delivery.userId,
-                                  ),
-                              );
-                          }
-                      }),
-                  ]),
-            ...(this.#stickers === undefined
-                ? []
-                : [
-                      this.#stickers.onEvent((event) => {
-                          this.#mutationIds.exit(() =>
-                              this.#journal.append(
-                                  "sticker_recents.updated",
-                                  {
-                                      recents: event.recents,
-                                      ...(event.mutationId === undefined
-                                          ? {}
-                                          : { mutationId: event.mutationId }),
-                                  },
-                                  event.at,
-                                  event.userId,
-                              ),
-                          );
-                      }),
-                  ]),
             ...(this.#providerClis === undefined
                 ? []
                 : [
@@ -3454,8 +3390,6 @@ export class ApiModule implements AgentModule {
      * changed fields, even when a value is the same as before.
      */
     #convertArtifactEvent(event: ArtifactEvent): void {
-        // A story reaches its readers as story.* events; its artifact never reaches anyone.
-        if (event.artifact.type === "story") return;
         const artifact = artifactResource(event.artifact);
         if (event.type === "artifact_created") {
             this.#journal.append("artifact.created", { artifact }, event.at);
@@ -7216,367 +7150,6 @@ export class ApiModule implements AgentModule {
         return true;
     }
 
-    /**
-     * `/v0/stories` routes. For a caller with Stories off every one of them answers `404`, exactly
-     * as on a daemon without Stories, before anything is read from the request.
-     */
-    async #handleStoryRoute(
-        ctx: Context,
-        request: IncomingMessage,
-        response: ServerResponse,
-        url: URL,
-    ): Promise<boolean> {
-        const stories = this.#stories;
-        if (stories === undefined) return false;
-        if (url.pathname !== "/v0/stories" && !url.pathname.startsWith("/v0/stories/"))
-            return false;
-        if (!(await stories.enabled(ctx))) throw notFound("The route was not found.");
-        try {
-            if (url.pathname === "/v0/stories" && request.method === "GET") {
-                const cursor = this.#journal.cursor();
-                const page = await stories.list(ctx, {
-                    statuses: storyStatusesParameter(url.searchParams.get("status")),
-                    ...(url.searchParams.get("cursor") === null
-                        ? {}
-                        : { cursor: url.searchParams.get("cursor") as string }),
-                    limit: integerParameter(url.searchParams.get("limit"), 50, 1, 100),
-                });
-                sendJson(response, 200, { ...page, cursor });
-                return true;
-            }
-            if (url.pathname === "/v0/stories" && request.method === "POST") {
-                const body = await bodyAs(request, createStoryRequestSchema, "story");
-                await this.#requireStoryAssets(ctx, body.frames);
-                const story = await this.#withMutationId(
-                    body.mutationId,
-                    async () => await stories.create(ctx, body),
-                );
-                sendJson(response, 201, { story });
-                return true;
-            }
-            if (url.pathname === "/v0/stories/feed" && request.method === "GET") {
-                const cursor = this.#journal.cursor();
-                sendJson(response, 200, { ...(await stories.feed(ctx)), cursor });
-                return true;
-            }
-            if (url.pathname === "/v0/stories/media" && request.method === "GET") {
-                const agentId = url.searchParams.get("agentId");
-                if (agentId === null || !Value.Check(cuid2Schema, agentId)) {
-                    throw invalidRequest("Name the conversation with agentId.");
-                }
-                await this.#requireAgentResource(ctx, agentId);
-                const cursor = url.searchParams.get("cursor");
-                sendJson(
-                    response,
-                    200,
-                    await stories.media(ctx, agentId, {
-                        ...(cursor === null ? {} : { cursor }),
-                        limit: integerParameter(url.searchParams.get("limit"), 30, 1, 100),
-                    }),
-                );
-                return true;
-            }
-            const overlayMedia =
-                /^\/v0\/stories\/([a-z][a-z0-9]*)\/overlays\/([a-z][a-z0-9]*)\/media$/.exec(
-                    url.pathname,
-                );
-            if (overlayMedia !== null && request.method === "GET") {
-                const file = await stories.overlayMedia(
-                    ctx,
-                    overlayMedia[1] as string,
-                    overlayMedia[2] as string,
-                );
-                await sendStoredFile(request, response, {
-                    ...file,
-                    // A round video's file never changes; a new recording gets a new overlay.
-                    cacheControl: "private, max-age=31536000, immutable",
-                });
-                return true;
-            }
-            const route =
-                /^\/v0\/stories\/([a-z][a-z0-9]*)(?:\/(post|delete|seen|reaction|viewers|frames|repost|feedback)(?:\/([a-z][a-z0-9]*))?)?$/.exec(
-                    url.pathname,
-                );
-            if (route === null) return false;
-            const storyId = route[1] as string;
-            const action = route[2];
-            const frameId = route[3];
-            if (frameId !== undefined && action !== "frames") return false;
-            if (action === "repost" && request.method === "POST") {
-                const body = await bodyAs(request, repostStoryRequestSchema, "story repost");
-                const story = await this.#withMutationId(
-                    body.mutationId,
-                    async () => await stories.repost(ctx, storyId, body),
-                );
-                sendJson(response, 201, { story });
-                return true;
-            }
-            if (action === "feedback" && request.method === "POST") {
-                const body = await bodyAs(request, storyFeedbackRequestSchema, "story feedback");
-                const target = await stories.feedbackTarget(ctx, storyId, body.frameId);
-                const mode = (await this.#agentSystem().config(ctx, target.agentId))?.metadata?.[
-                    "lastMode"
-                ];
-                if (!Value.Check(messageModeSchema, mode)) {
-                    throw new ApiError(
-                        409,
-                        "conflict",
-                        "This agent has not run yet. Open its conversation to write to it.",
-                    );
-                }
-                await this.#assertUserControlledAgent(ctx, target.agentId);
-                const sent = await this.#withMutationId(
-                    body.mutationId,
-                    async () =>
-                        await this.#sendUserMessage(ctx, target.agentId, {
-                            ...(body.id === undefined ? {} : { id: body.id }),
-                            mode,
-                            text: `${target.quote}\n${body.text}`,
-                        }),
-                );
-                const messageId = (sent.message as { id?: unknown }).id;
-                sendJson(response, 202, {
-                    agentId: target.agentId,
-                    messageId: typeof messageId === "string" ? messageId : body.id,
-                });
-                return true;
-            }
-            if (action === undefined && request.method === "GET") {
-                sendJson(response, 200, { story: await stories.get(ctx, storyId) });
-                return true;
-            }
-            if (action === undefined && request.method === "PATCH") {
-                const body = await bodyAs(request, updateStoryRequestSchema, "story update");
-                const ifMatch = await this.#storyIfMatch(ctx, request, storyId);
-                if (body.frames !== undefined) await this.#requireStoryAssets(ctx, body.frames);
-                const story = await this.#withMutationId(
-                    body.mutationId,
-                    async () => await stories.update(ctx, storyId, ifMatch, body),
-                );
-                sendJson(response, 200, { story });
-                return true;
-            }
-            if (action === "post" && request.method === "POST") {
-                const body = await bodyAs(request, postStoryRequestSchema, "story post");
-                const story = await this.#withMutationId(
-                    body.mutationId,
-                    async () =>
-                        await stories.post(ctx, storyId, body.artifactVersion, body.mutationId),
-                );
-                sendJson(response, 200, { story });
-                return true;
-            }
-            if (action === "delete" && request.method === "POST") {
-                const body = await bodyAs(request, storyMutationBodySchema, "story deletion");
-                const ifMatch = await this.#storyIfMatch(ctx, request, storyId);
-                const story = await this.#withMutationId(
-                    body.mutationId,
-                    async () => await stories.delete(ctx, storyId, ifMatch, body.mutationId),
-                );
-                sendJson(response, 200, { story });
-                return true;
-            }
-            if (action === "seen" && request.method === "POST") {
-                await bodyAs(request, storyMutationBodySchema, "seen mark");
-                sendJson(response, 200, { story: await stories.markSeen(ctx, storyId) });
-                return true;
-            }
-            if (action === "reaction" && request.method === "PUT") {
-                const body = await bodyAs(request, setStoryReactionRequestSchema, "reaction");
-                const story = await this.#withMutationId(
-                    body.mutationId,
-                    async () =>
-                        await stories.setReaction(ctx, storyId, body.emoji, body.mutationId),
-                );
-                sendJson(response, 200, { story });
-                return true;
-            }
-            if (action === "reaction" && request.method === "DELETE") {
-                const body = await bodyAs(request, storyMutationBodySchema, "reaction removal");
-                const story = await this.#withMutationId(
-                    body.mutationId,
-                    async () => await stories.removeReaction(ctx, storyId, body.mutationId),
-                );
-                sendJson(response, 200, { story });
-                return true;
-            }
-            if (action === "viewers" && request.method === "GET") {
-                const cursor = url.searchParams.get("cursor");
-                sendJson(
-                    response,
-                    200,
-                    await stories.viewers(ctx, storyId, {
-                        ...(cursor === null ? {} : { cursor }),
-                        limit: integerParameter(url.searchParams.get("limit"), 50, 1, 100),
-                    }),
-                );
-                return true;
-            }
-            if (action === "frames" && frameId !== undefined && request.method === "GET") {
-                const file = await stories.frame(ctx, storyId, frameId);
-                await sendStoredFile(request, response, {
-                    ...file,
-                    // A frame's asset never changes, so the same URL never names other bytes.
-                    cacheControl: "private, max-age=31536000, immutable",
-                });
-                return true;
-            }
-            return false;
-        } catch (error: unknown) {
-            throw storyApiError(error);
-        }
-    }
-
-    /** The `If-Match` a story write carries, checked well-formed; the story compares it. */
-    async #storyIfMatch(ctx: Context, request: IncomingMessage, storyId: string): Promise<string> {
-        const value = request.headers["if-match"];
-        if (typeof value !== "string" || !Value.Check(eventIdSchema, value)) {
-            // A missing version is refused only for someone who may see the story at all.
-            await this.#stories?.get(ctx, storyId);
-            throw invalidRequest("A valid If-Match resource version is required.");
-        }
-        return value;
-    }
-
-    /**
-     * Every conversation a write's frames take media from must be one the caller may read. An
-     * artifact file's own rules are the Stories module's to check.
-     */
-    async #requireStoryAssets(ctx: Context, frames: readonly StoryFrameInput[]): Promise<void> {
-        for (const [index, frame] of frames.entries()) {
-            const asset: StoryAsset | undefined = "asset" in frame ? frame.asset : undefined;
-            if (asset?.type !== "chat_media") continue;
-            try {
-                await this.#requireAgentResource(ctx, asset.agentId);
-            } catch (error: unknown) {
-                if (error instanceof ApiError && error.status === 404) {
-                    throw invalidRequest(
-                        `Frame ${String(index + 1)}: that conversation's media is not available to you.`,
-                    );
-                }
-                throw error;
-            }
-        }
-    }
-
-    /** `/v0/stickers` routes; like Stories, they do not exist for a caller with Stories off. */
-    async #handleStickerRoute(
-        ctx: Context,
-        request: IncomingMessage,
-        response: ServerResponse,
-        url: URL,
-    ): Promise<boolean> {
-        const stickers = this.#stickers;
-        if (stickers === undefined) return false;
-        if (!url.pathname.startsWith("/v0/stickers/")) return false;
-        if (!(await stickers.enabled(ctx))) throw notFound("The route was not found.");
-        try {
-            if (url.pathname === "/v0/stickers/packs" && request.method === "GET") {
-                sendJson(response, 200, { packs: await stickers.packs(ctx) });
-                return true;
-            }
-            if (url.pathname === "/v0/stickers/search" && request.method === "GET") {
-                const q = url.searchParams.get("q") ?? undefined;
-                const emoji = url.searchParams.get("emoji") ?? undefined;
-                const kind = url.searchParams.get("kind") ?? "stickers";
-                if (q === undefined && emoji === undefined) {
-                    throw invalidRequest("Search with q or emoji.");
-                }
-                if (q !== undefined && (q.length < 1 || q.length > 64)) {
-                    throw invalidRequest("q is 1 to 64 characters.");
-                }
-                if (emoji !== undefined && (emoji.length < 1 || emoji.length > 64)) {
-                    throw invalidRequest("emoji is one emoji.");
-                }
-                if (kind !== "stickers" && kind !== "emoji") {
-                    throw invalidRequest('kind is "stickers" or "emoji".');
-                }
-                sendJson(response, 200, {
-                    stickers: await stickers.search(ctx, {
-                        ...(q === undefined ? {} : { q }),
-                        ...(emoji === undefined ? {} : { emoji }),
-                        kind,
-                        limit: integerParameter(url.searchParams.get("limit"), 100, 1, 200),
-                    }),
-                });
-                return true;
-            }
-            if (url.pathname === "/v0/stickers/recents") {
-                if (request.method === "GET") {
-                    const cursor = this.#journal.cursor();
-                    sendJson(response, 200, { recents: await stickers.recents(ctx), cursor });
-                    return true;
-                }
-                if (request.method === "POST") {
-                    const body = await bodyAs(request, useStickerRequestSchema, "sticker use");
-                    const recents = await this.#withMutationId(
-                        body.mutationId,
-                        async () =>
-                            await stickers.use(
-                                ctx,
-                                { packId: body.packId, stickerId: body.stickerId },
-                                body.mutationId,
-                            ),
-                    );
-                    sendJson(response, 200, { recents, cursor: this.#journal.cursor() });
-                    return true;
-                }
-                if (request.method === "DELETE") {
-                    const body = await bodyAs(request, storyMutationBodySchema, "recents clear");
-                    const recents = await this.#withMutationId(
-                        body.mutationId,
-                        async () => await stickers.clear(ctx, body.mutationId),
-                    );
-                    sendJson(response, 200, { recents, cursor: this.#journal.cursor() });
-                    return true;
-                }
-                return false;
-            }
-            const pack = /^\/v0\/stickers\/packs\/([a-z0-9_-]{1,64})$/.exec(url.pathname);
-            if (pack !== null && request.method === "GET") {
-                sendJson(response, 200, await stickers.pack(ctx, pack[1] as string));
-                return true;
-            }
-            const file =
-                /^\/v0\/stickers\/packs\/([a-z0-9_-]{1,64})\/stickers\/([A-Za-z0-9_-]{1,128})\/file$/.exec(
-                    url.pathname,
-                );
-            if (file !== null && request.method === "GET") {
-                const stored = await stickers.file(
-                    ctx,
-                    file[1] as string,
-                    file[2] as string,
-                    url.searchParams.get("as") === "lottie",
-                );
-                await sendStoredFile(request, response, {
-                    ...stored,
-                    cacheControl: "private, max-age=31536000, immutable",
-                });
-                return true;
-            }
-            return false;
-        } catch (error: unknown) {
-            if (error instanceof StickerNotFoundError) throw notFound(error.message);
-            throw error;
-        }
-    }
-
-    /**
-     * A story's artifact is not there for anyone who may not read the story, and nobody writes
-     * one through the artifact routes.
-     */
-    async #guardStoryArtifact(ctx: Context, artifactId: string, write: boolean): Promise<void> {
-        if ((await this.#artifacts?.get(ctx, artifactId))?.type !== "story") return;
-        if (this.#stories === undefined || !(await this.#stories.canRead(ctx, artifactId))) {
-            throw notFound("The artifact was not found.");
-        }
-        if (write) {
-            throw invalidRequest(
-                "A story is changed only through Stories, not with the artifact routes or tools.",
-            );
-        }
-    }
-
     async #handleArtifactRoute(
         ctx: Context,
         request: IncomingMessage,
@@ -7618,7 +7191,6 @@ export class ApiModule implements AgentModule {
                 const existing =
                     body.id === undefined ? undefined : await artifacts.get(ctx, body.id);
                 if (existing !== undefined) {
-                    await this.#guardStoryArtifact(ctx, existing.id, true);
                     sendJson(response, 201, { artifact: artifactResource(existing) });
                     return true;
                 }
@@ -7644,7 +7216,6 @@ export class ApiModule implements AgentModule {
                 if (request.method !== "GET") return false;
                 const target = artifactFileRequest(url.pathname);
                 if (target === undefined) throw notFound("The artifact version has no such file.");
-                await this.#guardStoryArtifact(ctx, target.artifactId, false);
                 const stored = await artifacts.storedFile(
                     ctx,
                     target.artifactId,
@@ -7662,11 +7233,6 @@ export class ApiModule implements AgentModule {
             const artifactId = route[1] as string;
             const action = route[2];
             const selector = route[3];
-            await this.#guardStoryArtifact(
-                ctx,
-                artifactId,
-                request.method === "PATCH" || action === "delete",
-            );
             if (action === "versions" && request.method === "GET") {
                 if (selector !== undefined) {
                     const number = /^[1-9][0-9]*$/.test(selector) ? Number(selector) : undefined;
@@ -9900,8 +9466,6 @@ export class ApiModule implements AgentModule {
             status: this.#ready ? "ready" : "starting",
             capabilities: {
                 desktopLiveControl: this.#live !== undefined,
-                ...(this.#stories === undefined ? {} : { stories: true, agentStories: true }),
-                ...(this.#stickers === undefined ? {} : { stickers: true }),
                 ...(this.#providerClis === undefined || this.#team.enabled
                     ? {}
                     : { providerClis: true }),
@@ -11195,42 +10759,4 @@ function storedWorkspaceCompute(
         );
     }
     return { type: "docker", image: requested.image };
-}
-
-/** The body of a story action that carries nothing but an optional mutation. */
-const storyMutationBodySchema = Type.Object({
-    mutationId: Type.Optional(Type.String({ minLength: 1, maxLength: 256 })),
-});
-
-/** `status=draft,posted`: comma-separated story states, `draft,posted` when absent. */
-function storyStatusesParameter(value: string | null): StoryStatus[] {
-    if (value === null) return ["draft", "posted"];
-    const statuses = value.split(",");
-    const known = new Set(["draft", "posted", "deleted"]);
-    if (statuses.length === 0 || statuses.some((status) => !known.has(status))) {
-        throw invalidRequest('status is "draft", "posted", or "deleted", comma-separated.');
-    }
-    return [...new Set(statuses)] as StoryStatus[];
-}
-
-/** A Stories or artifact refusal as the HTTP error it is. */
-function storyApiError(error: unknown): unknown {
-    if (error instanceof StoryInputError) return invalidRequest(error.message);
-    if (error instanceof StoryNotFoundError) return notFound(error.message);
-    if (error instanceof StoryForbiddenError) return new ApiError(403, "forbidden", error.message);
-    if (error instanceof StoryConflictError) {
-        return new ApiError(
-            409,
-            "conflict",
-            error.message,
-            error.story === undefined
-                ? {}
-                : { currentVersion: error.story.version, story: error.story },
-        );
-    }
-    if (error instanceof ArtifactInputError) return invalidRequest(error.message);
-    if (error instanceof ArtifactNotFoundError) return invalidRequest(error.message);
-    if (error instanceof ArtifactTooLargeError)
-        return new ApiError(413, "too_large", error.message);
-    return error;
 }
