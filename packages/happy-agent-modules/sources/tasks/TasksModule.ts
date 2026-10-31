@@ -248,9 +248,13 @@ export class TasksModule implements AgentModule {
                                 title: name,
                             });
                         }
+                        // An automatic title is not a person's choice: if the owner later turns
+                        // rich tasks on, the task may still replace it.
                         await this.#change(txCtx, current, (value) => ({
                             ...value,
-                            ...(name === undefined ? {} : { name, nameConfigured: true }),
+                            ...(name === undefined
+                                ? {}
+                                : { name, nameConfigured: true, nameAgentChosen: true as const }),
                         }));
                     });
                     return null;

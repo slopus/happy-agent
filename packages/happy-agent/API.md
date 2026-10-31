@@ -10341,13 +10341,15 @@ for a bot, the person whose message the turn answers; in standalone mode, the in
 person. With `tasks.rich` off, a task or bot agent gets none of the first four, so its tools
 equal a protocol-33 daemon's apart from `set_status`.
 
-| Tool             | Given to                             | Does                                                                               |
-| ---------------- | ------------------------------------ | ---------------------------------------------------------------------------------- |
-| `get_card`       | Task and bot agents, `tasks.rich` on | Reads its own card: title and icon with who set them, status, stories, children    |
-| `set_status`     | Task and bot agents, `tasks.rich` on | Unchanged: sets or clears its status line                                          |
-| `set_story`      | Task and bot agents, `tasks.rich` on | Posts its one live story for an audience, replacing the last; `null` takes it down |
-| `set_visibility` | Task agents, `tasks.rich` on         | Sets a child choice on its own task: `"shown"`, `"hidden"`, or `"default"`         |
-| `organize_tasks` | Focus only                           | Moves tasks, including to the top of a section, and hides or shows them            |
+| Tool                  | Given to                               | Does                                                                               |
+| --------------------- | -------------------------------------- | ---------------------------------------------------------------------------------- |
+| `get_card`            | Task and bot agents, `tasks.rich` on   | Reads its own card: title and icon with who set them, status, stories, children    |
+| `set_status`          | Task and bot agents, `tasks.rich` on   | Unchanged: sets or clears its status line                                          |
+| `set_story`           | Task and bot agents, `tasks.rich` on   | Posts its one live story for an audience, replacing the last; `null` takes it down |
+| `set_visibility`      | Task agents, `tasks.rich` on           | Sets a child choice on its own task: `"shown"`, `"hidden"`, or `"default"`         |
+| `search_task_icons`   | Top-level task agents, `tasks.rich` on | Searches the bundled icon catalog; at most ten candidates                          |
+| `set_task_title_icon` | Top-level task agents, `tasks.rich` on | Sets its own task's title, icon, or both, unless a person chose that field         |
+| `organize_tasks`      | Focus only                             | Moves tasks, including to the top of a section, and hides or shows them            |
 
 `set_story` with `audience: "team"` is always reviewed in Auto mode, and the review allows it only
 when a person asked for a team post, in the conversation or as a standing instruction; otherwise
@@ -10574,10 +10576,12 @@ and icon through `search_task_icons` and `set_task_title_icon`. Search returns a
 matches from the bundled catalog, with each candidate's slug, label, description, category, hash,
 and score. A query with no matching terms returns no candidates. The setter has no task or agent ID:
 it changes only the calling task through the same canonical task mutation path. It refuses a
-change to a field already chosen by a person. The tool durably queues its change, reports that it
-applies when the turn ends, and rechecks the current setting and each person's choice in the write
-transaction. A person choosing a field, disabling rich tasks, or archiving the task before that
-write cancels the queued change. The tools are absent when rich tasks are off and
+change to a field already chosen by a person; a title from automatic naming is not a person's
+choice, so the task may replace it. The tool durably queues its change, which applies right after
+the call is saved, within moments and while the turn continues; no confirmation call is needed.
+The write rechecks the current setting and each person's choice in its transaction. A person
+choosing a field, disabling rich tasks, or archiving the task before that write cancels the
+queued change. The tools are absent when rich tasks are off and
 are not offered to bots or subtasks. Automatic naming skips rich tasks; with rich tasks off,
 existing first-message title generation is unchanged.
 

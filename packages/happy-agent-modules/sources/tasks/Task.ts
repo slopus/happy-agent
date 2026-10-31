@@ -47,7 +47,10 @@ export const taskRecordSchema = Type.Object(
          * once, from the task's first message; a rename settles it for good.
          */
         nameConfigured: Type.Boolean(),
-        /** The task itself chose its title; a person's update clears this provenance. */
+        /**
+         * The title came from a model, the task's own or the naming job, not a person, so the
+         * task may still replace it. A person's update clears this provenance.
+         */
         nameAgentChosen: Type.Optional(Type.Literal(true)),
         /** The icon's slug from the library; absent until one is chosen. */
         icon: Type.Optional(taskIconSlugSchema),

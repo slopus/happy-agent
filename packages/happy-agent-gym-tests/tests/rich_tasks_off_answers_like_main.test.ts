@@ -152,8 +152,17 @@ describe("with every rich-task setting off", () => {
             for (const [index, key] of SETTINGS.entries()) {
                 await gym.client.saveUserSetting(key, { value: ((bits >> index) & 1) === 1 });
             }
-            expect(await toolSets(), `settings ${String(bits)}`).toEqual(
-                mainTools((bits & 1) === 1),
+            const rich = (bits & 1) === 1;
+            const sets = await toolSets();
+            // Rich tasks also give a task, and only a task, its own title and icon tools.
+            const {
+                search_task_icons: search,
+                set_task_title_icon: identity,
+                ...taskTools
+            } = sets["task"]!;
+            expect([search !== undefined, identity !== undefined]).toEqual([rich, rich]);
+            expect({ ...sets, task: taskTools }, `settings ${String(bits)}`).toEqual(
+                mainTools(rich),
             );
         }
         expect(gym.errors).toEqual([]);

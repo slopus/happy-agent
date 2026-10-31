@@ -879,6 +879,37 @@ describe("TasksModule", () => {
         }
     });
 
+    it("lets a task replace the automatic title it got before rich tasks were on", async () => {
+        const fixture = await started("tasks-automatic-title");
+        try {
+            const ctx = fixture.database.context;
+            let wanted = false;
+            fixture.tasks.decideIdentityWith(async () => wanted);
+            fixture.naming.mockResolvedValue({ title: "Automatic title" });
+            const task = await fixture.tasks.create(ctx, {});
+            await fixture.acceptText(task.agentId, "user", "The login page loops.");
+            await vi.waitFor(async () =>
+                expect(await fixture.tasks.get(ctx, task.id)).toMatchObject({
+                    name: "Automatic title",
+                    nameConfigured: true,
+                    nameAgentChosen: true,
+                }),
+            );
+            wanted = true;
+            const own = await fixture.tasks.setIdentityForAgent(ctx, task.agentId, {
+                title: "Own title",
+            });
+            expect(own.name).toBe("Own title");
+            // A person resubmitting the same title still makes it final.
+            await fixture.tasks.update(ctx, task.id, { name: "Own title" }, own.version);
+            await expect(
+                fixture.tasks.setIdentityForAgent(ctx, task.agentId, { title: "Override" }),
+            ).rejects.toThrow("person");
+        } finally {
+            await fixture.close();
+        }
+    });
+
     it("keeps each person's identity choice final, including an unchanged title and a cleared icon", async () => {
         const fixture = await started("tasks-self-identity");
         try {

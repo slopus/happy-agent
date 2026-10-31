@@ -157,6 +157,86 @@ describe("a rich task chooses its own identity", () => {
         expect(gym.errors).toEqual([]);
     }, 60_000);
 
+    it("lets the task replace an automatic title from before rich tasks, but not a person's", async () => {
+        const { gym, act } = await start();
+        const named = async (id: string) =>
+            await gym.waitUntil(async () => {
+                const task = (await gym.client.getTask(id)).task;
+                return task.name === "Ordinary title" ? task : undefined;
+            }, "automatic naming");
+        const automatic = (await gym.client.createTask({})).task;
+        const kept = (await gym.client.createTask({})).task;
+        await act(automatic.agent.id);
+        await act(kept.agent.id);
+        await named(automatic.id);
+        const keptNamed = await named(kept.id);
+        // Submitting the automatic title unchanged is still a person's final choice.
+        await gym.client.updateTask(
+            kept.id,
+            { name: "Ordinary title" },
+            { ifMatch: keptNamed.version },
+        );
+
+        await gym.client.saveUserSetting("tasks.rich", { value: true });
+        await act(automatic.agent.id, call("set_task_title_icon", { title: "Agent refined" }));
+        await gym.waitUntil(
+            async () =>
+                (await gym.client.getTask(automatic.id)).task.name === "Agent refined"
+                    ? true
+                    : undefined,
+            "the task's own title replacing the automatic one",
+        );
+        await act(kept.agent.id, call("set_task_title_icon", { title: "Overwritten" }));
+        expect((await gym.client.getTask(kept.id)).task.name).toBe("Ordinary title");
+        expect(JSON.stringify(gym.inference.toolResults())).toMatch(/person has chosen/i);
+        expect(gym.errors).toEqual([]);
+    }, 60_000);
+
+    it("applies the identity change while the turn is still running", async () => {
+        let releaseNext!: () => void;
+        const nextMayFinish = new Promise<void>((resolve) => {
+            releaseNext = resolve;
+        });
+        let calls = 0;
+        const gym = await createAgentGym({
+            inference: async (request) => {
+                if (request.sessionId.startsWith("naming:")) {
+                    return { content: [{ type: "text", text: "<title>Ordinary title</title>" }] };
+                }
+                calls += 1;
+                if (calls === 1) {
+                    return call("set_task_title_icon", { title: "Live title", icon: "testing" });
+                }
+                // Hold the inference after the tool call, so the turn cannot have ended.
+                await nextMayFinish;
+                return { content: [{ type: "text", text: "Done." }] };
+            },
+        });
+        running.add(gym);
+        await gym.client.saveUserSetting("tasks.rich", { value: true });
+        const task = (await gym.client.createTask({})).task;
+        await gym.send("Review the pull request.", { sessionId: task.agent.id, wait: false });
+        await gym.waitUntil(() => (calls >= 2 ? true : undefined), "the held inference");
+        const applied = await gym.waitUntil(async () => {
+            const current = (await gym.client.getTask(task.id)).task;
+            return current.name === "Live title" && current.icon?.slug === "testing"
+                ? current
+                : undefined;
+        }, "the identity change before the turn ends");
+        expect(applied.agent.status).not.toBe("idle");
+        const results = JSON.stringify(gym.inference.toolResults());
+        expect(results).toContain("applies within moments");
+        expect(results).toContain("no confirmation call is needed");
+        expect(results).not.toContain("when this turn ends");
+        releaseNext();
+        await gym.waitUntil(
+            async () =>
+                (await gym.client.getTask(task.id)).task.agent.status === "idle" ? true : undefined,
+            "the turn to end",
+        );
+        expect(gym.errors).toEqual([]);
+    }, 30_000);
+
     it("rejects invented slugs and keeps ordinary bots outside the identity tool surface", async () => {
         const { gym, act } = await start();
         await gym.client.saveUserSetting("tasks.rich", { value: true });

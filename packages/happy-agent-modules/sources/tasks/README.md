@@ -89,8 +89,9 @@ owned by `TaskIconsModule`, and no naming job runs. An already-running job reche
 
 `update` applies a person's title, icon (`null` for none), or both. `setIdentityForAgent` resolves
 the calling agent's own task and uses the same write path. A person's choice is final for that
-field, including submitting the same title or clearing an icon. `nameAgentChosen` lets the task
-refine its own title until a person chooses it. Icons remain logical slugs in storage; the API
+field, including submitting the same title or clearing an icon. `nameAgentChosen` marks a title
+a model chose, the task's own or the naming job's, so the task can refine it until a person
+chooses one. Icons remain logical slugs in storage; the API
 derives the artwork digest from the current bundled catalog.
 
 ## Tools
@@ -151,7 +152,8 @@ released `001-task-state` migration stays first, `002-task-list-removed` drops t
 Migration `005-task-explicit-leaves` adds a per-member/task exclusion table for automatic joining.
 Migration `008-task-icon` adds the nullable `icon` slug and `icon_configured`, set once a person
 picks the icon.
-Migration `011-task-agent-title-choice` adds `name_agent_chosen`; a person's title update clears it.
+Migration `011-task-agent-title-choice` adds `name_agent_chosen`, set by the task's own and the
+naming job's titles; a person's title update clears it.
 Migration `009-task-sections` adds the nullable membership `hidden` flag and
 `happy_agent_module_task_sections`, one row per section with its member and order key.
 Migration `010-task-children` adds `happy_agent_module_task_children`, one row per task and child

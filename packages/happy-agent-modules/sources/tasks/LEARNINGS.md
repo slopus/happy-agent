@@ -189,7 +189,9 @@ ordinary tasks keep the same title-only request. A running job rechecks the sett
 
 Both human updates and the scoped agent setter share one mutation path. A human's choice is final
 for that field, including an unchanged title or `null` icon. `name_agent_chosen` distinguishes a
-task's own title, which it can refine, from a human choice; a human PATCH clears it. Icons stay
+model's title, which the task can refine, from a human choice; a human PATCH clears it. The naming
+job sets it too: it once wrote `name_configured` alone, so an automatic title written while rich
+tasks were off locked the task out of naming itself after the owner turned them on. Icons stay
 slugs in storage so updating artwork does not leave a permanently stale digest in a task row.
 
 ## Sections share the memberships' key space

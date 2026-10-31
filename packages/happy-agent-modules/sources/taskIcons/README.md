@@ -16,7 +16,9 @@ are offered and when called. Setters accept no target ID and Tasks protects each
 by a person. The setter commits a Durable Functions intent with the tool call. Its executor runs
 outside the calling turn, rechecks the setting and human choices, and writes through Tasks. This
 is necessary because a tool cannot mutate its own agent metadata from inside that agent's turn.
-The tool reports that the accepted change applies when the turn ends. A restart resumes its intent;
+The executor starts as soon as the tool call's transaction commits, so the change applies within
+moments while the turn continues; the tool says so and asks for no confirmation call. A restart
+resumes its intent;
 a person choosing a field or disabling rich tasks cancels it without an error.
 
 Search uses the repository's BM25 implementation over labels, aliases, tags, category,

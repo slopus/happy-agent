@@ -19,14 +19,17 @@ const eagerDirectories = [
     "userInput",
 ];
 /**
- * Voice's and Focus's whole tool arrays, which they receive without tool search, and set_status,
- * which agents never used while it was deferred.
+ * Voice's and Focus's whole tool arrays, which they receive without tool search, set_status,
+ * which agents never used while it was deferred, and the task identity tools a rich task is
+ * told to use early.
  */
 const eagerFiles = [
     "live/impl/voiceSidebarTools.ts",
     "live/impl/liveDesktopTools.ts",
     "agentStatus/tools/set_status.ts",
     "focus/tools/organize_tasks.ts",
+    "taskIcons/tools/search_task_icons.ts",
+    "taskIcons/tools/set_task_title_icon.ts",
 ];
 
 interface ToolDefinition {
