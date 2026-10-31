@@ -20,3 +20,7 @@ Bundling a separate catalog in every client limited the available icons and coup
 to icon selection. The daemon now bundles all artwork, adds its digest to known icon projections,
 and serves versioned WebP images through the existing authenticated transport. Clients cache by
 digest. A wrong version returns 404 so a mutable URL cannot enter an immutable cache.
+
+The legacy `waveform` choice resolves to canonical `audio` artwork. The logical stored slug stays
+unchanged, its projection uses the audio digest, and its versioned route returns the same bytes.
+All 139 legacy choices resolve without adding a 2,001st canonical topic or duplicate asset.

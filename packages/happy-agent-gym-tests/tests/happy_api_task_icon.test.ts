@@ -1,4 +1,4 @@
-import { createAgentGym, type AgentGym } from "@slopus/happy-agent-gym";
+import { createAgentGym, createUnixSocketFetch, type AgentGym } from "@slopus/happy-agent-gym";
 import { afterEach, describe, expect, it } from "vitest";
 
 const running = new Set<AgentGym>();
@@ -8,6 +8,36 @@ afterEach(async () => {
 });
 
 describe("task icon API", () => {
+    it("keeps a stored waveform choice and serves the canonical audio bytes and digest", async () => {
+        const gym = await createAgentGym();
+        running.add(gym);
+        const fresh = (await gym.client.createTask({ name: "Audio task" })).task;
+        const chosen = await gym.client.updateTask(
+            fresh.id,
+            {
+                icon: { type: "library", slug: "waveform" },
+            },
+            { ifMatch: fresh.version },
+        );
+        const fetch = createUnixSocketFetch(gym.socketPath);
+        const headers = { authorization: `Bearer ${gym.token}` };
+        const audio = await fetch("http://happy-agent.invalid/v0/task-icons/audio", { headers });
+        const hash = audio.headers.get("etag")!.slice(1, -1);
+        expect(chosen.task.icon).toEqual({ type: "library", slug: "waveform", hash });
+        const waveform = await fetch(
+            `http://happy-agent.invalid/v0/task-icons/waveform?v=${hash}`,
+            { headers },
+        );
+        expect(waveform.status).toBe(200);
+        expect(waveform.headers.get("cache-control")).toContain("immutable");
+        expect(new Uint8Array(await waveform.arrayBuffer())).toEqual(
+            new Uint8Array(await audio.arrayBuffer()),
+        );
+        await gym.restart();
+        expect((await gym.client.getTask(fresh.id)).task.icon).toEqual(chosen.task.icon);
+        expect(gym.errors).toEqual([]);
+    }, 30_000);
+
     it("serves a current digest for a stored slug and ignores a caller's stale digest", async () => {
         const gym = await createAgentGym();
         running.add(gym);

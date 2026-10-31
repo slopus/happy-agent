@@ -63,9 +63,9 @@ export function searchTaskIcons(query: string): TaskIconCandidate[] {
         });
 }
 
-/** Exact membership validation never repairs a model's choice into a different icon. */
+/** Accept catalog entries and established legacy choices without changing the logical slug. */
 export function assertTaskIconSlug(slug: string): void {
-    if (!Value.Check(taskIconSchema.properties.slug, slug) || !bySlug.has(slug)) {
+    if (!Value.Check(taskIconSchema.properties.slug, slug) || taskIconAsset(slug) === undefined) {
         throw new Error("Choose a task icon slug returned by search_task_icons.");
     }
 }
@@ -74,7 +74,7 @@ export function assertTaskIconSlug(slug: string): void {
 export function taskIconAsset(
     slug: string,
 ): { readonly slug: string; readonly hash: string; readonly size: number } | undefined {
-    return bySlug.get(slug);
+    return bySlug.get(slug === "waveform" ? "audio" : slug);
 }
 
 /** Preserve punctuation that distinguishes language names before ordinary word segmentation. */

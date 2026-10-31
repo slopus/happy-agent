@@ -10598,6 +10598,10 @@ returns `404`. A matching version responds with
 `Cache-Control: no-cache` so clients revalidate. The same cache headers apply to `304` responses.
 There is no public catalog route.
 
+The legacy slug `waveform` resolves to the canonical `audio` artwork. Stored choices keep the
+`waveform` slug and project the current audio digest; its versioned URL serves the same bytes.
+This alias does not add a topic or asset to the canonical catalog.
+
 ### `GET /v0/tasks/:taskId`
 
 Response — `200`: `{ "task": { ... }, "membership": { ... } }`. `membership` is the caller's
