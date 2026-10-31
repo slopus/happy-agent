@@ -27,6 +27,13 @@ export const artifactTypeSchema = Type.Union([
 ]);
 export type ArtifactType = Static<typeof artifactTypeSchema>;
 
+/**
+ * A type an artifact may report: the creatable ones, and `story`, made only through the story
+ * routes and listed only to a client that asks for `type=story`.
+ */
+export const artifactResourceTypeSchema = Type.Union([artifactTypeSchema, Type.Literal("story")]);
+export type ArtifactResourceType = Static<typeof artifactResourceTypeSchema>;
+
 /** A human display title: nonblank, bounded, and free of ASCII control characters. */
 export const artifactTitleSchema = Type.String({
     maxLength: 256,
@@ -206,7 +213,7 @@ export const artifactSchema = Type.Object({
     source: Nullable(artifactSourceSchema),
     status: Type.Union([Type.Literal("active"), Type.Literal("deleted")]),
     title: artifactTitleSchema,
-    type: artifactTypeSchema,
+    type: artifactResourceTypeSchema,
     updatedAt: timestampSchema,
     /** Who made the latest change: a version, or the deletion. */
     updatedBy: artifactAuthorSchema,

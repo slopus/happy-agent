@@ -29,6 +29,43 @@ export const taskFolderNameSchema = Type.String({
 });
 export type TaskFolderName = Static<typeof taskFolderNameSchema>;
 
+/** An icon from Happy's icon library; clients show their default for an unknown type or slug. */
+export const taskIconSchema = Type.Object({
+    slug: Type.String({ maxLength: 64, minLength: 1, pattern: "^[a-z0-9]+(?:-[a-z0-9]+)*$" }),
+    type: Type.Literal("library"),
+});
+export type TaskIcon = Static<typeof taskIconSchema>;
+
+/** What may sit under a task's card. */
+export const taskChildRefSchema = Type.Object({
+    id: cuid2Schema,
+    kind: Type.Union([Type.Literal("workspace"), Type.Literal("agent"), Type.Literal("artifact")]),
+});
+export type TaskChildRef = Static<typeof taskChildRefSchema>;
+export type TaskChildKind = TaskChildRef["kind"];
+
+/** Who made a change: an agent, Focus included, a person, or both `null` for the daemon. */
+export const taskActorSchema = Type.Object({
+    agentId: Nullable(cuid2Schema),
+    userId: Nullable(userIdSchema),
+});
+export type TaskActor = Static<typeof taskActorSchema>;
+
+export const taskChildVisibilitySchema = Type.Union([
+    Type.Literal("shown"),
+    Type.Literal("hidden"),
+]);
+export type TaskChildVisibility = Static<typeof taskChildVisibilitySchema>;
+
+/** A choice about one child, shared by every member; no choice means the derived default. */
+export const taskChildSchema = Type.Object({
+    by: taskActorSchema,
+    ref: taskChildRefSchema,
+    updatedAt: timestampSchema,
+    visibility: taskChildVisibilitySchema,
+});
+export type TaskChild = Static<typeof taskChildSchema>;
+
 /** A task and its one independently versioned agent. Tasks have no avatar and no order. */
 export const taskSchema = Type.Object({
     /** The task's one agent, embedded in full for list rendering. */
@@ -39,6 +76,8 @@ export const taskSchema = Type.Object({
      * `task.created` events and from daemons older than task archival routes.
      */
     canArchive: Type.Optional(Type.Boolean()),
+    /** Child choices, oldest first; absent without `capabilities.taskSections`. */
+    children: Type.Optional(Type.Array(taskChildSchema, { maxItems: 200 })),
     /** Mirrors the dedicated workspace's compute. */
     compute: computeSchema,
     createdAt: timestampSchema,
@@ -46,6 +85,8 @@ export const taskSchema = Type.Object({
     creatorAgentId: Nullable(cuid2Schema),
     /** Immutable local snake_case folder name. */
     folderName: taskFolderNameSchema,
+    /** `null` until one is chosen; absent without `capabilities.taskSections`. */
+    icon: Type.Optional(Nullable(taskIconSchema)),
     id: cuid2Schema,
     name: taskNameSchema,
     /** The person the task belongs to; `null` in standalone mode or when nobody was identified. */
@@ -74,6 +115,8 @@ export type TaskMembershipUnread = Static<typeof taskMembershipUnreadSchema>;
 
 /** One person's place in one task: joining puts the task in their own ordered list. */
 export const taskMembershipSchema = Type.Object({
+    /** Out of the member's list but still in every response; absent means `false`. */
+    hidden: Type.Optional(Type.Boolean()),
     joinedAt: timestampSchema,
     /** Set until the member reads the task; `null` when nothing is unread. Older daemons omit it. */
     unread: Type.Optional(Nullable(taskMembershipUnreadSchema)),
@@ -89,9 +132,30 @@ export type TaskMembership = Static<typeof taskMembershipSchema>;
 export const taskListScopeSchema = Type.Union([Type.Literal("all"), Type.Literal("joined")]);
 export type TaskListScope = Static<typeof taskListScopeSchema>;
 
+/** A section name: nonblank, bounded, free of control characters, unique per member ignoring case. */
+export const taskSectionNameSchema = Type.String({
+    maxLength: 64,
+    minLength: 1,
+    pattern: "^(?=.*\\S)[^\\x00-\\x1f\\x7f]+$",
+});
+
+/**
+ * A header in one member's list. Sections share the memberships' key space: a task belongs to the
+ * last section whose key is below its own.
+ */
+export const taskSectionSchema = Type.Object({
+    collapsed: Type.Boolean(),
+    id: cuid2Schema,
+    name: taskSectionNameSchema,
+    orderKey: Type.String(),
+});
+export type TaskSection = Static<typeof taskSectionSchema>;
+
 /** `GET /v0/tasks` — `memberships` is always every membership of the caller, in their order. */
 export const taskListResponseSchema = Type.Object({
     memberships: Type.Array(taskMembershipSchema),
+    /** The caller's sections in key order; absent without `capabilities.taskSections`. */
+    sections: Type.Optional(Type.Array(taskSectionSchema)),
     tasks: Type.Array(taskSchema),
 });
 export type TaskListResponse = Static<typeof taskListResponseSchema>;
@@ -127,6 +191,25 @@ export const renameTaskRequestSchema = Type.Object({
 });
 export type RenameTaskRequest = Static<typeof renameTaskRequestSchema>;
 
+/**
+ * `PATCH /v0/tasks/:taskId` with `capabilities.taskSections`: a name, an icon, or both. Each ends
+ * its automatic choice for good.
+ */
+export const updateTaskRequestSchema = Type.Union([
+    Type.Object({
+        folderName: Type.Optional(Type.Never()),
+        icon: Type.Optional(Nullable(taskIconSchema)),
+        mutationId: Type.Optional(mutationIdSchema),
+        name: taskNameSchema,
+    }),
+    Type.Object({
+        folderName: Type.Optional(Type.Never()),
+        icon: Nullable(taskIconSchema),
+        mutationId: Type.Optional(mutationIdSchema),
+    }),
+]);
+export type UpdateTaskRequest = Static<typeof updateTaskRequestSchema>;
+
 /** `POST /v0/tasks/:taskId/join` */
 export const joinTaskRequestSchema = Type.Object({
     mutationId: Type.Optional(mutationIdSchema),
@@ -146,6 +229,58 @@ export const reorderTaskRequestSchema = Type.Object({
     mutationId: Type.Optional(mutationIdSchema),
 });
 export type ReorderTaskRequest = Static<typeof reorderTaskRequestSchema>;
+
+/** `POST /v0/tasks/:taskId/reorder` with `capabilities.taskSections`: first in that section. */
+export const reorderTaskAfterSectionRequestSchema = Type.Object({
+    afterSectionId: cuid2Schema,
+    mutationId: Type.Optional(mutationIdSchema),
+});
+export type ReorderTaskAfterSectionRequest = Static<typeof reorderTaskAfterSectionRequestSchema>;
+
+/** `PATCH /v0/tasks/:taskId/membership` — the caller's own membership; `taskSections`. */
+export const updateTaskMembershipRequestSchema = Type.Object({
+    hidden: Type.Boolean(),
+    mutationId: Type.Optional(mutationIdSchema),
+});
+export type UpdateTaskMembershipRequest = Static<typeof updateTaskMembershipRequestSchema>;
+
+/** Where a section header goes: the top, after a task, or after another section's last task. */
+export const taskSectionAnchorSchema = Nullable(
+    Type.Union([Type.Object({ taskId: cuid2Schema }), Type.Object({ sectionId: cuid2Schema })]),
+);
+export type TaskSectionAnchor = Static<typeof taskSectionAnchorSchema>;
+
+/**
+ * `PUT /v0/tasks/sections` — the caller's whole set, applied in order. A section left out is
+ * removed; moving one with `after` takes its tasks along. Left out, `after` keeps an existing
+ * section's place and puts a new one at the top.
+ */
+export const replaceTaskSectionsRequestSchema = Type.Object({
+    mutationId: Type.Optional(mutationIdSchema),
+    sections: Type.Array(
+        Type.Object({
+            after: Type.Optional(taskSectionAnchorSchema),
+            collapsed: Type.Boolean(),
+            id: cuid2Schema,
+            name: taskSectionNameSchema,
+        }),
+        { maxItems: 50 },
+    ),
+});
+export type ReplaceTaskSectionsRequest = Static<typeof replaceTaskSectionsRequestSchema>;
+
+/** `PUT /v0/tasks/sections` */
+export const taskSectionsResponseSchema = Type.Object({
+    sections: Type.Array(taskSectionSchema),
+});
+export type TaskSectionsResponse = Static<typeof taskSectionsResponseSchema>;
+
+/** `PUT /v0/tasks/:taskId/children/:kind/:refId` — shared by every member; the latest wins. */
+export const setTaskChildRequestSchema = Type.Object({
+    mutationId: Type.Optional(mutationIdSchema),
+    visibility: taskChildVisibilitySchema,
+});
+export type SetTaskChildRequest = Static<typeof setTaskChildRequestSchema>;
 
 /** `POST /v0/tasks/:taskId/archive` — requires `If-Match`; the owner or team owner only. */
 export const archiveTaskRequestSchema = Type.Object({

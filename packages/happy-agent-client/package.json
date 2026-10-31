@@ -1,6 +1,6 @@
 {
     "name": "@slopus/happy-agent-client",
-    "version": "0.0.136",
+    "version": "0.0.137-rc.1",
     "description": "Typed client for the Happy agent HTTP API.",
     "license": "MIT",
     "repository": {
@@ -34,6 +34,7 @@
     },
     "devDependencies": {
         "@types/node": "^24.0.10",
+        "happy-agent-client-0.0.136": "npm:@slopus/happy-agent-client@0.0.136",
         "typescript": "^7.0.2",
         "vitest": "^3.2.4"
     },

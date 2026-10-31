@@ -11,6 +11,7 @@ import {
 } from "./common.js";
 import { userIdSchema } from "./userId.js";
 import { agentSchema } from "./agents.js";
+import { messageReplyToSchema } from "./messageReplyTo.js";
 
 /** Each list uses the daemon generator's exact 24-character CUID2 format. */
 export const surfaceIdSchema = Type.String({
@@ -867,6 +868,8 @@ const surfaceMessageFields = {
     /** Time of the latest text change, or null when never edited. */
     editedAt: Nullable(timestampSchema),
     id: cuid2Schema,
+    /** A story quoted when posting, with `capabilities.storyArtifacts`; never changes. */
+    replyTo: Type.Optional(messageReplyToSchema),
     seq: surfaceMessageSeqSchema,
     surfaceId: surfaceIdSchema,
     text: surfaceMessageTextSchema,
@@ -927,6 +930,8 @@ export const sendSurfaceMessageRequestSchema = Type.Object(
     {
         id: Type.Optional(cuid2Schema),
         mutationId: Type.Optional(mutationIdSchema),
+        /** Requires `capabilities.storyArtifacts`; older daemons reject it. */
+        replyTo: Type.Optional(messageReplyToSchema),
         text: surfaceMessageTextSchema,
     },
     { additionalProperties: false },

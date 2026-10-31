@@ -45,7 +45,8 @@ import {
     secretEnvironmentVariableNameSchema,
     secretSchema,
 } from "./secrets.js";
-import { taskMembershipSchema, taskSchema } from "./tasks.js";
+import { storySchema } from "./stories.js";
+import { taskMembershipSchema, taskSchema, taskSectionSchema } from "./tasks.js";
 import {
     surfaceIdSchema,
     surfaceOrderKeySchema,
@@ -244,6 +245,20 @@ export const taskMembershipPayloadSchema = Type.Object({
     mutationId: Type.Optional(mutationIdSchema),
 });
 export type TaskMembershipPayload = Static<typeof taskMembershipPayloadSchema>;
+
+/** The member's sections changed, protocol 34: a complete replacement, in key order. */
+export const taskSectionsUpdatedPayloadSchema = Type.Object({
+    mutationId: Type.Optional(mutationIdSchema),
+    sections: Type.Array(taskSectionSchema),
+});
+export type TaskSectionsUpdatedPayload = Static<typeof taskSectionsUpdatedPayloadSchema>;
+
+/** A story changed, protocol 34: a complete replacement; keep the latest per `artifactId`. */
+export const storyChangedPayloadSchema = Type.Object({
+    mutationId: Type.Optional(mutationIdSchema),
+    story: storySchema,
+});
+export type StoryChangedPayload = Static<typeof storyChangedPayloadSchema>;
 
 /**
  * Members stay present on chat-only and edit-only changes. Chat association, `name`, and `image`
@@ -646,6 +661,8 @@ export type HappyAgentEvent =
     | EventEnvelope<"task.reordered", TaskMembershipPayload>
     | EventEnvelope<"task.left", TaskMembershipPayload>
     | EventEnvelope<"task.membership.updated", TaskMembershipPayload>
+    | EventEnvelope<"task.sections.updated", TaskSectionsUpdatedPayload>
+    | EventEnvelope<"story.changed", StoryChangedPayload>
     | EventEnvelope<"surface.updated", SurfaceUpdatedPayload>
     | EventEnvelope<"surface.created", SurfaceCreatedPayload>
     | EventEnvelope<"todo.created", TodoCreatedPayload>

@@ -74,6 +74,7 @@ export * from "./protocol/secrets.js";
 export * from "./protocol/services.js";
 export * from "./protocol/skills.js";
 export * from "./protocol/slashCommands.js";
+export * from "./protocol/stories.js";
 export * from "./protocol/terminals.js";
 export * from "./protocol/usage.js";
 export * from "./protocol/users.js";

@@ -18,6 +18,7 @@ import {
     resourceVersionSchema,
     timestampSchema,
 } from "./common.js";
+import { userIdSchema } from "./userId.js";
 import type { BackgroundProcess } from "./processes.js";
 import type { CompactionMessage, Run, ServiceMessage } from "./messages.js";
 import type { SlashCommandCatalog } from "./slashCommands.js";
@@ -85,6 +86,8 @@ export type AgentRetrying = Static<typeof agentRetryingSchema>;
 
 /** Why the agent has something the person has not looked at. */
 export const agentUnreadSchema = Type.Object({
+    /** People whose messages arrived while unread, newest first, at most 8; drawn as faces. */
+    from: Type.Optional(Type.Array(userIdSchema, { maxItems: 8 })),
     reason: Type.String(),
     since: timestampSchema,
 });

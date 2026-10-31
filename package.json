@@ -6,7 +6,7 @@
         "build": "pnpm --filter @slopus/happy-agent-supervisor build && pnpm --filter @slopus/happy-agent-client build && pnpm --filter @slopus/happy-providers build && pnpm --filter @slopus/happy-agent-compute build && pnpm --filter @slopus/happy-agent-modules build && pnpm --filter @slopus/happy-agent build && pnpm --filter happy-plugins build && pnpm --filter happy-worklets build",
         "build:bun": "pnpm build && pnpm --filter @slopus/happy-agent build:bun",
         "build:bun:all": "pnpm build && pnpm --filter @slopus/happy-agent build:bun:all",
-        "check": "pnpm --filter @slopus/happy-providers build && pnpm --filter @slopus/happy-agent-modules build && pnpm --filter @slopus/happy-agent-compute build && pnpm --filter @slopus/happy-agent build && pnpm --filter happy-plugins build && pnpm --filter happy-worklets build && pnpm run check:root && pnpm --recursive --filter './packages/**' run check",
+        "check": "pnpm --filter @slopus/happy-agent-client build && pnpm --filter @slopus/happy-providers build && pnpm --filter @slopus/happy-agent-modules build && pnpm --filter @slopus/happy-agent-compute build && pnpm --filter @slopus/happy-agent build && pnpm --filter happy-plugins build && pnpm --filter happy-worklets build && pnpm run check:root && pnpm --recursive --filter './packages/**' run check",
         "check:root": "tsc --noEmit -p tsconfig.json",
         "format": "oxfmt --write .",
         "format:check": "oxfmt --check .",
@@ -44,6 +44,7 @@
     "packageManager": "pnpm@10.28.1",
     "pnpm": {
         "overrides": {
+            "@slopus/happy-agent-client": "link:./packages/happy-agent-client",
             "@slopus/happy-providers": "0.0.51",
             "@steve.kite/stdlib": "0.0.12"
         },
@@ -89,5 +90,6 @@
                 }
             }
         }
-    }
+    },
+    "//": "Branch-only (rich tasks): pnpm.overrides links @slopus/happy-agent-client to packages/happy-agent-client, and check builds it first, so every package resolves one copy of 0.0.137-rc. Drop both, and pin the published 0.0.137 everywhere, once it is released."
 }

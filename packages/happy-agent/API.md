@@ -293,6 +293,21 @@ it sees one. An older client ignores these event types as it does every type it 
 keeps showing the deleted resource as archived, and finds it gone with `404` on its next read or
 resync. No request or response schema changes.
 
+Protocol 34 adds rich tasks, described under [Rich tasks](#rich-tasks), [Stories](#stories),
+[Inline actions](#inline-actions), and [Onboarding in the built-in bot's conversation](#onboarding-in-the-built-in-bots-conversation).
+Each part is detected through its own health capability, never through the protocol number:
+`taskSections` (task icons, sub-row choices, hidden tasks, and sections), `storyArtifacts`
+(stories and replies to them), `chatActions` (inline actions and action messages), and
+`chatOnboarding` (the reserved `onboarding.chat` setting). Every new response field is optional,
+so an older client ignores it and draws the list it always did, in the same order, with hidden
+tasks still shown. Story artifacts never reach an older client: they are left out of
+`GET /v0/artifacts` and emit no `artifact.*` events. An older daemon ignores or rejects every new
+request field and answers every new route with `404`, so a client sends none of them unless the
+matching capability is present. The reserved settings `tasks.rich`, `tasks.sections`,
+`tasks.focus`, and `onboarding.chat` are off unless set to JSON `true`; with all of them off, a
+current daemon behaves as a protocol-33 daemon does, apart from the new optional fields, except
+that `set_status` is offered only while `tasks.rich` is on.
+
 Account provenance, configuration history blocks, and structured error details are additive output
 and do not increment the protocol version. Clients tolerate their absence and older clients keep
 their existing text rendering. Existing sends and idle-only compaction remain unchanged.
@@ -484,7 +499,12 @@ types, and no longer reports `stemCellIdentities`, `sidebarOperations`, `sidebar
 `sidebarProposals`, `sidebarSeparatorPins`, `stories`, `agentStories`, `stickers`, `onboarding`, or
 `chatActions` from health. Clients treat it as a daemon that never had them: they draw the sidebar
 from bots, tasks, and Surfaces, and run their own onboarding against `GET /v0/onboarding` and
-`POST /v0/onboarding/complete`.
+`POST /v0/onboarding/complete`. Protocol 34 brings back `chatActions` with its earlier meaning,
+for a smaller set of blocks, and a new `story` artifact type under the new `storyArtifacts`
+capability. The removed `stories`, `agentStories`, and `onboarding` capabilities, their routes,
+and the `story.created`, `story.updated`, `story.posted`, `story.ended`, `story.deleted`,
+`story.seen`, and `story.reacted` events stay removed, so a client built for the removed Stories
+never mistakes the new ones for them.
 
 Drain intent is additive and does not increment the protocol version. A daemon that supports it
 accepts the optional `POST /v0/drain` body and includes `drain` in the drain response, health, the
@@ -1170,7 +1190,14 @@ Fields:
   Surface catalog and members. `providerClis: true` advertises the routes under
   `/v0/provider-clis` and the `provider_cli.updated` event, described under Provider CLIs.
   `providerRoutes: true` advertises the routes under `/v0/provider-routes`, described under
-  Provider routes.
+  Provider routes. Protocol 34 adds four, described under [Rich tasks](#rich-tasks):
+  `taskSections: true` advertises task `icon` and `children`, membership `hidden`, task
+  sections, `afterSectionId` on reorder, their routes and `task.sections.updated`, Focus, and the
+  reserved `tasks.rich`, `tasks.sections`, and `tasks.focus` settings. `storyArtifacts: true`
+  advertises the `story` artifact type, the routes under `/v0/stories`, `replyTo` on agent and
+  chat Surface messages, and `story.changed`. `chatActions: true` advertises inline actions:
+  action messages through `send` and `actionChoices` on agent messages. `chatOnboarding: true`
+  advertises the reserved `onboarding.chat` setting.
 - `ready` — `false` while starting, `true` once the agent system is loaded.
 - `status` — `"starting"` or `"ready"`; the human-readable form of `ready`.
 - `version` — one identity object. `protocol` is the wire protocol number, the client's
@@ -2269,8 +2296,23 @@ Removes the photo. Response — `200`: `{ "profile": { ... } }`.
 User settings are a small key-value store of opaque preferences that belongs to one person, so an
 application can keep a person's choices on the daemon and have them follow that person from device
 to device. The settings store checks only the shape and size of keys and values. Preferences never
-reach agents, tools, or model context. The daemon interprets the reserved `tasks.autoJoin` key as
-described under Tasks; other keys remain opaque.
+reach model context. The daemon interprets the reserved `tasks.autoJoin` key as described under
+Tasks, and, on daemons with the matching capability, the reserved keys below; other keys remain
+opaque.
+
+| Key               | Capability       | While JSON `true`                                                              |
+| ----------------- | ---------------- | ------------------------------------------------------------------------------ |
+| `tasks.rich`      | `taskSections`   | Rich task cards, sub-rows, and stories; the person's agents get the card tools |
+| `tasks.sections`  | `taskSections`   | Named sections in the person's task list; Focus may create them                |
+| `tasks.focus`     | `taskSections`   | Focus arranges the person's task list                                          |
+| `onboarding.chat` | `chatOnboarding` | Onboarding runs in the built-in bot's conversation                             |
+
+Only the JSON boolean `true` turns one of these on; a missing or cleared key, `false`, or any
+other value leaves it off, which is how every person starts. They are per person and per daemon,
+written through the ordinary routes below, with the same last-write-wins rules and owner-only
+`user_settings.updated` events. A change takes effect without a restart: tool sets change at the
+agent's next turn, and Focus starts or stops within one brief. Clients read the same keys to
+decide what to draw, and draw today's list when the capability is absent, whatever the value.
 
 **Owner.** In team mode, settings belong to the authenticated member, keyed by their
 installation-local Happy user ID. A member reads, writes, and receives events for only their own
@@ -2438,6 +2480,34 @@ complete onboarding for another member who lacks a profile. Idempotent. Response
 `{ "completed": true }` and a
 `config.updated` nudge is **not** emitted — clients that care watch their own flow; others
 read the flag on next bootstrap.
+
+### Onboarding in the built-in bot's conversation
+
+A daemon that reports `capabilities.chatOnboarding: true` can run onboarding as a conversation
+with the built-in bot (`systemKey: "chief_of_staff"`) instead of leaving it to the client. It does
+so only for a person whose reserved `onboarding.chat` setting is JSON `true` while `completed` is
+`false`. A client that wants it writes the setting, then opens the built-in bot's conversation
+in place of its own setup screens. Without the setting, onboarding is exactly as described above.
+
+The conversation is ordinary agent messages with inline actions (see "Inline actions"), in four
+steps, each answered by a press:
+
+1. **Welcome** — a `<menu>` that starts.
+2. **AI connection** — one `<figure data-provider-cli="ID">` per assistant. The step is done
+   when `steps.providers.done` is `true`.
+3. **Task list** — `<figure data-setting="tasks-style"></figure>`: two live previews of the
+   person's list, rich and minimal, each one control of the action `onboarding.tasksStyle` with
+   the parameter `choice`, `"rich"` or `"minimal"`.
+4. **Focus** — `<figure data-setting="focus"></figure>`: on or off, each one control of the
+   action `onboarding.focus` with `choice` `"on"` or `"off"`.
+
+A press is the person's action message. The daemon checks it like any press, then in the same
+transaction writes `tasks.rich` (`true` for rich, `false` for minimal) or `tasks.focus`, emitting
+`user_settings.updated`, so the client switches its list at once, without a restart. The last
+press records installation completion as `POST /v0/onboarding/complete` does, and emits
+`config.updated` once so clients read the onboarding state again. Closing the conversation early
+leaves `completed` `false`; the next open continues from the step it reached. The flow's wording
+and pace are the daemon's; clients draw only what the messages hold.
 
 ## Provider CLIs
 
@@ -5702,9 +5772,16 @@ Fields:
   `null`. See "Questions" below.
 - `unread` — set when the agent finished work the user has not looked at: why (`reason`) and
   since when. `null` when there is nothing unread. Cleared by `POST /v0/agents/:agentId/read`.
+  Optional `from` lists the people whose messages the conversation received while it was
+  unread: distinct Happy user IDs, newest first, at most 8, leaving out messages with no
+  `metadata.userId`. Clients draw them as faces beside the unread dot, leaving out the viewer.
+  A reply to the agent's story marks it unread with `reason` `"story_reply"` when nothing is
+  unread yet (see Stories). Additive; older daemons omit it, which means no faces.
 - `statusLine` — optional additive object: `null`, or
   `{ "text": "Testing with a few friends", "updatedAt": 1755400000000 }`, what the agent last wrote
-  about where its work stands, with its `set_status` tool. Task and bot agents have the tool. `text` is 1–120 characters with at most one line break, a single `\n` between two
+  about where its work stands, with its `set_status` tool. Task and bot agents have the tool; on
+  daemons with `capabilities.taskSections`, only while the person they work for has `tasks.rich`
+  on (see Rich tasks). Withholding the tool never clears a line already set. `text` is 1–120 characters with at most one line break, a single `\n` between two
   non-empty lines, and never a `\r`; that is the only bound `set_status` enforces. Agents aim
   for a short phrase of about 40 characters so it fits, or two such lines deliberately set one
   above the other, such as `"1. Ship new onboarding\n2. Submit iOS native build"`. A client
@@ -6087,6 +6164,14 @@ meaningful; it accepts only `null` today. A string that does not match the curre
 converted to `null` rather than rejected. The daemon stores and returns only the decoded value on
 every complete representation of a user message, and never sends the opaque string to the model.
 See `send` for its context-reset semantics.
+
+`replyTo` — optional on a user message, on daemons with `capabilities.storyArtifacts`:
+`{ "kind": "story", "artifactId": "..." }`, the story the person was answering when they wrote it
+(see Stories). It is set at send and never changes. Clients draw the story as a quote above the
+message. The kind set may grow; a client draws an unknown `replyTo` as no quote.
+
+`actionChoices` — optional on an agent message, on daemons with `capabilities.chatActions`;
+present once a person has pressed one of its inline action controls (see "Inline actions").
 
 **Roles** say who produced the message:
 
@@ -7248,6 +7333,97 @@ Media layouts in text are additive and do not increment the protocol version. Re
 schemas are unchanged apart from the optional `source`. A client that does not render them shows
 the HTML as its Markdown renderer does.
 
+#### Inline actions
+
+Any agent's reply may hold inline action blocks: a small, closed subset of HTML, without scripts
+or styles, that clients draw as controls where it was written, so a person can answer with a
+click instead of typing. A press is the person's own action message, described under `send`. A
+daemon that accepts presses reports `capabilities.chatActions: true` from health.
+
+```markdown
+Ready to push?
+
+<menu>
+  <button data-action="reply" data-emphasis>Push it</button>
+  <button data-action="reply">Not yet</button>
+</menu>
+```
+
+A block is recognized only when it starts a line, with at most three spaces of indentation,
+outside a code fence and outside a code span. It ends on the line where its root element closes.
+A block still open at the end of the text is held back while the message streams, and stays inert
+text once the message is final. Its root is one of:
+
+- `<menu>` — buttons, each `<button data-action="ID" …>Label</button>`.
+- `<form data-action="ID">` — a checklist: `<label>` rows, each holding one
+  `<input type="checkbox" value="V" [checked] [disabled]>`, its label, and optional `<small>`
+  details; then exactly one `<button type="submit">` and optional
+  `<button type="button" data-action="ID">` others.
+- `<ol data-steps>` — steps, each
+  `<li data-status="pending|running|done|failed">Label <small>detail</small></li>`.
+- `<output data-status="info|running|done|failed">Text <small>detail</small></output>` — one
+  status line.
+- `<figure data-provider-cli="ID"></figure>` — one provider CLI, by its `id`, drawn live from
+  `GET /v0/provider-clis/:cliId` and `provider_cli.updated`: install, sign in, a sign-in code
+  field, cancel, and the signed-in account. Every control calls the provider CLI routes; none is a
+  press. A figure appearing never opens a browser.
+- `<figure data-setting="NAME"></figure>` — one setting, drawn live: `default-model` (the default
+  model and effort from `GET /v0/config` `defaults`, changed through `PATCH /v0/config`), and the
+  onboarding figures `tasks-style` and `focus` (see "Onboarding in the built-in bot's
+  conversation"). Any other name draws as an unknown figure does: not at all.
+
+The only elements are `menu`, `form`, `output`, `ol`, `figure`, `li`, `button`, `label`, `input`,
+`small`, and `br`. The only entities are `amp`, `lt`, `gt`, `quot`, `apos`, `nbsp`, `middot`,
+`hellip`, `mdash`, `ndash`, and numeric references. Optional presentation attributes are
+`data-emphasis` (the first in a block counts), `data-mark` (`claude`, `openai`, `grok`, or
+`gemini`), `data-icon` (a task icon slug), and, on a checklist's submit, `data-empty-label`, its
+label while nothing is ticked. A block with any other element, any `on*` or `style` attribute,
+mismatched nesting, stray text between elements, or more than one root is not a block; it is
+drawn as the inert text it was written as.
+
+Every other `data-X` attribute of a control, or of its form, is the action's parameter `X`. An
+action is known by its ID:
+
+- `reply` — usable by every agent in every conversation. Pressing answers the agent with the
+  control's label, as if the person had typed it; a checklist's ticked labels go with it.
+- `onboarding.*` — the onboarding actions, live only in the built-in bot's conversation while
+  onboarding runs.
+
+An action ID the daemon does not know, or a control whose parameters do not check, is drawn but
+cannot be pressed; nothing is inferred from a label. A checklist's ticked values are the
+action's `values` and cannot come from an attribute.
+
+Blocks are numbered by `blockIndex`: the zero-based position of a valid action block among the
+valid action blocks of the message's text, in order. Steps, status lines, and figures count.
+Media layout blocks are split out first, so a `<figure>` holding an `<img>` stays a layout.
+
+`actionChoices` maps a `blockIndex`, as a string, to that block's one choice:
+
+- `{ "kind": "button", "index": 1 }` — the button pressed, by its zero-based position among the
+  block's buttons; a checklist's other buttons count after its submit, which is `0`.
+- `{ "kind": "checklist", "values": ["t1", "t3"] }` — a checklist submitted with these values.
+
+The kind set may grow; a client draws a block with an unknown choice as chosen, with nothing
+emphasized. A block with a choice is locked: clients draw the chosen control as pressed and accept
+no further press. Recording a choice is announced as `message.updated` with the whole pressed
+message, so every client and every reload draws the same choice. The choice itself is never model
+input; the action message is.
+
+**Fallback.** A surface that cannot draw action blocks drops each complete block, closing up the
+blank lines around it. The daemon applies this to agent text it relays to exported bots and to
+the Happy mobile app. A client without inline actions shows the HTML as its Markdown renderer
+does.
+
+**One implementation.** `@slopus/happy-agent-client` exports the block splitter, parser, and
+fallback, used after `splitMediaLayoutBlocks`, by clients and the daemon alike:
+
+```ts
+splitChatActionBlocks(markdown: string):
+    ({ type: "markdown"; text: string } | { type: "action"; html: string; complete: boolean })[];
+parseChatActionBlock(html: string): ChatActionBlock | null; // null: not a block, draw as text
+stripChatActionBlocks(markdown: string): string;
+```
+
 #### File links
 
 A bare `path:line` is read against the workspace of the conversation that shows it. That is the
@@ -7403,7 +7579,8 @@ Request:
   client already keys by. Omitted, the daemon generates one. Sending again with an `id` the
   agent already has creates nothing and returns the message as it now stands, which makes
   retrying a send whose response was lost safe.
-- `text` — the message text. Required, 1–1,000,000 characters.
+- `text` — the message text. Required, 1–1,000,000 characters, except on an action message,
+  which has none (see "Action messages" below).
 - `clientMetadata` — optional freeform JSON object owned by the sending client. It is persisted
   and echoed unchanged on every complete representation of this message, but is not interpreted
   by the daemon or sent to the model.
@@ -7443,8 +7620,68 @@ Request:
   `400 invalid_request`. The selection is then checked against the live model catalog: the
   provider must offer the model as enabled, `effort` must be one of the model's `efforts`, and a
   non-null `serviceTier` must be one of its `serviceTiers`. Any failure is `400 invalid_request`.
+- `replyTo` — optional, on daemons with `capabilities.storyArtifacts`:
+  `{ "kind": "story", "artifactId": "..." }`, a reply to that story. The story must be one the
+  caller may see, ended ones included (`404 not_found` otherwise), and this agent must be the
+  story's `replyAgentId` (`409 conflict` otherwise). See Stories.
 
-The request body accepts only the fields above; an unknown field is `400 invalid_request`.
+The request body accepts only the fields above; an unknown field is `400 invalid_request`. An
+older daemon therefore rejects `replyTo` and action messages, and a client sends them only when
+the matching capability is present.
+
+#### Action messages
+
+On daemons with `capabilities.chatActions`, pressing an inline action control sends the person's
+own message: an action message, whose `content` is exactly one `action` block and which has no
+`text`.
+
+```json
+{
+    "id": "q2w8e4r6t1y3u5i7o9p0a2s4",
+    "content": [
+        {
+            "type": "action",
+            "messageId": "tz4a98xxat96iws9zmbrgj3a",
+            "blockIndex": 0,
+            "actionId": "reply",
+            "params": {},
+            "values": []
+        }
+    ],
+    "delivery": "queue",
+    "mode": { "...": "as for any send" }
+}
+```
+
+- `messageId` — the agent message in this conversation that holds the control.
+- `blockIndex` — the block, numbered as under "Inline actions".
+- `actionId`, `params` — the control's action ID and its parameters as written, every value a
+  string, never a presentation attribute such as `data-emphasis`.
+- `values` — a checklist's ticked values; omitted or empty otherwise.
+
+The daemon reads the block from its own copy of the message and checks that the block exists and
+holds a control with exactly that action ID and those parameters, and that every value is one the
+checklist offers and the person could change; otherwise the send is `400 invalid_request`. A block
+that already has a choice, including from another action message still waiting, or one superseded
+because a later agent message in the conversation offers a control with the same action ID and
+parameters, is `409 conflict`. Then, in one transaction, it records the choice in the pressed
+message's `actionChoices`, does the action's work, and queues or accepts the action message like
+any other. Sending the same `id` again returns the message as it stands.
+
+The stored block adds what the daemon decided:
+
+- `label` — the words on the control pressed, as the person read them; for a checklist submitted
+  with nothing ticked, its empty label when it has one.
+- `ticked` — only for a submitted checklist: the labels of the options ticked, in the order shown,
+  and `[]` when none was.
+- `outcome` — what the action's work did, in English, as the agent's model reads it; absent when
+  there was none.
+
+The agent's model reads an action message as an ordinary person turn: `[Pressed "Push it" in your
+message]`, or `[Pressed "Continue" with "Desktop", "Phone" ticked in your message]`, then the
+outcome. Clients draw it as the person's own message, from its stored block: `label`, or for a
+submitted checklist `label`, a colon, and `ticked` joined with ", ". The pressed control also
+shows chosen in place, from the pressed message's `actionChoices`.
 
 ### `GET /v0/agents/:agentId/messages`
 
@@ -9647,6 +9884,12 @@ resolvable through `GET /v0/users`, or `null` in standalone mode. It is set at c
 authenticated caller, never from a request body, and never changes. It appears unchanged in
 every revision snapshot.
 
+`replyTo` is optional, on daemons with `capabilities.storyArtifacts`:
+`{ "kind": "story", "artifactId": "..." }`, a story the author quoted when posting, which clients
+draw above the text. It is set at creation, never changes, and appears in every revision. Quoting
+routes nothing: a reply that reaches the story's poster is an agent message (see Stories). Older
+daemons omit it.
+
 Only a message's author may edit or delete it. In team mode, the authenticated caller's user ID
 must equal `authorUserId`; any other person, including for a message with a `null` author,
 receives `403 forbidden` and changes nothing. In standalone mode the installation's one person
@@ -9706,7 +9949,9 @@ body fields and malformed values return `400 invalid_request`.
   captured before the read. Repeated or malformed paging parameters return
   `400 invalid_request`; other query fields are ignored.
 - `POST` accepts `{ "text": "Shipping on Friday.", "id": "...", "mutationId": "..." }`. `id` and
-  `mutationId` are optional. Creation records the authenticated caller as `authorUserId`, assigns
+  `mutationId` are optional, and so is `replyTo` on daemons with `capabilities.storyArtifacts`;
+  it must name a story the caller may see, or the request is `404 not_found`, and an older daemon
+  rejects it as an unsupported field. Creation records the authenticated caller as `authorUserId`, assigns
   the next `seq`, and returns `201 { "message": {...} }`, emitting shared
   `surface_message.created`. A repeated supplied ID returns the current message unchanged with
   `201`, even after deletion or restart, and emits no event; the other fields are ignored. This
@@ -10012,10 +10257,83 @@ It is the workspace's only primary conversation: `POST /v0/agents` refuses a tas
 `409`. Shared-filesystem subtasks run in the task's workspace and appear in the task agent's
 `subtasks` tree.
 
-Tasks are a versioned resource. The task's `version` covers its own fields — name and archival.
-Memberships are not versioned: a person's own list has one writer, and the latest reorder wins. The
-embedded agent is independently versioned and changes through `agent.updated` without advancing
-the task.
+Tasks are a versioned resource. The task's `version` covers its own fields — name, icon,
+children, and archival. Memberships and sections are not versioned: a person's own list has one
+writer, and the latest change wins. The embedded agent is independently versioned and changes
+through `agent.updated` without advancing the task.
+
+### Rich tasks
+
+A daemon that reports `capabilities.taskSections: true` lets each person arrange their task list
+and lets the list carry more: an icon on every task, sub-rows under it, hidden tasks, and named
+sections. What a person sees is chosen by their reserved settings (see User settings):
+`tasks.rich` draws three-line cards with sub-rows and stories, `tasks.sections` draws sections, and
+`tasks.focus` lets Focus arrange the list. With them off, a client draws today's list. A client
+without the capability, or without the setting, never sends the requests below.
+
+Each part of a card has one writer, and a person's choice always wins:
+
+| Part           | Written by                                                    | Field                    |
+| -------------- | ------------------------------------------------------------- | ------------------------ |
+| Title, icon    | The naming job, in one request, until a person changes either | `name`, `icon`           |
+| Status line    | The task's own agent, with `set_status`                       | the agent's `statusLine` |
+| Story ring     | Whoever posted, with `set_story` or a repost                  | Stories                  |
+| Faces and dot  | Nobody: derived from the agent's `unread`                     | `unread.from`            |
+| Sub-rows       | Derived, plus the task's agent, Focus, or a person            | `children`               |
+| Place, section | Focus or the person                                           | membership `orderKey`    |
+| Hidden         | Focus or the person                                           | membership `hidden`      |
+
+**Icons.** The automatic naming job picks the task's icon in the same request as its name, as a
+slug from Happy's icon library. A task created with a name gets the same job on its first message,
+which then chooses the icon alone. Name and icon end separately: a person's `PATCH` with `name`
+ends automatic naming of the name, and one with `icon` ends automatic icon choice, each for good,
+so the job never overwrites a person's choice, even one committed while it runs.
+
+**Sub-rows.** The rows under a task's card are derived by the client from what it already holds:
+the workspaces whose `creatorAgentId` or `subtaskAgentId` is the task's agent or one of its
+subtasks, those subtasks while they are working or asking, and the artifacts whose
+`source.agentId` is one of them. A **child choice** changes that for one pair of task and child,
+shared by every member: `"shown"` adds a child the task did not make, or keeps one shown, and
+`"hidden"` takes one away. No choice is the default. The same workspace may be shown under one
+task and hidden under another. `children` lists the choices, never the derived rows.
+
+**Hidden.** A hidden task stays in every response and in search, keeps its place, and comes back
+where it was; clients with rich tasks leave it out of the list. Hidden is the member's own.
+
+**Sections.** A section is a header in the member's own list. Sections and memberships share one
+`orderKey` space: the client interleaves both by comparing keys, and a task belongs to the last
+section whose key is below its own; tasks before the first section have none. There is no
+section ID on a membership, so moving a task between sections changes only its own key, and an
+older client sees the same order as before, without the headers.
+
+**Focus.** While a person has `tasks.focus` on, Focus arranges their list: one long-running
+subtask of the built-in bot per person, appearing in its `subtasks` tree like any subtask. It
+wakes, at most once per short burst, when a task is created or first messaged, a status line or
+pending question changes, a story is posted, someone writes to a task's agent, the person moves,
+hides, or sections a row, or a task is archived. Its own writes never wake it. A row the person
+moved, hid, or sectioned is held: Focus does not move or hide it until its status line changes
+again. Focus creates sections only while `tasks.sections` is on. Turning `tasks.focus` off stops
+Focus; the arrangement it made stays.
+
+**Agent tools.** Tools follow the setting of the person an agent works for: a task's owner, or,
+for a bot, the person whose message the turn answers; in standalone mode, the installation's one
+person. With `tasks.rich` off, a task or bot agent gets none of the first four, so its tools
+equal a protocol-33 daemon's apart from `set_status`.
+
+| Tool             | Given to                             | Does                                                                                      |
+| ---------------- | ------------------------------------ | ----------------------------------------------------------------------------------------- |
+| `get_card`       | Task and bot agents, `tasks.rich` on | Reads its own card: title and icon with who set them, status, stories, children           |
+| `set_status`     | Task and bot agents, `tasks.rich` on | Unchanged: sets or clears its status line                                                 |
+| `set_story`      | Task and bot agents, `tasks.rich` on | Posts its one live story for an audience, replacing the last; `null` takes it down        |
+| `set_visibility` | Task agents, `tasks.rich` on         | Sets a child choice on its own task: `"shown"`, `"hidden"`, or `"default"`                |
+| `organize_tasks` | Focus only                           | Moves tasks and sections, hides, sets child choices, creates, renames, and drops sections |
+
+`set_story` with `audience: "team"` is always reviewed in Auto mode, and the review allows it only
+when a person asked for a team post, in the conversation or as a standing instruction; otherwise
+it is refused as not allowed. `organize_tasks` applies all its operations in one transaction and
+skips, without failing, an operation on a held row (`held_by_person`), on something that does not
+exist (`not_found`), or on a bot (`bots_not_allowed`). Each change these tools make emits the same
+events as the routes below; `by` names the agent.
 
 ### The task object
 
@@ -10030,6 +10348,15 @@ the task.
     "compute": { "type": "host", "path": "/Users/steve/Happy/Tasks/fix_login_redirect" },
     "status": "active",
     "canArchive": true,
+    "icon": { "type": "library", "slug": "rocket" },
+    "children": [
+        {
+            "ref": { "kind": "artifact", "id": "r7k2m9q4w1e5t8y3u6i0o2p5" },
+            "visibility": "hidden",
+            "by": { "agentId": "a9b8c7d6e5f4g3h2i1j0k9l8", "userId": null },
+            "updatedAt": 1755400000000
+        }
+    ],
     "agent": {
         /* the task's one agent, the full agent object */
     },
@@ -10060,6 +10387,15 @@ Fields:
   `changes`. It never changes for a given caller and task, so a client keeps the value it read; a
   client that learns of a task only from `task.created` reads `GET /v0/tasks/:taskId` before
   offering archival. Older compatible daemons omit it.
+- `icon` — the task's icon, or `null` until one is chosen: `{ "type": "library", "slug": "..." }`,
+  a slug of 1–64 lowercase ASCII letters, digits, and single hyphens, from Happy's icon library.
+  The type set may grow; a client shows its default icon for an unknown type or slug. Additive;
+  daemons without `capabilities.taskSections` omit it.
+- `children` — the task's child choices, oldest first, `[]` when there are none; see "Sub-rows".
+  Each holds `ref` (`kind` `"workspace"`, `"agent"`, or `"artifact"`, and its `id`), `visibility`
+  (`"shown"` or `"hidden"`), `by` (who chose: `agentId` for an agent, Focus included, `userId` for
+  a person, both `null` for the daemon itself), and `updatedAt`. A choice whose child no longer
+  exists is left out. At most 200. Additive; daemons without `capabilities.taskSections` omit it.
 - `agent` — the task's one agent, embedded in full. It merges by its own `version` through
   `agent.updated` events.
 - `version` — the UUIDv7 concurrency version; see the basics.
@@ -10079,7 +10415,8 @@ Fields:
         "since": 1755400000000,
         "agentId": "f2g3h4j5k6l7m8n9p0q1r2s3",
         "note": "Refunds go through Stripe, which Steve follows."
-    }
+    },
+    "hidden": false
 }
 ```
 
@@ -10093,6 +10430,22 @@ Fields:
   and optionally `agentId` (the agent that marked it, the task's agent) and `note` (its
   one-sentence reason, 1–500 characters, shown to the member). Additive: older daemons omit it, and
   clients treat a missing value as `null`.
+- `hidden` — whether the member took the task out of their list; see "Hidden". Additive: daemons
+  without `capabilities.taskSections` omit it, and clients treat a missing value as `false`.
+
+### The section object
+
+```json
+{ "id": "s9d8f7g6h5j4k3l2m1n0b9v8", "name": "Priorities", "orderKey": "3", "collapsed": false }
+```
+
+- `id` — stable section identifier, a CUID2.
+- `name` — 1–64 nonblank characters without ASCII control characters, unique among the member's
+  sections ignoring case.
+- `orderKey` — an opaque key in the same space as the member's memberships; see "Sections".
+- `collapsed` — whether the member folded the section; only the member changes it.
+
+Sections belong to one member and exist only on daemons with `capabilities.taskSections`.
 
 Every task route answers only with the caller's own memberships. In team mode one member never
 sees another member's memberships.
@@ -10107,7 +10460,9 @@ in the caller's own order. Any other value is `400 invalid_request`.
 
 Response — `200`: `{ "tasks": [ /* task objects */ ], "memberships": [ /* membership objects */ ] }`.
 `memberships` is always every membership of the caller, in the caller's order, whichever scope was
-requested, so a global list also shows which tasks the caller joined.
+requested, so a global list also shows which tasks the caller joined. Daemons with
+`capabilities.taskSections` add `sections`, every section of the caller, in key order; hidden
+tasks stay in both lists.
 
 ### `POST /v0/tasks`
 
@@ -10180,7 +10535,12 @@ Renaming also updates the task's agent title and permanently ends automatic nami
 even when the submitted name equals the current one. The `folderName` is immutable: a request
 carrying `folderName` is `400 invalid_request`.
 
-Response — `200`: `{ "task": { ... }, "membership": { ... } }` with the new name, and a
+On daemons with `capabilities.taskSections` the request may carry `icon` as well as, or instead
+of, `name`: `{ "icon": { "type": "library", "slug": "bug" } }`, or `null` for no icon. At least one
+of the two is required. An icon permanently ends automatic icon choice, even when it equals the
+current one. An older daemon ignores `icon` beside a name and rejects a request without one.
+
+Response — `200`: `{ "task": { ... }, "membership": { ... } }` with the change, and a
 `task.updated` event after commit, echoing `mutationId`. `404` when no such task exists, and the
 usual `409` when `If-Match` names an older version.
 
@@ -10224,16 +10584,87 @@ Response — `200`: `{ "task": { ... }, "membership": null }`. A removed members
 Moves the task within the caller's own list.
 
 Request: `{ "afterId": "c3d4e5f6...", "mutationId": "..." }` — the joined task to place this one
-after, or `null` to move it first.
+after, or `null` to move it first. On daemons with `capabilities.taskSections` the request may
+carry `afterSectionId` instead: `{ "afterSectionId": "s9d8f7g6...", "mutationId": "..." }` places
+the task first in that section of the caller's list. Exactly one of the two is required; an
+older daemon rejects a request without `afterId`.
 
 Response — `200`: `{ "task": { ... }, "membership": { ... } }`. The moved membership receives a
-fractional `orderKey` between its destination neighbours in the caller's list; every other
-membership, the caller's neighbours and other members' lists included, is unchanged. Moving a task
-to the place it already holds changes nothing and emits no event; otherwise the move emits
-`task.reordered` after commit, echoing `mutationId`.
+fractional `orderKey` between its destination neighbours in the caller's list, sections included;
+every other membership and section, the caller's neighbours and other members' lists included,
+is unchanged. A task placed after another lands in that task's section. Moving a task to the place
+it already holds changes nothing and emits no event; otherwise the move emits `task.reordered`
+after commit, echoing `mutationId`.
 
 `404` when no such task exists. `409 conflict` when the caller has not joined the task, when
-`afterId` names the task itself, or when `afterId` names a task that is not in the caller's list.
+`afterId` names the task itself, when `afterId` names a task that is not in the caller's list, or
+when `afterSectionId` names no section of the caller's.
+
+### `PATCH /v0/tasks/:taskId/membership`
+
+Changes the caller's own membership in place. Requires `capabilities.taskSections`.
+
+Request: `{ "hidden": true, "mutationId": "..." }`. `hidden` is required.
+
+Response — `200`: `{ "task": { ... }, "membership": { ... } }`. A change emits
+`task.membership.updated` after commit, echoing `mutationId`; setting the value it already has
+changes nothing and emits nothing. `404` when no such task exists; `409 conflict` when the caller
+has not joined it.
+
+### `PUT /v0/tasks/sections`
+
+Replaces the caller's sections. Requires `capabilities.taskSections`.
+
+Request:
+
+```json
+{
+    "sections": [
+        {
+            "id": "s9d8f7g6h5j4k3l2m1n0b9v8",
+            "name": "Priorities",
+            "collapsed": false,
+            "after": null
+        },
+        { "id": "s1q2w3e4r5t6y7u8i9o0p1a2", "name": "Later", "collapsed": true }
+    ],
+    "mutationId": "..."
+}
+```
+
+- `sections` — the caller's whole set, at most 50. A section left out is removed: its tasks keep
+  their keys and fall under the section above them. An ID the caller does not have creates a
+  section with that ID; a new section's `id` must be a CUID2 unused by any section.
+- `name`, `collapsed` — required on every entry; a duplicate name, ignoring case, is
+  `400 invalid_request`.
+- `after` — optional: where the header goes, `null` for the top of the list,
+  `{ "taskId": "..." }` after one of the caller's tasks, or `{ "sectionId": "..." }` after another
+  section's last task. Moving an existing section takes the tasks under it along, in order. Left
+  out, an existing section keeps its place and a new one goes to the top. Entries apply in order.
+
+Response — `200`: `{ "sections": [ /* section objects, in key order */ ] }`. A change emits one
+`task.sections.updated` after commit, plus `task.reordered` for each task that moved with its
+section, echoing `mutationId`. A request that changes nothing emits nothing. An `after` naming
+a task or section the caller does not have is `409 conflict`.
+
+### `PUT /v0/tasks/:taskId/children/:kind/:refId`
+
+Sets the child choice for one child of the task: `kind` is `workspace`, `agent`, or `artifact`.
+Requires `capabilities.taskSections`. Any member may set one; it is shared by every member.
+
+Request: `{ "visibility": "hidden", "mutationId": "..." }`, `"shown"` or `"hidden"`.
+
+Response — `200`: `{ "task": { ... }, "membership": { ... } }`, with `by` naming the caller. A
+change advances the task's version and emits `task.updated` with the whole `children` array
+after commit, echoing `mutationId`; setting the choice it already has changes nothing. `If-Match`
+is not used: the latest choice wins. `404` when the task or the child does not exist; a story
+artifact cannot be a child (`400 invalid_request`).
+
+### `DELETE /v0/tasks/:taskId/children/:kind/:refId`
+
+Forgets the child choice, returning the child to the default. Body `{}` or
+`{ "mutationId": "..." }`. Response and events as for `PUT`; forgetting a choice that does not
+exist changes nothing.
 
 ### `POST /v0/tasks/:taskId/archive`
 
@@ -10428,6 +10859,15 @@ scripts included, in a sandboxed frame that has no access to the daemon's or the
 storage, or credentials. An artifact's type never changes. The set of types grows with the product;
 a client that meets a `type` it does not recognize shows the title and offers the entry for
 download.
+
+**Story artifacts.** On daemons with `capabilities.storyArtifacts`, a story is an artifact of type
+`story`, described under [Stories](#stories). Story artifacts are made and changed only through
+the story routes and `set_story`: `POST /v0/artifacts` with `type: "story"` is
+`400 invalid_request`, and `PATCH` or delete on one is `409 conflict`. They are kept out of the
+catalog for every client that did not ask for them: `GET /v0/artifacts` and the `list_artifacts`
+tool list them only when `type` is `story`, they emit no `artifact.*` events, and they never
+appear in a tool-call presentation. The single-artifact, version, and file routes serve them by
+ID, so a story's files are read like any artifact's.
 
 **Sources.** `source` says where an artifact was created, as an object discriminated by `kind`:
 
@@ -10700,7 +11140,7 @@ Lists the catalog, newest `createdAt` first with the artifact ID as the tie-brea
 
 Query parameters, all optional:
 
-- `type` — only artifacts of this type.
+- `type` — only artifacts of this type. Story artifacts are listed only with `type=story`.
 - `sourceKind` — only artifacts whose `source.kind` is this. `sourceId` additionally narrows to one
   place: the source's `botId`, `taskId`, `projectId`, `workspaceId`, or, for an `agent` source,
   `agentId`. `sourceId` without `sourceKind` is `400`.
@@ -11255,6 +11695,155 @@ counted in `dropped`, and the request still succeeds. An invalid body is `400`.
 The log lives beside the artifact's data, in `logs.sqlite` in the same directory, and keeps the
 newest 1,000 entries of the last 7 days. It is read by agents through their `read_artifact_logs`
 tool, newest first, filtered by level, user, and time. Pages cannot read it.
+
+## Stories
+
+A story is a moment worth showing — something shipped, something to try — posted for a day on a
+task's or bot's card and in the stories header. A status line says where the work stands and
+stays; a story expires. A daemon that serves stories reports `capabilities.storyArtifacts: true`
+from health. Stories are part of rich tasks: an agent posts only while the person it works for
+has `tasks.rich` on, and clients draw them only then.
+
+Each story is one frame: one artifact of type `story` whose entry is `story.json`, with the
+story's own files beside it. Agents post with `set_story`; people repost an agent's story.
+
+**Posters and audiences.** Each poster has at most one live story per audience; posting replaces
+it.
+
+- `"owner"` — only the person the posting agent works for: the task's owner, or, for a bot, the
+  person whose message the posting turn answered. This is the default for agents.
+- `"team"` — every member. An agent posts to the team only when a person asked for it (see
+  "Agent tools" under Rich tasks). Reposts go to the team unless they name `"owner"`.
+
+In standalone mode both audiences are the installation's one person.
+
+**Lifecycle.** A story is `"live"` from posting for 24 hours, then `"expired"`. Posting again
+makes the previous live story for that audience `"replaced"`; `set_story` with `null` or
+`POST /v0/stories/:artifactId/take-down` makes it `"taken_down"`, recording who. An ended story
+stays readable for 7 days.
+
+**Replies.** Every story has one `replyAgentId`: the agent that posted it, or, for a repost, the
+agent that posted the story it reposts. A reply is an ordinary message to that agent through
+`POST /v0/agents/:agentId/send` with `replyTo`, written by the replier, so in team mode a
+teammate's reply lands in the task's conversation as their own message. The agent reads it as a
+person's message, told which story it answers, and acts on it like any other; it also marks the
+agent unread (`"story_reply"`) with the replier in `unread.from`. `replies` counts them, and
+`GET /v0/stories/:artifactId/replies` reads them back.
+
+### The story object
+
+```json
+{
+    "artifactId": "r1t2y3u4i5o6p7a8s9d0f1g2",
+    "artifactVersion": 1,
+    "poster": {
+        "kind": "agent",
+        "agentId": "a9b8c7d6e5f4g3h2i1j0k9l8",
+        "taskId": "t4k8m2q9w1e5r7y3u6i0o2p4",
+        "botId": null
+    },
+    "replyAgentId": "a9b8c7d6e5f4g3h2i1j0k9l8",
+    "audience": "owner",
+    "caption": "New onboarding is live in the preview build",
+    "media": { "artifactId": "r7k2m9q4w1e5t8y3u6i0o2p5", "version": 3, "path": "demo.mp4" },
+    "round": null,
+    "repostOf": null,
+    "postedAt": 1755400000000,
+    "expiresAt": 1755486400000,
+    "state": "live",
+    "endedAt": null,
+    "takenDownBy": null,
+    "seenBy": [{ "userId": "u1x2y3z4a5b6c7d8e9f0g1h2", "seenAt": 1755401000000 }],
+    "replies": 2
+}
+```
+
+- `artifactId`, `artifactVersion` — the story artifact and the version holding this story.
+- `poster` — `{ "kind": "agent", "agentId", "taskId", "botId" }`, with `taskId` or `botId` naming
+  the task or bot the agent works under, or `null`; or `{ "kind": "user", "userId" }` for a
+  person's repost.
+- `replyAgentId` — the agent replies go to; see "Replies".
+- `audience` — `"owner"` or `"team"`.
+- `caption` — up to 140 characters of plain text, or `null`.
+- `media` — what the frame shows: `{ "artifactId", "version", "path" }`, a file of another
+  artifact's version, its entry when `path` is absent; or `{ "path" }`, a file of the story
+  artifact itself. Read either through `GET /v0/artifacts/:artifactId/versions/:number/files/*path`.
+- `round` — `{ "path" }`, a round video of the story artifact, shown over the frame of a repost,
+  or `null`.
+- `repostOf` — the `artifactId` of the story this one reposts, or `null`.
+- `postedAt`, `expiresAt` — when it was posted and when it expires.
+- `state` — `"live"`, `"replaced"`, `"taken_down"`, or `"expired"`. The set may grow; a client
+  treats an unknown state as ended.
+- `endedAt` — when it stopped being live, or `null`.
+- `takenDownBy` — who took it down: `{ "agentId", "userId" }`, as for child choices, or `null`.
+- `seenBy` — the people who opened it, by `userId` (`null` for a standalone installation's one
+  person), oldest first. A client greys the ring once its own user ID is here.
+- `replies` — how many replies it has.
+
+`story.json`, the entry, holds the same `media`, `round`, `caption`, `repostOf`, `audience`,
+`postedAt`, and `expiresAt`; the routes below are how clients read stories.
+
+### `GET /v0/stories`
+
+Query `scope` is optional: `feed`, the default, lists the live stories the caller may see;
+`mine` lists the stories the caller posted and those posted by agents of tasks the caller owns,
+live and ended in the last 7 days. Any other value is `400 invalid_request`.
+
+Response — `200`: `{ "stories": [ /* story objects, newest postedAt first */ ], "cursor": "..." }`,
+`cursor` being the event cursor captured before the read. Clients draw one ring per poster, split
+into one segment per live story.
+
+### `POST /v0/stories/:artifactId/seen`
+
+Marks the story seen by the caller. Body `{}` or `{ "mutationId": "..." }`. Idempotent: the first
+call records `seenAt` and emits `story.changed`; later ones change nothing.
+
+Response — `200`: `{ "story": { ... } }`. `404` when the caller may not see the story.
+
+### `GET /v0/stories/:artifactId/replies`
+
+Reads the replies to the story, newest first. Query: optional `limit`, 1–100, default 50, and
+`before`, the ID of the last message of the previous page.
+
+Response — `200`: `{ "agentId": "...", "messages": [ /* user messages carrying this replyTo */ ],
+"hasMore": false }`. `agentId` is the story's `replyAgentId`. `404` when the caller may not see the
+story.
+
+### `POST /v0/stories/:artifactId/take-down`
+
+Ends a live story now. Body `{}` or `{ "mutationId": "..." }`. The person the story belongs to may
+take it down — the owner of the posting task, the reposter, or, for a bot's story, the person it
+was posted for — and so may the team owner; anyone else receives `403 forbidden`. In standalone
+mode the installation's one person may.
+
+Response — `200`: `{ "story": { ... } }` with `state` `"taken_down"` and `takenDownBy` naming the
+caller, and `story.changed` after commit. An ended story answers unchanged.
+
+### `POST /v0/stories/:artifactId/repost`
+
+Reposts a story the caller may see, as the caller's own story.
+
+Request:
+
+```json
+{
+    "id": "r3e4w5q6a7s8d9f0g1h2j3k4",
+    "caption": "Ship it",
+    "round": { "uploadId": "u5p6l7o8a9d0i1d2x3y4z5w6", "path": "round.mp4" },
+    "audience": "team",
+    "mutationId": "..."
+}
+```
+
+- `id` — optional; the new story artifact's ID and the retry key.
+- `caption` — optional, up to 140 characters; omitted, the original's caption.
+- `round` — optional: a video upload from `POST /v0/artifact-uploads`, placed at `path` in the
+  new story artifact.
+- `audience` — optional, `"team"` by default.
+
+Response — `201`: `{ "story": { ... } }`, with the original's `media` and `replyAgentId`,
+`repostOf` naming it, and the caller as `poster`. The caller's previous live story for that
+audience is replaced. Emits `story.changed` for the new story and for any it replaced.
 
 ## Live voice sessions
 
@@ -11977,7 +12566,9 @@ event is idempotent by attachment ID.
 - `task.created` — a task was created, with its dedicated workspace, folder, and one agent; the
   agent also emits its own `agent.created`.
     - `task` (full task object).
-- `task.updated` — rename, automatic naming, archive, or unarchive. The embedded agent's own
+- `task.updated` — rename, automatic naming, archive, or unarchive; on daemons with
+  `capabilities.taskSections`, also an icon change, carrying `icon`, or a child choice, carrying
+  the whole `children` array. The embedded agent's own
   state changes travel as `agent.updated` and do not advance the task. A task's workspace has no
   `workspace.*` events of its own; it follows the task.
     - `taskId` (ID string), `previousVersion`, `version`, `changes`.
@@ -11993,10 +12584,23 @@ event is idempotent by attachment ID.
     - `membership` (full membership object with its new `orderKey`).
 - `task.left` — the member left a task. In team mode it reaches only that member's connections.
     - `membership` (the removed membership object).
-- `task.membership.updated` — the member's membership changed in place: marked `unread` again, or
-  read. In team mode it reaches only that member's connections. Additive; older daemons never
-  emit it.
+- `task.membership.updated` — the member's membership changed in place: marked `unread` again,
+  read, or, on daemons with `capabilities.taskSections`, hidden or shown. In team mode it reaches
+  only that member's connections. Additive; older daemons never emit it.
     - `membership` (full membership object).
+- `task.sections.updated` — protocol 34, `capabilities.taskSections`. The member's sections
+  changed: created, renamed, folded, moved, or removed, by the member or Focus. A complete
+  replacement; tasks that moved with a section emit their own `task.reordered`. In team mode it
+  reaches only that member's connections.
+    - `sections` (every section object of the member, in key order).
+
+**Stories**
+
+- `story.changed` — protocol 34, `capabilities.storyArtifacts`. A story was posted, seen,
+  replied to, replaced, taken down, or expired. A complete replacement of the story; keep the
+  latest event for each `artifactId`. It reaches only the connections of people who may see the
+  story. Story artifacts emit no `artifact.*` events.
+    - `story` (full story object).
 
 **Artifacts**
 
@@ -12179,8 +12783,9 @@ version rules. Snapshot-to-stream cursor and version-gap recovery rules remain u
       everything.
 - `message.updated` — a message changed structurally after it entered a run: a block was added,
   a tool call or compaction changed `status`, a compaction gained `tokensAfter`, or a result or
-  presentation arrived. Pending acceptance is carried by `run.started` or `run.boundary`, not
-  duplicated here.
+  presentation arrived; on daemons with `capabilities.chatActions`, also an agent message whose
+  `actionChoices` gained a press. Pending acceptance is carried by `run.started` or
+  `run.boundary`, not duplicated here.
     - `agentId` (ID string).
     - `runId` (ID string).
     - `message` (full message object) — the whole message as of now; not a diff.
@@ -12544,6 +13149,12 @@ Response — `200`:
     "taskMemberships": [
         /* the caller's memberships, in the caller's order */
     ],
+    "taskSections": [
+        /* the caller's sections, in key order */
+    ],
+    "taskArtifacts": [
+        /* metadata of the artifacts each active task made, newest first */
+    ],
     "surfaces": [
         /* the full Surface instance catalog, ascending ID */
     ],
@@ -12574,7 +13185,9 @@ Response — `200`:
   directly under it. Each returned project and workspace embeds its active top-level `agents`
   series. Deeper nesting and archived workspaces are loaded on demand through the workspace
   endpoints when the user opens a project; the archived agents of the included owners arrive in
-  `archivedAgents`.
+  `archivedAgents`. On daemons with `capabilities.taskSections` it also holds, at any depth, every active
+  workspace whose `creatorAgentId` or `subtaskAgentId` names an active task's agent or one of
+  its subtasks, so a client can derive every task's workspace sub-rows from bootstrap alone.
 - `bots` — every bot, archived ones included, in catalog order, exactly as `GET /v0/bots`
   returns them, each embedding its one agent. This additive field may be absent on an older
   compatible daemon, which does not serve the bot endpoints either.
@@ -12584,6 +13197,16 @@ Response — `200`:
 - `taskMemberships` — the caller's memberships, in the caller's own order, exactly as
   `GET /v0/tasks` returns them. A client renders the caller's task list by following this order
   into `tasks`. Additive; absent together with `tasks`.
+- `taskSections` — the caller's sections, in key order, exactly as `GET /v0/tasks` returns them
+  in `sections`. Protocol 34; present only on daemons with `capabilities.taskSections`.
+- `taskArtifacts` — what a client needs to derive artifact sub-rows without listing the catalog:
+  for each active task, the at most 20 most recently updated active artifacts whose
+  `source.agentId` is the task's agent or one of its subtasks, as
+  `{ "artifactId", "taskId", "agentId", "title", "type", "updatedAt" }`, newest `updatedAt`
+  first across all tasks. `agentId` is the artifact's `source.agentId`. Story artifacts and
+  tombstones are never listed. Follow `artifact.*` events from the bootstrap `cursor` to keep it
+  current. Workspace sub-rows come from `workspaces`, whose full objects carry `creatorAgentId`
+  and `subtaskAgentId`. Protocol 34; present only on daemons with `capabilities.taskSections`.
 - `surfaces` — exactly the catalog with nested members from `GET /v0/surfaces`. Additive and
   absent on daemons without Surface support. Follow shared `surface.updated` from the bootstrap cursor.
   Todo data and revision history are loaded on demand through the Todo Surface endpoints.

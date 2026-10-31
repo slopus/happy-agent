@@ -19,10 +19,12 @@ import {
  * runners require protocol 26 or newer, and the mobile connector requires protocol 27
  * or newer, and agent networks require protocol 28 or newer, and pushed provider-account
  * usage requires protocol 29 or newer, and typed failures with their retry and switch actions
- * require protocol 30 or newer. Global skill management is additive and detected through
- * its catalog endpoint.
+ * require protocol 30 or newer. Protocol 32 takes Switch targets from the live catalog, protocol
+ * 33 adds permanent deletion and its removal events, and protocol 34 adds rich tasks, stories,
+ * and inline actions, each detected through its health capability. Global skill management is
+ * additive and detected through its catalog endpoint.
  */
-export const HAPPY_AGENT_PROTOCOL_VERSION = 30;
+export const HAPPY_AGENT_PROTOCOL_VERSION = 34;
 
 /** The oldest additive protocol supported for existing capabilities. */
 export const HAPPY_AGENT_MIN_PROTOCOL_VERSION = 22;
@@ -158,6 +160,17 @@ export const healthResponseSchema = Type.Object({
             providerClis: Type.Optional(Type.Boolean()),
             /** True when the daemon serves `/v0/provider-routes`, described under Provider routes. */
             providerRoutes: Type.Optional(Type.Boolean()),
+            /**
+             * True when tasks carry `icon` and `children`, memberships `hidden`, the list has
+             * sections, and the daemon honors `tasks.rich`, `tasks.sections`, and `tasks.focus`.
+             */
+            taskSections: Type.Optional(Type.Boolean()),
+            /** True when the daemon serves story artifacts, `/v0/stories`, and `replyTo`. */
+            storyArtifacts: Type.Optional(Type.Boolean()),
+            /** True when the daemon accepts action messages and records `actionChoices`. */
+            chatActions: Type.Optional(Type.Boolean()),
+            /** True when the daemon honors `onboarding.chat`. */
+            chatOnboarding: Type.Optional(Type.Boolean()),
         }),
     ),
     /** Always `true`; a daemon that cannot answer does not answer. */

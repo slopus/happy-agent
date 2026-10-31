@@ -11,14 +11,15 @@ import {
 } from "./agents.js";
 import { botSchema } from "./bots.js";
 import { cloudSchema } from "./cloud.js";
-import { type EventCursor, eventCursorSchema } from "./common.js";
+import { cuid2Schema, type EventCursor, eventCursorSchema, timestampSchema } from "./common.js";
 import { daemonConfigSchema, onboardingStateSchema } from "./daemon.js";
 import { happyIntegrationSchema } from "./integrations.js";
 import type { UserMessage } from "./messages.js";
 import type { BackgroundProcess } from "./processes.js";
 import { profileSchema } from "./profile.js";
 import { projectSchema } from "./projects.js";
-import { taskMembershipSchema, taskSchema } from "./tasks.js";
+import { artifactTitleSchema, artifactTypeSchema } from "./artifacts.js";
+import { taskMembershipSchema, taskSchema, taskSectionSchema } from "./tasks.js";
 import { surfaceSchema } from "./surfaces.js";
 import type { AgentUsageResponse } from "./usage.js";
 import { storedUserSettingSchema } from "./userSettings.js";
@@ -79,6 +80,25 @@ export const desktopBootstrapResponseSchema = Type.Object({
      * older compatible daemons.
      */
     taskMemberships: Type.Optional(Type.Array(taskMembershipSchema)),
+    /**
+     * Metadata of the artifacts each active task's agent or its subtasks made, for sub-rows: at
+     * most 20 per task, newest `updatedAt` first, never stories or tombstones. Protocol 34 with
+     * `capabilities.taskSections`.
+     */
+    taskArtifacts: Type.Optional(
+        Type.Array(
+            Type.Object({
+                agentId: cuid2Schema,
+                artifactId: cuid2Schema,
+                taskId: cuid2Schema,
+                title: artifactTitleSchema,
+                type: artifactTypeSchema,
+                updatedAt: timestampSchema,
+            }),
+        ),
+    ),
+    /** The caller's sections in key order. Protocol 34 with `capabilities.taskSections`. */
+    taskSections: Type.Optional(Type.Array(taskSectionSchema)),
     /** Every task, archived ones included, oldest first. Absent on older compatible daemons. */
     tasks: Type.Optional(Type.Array(taskSchema)),
     /** The predefined catalog. Absent on older daemons without Surfaces. */

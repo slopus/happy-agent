@@ -336,7 +336,7 @@ opaque; `networkProxyUrl` throws for one outside its specified form. A `404` fro
 `CONNECT` means it is not served right now: read the agent's network again and use what it
 returns. A different `networkId` gets a new profile; never move the old profile's cookies to it.
 
-`HAPPY_AGENT_PROTOCOL_VERSION` is 28; `HAPPY_AGENT_MIN_PROTOCOL_VERSION` is 22. The range
+`HAPPY_AGENT_PROTOCOL_VERSION` is 34; `HAPPY_AGENT_MIN_PROTOCOL_VERSION` is 22. The range
 is additive, so clients should not require exact protocol equality for existing features.
 Creating a bot without `name` requires a daemon advertising protocol 24 or newer. With
 an older compatible daemon, supply a deliberate name or leave unnamed creation unavailable.

@@ -21,6 +21,7 @@ import {
 } from "./common.js";
 import { artifactDisplaySchema, artifactTitleSchema, artifactTypeSchema } from "./artifacts.js";
 import { mediaLayoutStyleSchema } from "./mediaLayoutStyle.js";
+import type { MessageReplyTo } from "./messageReplyTo.js";
 import type { UsageBreakdown } from "./usage.js";
 import { userIdSchema } from "./users.js";
 
@@ -776,6 +777,41 @@ export const toolCallRequestBlockSchema = Type.Object(
 /** An explicit request in a user message for Agent Base to execute one tool before inference. */
 export type ToolCallRequestBlock = Static<typeof toolCallRequestBlockSchema>;
 
+/**
+ * A press of an inline action control, the one block of an action message, with
+ * `capabilities.chatActions`. `params` are the control's parameters as written; `values` a
+ * checklist's ticked values.
+ */
+export const actionBlockSchema = Type.Object({
+    actionId: Type.String({ maxLength: 128, minLength: 1 }),
+    blockIndex: Type.Integer({ minimum: 0 }),
+    messageId: cuid2Schema,
+    params: Type.Record(Type.String(), Type.String()),
+    type: Type.Literal("action"),
+    values: Type.Optional(Type.Array(Type.String(), { maxItems: 64 })),
+});
+
+/** An action block as stored: what the daemon decided is added to the press. */
+export const storedActionBlockSchema = Type.Composite([
+    actionBlockSchema,
+    Type.Object({
+        /** The words on the control pressed, as the person read them. */
+        label: Type.Optional(Type.String()),
+        /** What the action's work did, in English, as the agent's model reads it. */
+        outcome: Type.Optional(Type.String()),
+        /** A submitted checklist's ticked labels, in the order shown. */
+        ticked: Type.Optional(Type.Array(Type.String())),
+    }),
+]);
+export type ActionBlock = Static<typeof storedActionBlockSchema>;
+
+/** One block's choice; the kind set may grow, and an unknown kind still locks the block. */
+export const actionChoiceSchema = Type.Union([
+    Type.Object({ index: Type.Integer({ minimum: 0 }), kind: Type.Literal("button") }),
+    Type.Object({ kind: Type.Literal("checklist"), values: Type.Array(Type.String()) }),
+]);
+export type ActionChoice = Static<typeof actionChoiceSchema>;
+
 /** What is in a message, in order. */
 export type MessageBlock =
     | TextBlock
@@ -784,7 +820,8 @@ export type MessageBlock =
     | ReasoningBlock
     | ToolCallBlock
     | ConfigurationBlock
-    | CompactionBlock;
+    | CompactionBlock
+    | ActionBlock;
 
 /** Plain text. */
 export interface TextBlock {
@@ -943,6 +980,8 @@ export interface UserMessage {
     mode: MessageMode;
     /** `null` while pending; assigned at acceptance and the handle for abort. */
     runId: Cuid2 | null;
+    /** The story this message answers, with `capabilities.storyArtifacts`; never changes. */
+    replyTo?: MessageReplyTo;
 }
 
 /** Produced by the model: its text, reasoning, and tool calls. */
@@ -952,6 +991,11 @@ export interface AgentMessage {
     createdAt: Timestamp;
     content: MessageBlock[];
     metadata: MessageMetadata;
+    /**
+     * Each pressed inline action block's choice, keyed by its `blockIndex` as a string, with
+     * `capabilities.chatActions`. A block with a choice is locked.
+     */
+    actionChoices?: Record<string, ActionChoice>;
 }
 
 /** Content the daemon injected into the model's context, when worth showing. */
@@ -1025,6 +1069,22 @@ export interface SendMessageRequest {
     /** Opaque context profile. Omitted and `null` both select the default profile. */
     profile?: string | null;
     /** The model selection and permission mode this message runs with. */
+    mode: MessageMode;
+    /**
+     * A reply to this story, with `capabilities.storyArtifacts`; the agent must be the story's
+     * `replyAgentId`.
+     */
+    replyTo?: MessageReplyTo;
+}
+
+/**
+ * `POST /v0/agents/:agentId/send` — an action message, with `capabilities.chatActions`: the
+ * person pressed an inline action control. It has no `text`.
+ */
+export interface SendActionMessageRequest {
+    id?: Cuid2;
+    content: [Static<typeof actionBlockSchema>];
+    delivery?: MessageDelivery;
     mode: MessageMode;
 }
 

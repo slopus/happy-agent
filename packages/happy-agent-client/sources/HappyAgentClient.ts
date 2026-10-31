@@ -73,12 +73,28 @@ import type {
     JoinTaskRequest,
     LeaveTaskRequest,
     RenameTaskRequest,
+    ReorderTaskAfterSectionRequest,
     ReorderTaskRequest,
+    ReplaceTaskSectionsRequest,
+    SetTaskChildRequest,
+    TaskChildRef,
     TaskListResponse,
     TaskListScope,
     TaskResponse,
+    TaskSectionsResponse,
     UnarchiveTaskRequest,
+    UpdateTaskMembershipRequest,
+    UpdateTaskRequest,
 } from "./protocol/tasks.js";
+import type {
+    RepostStoryRequest,
+    StoryListResponse,
+    StoryListScope,
+    StoryMutationRequest,
+    StoryRepliesQuery,
+    StoryRepliesResponse,
+    StoryResponse,
+} from "./protocol/stories.js";
 import type {
     CreateSurfaceRequest,
     CreateTodoRequest,
@@ -188,6 +204,7 @@ import type {
 import type {
     MessageHistoryQuery,
     MessageHistoryResponse,
+    SendActionMessageRequest,
     SendMessageRequest,
     SendMessageResponse,
 } from "./protocol/messages.js";
@@ -1566,6 +1583,80 @@ export class HappyAgentClient {
         });
     }
 
+    /**
+     * `PATCH /v0/tasks/:taskId` with an `icon`, alone or beside a name; requires
+     * `capabilities.taskSections`. Each ends its automatic choice for good.
+     */
+    async updateTask(
+        taskId: Cuid2,
+        request: UpdateTaskRequest,
+        options: VersionedRequestOptions,
+    ): Promise<TaskResponse> {
+        return await this.#json({
+            method: "PATCH",
+            path: `v0/tasks/${encodeURIComponent(taskId)}`,
+            json: request,
+            ifMatch: options.ifMatch,
+            signal: options.signal,
+        });
+    }
+
+    /** `PATCH /v0/tasks/:taskId/membership` — hides or shows it in the caller's own list. */
+    async updateTaskMembership(
+        taskId: Cuid2,
+        request: UpdateTaskMembershipRequest,
+        options: RequestOptions = {},
+    ): Promise<TaskResponse> {
+        return await this.#json({
+            method: "PATCH",
+            path: `v0/tasks/${encodeURIComponent(taskId)}/membership`,
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /** `PUT /v0/tasks/sections` — replaces the caller's sections, applied in order. */
+    async replaceTaskSections(
+        request: ReplaceTaskSectionsRequest,
+        options: RequestOptions = {},
+    ): Promise<TaskSectionsResponse> {
+        return await this.#json({
+            method: "PUT",
+            path: "v0/tasks/sections",
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /** `PUT /v0/tasks/:taskId/children/:kind/:refId` — shows or hides one child for every member. */
+    async setTaskChild(
+        taskId: Cuid2,
+        ref: TaskChildRef,
+        request: SetTaskChildRequest,
+        options: RequestOptions = {},
+    ): Promise<TaskResponse> {
+        return await this.#json({
+            method: "PUT",
+            path: taskChildPath(taskId, ref),
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /** `DELETE /v0/tasks/:taskId/children/:kind/:refId` — returns the child to its default. */
+    async clearTaskChild(
+        taskId: Cuid2,
+        ref: TaskChildRef,
+        options: RequestOptions & JoinTaskRequest = {},
+    ): Promise<TaskResponse> {
+        return await this.#json({
+            method: "DELETE",
+            path: taskChildPath(taskId, ref),
+            json: bodyOf(options),
+            signal: options.signal,
+        });
+    }
+
     /** `GET /v0/tasks/:taskId` — the task and the caller's membership, or `null`. */
     async getTask(taskId: Cuid2, options: RequestOptions = {}): Promise<TaskResponse> {
         return await this.#json({
@@ -1617,7 +1708,7 @@ export class HappyAgentClient {
     /** `POST /v0/tasks/:taskId/reorder` — moves it within the caller's own list only. */
     async reorderTask(
         taskId: Cuid2,
-        request: ReorderTaskRequest,
+        request: ReorderTaskRequest | ReorderTaskAfterSectionRequest,
         options: RequestOptions = {},
     ): Promise<TaskResponse> {
         return await this.#json({
@@ -1655,6 +1746,74 @@ export class HappyAgentClient {
             path: `v0/tasks/${encodeURIComponent(taskId)}/unarchive`,
             json: bodyOf(options),
             ifMatch: options.ifMatch,
+            signal: options.signal,
+        });
+    }
+
+    // Stories
+
+    /** `GET /v0/stories` — live stories the caller may see, or with `mine` their own, ended included. */
+    async listStories(
+        options: RequestOptions & { readonly scope?: StoryListScope } = {},
+    ): Promise<StoryListResponse> {
+        return await this.#json({
+            method: "GET",
+            path: "v0/stories",
+            query: { scope: options.scope },
+            signal: options.signal,
+        });
+    }
+
+    /** `POST /v0/stories/:artifactId/seen` — idempotent. */
+    async markStorySeen(
+        artifactId: Cuid2,
+        options: RequestOptions & StoryMutationRequest = {},
+    ): Promise<StoryResponse> {
+        return await this.#json({
+            method: "POST",
+            path: `v0/stories/${encodeURIComponent(artifactId)}/seen`,
+            json: bodyOf(options),
+            signal: options.signal,
+        });
+    }
+
+    /** `GET /v0/stories/:artifactId/replies` — newest first, from the reply agent's conversation. */
+    async listStoryReplies(
+        artifactId: Cuid2,
+        query: StoryRepliesQuery = {},
+        options: RequestOptions = {},
+    ): Promise<StoryRepliesResponse> {
+        return await this.#json({
+            method: "GET",
+            path: `v0/stories/${encodeURIComponent(artifactId)}/replies`,
+            query: { before: query.before, limit: query.limit },
+            signal: options.signal,
+        });
+    }
+
+    /** `POST /v0/stories/:artifactId/take-down` — the person it belongs to, or the team owner. */
+    async takeDownStory(
+        artifactId: Cuid2,
+        options: RequestOptions & StoryMutationRequest = {},
+    ): Promise<StoryResponse> {
+        return await this.#json({
+            method: "POST",
+            path: `v0/stories/${encodeURIComponent(artifactId)}/take-down`,
+            json: bodyOf(options),
+            signal: options.signal,
+        });
+    }
+
+    /** `POST /v0/stories/:artifactId/repost` — as the caller's own story. */
+    async repostStory(
+        artifactId: Cuid2,
+        request: RepostStoryRequest = {},
+        options: RequestOptions = {},
+    ): Promise<StoryResponse> {
+        return await this.#json({
+            method: "POST",
+            path: `v0/stories/${encodeURIComponent(artifactId)}/repost`,
+            json: request,
             signal: options.signal,
         });
     }
@@ -2869,7 +3028,7 @@ export class HappyAgentClient {
      */
     async sendMessage(
         agentId: Cuid2,
-        request: SendMessageRequest,
+        request: SendMessageRequest | SendActionMessageRequest,
         options: RequestOptions = {},
     ): Promise<SendMessageResponse> {
         return await this.#json({
@@ -3361,6 +3520,10 @@ export class HappyAgentClient {
  */
 function bodyOf(options: { mutationId?: string }): { mutationId?: string } {
     return options.mutationId === undefined ? {} : { mutationId: options.mutationId };
+}
+
+function taskChildPath(taskId: Cuid2, ref: TaskChildRef): string {
+    return `v0/tasks/${encodeURIComponent(taskId)}/children/${ref.kind}/${encodeURIComponent(ref.id)}`;
 }
 
 /** A setting's route; keys need no percent-encoding, so an invalid one is refused before sending. */
