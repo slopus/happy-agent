@@ -191,7 +191,10 @@ Both human updates and the scoped agent setter share one mutation path. A human'
 for that field, including an unchanged title or `null` icon. `name_agent_chosen` distinguishes a
 model's title, which the task can refine, from a human choice; a human PATCH clears it. The naming
 job sets it too: it once wrote `name_configured` alone, so an automatic title written while rich
-tasks were off locked the task out of naming itself after the owner turned them on. Icons stay
+tasks were off locked the task out of naming itself after the owner turned them on. So does a name
+an agent gives in `create_task`; only a name a person supplies is final from creation. A PATCH
+with the title already shown clears the flag without a new version or event, because the flag is
+not on the wire and main answers that PATCH as a no-op even with every setting off. Icons stay
 slugs in storage so updating artwork does not leave a permanently stale digest in a task row.
 
 ## Sections share the memberships' key space

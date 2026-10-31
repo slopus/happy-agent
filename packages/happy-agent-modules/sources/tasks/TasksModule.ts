@@ -891,6 +891,10 @@ export class TasksModule implements AgentModule {
                 id: taskId,
                 name,
                 nameConfigured: input.name !== undefined,
+                // A name the creating agent chose is its own to refine; a person's is final.
+                ...(input.name !== undefined && input.creatorAgentId !== undefined
+                    ? { nameAgentChosen: true as const }
+                    : {}),
                 folderName,
                 ...(input.ownerUserId === undefined ? {} : { ownerUserId: input.ownerUserId }),
                 ...(input.creatorAgentId === undefined
@@ -1054,13 +1058,16 @@ export class TasksModule implements AgentModule {
         by: "person" | "agent",
     ): Promise<TaskRecord> {
         const { name, icon } = change;
+        // A person keeping an automatic title makes it final without changing what anyone sees.
+        if (by === "person" && name === current.name && current.nameAgentChosen === true) {
+            const { nameAgentChosen: _chosen, ...kept } = current;
+            current = await updateTask(ctx, kept, current.version);
+        }
         const renames =
             name !== undefined &&
             (current.name !== name ||
                 !current.nameConfigured ||
-                (by === "person"
-                    ? current.nameAgentChosen === true
-                    : current.nameAgentChosen !== true));
+                (by === "agent" && current.nameAgentChosen !== true));
         const picks =
             icon !== undefined &&
             (current.icon !== (icon ?? undefined) ||

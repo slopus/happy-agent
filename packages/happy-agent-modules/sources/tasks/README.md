@@ -90,8 +90,8 @@ owned by `TaskIconsModule`, and no naming job runs. An already-running job reche
 `update` applies a person's title, icon (`null` for none), or both. `setIdentityForAgent` resolves
 the calling agent's own task and uses the same write path. A person's choice is final for that
 field, including submitting the same title or clearing an icon. `nameAgentChosen` marks a title
-a model chose, the task's own or the naming job's, so the task can refine it until a person
-chooses one. Icons remain logical slugs in storage; the API
+a model chose, the task's own, the naming job's, or the creating agent's, so the task can refine
+it until a person chooses one; a person resubmitting the shown title clears it without a version. Icons remain logical slugs in storage; the API
 derives the artwork digest from the current bundled catalog.
 
 ## Tools

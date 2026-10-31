@@ -950,6 +950,40 @@ describe("TasksModule", () => {
         }
     });
 
+    it("lets a task refine the name its creating agent gave it, and keeps a person's same-name save quiet", async () => {
+        const fixture = await started("tasks-agent-named");
+        try {
+            const ctx = fixture.database.context;
+            fixture.tasks.decideIdentityWith(async () => true);
+            const bot = await fixture.bots.create(ctx, { name: "Planner" });
+            const task = await fixture.executeCreate(bot.agentId, { name: "Login fix" });
+            const refined = await fixture.tasks.setIdentityForAgent(ctx, task.agentId, {
+                title: "Login redirect loop",
+            });
+            expect(refined).toMatchObject({ name: "Login redirect loop", nameAgentChosen: true });
+            // Saving the same title is no change anyone sees, yet it makes the title the person's.
+            fixture.events.length = 0;
+            const kept = await fixture.tasks.update(
+                ctx,
+                task.id,
+                { name: refined.name },
+                refined.version,
+            );
+            expect(kept.version).toBe(refined.version);
+            expect(kept.nameAgentChosen).toBeUndefined();
+            expect(fixture.events).toEqual([]);
+            await expect(
+                fixture.tasks.setIdentityForAgent(ctx, task.agentId, { title: "Override" }),
+            ).rejects.toThrow("person");
+            const named = await fixture.tasks.create(ctx, { name: "Person's name" });
+            await expect(
+                fixture.tasks.setIdentityForAgent(ctx, named.agentId, { title: "Override" }),
+            ).rejects.toThrow("person");
+        } finally {
+            await fixture.close();
+        }
+    });
+
     it("leaves a previously attempted unnamed task alone", async () => {
         const fixture = await started("tasks-old-name-attempt");
         try {
