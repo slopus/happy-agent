@@ -189,21 +189,25 @@ export class TasksModule implements AgentModule {
                 this.#backgroundScope.runInAsyncScope(async () => {
                     const { taskId, providerId, message } = call.arguments;
                     // The name and the icon end separately: each is wanted until it is settled.
-                    const wanted = (task: TaskRecord | undefined): TitleNamesWanted =>
+                    // The icon is asked again each time, since the owner may have turned it off.
+                    const wanted = async (
+                        wantCtx: Context,
+                        task: TaskRecord | undefined,
+                    ): Promise<TitleNamesWanted> =>
                         task === undefined || task.status !== "active"
                             ? {}
                             : {
                                   ...(task.nameConfigured ? {} : { title: true }),
-                                  ...(call.arguments.icon && task.iconConfigured !== true
+                                  ...(call.arguments.icon && (await this.#wantsIcon(wantCtx, task))
                                       ? { icon: true }
                                       : {}),
                               };
                     const eligible = async () =>
-                        Object.keys(wanted(await readTask(ctx, taskId))).length > 0;
+                        Object.keys(await wanted(ctx, await readTask(ctx, taskId))).length > 0;
                     if (!(await eligible())) return null;
                     let names: TitleNames = {};
                     const answer = await runNamingAttempts(ctx, call.kv, eligible, async () => {
-                        const asked = wanted(await readTask(ctx, taskId));
+                        const asked = await wanted(ctx, await readTask(ctx, taskId));
                         names = await this.#titles.suggestNames(
                             ctx,
                             { firstMessage: message, wanted: asked, providerId },
@@ -226,7 +230,7 @@ export class TasksModule implements AgentModule {
                     if (named === undefined && names.icon === undefined) return null;
                     await ctx.inTx(async (txCtx) => {
                         const current = await this.#required(txCtx, taskId);
-                        const still = wanted(current);
+                        const still = await wanted(txCtx, current);
                         const name = still.title === true ? named : undefined;
                         const icon = still.icon === true ? names.icon : undefined;
                         if (name === undefined && icon === undefined) return;
@@ -306,9 +310,7 @@ export class TasksModule implements AgentModule {
             // wanted, the same request picks the icon, and a named task gets it alone.
             const task = await readTaskByAgent(hookCtx, scope.agent.id);
             if (task !== undefined) {
-                const icon =
-                    task.iconConfigured !== true &&
-                    (await this.#iconsWanted?.(hookCtx, task)) === true;
+                const icon = await this.#wantsIcon(hookCtx, task);
                 if (task.nameConfigured && !icon) return;
                 const message = namingText(accepted, task);
                 if (message.length === 0) return;
@@ -356,6 +358,12 @@ export class TasksModule implements AgentModule {
      */
     decideIconsWith(wanted: (ctx: Context, task: TaskRecord) => Promise<boolean>): void {
         this.#iconsWanted = wanted;
+    }
+
+    /** Any icon the task has, automatic or a person's, is settled: naming never picks another. */
+    async #wantsIcon(ctx: Context, task: TaskRecord): Promise<boolean> {
+        if (task.icon !== undefined || task.iconConfigured === true) return false;
+        return (await this.#iconsWanted?.(ctx, task)) === true;
     }
 
     onEventTransactional(listener: TaskEventListener): TaskUnsubscribe {

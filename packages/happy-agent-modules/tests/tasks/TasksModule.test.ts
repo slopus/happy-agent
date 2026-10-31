@@ -799,6 +799,57 @@ describe("TasksModule", () => {
         }
     });
 
+    it("picks an icon only while it is wanted, and never a second one", async () => {
+        const fixture = await started("tasks-icon-settled");
+        try {
+            const ctx = fixture.database.context;
+            let wanted = true;
+            fixture.tasks.decideIconsWith(async () => wanted);
+            fixture.naming.mockResolvedValue({ title: "Login loop", icon: "login" });
+            const task = await fixture.tasks.create(ctx, {});
+            await fixture.acceptText(task.agentId, "user", "The login page loops.");
+            await vi.waitFor(async () => {
+                expect((await fixture.tasks.get(ctx, task.id))?.icon).toBe("login");
+            });
+            const named = (await fixture.tasks.get(ctx, task.id))!;
+            // Replayed after its write but before the call was removed, the job finds both settled.
+            const runs = fixture.finished.length;
+            await ctx.inTx(async (txCtx) => {
+                await fixture.durable.invoke(txCtx, {
+                    function: "tasks.name",
+                    operationId: "tasks.name:replay",
+                    arguments: {
+                        taskId: task.id,
+                        providerId: "scripted",
+                        message: "Loops.",
+                        icon: true,
+                    },
+                });
+            });
+            await vi.waitFor(() => expect(fixture.finished).toHaveLength(runs + 1));
+            expect(fixture.naming).toHaveBeenCalledTimes(1);
+            expect((await fixture.tasks.get(ctx, task.id))?.version).toBe(named.version);
+
+            // Turned off while the request runs, the icon is not written; the title still is.
+            let answer!: (names: { title?: string; icon?: string }) => void;
+            fixture.naming.mockReturnValueOnce(new Promise((resolve) => (answer = resolve)));
+            const later = await fixture.tasks.create(ctx, {});
+            await fixture.acceptText(later.agentId, "user", "Login fails.");
+            await vi.waitFor(() => expect(fixture.naming).toHaveBeenCalledTimes(2));
+            expect(fixture.naming.mock.calls[1]?.[1]).toMatchObject({
+                wanted: { title: true, icon: true },
+            });
+            wanted = false;
+            answer({ title: "Login fails", icon: "crash" });
+            await vi.waitFor(async () => {
+                expect((await fixture.tasks.get(ctx, later.id))?.name).toBe("Login fails");
+            });
+            expect((await fixture.tasks.get(ctx, later.id))?.icon).toBeUndefined();
+        } finally {
+            await fixture.close();
+        }
+    });
+
     it("leaves a previously attempted unnamed task alone", async () => {
         const fixture = await started("tasks-old-name-attempt");
         try {
@@ -1876,6 +1927,21 @@ async function started(
     const durable = new DurableFunctionsModule();
     vi.spyOn(durable, "invoke");
     vi.spyOn(durable, "cancel");
+    // Every durable call that ran to its end, by function name, so a test can wait for one.
+    const finished: string[] = [];
+    const register = durable.register.bind(durable);
+    vi.spyOn(durable, "register").mockImplementation((definition) =>
+        register({
+            ...definition,
+            executor: async (ctx: Context, call: Parameters<typeof definition.executor>[1]) => {
+                try {
+                    return await definition.executor(ctx, call);
+                } finally {
+                    finished.push(definition.name);
+                }
+            },
+        } as never),
+    );
     const durableHooks = durable.beforeStart(database.context);
     const titles = new TitlesModule(config, new HistoryModule(), workspaces);
     const naming = vi.spyOn(titles, "suggestNames");
@@ -1946,6 +2012,7 @@ async function started(
         database,
         durable,
         events,
+        finished,
         naming,
         markNamingAttempted: async (agentId: string) => {
             await scopeFor(agentId).kv.write(database.context, "task-name-attempted", { at: 1 });

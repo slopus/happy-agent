@@ -189,3 +189,9 @@ today's request byte for byte. Tasks cannot read settings (settings depend on Te
 on Tasks), so `RichTasksModule` answers through `decideIconsWith`. The name and the icon end
 separately: a person's rename leaves the icon to naming, and a person's pick, `null` included,
 ends automatic icon choice even when it races the job.
+
+Review found two holes in the first version. A queued job trusted the icon flag it was invoked
+with, so turning `tasks.rich` off, or restarting without rich tasks, still bought and wrote an
+icon; the job now asks again before every attempt and inside its writing transaction. And an
+automatic icon left no settled mark, so a job replayed after its write but before Durable
+Functions removed it picked a second icon; any icon a task already has now settles that part.
