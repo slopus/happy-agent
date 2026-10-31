@@ -95,6 +95,7 @@ import { UsageModule } from "../usage/index.js";
 import { UserInputModule } from "../userInput/index.js";
 import { UserSettingsModule } from "../userSettings/index.js";
 import { TaskAutoJoinModule } from "../taskAutoJoin/index.js";
+import { RichTasksModule } from "../richTasks/index.js";
 import { TeammatesModule } from "../teammates/index.js";
 import { SurfaceAutoJoinModule } from "../surfaceAutoJoin/index.js";
 import { SurfacesModule } from "../surfaces/index.js";
@@ -571,6 +572,7 @@ export async function startHappyAgentRuntime(
         registerShutdown("team", async () => team.close());
         const userSettings = new UserSettingsModule(team);
         const taskAutoJoin = new TaskAutoJoinModule(tasks, team, userSettings, durableFunctions);
+        const richTasks = new RichTasksModule(config, tasks, team, userSettings);
         const surfaces = new SurfacesModule(
             durableFunctions,
             team,
@@ -889,6 +891,7 @@ export async function startHappyAgentRuntime(
             git,
             durableFunctions,
             taskAutoJoin,
+            richTasks,
             teammates,
             surfaces,
             surfaceAutoJoin,

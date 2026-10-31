@@ -18,6 +18,12 @@ export const taskNameSchema = Type.String({
     maxLength: 256,
     pattern: "^(?=.*\\S)[^\\x00-\\x1f\\x7f]+$",
 });
+/** A slug from Happy's icon library; clients show their default for one they do not know. */
+export const taskIconSlugSchema = Type.String({
+    minLength: 1,
+    maxLength: 64,
+    pattern: "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+});
 /** The immutable snake_case folder name chosen when a task is created. */
 export const taskFolderNameSchema = Type.String({
     minLength: 1,
@@ -41,6 +47,10 @@ export const taskRecordSchema = Type.Object(
          * once, from the task's first message; a rename settles it for good.
          */
         nameConfigured: Type.Boolean(),
+        /** The icon's slug from the library; absent until one is chosen. */
+        icon: Type.Optional(taskIconSlugSchema),
+        /** Set once a person picks the icon, which ends automatic icon choice for good. */
+        iconConfigured: Type.Optional(Type.Literal(true)),
         folderName: taskFolderNameSchema,
         /** The team user who owns the task; absent on a standalone installation. */
         ownerUserId: Type.Optional(cuid2Schema),

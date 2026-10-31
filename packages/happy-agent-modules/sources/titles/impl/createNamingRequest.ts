@@ -3,6 +3,7 @@ import {
     MAX_NAMING_TRANSCRIPT_CHARS,
     type TitleNamesWanted,
 } from "../Title.js";
+import { SPACE_ICON_SLUGS } from "./spaceIconSlugs.js";
 
 export interface NamingRequestText {
     readonly instructions: string;
@@ -15,6 +16,7 @@ const CLOSING = "Use only what you were given; do not guess at work you cannot s
 const WHAT_IT_IS: Readonly<Record<keyof TitleNamesWanted, string>> = {
     slug: "The slug names the folder the work happens in and the Git branch it happens on, which are the same name.",
     title: "The title is what the saved chat is called in a list a person reads.",
+    icon: "The icon is the picture shown beside the work in that list.",
 };
 
 const RULES: Readonly<Record<keyof TitleNamesWanted, string>> = {
@@ -26,11 +28,13 @@ const RULES: Readonly<Record<keyof TitleNamesWanted, string>> = {
         "<title>: two to six words naming what the work is about, the way a person writes a title.",
         "No quotes, no trailing punctuation, no markdown.",
     ].join(" "),
+    icon: `<icon>: the one slug from this list that best fits the work, copied exactly: ${SPACE_ICON_SLUGS.join(", ")}.`,
 };
 
 const EXAMPLES: Readonly<Record<keyof TitleNamesWanted, string>> = {
     slug: "<slug>the-name</slug>",
     title: "<title>The name</title>",
+    icon: "<icon>the-slug</icon>",
 };
 
 /**
@@ -129,6 +133,7 @@ export function wantedNames(wanted: TitleNamesWanted): (keyof TitleNamesWanted)[
     return [
         ...(wanted.title === true ? (["title"] as const) : []),
         ...(wanted.slug === true ? (["slug"] as const) : []),
+        ...(wanted.icon === true ? (["icon"] as const) : []),
     ];
 }
 

@@ -699,10 +699,10 @@ describe("TasksModule", () => {
         const fixture = await started("tasks-rename");
         try {
             const first = await fixture.tasks.create(fixture.database.context, { name: "First" });
-            const renamed = await fixture.tasks.rename(
+            const renamed = await fixture.tasks.update(
                 fixture.database.context,
                 first.id,
-                "Renamed",
+                { name: "Renamed" },
                 first.version,
             );
             expect(renamed).toMatchObject({
@@ -713,7 +713,12 @@ describe("TasksModule", () => {
             });
             expect(fixture.agents.configs.get(first.agentId)?.metadata?.title).toBe("Renamed");
             await expect(
-                fixture.tasks.rename(fixture.database.context, first.id, "Stale", first.version),
+                fixture.tasks.update(
+                    fixture.database.context,
+                    first.id,
+                    { name: "Stale" },
+                    first.version,
+                ),
             ).rejects.toBeInstanceOf(TaskConflictError);
         } finally {
             await fixture.close();
@@ -782,7 +787,7 @@ describe("TasksModule", () => {
             const raced = await fixture.tasks.create(ctx, {});
             await fixture.acceptText(raced.agentId, "user", "Rewrite the onboarding emails.");
             await vi.waitFor(() => expect(fixture.naming).toHaveBeenCalledTimes(3));
-            await fixture.tasks.rename(ctx, raced.id, "Onboarding emails", raced.version);
+            await fixture.tasks.update(ctx, raced.id, { name: "Onboarding emails" }, raced.version);
             answer({ title: "Generated name" });
             await fixture.tasks.close();
             expect((await fixture.tasks.get(ctx, raced.id))?.name).toBe("Onboarding emails");
@@ -1800,6 +1805,7 @@ describe("TasksModule", () => {
                 "005-task-explicit-leaves",
                 "006-task-order-keys-renumbered",
                 "007-task-member-unread",
+                "008-task-icon",
             ]);
         } finally {
             database.close();

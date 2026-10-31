@@ -3652,6 +3652,15 @@ export class ConfigModule implements AgentModule {
     }
 
     /**
+     * Whether rich tasks (task icons, and later the rest of `capabilities.taskSections`) are
+     * served. They are built in steps and switched on together; until then only
+     * `HAPPY_AGENT_TASK_SECTIONS=1` turns them on, for the scenarios that exercise them.
+     */
+    get taskSections(): boolean {
+        return this.#environmentValue("HAPPY_AGENT_TASK_SECTIONS") === "1";
+    }
+
+    /**
      * Package-manager folders programs are found in even when they are not on this process's
      * `PATH`, as for a daemon started from the desktop with launchd's short `PATH`: Homebrew's on
      * macOS and Linux, none on Windows. `HAPPY_AGENT_PROGRAM_DIRECTORIES` replaces them with its

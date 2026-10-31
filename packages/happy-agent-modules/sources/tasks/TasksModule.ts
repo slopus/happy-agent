@@ -29,7 +29,12 @@ import { ConfigModule } from "../config/index.js";
 import { DurableFunctionsModule } from "../durableFunctions/index.js";
 import { ProjectsModule } from "../projects/index.js";
 import type { RunnersModule } from "../runners/index.js";
-import { MAX_NAMING_MESSAGE_CHARS, TitlesModule } from "../titles/index.js";
+import {
+    MAX_NAMING_MESSAGE_CHARS,
+    TitlesModule,
+    type TitleNames,
+    type TitleNamesWanted,
+} from "../titles/index.js";
 import { WorkspacesModule } from "../workspaces/index.js";
 import { agentDeliveryMode } from "../impl/agentDeliveryMode.js";
 import type { HistoryModule } from "../history/index.js";
@@ -48,6 +53,7 @@ import {
     STANDALONE_TASK_MEMBER,
     taskMemberIdSchema,
     taskMembershipUnreadSchema,
+    taskIconSlugSchema,
     taskNameSchema,
     taskRecordSchema,
     TASK_ARCHIVE_FUNCTION,
@@ -108,6 +114,8 @@ const namingArgumentsSchema = Type.Object({
     taskId: cuid2Schema,
     providerId: Type.String(),
     message: Type.String({ minLength: 1, maxLength: MAX_NAMING_MESSAGE_CHARS }),
+    /** Whether the same request also picks the task's icon. */
+    icon: Type.Optional(Type.Literal(true)),
 });
 const ownerSchema = Type.Union([cuid2Schema, Type.Null()]);
 
@@ -146,6 +154,7 @@ export class TasksModule implements AgentModule {
     /** The mutation the sending run answers, carried on each message into a task. */
     readonly #history: HistoryModule | undefined;
     #agents: AgentSystemRef | undefined;
+    #iconsWanted: ((ctx: Context, task: TaskRecord) => Promise<boolean>) | undefined;
     #closed = false;
 
     constructor(
@@ -179,40 +188,33 @@ export class TasksModule implements AgentModule {
             executor: (ctx, call) =>
                 this.#backgroundScope.runInAsyncScope(async () => {
                     const { taskId, providerId, message } = call.arguments;
-                    const initial = await readTask(ctx, taskId);
-                    if (
-                        initial === undefined ||
-                        initial.nameConfigured ||
-                        initial.status !== "active"
-                    )
-                        return null;
-                    const name = await runNamingAttempts(
-                        ctx,
-                        call.kv,
-                        async () => {
-                            const current = await readTask(ctx, taskId);
-                            return (
-                                current !== undefined &&
-                                !current.nameConfigured &&
-                                current.status === "active"
-                            );
-                        },
-                        async () => {
-                            return (
-                                await this.#titles.suggestNames(
-                                    ctx,
-                                    {
-                                        firstMessage: message,
-                                        wanted: { title: true },
-                                        providerId,
-                                    },
-                                    ctx.lifetime === undefined ? {} : { signal: ctx.lifetime },
-                                )
-                            ).title;
-                        },
-                    );
-                    if (name === null) return null;
-                    const chosen = name ?? this.#titles.fallbackName(message);
+                    // The name and the icon end separately: each is wanted until it is settled.
+                    const wanted = (task: TaskRecord | undefined): TitleNamesWanted =>
+                        task === undefined || task.status !== "active"
+                            ? {}
+                            : {
+                                  ...(task.nameConfigured ? {} : { title: true }),
+                                  ...(call.arguments.icon && task.iconConfigured !== true
+                                      ? { icon: true }
+                                      : {}),
+                              };
+                    const eligible = async () =>
+                        Object.keys(wanted(await readTask(ctx, taskId))).length > 0;
+                    if (!(await eligible())) return null;
+                    let names: TitleNames = {};
+                    const answer = await runNamingAttempts(ctx, call.kv, eligible, async () => {
+                        const asked = wanted(await readTask(ctx, taskId));
+                        names = await this.#titles.suggestNames(
+                            ctx,
+                            { firstMessage: message, wanted: asked, providerId },
+                            ctx.lifetime === undefined ? {} : { signal: ctx.lifetime },
+                        );
+                        // A missing title is worth another attempt; an icon rides along.
+                        return asked.title === true ? names.title : names.icon;
+                    });
+                    if (answer === null) return null;
+                    const chosen =
+                        answer === undefined ? this.#titles.fallbackName(message) : names.title;
                     const title = chosen
                         ?.split(/\s+/u)
                         .slice(0, 6)
@@ -220,15 +222,23 @@ export class TasksModule implements AgentModule {
                         .slice(0, 60)
                         .trimEnd();
                     ctx.lifetime?.throwIfAborted();
-                    if (title === undefined || !Value.Check(taskNameSchema, title)) return null;
+                    const named = Value.Check(taskNameSchema, title) ? title : undefined;
+                    if (named === undefined && names.icon === undefined) return null;
                     await ctx.inTx(async (txCtx) => {
                         const current = await this.#required(txCtx, taskId);
-                        if (current.nameConfigured || current.status !== "active") return;
-                        await this.#updateAgentMetadata(txCtx, current.agentId, { title });
+                        const still = wanted(current);
+                        const name = still.title === true ? named : undefined;
+                        const icon = still.icon === true ? names.icon : undefined;
+                        if (name === undefined && icon === undefined) return;
+                        if (name !== undefined) {
+                            await this.#updateAgentMetadata(txCtx, current.agentId, {
+                                title: name,
+                            });
+                        }
                         await this.#change(txCtx, current, (value) => ({
                             ...value,
-                            name: title,
-                            nameConfigured: true,
+                            ...(name === undefined ? {} : { name, nameConfigured: true }),
+                            ...(icon === undefined ? {} : { icon }),
                         }));
                     });
                     return null;
@@ -292,10 +302,14 @@ export class TasksModule implements AgentModule {
         },
         messageAcceptedTransact: async (hookCtx, scope, accepted) => {
             // An unnamed task takes its name from the first request it is given: a person's
-            // message, or the opening message from the agent that created it.
+            // message, or the opening message from the agent that created it. When icons are
+            // wanted, the same request picks the icon, and a named task gets it alone.
             const task = await readTaskByAgent(hookCtx, scope.agent.id);
             if (task !== undefined) {
-                if (task.nameConfigured) return;
+                const icon =
+                    task.iconConfigured !== true &&
+                    (await this.#iconsWanted?.(hookCtx, task)) === true;
+                if (task.nameConfigured && !icon) return;
                 const message = namingText(accepted, task);
                 if (message.length === 0) return;
                 if ((await scope.kv.read(hookCtx, NAME_ATTEMPTED_KEY)) !== undefined) return;
@@ -307,6 +321,7 @@ export class TasksModule implements AgentModule {
                         taskId: task.id,
                         providerId: scope.agent.provider,
                         message,
+                        ...(icon ? { icon: true as const } : {}),
                     },
                 });
                 return;
@@ -333,6 +348,14 @@ export class TasksModule implements AgentModule {
         if (this.#closed) return;
         this.#closed = true;
         this.#backgroundScope.emitDestroy();
+    }
+
+    /**
+     * Lets the module that reads people's settings decide whether naming also picks a task's
+     * icon. Tasks cannot read settings itself: they depend on Team, which depends on Tasks.
+     */
+    decideIconsWith(wanted: (ctx: Context, task: TaskRecord) => Promise<boolean>): void {
+        this.#iconsWanted = wanted;
     }
 
     onEventTransactional(listener: TaskEventListener): TaskUnsubscribe {
@@ -803,30 +826,41 @@ export class TasksModule implements AgentModule {
     }
 
     /**
-     * Renames the task and its conversation together. The folder and identities do not move. A
-     * rename is a decision, so it also ends automatic naming, even when the name is unchanged.
+     * Renames the task and its conversation together, picks its icon (`null` for none), or both.
+     * The folder and identities do not move. Each is a decision, so it ends automatic choice of
+     * that part for good, even when the value is unchanged.
      */
-    async rename(
+    async update(
         ctx: Context,
         taskId: string,
-        name: string,
+        change: { readonly name?: string | undefined; readonly icon?: string | null | undefined },
         expectedVersion: number,
     ): Promise<TaskRecord> {
-        if (!Value.Check(taskNameSchema, name)) {
+        const { name, icon } = change;
+        if (name !== undefined && !Value.Check(taskNameSchema, name)) {
             throw new TaskInputError("The task name must be a short, nonblank line of text.");
+        }
+        if (icon !== undefined && icon !== null && !Value.Check(taskIconSlugSchema, icon)) {
+            throw new TaskInputError("The task icon must be a slug from the icon library.");
         }
         return await ctx.inTx(async (txCtx) => {
             const current = await this.#required(txCtx, taskId);
             this.#assertVersion(current, expectedVersion);
-            if (current.name === name && current.nameConfigured) return current;
-            if (current.name !== name) {
+            const renames =
+                name !== undefined && !(current.name === name && current.nameConfigured);
+            const picks =
+                icon !== undefined &&
+                !(current.icon === (icon ?? undefined) && current.iconConfigured === true);
+            if (!renames && !picks) return current;
+            if (renames && current.name !== name) {
                 await this.#updateAgentMetadata(txCtx, current.agentId, { title: name });
             }
-            return await this.#change(txCtx, current, (task) => ({
-                ...task,
-                name,
-                nameConfigured: true,
-            }));
+            return await this.#change(txCtx, current, (task) => {
+                if (renames) Object.assign(task, { name, nameConfigured: true });
+                if (!picks) return task;
+                delete task.icon;
+                return { ...task, ...(icon === null ? {} : { icon }), iconConfigured: true };
+            });
         });
     }
 

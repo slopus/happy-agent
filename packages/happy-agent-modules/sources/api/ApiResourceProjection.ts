@@ -222,12 +222,14 @@ export function botResource(
 
 /**
  * One task as the API shows it. `canArchive` depends on who is asking, so it is supplied only for
- * a caller's own response and left out of events, which reach every member alike.
+ * a caller's own response and left out of events, which reach every member alike. `icon` is
+ * served only with `capabilities.taskSections`.
  */
 export function taskResource(
     task: TaskRecord,
     agent: Readonly<Record<string, unknown>>,
-    canArchive?: boolean,
+    canArchive: boolean | undefined,
+    taskSections: boolean,
 ): Record<string, unknown> {
     return {
         id: task.id,
@@ -242,6 +244,9 @@ export function taskResource(
                 : { type: "runner", runnerId: task.runnerId, path: task.path },
         status: task.status,
         ...(canArchive === undefined ? {} : { canArchive }),
+        ...(taskSections
+            ? { icon: task.icon === undefined ? null : { type: "library", slug: task.icon } }
+            : {}),
         agent,
         version: apiResourceVersion(task.updatedAt, task.version, task.id),
         createdAt: task.createdAt,

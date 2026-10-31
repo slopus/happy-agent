@@ -141,4 +141,18 @@ export const taskMigrations = [
             );
         },
     ],
+    [
+        // A task's icon slug, and whether a person picked it; no existing task has either.
+        "008-task-icon",
+        async (_ctx: Context, database: AgentDatabaseFacade<AgentDatabase>): Promise<void> => {
+            await agentDatabaseRun(
+                database,
+                sql`ALTER TABLE ${sql.raw(TASKS_TABLE)} ADD COLUMN icon TEXT`,
+            );
+            await agentDatabaseRun(
+                database,
+                sql`ALTER TABLE ${sql.raw(TASKS_TABLE)} ADD COLUMN icon_configured INTEGER`,
+            );
+        },
+    ],
 ] as const;

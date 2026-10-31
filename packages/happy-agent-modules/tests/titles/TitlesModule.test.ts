@@ -207,6 +207,21 @@ describe("TitlesModule naming", () => {
         expect(test.provider.sessions).toHaveLength(1);
     });
 
+    it("takes an icon only from the library", async () => {
+        const test = await titles([
+            textTurn("<title>Login loop</title><icon>Login</icon>"),
+            textTurn("<title>Login loop</title><icon>padlock</icon>"),
+        ]);
+        const request = { firstMessage: "login loops", wanted: { title: true, icon: true } };
+        await expect(test.module.suggestNames(ctx, request)).resolves.toEqual({
+            title: "Login loop",
+            icon: "login",
+        });
+        await expect(test.module.suggestNames(ctx, request)).resolves.toEqual({
+            title: "Login loop",
+        });
+    });
+
     it("reduces a slug the model wrote as a title to kebab-case", async () => {
         const test = await titles([textTurn("<slug>Retry Policy Rewrite</slug>")]);
 

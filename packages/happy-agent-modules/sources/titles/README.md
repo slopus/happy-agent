@@ -31,7 +31,9 @@ Writing three words does not deserve a reasoning budget.
 
 Each name is asked for as its own tag, `<title>…</title>` and `<slug>…</slug>`, because that is the
 shape models answer most reliably, and only the names still wanted are asked for. A greeting, a code fence or a closing remark around it is ignored; an answer with no tag at
-all is read as the name itself. A chat title is bounded to six words and 80 characters; a workspace
+all is read as the name itself. A caller may also ask for `<icon>…</icon>`, a slug from
+`SPACE_ICON_SLUGS`, the clay library clients ship; an answer outside the library is no icon. Only
+tasks ask for it, and only when they want one. A chat title is bounded to six words and 80 characters; a workspace
 or branch name is reduced to lower-case kebab-case and bounded to 48 characters. Text that is merely
 too long is shortened rather than rejected — a slightly long name beats no name.
 

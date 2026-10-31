@@ -6,6 +6,7 @@ import {
     type TitleNamesWanted,
 } from "../Title.js";
 import { wantedNames } from "./createNamingRequest.js";
+import { SPACE_ICON_SLUGS } from "./spaceIconSlugs.js";
 
 /**
  * Reads the names out of whatever the model said.
@@ -28,9 +29,13 @@ export function parseSuggestedNames(text: string, wanted: TitleNamesWanted): Tit
     };
     const title = keep(read("title"), shortenTitle);
     const slug = keep(read("slug"), toSlug);
+    // An icon outside the library would draw as nothing, so it is no answer at all.
+    const iconAnswer = read("icon")?.toLowerCase();
+    const icon = SPACE_ICON_SLUGS.find((known) => known === iconAnswer);
     return {
         ...(slug === undefined ? {} : { slug }),
         ...(title === undefined ? {} : { title }),
+        ...(icon === undefined ? {} : { icon }),
     };
 }
 

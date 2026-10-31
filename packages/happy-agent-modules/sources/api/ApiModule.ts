@@ -72,6 +72,7 @@ import {
     createBotRequestSchema,
     createTaskRequestSchema,
     renameTaskRequestSchema,
+    updateTaskRequestSchema,
     joinTaskRequestSchema,
     leaveTaskRequestSchema,
     reorderTaskRequestSchema,
@@ -3365,12 +3366,13 @@ export class ApiModule implements AgentModule {
             { userVisible: true },
         );
         if (agent === undefined) throw new Error("The task event has no agent.");
-        const resource = taskResource(event.task, agent);
+        const sections = this.#config.taskSections;
+        const resource = taskResource(event.task, agent, undefined, sections);
         if (event.type === "task_created") {
             this.#journal.append("task.created", { task: resource }, event.at);
             return;
         }
-        const previous = taskResource(event.previousTask, agent);
+        const previous = taskResource(event.previousTask, agent, undefined, sections);
         const changes = resourceChanges(previous, resource);
         delete changes["agent"];
         this.#journal.append(
@@ -7035,7 +7037,13 @@ export class ApiModule implements AgentModule {
         }
         if (direct !== null && request.method === "PATCH") {
             const taskId = direct[1] as string;
-            const body = await bodyAs(request, renameTaskRequestSchema, "task rename");
+            const body = this.#config.taskSections
+                ? await bodyAs(request, updateTaskRequestSchema, "task update")
+                : await bodyAs(request, renameTaskRequestSchema, "task rename");
+            // Without `capabilities.taskSections` an icon is no part of the request, even beside
+            // a name.
+            const icon = this.#config.taskSections && "icon" in body ? body.icon : undefined;
+            const change = { name: body.name, icon: icon === null ? null : icon?.slug };
             const current = await tasks.get(ctx, taskId);
             if (current === undefined) throw notFound("The task was not found.");
             const resource = await this.#taskResource(ctx, current);
@@ -7046,7 +7054,7 @@ export class ApiModule implements AgentModule {
             try {
                 await this.#withMutationId(
                     body.mutationId,
-                    async () => await tasks.rename(ctx, taskId, body.name, current.version),
+                    async () => await tasks.update(ctx, taskId, change, current.version),
                 );
             } catch (error: unknown) {
                 if (!(error instanceof TaskConflictError)) throw error;
@@ -7429,7 +7437,12 @@ export class ApiModule implements AgentModule {
             userVisible: true,
         });
         if (agent === undefined) throw new Error("The task has no agent.");
-        return taskResource(task, agent, this.#canArchiveTask(ctx, task));
+        return taskResource(
+            task,
+            agent,
+            this.#canArchiveTask(ctx, task),
+            this.#config.taskSections,
+        );
     }
 
     async #taskResponse(ctx: Context, task: TaskRecord): Promise<Record<string, unknown>> {

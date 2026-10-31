@@ -13,6 +13,8 @@ export const titleNamesWantedSchema = Type.Object(
         slug: Type.Optional(Type.Boolean()),
         /** The chat title, written the way a person writes a title. */
         title: Type.Optional(Type.Boolean()),
+        /** An icon slug from the bundled library, picked in the same reading as the title. */
+        icon: Type.Optional(Type.Boolean()),
     },
     { additionalProperties: false },
 );
@@ -23,6 +25,7 @@ export type TitleNamesWanted = Static<typeof titleNamesWantedSchema>;
 export interface TitleNames {
     readonly slug?: string;
     readonly title?: string;
+    readonly icon?: string;
 }
 
 /** How much of the first message the naming request carries. */

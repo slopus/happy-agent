@@ -67,6 +67,16 @@ never reverses one, across restarts or preference changes; an explicit join clea
 existing order untouched. Startup catch-up invokes it in bounded transactions, while live task,
 profile, and preference mutations compose participation inside their originating transaction.
 
+## Name and icon
+
+An unnamed task is `New Task` until its first text-bearing message starts the durable
+`tasks.name` job. When `decideIconsWith` says the task's person wants icons (`RichTasksModule`
+does, for an owner with `tasks.rich` on while rich tasks are served), the same request also picks
+an icon slug from the titles module's library, and a named task gets that job for its icon alone.
+Otherwise the request is exactly the title-only one. `update` renames, picks an icon (`null` for
+none), or both in one version; each ends automatic choice of its own part for good, and the job
+rechecks both in its writing transaction, so a person's choice made while it runs always wins.
+
 ## Tools
 
 Offered to every root agent that is not a task, which means bots and human-owned roots. Tasks and
@@ -99,7 +109,7 @@ so the task reports back to it. `SubtasksModule` gives it the same coordinator g
 ## Public operations
 
 `list`, `listForMember`, `get`, `membership`, `memberFor`, `forAgent`, `forWorkspace`,
-`hasIdentity`, `create`, `createWithResult`, `sendMessage`, `rename`, `join`, `joinAutomatically`, `leave`, `reorder`,
+`hasIdentity`, `create`, `createWithResult`, `sendMessage`, `update`, `decideIconsWith`, `join`, `joinAutomatically`, `leave`, `reorder`,
 `archive`, `archiveForAgent`, `unarchive`, `purge`, and `onEvent`. Task mutations take an expected version
 and raise `TaskConflictError` when the row moved; memberships are unversioned because each list
 has one writer. `task_created`, `task_updated`, `task_joined`, `task_reordered`, and `task_left`
@@ -122,6 +132,8 @@ member with that member's order key. The module name once belonged to a per-agen
 released `001-task-state` migration stays first, `002-task-list-removed` drops that table, and
 `003-task-catalog` creates the catalog and memberships.
 Migration `005-task-explicit-leaves` adds a per-member/task exclusion table for automatic joining.
+Migration `008-task-icon` adds the nullable `icon` slug and `icon_configured`, set once a person
+picks the icon.
 
 The HTTP contract for tasks is specified in the Tasks chapter of `packages/happy-agent/API.md`
 and typed in `@slopus/happy-agent-client`. `ApiModule` serves it from this module's public

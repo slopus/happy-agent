@@ -178,3 +178,14 @@ Read only agent could start Auto work through a task, and a mode a person chose 
 ignored. Both now use the mode chosen at creation, or else Auto, narrowed to the creating or
 sending agent's mode. A task is a person's own root rather than the agent's child, so a Full
 access agent does not pass Full access on; the person picks the mode once they open it.
+
+## A task's icon comes from its naming request, and only for people who see rich tasks
+
+Rich tasks show an icon on every task card, chosen by the naming job in the same cheap request as
+the title, as one more `<icon>` tag limited to the restored clay library. Asking for it changes
+the naming prompt, and a named task would gain a request it never made, so the icon is asked for
+only when the owner has `tasks.rich` on and the daemon serves rich tasks; everyone else gets
+today's request byte for byte. Tasks cannot read settings (settings depend on Team, which depends
+on Tasks), so `RichTasksModule` answers through `decideIconsWith`. The name and the icon end
+separately: a person's rename leaves the icon to naming, and a person's pick, `null` included,
+ends automatic icon choice even when it races the job.
