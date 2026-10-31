@@ -84,6 +84,7 @@ import {
     unarchiveTaskRequestSchema,
     renameBotRequestSchema,
     reorderBotRequestSchema,
+    setBotVisibilityRequestSchema,
     reorderConnectionRequestSchema,
     unarchiveBotRequestSchema,
     configPatchSchema,
@@ -3287,6 +3288,20 @@ export class ApiModule implements AgentModule {
             );
             return;
         }
+        if (event.type === "bot_membership_updated") {
+            // One person's own state: only they hear it, and the bot's version does not move.
+            const { bot, membership } = event;
+            const version = apiResourceVersion(bot.updatedAt, bot.version, bot.id);
+            const changes = { hidden: membership.hidden, unread: membership.unread ?? null };
+            const memberId = membership.memberId;
+            this.#journal.append(
+                "bot.updated",
+                { botId: bot.id, previousVersion: version, version, changes },
+                event.at,
+                memberId === STANDALONE_TASK_MEMBER ? undefined : memberId,
+            );
+            return;
+        }
         // Agent creation and archival have their own independently versioned event chain. Bot
         // delivery runs inside the catalog's post-commit notification, so it must not wait on
         // another post-commit chain from that same transaction.
@@ -4726,6 +4741,11 @@ export class ApiModule implements AgentModule {
                     if (task !== undefined) {
                         await this.#tasks!.markRead(ctx, task.id, this.#taskMember(ctx));
                     }
+                    // A bot's unread mark for this person clears the same way.
+                    const bot = await this.#bots.forAgent(ctx, agentId);
+                    const member = this.#tasks?.memberFor(teamUser(ctx)?.id);
+                    if (bot !== undefined && member !== undefined)
+                        await this.#bots.updateMembership(ctx, bot.id, member, { unread: null });
                 });
                 sendJson(response, 200, await this.#focusedAgentResponse(ctx, agentId));
                 return true;
@@ -6343,6 +6363,20 @@ export class ApiModule implements AgentModule {
                 return true;
             }
             return false;
+        }
+
+        // A person's own Bots section, like their task list, takes no version.
+        const visibility = /^\/v0\/bots\/([a-z][a-z0-9]*)\/visibility$/.exec(url.pathname);
+        if (visibility !== null && request.method === "PUT") {
+            const body = await bodyAs(request, setBotVisibilityRequestSchema, "bot visibility");
+            const bot = await this.#bots.get(ctx, visibility[1] as string);
+            if (bot === undefined) throw notFound("The bot was not found.");
+            const change = { hidden: body.hidden, held: true };
+            await this.#withMutationId(body.mutationId, async () => {
+                await this.#bots.updateMembership(ctx, bot.id, this.#taskMember(ctx), change);
+            });
+            sendJson(response, 200, { bot: await this.#botResource(ctx, bot) });
+            return true;
         }
 
         const action = /^\/v0\/bots\/([a-z][a-z0-9]*)\/(archive|unarchive|reorder)$/.exec(
@@ -8391,7 +8425,11 @@ export class ApiModule implements AgentModule {
             userVisible: true,
         });
         if (agent === undefined) throw new Error("The bot has no agent.");
-        return botResource(bot, agent);
+        // `hidden` and `unread` are the caller's own, so events reaching everyone leave them out.
+        const member = this.#tasks?.memberFor(teamUser(ctx)?.id);
+        if (member === undefined) return botResource(bot, agent);
+        const { hidden, unread } = await this.#bots.membership(ctx, bot.id, member);
+        return { ...botResource(bot, agent), hidden, ...(unread === undefined ? {} : { unread }) };
     }
 
     async #agentsForProject(

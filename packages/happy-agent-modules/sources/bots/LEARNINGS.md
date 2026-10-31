@@ -1,5 +1,16 @@
 # Bots — learnings
 
+## Hiding a bot is one person's, and it comes back with its mark
+
+Kirill asked for bots that Focus or a person can tuck away and that resurface on their own when
+they have something for that person. Bots stay in their own section above the tasks; hiding only
+leaves them out of one person's section and never pauses them, so their scheduled messages keep
+running. Each person's `hidden`, `held` (they chose it themselves, so Focus leaves it), and
+`unread` live on a row per bot and person, not on the bot or its agent, whose `unread` is shared.
+A loop-in from the bot clears `hidden` and sets `unread` in one write and one event, so a client
+never draws the row without its dot. The event reaches only that person and does not move the
+bot's version, because nobody else's copy changed.
+
 ## Managed pictures share one normalization function
 
 Bot, node, and Surface pictures use one managed-image normalization function for WebP encoding,

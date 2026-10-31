@@ -1,7 +1,7 @@
 import { Type, type Static } from "@sinclair/typebox";
 import type { Context } from "@steve.kite/stdlib";
 
-import { botRecordSchema, botTimestampSchema } from "./Bot.js";
+import { botMembershipSchema, botRecordSchema, botTimestampSchema } from "./Bot.js";
 
 const envelope = {
     eventId: Type.String({ minLength: 1, maxLength: 128 }),
@@ -19,6 +19,16 @@ export const botEventSchema = Type.Union([
             type: Type.Literal("bot_updated"),
             bot: botRecordSchema,
             previousBot: botRecordSchema,
+        },
+        { additionalProperties: false },
+    ),
+    /** One person's `hidden` or `unread` on the bot changed; the bot itself did not. */
+    Type.Object(
+        {
+            ...envelope,
+            type: Type.Literal("bot_membership_updated"),
+            bot: botRecordSchema,
+            membership: botMembershipSchema,
         },
         { additionalProperties: false },
     ),

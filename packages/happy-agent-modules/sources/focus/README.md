@@ -61,9 +61,13 @@ turned on again. A Focus the person archived is replaced by a new one at the nex
 
 ## `organize_tasks`
 
-`{ ops, note? }`, with `move` (a task, after a task, at the top, or first in a section) and `hide`,
-applied in order in one transaction through the Tasks module's own operations, so every change
-publishes its usual events after commit. A skipped operation reports `held_by_person`,
+`{ ops, note? }`, with `move` (a task, after a task, at the top, or first in a section) and `hide`
+(a task, or a bot by `botId`), applied in order in one transaction through the Tasks and Bots
+modules' own operations, so every change publishes its usual events after commit. Bots always stay
+in their own section above the tasks: a `move` or task `hide` naming a bot is `bots_not_allowed`.
+A bot the person hid or showed themselves is held through the bots module's own `held` flag, which
+lasts until one of the bot's loop-ins shows it to them again; the brief lists every active bot
+with its unread, hidden, and held marks. A skipped operation reports `held_by_person`,
 `not_found`, or `bots_not_allowed`; the rest still apply. A call made after `tasks.focus` went off
 answers `{ "error": "off" }`. It needs no review in Auto: it only rearranges the person's own list.
 

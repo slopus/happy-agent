@@ -7,11 +7,13 @@ import type { Context } from "@steve.kite/stdlib";
 
 import {
     botAvatarAssetSchema,
+    botMembershipSchema,
     botRecordSchema,
     type BotAvatarAsset,
+    type BotMembership,
     type BotRecord,
 } from "./Bot.js";
-import { BOT_AVATARS_TABLE, BOTS_TABLE } from "./BotMigrations.js";
+import { BOT_AVATARS_TABLE, BOT_MEMBERS_TABLE, BOTS_TABLE } from "./BotMigrations.js";
 
 interface BotRow {
     readonly id: string;
@@ -193,9 +195,40 @@ export async function deleteBotAvatar(ctx: Context, botId: string): Promise<void
     );
 }
 
+export async function readBotMembership(
+    ctx: Context,
+    botId: string,
+    memberId: string,
+): Promise<BotMembership> {
+    const [row] = await agentDatabaseRows<{ state: string }>(
+        ctx.db,
+        sql`SELECT state FROM ${sql.raw(BOT_MEMBERS_TABLE)}
+            WHERE bot_id = ${botId} AND member_id = ${memberId}`,
+    );
+    const stored: unknown = row === undefined ? {} : JSON.parse(row.state);
+    const membership = { botId, memberId, hidden: false, held: false, ...(stored as object) };
+    if (!Value.Check(botMembershipSchema, membership)) throw new Error("The bot state is invalid.");
+    return membership;
+}
+
+export async function writeBotMembership(ctx: Context, membership: BotMembership): Promise<void> {
+    if (!Value.Check(botMembershipSchema, membership)) throw new Error("The bot state is invalid.");
+    const { botId, memberId, ...state } = membership;
+    await agentDatabaseRun(
+        ctx.db,
+        sql`INSERT INTO ${sql.raw(BOT_MEMBERS_TABLE)} (bot_id, member_id, state)
+            VALUES (${botId}, ${memberId}, ${JSON.stringify(state)})
+            ON CONFLICT (bot_id, member_id) DO UPDATE SET state = EXCLUDED.state`,
+    );
+}
+
 /** Remove a bot's row and its picture. The system seed ledger is deliberately left alone. */
 export async function deleteBot(ctx: Context, botId: string): Promise<void> {
     await deleteBotAvatar(ctx, botId);
+    await agentDatabaseRun(
+        ctx.db,
+        sql`DELETE FROM ${sql.raw(BOT_MEMBERS_TABLE)} WHERE bot_id = ${botId}`,
+    );
     await agentDatabaseRun(ctx.db, sql`DELETE FROM ${sql.raw(BOTS_TABLE)} WHERE id = ${botId}`);
 }
 

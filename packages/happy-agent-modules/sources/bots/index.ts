@@ -12,6 +12,7 @@ export {
     BotNotFoundError,
     type BotAvatarAsset,
     type BotCreation,
+    type BotMembership,
     type BotRecord,
     type BotStatus,
     type CreateBotInput,

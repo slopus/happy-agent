@@ -8,6 +8,7 @@ import type { FocusModule } from "../FocusModule.js";
 export const focusOpSchema = Type.Union([
     Type.Object({ op: Type.Literal("move"), taskId: cuid2Schema, after: taskSectionAnchorSchema }),
     Type.Object({ op: Type.Literal("hide"), taskId: cuid2Schema, hidden: Type.Boolean() }),
+    Type.Object({ op: Type.Literal("hide"), botId: cuid2Schema, hidden: Type.Boolean() }),
 ]);
 export type FocusOp = Static<typeof focusOpSchema>;
 export const focusSkipReasonSchema = Type.Union([
@@ -44,7 +45,8 @@ export function organizeTasksTool(focus: FocusModule, memberId: string) {
             "Arrange the person's task list. Operations apply in order, in one step:",
             '- move: { op: "move", taskId, after }, where after is { taskId }, { sectionId } (first in that section), or null (the top).',
             '- hide: { op: "hide", taskId, hidden } takes a task out of the list or brings it back.',
-            "An operation on a task the person holds, on something missing, or on a bot is skipped with its reason; the rest still apply.",
+            '- hide a bot: { op: "hide", botId, hidden } takes it out of the Bots section or brings it back. Bots are never moved.',
+            "An operation on a row the person holds, on something missing, or that moves a bot is skipped with its reason; the rest still apply.",
         ].join("\n"),
         parameters: organizeTasksInputSchema,
         returnType: organizeTasksResultSchema,

@@ -1,5 +1,6 @@
 import { AsyncResource } from "node:async_hooks";
 import { basename } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 
 import { createId } from "@paralleldrive/cuid2";
 import { orderKeyBetween } from "../utils/orderKeyBetween.js";
@@ -44,6 +45,7 @@ import {
     BotNotFoundError,
     type BotAvatarAsset,
     type BotCreation,
+    type BotMembership,
     type BotRecord,
     type CreateBotInput,
 } from "./Bot.js";
@@ -70,9 +72,11 @@ import {
     readBotByAgent,
     readBotByUsername,
     readBotByWorkspace,
+    readBotMembership,
     readBots,
     updateBot,
     writeBotAvatar,
+    writeBotMembership,
 } from "./BotStore.js";
 import { formatBotIdentityPrompt } from "./impl/formatBotIdentityPrompt.js";
 import { formatChiefOfStaffInstructions } from "./impl/formatChiefOfStaffInstructions.js";
@@ -713,6 +717,45 @@ export class BotsModule implements AgentModule {
             return await this.#change(txCtx, current, (bot) =>
                 bot.orderKey === orderKey ? undefined : { ...bot, orderKey },
             );
+        });
+    }
+
+    /** One person's own state on a bot: whether they hid it, and what they have not read. */
+    async membership(ctx: Context, botId: string, memberId: string): Promise<BotMembership> {
+        return await readBotMembership(ctx, botId, memberId);
+    }
+
+    /**
+     * Change one person's own state on a bot; `unread: null` clears it. A change to what they see
+     * publishes one event carrying both `hidden` and `unread`, so neither shows without the other.
+     * TODO(stories): a story this bot posts that the person can see shows it to them here too.
+     */
+    async updateMembership(
+        ctx: Context,
+        botId: string,
+        memberId: string,
+        change: Partial<Pick<BotMembership, "hidden" | "held">> & {
+            readonly unread?: BotMembership["unread"] | null;
+        },
+    ): Promise<BotMembership> {
+        return await ctx.inTx(async (txCtx) => {
+            const bot = await this.#required(txCtx, botId);
+            const previous = await readBotMembership(txCtx, botId, memberId);
+            const { unread, ...state } = change;
+            const { unread: before, ...kept } = previous;
+            const after = unread === undefined ? before : (unread ?? undefined);
+            const next = { ...kept, ...state, ...(after === undefined ? {} : { unread: after }) };
+            if (isDeepStrictEqual(next, previous)) return previous;
+            await writeBotMembership(txCtx, next);
+            if (next.hidden === previous.hidden && isDeepStrictEqual(after, before)) return next;
+            this.#publish(txCtx, {
+                eventId: globalThis.crypto.randomUUID(),
+                at: Date.now(),
+                type: "bot_membership_updated",
+                bot,
+                membership: next,
+            });
+            return next;
         });
     }
 

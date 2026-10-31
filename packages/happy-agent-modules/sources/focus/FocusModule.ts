@@ -225,6 +225,14 @@ export class FocusModule implements AgentModule {
         op: FocusOp,
         held: ReadonlySet<string>,
     ): Promise<FocusSkipReason | undefined> {
+        // Bots stay in their own section: Focus only hides or shows one the person left to it.
+        if ("botId" in op) {
+            if ((await this.#bots.get(ctx, op.botId)) === undefined) return "not_found";
+            if ((await this.#bots.membership(ctx, op.botId, memberId)).held)
+                return "held_by_person";
+            await this.#bots.updateMembership(ctx, op.botId, memberId, { hidden: op.hidden });
+            return undefined;
+        }
         if ((await this.#bots.get(ctx, op.taskId)) !== undefined) return "bots_not_allowed";
         if ((await this.#tasks.membership(ctx, op.taskId, memberId)) === undefined)
             return "not_found";
@@ -353,7 +361,22 @@ export class FocusModule implements AgentModule {
             rows.push({ orderKey: membership.orderKey, line });
         }
         rows.sort((a, b) => (a.orderKey < b.orderKey ? -1 : a.orderKey > b.orderKey ? 1 : 0));
+        const bots: string[] = [];
+        for (const bot of await this.#bots.list(ctx)) {
+            if (bot.status !== "active") continue;
+            const { hidden, held, unread } = await this.#bots.membership(ctx, bot.id, memberId);
+            const facts = [
+                `- ${bot.name} (bot ${bot.id})`,
+                unread === undefined ? null : "unread",
+                hidden ? "hidden" : null,
+                held ? "held by the person" : null,
+            ];
+            bots.push(facts.filter((fact) => fact !== null).join(" · "));
+        }
         return [
+            "The person's bots, in their own section at the top:",
+            ...(bots.length === 0 ? ["(none)"] : bots),
+            "",
             "The person's list, top first:",
             ...(rows.length === 0 ? ["(empty)"] : rows.map(({ line }) => line)),
             "",

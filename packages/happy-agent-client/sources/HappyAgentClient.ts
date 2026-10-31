@@ -66,6 +66,7 @@ import type {
     CreateBotRequest,
     RenameBotRequest,
     ReorderBotRequest,
+    SetBotVisibilityRequest,
     UnarchiveBotRequest,
 } from "./protocol/bots.js";
 import type {
@@ -1494,6 +1495,20 @@ export class HappyAgentClient {
             path: `v0/bots/${encodeURIComponent(botId)}/reorder`,
             json: request,
             ifMatch: options.ifMatch,
+            signal: options.signal,
+        });
+    }
+
+    /** `PUT /v0/bots/:botId/visibility` — protocol 34; the caller's own Bots section only. */
+    async setBotVisibility(
+        botId: Cuid2,
+        request: SetBotVisibilityRequest,
+        options: RequestOptions = {},
+    ): Promise<BotResponse> {
+        return await this.#json({
+            method: "PUT",
+            path: `v0/bots/${encodeURIComponent(botId)}/visibility`,
+            json: request,
             signal: options.signal,
         });
     }

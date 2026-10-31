@@ -6,7 +6,9 @@ import type {
 } from "@slopus/happy-agent-base";
 import type { Context } from "@steve.kite/stdlib";
 
-import { TasksModule, type TaskMembership } from "../tasks/index.js";
+import { BotsModule } from "../bots/index.js";
+import { RichTasksModule } from "../richTasks/index.js";
+import { TasksModule } from "../tasks/index.js";
 import { TeamModule, type TeamUser } from "../team/index.js";
 import { listTeammatesTool } from "./tools/list_teammates.js";
 import { loopInTeammateTool } from "./tools/loop_in_teammate.js";
@@ -33,33 +35,57 @@ const TEAMMATES_INSTRUCTIONS = [
     "When you mention a person in a reply, link them as [their name](happy://users/<userId>); people see their current name as the link text. list_teammates and loop_in_teammate give you the exact link.",
 ].join("\n");
 
+const BOT_TEAMMATES_INSTRUCTIONS = [
+    "# Teammates",
+    "",
+    "list_teammates shows each person on the team: user ID, name, role, and what they follow. When something you found clearly concerns one teammate, such as work they follow or people they know, loop them in with loop_in_teammate and say why in one sentence: it marks this bot new for them and brings it back into their sidebar if they had hidden it, and nobody else is notified. Do not loop people in for things they would not care about.",
+    "When you mention a person in a reply, link them as [their name](happy://users/<userId>); people see their current name as the link text. list_teammates and loop_in_teammate give you the exact link.",
+].join("\n");
+
+/** Where an agent loops people in: its own task, or its own bot. */
+export type LoopInTarget = { readonly taskId: string } | { readonly botId: string };
+
 /**
  * The people on the team, as agents see them, and looping one of them into a task.
  *
  * A task's agent reads the directory and adds a teammate to its own task: the teammate joins it
- * even when their automatic joining is off, and the task is marked unread for them. Team mode
- * only, because a standalone installation is one person.
+ * even when their automatic joining is off, and the task is marked unread for them. A bot's agent
+ * does the same for its bot while its person has rich tasks on. Team mode only, because a
+ * standalone installation is one person.
  */
 export class TeammatesModule implements AgentModule {
     readonly name = "teammates";
     readonly #tasks: TasksModule;
     readonly #team: TeamModule;
+    readonly #bots: BotsModule;
+    readonly #richTasks: RichTasksModule;
 
-    constructor(tasks: TasksModule, team: TeamModule) {
+    constructor(
+        tasks: TasksModule,
+        team: TeamModule,
+        bots: BotsModule,
+        richTasks: RichTasksModule,
+    ) {
         this.#tasks = tasks;
         this.#team = team;
+        this.#bots = bots;
+        this.#richTasks = richTasks;
     }
 
     readonly #hooks: AgentModuleHooks = {
-        instructions: async (ctx: Context, scope: AgentModuleScope): Promise<string> =>
-            (await this.#offersTools(ctx, scope.agent.id)) ? TEAMMATES_INSTRUCTIONS : "",
-        tools: async (ctx: Context, scope: AgentModuleScope): Promise<readonly AnyAgentTool[]> => {
-            const task = this.#team.enabled
-                ? await this.#tasks.forAgent(ctx, scope.agent.id)
-                : undefined;
-            if (task === undefined) return [];
-            return [listTeammatesTool(this), loopInTeammateTool(this, task.id, scope.agent.id)];
+        instructions: async (ctx: Context, scope: AgentModuleScope): Promise<string> => {
+            const to = await this.#target(ctx, scope);
+            if (to === undefined) return "";
+            return "botId" in to ? BOT_TEAMMATES_INSTRUCTIONS : TEAMMATES_INSTRUCTIONS;
         },
+        tools: async (ctx: Context, scope: AgentModuleScope): Promise<readonly AnyAgentTool[]> => {
+            const to = await this.#target(ctx, scope);
+            if (to === undefined) return [];
+            return [listTeammatesTool(this), loopInTeammateTool(this, to, scope.agent.id)];
+        },
+        // A bot's tools follow the person its turn answers.
+        messageAcceptedTransact: async (ctx, scope, accepted) =>
+            await this.#richTasks.notePerson(ctx, scope.kv, accepted),
     };
 
     readonly beforeStart = (): AgentModuleHooks => this.#hooks;
@@ -75,20 +101,18 @@ export class TeammatesModule implements AgentModule {
             );
     }
 
-    /** Add a teammate to the task and mark it unread for them with the agent's reason. */
+    /**
+     * Add a teammate to the task and mark it unread for them with the agent's reason. For a bot,
+     * show it to them again and mark it unread, in one change that touches nobody else.
+     */
     async loopIn(
         ctx: Context,
-        input: {
-            readonly taskId: string;
+        input: LoopInTarget & {
             readonly agentId: string;
             readonly userId: string;
             readonly reason: string;
         },
-    ): Promise<{
-        readonly teammate: Teammate;
-        readonly membership: TaskMembership;
-        readonly joined: boolean;
-    }> {
+    ): Promise<{ readonly teammate: Teammate; readonly joined: boolean }> {
         return await ctx.inTx(async (txCtx) => {
             const user = this.#team.enabled
                 ? await this.#team.getUser(txCtx, input.userId)
@@ -96,16 +120,29 @@ export class TeammatesModule implements AgentModule {
             if (user === undefined || user.authentication === "guest") {
                 throw new TeammateNotFoundError();
             }
+            if ("botId" in input) {
+                const { agentId, reason: note } = input;
+                const unread = { reason: "looped_in", since: Date.now(), agentId, note };
+                const change = { hidden: false, held: false, unread };
+                await this.#bots.updateMembership(txCtx, input.botId, user.id, change);
+                return { teammate: teammate(user), joined: true };
+            }
             const result = await this.#tasks.loopIn(txCtx, input.taskId, user.id, {
                 agentId: input.agentId,
                 note: input.reason,
             });
-            return { teammate: teammate(user), ...result };
+            return { teammate: teammate(user), joined: result.joined };
         });
     }
 
-    async #offersTools(ctx: Context, agentId: string): Promise<boolean> {
-        return this.#team.enabled && (await this.#tasks.forAgent(ctx, agentId)) !== undefined;
+    /** The agent's own task, or its own bot while its person has rich tasks on. */
+    async #target(ctx: Context, scope: AgentModuleScope): Promise<LoopInTarget | undefined> {
+        if (!this.#team.enabled) return undefined;
+        const task = await this.#tasks.forAgent(ctx, scope.agent.id);
+        if (task !== undefined) return { taskId: task.id };
+        const bot = await this.#bots.forAgent(ctx, scope.agent.id);
+        if (bot === undefined || !(await this.#richTasks.isOnForAgent(ctx, scope))) return;
+        return { botId: bot.id };
     }
 }
 

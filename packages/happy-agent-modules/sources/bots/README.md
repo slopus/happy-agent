@@ -68,6 +68,15 @@ shared `/v0/workspaces` HTTP and model-tool surfaces, while bot creation, listin
 agent messaging remain usable. When workspace routes are enabled, a bot's unlisted dedicated
 workspace is addressable by ID for files, terminals, and the workspace proxy.
 
+## Each person's own state
+
+`membership` and `updateMembership` keep one row per bot and person (migration
+`008-bot-members`), its state one JSON value: whether they hid the bot in their Bots section, whether they chose that
+themselves (`held`, which Focus respects), and what they have not read. No row means shown and
+read. One change writes the row and, when `hidden` or `unread` moved, publishes one
+`bot_membership_updated` carrying both, so the API tells only that person, never showing the bot
+without its mark. The bot's version does not move.
+
 ## Bot settings
 
 Each bot carries the owner's settings, stored by the bot settings module against the bot's agent:

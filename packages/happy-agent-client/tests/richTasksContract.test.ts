@@ -56,6 +56,9 @@ const membership = {
     joinedAt: at,
     hidden: true,
 };
+const [hidden, unread] = [false, { reason: "looped_in", since: at, agentId: agent.id, note: "X" }];
+// A bot shares a task's identity and lifecycle fields; task-only extras are tolerated.
+const bot = { ...task, username: "social_growth", avatar: null, orderKey: "1", hidden, unread };
 const section = {
     id: "s9d8f7g6h5j4k3l2m1n0b9v8",
     name: "Priorities",
@@ -130,6 +133,12 @@ function responses(c: typeof current | typeof published): [string, TSchema, unkn
             },
         ],
         ["task.membership.updated", c.taskMembershipPayloadSchema, { membership }],
+        ["bot list", c.botListResponseSchema, { bots: [bot] }],
+        [
+            "bot.updated for one person",
+            c.botUpdatedPayloadSchema,
+            { botId: bot.id, previousVersion: version, version, changes: { hidden, unread } },
+        ],
         [
             "chat page",
             c.surfaceMessagePageResponseSchema,
@@ -221,6 +230,8 @@ describe("rich tasks contract", () => {
             true,
         );
         expect(Value.Check(current.updateTaskRequestSchema, { icon: null })).toBe(true);
+        expect(Value.Check(current.setBotVisibilityRequestSchema, { hidden: true })).toBe(true);
+        expect(Value.Check(current.setBotVisibilityRequestSchema, {})).toBe(false);
         expect(Value.Check(current.updateTaskRequestSchema, { mutationId: "m1" })).toBe(false);
         expect(
             Value.Check(current.reorderTaskAfterSectionRequestSchema, {

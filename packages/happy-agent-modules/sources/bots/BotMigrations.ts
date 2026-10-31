@@ -6,6 +6,7 @@ export const BOTS_TABLE = "happy_agent_module_bots";
 export const BOT_AVATARS_TABLE = "happy_agent_module_bot_avatars";
 export const BOT_SYSTEM_SEEDS_TABLE = "happy_agent_module_bot_system_seeds";
 export const BOT_SYSTEM_RENAMES_TABLE = "happy_agent_module_bot_system_renames";
+export const BOT_MEMBERS_TABLE = "happy_agent_module_bot_members";
 
 export const botMigrations = [
     [
@@ -139,6 +140,17 @@ export const botMigrations = [
                     name TEXT NOT NULL,
                     PRIMARY KEY (system_key, name)
                 )`,
+            );
+        },
+    ],
+    [
+        "008-bot-members",
+        /** Each person's own `hidden`, `held`, and `unread` on a bot, as JSON; no row means shown and read. */
+        async (_ctx: Context, database: AgentDatabase): Promise<void> => {
+            await agentDatabaseRun(
+                database,
+                sql`CREATE TABLE ${sql.raw(BOT_MEMBERS_TABLE)} (bot_id TEXT NOT NULL,
+                    member_id TEXT NOT NULL, state TEXT NOT NULL, PRIMARY KEY (bot_id, member_id))`,
             );
         },
     ],

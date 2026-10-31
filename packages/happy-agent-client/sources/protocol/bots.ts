@@ -11,6 +11,7 @@ import {
     resourceVersionSchema,
     timestampSchema,
 } from "./common.js";
+import { taskMembershipUnreadSchema } from "./tasks.js";
 
 /** A bot picture. Its bytes are served separately from the bot resource. */
 export const botAvatarSchema = Type.Object({
@@ -55,7 +56,11 @@ export const botSchema = Type.Object({
     /** Mirrors the dedicated workspace's compute. */
     compute: computeSchema,
     createdAt: timestampSchema,
+    /** Protocol 34: the caller hid it in their Bots section; absent means `false`. */
+    hidden: Type.Optional(Type.Boolean()),
     id: cuid2Schema,
+    /** Protocol 34: what the caller has not looked at on this bot; absent or `null` is nothing. */
+    unread: Type.Optional(Nullable(taskMembershipUnreadSchema)),
     /** Whether this bot has the `admin_bot` tool role. Older compatible daemons omit it. */
     isAdmin: Type.Optional(Type.Boolean()),
     name: botNameSchema,
@@ -124,3 +129,10 @@ export const reorderBotRequestSchema = Type.Object({
     mutationId: Type.Optional(mutationIdSchema),
 });
 export type ReorderBotRequest = Static<typeof reorderBotRequestSchema>;
+
+/** `PUT /v0/bots/:botId/visibility`, protocol 34: hides or shows the bot for the caller only. */
+export const setBotVisibilityRequestSchema = Type.Object({
+    hidden: Type.Boolean(),
+    mutationId: Type.Optional(mutationIdSchema),
+});
+export type SetBotVisibilityRequest = Static<typeof setBotVisibilityRequestSchema>;

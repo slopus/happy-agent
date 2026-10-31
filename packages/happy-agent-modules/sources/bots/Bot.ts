@@ -1,5 +1,10 @@
 import { cuid2Schema } from "@slopus/happy-agent-base";
-import { botAvatarSchema, botNameSchema, botUsernameSchema } from "@slopus/happy-agent-client";
+import {
+    botAvatarSchema,
+    botNameSchema,
+    botUsernameSchema,
+    taskMembershipUnreadSchema,
+} from "@slopus/happy-agent-client";
 import { Type, type Static } from "@sinclair/typebox";
 
 import { botSystemKeySchema } from "./BotSystemKey.js";
@@ -41,6 +46,20 @@ export const botRecordSchema = Type.Object(
     { additionalProperties: false },
 );
 
+/** One person's own state on a bot. A person who never changed it has the bot shown and read. */
+export const botMembershipSchema = Type.Object(
+    {
+        botId: cuid2Schema,
+        memberId: Type.String({ minLength: 1, maxLength: 128 }),
+        hidden: Type.Boolean(),
+        /** The person chose `hidden` themselves, so Focus leaves it alone. */
+        held: Type.Boolean(),
+        /** What they have not read, shaped like a task membership's: today a loop-in. */
+        unread: Type.Optional(taskMembershipUnreadSchema),
+    },
+    { additionalProperties: false },
+);
+
 export const createBotInputSchema = Type.Object(
     {
         id: Type.Optional(cuid2Schema),
@@ -72,6 +91,7 @@ export const botAvatarAssetSchema = Type.Object(
 
 export type BotRecord = Static<typeof botRecordSchema>;
 export type BotStatus = Static<typeof botStatusSchema>;
+export type BotMembership = Static<typeof botMembershipSchema>;
 export type CreateBotInput = Static<typeof createBotInputSchema>;
 export const botCreationSchema = Type.Object({ bot: botRecordSchema, created: Type.Boolean() });
 export type BotCreation = Static<typeof botCreationSchema>;

@@ -732,7 +732,7 @@ export async function startHappyAgentRuntime(
             await system?.close(shutdownCtx);
             await codeMode.close();
         });
-        const teammates = new TeammatesModule(tasks, team);
+        const teammates = new TeammatesModule(tasks, team, bots, richTasks);
         const live = new LiveModule(
             config,
             durableFunctions,

@@ -8652,6 +8652,31 @@ Fields:
 - `version` — the UUIDv7 concurrency version; see the basics.
 - `createdAt`, `updatedAt`, `archivedAt` — lifecycle timestamps; `archivedAt` is `null` while
   active.
+- `hidden` — whether the caller's Bots section leaves this bot out; see "Hiding a bot". It
+  belongs to the caller alone. Protocol 34; older daemons omit it, and clients treat a missing
+  value as `false`.
+- `unread` — what the caller has not looked at on this bot, in the shape of a task membership's
+  `unread`: `reason` (`"looped_in"` today), `since`, and optionally `agentId` (the bot's agent)
+  and `note` (its one-sentence reason). It belongs to the caller alone. Present only while there
+  is something; absent or `null` means nothing. Protocol 34; older daemons omit it.
+
+### Hiding a bot
+
+Bots always sit in their own section at the top of the sidebar, above the tasks, in catalog
+order. Each person may hide a bot there, and a hidden bot leaves only that person's section: it
+keeps its place, keeps running, and stays in every response and in search. `hidden` and `unread`
+on the bot object belong to the caller; another person's never show.
+
+A hidden bot comes back on its own when it has something for the person. When a bot's agent loops
+a team member in with `loop_in_teammate` (see "Mentioning a teammate" under Tasks), that member's
+`hidden` clears and their `unread` is set in one change, delivered as one `bot.updated` carrying
+both, so the row never appears without its unread mark. Nobody else's state changes.
+`POST /v0/agents/:agentId/read` on the bot's agent clears the caller's `unread`.
+
+A change to the caller's own `hidden` or `unread` is delivered as `bot.updated` to that person's
+connections only, in team mode, with `changes` holding both fields (`unread` `null` when cleared).
+These fields are not versioned: such an event names the bot's unchanged version as both
+`previousVersion` and `version`, and clients apply its `changes` without moving the version.
 
 ### `GET /v0/bots`
 
@@ -8783,6 +8808,16 @@ Request: `{ "afterId": "c3d4e5f6", "mutationId": "..." }` — the bot to place t
 
 Response — `200`: `{ "bot": { ... } }`. Reordering assigns the moved bot a fractional `orderKey`
 between its destination neighbours; neighbour keys and versions remain unchanged.
+
+### `PUT /v0/bots/:botId/visibility`
+
+Hides the bot in the caller's own Bots section, or shows it again; see "Hiding a bot". Protocol 34. Like a task membership change it needs no `If-Match`, and the latest change wins. Archived
+bots may be hidden too. Setting the value the caller already has changes nothing and emits nothing.
+
+Request: `{ "hidden": true, "mutationId": "..." }`
+
+Response — `200`: `{ "bot": { ... } }` with the caller's `hidden`. A change emits `bot.updated`
+to the caller's connections only; `404` when no such bot exists.
 
 ### `GET /v0/bots/:botId/avatar`
 
@@ -10239,6 +10274,11 @@ joins them to the task. Such a join ignores `tasks.autoJoin`, clears an explicit
 manual join, and marks the membership `unread` with the agent's reason; looping in a member already
 in the task keeps its place and marks it unread again. Agents write a person as `[Name](happy://users/<userId>)` (see "Happy links").
 
+A bot's agent gets the same two tools while the person its turn works for has `tasks.rich` on
+(protocol 34). Looping someone in from a bot joins them to nothing: it marks that bot unread for
+them with the bot's reason and shows it again in their Bots section if they had hidden it, in one
+change (see "Hiding a bot"). Everyone else's bot state is unchanged.
+
 **Unread.** A membership's `unread` says what its member has not looked at yet, today only that
 a teammate's agent looped them into the task. It is the
 member's own: it travels on their membership in task responses, `GET /v0/tasks`, the desktop
@@ -10355,8 +10395,12 @@ equal a protocol-33 daemon's apart from `set_status`.
 when a person asked for a team post, in the conversation or as a standing instruction; otherwise
 it is refused as not allowed. `organize_tasks` applies all its operations in one transaction and
 skips, without failing, an operation on a held row (`held_by_person`), on something that does not
-exist (`not_found`), or on a bot (`bots_not_allowed`). Each change these tools make emits the same
-events as the routes below; `by` names the agent.
+exist (`not_found`), or on a bot (`bots_not_allowed`). Bots are only hidden or shown, with
+`{ "op": "hide", "botId": "...", "hidden": true }`, and stay in their own section: a `move` or a
+task `hide` naming a bot is `bots_not_allowed`, and a bot the person hid or showed themselves
+through `PUT /v0/bots/:botId/visibility` is `held_by_person` until one of its agent's loop-ins
+shows it to them again. Focus's brief lists the person's bots with their hidden and unread state.
+Each change these tools make emits the same events as the routes below; `by` names the agent.
 
 ### The task object
 
@@ -12624,7 +12668,9 @@ event is idempotent by attachment ID.
     - `bot` (full bot object).
 - `bot.updated` — rename, reorder, archive, unarchive, or avatar. The embedded agent's own
   state changes travel as `agent.updated` and do not advance the bot; likewise the workspace's
-  own changes travel as `workspace.updated`.
+  own changes travel as `workspace.updated`. Protocol 34 also sends it for a change to one
+  person's `hidden` or `unread`, to that person's connections only in team mode, with the bot's
+  unchanged version as both `previousVersion` and `version`; see "Hiding a bot".
     - `botId` (ID string), `previousVersion`, `version`, `changes`.
 - `bot.removed` — protocol 33 or newer. An admin bot permanently deleted the bot. Its workspace
   emits `workspace.removed` and its agents emit `agent.removed`.
