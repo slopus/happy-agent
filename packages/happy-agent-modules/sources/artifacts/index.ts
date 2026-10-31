@@ -79,5 +79,6 @@ export {
     MAX_AGENT_ARTIFACT_VERSIONS_PER_HOUR,
     type ArtifactActor,
     type ArtifactProxy,
+    type ArtifactReader,
     type ArtifactFileChanges,
 } from "./ArtifactsModule.js";

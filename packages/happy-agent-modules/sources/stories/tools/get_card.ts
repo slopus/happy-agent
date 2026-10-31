@@ -44,7 +44,7 @@ export function getCardTool(
                               by: task.iconConfigured === true ? person : { agentId, userId: null },
                           },
                 status: await stories.statusOf(ctx, agentId),
-                stories: (await stories.list(ctx, { agentId })).map((story) => ({
+                stories: (await stories.ofAgent(ctx, scope)).map((story) => ({
                     id: story.artifactId,
                     audience: story.audience,
                     caption: story.caption,

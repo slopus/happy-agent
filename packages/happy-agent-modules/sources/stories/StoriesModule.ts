@@ -19,6 +19,7 @@ import { Value } from "@sinclair/typebox/value";
 import { afterCommit, detach, type Context } from "@steve.kite/stdlib";
 
 import {
+    ArtifactConflictError,
     ArtifactInputError,
     artifactMimeTypeForPath,
     ArtifactsModule,
@@ -58,10 +59,11 @@ type StoryDraft = Omit<
     StoryRecord,
     "postedAt" | "expiresAt" | "state" | "endedAt" | "takenDownBy" | "artifactVersion"
 >;
-/** Who reads stories: a member's `feed` or `mine`, or an agent reading its own card. */
-export type StoryReader =
-    | { readonly memberId: string; readonly scope: "feed" | "mine" }
-    | { readonly agentId: string };
+/** Who reads stories: a member's `feed` or `mine`, or an agent's own as its person sees them. */
+export type StoryReader = { readonly memberId: string } & (
+    | { readonly scope: "feed" | "mine" }
+    | { readonly agentId: string }
+);
 
 /**
  * Stories: one image or video a task's or bot's agent posts on its card for a day, or a person
@@ -95,6 +97,14 @@ export class StoriesModule implements AgentModule {
         this.#team = team;
         this.#richTasks = richTasks;
         this.#focus = focus;
+        // A person reads a story they may see; an agent, one it posted or receives replies to.
+        artifacts.gateStoriesWith(async (ctx, artifactId, reader) => {
+            const story = await store.readStory(ctx, artifactId);
+            if (story === undefined) return false;
+            if ("memberId" in reader) return canSee(story, reader.memberId);
+            const poster = story.poster.kind === "agent" ? story.poster.agentId : undefined;
+            return reader.agentId === poster || reader.agentId === story.replyAgentId;
+        });
     }
 
     readonly beforeStart = (ctx: Context, agents: AgentSystemRef): AgentModuleHooks => {
@@ -134,11 +144,15 @@ export class StoriesModule implements AgentModule {
         input: SetStoryInput["story"],
     ): Promise<{ readonly story: StoryRecord | null; readonly replaced: string | null }> {
         const agentId = scope.agent.id;
+        // `artifactId` is the live story the first run of a take-down found, kept by the call.
         if (input === null) {
-            const live = await this.#live(ctx, `agent:${agentId}`, audience);
             const by = { agentId, userId: null };
-            if (live !== undefined) await ctx.inTx(async (tx) => await this.#end(tx, live, by));
-            return { story: null, replaced: live?.artifactId ?? null };
+            const ended = await ctx.inTx(async (tx) => {
+                const story = await store.readStory(tx, artifactId);
+                const own = story?.poster.kind === "agent" && story.poster.agentId === agentId;
+                return own ? await this.#end(tx, story, by) : undefined;
+            });
+            return { story: null, replaced: ended?.artifactId ?? null };
         }
         const repeated = await store.readStory(ctx, artifactId);
         if (repeated !== undefined) return { story: repeated, replaced: null };
@@ -179,7 +193,13 @@ export class StoriesModule implements AgentModule {
         const original = await this.#visible(ctx, artifactId, memberId);
         const id = request.id ?? createId();
         const round = request.round;
-        if ((await store.readStory(ctx, id)) === undefined) {
+        const repeated = await store.readStory(ctx, id);
+        if (
+            repeated !== undefined &&
+            (repeated.repostOf !== artifactId || repeated.person !== memberId)
+        )
+            throw new ArtifactConflictError("That ID belongs to another story.");
+        if (repeated === undefined) {
             if (round !== undefined && !artifactMimeTypeForPath(round.path).startsWith("video/"))
                 throw new ArtifactInputError("A round is a video, such as round.mp4.");
             const userId = this.#team.enabled ? memberId : null;
@@ -204,11 +224,16 @@ export class StoriesModule implements AgentModule {
 
     /** End a live story now: the person it belongs to may, and so may the team owner. */
     async takeDown(ctx: Context, id: string, memberId: string, by: TaskActor): Promise<Story> {
-        const story = await this.#visible(ctx, id, memberId);
         const owner = by.userId !== null && (await this.#team.getUser(ctx, by.userId))?.isOwner;
-        if (story.person !== memberId && owner !== true)
-            throw new StoryAccessError(403, "Only the person this story is for may take it down.");
-        if (stateOf(story) === "live") await ctx.inTx(async (tx) => await this.#end(tx, story, by));
+        await ctx.inTx(async (tx) => {
+            const story = await this.#visible(tx, id, memberId);
+            if (story.person !== memberId && owner !== true)
+                throw new StoryAccessError(
+                    403,
+                    "Only the person this story is for may take it down.",
+                );
+            await this.#end(tx, story, by);
+        });
         return await this.get(ctx, id, memberId);
     }
 
@@ -226,23 +251,31 @@ export class StoriesModule implements AgentModule {
     }
 
     /**
-     * `feed`: the live stories a member may see. `mine`: the member's own, and an agent's: its
-     * own; both with those that ended in the last 7 days. Live first, then newest posted first.
+     * `feed`: the live stories a member may see. `mine`: the member's own; with an agent, that
+     * agent's which the member may see. Both with those that ended in the last 7 days. Live first,
+     * then newest posted first.
      */
     async list(ctx: Context, reader: StoryReader): Promise<Story[]> {
         const now = Date.now();
         const own = "agentId" in reader ? `agent:${reader.agentId}` : undefined;
-        const member = "memberId" in reader ? reader.memberId : undefined;
         const feed = "scope" in reader && reader.scope === "feed";
         const stories = (await store.readStories(ctx, now - DAY_MS - KEPT_MS, own))
             .filter((story) =>
                 feed
-                    ? canSee(story, member!) && stateOf(story) === "live"
-                    : (member === undefined || story.person === member) &&
+                    ? canSee(story, reader.memberId) && stateOf(story) === "live"
+                    : (own === undefined
+                          ? story.person === reader.memberId
+                          : canSee(story, reader.memberId)) &&
                       (endedAt(story) ?? now) > now - KEPT_MS,
             )
             .sort((a, b) => Number(stateOf(b) === "live") - Number(stateOf(a) === "live"));
         return await Promise.all(stories.map(async (story) => await this.#serve(ctx, story)));
+    }
+
+    /** The agent's own stories that the person its turn works for may see, for its card. */
+    async ofAgent(ctx: Context, scope: AgentModuleScope): Promise<Story[]> {
+        const memberId = this.#tasks.memberFor(await this.#richTasks.personFor(ctx, scope)) ?? "";
+        return await this.list(ctx, { memberId, agentId: scope.agent.id });
     }
 
     /** Whether the member may read this story artifact; `undefined` when it is no story. */
@@ -279,7 +312,7 @@ export class StoriesModule implements AgentModule {
         const manifest = { media, round, caption, repostOf, audience, postedAt, expiresAt };
         const entry = await this.#artifacts.stageText(ctx, JSON.stringify(manifest, null, 2));
         return await ctx.inTx(async (tx) => {
-            await this.#artifacts.create(tx, {
+            const { created } = await this.#artifacts.create(tx, {
                 id: story.artifactId,
                 type: "story",
                 title: caption ?? "Story",
@@ -287,6 +320,7 @@ export class StoriesModule implements AgentModule {
                 author,
                 ...(source && { source }),
             });
+            if (!created) throw new ArtifactConflictError("That ID belongs to another artifact.");
             const replaced = await this.#live(tx, posterKey(story), audience);
             if (replaced !== undefined) await this.#end(tx, replaced, null);
             await store.writeStory(tx, posterKey(story), story);
@@ -302,17 +336,24 @@ export class StoriesModule implements AgentModule {
         });
     }
 
+    /** The agent's live story for an audience, which a take-down targets. */
+    async liveOf(ctx: Context, agentId: string, audience: StoryAudience) {
+        return (await this.#live(ctx, `agent:${agentId}`, audience))?.artifactId;
+    }
+
     async #live(ctx: Context, poster: string, audience: StoryAudience) {
         const stories = await store.readStories(ctx, Date.now() - DAY_MS, poster);
         return stories.find((story) => story.audience === audience && stateOf(story) === "live");
     }
 
     /** End a story: taken down by someone, or replaced by its poster's newer one. */
-    async #end(ctx: Context, story: StoryRecord, takenDownBy: TaskActor | null): Promise<void> {
+    async #end(ctx: Context, story: StoryRecord, takenDownBy: TaskActor | null) {
+        if (stateOf(story) !== "live") return undefined;
         const state = takenDownBy === null ? "replaced" : "taken_down";
         const ended: StoryRecord = { ...story, state, endedAt: Date.now(), takenDownBy };
         await store.writeStory(ctx, posterKey(story), ended);
         this.#changed(ctx, story.artifactId);
+        return ended;
     }
 
     async #visible(ctx: Context, artifactId: string, memberId: string): Promise<StoryRecord> {

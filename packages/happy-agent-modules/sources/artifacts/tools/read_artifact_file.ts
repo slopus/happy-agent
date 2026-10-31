@@ -72,7 +72,9 @@ const artifactFileReadSchema = Type.Object({
 type ArtifactFileRead = Static<typeof artifactFileReadSchema>;
 
 /** Read one file of an artifact version: text a page at a time, or an image to look at. */
-export function readArtifactFileTool(artifacts: ArtifactsModule) {
+export function readArtifactFileTool(artifacts: ArtifactsModule, agentId: string) {
+    // A story is missing unless this agent posted it or receives its replies.
+    const reader = { agentId };
     return defineAgentTool({
         name: "read_artifact_file",
         defer: true,
@@ -89,14 +91,23 @@ export function readArtifactFileTool(artifacts: ArtifactsModule) {
             input: ReadArtifactFileToolInput,
         ): Promise<ArtifactFileRead> => {
             const selector = input.version ?? "latest";
-            const stored = await artifacts.storedFile(ctx, input.artifactId, selector, input.path);
+            const stored = await artifacts.storedFile(
+                ctx,
+                input.artifactId,
+                selector,
+                input.path,
+                reader,
+            );
             const base = {
                 artifactId: input.artifactId,
                 version: stored.version,
                 file: stored.file,
             };
             if (RASTER_IMAGE_MIME_TYPES.has(stored.file.mimeType)) {
-                return { ...base, ...(await readImage(ctx, artifacts, input, stored.version)) };
+                return {
+                    ...base,
+                    ...(await readImage(ctx, artifacts, input, stored.version, agentId)),
+                };
             }
             if (stored.file.size > MAX_ARTIFACT_TEXT_BYTES) {
                 return {
@@ -109,9 +120,8 @@ export function readArtifactFileTool(artifacts: ArtifactsModule) {
                 input.artifactId,
                 stored.version,
                 input.path,
-                {
-                    maxBytes: stored.file.size,
-                },
+                { maxBytes: stored.file.size },
+                reader,
             );
             const decoded = decodeArtifactText(stored.file.mimeType, read.bytes, {
                 atStart: true,
@@ -162,9 +172,11 @@ async function readImage(
     artifacts: ArtifactsModule,
     input: ReadArtifactFileToolInput,
     version: number,
+    agentId: string,
 ): Promise<Pick<ArtifactFileRead, "image" | "note">> {
-    const read = await artifacts.readFile(ctx, input.artifactId, version, input.path, {
-        maxBytes: MAX_PROMPT_IMAGE_INPUT_BYTES + 1,
+    const window = { maxBytes: MAX_PROMPT_IMAGE_INPUT_BYTES + 1 };
+    const read = await artifacts.readFile(ctx, input.artifactId, version, input.path, window, {
+        agentId,
     });
     if (read.more || read.bytes.byteLength > MAX_PROMPT_IMAGE_INPUT_BYTES) {
         return { note: "This image is too large to show." };

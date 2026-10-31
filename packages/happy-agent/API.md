@@ -10967,23 +10967,25 @@ a client that meets a `type` it does not recognize shows the title and offers th
 download.
 
 **Story artifacts.** On daemons with `capabilities.storyArtifacts`, a story is an artifact of type
-`story`, described under [Stories](#stories). Story artifacts are made and changed only through
-the story routes and `set_story`: `POST /v0/artifacts` with `type: "story"` is
-`400 invalid_request`, and `PATCH` or delete on one is `409 conflict`. They are kept out of the
-catalog for every client that did not ask for them: `GET /v0/artifacts` and the `list_artifacts`
-tool list them only when `type` is `story`, they emit no `artifact.*` events, and they never
-appear in a tool-call presentation. Every other route under `/v0/artifacts/:artifactId` — the
-artifact, its versions, one version, its files, the proxy, and the artifact data API — answers
+`story`, described under [Stories](#stories). Story artifacts are made and changed only through the
+story routes and `set_story`: `POST /v0/artifacts` with `type: "story"` is `400 invalid_request`,
+and `PATCH` or delete on one is `409 conflict`. They are kept out of the catalog for every client
+that did not ask for them: `GET /v0/artifacts` and the `list_artifacts` tool list them only when
+`type` is `story`, they emit no `artifact.*` events, and they never appear in a tool-call
+presentation. The proxy, the artifact data API, Surface references, and link labels never serve one;
+an agent's artifact tools treat one as missing unless the agent posted it or receives its replies; a
+creation that reuses a story's ID is `409 conflict`. Every other route under
+`/v0/artifacts/:artifactId` — the artifact, its versions, one version, and its files — answers
 `404 not_found` for a story artifact, exactly as for an artifact that does not exist, unless the
-request carries the query parameter `type=story`; with it, the route serves the story artifact as
-it serves any other, provided the caller may see the story: a team-audience story, a person's
-repost included, is readable by every member, and an owner-audience story only by the person it
-was posted for; anyone else receives `404 not_found` even with `type=story`. `type=story` never
-hides an artifact that is not a story. A shared `happy://artifacts/<id>` link to a story therefore
-opens as a missing artifact in an older client, which never receives a `type` it cannot parse. A
-client with `capabilities.storyArtifacts` always adds `type=story` when it opens a
-`happy://artifacts` link, and opens the story viewer when the artifact it receives is a story. It
-reads stories through `/v0/stories` and a story artifact's own files with `type=story`.
+request carries the query parameter `type=story`; with it, the route serves the story artifact as it
+serves any other, provided the caller may see the story: a team-audience story, a person's repost
+included, is readable by every member, and an owner-audience story only by the person it was posted
+for; anyone else receives `404 not_found` even with `type=story`. `type=story` never hides an
+artifact that is not a story. A shared `happy://artifacts/<id>` link to a story therefore opens as a
+missing artifact in an older client, which never receives a `type` it cannot parse. A client with
+`capabilities.storyArtifacts` always adds `type=story` when it opens a `happy://artifacts` link, and
+opens the story viewer when the artifact it receives is a story. It reads stories through
+`/v0/stories` and a story artifact's own files with `type=story`.
 
 **Sources.** `source` says where an artifact was created, as an object discriminated by `kind`:
 

@@ -1239,7 +1239,8 @@ export class SurfacesModule implements AgentModule {
     }
     /**
      * Every authenticated person may read every bot, task, and artifact, so availability is the
-     * target's own lifecycle. Unavailable projections never carry the target's identity.
+     * target's own lifecycle; a story, which Artifacts never shows here, is unavailable.
+     * Unavailable projections never carry the target's identity.
      */
     async #resolve(ctx: Context, reference: SurfaceReference): Promise<SurfaceTarget> {
         if (reference.type === "artifact") {

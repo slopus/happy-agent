@@ -164,7 +164,9 @@ type accepts before it is read.
 - `delete(ctx, { artifactId, expectedRevision?, author, source? })` leaves a tombstone; repeating
   it changes nothing.
 - `get`, `list`, `listVersions`, and `getVersion(ctx, artifactId, number | "latest")` read the
-  catalog. Versions of a deleted artifact are not served.
+  catalog. Versions of a deleted artifact are not served. Every read treats a `story` as missing unless its last
+  argument names a reader (`{ memberId }` or `{ agentId }`) the gate Stories installs with
+  `gateStoriesWith` admits.
 - `recentForAgents(ctx, agentIds, limit)` reads at most `limit` of each agent's most recently
   changed active artifacts, never stories, newest first, for task sub-rows in desktop bootstrap.
 - `storedFile(ctx, artifactId, number | "latest", path)` returns one file and where its bytes

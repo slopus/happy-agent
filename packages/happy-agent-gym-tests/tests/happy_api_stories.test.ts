@@ -113,6 +113,23 @@ describe("stories", () => {
         expect(await raw("POST", "/v0/artifacts", forged)).toBe(400);
         const child = `/v0/tasks/${task.id}/children/artifact/${live!.artifactId}`;
         expect(await raw("PUT", child, { visibility: "shown" })).toBe(400);
+        // No side door: a create reusing its ID, a Surface naming it, or another agent's read.
+        const reuse = { ...forged, type: "markdown", id: live!.artifactId };
+        expect(await raw("POST", "/v0/artifacts", reuse)).toBe(409);
+        const reference = { type: "artifact", name: "Story", artifactId: live!.artifactId };
+        expect(await raw("POST", "/v0/surfaces", reference)).toBe(404);
+        const read = { artifactId: live!.artifactId };
+        turns.set(gym.defaultSessionId, [
+            call("read_artifact", read),
+            call("read_artifact_file", { ...read, path: "story.json" }),
+            text("Looked."),
+        ]);
+        const seenBefore = gym.inference.toolResults().length;
+        await gym.send("Read that artifact.");
+        const reads = gym.inference.toolResults().slice(seenBefore);
+        expect(
+            reads.map((r) => /not found/i.test(r.text) && !r.text.includes("onboarding")),
+        ).toEqual([true, true]);
         const events = async (client: typeof bob, after: string) =>
             (await client.getEvents({ after, limit: 1_000 })).events;
         const aliceEvents = await events(alice, cursors[0]!);
@@ -144,6 +161,14 @@ describe("stories", () => {
         // An ended story stays readable by ID to whoever could see it.
         expect((await alice.getStory(first!.artifactId)).story.state).toBe("replaced");
         expect(await status(bob.getStory(first!.artifactId))).toBe(404);
+        // Taking down a story that already ended changes nothing.
+        expect((await alice.takeDownStory(first!.artifactId)).story).toMatchObject({
+            state: "replaced",
+            takenDownBy: null,
+        });
+        // A repost never takes over another artifact's ID.
+        expect(await status(alice.repostStory(live!.artifactId, { id: frame.id }))).toBe(409);
+        expect((await alice.getArtifact(frame.id)).artifact.type).toBe("image");
         turns.set(task.agent.id, [call("get_card", {}), text("Read it.")]);
         await gym.send("What does your card say?", { sessionId: task.agent.id });
         const card = JSON.parse(
@@ -165,6 +190,17 @@ describe("stories", () => {
         const hidden = async (client: typeof bob) =>
             (await client.listBots()).bots.find((b) => b.id === bot.id)!.hidden;
         expect([await hidden(alice), await hidden(bob)]).toEqual([false, true]);
+        // Alice's own bot story stays off the card the bot reads in Bob's turn.
+        await bob.saveUserSetting("tasks.rich", { value: true });
+        turns.set(bot.agent.id, [call("get_card", {}), text("Read it.")]);
+        const cardsBefore = gym.inference.toolResults().length;
+        const mode = { ...gym.selection, permissionMode: "full_access" as const };
+        await bob.sendMessage(bot.agent.id, { text: "What is on your card?", mode });
+        const bobsCard = await gym.waitUntil(
+            async () => gym.inference.toolResults().slice(cardsBefore)[0],
+            "the bot's card in Bob's turn",
+        );
+        expect(JSON.parse(bobsCard.text).stories).toEqual([]);
         expect(gym.errors).toEqual([]);
     }, 120_000);
 });

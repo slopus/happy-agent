@@ -118,6 +118,10 @@ import { readArtifactTool } from "./tools/read_artifact.js";
 import { updateArtifactTool } from "./tools/update_artifact.js";
 import { writeArtifactFileTool } from "./tools/write_artifact_file.js";
 
+/** Who reads a story artifact: a person by member key, or an agent. */
+export type ArtifactReader = { readonly memberId: string } | { readonly agentId: string };
+type StoryGate = (ctx: Context, artifactId: string, reader: ArtifactReader) => Promise<boolean>;
+
 /** Who is acting and where, as an agent's own conversation decides it. */
 export interface ArtifactActor {
     readonly author: ArtifactAuthor;
@@ -174,6 +178,7 @@ export class ArtifactsModule implements AgentModule {
     readonly #listeners = new Set<ArtifactEventListener>();
     #agents: AgentSystemRef | undefined;
     #home: Promise<void> | undefined;
+    #storyGate: StoryGate = async () => false;
 
     constructor(
         config: ConfigModule,
@@ -216,8 +221,8 @@ export class ArtifactsModule implements AgentModule {
             editArtifactFileTool(this, scope.agent.id),
             updateArtifactTool(this, this.#compute, scope.agent.id),
             listArtifactsTool(this, scope.agent.id),
-            readArtifactTool(this),
-            readArtifactFileTool(this),
+            readArtifactTool(this, scope.agent.id),
+            readArtifactFileTool(this, scope.agent.id),
             deleteArtifactTool(this, scope.agent.id),
         ],
     };
@@ -232,9 +237,19 @@ export class ArtifactsModule implements AgentModule {
         return () => this.#listeners.delete(listener);
     }
 
-    /** One artifact, a tombstone included. */
-    async get(ctx: Context, artifactId: string): Promise<ArtifactRecord | undefined> {
-        return structuredClone(await queryArtifact(ctx, artifactId));
+    /** Stories decide who may read a story artifact; until then, and without a reader, nobody. */
+    gateStoriesWith(gate: StoryGate): void {
+        this.#storyGate = gate;
+    }
+
+    /** One artifact, a tombstone included; a story only for a reader Stories lets see it. */
+    async get(
+        ctx: Context,
+        artifactId: string,
+        reader?: ArtifactReader,
+    ): Promise<ArtifactRecord | undefined> {
+        const artifact = await queryArtifact(ctx, artifactId);
+        return (await this.#hides(ctx, artifact, reader)) ? undefined : structuredClone(artifact);
     }
 
     /** An attachment to the recorded network; each connection uses the current artifact policy. */
@@ -264,7 +279,11 @@ export class ArtifactsModule implements AgentModule {
     }
 
     /** One page of the catalog, newest created first. */
-    async list(ctx: Context, query: ArtifactListQuery = {}): Promise<ArtifactPage> {
+    async list(
+        ctx: Context,
+        query: ArtifactListQuery = {},
+        reader?: ArtifactReader,
+    ): Promise<ArtifactPage> {
         if (!Value.Check(artifactListQuerySchema, query)) {
             throw new ArtifactInputError("The artifact list filter is invalid.");
         }
@@ -277,8 +296,11 @@ export class ArtifactsModule implements AgentModule {
         const page = await queryArtifactPage(ctx, query);
         if (page === undefined) throw new ArtifactInputError("The page cursor is not recognized.");
         const last = page.artifacts.at(-1);
+        const shown: ArtifactRecord[] = [];
+        for (const artifact of page.artifacts)
+            if (!(await this.#hides(ctx, artifact, reader))) shown.push(artifact);
         return structuredClone({
-            artifacts: page.artifacts,
+            artifacts: shown,
             ...(page.hasMore && last !== undefined ? { nextAfter: last.id } : {}),
         });
     }
@@ -297,12 +319,13 @@ export class ArtifactsModule implements AgentModule {
         ctx: Context,
         artifactId: string,
         query: ArtifactVersionQuery = {},
+        reader?: ArtifactReader,
     ): Promise<ArtifactVersionPage> {
         if (!Value.Check(artifactVersionQuerySchema, query)) {
             throw new ArtifactInputError("The artifact version query is invalid.");
         }
         return await ctx.inTx(async (txCtx) => {
-            await this.#requiredActive(txCtx, artifactId);
+            await this.#requiredActive(txCtx, artifactId, reader);
             const page = await queryArtifactVersionPage(
                 txCtx,
                 artifactId,
@@ -325,9 +348,10 @@ export class ArtifactsModule implements AgentModule {
         ctx: Context,
         artifactId: string,
         selector: ArtifactVersionSelector,
+        reader?: ArtifactReader,
     ): Promise<ArtifactVersion> {
         return await ctx.inTx(async (txCtx) => {
-            const artifact = await this.#requiredActive(txCtx, artifactId);
+            const artifact = await this.#requiredActive(txCtx, artifactId, reader);
             const number = selector === "latest" ? artifact.latestVersion : selector;
             const version = await queryArtifactVersion(txCtx, artifactId, number);
             if (version === undefined)
@@ -346,9 +370,10 @@ export class ArtifactsModule implements AgentModule {
         artifactId: string,
         selector: ArtifactVersionSelector,
         path: string,
+        reader?: ArtifactReader,
     ): Promise<ArtifactStoredFile> {
         return await ctx.inTx(async (txCtx) => {
-            const artifact = await this.#requiredActive(txCtx, artifactId);
+            const artifact = await this.#requiredActive(txCtx, artifactId, reader);
             const number = selector === "latest" ? artifact.latestVersion : selector;
             const file = await queryArtifactFile(txCtx, artifactId, number, path);
             if (file === undefined) {
@@ -375,6 +400,7 @@ export class ArtifactsModule implements AgentModule {
         selector: ArtifactVersionSelector,
         path: string,
         window: { readonly offset?: number; readonly maxBytes: number },
+        reader?: ArtifactReader,
     ): Promise<{
         readonly file: ArtifactFile;
         readonly version: number;
@@ -382,7 +408,7 @@ export class ArtifactsModule implements AgentModule {
         readonly bytes: Uint8Array;
         readonly more: boolean;
     }> {
-        const stored = await this.storedFile(ctx, artifactId, selector, path);
+        const stored = await this.storedFile(ctx, artifactId, selector, path, reader);
         const offset = Math.min(Math.max(0, window.offset ?? 0), stored.file.size);
         const bytes = await readArtifactContent(
             stored.contentPath,
@@ -520,6 +546,9 @@ export class ArtifactsModule implements AgentModule {
             if (input.id !== undefined) {
                 const existing = await queryArtifact(txCtx, input.id);
                 if (existing !== undefined) {
+                    // An ID another type holds, a story included, never answers with it.
+                    if (existing.type !== input.type)
+                        throw new ArtifactConflictError("That ID belongs to another artifact.");
                     return { artifact: structuredClone(existing), created: false };
                 }
             }
@@ -1138,12 +1167,23 @@ export class ArtifactsModule implements AgentModule {
         return artifact;
     }
 
-    async #requiredActive(ctx: Context, artifactId: string): Promise<ArtifactRecord> {
+    async #requiredActive(
+        ctx: Context,
+        artifactId: string,
+        reader?: ArtifactReader,
+    ): Promise<ArtifactRecord> {
         const artifact = await this.#required(ctx, artifactId);
+        if (await this.#hides(ctx, artifact, reader)) throw new ArtifactNotFoundError();
         if (artifact.status === "deleted") {
             throw new ArtifactNotFoundError("The artifact was deleted.");
         }
         return artifact;
+    }
+
+    /** A story is missing to every reader its gate does not let see it. */
+    async #hides(ctx: Context, artifact: ArtifactRecord | undefined, reader?: ArtifactReader) {
+        if (artifact?.type !== "story") return false;
+        return reader === undefined || !(await this.#storyGate(ctx, artifact.id, reader));
     }
 
     #assertRevision(artifact: ArtifactRecord, expectedRevision: number | undefined): void {
@@ -1183,7 +1223,7 @@ export class ArtifactsModule implements AgentModule {
 /** A story changes only through the Stories module, never as an ordinary artifact. */
 function refuseStory(artifact: ArtifactRecord): ArtifactRecord {
     if (artifact.type !== "story") return artifact;
-    throw new ArtifactConflictError("A story changes only by posting or taking it down.", artifact);
+    throw new ArtifactNotFoundError();
 }
 
 /** The durable removal of one upload, cancelled when the upload is used. */

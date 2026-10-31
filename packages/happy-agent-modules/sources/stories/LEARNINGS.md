@@ -21,3 +21,15 @@ image or video with `create_artifact` and name it in `set_story`.
 `set_story` with `audience: "team"` reaches people who never asked for it, so it is always reviewed
 in Auto, and the review text tells the reviewer to allow it only when a person asked for a team
 post, in the conversation or as a standing instruction. Owner posts are not reviewed.
+
+## The story gate lives in Artifacts, closed by default
+
+Review found side doors: agent read tools, Surface references, an idempotent create reusing a
+story's ID, and a repost or post naming an ordinary artifact's ID all reached story content or
+attached story state to someone else's artifact. Every Artifacts read now treats a story as
+missing unless the caller names a reader (`{ memberId }` or `{ agentId }`) that this module's
+gate admits: a person who may see it, or the agent that posted it or receives its replies. A
+create that hits another type's ID is a conflict, and a story create that finds an existing
+artifact fails. A take-down keeps its target in the call's store and ends only a live story,
+inside one transaction, so a replay never ends a newer one. `get_card` shows a bot's owner stories
+only to the person its turn answers.

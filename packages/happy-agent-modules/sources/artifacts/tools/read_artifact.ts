@@ -40,7 +40,9 @@ const artifactReadSchema = Type.Object({
 type ArtifactRead = Static<typeof artifactReadSchema>;
 
 /** Read one version of an artifact: who made it, where, every file, and a page's entry text. */
-export function readArtifactTool(artifacts: ArtifactsModule) {
+export function readArtifactTool(artifacts: ArtifactsModule, agentId: string) {
+    // A story is missing unless this agent posted it or receives its replies.
+    const reader = { agentId };
     return defineAgentTool({
         name: "read_artifact",
         defer: true,
@@ -53,13 +55,14 @@ export function readArtifactTool(artifacts: ArtifactsModule) {
         reloadable: true,
         shouldReviewInAutoMode: () => false,
         execute: async (ctx: Context, input: ReadArtifactToolInput): Promise<ArtifactRead> => {
-            const artifact = await artifacts.get(ctx, input.artifactId);
+            const artifact = await artifacts.get(ctx, input.artifactId, reader);
             if (artifact === undefined) throw new ArtifactNotFoundError();
             if (artifact.status === "deleted") return { artifact };
             const version = await artifacts.getVersion(
                 ctx,
                 artifact.id,
                 input.version ?? artifact.latestVersion,
+                reader,
             );
             if (ARTIFACT_TYPE_RULES[artifact.type].entry === undefined) {
                 return { artifact, version };
@@ -70,6 +73,7 @@ export function readArtifactTool(artifacts: ArtifactsModule) {
                 version.number,
                 version.entry.path,
                 { maxBytes: MAX_ENTRY_TEXT_BYTES },
+                reader,
             );
             const decoded = decodeArtifactText(version.entry.mimeType, read.bytes, {
                 atStart: true,

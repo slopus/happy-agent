@@ -56,8 +56,13 @@ export function setStoryTool(stories: StoriesModule, scope: AgentModuleScope) {
         execute: async (ctx, input: SetStoryInput, call) => {
             if (agentPermissionMode(ctx) === "read_only")
                 throw new ArtifactInputError("Read only mode cannot post stories.");
-            const id = await call.kv.getOrCreate(ctx, "artifactId", () => createId());
             const audience = input.audience ?? "owner";
+            // A take-down keeps the story it found first, so a replay never ends a newer one.
+            const id = await call.kv.getOrCreate(ctx, "artifactId", async () =>
+                input.story === null
+                    ? ((await stories.liveOf(ctx, scope.agent.id, audience)) ?? "")
+                    : createId(),
+            );
             const { story, replaced } = await stories.post(ctx, scope, id, audience, input.story);
             const { artifactId, postedAt, expiresAt } = story ?? {};
             return { story: story && { id: artifactId, audience, postedAt, expiresAt }, replaced };

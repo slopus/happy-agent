@@ -7200,7 +7200,7 @@ export class ApiModule implements AgentModule {
             }
             if (
                 ref.kind === "artifact" &&
-                (await this.#artifacts?.get(ctx, ref.id))?.type === "story"
+                (await this.#stories?.canSee(ctx, ref.id, "")) !== undefined
             )
                 throw invalidRequest("A story is never shown under a task.");
             if (put !== undefined && !(await this.#taskChildExists(ctx, ref))) {
@@ -7346,20 +7346,9 @@ export class ApiModule implements AgentModule {
     ): Promise<boolean> {
         const artifacts = this.#artifacts;
         if (artifacts === undefined) return false;
-        // A story answers as missing unless asked for by type and the caller may see it.
-        const storyId = /^\/v0\/artifacts\/([a-z][a-z0-9]*)(?:\/|$)/.exec(url.pathname)?.[1];
-        const viewer = this.#tasks?.memberFor(teamUser(ctx)?.id) ?? "";
-        const story = storyId && (await this.#stories?.canSee(ctx, storyId, viewer));
-        if (typeof story === "boolean") {
-            if (!story || url.searchParams.get("type") !== "story")
-                throw notFound("The artifact was not found.");
-            if (request.method === "PATCH" || url.pathname.endsWith("/delete"))
-                throw new ApiError(
-                    409,
-                    "conflict",
-                    "A story changes only by posting or taking it down.",
-                );
-        }
+        // A story is read only with type=story, by someone it is for; Artifacts keeps the gate.
+        const member = this.#tasks?.memberFor(teamUser(ctx)?.id) ?? "";
+        const reader = url.searchParams.get("type") === "story" ? { memberId: member } : undefined;
         if (this.#artifactData !== undefined && ARTIFACT_DATA_ROUTE.test(url.pathname)) {
             await this.#artifactData.handle(ctx, request, response);
             return true;
@@ -7377,16 +7366,9 @@ export class ApiModule implements AgentModule {
                 if (request.method === "GET") {
                     const query = artifactListQuery(url);
                     const cursor = this.#journal.cursor();
-                    const page = await artifacts.list(ctx, query);
-                    const seen = await Promise.all(
-                        page.artifacts.map(
-                            async ({ id, type }) =>
-                                type !== "story" ||
-                                (await this.#stories?.canSee(ctx, id, viewer)) === true,
-                        ),
-                    );
+                    const page = await artifacts.list(ctx, query, reader);
                     sendJson(response, 200, {
-                        artifacts: page.artifacts.filter((_, at) => seen[at]).map(artifactResource),
+                        artifacts: page.artifacts.map(artifactResource),
                         nextPageCursor: page.nextAfter ?? null,
                         cursor,
                     });
@@ -7432,6 +7414,7 @@ export class ApiModule implements AgentModule {
                     target.artifactId,
                     target.selector,
                     target.path,
+                    reader,
                 );
                 await sendArtifactFile(request, response, stored, target.selector === "latest");
                 return true;
@@ -7454,19 +7437,25 @@ export class ApiModule implements AgentModule {
                         ctx,
                         artifactId,
                         selector === "latest" ? "latest" : (number as number),
+                        reader,
                     );
                     sendJson(response, 200, { version: artifactVersionResource(version) });
                     return true;
                 }
-                const page = await artifacts.listVersions(ctx, artifactId, {
-                    limit: integerParameter(
-                        url.searchParams.get("limit"),
-                        DEFAULT_ARTIFACT_PAGE_SIZE,
-                        1,
-                        MAX_ARTIFACT_PAGE_SIZE,
-                    ),
-                    ...versionPageCursor(url.searchParams.get("pageCursor")),
-                });
+                const page = await artifacts.listVersions(
+                    ctx,
+                    artifactId,
+                    {
+                        limit: integerParameter(
+                            url.searchParams.get("limit"),
+                            DEFAULT_ARTIFACT_PAGE_SIZE,
+                            1,
+                            MAX_ARTIFACT_PAGE_SIZE,
+                        ),
+                        ...versionPageCursor(url.searchParams.get("pageCursor")),
+                    },
+                    reader,
+                );
                 sendJson(response, 200, {
                     versions: page.versions.map(artifactVersionResource),
                     nextPageCursor: page.nextBefore === undefined ? null : String(page.nextBefore),
@@ -7475,15 +7464,16 @@ export class ApiModule implements AgentModule {
             }
             if (selector !== undefined) return false;
             if (action === undefined && request.method === "GET") {
-                const artifact = await artifacts.get(ctx, artifactId);
+                const artifact = await artifacts.get(ctx, artifactId, reader);
                 if (artifact === undefined) throw notFound("The artifact was not found.");
                 sendJson(response, 200, { artifact: artifactResource(artifact) });
                 return true;
             }
             if (action === undefined && request.method === "PATCH") {
                 const body = await bodyAs(request, updateArtifactRequestSchema, "artifact update");
-                const current = await artifacts.get(ctx, artifactId);
+                const current = await artifacts.get(ctx, artifactId, reader);
                 if (current === undefined) throw notFound("The artifact was not found.");
+                if (current.type === "story") throw new ApiError(409, "conflict", STORY_CONFLICT);
                 const resource = artifactResource(current);
                 const conflict = { currentVersion: resource["version"], artifact: resource };
                 requireIfMatch(request, resource["version"], conflict);
@@ -7542,8 +7532,9 @@ export class ApiModule implements AgentModule {
                     deleteArtifactRequestSchema,
                     "artifact deletion",
                 );
-                const current = await artifacts.get(ctx, artifactId);
+                const current = await artifacts.get(ctx, artifactId, reader);
                 if (current === undefined) throw notFound("The artifact was not found.");
+                if (current.type === "story") throw new ApiError(409, "conflict", STORY_CONFLICT);
                 const resource = artifactResource(current);
                 // A retried deletion succeeds with whatever version it was first sent with.
                 if (current.status === "deleted") {
@@ -10849,6 +10840,8 @@ function booleanParameter(value: string | null, fallback: boolean): boolean {
     if (value === "false") return false;
     throw invalidRequest("A boolean query parameter must be true or false.");
 }
+
+const STORY_CONFLICT = "A story changes only by posting or taking it down.";
 
 /** `GET /v0/artifacts` filters; a page cursor is the last listed artifact's ID. */
 function artifactListQuery(url: URL): ArtifactListQuery {
