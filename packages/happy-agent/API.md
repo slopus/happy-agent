@@ -39,14 +39,55 @@ authentication boundary. The separate `[feature.tailcat]` exposure is unchanged 
 The operator supplies DNS, a publicly trusted certificate, and a trusted TLS-terminating proxy
 forwarding the complete HTTP/1.1 stream to that loopback listener. The proxy must preserve request
 targets and Authorization, streaming responses, WebSocket upgrades, and arbitrary bidirectional
-bytes after CONNECT. A TLS-terminating TCP proxy supports the complete API; ordinary HTTP proxy
-defaults may reject CONNECT and cannot support workspace browser tunnels. The proxy can observe
-credentials and plaintext; its final loopback hop is unencrypted. Configuring an origin does not
-configure or probe DNS, TLS, a firewall, or a proxy, and never binds a public interface itself.
+bytes after CONNECT. A TLS-terminating TCP proxy supports the complete API. An ordinary HTTP proxy
+or load balancer that rejects CONNECT still supports every tunnel through its WebSocket twin,
+described under "WebSocket tunnels"; only the CONNECT form is unavailable through it. The proxy
+can observe credentials and plaintext; its final loopback hop is unencrypted. Configuring an origin
+does not configure or probe DNS, TLS, a firewall, or a proxy, and never binds a public interface
+itself.
 
 Clients use normal platform TLS trust and hostname verification, map HTTPS to WSS for WebSockets,
 and never downgrade to HTTP, ignore certificate errors, forward bearer credentials through a
 redirect, or silently substitute Tailcat when the public endpoint fails.
+
+### Load balancers and edge authentication
+
+A deployment may place the team listener or the public listener behind an HTTPS load balancer or
+gateway that authenticates requests itself before they reach the daemon, for example by verifying
+the same JWT access token. Such an edge must:
+
+- forward `GET /v0/authentication` without authentication, because it is how a signed-out client
+  learns where to sign in;
+- authenticate API requests with the `Authorization` bearer token alone, never with a browser
+  session cookie or a redirect to a sign-in page, since native clients follow no redirects on API
+  calls;
+- forward the `Authorization` header unchanged, stream responses without buffering, and pass
+  WebSocket upgrades;
+- keep its idle timeout at 20 seconds or more, and below the daemon's 60-second idle keep-alive
+  timeout, so that it never reuses a connection the daemon is about to close.
+
+The runner and exported-bot bridge connection routes use their own credentials, not member tokens,
+and are not served on the public listener. They belong on a private network rather than behind
+the member-facing edge. When an edge does carry them, it must forward them without its own
+authentication.
+
+### Keepalive
+
+Every long-lived stream carries traffic at least every 15 seconds, so an intermediary's idle
+timeout never ends a healthy stream:
+
+- Server-Sent Events streams, `GET /v0/events/stream` and the artifact data change stream, write a
+  comment frame at least every 15 seconds. Clients ignore comment frames.
+- The daemon sends a WebSocket ping at least every 15 seconds on every WebSocket it serves,
+  including terminal attachments, bridges, WebSocket tunnels, and live voice control. Clients
+  answer with a pong, as WebSocket implementations do on their own, and may send pings of their
+  own at any interval.
+
+A client treats 45 seconds without receiving any bytes on a stream, or any message, ping, or pong
+on a WebSocket, as a dead connection. It closes the connection and reconnects with backoff,
+resuming as the stream defines: the event stream from its last cursor, a terminal by attaching
+again. Tunnels and bridges are not resumable; a client opens new ones. CONNECT tunnels carry only
+the bytes of their destinations and have no keepalive of their own.
 
 ### Credentials on the public transport
 
@@ -123,6 +164,7 @@ token_url = "https://sso.acme.example/oauth/token"
 refresh_url = "https://sso.acme.example/oauth/token"
 client_id = "happy"
 scope = "happy"
+resource = "https://happy.acme.example"
 issuer = "https://sso.acme.example"
 audience = "https://happy.acme.example"
 user_id_claim = "sub"
@@ -141,6 +183,10 @@ jwks_refresh_interval_sec = 3600
 - `client_id` — required; the public OAuth client identifier, 1–256 printable characters.
 - `scope` — optional; the space-separated scope requested during authorization, 1–1,024
   printable characters.
+- `resource` — optional; an RFC 8707 resource indicator that clients send to the authorization
+  server so it can issue tokens for this deployment directly. An absolute URI of 1–2,048
+  characters without a fragment, usually equal to `audience`. The daemon does not compare it with
+  any token claim; tokens are still verified against `audience`.
 - `issuer` — required; the exact `iss` claim value.
 - `audience` — required; a value the `aud` claim must equal or contain.
 - `user_id_claim` — optional, default `"sub"`; the top-level claim holding the user ID. Its value
@@ -155,7 +201,7 @@ jwks_refresh_interval_sec = 3600
 - `jwks_refresh_interval_sec` — optional, only with `jwks_url`; an integer from 60 through 86,400,
   default 3,600. How often the daemon downloads the key set again.
 
-Every URL must be absolute and use `https`; `http` is accepted only for a loopback host
+Every endpoint URL must be absolute and use `https`; `http` is accepted only for a loopback host
 (`localhost`, `[::1]`, or an IPv4 address in `127.0.0.0/8`). Asymmetric key sources accept only
 `RS256`, `RS384`, `RS512`, `PS256`, `PS384`, `PS512`, `ES256`, `ES384`, `ES512`, and `EdDSA`.
 `secret_env` accepts only `HS256`, `HS384`, and `HS512`. A mixture, a missing or invalid setting, a
@@ -195,23 +241,30 @@ PKCE verifier, or a refresh token, and it has no endpoint that accepts them. A c
 2. Generates a random `state` and a PKCE verifier of 43–128 characters, both kept only in the
    client, and opens `authorizationUrl` in the system browser with the query parameters
    `response_type=code`, `client_id`, `redirect_uri`, `state`, `code_challenge` (the base64url
-   SHA-256 of the verifier), `code_challenge_method=S256`, and `scope` when the method has one.
-   The redirect URI is a loopback `http://127.0.0.1:<port>/<path>` address or a private-use
-   custom scheme registered by the application, as RFC 8252 describes.
+   SHA-256 of the verifier), `code_challenge_method=S256`, `scope` when the method has one, and
+   `resource` when the method has one.
+   The redirect URI is the application's private-use URI scheme callback, as RFC 8252 describes.
+   Happy's desktop, iOS, and Android applications all use exactly `happy://oauth/callback`, so a
+   deployer allow-lists that one value with its authorization server.
 3. Receives `redirect_uri?code=<code>&state=<state>`, or `error` and optional
    `error_description` on failure, and rejects the result unless `state` matches.
 4. Sends `POST tokenUrl` with an `application/x-www-form-urlencoded` body carrying
-   `grant_type=authorization_code`, `code`, `redirect_uri`, `client_id`, and `code_verifier`.
+   `grant_type=authorization_code`, `code`, `redirect_uri`, `client_id`, `code_verifier`, and
+   `resource` when the method has one.
    A successful JSON response carries `access_token` and `token_type` `Bearer`, and optionally
    `expires_in` in seconds and `refresh_token`.
 5. Uses `access_token` as its bearer token for this daemon.
 
 When the method advertises `refreshUrl` and the client holds a refresh token, the client may send
-`POST <refresh URL>` with `grant_type=refresh_token`, `refresh_token`, and `client_id` in the same
-form encoding, and receives the same response. A new `refresh_token` replaces the old one; its
-absence keeps the old one. The client sends a refresh token only to the refresh URL and client ID
-recorded when that token was issued, never to a URL a daemon advertises afterwards. When refresh
-fails or is unavailable, the client signs in again. Clients may keep credentials only in memory.
+`POST <refresh URL>` with `grant_type=refresh_token`, `refresh_token`, `client_id`, and the
+`resource` recorded at sign-in when there was one, in the same form encoding, and receives the
+same response. A new `refresh_token` replaces the old one; its absence keeps the old one. The
+client sends a refresh token only to the refresh URL, client ID, and resource recorded when that
+token was issued, never to a URL a daemon advertises afterwards. When refresh fails or is
+unavailable, the client signs in again. Clients may keep credentials only in memory; a client that
+keeps a refresh token across launches stores it in the operating system's credential store, such
+as the macOS or iOS Keychain, Android Keystore-protected storage, or Windows Credential Manager.
+Token requests follow no redirects.
 
 Because the daemon sees every access token sent to it, each deployment must use its own
 `audience`, so that a daemon cannot replay a member's token to another deployment. A daemon
@@ -246,12 +299,42 @@ carries an `authentication` object whose `methods` are the same as those returne
                 "tokenUrl": "https://sso.acme.example/oauth/token",
                 "refreshUrl": "https://sso.acme.example/oauth/token",
                 "clientId": "happy",
-                "scope": "happy"
+                "scope": "happy",
+                "resource": "https://happy.acme.example"
             }
         ]
     }
 }
 ```
+
+#### Credentials on the wire and signing in again
+
+A client sends its credential only in the `Authorization` header: on JSON requests, event streams,
+WebSocket upgrades, and CONNECT alike. It never puts a credential in a query string, a cookie, or
+a WebSocket subprotocol, and the daemon accepts it from nowhere else. A client never follows a
+redirect on an API request and never sends its credential to another origin.
+
+Every error the daemon writes is a Happy error: a `content-type` of `application/json`, with any
+parameters, and a body that is a JSON object whose `error` and `code` are strings. Anything else
+came from something in front of the daemon, such as a load balancer or an identity-aware proxy.
+
+A client signs in again when a request, an event stream, or a WebSocket upgrade is answered with:
+
+- a redirect: any `3xx` status other than `304 Not Modified`, including a redirect the client's
+  HTTP stack reports as opaque;
+- `401`, after the check below; or
+- `403` that is not a Happy error.
+
+A `403` that is a Happy error is an ordinary refusal; the client shows it and keeps its sign-in.
+A `401` that is not a Happy error came from the edge, and the client signs in again at once,
+trying its refresh token first when it has one. A `401` that is a Happy error may instead be the
+team profile gate: before treating it as an expired sign-in, the client calls
+`GET /v0/authentication` with the same token. `authenticated: true` with a `null` `userId` means
+the member must save a profile, not sign in; `authenticated: true` with a user ID means the
+credential is still good; `authenticated: false` means it expired, and the client refreshes or
+signs in. A client that checks discovery right after each sign-in and saves the profile before
+using other routes never meets the gate. Paired mobile device credentials keep their own
+revocation rules, described under Mobile connector.
 
 A runner token from `[runners.<id>] token` authenticates only `GET /v0/runners/connect` on the
 primary transports, in both standalone and team mode. No other credential is accepted on that
@@ -365,6 +448,16 @@ By explicit product decision, the `browser` sign-in method that returned a JWT i
 fragment, and the `redirectUri` and `state` parameters of `GET /v0/authentication`, are removed
 as a one-off exception to additive compatibility. No daemon release served them. Daemons advertise
 the `oauth` method instead and ignore any query string on discovery.
+
+WebSocket tunnels, WebSocket keepalive pings, and the sign-in `resource` are additive and do not
+increment the protocol version. A daemon that serves the WebSocket twins of the proxy tunnels
+reports `capabilities.webSocketTunnels: true` from health. Older daemons omit it and refuse the
+twin routes, and a client then uses `CONNECT`. When a `CONNECT` through an HTTPS endpoint is
+refused with something other than a Happy error, or the connection closes without an answer, the
+endpoint does not carry CONNECT: the client leaves browser previews, agent networks, live-URL
+artifacts, and local-to-workspace forwarding unavailable for that daemon, says so in human
+terms, and does not retry in a loop. Older daemons omit the authentication method's `resource`;
+clients then send none.
 
 Workspace bridges are additive and do not increment the protocol version. A daemon that serves
 them reports `capabilities.workspaceBridges: true` from health. Older daemons omit it and answer
@@ -1223,7 +1316,8 @@ Fields:
   Surface catalog and members. `providerClis: true` advertises the routes under
   `/v0/provider-clis` and the `provider_cli.updated` event, described under Provider CLIs.
   `providerRoutes: true` advertises the routes under `/v0/provider-routes`, described under
-  Provider routes.
+  Provider routes. `webSocketTunnels: true` advertises the WebSocket twins of the proxy tunnels,
+  described under WebSocket tunnels, and the WebSocket keepalive pings described under Keepalive.
 - `ready` — `false` while starting, `true` once the agent system is loaded.
 - `status` — `"starting"` or `"ready"`; the human-readable form of `ready`.
 - `version` — one identity object. `protocol` is the wire protocol number, the client's
@@ -1272,7 +1366,8 @@ Response — `200`:
             "tokenUrl": "https://sso.acme.example/oauth/token",
             "refreshUrl": "https://sso.acme.example/oauth/token",
             "clientId": "happy",
-            "scope": "happy"
+            "scope": "happy",
+            "resource": "https://happy.acme.example"
         }
     ]
 }
@@ -1295,6 +1390,8 @@ Authentication. Its fields come from machine configuration unchanged:
 - `refreshUrl` — `refresh_url`; present only when configured.
 - `clientId` — `client_id`.
 - `scope` — `scope`; present only when configured.
+- `resource` — `resource`; present only when configured. Clients send it on the authorization,
+  token, and refresh requests as described under Authentication.
 
 These URLs come from the daemon, which clients do not trust with credentials. Clients show the
 authorization server's host to the person before or during sign-in, send the code only to the
@@ -5311,6 +5408,49 @@ Clients must use this route for live-URL artifacts and must not use the unrestri
 workspace, or agent proxy routes for them. If this additive route is unavailable on an older
 daemon, the client shows the live page as unavailable rather than falling back. The existing
 network and workspace proxy routes, including agent browser tabs using them, are unchanged.
+
+### WebSocket tunnels
+
+Every proxy tunnel above also has a WebSocket twin, for networks and load balancers that do not
+carry `CONNECT`. The twin's path is the tunnel's path followed by `/websocket`:
+
+| `CONNECT` tunnel                                            | WebSocket twin                                                    |
+| ----------------------------------------------------------- | ----------------------------------------------------------------- |
+| `CONNECT /v0/workspaces/:workspaceId/proxy`                 | `GET /v0/workspaces/:workspaceId/proxy/websocket`                 |
+| `CONNECT /v0/workspaces/:workspaceId/agents/:agentId/proxy` | `GET /v0/workspaces/:workspaceId/agents/:agentId/proxy/websocket` |
+| `CONNECT /v0/networks/:networkId/proxy`                     | `GET /v0/networks/:networkId/proxy/websocket`                     |
+| `CONNECT /v0/artifacts/:artifactId/proxy`                   | `GET /v0/artifacts/:artifactId/proxy/websocket`                   |
+
+Each twin is a WebSocket upgrade with the same bearer token as every other route, and no other
+header or subprotocol. It is admitted exactly as its `CONNECT` twin is: the same authentication,
+the same refusals with the same statuses and Happy error bodies, answered before the upgrade, and
+the same network. A request to a twin path that is not a WebSocket upgrade is `404 not_found`.
+
+One WebSocket is one tunnel. After the upgrade, binary messages carry exactly the bytes that flow
+on the `CONNECT` tunnel after its `200`, in both directions: the client speaks HTTP/1.1 to the
+daemon's forwarding proxy, sending absolute-form requests or a nested `CONNECT host:port`, and
+everything said there about streaming, headers, destinations, failures, policy, archival, and the
+artifact destination boundary applies unchanged. Message boundaries carry no meaning; either side
+may split or join bytes freely.
+
+- Every message is binary. A text message closes the WebSocket with `1003`.
+- A message is at most 1 MiB. A larger one closes the WebSocket with `1009`.
+- An empty binary message ends that direction's stream, as a TCP half-close does; the other
+  direction stays open. Once both directions have ended, the daemon closes the WebSocket with
+  `1000`. Either side may instead simply close it, which ends everything opened on the tunnel.
+- The daemon closes with `1001` when it shuts down and `1011` on an internal failure.
+- The daemon pings as described under Keepalive. A tunnel is not resumable; after a disconnect
+  the client opens a new one.
+
+A client uses the twins on an HTTPS endpoint whenever health reports
+`capabilities.webSocketTunnels: true`, and may keep using `CONNECT` on a Unix socket or Tailcat.
+Local-to-workspace forwarding through a bridge-capable client may use the workspace twin in
+place of `CONNECT /v0/workspaces/:workspaceId/proxy`. The twins work unchanged through
+`/v0/connections/:id/api/*`.
+
+`HappyAgentClient.workspaceProxyWebSocketUrl(workspaceId)`,
+`workspaceAgentProxyWebSocketUrl(workspaceId, agentId)`, `networkProxyWebSocketUrl(networkId)`,
+and `artifactProxyWebSocketUrl(artifactId)` build their URLs.
 
 ### Local bridges
 
@@ -12563,7 +12703,9 @@ integration events produce no event frame for another member; resuming after the
 cursor must still deliver all subsequent visible events in journal order. The hello cursor and
 gap rules retain their installation-wide journal meaning. The same rules apply to private draft and
 user-settings events.
-Comment heartbeats keep the connection alive through proxies; clients ignore them. A client
+Comment heartbeats arrive at least every 15 seconds and keep the connection alive through
+proxies; clients ignore them, and a client that hears nothing for 45 seconds reconnects, as
+described under Keepalive. A client
 that falls too far behind reading is disconnected rather than buffered without bound, and comes
 back with its last cursor — landing in either the resumed or the gap case above.
 
