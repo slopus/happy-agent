@@ -1,10 +1,17 @@
-import { mkdir, readdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { crc32, deflateSync } from "node:zlib";
 
 import type { HappyAgentClient } from "@slopus/happy-agent-client";
-import { runGymSql, type AgentGym, type GymTurn } from "@slopus/happy-agent-gym";
+import {
+    createAgentGym,
+    createUnixSocketFetch,
+    runGymSql,
+    type AgentGym,
+    type GymTurn,
+} from "@slopus/happy-agent-gym";
 import { afterEach, describe, expect, it } from "vitest";
+import { WebSocket } from "ws";
 
 import { surfaceTeamClients } from "./support/surfaceTeamClients.js";
 
@@ -94,7 +101,12 @@ async function harness() {
     }
     let count = 0;
     /** Alice asks the task's agent to call one tool; returns its result and the tools offered. */
-    async function call(name: string, args: Record<string, unknown>, agentId = task.agent.id) {
+    async function call(
+        name: string,
+        args: Record<string, unknown>,
+        agentId = task.agent.id,
+        permissionMode: "auto" | "full_access" = "auto",
+    ) {
         const callId = `story_call_${String(++count)}`;
         commands.set(agentId, {
             callId,
@@ -102,7 +114,7 @@ async function harness() {
         });
         await gym.send(`Please run ${name}, request ${callId}.`, {
             sessionId: agentId,
-            permissionMode: "auto",
+            permissionMode,
         });
         const offered = gym.inference.requests
             .filter((request) => request.sessionId === agentId)
@@ -119,9 +131,13 @@ async function harness() {
             method,
             headers: {
                 authorization: `Bearer ${tokenFor(subject)}`,
-                ...(json === undefined ? {} : { "content-type": "application/json" }),
+                ...(json === undefined || json instanceof FormData
+                    ? {}
+                    : { "content-type": "application/json" }),
             },
-            ...(json === undefined ? {} : { body: JSON.stringify(json) }),
+            ...(json === undefined
+                ? {}
+                : { body: json instanceof FormData ? json : JSON.stringify(json) }),
         });
         return { status: response.status, body: Buffer.from(await response.arrayBuffer()) };
     }
@@ -275,6 +291,294 @@ describe("stories", () => {
 });
 
 describe("story replies, reposts, and deletes", () => {
+    it("lets the standalone person upload and delete a story with no agent or user ID", async () => {
+        const gym = await createAgentGym();
+        running.add(gym);
+        await gym.client.saveUserSetting("stories", { value: true });
+        const form = new FormData();
+        form.set("media", new Blob([SHOT], { type: "image/png" }), "gallery");
+        const encoded = new Response(form);
+        const contentType = encoded.headers.get("content-type")!;
+        const response = await createUnixSocketFetch(gym.socketPath)(
+            "http://happy-agent.gym/v0/stories",
+            {
+                method: "POST",
+                headers: { authorization: `Bearer ${gym.token}`, "content-type": contentType },
+                body: await encoded.arrayBuffer(),
+            },
+        );
+        expect(response.status).toBe(200);
+        const { story } = (await response.json()) as { story: { id: string } };
+        expect(story).toMatchObject({
+            agentId: null,
+            userId: null,
+            poster: "person",
+            canDelete: true,
+        });
+        expect((await gym.http.get(`/v0/stories/${story.id}/media`)).status).toBe(200);
+        expect((await gym.http.delete(`/v0/stories/${story.id}`)).status).toBe(200);
+        expect((await gym.http.get<{ stories: unknown[] }>("/v0/stories")).body.stories).toEqual(
+            [],
+        );
+        expect(gym.errors).toEqual([]);
+    });
+
+    it("keeps person stories out of an exported bot guest's transport", async () => {
+        const { gym, alice, bot, call, api, feed } = await harness();
+        await alice.saveUserSetting("stories", { value: true });
+        const chief = (await alice.listBots()).bots.find(
+            (item) => item.username === "chief_of_staff",
+        )!;
+        const exported = await call(
+            "set_bridge_exported_bot",
+            {
+                botId: bot.id,
+                service: "Test chat",
+                tokenFile: "guest.token",
+                allowedUsers: ["outside"],
+            },
+            chief.agent.id,
+            "full_access",
+        );
+        const tokenPath = /written to (\S+), readable/.exec(exported.result.text)?.[1];
+        expect(tokenPath).toBeDefined();
+        const token = (await readFile(tokenPath!, "utf8")).trim();
+        const socket = new WebSocket(
+            new URL("/v0/exported-bots/connect", gym.daemon.httpUrl).href.replace(/^http/, "ws"),
+            {
+                headers: { authorization: `Bearer ${token}` },
+            },
+        );
+        const frames: Record<string, unknown>[] = [];
+        socket.on("message", (data) => {
+            const frame = JSON.parse(String(data));
+            frames.push(frame);
+            if (frame.type === "reply")
+                socket.send(JSON.stringify({ type: "ack", seq: frame.seq }));
+        });
+        try {
+            await new Promise<void>((resolve, reject) => {
+                socket.once("open", resolve);
+                socket.once("error", reject);
+            });
+            socket.send(
+                JSON.stringify({
+                    type: "message",
+                    id: "hello",
+                    userId: "outside",
+                    chatId: "outside",
+                    name: "Outside person",
+                    text: "Hello",
+                }),
+            );
+            await gym.waitUntil(
+                () => frames.find((frame) => frame.type === "reply"),
+                "the guest's ordinary reply",
+            );
+            const child = (await alice.getAgentActivity(bot.agent.id)).subagents[0]!;
+            const message = (await alice.getMessages(child.id)).runs
+                .flatMap((run) => run.messages)
+                .find((item) => item.role === "user")!;
+            expect((await alice.getUsers([message.metadata.userId!])).users).toEqual([
+                expect.objectContaining({ kind: "guest", canLogIn: false }),
+            ]);
+            const form = new FormData();
+            form.set("media", new Blob([SHOT], { type: "image/png" }), "gallery");
+            expect((await api("alice", "POST", "/v0/stories", form)).status).toBe(200);
+            const [story] = await feed("alice");
+            for (const [method, path] of [
+                ["GET", "/v0/stories"],
+                ["GET", `/v0/stories/${story!.id}/media`],
+                ["POST", "/v0/stories"],
+            ] as const) {
+                const response = await fetch(new URL(path, gym.daemon.httpUrl), {
+                    method,
+                    headers: { authorization: `Bearer ${token}` },
+                });
+                expect(response.status).toBe(401);
+                await response.arrayBuffer();
+            }
+            expect(frames.some((frame) => String(frame.type).startsWith("story."))).toBe(false);
+        } finally {
+            socket.terminate();
+        }
+        expect(gym.errors).toEqual([]);
+    });
+
+    it("keeps emoji text and round centers separate from a repost's media, including after restart", async () => {
+        const { gym, alice, bob, task, call, api, feed } = await harness();
+        for (const person of [alice, bob]) await person.saveUserSetting("stories", { value: true });
+        await call("post_story", { path: "shot.png" });
+        const [original] = await feed("alice");
+        const path = `/v0/stories/${original!.id}/repost`;
+        const layers = { text: { text: "Shipped 🚀", x: 0.7, y: 0.9 }, round: { x: 0.2, y: 0.3 } };
+        const form = new FormData();
+        form.set("metadata", JSON.stringify({ layers }));
+        form.set("round", new Blob([CLIP], { type: "video/mp4" }), "selfie.mp4");
+        const response = await api("bob", "POST", path, form);
+        expect(response.status).toBe(200);
+        const { story } = JSON.parse(response.body.toString());
+        expect(story).toMatchObject({ layers, agentId: task.agent.id, repostOf: original!.id });
+        expect((await api("alice", "GET", `/v0/stories/${story.id}/round`)).body.equals(CLIP)).toBe(
+            true,
+        );
+        expect(
+            JSON.parse((await api("bob", "POST", path, {})).body.toString()).story,
+        ).toMatchObject({ caption: null, round: null });
+        const textOnly = { text: { text: "👋", x: 0, y: 1 } };
+        expect(
+            JSON.parse((await api("bob", "POST", path, { layers: textOnly })).body.toString()).story
+                .layers,
+        ).toEqual(textOnly);
+        for (const invalid of [
+            { text: { text: "", x: 0.5, y: 0.5 } },
+            { text: { text: "x".repeat(201), x: 0.5, y: 0.5 } },
+            { text: { text: "Hi", x: -0.1, y: 0.5 } },
+            { round: { x: 0.5, y: 1.01 } },
+            { text: { text: "Hi", x: 0.5, y: 0.5, bold: true } },
+            { round: { x: 0.2, y: 0.3 } }, // No round file.
+        ])
+            expect((await api("bob", "POST", path, { layers: invalid })).status).toBe(400);
+        await gym.restart();
+        expect((await feed("alice")).find((item) => item.id === story.id)).toMatchObject({
+            layers,
+            agentId: task.agent.id,
+        });
+        expect(gym.errors).toEqual([]);
+    });
+
+    it("shows a person's binary photo and video to teammates without a chat target, and only the poster deletes", async () => {
+        const { gym, alice, bob, aliceId, task, api, feed, clientFor, onboard } = await harness();
+        const carol = clientFor("carol");
+        await onboard(carol, "Carol");
+        await bob.leaveTask(task.id);
+        for (const person of [alice, bob]) await person.saveUserSetting("stories", { value: true });
+        const before = (await alice.getEvents()).latestCursor;
+        const layers = {
+            text: { text: "A day out 🌅", x: 0.4, y: 0.8 },
+            round: { x: 0.3, y: 0.2 },
+        };
+        const ids: string[] = [];
+        for (const [bytes, type] of [
+            [SHOT, "image/png"],
+            [CLIP, "video/mp4"],
+        ] as const) {
+            const form = new FormData();
+            form.set("media", new Blob([bytes], { type }), "gallery");
+            form.set("round", new Blob([CLIP], { type: "video/mp4" }), "selfie.mp4");
+            form.set("metadata", JSON.stringify({ caption: "Today", layers }));
+            const posted = await api("alice", "POST", "/v0/stories", form);
+            expect(posted.status, posted.body.toString()).toBe(200);
+            const { story } = JSON.parse(posted.body.toString());
+            expect(story).toMatchObject({
+                poster: "person",
+                userId: aliceId,
+                agentId: null,
+                taskId: null,
+                botId: null,
+                repostOf: null,
+                canDelete: true,
+                layers,
+            });
+            ids.push(story.id);
+            expect(
+                (await api("bob", "GET", `/v0/stories/${story.id}/media`)).body.equals(bytes),
+            ).toBe(true);
+            expect(
+                (await api("bob", "GET", `/v0/stories/${story.id}/round`)).body.equals(CLIP),
+            ).toBe(true);
+            expect((await api("bob", "POST", `/v0/stories/${story.id}/repost`, {})).status).toBe(
+                404,
+            );
+            expect((await api("bob", "DELETE", `/v0/stories/${story.id}`)).status).toBe(403);
+        }
+        expect(await feed("bob")).toHaveLength(2);
+        expect(await feed("carol")).toEqual([]);
+        expect(await storyEvents(carol, before)).toEqual([]);
+        expect(await storyEvents(bob, before)).toHaveLength(2);
+        expect((await api("carol", "GET", `/v0/stories/${ids[0]}/media`)).status).toBe(404);
+        await carol.saveUserSetting("stories", { value: true });
+        expect(await feed("carol")).toHaveLength(2);
+        const inferenceCount = gym.inference.requests.length;
+        expect(
+            (await api("bob", "POST", `/v0/stories/${ids[0]}/replies`, { text: "Great view" }))
+                .status,
+        ).toBe(200);
+        expect((await feed("alice"))[0]).toMatchObject({
+            replyCount: 1,
+            replies: [{ text: "Great view" }],
+        });
+        expect(gym.inference.requests.length).toBe(inferenceCount);
+        expect(JSON.stringify((await alice.getMessages(task.agent.id)).runs)).not.toContain(
+            "Great view",
+        );
+        await gym.restart();
+        expect((await feed("bob"))[0]).toMatchObject({ layers, agentId: null, replyCount: 1 });
+        for (const id of ids) {
+            expect((await api("alice", "DELETE", `/v0/stories/${id}`)).status).toBe(200);
+            for (const route of ["media", "round", "replies"])
+                expect((await api("bob", "GET", `/v0/stories/${id}/${route}`)).status).toBe(404);
+            expect((await api("bob", "POST", `/v0/stories/${id}/seen`)).status).toBe(404);
+        }
+        expect(await feed("bob")).toEqual([]);
+        expect(gym.errors).toEqual([]);
+    });
+
+    it("refuses malformed or oversized person uploads and requires stories on", async () => {
+        const { gym, alice, api, feed } = await harness();
+        const form = (bytes: Uint8Array, type: string) => {
+            const result = new FormData();
+            result.set("media", new Blob([bytes], { type }), "gallery");
+            return result;
+        };
+        expect((await api("alice", "POST", "/v0/stories", form(SHOT, "image/png"))).status).toBe(
+            404,
+        );
+        await alice.saveUserSetting("stories", { value: true });
+        for (const [bytes, type] of [
+            [new Uint8Array(), "image/png"],
+            [Buffer.from("bad"), "image/png"],
+            [Buffer.from("bad"), "video/mp4"],
+            [CLIP, "video/quicktime"],
+            [SHOT, "text/plain"],
+        ] as const) {
+            const response = await api("alice", "POST", "/v0/stories", form(bytes, type));
+            expect(response.status, `${type}: ${response.body.toString()}`).toBe(400);
+        }
+        const oversized = form(new Uint8Array(32 * 1024 * 1024 + 1), "image/png");
+        expect((await api("alice", "POST", "/v0/stories", oversized)).status).toBe(413);
+        const bigRound = form(SHOT, "image/png");
+        bigRound.set(
+            "round",
+            new Blob([new Uint8Array(16 * 1024 * 1024 + 1)], { type: "video/mp4" }),
+            "round.mp4",
+        );
+        expect((await api("alice", "POST", "/v0/stories", bigRound)).status).toBe(413);
+        for (const modify of [
+            (value: FormData) => value.append("media", new Blob([SHOT], { type: "image/png" })),
+            (value: FormData) => value.set("metadata", "not JSON"),
+            (value: FormData) => value.set("metadata", '{"surprise":true}'),
+            (value: FormData) => value.set("metadata", '{"layers":{"round":{"x":0.1,"y":0.2}}}'),
+            (value: FormData) => value.set("round", new Blob([CLIP], { type: "video/quicktime" })),
+            (value: FormData) => value.set("round", new Blob(["bad"], { type: "video/mp4" })),
+            (value: FormData) => value.set("unexpected", "value"),
+            (value: FormData) => value.delete("media"),
+        ]) {
+            const upload = form(SHOT, "image/png");
+            modify(upload);
+            expect((await api("alice", "POST", "/v0/stories", upload)).status).toBe(400);
+        }
+        expect((await api("alice", "POST", "/v0/stories", {})).status).toBe(400);
+        expect(await feed("alice")).toEqual([]);
+        const plain = await api("alice", "POST", "/v0/stories", form(SHOT, "image/png"));
+        expect(plain.status).toBe(200);
+        expect(JSON.parse(plain.body.toString()).story).toMatchObject({
+            caption: null,
+            round: null,
+        });
+        expect(gym.errors).toEqual([]);
+    });
+
     it.each([false, true])(
         "send a reply to the story's agent as the person's message, readable by everyone who sees it (restart: %s)",
         async (restart) => {

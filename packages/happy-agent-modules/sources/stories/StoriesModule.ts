@@ -50,6 +50,8 @@ export class StoryInputError extends Error {}
  * a member of, or a bot. A repost is seen by exactly those who see what it reposts.
  */
 export class StoriesModule implements AgentModule {
+    static readonly layersSchema = store.storyLayersSchema;
+    static readonly metadataSchema = store.storyMetadataSchema;
     readonly name = "stories";
     readonly migrations = store.storyMigrations;
 
@@ -110,11 +112,11 @@ export class StoriesModule implements AgentModule {
         if (poster === undefined) return false;
         const person = await scope.kv.read(ctx, PERSON_KEY);
         if (person === GUEST) return false;
-        if (!this.#team.enabled) return await this.#enabled(ctx);
+        if (!this.#team.enabled) return await this.enabled(ctx);
         const userId = typeof person === "string" ? person : poster.ownerUserId;
         const user = userId === null ? undefined : await this.#team.getUser(ctx, userId);
         if (user === undefined || user.authentication === "guest") return false;
-        return await this.#enabled(this.#team.connectionContext(ctx, user));
+        return await this.enabled(this.#team.connectionContext(ctx, user));
     }
 
     /** Post a story under the tool call's ID, so a replay keeps the first one. */
@@ -150,19 +152,72 @@ export class StoriesModule implements AgentModule {
     }
 
     /** The caller's repost of an agent story they see, with their caption and round video. */
-    async repost(ctx: Context, id: string, caption: string | null, round?: Uint8Array) {
+    async repost(
+        ctx: Context,
+        id: string,
+        caption: string | null,
+        round?: Uint8Array,
+        layers?: StoryRecord["layers"],
+    ) {
+        if (layers?.round && !round)
+            throw new StoryInputError("A round position needs a round video.");
         if (round && (round.byteLength > MAX_ROUND || !store.isH264Mp4(round)))
             throw new StoryInputError("A round is an H.264 MP4 video of at most 16 MiB.");
         const kept = round && (await this.#chatMedia.snapshot(round, "round.mp4"));
         return await ctx.inTx(async (txCtx) => {
             const [original] = await this.#read(txCtx, id);
-            if (original === undefined || original.repostOf !== undefined) return undefined;
+            if (
+                original === undefined ||
+                original.repostOf !== undefined ||
+                original.agentId === null
+            )
+                return undefined;
             const { agentId, taskId, botId, media } = original;
             const [postedAt, userId] = [Date.now(), this.#reader(txCtx).readerId ?? null];
             const from = { agentId, taskId, botId, media, repostOf: id, userId };
             const life = { postedAt, expiresAt: postedAt + DAY };
             const story: StoryRecord = { id: createId(), caption, ...from, ...life };
+            if (layers) story.layers = layers;
             if (kept) story.round = { ...kept, kind: "video" };
+            await store.insertStory(txCtx, story);
+            await this.#changed(txCtx, story.id);
+            return await this.get(txCtx, story.id);
+        });
+    }
+
+    /** A person's original upload has no agent or task and reaches all signed-in members. */
+    async upload(ctx: Context, media: Blob, metadata: store.StoryMetadata, round?: Uint8Array) {
+        if (!(await this.enabled(ctx))) return undefined;
+        if (metadata.layers?.round && !round)
+            throw new StoryInputError("A round position needs a round video.");
+        if (round && (round.byteLength > MAX_ROUND || !store.isH264Mp4(round)))
+            throw new StoryInputError("A round must be an H.264 MP4 video.");
+        const bytes = new Uint8Array(await media.arrayBuffer());
+        const video = media.type === "video/mp4";
+        if ((!video && !media.type.startsWith("image/")) || (video && !store.isH264Mp4(bytes)))
+            throw new StoryInputError("Choose an image or an H.264 MP4 video.");
+        const name = video
+            ? "story.mp4"
+            : `story.${media.type.slice(6).replace("svg+xml", "svg").replace("x-icon", "ico")}`;
+        const item = await this.#chatMedia.snapshot(bytes, name);
+        if (item.kind !== "image" && item.kind !== "video")
+            throw new StoryInputError("The image could not be read.");
+        const kept = round && (await this.#chatMedia.snapshot(round, "round.mp4"));
+        const postedAt = Date.now();
+        const story: StoryRecord = {
+            id: createId(),
+            agentId: null,
+            taskId: null,
+            botId: null,
+            userId: this.#reader(ctx).readerId ?? null,
+            caption: metadata.caption ?? null,
+            media: { ...item, kind: item.kind },
+            postedAt,
+            expiresAt: postedAt + DAY,
+        };
+        if (metadata.layers) story.layers = metadata.layers;
+        if (kept) story.round = { ...kept, kind: "video" };
+        return await ctx.inTx(async (txCtx) => {
             await store.insertStory(txCtx, story);
             await this.#changed(txCtx, story.id);
             return await this.get(txCtx, story.id);
@@ -177,6 +232,10 @@ export class StoriesModule implements AgentModule {
             const userId = this.#reader(txCtx).readerId ?? null;
             const reply = { id: createId(), storyId: id, userId, text, createdAt: Date.now() };
             await store.insertReply(txCtx, reply);
+            if (story.agentId === null) {
+                await this.#changed(txCtx, id);
+                return reply;
+            }
             const agents = this.#agents!;
             const delivery = await agentDeliveryMode(
                 txCtx,
@@ -290,10 +349,14 @@ export class StoriesModule implements AgentModule {
     }
 
     async #read(ctx: Context, id?: string) {
-        if (!(await this.#enabled(ctx))) return [];
+        if (!(await this.enabled(ctx))) return [];
         const { member } = this.#reader(ctx);
         const visible: (StoryRecord & { seen: boolean })[] = [];
         for (const story of await store.readLiveStories(ctx, member, Date.now(), id)) {
+            if (story.agentId === null) {
+                visible.push(story);
+                continue;
+            }
             // A task's story reaches its members; a bot's, everyone who can open the bot. An
             // archived one's stories are gone, so nothing wakes its archived agent.
             const where = story.botId
@@ -312,9 +375,10 @@ export class StoriesModule implements AgentModule {
         const { readerId } = this.#reader(ctx);
         // A person deletes their own repost, and a task's owner its agent's stories.
         const owner = story.taskId && (await this.#tasks.get(ctx, story.taskId))?.ownerUserId;
-        const mine = story.repostOf === undefined ? owner === readerId : story.userId === readerId;
+        const personal = story.repostOf !== undefined || story.agentId === null;
+        const mine = personal ? story.userId === readerId : owner === readerId;
         const round = story.round && { mimeType: story.round.mimeType, size: story.round.size };
-        const poster = story.repostOf === undefined ? ("agent" as const) : ("person" as const);
+        const poster = personal ? ("person" as const) : ("agent" as const);
         const canDelete = !this.#team.enabled || (readerId !== undefined && mine);
         const [userId, repostOf] = [story.userId ?? null, story.repostOf ?? null];
         const extra = { poster, round: round ?? null, replyCount: count, replies, canDelete };
@@ -367,7 +431,8 @@ export class StoriesModule implements AgentModule {
         );
     }
 
-    async #enabled(ctx: Context): Promise<boolean> {
+    async enabled(ctx: Context): Promise<boolean> {
+        if (this.#team.enabled && teamUser(ctx)?.authentication === "guest") return false;
         return (await this.#settings.get(ctx, "stories")).value === true;
     }
 

@@ -15,6 +15,28 @@ const mediaSchema = Type.Object({
     size: Type.Integer(),
     sha256: Type.String(),
 });
+const coordinate = Type.Number({ minimum: 0, maximum: 1 });
+const position = { x: coordinate, y: coordinate };
+export const storyLayersSchema = Type.Object(
+    {
+        text: Type.Optional(
+            Type.Object(
+                { text: Type.String({ minLength: 1, maxLength: 200 }), ...position },
+                { additionalProperties: false },
+            ),
+        ),
+        round: Type.Optional(Type.Object(position, { additionalProperties: false })),
+    },
+    { additionalProperties: false },
+);
+export const storyMetadataSchema = Type.Object(
+    {
+        caption: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
+        layers: Type.Optional(storyLayersSchema),
+    },
+    { additionalProperties: false },
+);
+export type StoryMetadata = Static<typeof storyMetadataSchema>;
 
 /**
  * A story as stored: what is served, plus the snapshots its media is kept under. A repost names
@@ -22,7 +44,7 @@ const mediaSchema = Type.Object({
  */
 export const storyRecordSchema = Type.Object({
     id: Type.String(),
-    agentId: Type.String(),
+    agentId: Type.Union([Type.String(), Type.Null()]),
     taskId: Type.Union([Type.String(), Type.Null()]),
     botId: Type.Union([Type.String(), Type.Null()]),
     caption: Type.Union([Type.String(), Type.Null()]),
@@ -30,6 +52,7 @@ export const storyRecordSchema = Type.Object({
     repostOf: Type.Optional(Type.String()),
     userId: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     round: Type.Optional(mediaSchema),
+    layers: Type.Optional(storyLayersSchema),
     postedAt: Type.Integer(),
     expiresAt: Type.Integer(),
 });

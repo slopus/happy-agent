@@ -36,6 +36,12 @@ counts and the latest 50 replies) and `delete_story` (one of its own stories, wi
 
 ## Reposts, replies, and deleting
 
+A person may also upload their own image or H.264 MP4 through binary multipart, with optional
+text and round layers. These stories have no agent, task, or bot; every non-guest member with
+stories on sees them, only their poster deletes them, and their replies stay with the story.
+Layer positions are normalized centers, persisted separately from the media. `agentId` remains
+the chat target for agent stories and reposts and is null for person originals.
+
 A repost copies the original's agent, task or bot, and media, so the original's audience and row
 carry over unchanged; only its caption, optional round MP4 (16 MiB, checked like a posted video),
 reposter, and lifetime are its own. A reply is stored with the story and sent to the story's agent

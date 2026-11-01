@@ -5,6 +5,8 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { AsyncLocalStorage, AsyncResource } from "node:async_hooks";
 import type { Socket } from "node:net";
 import { dirname, join } from "node:path";
+// Bun replaces bare "undici" with its native parser, which drops multipart file content types.
+import { Response as MultipartResponse } from "undici/index.js";
 import {
     BridgeError,
     BridgesModule,
@@ -418,6 +420,7 @@ const storyRepostRequestSchema = Type.Object(
         round: Type.Optional(
             Type.Object({ data: storyRoundSchema }, { additionalProperties: false }),
         ),
+        layers: Type.Optional(StoriesModule.layersSchema),
     },
     { additionalProperties: false },
 );
@@ -7106,6 +7109,14 @@ export class ApiModule implements AgentModule {
             sendJson(response, 200, { stories: await stories.list(ctx), cursor });
             return true;
         }
+        if (request.method === "POST" && url.pathname === "/v0/stories") {
+            if (!(await stories.enabled(ctx))) throw notFound("The story was not found.");
+            const { media, metadata, round } = await readStoryUpload(request, true);
+            const story = await stories.upload(ctx, media!, metadata, round).catch(storyInputError);
+            if (story === undefined) throw notFound("The story was not found.");
+            sendJson(response, 200, { story });
+            return true;
+        }
         const match =
             /^\/v0\/stories\/([a-z][a-z0-9]*)(?:\/(seen|media|round|replies|repost))?$/.exec(
                 url.pathname,
@@ -7135,16 +7146,21 @@ export class ApiModule implements AgentModule {
             if (reply === undefined) throw notFound("The story was not found.");
             sendJson(response, 200, { reply });
         } else if (route === "POST repost") {
-            const body = await bodyAs(request, storyRepostRequestSchema, "story repost");
             // Decode only for someone who sees the story.
             if ((await stories.get(ctx, storyId)) === undefined)
                 throw notFound("The story was not found.");
-            const round = body.round && Buffer.from(body.round.data, "base64");
+            const upload = request.headers["content-type"]?.startsWith("multipart/form-data")
+                ? await readStoryUpload(request, false)
+                : undefined;
+            const legacy = upload
+                ? undefined
+                : await bodyAs(request, storyRepostRequestSchema, "story repost");
+            const body = upload?.metadata ?? legacy!;
+            const round =
+                upload?.round ?? (legacy?.round && Buffer.from(legacy.round.data, "base64"));
             const story = await stories
-                .repost(ctx, storyId, body.caption ?? null, round)
-                .catch((error: unknown) => {
-                    throw error instanceof StoryInputError ? invalidRequest(error.message) : error;
-                });
+                .repost(ctx, storyId, body.caption ?? null, round, body.layers)
+                .catch(storyInputError);
             if (story === undefined) throw notFound("The story was not found.");
             sendJson(response, 200, { story });
         } else if (route === "DELETE ") {
@@ -10483,6 +10499,59 @@ async function readBytes(request: IncomingMessage, maximum: number): Promise<Buf
         chunks.push(buffer);
     }
     return Buffer.concat(chunks);
+}
+
+function storyInputError(error: unknown): never {
+    throw error instanceof StoryInputError ? invalidRequest(error.message) : error;
+}
+
+/** Bounded binary multipart upload; metadata is validated separately from the files. */
+async function readStoryUpload(request: IncomingMessage, original: boolean) {
+    const bytes = await readBytes(request, 48 * 1024 * 1024 + 65536);
+    const type = request.headers["content-type"] ?? "";
+    if (!type.startsWith("multipart/form-data"))
+        throw invalidRequest("Use multipart/form-data for a story upload.");
+    const form = await new MultipartResponse(bytes, { headers: { "content-type": type } })
+        .formData()
+        .catch(() => {
+            throw invalidRequest("The story upload is invalid.");
+        });
+    for (const key of form.keys()) {
+        if (
+            !["metadata", "round", ...(original ? ["media"] : [])].includes(key) ||
+            form.getAll(key).length !== 1
+        )
+            throw invalidRequest("The story upload has unexpected or repeated parts.");
+    }
+    let value: unknown;
+    try {
+        value = JSON.parse(String(form.get("metadata") ?? "{}"));
+    } catch {
+        throw invalidRequest("The story metadata is invalid.");
+    }
+    const metadata = queryAs(value, StoriesModule.metadataSchema, "story metadata");
+    const media = form.get("media"),
+        round = form.get("round");
+    if ((original && !(media instanceof Blob)) || (round !== null && !(round instanceof Blob)))
+        throw invalidRequest("The story needs binary files.");
+    for (const [file, cap] of [
+        [media, 32 * 1024 * 1024],
+        [round, 16 * 1024 * 1024],
+    ] as const) {
+        if (file instanceof Blob && (file.size === 0 || file.size > cap))
+            throw new ApiError(
+                file.size === 0 ? 400 : 413,
+                file.size === 0 ? "invalid_request" : "too_large",
+                "The story file is empty or too large.",
+            );
+    }
+    if (round instanceof Blob && round.type !== "video/mp4")
+        throw invalidRequest("A round must be an H.264 MP4 video.");
+    return {
+        metadata,
+        media: media instanceof Blob ? media : undefined,
+        round: round instanceof Blob ? new Uint8Array(await round.arrayBuffer()) : undefined,
+    };
 }
 
 interface ApiUsageTokens {
