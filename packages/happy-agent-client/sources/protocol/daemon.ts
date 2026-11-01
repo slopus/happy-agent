@@ -243,7 +243,23 @@ export const nodeConfigPatchSchema = Type.Object(
 );
 export type NodeConfigPatch = Static<typeof nodeConfigPatchSchema>;
 
-/** Optional machine-level public phone endpoint; older daemons omit this object. */
+/** Daemon-owned public reachability, independent of mobile pairing. Older daemons omit it. */
+export const apiConfigSchema = Type.Object({
+    /** Missing means no advertisement; null explicitly removes the public endpoint. */
+    publicUrl: Type.Optional(Nullable(Type.String({ minLength: 1, maxLength: 2048 }))),
+    /** Read-only loopback port for the shared HTTP listener behind the operator's TLS proxy. */
+    localPort: Type.Optional(Type.Integer({ minimum: 1, maximum: 65535 })),
+});
+export type ApiConfig = Static<typeof apiConfigSchema>;
+
+/** Omission preserves the endpoint; null removes it even over a machine-file URL. */
+export const apiConfigPatchSchema = Type.Object(
+    { publicUrl: Type.Optional(Nullable(Type.String({ minLength: 1, maxLength: 2048 }))) },
+    { additionalProperties: false },
+);
+export type ApiConfigPatch = Static<typeof apiConfigPatchSchema>;
+
+/** Existing connectivity projection; newer daemons expose the same endpoint under `api`. */
 export const mobileConnectorConfigSchema = Type.Object({
     /** Canonical HTTPS origin, or null to use Tailcat. */
     publicUrl: Type.Optional(Nullable(Type.String({ minLength: 1, maxLength: 2048 }))),
@@ -468,6 +484,8 @@ export type WorkspaceConfig = Static<typeof workspaceConfigSchema>;
 
 /** The daemon's effective configuration, with every secret removed. */
 export const daemonConfigSchema = Type.Object({
+    /** Public endpoint shared by ordinary API and mobile clients. */
+    api: Type.Optional(apiConfigSchema),
     /** Installation name and avatar. Absent on older compatible daemons. */
     node: Type.Optional(nodeConfigSchema),
     defaults: configDefaultsSchema,
@@ -502,6 +520,7 @@ export type ConfigResponse = Static<typeof configResponseSchema>;
  */
 export const configPatchSchema = Type.Partial(
     Type.Object({
+        api: apiConfigPatchSchema,
         defaults: Type.Partial(configDefaultsSchema),
         features: Type.Partial(configFeaturesSchema),
         network: Type.Partial(networkConfigSchema),

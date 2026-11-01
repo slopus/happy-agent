@@ -63,6 +63,23 @@ not one past the newest held, read forward with `afterSeq`.
 for every request, so refreshed credentials apply without a new client; it may be omitted only to
 call `getAuthentication()` before signing in.
 
+Authenticated configuration may advertise daemon-wide public reachability in optional `config.api`:
+`publicUrl` is a canonical HTTPS origin or `null`, and `localPort` is the read-only loopback port
+behind the operator's TLS proxy. A missing object or missing URL supplies no update; explicit
+`null` removes the endpoint. `patchConfig({ api: { publicUrl } })` changes it. The already-published
+`mobileConnector` fields remain compatible projections of the same daemon-owned setting, not a
+second listener. When both patch objects supply URLs, the daemon compares normalized origins and
+rejects a conflict before changing any field.
+
+The client library does not automatically retarget its endpoint or forward credentials based on
+configuration. A consuming application may adopt an origin only from authenticated configuration,
+retain any original transport coordinates, and reconnect HTTP, event streams, WebSockets, and
+tunnels consistently. A failed HTTPS connection is not permission to fall back. In public mode the
+daemon owns one shared API/mobile listener and starts no separate mobile or mobile Tailcat
+listener, so an offline client whose old route has closed cannot discover the change through that
+route; it needs a new QR or another trusted provisioning path. No public endpoint is deployed by
+these settings or schemas.
+
 `getAuthentication()` reports whether the client is signed in and lists sign-in methods. An `oauth`
 method uses the authorization code flow with PKCE, talking to the deployer's authorization server
 directly; the daemon never sees the code, the PKCE verifier, or a refresh token.

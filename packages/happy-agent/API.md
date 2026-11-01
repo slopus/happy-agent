@@ -8,9 +8,9 @@ target design, not a description of legacy behavior.
 
 ### Transport
 
-The daemon has two mutually exclusive deployment transports:
+The daemon has two mutually exclusive primary deployment transports:
 
-- Standalone mode serves HTTP/1.1 over a Unix domain socket. There is no TCP listener. The socket
+- Standalone mode serves HTTP/1.1 over a Unix domain socket. The socket
   path comes from the agent configuration (`paths.socketPath`); the socket file and its parent
   directory are created with owner-only permissions (`0600` / `0700`).
 - Team mode serves HTTP/1.1 over TCP at the host and port configured by `[feature.team]`. It does
@@ -19,10 +19,58 @@ The daemon has two mutually exclusive deployment transports:
   A configured port of `0` selects an ephemeral port.
 
 Either mode may also serve the same API over Tailcat: `[feature.tailcat]` exposes the deployment
-transport, and the mobile connector's socket serves paired phones with credentials of their own.
-The mobile connector may instead expose a loopback HTTP listener behind an operator-managed HTTPS
-reverse proxy. This does not expose the main transport or accept its credentials. See Mobile
-connector.
+transport. Without a public endpoint, the mobile connector has a separate Tailcat socket for
+paired phones with credentials of their own.
+
+The optional machine setting `[api] public_url` configures this daemon's public HTTPS origin,
+independently of mobile pairing. `[api] public_port` selects its loopback HTTP port, default
+`24782`, in 1–65535. Only machine configuration may set either value, never a repository's
+`happy.toml`. An omitted or empty machine URL disables the public transport; a runtime
+`public_url = ""` explicitly overrides a machine URL with no public endpoint. URL normalization
+is specified under `PATCH /v0/config`.
+
+When a public origin is configured, the daemon owns one HTTP/1.1 listener on
+`127.0.0.1:<public_port>`. It serves both ordinary API clients and mobile connections. It starts
+independently of paired devices and remains available even when the mobile connector is disabled.
+The mobile connector does not start its own listener, forwarding listener, or Tailcat exposure in
+public mode. The primary Unix socket or team listener remains available with its existing
+authentication boundary. The separate `[feature.tailcat]` exposure is unchanged by this setting.
+
+The operator supplies DNS, a publicly trusted certificate, and a trusted TLS-terminating proxy
+forwarding the complete HTTP/1.1 stream to that loopback listener. The proxy must preserve request
+targets and Authorization, streaming responses, WebSocket upgrades, and arbitrary bidirectional
+bytes after CONNECT. A TLS-terminating TCP proxy supports the complete API; ordinary HTTP proxy
+defaults may reject CONNECT and cannot support workspace browser tunnels. The proxy can observe
+credentials and plaintext; its final loopback hop is unencrypted. Configuring an origin does not
+configure or probe DNS, TLS, a firewall, or a proxy, and never binds a public interface itself.
+
+Clients use normal platform TLS trust and hostname verification, map HTTPS to WSS for WebSockets,
+and never downgrade to HTTP, ignore certificate errors, forward bearer credentials through a
+redirect, or silently substitute Tailcat when the public endpoint fails.
+
+### Credentials on the public transport
+
+The shared public listener verifies the credential's identity before selecting its authority:
+
+- The existing standalone API bearer, or the deployment's configured WorkOS/JWT authentication,
+  retains its ordinary user and authorization rules.
+- A paired mobile device retains exactly its pairing owner's authority, revocation behavior, and
+  mobile route restrictions. Its token never becomes a standalone API or team sign-in credential.
+- Pairing tokens and handshake credentials reach only their own mobile handshake routes. Ordinary
+  API credentials do not authorize a mobile handshake.
+
+Credential classes are established by verification, not guessed from token shape. Invalid,
+ambiguous, or revoked credentials are refused. Mobile credentials remain unavailable when the
+mobile connector is disabled. Runner and exported-bot bridge credentials and their dedicated
+upgrade routes are not accepted on this public listener.
+
+For every public caller, `/v0/drain`, `/v0/shutdown`, and `/v0/debug` and its descendants return
+`403 forbidden` after authentication, regardless of method. These operations remain available
+only through existing non-public transports with their existing authorization. Every request,
+WebSocket upgrade, and CONNECT otherwise requires its appropriate credential. The sole
+unauthenticated exception is the existing `GET /v0/authentication` sign-in discovery: it returns
+only `authenticated: false`, the configured sign-in methods, and `userId: null` when no credential
+verifies, never user or daemon data. Mobile management restrictions are unchanged.
 
 Clients construct request URLs against an arbitrary authority — the daemon ignores the `Host`
 header. Only the path and query string matter.
@@ -205,19 +253,22 @@ carries an `authentication` object whose `methods` are the same as those returne
 }
 ```
 
-A runner token from `[runners.<id>] token` authenticates only `GET /v0/runners/connect`, in both
-standalone and team mode, and no other credential is accepted on that route. See Runners.
+A runner token from `[runners.<id>] token` authenticates only `GET /v0/runners/connect` on the
+primary transports, in both standalone and team mode. No other credential is accepted on that
+route, and the public listener does not expose it. See Runners.
 
-A bridge token authenticates only `GET /v0/exported-bots/connect`, in both standalone and team
-mode, and no other credential is accepted on that route. See Exported bots. Exported-bot guests
+A bridge token authenticates only `GET /v0/exported-bots/connect` on the primary transports, in both
+standalone and team mode. No other credential is accepted on that route, and the public listener
+does not expose it. See Exported bots. Exported-bot guests
 have no credentials: no sign-in method, bearer token, or bridge token authenticates as a guest.
 
 `GET /v0/authentication` is the only unauthenticated endpoint. Every other endpoint, health
 included, requires a valid bearer token.
 
-The mobile connector's socket accepts none of these credentials, only a paired phone's device
-token and the pairing credentials, and has no unauthenticated endpoint. The main transports accept
-none of the mobile credentials. See "Credentials on the connector's socket".
+The dedicated mobile Tailcat socket accepts none of these credentials, only a paired phone's device
+token and the pairing credentials, and has no unauthenticated endpoint. The primary transports
+accept none of the mobile credentials. The daemon-owned public listener serves ordinary and
+mobile credentials with separate authority, as specified under "Credentials on the public transport".
 
 ### Versioning
 
@@ -1563,11 +1614,16 @@ Field groups:
     not increment the protocol version; older daemons omit it.
 
 - `settings` — daemon behavior toggles and tunables.
-- `mobileConnector` — optional machine-level phone connectivity settings. Supporting daemons return
+- `api` — optional daemon-wide public connectivity settings. Supporting daemons return
   `{ "publicUrl": null, "localPort": 24782 }`. `publicUrl` is the configured canonical HTTPS origin,
-  or `null` for Tailcat. `localPort` is the read-only loopback HTTP port used behind the TLS proxy,
-  configured by `[feature.mobile_connector] public_port` (default `24782`). These fields are
-  additive; older daemons omit this object. The public URL is an address, not a credential.
+  or `null` when the daemon has no public endpoint. `localPort` is the read-only loopback HTTP port
+  configured by `[api] public_port` (default `24782`). Both fields are optional for compatibility;
+  older daemons omit the object. This is configuration, not proof that public DNS, TLS, or the proxy
+  is reachable. The URL is an address, not a credential.
+- `mobileConnector` — the existing optional `{ "publicUrl", "localPort" } projection remains
+available to compatible clients. On a daemon supporting `api`, both objects describe the same
+daemon-owned endpoint; this object does not own a separate listener or configuration value.
+New clients use `api` for daemon reachability, independently of mobile pairing.
 - `theme` — terminal color assignments.
 - `voice` — optional machine-level voice settings, present when the daemon supports voice:
 
@@ -1652,14 +1708,14 @@ own mode. A model that later stops being offered is ignored until it is offered 
 emits `config.updated`. In team mode only the team owner may change it; anyone else receives
 `403 forbidden`.
 
-The optional `mobileConnector` object changes public phone connectivity:
+The optional `api` object changes this daemon's public endpoint:
 
 ```json
-{ "mobileConnector": { "publicUrl": "https://agent.example.com" } }
+{ "api": { "publicUrl": "https://agent.example.com" } }
 ```
 
-`publicUrl` is optional: omission leaves it unchanged; `null` explicitly selects Tailcat, including
-when the machine file supplies a URL. A string is 1–2,048 characters, is trimmed, and a bare hostname (with an optional
+`publicUrl` is optional: omission leaves it unchanged; `null` explicitly removes the public endpoint,
+including when the machine file supplies a URL. A string is 1–2,048 characters, is trimmed, and a bare hostname (with an optional
 port) gets `https://`. Only an HTTPS origin is accepted: no user information, non-root path,
 query, fragment, whitespace, or port outside 1–65535. The returned URL uses the URL-standard
 ASCII hostname, lowercase scheme and hostname, no trailing slash, and omits the default port 443.
@@ -1668,15 +1724,45 @@ is saved in generated `runtime.toml`, overrides the machine file, survives resta
 `config.updated`. In team mode only the owner may change it; otherwise the entire patch is
 `403 forbidden`. No port, certificate, DNS, or reverse proxy is configured by this request.
 
-A changed URL cancels unfinished pairings and switches the connector's transport immediately;
-the next pairing advertises the new address. Paired device credentials are not revoked, but phones
-retain the endpoint they originally paired with: re-pair them to use the new endpoint. In particular,
-Tailcat phones are unreachable while the connector is configured for HTTPS, and HTTPS phones are
-unreachable after switching back to Tailcat. Restoring their original endpoint restores access with
-their existing token. An unavailable loopback port produces a failed connector snapshot, never an
-insecure or Tailcat fallback; the setting remains saved so the operator can correct the proxy/port
-and start another pairing. The local listener cannot prove the public DNS, certificate, or proxy
-works; `open` means the daemon's local transport is ready, not that the public endpoint was probed.
+The existing `mobileConnector.publicUrl` patch remains accepted and writes this same daemon-owned
+setting. If both objects supply a value, normalize and compare them before any mutation: equivalent
+origins or two nulls are accepted as one change; conflicting values return `400 invalid_request`
+and change nothing. Neither object accepts a mutable `localPort`. Runtime changes are saved under
+`[api]` in generated `runtime.toml`; the old projection never creates an independent setting.
+
+A changed URL cancels unfinished mobile pairings. The next QR advertises the daemon's current
+origin. Enabling the endpoint starts the daemon-owned listener and closes the separate mobile
+listener and mobile Tailcat exposure. Removing it closes the public listener and restores the
+mobile connector's ordinary on-demand Tailcat behavior. Changing one non-null origin to another
+updates the advertisement without changing the local listening port; the operator separately
+updates DNS and the TLS proxy. Paired device credentials are never revoked by an endpoint change.
+An unavailable loopback port is reported as a public transport error, and the enabled mobile
+connector reports `failed`; the primary local/team transport remains usable for repair. The setting
+remains saved, with no insecure or Tailcat fallback. Correct the port conflict and restart to retry.
+Machine-file changes, including the file-only public port, take effect after restart.
+
+#### Authenticated endpoint discovery
+
+Clients may adopt a daemon's endpoint from authenticated `GET /v0/config` or the same config in an
+authenticated bootstrap. `config.updated` tells them to refresh it. A missing `api` object or missing
+`api.publicUrl` means an older daemon has supplied no update; it must not erase an already stored
+endpoint. An HTTPS origin selects that endpoint. Explicit `null` removes the public endpoint and
+permits a client to restore its original transport, if it retained one. Invalid advertisement values
+are rejected rather than normalized by the client. An unauthenticated response, redirect, error,
+or failed TLS connection never authorizes an endpoint or credential-routing change.
+
+Phones preserve their device token and any original Tailcat address and port when adopting an
+authenticated origin. Future HTTP, event streams, WebSockets, and CONNECT use the selected
+endpoint; reconnecting streams and sockets does not change user identity or broaden authority.
+An HTTPS failure alone never selects the retained Tailcat route.
+
+This is not an out-of-band discovery service. In public mode there is no mobile Tailcat listener
+to inform an offline Tailcat-only phone of the new origin. A client that receives an authenticated
+advertisement while its old route is still reachable can migrate without re-pairing; otherwise it
+needs a new pairing QR or another trusted provisioning path. Likewise, removing or replacing an
+unreachable public origin cannot notify disconnected clients. A v2-only pairing has no original
+Tailcat coordinates to restore. Do not promise transparent migration when no previously trusted
+route can deliver the advertisement, and do not silently guess a fallback.
 
 The optional `voice` object changes the voice settings:
 
@@ -3440,11 +3526,9 @@ Happy Agent ships no phone code. A phone implements its side from this section a
 test vectors and the emoji table below are the reference it is checked against.
 
 The machine setting `[feature.mobile_connector]` has `enabled`, default `true`, and `port`, default
-`24781` (the Tailcat port). It also accepts `public_url`, an HTTPS origin or bare hostname, and
-`public_port`, the loopback HTTP port behind a TLS proxy, default `24782`, in 1–65535. An omitted
-or empty machine `public_url` selects Tailcat. A runtime `public_url = ""` explicitly selects
-Tailcat over a machine URL. Only machine configuration can set these, never a repository's
-`happy.toml`. Public URL normalization is the same as `PATCH /v0/config`.
+`24781` (the Tailcat port). These are machine-only settings. Public reachability instead belongs to
+the daemon's `[api] public_url` and `public_port`, as specified under Transport; the connector
+consumes that endpoint and does not own another public URL or port.
 
 In standalone mode the installation's one person owns the pairing and the paired phones. In team
 mode each locally onboarded user has their own: authentication selects the owner for every route,
@@ -3462,34 +3546,28 @@ Tailcat client for the address from the QR code. Tailcat encrypts the traffic an
 server. The address carries the identity's WireGuard key and pre-shared key, so it is a secret:
 phones keep it with the device token and never log it.
 
-When `publicUrl` is configured, the connector instead serves HTTP/1.1 on
-`127.0.0.1:<public_port>`, with the same mobile authentication boundary. It does not open Tailcat
-or listen on public interfaces. An operator must place a TLS-terminating reverse proxy in front
-of this listener, configure its DNS and a publicly trusted certificate, and preserve the complete
-HTTP stream. Phones connect to the advertised HTTPS origin and verify TLS using their platform's
-normal trust and hostname checks. They never downgrade to HTTP, ignore certificate errors, follow
-redirects with bearer credentials, or silently fall back to Tailcat.
-
-The proxy must support streaming responses, WebSocket upgrades, and arbitrary bidirectional bytes
-after HTTP `CONNECT`, preserving the request target and `Authorization` header. A TLS-terminating
-TCP proxy (for example HAProxy in TCP mode with TLS termination) supports the full API. Ordinary
-HTTP reverse-proxy defaults may reject `CONNECT`; such a deployment does not support workspace
-browser tunnels and is not a complete mobile endpoint. TLS terminates at the operator's trusted
-proxy, which can observe device credentials and plaintext; the loopback link is unencrypted.
+When the daemon has a public origin, mobile connections use its shared public listener with the
+phone credential restrictions below. The connector starts no listener or Tailcat exposure of its
+own. The daemon's public listener remains available independently of pairing demand and connector
+enablement; disabling mobile pairing does not disable ordinary public API access. Phones use the
+daemon's advertised HTTPS origin and the TLS requirements specified under Transport.
 
 Behind the socket is this API: the same routes, Server-Sent Events, WebSocket upgrades, and
 `CONNECT` tunnels as on the main transports, which are the Unix socket, the team TCP listener, and
 the `[feature.tailcat]` exposure. The socket differs only in the credentials it accepts.
 
-The socket is open only while a pairing is active, for three seconds after a pairing ends, or while
+Without a public endpoint, the mobile socket is open only while a pairing is active, for three seconds after a pairing ends, or while
 at least one phone is paired. The three seconds let the answer to the request that ended a pairing,
 and a status read it woke, reach the phone. A restart reopens the socket when phones are paired.
-When nothing needs it, or the feature is disabled, nothing is exposed.
+When nothing needs it, or the feature is disabled, the mobile socket is not exposed. In public mode
+the connector reports `open` while enabled and the daemon's shared public transport is ready, even
+with no pairing or devices; `disabled` still means phone credentials are refused, not that the
+daemon's public listener is closed.
 
 ### Credentials on the connector's socket
 
-Every request, WebSocket upgrade, and `CONNECT` on the connector's socket is authenticated before
-anything else happens, with one of three bearer credentials:
+Every mobile request, WebSocket upgrade, and `CONNECT` is authenticated with one of three bearer
+credentials, on either the dedicated Tailcat socket or the shared public listener:
 
 ```
 Authorization: Bearer <credential>
@@ -3509,16 +3587,19 @@ Authorization: Bearer <credential>
   handshake's own routes: `GET /v0/mobile-connector/handshake` and
   `POST /v0/mobile-connector/handshake/reveal`, `/confirm`, and `/reject`.
 
-Anything else receives `401` with code `unauthorized` and no `authentication` field: a missing
+On the dedicated mobile Tailcat socket, anything else receives `401` with code `unauthorized` and no `authentication` field: a missing
 header, an unknown or removed device's token, a used, replaced, or expired pairing token, a
 handshake the daemon no longer knows, a pairing or handshake credential on any other route, and
 every credential of the main transports, namely the standalone token, WorkOS and JWT access
 tokens, runner tokens, and bridge tokens. On this socket no endpoint is unauthenticated,
 `GET /v0/authentication` included.
 
-The main transports never accept a device token, a pairing token, or a handshake credential: they
-receive `401` like any unknown token. The handshake routes exist only on the connector's socket; on
-a main transport they return `404` with code `not_found`.
+The primary Unix/team transports and their `[feature.tailcat]` exposure never accept a device token,
+a pairing token, or a handshake credential: they receive `401` like any unknown token. The handshake
+routes are not served on a primary transport and return `404` with code `not_found`. The daemon-owned public listener is
+the explicit exception: it accepts ordinary and mobile credentials with their separate authority
+and handshake rules, as specified under Credentials on the public transport. The pairing routes
+and cryptographic exchange are identical on both mobile-capable transports.
 
 Removing a device from the desktop makes its token fail at once and closes every request, event
 stream, WebSocket, and `CONNECT` tunnel it has open. The device's `lastSeenAt` moves forward at most
@@ -3555,13 +3636,15 @@ once a minute as the phone uses its token.
 }
 ```
 
-- `status` — the connector's socket, one of:
+- `status` — the transport available to the connector, one of:
     - `"disabled"` — `[feature.mobile_connector] enabled` is `false`;
-    - `"closed"` — enabled, but nothing needs the socket, so nothing is exposed;
+    - `"closed"` — enabled without a public endpoint, but nothing needs the mobile socket;
     - `"starting"` — the socket is opening;
-    - `"open"` — phones can reach the daemon;
-    - `"failed"` — the socket could not open; `error` says why. The next pairing or device change
-      tries again.
+    - `"open"` — the local transport is ready for phones; this does not prove that public DNS,
+      TLS, or the proxy works;
+    - `"failed"` — the transport could not open; `error` says why. For the dedicated Tailcat
+      socket, the next pairing or device change tries again. A failed public listener is owned by
+      the daemon; repair its configuration or port conflict and restart.
 - `pairing` — the caller's current or most recent pairing, or `null`. A finished pairing stays here
   until the next start or cancel, so the desktop can show how it ended.
     - `id` — a CUID2 naming this pairing in the desktop routes.
@@ -3818,8 +3901,9 @@ The emoji for these values are 🌀 👗 ⏳ 👟.
 
 ### Handshake routes
 
-These routes exist only on the connector's socket. Each takes the credential named for it, as
-described under "Credentials on the connector's socket". A handshake's status is described by:
+These routes exist on the dedicated mobile Tailcat socket and the daemon-owned public listener,
+never on the primary transports. Each takes only the pairing credential named for it, as described
+under "Credentials on the connector's socket". A handshake's status is described by:
 
 ```json
 { "status": "completed", "deviceId": "dv3n8k1m5q9r2t6w0y4z7a1c", "mac": "…43 characters…" }
