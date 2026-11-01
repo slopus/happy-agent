@@ -229,6 +229,7 @@ describe("TeamModule with JWT authentication", () => {
                 id: "jwt",
                 name: "Acme SSO",
                 refreshUrl: "https://refresh.acme.example/oauth/refresh",
+                resource: "https://happy.acme.example",
                 scope: "happy",
                 tokenUrl: "https://sso.acme.example/oauth/token",
                 type: "oauth",
@@ -236,6 +237,7 @@ describe("TeamModule with JWT authentication", () => {
         ]);
         const [withoutRefresh] = createJwtTeam(SECRET, {}).authenticationMethods();
         expect(withoutRefresh).not.toHaveProperty("refreshUrl");
+        expect(withoutRefresh).not.toHaveProperty("resource");
         expect(withoutRefresh).not.toHaveProperty("scope");
         expect(JSON.stringify(createJwtTeam().authenticationMethods())).not.toContain(
             "HAPPY_TEAM_JWT_SECRET",
@@ -304,8 +306,13 @@ describe("team identity migration", () => {
 
 function createJwtTeam(
     secret: Uint8Array | null = SECRET,
-    endpoints: { readonly refreshUrl?: string; readonly scope?: string } = {
+    endpoints: {
+        readonly refreshUrl?: string;
+        readonly resource?: string;
+        readonly scope?: string;
+    } = {
         refreshUrl: "https://refresh.acme.example/oauth/refresh",
+        resource: "https://happy.acme.example",
         scope: "happy",
     },
 ): TeamModule {
@@ -329,6 +336,9 @@ function createJwtTeam(
                                 ...(endpoints.refreshUrl === undefined
                                     ? {}
                                     : { refreshUrl: endpoints.refreshUrl }),
+                                ...(endpoints.resource === undefined
+                                    ? {}
+                                    : { resource: endpoints.resource }),
                                 ...(endpoints.scope === undefined
                                     ? {}
                                     : { scope: endpoints.scope }),

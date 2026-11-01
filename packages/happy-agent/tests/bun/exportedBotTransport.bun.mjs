@@ -22,6 +22,8 @@ async function fixture() {
             prepareTerminalSocket: async () => ({ handled: false }),
             prepareRunnerSocket: () => ({ handled: false }),
             prepareLiveSocket: async () => ({ handled: false }),
+            publicSocketRejection: async () => undefined,
+            prepareWorkspaceProxyWebSocket: async () => ({ handled: false }),
             prepareBridgeSocket: async () => ({ handled: false }),
             prepareExportedBotSocket: async (_ctx, url, authorization) => {
                 await setImmediate();

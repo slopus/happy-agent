@@ -24,6 +24,8 @@ async function fixture() {
             prepareRunnerSocket: () => ({ handled: false }),
             prepareExportedBotSocket: async () => ({ handled: false }),
             prepareLiveSocket: async () => ({ handled: false }),
+            publicSocketRejection: async () => undefined,
+            prepareWorkspaceProxyWebSocket: async () => ({ handled: false }),
             prepareBridgeSocket: async (_ctx, url, authorization) => {
                 // Real admission reads catalogs and binds listeners before answering.
                 await setImmediate();

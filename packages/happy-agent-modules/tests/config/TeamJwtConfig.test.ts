@@ -161,22 +161,39 @@ describe("JWT team authentication configuration", () => {
         ).rejects.toThrow();
     });
 
-    it("resolves an optional refresh endpoint on another origin and a scope", async () => {
+    it("resolves an optional refresh endpoint on another origin, a scope, and a resource", async () => {
         const configuration = await load(
             `${team}\n${jwt([
                 'algorithms = ["ES256"]',
                 'jwks_url = "https://sso.acme.example/jwks"',
                 'refresh_url = "https://refresh.other.example/oauth/refresh"',
                 'scope = "happy offline_access"',
+                'resource = "https://happy.acme.example"',
             ])}\n`,
         );
         expect(configuration.values.feature.team).toMatchObject({
             jwt: {
                 refreshUrl: "https://refresh.other.example/oauth/refresh",
+                resource: "https://happy.acme.example",
                 scope: "happy offline_access",
             },
         });
     });
+
+    it.each(["happy.acme.example", "https://happy.acme.example/#api", ""])(
+        "rejects the resource %j",
+        async (resource) => {
+            await expect(
+                load(
+                    `${team}\n${jwt([
+                        'algorithms = ["HS256"]',
+                        'secret_env = "SECRET"',
+                        `resource = ${JSON.stringify(resource)}`,
+                    ])}\n`,
+                ),
+            ).rejects.toThrow(resource === "" ? "invalid value" : "feature.team.jwt.resource");
+        },
+    );
 
     it.each([
         ["token_url", 'token_url = "http://sso.acme.example/oauth/token"'],

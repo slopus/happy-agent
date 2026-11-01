@@ -305,7 +305,10 @@ import {
     createSseWriter,
     type BinaryWebSocket,
     type SseWriter,
+    type TunnelWebSocket,
+    WEBSOCKET_TUNNEL_MAX_MESSAGE_BYTES,
     WebSocketDuplex,
+    WebSocketTunnel,
 } from "../transport/index.js";
 import { UsageModule, type UsageCurrentContext, type UsageRunSummary } from "../usage/index.js";
 import {
@@ -436,6 +439,8 @@ const MAX_FILE_WRITE_BODY_BYTES = 72 * 1024 * 1024;
 const MAX_USER_SETTING_BODY_BYTES = 1024 * 1024;
 const MAX_SSE_BUFFER_BYTES = 64 * 1024 * 1024;
 const HEARTBEAT_MS = 15_000;
+/** How often every WebSocket the daemon serves is pinged, so no intermediary finds it idle. */
+const WEBSOCKET_PING_MS = 15_000;
 const MAX_TERMINAL_WIRE_MESSAGE_BYTES = 4 * 1024 * 1024 + 20;
 const MAX_ANNOUNCED_PENDING_MESSAGES = 10_000;
 const MAX_ANNOUNCED_AGENT_CREATIONS = 10_000;
@@ -547,6 +552,24 @@ export type PreparedWorkspaceProxySocket =
            */
           readonly revoked?: AbortSignal;
       };
+
+/** The WebSocket twin of a proxy tunnel, admitted exactly as its `CONNECT` is. */
+export type PreparedWorkspaceProxyWebSocket =
+    | { readonly handled: false }
+    | { readonly handled: true; readonly rejection: ApiSocketRejection }
+    | {
+          readonly handled: true;
+          /** Takes the upgraded WebSocket and opens the tunnel on it. */
+          readonly attach: (webSocket: TunnelWebSocket) => WorkspaceProxyWebSocketBinding;
+      };
+
+/** What the server tells a tunnel about its WebSocket. */
+export interface WorkspaceProxyWebSocketBinding {
+    /** One message: bytes for a binary message, a string for a text message. */
+    message(data: Uint8Array | string): void;
+    /** The WebSocket closed, for whatever reason. */
+    closed(): void;
+}
 
 export interface ApiDrainAgentProgress {
     readonly id: string;
@@ -690,6 +713,14 @@ export class ApiModule implements AgentModule {
         noServer: true,
         perMessageDeflate: false,
     });
+    readonly #tunnelWebSockets = new WebSocketServer({
+        maxPayload: WEBSOCKET_TUNNEL_MAX_MESSAGE_BYTES,
+        noServer: true,
+        perMessageDeflate: false,
+    });
+    /** Open WebSocket tunnels, on either runtime, closed with `1001` at shutdown. */
+    readonly #tunnels = new Set<WebSocketTunnel>();
+    #webSocketPings: ReturnType<typeof setInterval> | undefined;
     readonly #unsubscribe: (() => void)[] = [];
     readonly #streams = new Set<SseWriter>();
     /** Event streams that live document frames can address, with the person who opened each. */
@@ -1013,6 +1044,11 @@ export class ApiModule implements AgentModule {
         this.#bridgeWebSockets.close();
         for (const client of this.#exportedBotWebSockets.clients) client.terminate();
         this.#exportedBotWebSockets.close();
+        if (this.#webSocketPings !== undefined) clearInterval(this.#webSocketPings);
+        this.#webSocketPings = undefined;
+        for (const tunnel of this.#tunnels) tunnel.shutdown();
+        this.#tunnels.clear();
+        this.#tunnelWebSockets.close();
         this.#runnerWebSockets.close();
         await this.#workspaceProxy.close();
     }
@@ -2095,6 +2131,7 @@ export class ApiModule implements AgentModule {
         socket: Socket,
         head: Buffer,
     ): Promise<boolean> {
+        this.#pingWebSockets();
         if (isMobileTransport(ctx) || isPublicTransport(ctx)) {
             try {
                 ctx = await this.#admitConnection(
@@ -2220,6 +2257,46 @@ export class ApiModule implements AgentModule {
                 bridge.failed();
                 socket.destroy();
             }
+            return true;
+        }
+        const tunnel = await this.prepareWorkspaceProxyWebSocket(
+            ctx,
+            requestUrl(request).pathname,
+            request.headers.authorization,
+        );
+        if (tunnel.handled) {
+            if ("rejection" in tunnel) {
+                writeSocketError(socket, tunnel.rejection);
+                return true;
+            }
+            this.#tunnelWebSockets.handleUpgrade(request, socket, head, (webSocket) => {
+                const binding = tunnel.attach({
+                    get bufferedAmount() {
+                        return webSocket.bufferedAmount;
+                    },
+                    send: (data) => {
+                        if (webSocket.readyState === webSocket.OPEN)
+                            webSocket.send(data, { binary: true, compress: false });
+                    },
+                    close: (code, reason) => {
+                        if (webSocket.readyState === webSocket.OPEN) webSocket.close(code, reason);
+                        else if (webSocket.readyState !== webSocket.CLOSED) webSocket.terminate();
+                    },
+                    pause: () => {
+                        if (webSocket.readyState === webSocket.OPEN) webSocket.pause();
+                    },
+                    resume: () => {
+                        if (webSocket.readyState === webSocket.OPEN) webSocket.resume();
+                    },
+                });
+                webSocket.on("message", (data, binary) => {
+                    binding.message(
+                        binary ? webSocketBytes(data) : webSocketBytes(data).toString(),
+                    );
+                });
+                webSocket.on("close", () => binding.closed());
+                webSocket.on("error", () => webSocket.terminate());
+            });
             return true;
         }
         const prepared = await this.prepareTerminalSocket(
@@ -2575,6 +2652,73 @@ export class ApiModule implements AgentModule {
             writeSocketError(socket, rejection);
         }
         return true;
+    }
+
+    /**
+     * `GET <proxy tunnel>/websocket`: the WebSocket twin of a proxy tunnel, for networks that do
+     * not carry `CONNECT`. Admission, refusals, and the network are exactly the `CONNECT`'s.
+     */
+    async prepareWorkspaceProxyWebSocket(
+        ctx: Context,
+        pathname: string,
+        authorization: string | string[] | undefined,
+    ): Promise<PreparedWorkspaceProxyWebSocket> {
+        if (!pathname.endsWith("/proxy/websocket")) return { handled: false };
+        const prepared = await this.prepareWorkspaceProxySocket(
+            ctx,
+            pathname.slice(0, -"/websocket".length),
+            authorization,
+        );
+        if (!prepared.handled || "rejection" in prepared) return prepared;
+        return {
+            handled: true,
+            attach: (webSocket) => {
+                const tunnel = new WebSocketTunnel(webSocket);
+                this.#tunnels.add(tunnel);
+                const revoked = prepared.revoked;
+                const revoke = (): void => {
+                    tunnel.destroy();
+                };
+                revoked?.addEventListener("abort", revoke, { once: true });
+                tunnel.once("close", () => {
+                    this.#tunnels.delete(tunnel);
+                    revoked?.removeEventListener("abort", revoke);
+                });
+                // A failed tunnel only closes its WebSocket; the proxy owns what it opened.
+                tunnel.on("error", () => undefined);
+                if (this.#closed || revoked?.aborted === true) tunnel.shutdown();
+                else if (!this.#workspaceProxy.acceptStream(tunnel, prepared.route))
+                    tunnel.destroy(new Error("The tunnel's admission expired."));
+                return {
+                    message: (data) => tunnel.message(data),
+                    closed: () => tunnel.webSocketClosed(),
+                };
+            },
+        };
+    }
+
+    /**
+     * Ping every WebSocket this daemon serves at least every 15 seconds, so load balancers and
+     * other intermediaries never find a healthy one idle. Bun's native server pings its own.
+     */
+    #pingWebSockets(): void {
+        if (this.#webSocketPings !== undefined || this.#closed) return;
+        const servers = [
+            this.#webSockets,
+            this.#runnerWebSockets,
+            this.#liveWebSockets,
+            this.#bridgeWebSockets,
+            this.#exportedBotWebSockets,
+            this.#tunnelWebSockets,
+        ];
+        this.#webSocketPings = setInterval(() => {
+            for (const server of servers) {
+                for (const client of server.clients) {
+                    if (client.readyState === client.OPEN) client.ping();
+                }
+            }
+        }, WEBSOCKET_PING_MS);
+        this.#webSocketPings.unref();
     }
 
     async prepareWorkspaceProxySocket(
@@ -9734,6 +9878,7 @@ export class ApiModule implements AgentModule {
             status: this.#ready ? "ready" : "starting",
             capabilities: {
                 desktopLiveControl: this.#live !== undefined,
+                webSocketTunnels: true,
                 ...(this.#providerClis === undefined || this.#team.enabled
                     ? {}
                     : { providerClis: true }),

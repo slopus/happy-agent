@@ -14,6 +14,17 @@ answer before that listener closes. The API flushes that answer before notifying
 the daemon then drains the transport with a deadline, including Bun's forwarding hops. Stalled
 readers, SSE, WebSockets, and tunnels cannot keep an obsolete endpoint alive indefinitely.
 
+## Every tunnel has a WebSocket twin, and every WebSocket is pinged
+
+Behind HTTPS load balancers that reject CONNECT, browser previews, agent networks, and live
+artifacts were simply unavailable, and quiet WebSockets were cut by idle timeouts. Each proxy tunnel
+now also answers `GET <tunnel>/websocket`. The twin reuses the CONNECT admission unchanged, so its
+authentication, refusals, network, and destination policy cannot drift, and hands the workspace
+proxy a `WebSocketTunnel` stream instead of a socket: binary messages are the tunnel's bytes and an
+empty message is a half-close. Both runtimes ping every WebSocket they serve every 15 seconds; Bun's
+default ping only fires near its 120-second idle timeout. Health advertises
+`capabilities.webSocketTunnels`. Prove changes on Bun and in the Node lane.
+
 ## Opaque settings support cannot advertise a membership policy
 
 An older daemon accepts arbitrary `surfaces.autoJoin` values but does not interpret them, so

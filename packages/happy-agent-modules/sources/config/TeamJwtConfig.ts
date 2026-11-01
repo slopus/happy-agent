@@ -60,6 +60,7 @@ export const teamJwtTomlSchema = Type.Object(
             Type.String({ maxLength: 256, minLength: 1, pattern: "^[A-Za-z_][A-Za-z0-9_]*$" }),
         ),
         refresh_url: Type.Optional(urlSchema),
+        resource: Type.Optional(urlSchema),
         scope: Type.Optional(scopeSchema),
         token_url: urlSchema,
         user_id_claim: Type.Optional(Type.String({ maxLength: 256, minLength: 1 })),
@@ -102,6 +103,8 @@ export const teamJwtConfigSchema = Type.Object(
         ]),
         name: teamJwtNameSchema,
         refreshUrl: Type.Optional(urlSchema),
+        /** The RFC 8707 resource indicator clients send to the authorization server. */
+        resource: Type.Optional(urlSchema),
         scope: Type.Optional(scopeSchema),
         tokenUrl: urlSchema,
         userIdClaim: Type.String({ maxLength: 256, minLength: 1 }),
@@ -117,6 +120,7 @@ export function resolveTeamJwtConfig(value: TeamJwtToml): TeamJwtConfig {
     if (value.refresh_url !== undefined) {
         assertBrowserUrl(value.refresh_url, "feature.team.jwt.refresh_url");
     }
+    if (value.resource !== undefined) assertResourceIndicator(value.resource);
     const sources = [value.jwks_url, value.public_key, value.secret_env].filter(
         (source) => source !== undefined,
     );
@@ -170,6 +174,7 @@ export function resolveTeamJwtConfig(value: TeamJwtToml): TeamJwtConfig {
         key,
         name: value.name,
         ...(value.refresh_url === undefined ? {} : { refreshUrl: value.refresh_url }),
+        ...(value.resource === undefined ? {} : { resource: value.resource }),
         ...(value.scope === undefined ? {} : { scope: value.scope }),
         tokenUrl: value.token_url,
         userIdClaim: value.user_id_claim ?? "sub",
@@ -185,6 +190,18 @@ function assertAlgorithms(
     if (!algorithms.every((algorithm) => allowed.includes(algorithm))) {
         throw new Error(`feature.team.jwt.${source} accepts only the ${description} algorithms.`);
     }
+}
+
+/** RFC 8707: an absolute URI without a fragment. It is an identifier, never fetched. */
+function assertResourceIndicator(value: string): void {
+    let valid: boolean;
+    try {
+        valid = new URL(value).hash === "" && !value.includes("#");
+    } catch {
+        valid = false;
+    }
+    if (!valid)
+        throw new Error("feature.team.jwt.resource must be an absolute URI without a fragment.");
 }
 
 function assertBrowserUrl(value: string, name: string): void {

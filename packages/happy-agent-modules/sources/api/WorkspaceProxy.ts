@@ -167,6 +167,19 @@ export class WorkspaceProxy {
         });
     }
 
+    /**
+     * Open an admitted attachment that is already a byte stream, such as a WebSocket tunnel. It
+     * has no `CONNECT` to answer; its bytes are the proxy conversation from the start. Returns
+     * `false`, opening nothing, when the route is unknown or expired.
+     */
+    acceptStream(stream: Duplex, route: string): boolean {
+        const connector = this.#take(route);
+        if (connector === undefined) return false;
+        this.#connectors.set(stream, connector);
+        this.#server.emit("connection", stream);
+        return true;
+    }
+
     async listen(path: string): Promise<void> {
         if (this.#socketPath !== undefined) {
             if (this.#socketPath === path) return;

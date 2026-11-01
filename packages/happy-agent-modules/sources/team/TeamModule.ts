@@ -100,6 +100,8 @@ export interface TeamOAuthAuthenticationMethod {
     readonly id: string;
     readonly name: string;
     readonly refreshUrl?: string;
+    /** The RFC 8707 resource indicator clients send on every sign-in and refresh request. */
+    readonly resource?: string;
     readonly scope?: string;
     readonly tokenUrl: string;
     readonly type: "oauth";
@@ -580,6 +582,7 @@ export class TeamModule<Database extends AgentDatabase = AgentDatabase> implemen
                 id: "jwt",
                 name: jwt.name,
                 ...(jwt.refreshUrl === undefined ? {} : { refreshUrl: jwt.refreshUrl }),
+                ...(jwt.resource === undefined ? {} : { resource: jwt.resource }),
                 ...(jwt.scope === undefined ? {} : { scope: jwt.scope }),
                 tokenUrl: jwt.tokenUrl,
                 type: "oauth",

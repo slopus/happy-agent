@@ -377,6 +377,7 @@ token_url = "https://sso.acme.example/oauth/token"
 refresh_url = "https://sso.acme.example/oauth/token"
 client_id = "happy"
 scope = "openid"
+resource = "https://happy.acme.example"
 issuer = "https://sso.acme.example"
 audience = "https://happy.acme.example"
 user_id_claim = "sub"
@@ -394,6 +395,7 @@ jwks_refresh_interval_sec = 3600
 | `refresh_url`               | none           | Endpoint for refresh tokens, on any origin. Without it, apps sign in again when tokens expire. |
 | `client_id`                 | required       | Public OAuth client ID registered for the Happy apps.                                          |
 | `scope`                     | none           | Space-separated scope requested at sign-in.                                                    |
+| `resource`                  | none           | RFC 8707 resource indicator the apps send at sign-in and refresh, usually equal to `audience`. |
 | `issuer`                    | required       | Exact `iss` claim required in every access token.                                              |
 | `audience`                  | required       | Value the `aud` claim must equal or contain; use a unique value per deployment.                |
 | `user_id_claim`             | `"sub"`        | Claim holding a stable, never-reused user ID.                                                  |
@@ -405,9 +407,11 @@ jwks_refresh_interval_sec = 3600
 
 Configure exactly one of `jwks_url`, `public_key`, and `secret_env`. Asymmetric sources accept the
 RS, PS, ES, and EdDSA algorithms; `secret_env` accepts only HS256, HS384, and HS512. A shared
-secret lets the daemon mint tokens itself, so prefer asymmetric keys. Every URL must use `https`,
-or plain `http` only on a loopback host. Clients discover the method without a token through
-`GET /v0/authentication` and from the `authentication` field of any `401`.
+secret lets the daemon mint tokens itself, so prefer asymmetric keys. Every endpoint URL must use
+`https`, or plain `http` only on a loopback host; `resource` is any absolute URI without a fragment.
+Clients discover the method without a token through `GET /v0/authentication` and from the
+`authentication` field of any `401`. Register the redirect URI `happy://oauth/callback` with the
+authorization server; the desktop, iOS, and Android apps all use exactly that value.
 
 With either authentication method, `[feature.team.members]` may list people before they first
 sign in, keyed by their user ID (the `user_id_claim` value, or the WorkOS user ID). Startup creates
@@ -434,8 +438,9 @@ auto_join_tasks = false
 Run a team deployment with `happy-agent run` under a process supervisor. Local socket-based daemon
 management and the macOS menu bar integration are disabled. The listener serves plain HTTP, so put
 it behind TLS-capable ingress before exposing it outside a trusted network. See
-[team-mode.md](team-mode.md) for the complete deployment and onboarding behavior, or
-[tailcat.md](tailcat.md) to expose it through Tailcat.
+[team-mode.md](team-mode.md) for the complete deployment and onboarding behavior,
+[Put a team server behind an SSO load balancer](recipe/edge-sso-load-balancer.md) for an HTTPS load
+balancer that authenticates at the edge, or [tailcat.md](tailcat.md) to expose it through Tailcat.
 
 ## Protected paths
 

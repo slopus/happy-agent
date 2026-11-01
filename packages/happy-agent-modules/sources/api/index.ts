@@ -27,6 +27,8 @@ export {
     type PreparedLiveSocket,
     type PreparedRunnerSocket,
     type PreparedWorkspaceProxySocket,
+    type PreparedWorkspaceProxyWebSocket,
+    type WorkspaceProxyWebSocketBinding,
     socketRejectionBody,
 } from "./ApiModule.js";
 export { ApiArtifactData } from "./ApiArtifactData.js";

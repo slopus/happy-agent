@@ -120,3 +120,8 @@ with its own identity provider instead of WorkOS. The Happy app signs in with th
 OAuth authorization server directly, using the authorization code flow with PKCE and optional
 refresh; the daemon only verifies the resulting access token and never sees codes or refresh
 tokens.
+
+Read [Put a team server behind an SSO load balancer](edge-sso-load-balancer.md) when that server
+sits behind an HTTPS load balancer or gateway that enforces sign-in itself. It covers the paths
+that bypass edge authentication, idle timeouts, WebSocket tunnels instead of `CONNECT`, and the
+managed settings that preset the server in the apps.

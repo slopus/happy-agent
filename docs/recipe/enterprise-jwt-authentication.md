@@ -51,19 +51,20 @@ Happy app                 Happy Agent daemon           Authorization server (dep
 1. The Happy app asks the daemon how to sign in. Any `401` from the daemon carries the same
    answer, so the app can start sign-in from any rejected request.
 2. The daemon returns an `oauth` method: the authorization, token, and optional refresh
-   endpoints, the client ID, and an optional scope, straight from its configuration.
+   endpoints, the client ID, an optional scope, and an optional resource indicator, straight from
+   its configuration.
 3. The app creates a random `state` and a PKCE verifier, keeps both in memory, and opens the
    authorization endpoint in the **system browser**, never an embedded web view. It shows the
    authorization server's host so the person can see where they are signing in.
 4. The authorization server signs the person in with the identity provider and redirects to the
-   app's `redirect_uri` with a **one-time code** and the `state`. On desktop the redirect URI is a
-   loopback address such as `http://127.0.0.1:53682/callback`; on mobile it is the app's own URL
-   scheme.
+   app's `redirect_uri` with a **one-time code** and the `state`. Every Happy app, desktop, iOS, and
+   Android, uses the one redirect URI `happy://oauth/callback`, which the operating system hands
+   to the app.
 5. The app checks `state` and exchanges the code, together with the PKCE verifier, at the token
    endpoint. Anyone who intercepts the redirect gets only a code that is useless without the
    verifier and expires within seconds.
-6. The app sends the access token to the daemon on every request. It may keep all tokens only in
-   memory.
+6. The app sends the access token to the daemon on every request, only in the `Authorization`
+   header. It keeps a refresh token in the operating system's keychain, or only in memory.
 7. Before or when the access token expires, the app sends the refresh token to the refresh
    endpoint, if there is one, and receives a new access token. Without a refresh endpoint, or when
    refresh fails, the app goes through the browser again. That is usually instant while the
@@ -82,8 +83,10 @@ with PKCE** for a public client and issues **JWT access tokens**. There are two 
 
 - **Use the identity provider directly.** Okta, Entra ID, Auth0, Keycloak, Ping, and most modern
   identity providers do this out of the box. Register a native or public application, allow the
-  Happy app's redirect URIs, define an API or resource for this deployment so access tokens carry
-  its audience, and enable refresh tokens if wanted. No custom code is needed.
+  redirect URI `happy://oauth/callback`, define an API or resource for this deployment so access
+  tokens carry its audience, and enable refresh tokens if wanted. If the provider selects the API
+  by an RFC 8707 `resource` parameter, set `resource` in step 4 and the apps send it. No custom
+  code is needed.
 - **Write a small authorization server** in front of an identity provider that cannot issue
   suitable access tokens, for example a SAML-only one. See step 3.
 
@@ -98,6 +101,9 @@ with PKCE** for a public client and issues **JWT access tokens**. There are two 
 - **Owner**: the user ID of the person who should become the deployment owner.
 - **Client ID** and optional **scope**: whatever the authorization server registered for the
   Happy app. Request `offline_access` or the provider's equivalent if refresh tokens need it.
+- **Redirect URI**: exactly `happy://oauth/callback`, for every platform.
+- **Resource** (optional): an RFC 8707 resource indicator, usually the audience, for providers that
+  choose which API a token is for from the request rather than from the client registration.
 - **Lifetimes**: short access tokens, typically 5–60 minutes, with refresh tokens if the
   organization wants long sessions. Rotate refresh tokens on use where the server supports it.
 - **Signing key**: prefer an asymmetric key published as a JWKS URL, which every identity provider
@@ -115,18 +121,18 @@ Implement three endpoints following RFC 6749, RFC 7636, and RFC 8252. Any OAuth 
 do this; the essentials are:
 
 **`GET /oauth/authorize`** receives `response_type=code`, `client_id`, `redirect_uri`, `state`,
-`code_challenge`, `code_challenge_method=S256`, and optional `scope`.
+`code_challenge`, `code_challenge_method=S256`, and optional `scope` and `resource`.
 
-1. Check `client_id` and **check `redirect_uri` exactly against an allow-list** of the Happy app's
-   callbacks, for example `happy://auth/callback` and `http://127.0.0.1:<any port>/callback`.
-   Never redirect anywhere else, not even to report an error.
+1. Check `client_id` and **check `redirect_uri` exactly against the allow-list**, which for the
+   Happy apps is the single value `happy://oauth/callback`. Never redirect anywhere else, not even
+   to report an error.
 2. Sign the person in with the identity provider, and check that they may use Happy.
 3. Create a random, single-use code that expires within about a minute, and store it with the user,
    `client_id`, `redirect_uri`, and `code_challenge`.
 4. Redirect to `redirect_uri?code=<code>&state=<state>`, copying `state` unchanged.
 
 **`POST /oauth/token`** receives a form with `grant_type=authorization_code`, `code`,
-`redirect_uri`, `client_id`, and `code_verifier`. Consume the code, check that `client_id` and
+`redirect_uri`, `client_id`, `code_verifier`, and `resource` when one is configured. Consume the code, check that `client_id` and
 `redirect_uri` match, and check that the base64url SHA-256 of `code_verifier` equals the stored
 challenge. Respond with JSON:
 
@@ -142,7 +148,8 @@ challenge. Respond with JSON:
 Errors use `400` with `{ "error": "invalid_grant" }` or another OAuth error code.
 
 **`POST /oauth/refresh`** (optional; it can also be the token endpoint) receives
-`grant_type=refresh_token`, `refresh_token`, and `client_id`, and responds the same way. Store
+`grant_type=refresh_token`, `refresh_token`, `client_id`, and `resource` when one is configured,
+and responds the same way. Store
 refresh tokens hashed, rotate them on every use, revoke them when a person leaves, and treat reuse
 of a rotated token as theft by revoking the whole session. The refresh endpoint may live on a
 different origin from the other two.
@@ -192,6 +199,7 @@ token_url = "https://sso.acme.example/oauth/token"
 refresh_url = "https://sso.acme.example/oauth/refresh"
 client_id = "happy"
 scope = "happy offline_access"
+resource = "https://happy.acme.example"
 issuer = "https://sso.acme.example"
 audience = "https://happy.acme.example"
 user_id_claim = "sub"
@@ -201,7 +209,7 @@ jwks_refresh_interval_sec = 3600
 ```
 
 `name` is what the Happy app shows on the sign-in button. Leave out `refresh_url` to turn refresh
-off; leave out `scope` if the server needs none. Configure exactly one key source:
+off; leave out `scope` or `resource` if the server needs none. Configure exactly one key source:
 
 - `jwks_url = "https://..."` for a published key set (recommended). The daemon downloads the keys
   itself when it starts and again every `jwks_refresh_interval_sec` seconds (60–86,400, default
@@ -234,9 +242,10 @@ Run these checks from a machine that can reach the daemon, replacing `DAEMON` wi
     Expect `"authenticated": false` and one `oauth` method with the configured endpoints and client
     ID, and no secret, key, or JWKS content.
 
-2. Sign in from the Happy app, or test the flow by hand: open the authorization URL with a
-   loopback `redirect_uri`, a `state`, and a PKCE challenge, confirm the browser lands on
-   `redirect_uri?code=...&state=...`, and exchange the code at the token endpoint.
+2. Sign in from the Happy app, or test the flow by hand: open the authorization URL with
+   `redirect_uri=happy://oauth/callback`, a `state`, and a PKCE challenge, confirm the browser
+   tries to open `happy://oauth/callback?code=...&state=...`, and exchange the code at the token
+   endpoint.
 3. Call discovery with the access token and expect `"authenticated": true`. `userId` stays `null`
    until the person saves a profile.
 4. Confirm that a tampered, expired, or wrong-audience token gets `401` with an `authentication`

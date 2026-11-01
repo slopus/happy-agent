@@ -20,6 +20,7 @@ const OAUTH = {
     id: "jwt",
     name: "Acme SSO",
     refreshUrl: "https://refresh.acme.example/oauth/refresh",
+    resource: "https://happy.acme.example",
     tokenUrl: "https://sso.acme.example/oauth/token",
     type: "oauth",
 };
@@ -57,6 +58,7 @@ async function harness(mode: "standalone" | "jwt"): Promise<Harness> {
                       clientId: OAUTH.clientId,
                       name: "Acme SSO",
                       refreshUrl: OAUTH.refreshUrl,
+                      resource: OAUTH.resource,
                       tokenUrl: OAUTH.tokenUrl,
                       userIdClaim: "sub",
                   },

@@ -13,11 +13,16 @@ import {
     type PreparedRunnerSocket,
     type PreparedTerminalSocket,
     type PreparedLiveSocket,
+    type PreparedWorkspaceProxyWebSocket,
     type LiveControlBinding,
+    type WorkspaceProxyWebSocketBinding,
 } from "@slopus/happy-agent-modules";
 import { WORKSPACE_BRIDGE_MAX_BINARY_MESSAGE_BYTES } from "@slopus/happy-agent-client";
 import { MAX_RUNNER_FRAME_BYTES } from "@slopus/happy-agent-compute";
-import { WebSocketDuplex } from "@slopus/happy-agent-modules/transport";
+import {
+    WEBSOCKET_TUNNEL_MAX_MESSAGE_BYTES,
+    WebSocketDuplex,
+} from "@slopus/happy-agent-modules/transport";
 
 import {
     startBunSocketBridge,
@@ -40,6 +45,8 @@ import { createBunHttpForwarder } from "./createBunHttpForwarder.js";
 import { forwardBunAttachment } from "./forwardBunAttachment.js";
 
 const MAX_TERMINAL_WIRE_MESSAGE_BYTES = 4 * 1024 * 1024 + 20;
+/** How often every WebSocket is pinged, so no intermediary finds a healthy one idle. */
+const WEBSOCKET_PING_MS = 15_000;
 
 interface TerminalWebSocketData extends BunWebSocketState {
     readonly kind?: "terminal";
@@ -69,12 +76,19 @@ interface ExportedBotWebSocketData {
     binding?: ExportedBotSocketBinding;
 }
 
+interface TunnelWebSocketData {
+    readonly kind: "tunnel";
+    readonly prepared: Extract<PreparedWorkspaceProxyWebSocket, { readonly attach: unknown }>;
+    binding?: WorkspaceProxyWebSocketBinding;
+}
+
 type BunWebSocketData =
     | TerminalWebSocketData
     | LiveWebSocketData
     | RunnerWebSocketData
     | BridgeWebSocketData
-    | ExportedBotWebSocketData;
+    | ExportedBotWebSocketData
+    | TunnelWebSocketData;
 
 interface BunTerminalWebSocket extends BunServerWebSocket {
     data: BunWebSocketData;
@@ -175,7 +189,12 @@ export function startBunHttpServer(
     address: BunSocketAddress,
     forwarder: ReturnType<typeof createBunHttpForwarder>,
 ): BunWebSocketServer {
-    return bun.serve({
+    const open = new Set<BunTerminalWebSocket>();
+    const pings = setInterval(() => {
+        for (const webSocket of open) webSocket.ping();
+    }, WEBSOCKET_PING_MS);
+    pings.unref();
+    const server = bun.serve({
         ...address,
         idleTimeout: 60,
         // The shared API owns its per-route streaming body limits.
@@ -294,6 +313,25 @@ export function startBunHttpServer(
                     "The bridge upgrade could not be completed.",
                 );
             }
+            const tunnel = await prepared.api.prepareWorkspaceProxyWebSocket(
+                prepared.context("bun-tunnel-websocket-upgrade"),
+                url.pathname,
+                request.headers.get("authorization") ?? undefined,
+            );
+            if (tunnel.handled) {
+                if ("rejection" in tunnel)
+                    return Response.json(socketRejectionBody(tunnel.rejection), {
+                        headers: { "cache-control": "no-store" },
+                        status: tunnel.rejection.status,
+                    });
+                const data: TunnelWebSocketData = { kind: "tunnel", prepared: tunnel };
+                if (server.upgrade(request, { data })) return undefined;
+                return socketResponse(
+                    500,
+                    "internal",
+                    "The tunnel upgrade could not be completed.",
+                );
+            }
             const pathname = url.pathname;
             const terminal = await prepared.api.prepareTerminalSocket(
                 prepared.context("bun-websocket-upgrade"),
@@ -317,6 +355,21 @@ export function startBunHttpServer(
             // Runner frames may carry a whole file; terminal messages keep their own bound below.
             maxPayloadLength: MAX_RUNNER_FRAME_BYTES,
             open(webSocket: BunTerminalWebSocket) {
+                open.add(webSocket);
+                if (webSocket.data.kind === "tunnel") {
+                    webSocket.data.binding = webSocket.data.prepared.attach({
+                        get bufferedAmount() {
+                            return webSocket.getBufferedAmount();
+                        },
+                        send: (data) => {
+                            webSocket.send(data, false);
+                        },
+                        close: (code, reason) => {
+                            webSocket.close(code, reason);
+                        },
+                    });
+                    return;
+                }
                 if (webSocket.data.kind === "runner") {
                     webSocket.data.prepared.attach(
                         createBunBinaryWebSocket(webSocket, webSocket.data),
@@ -390,6 +443,19 @@ export function startBunHttpServer(
                 }
             },
             message(webSocket: BunTerminalWebSocket, message: string | Uint8Array) {
+                if (webSocket.data.kind === "tunnel") {
+                    if (
+                        typeof message !== "string" &&
+                        message.byteLength > WEBSOCKET_TUNNEL_MAX_MESSAGE_BYTES
+                    ) {
+                        webSocket.close(1009, "The message is too large.");
+                        return;
+                    }
+                    webSocket.data.binding?.message(
+                        typeof message === "string" ? message : Buffer.from(message),
+                    );
+                    return;
+                }
                 if (webSocket.data.kind === "exportedBot") {
                     if (
                         (typeof message === "string"
@@ -446,7 +512,9 @@ export function startBunHttpServer(
                 if (webSocket.data.kind === "exportedBot") webSocket.data.binding?.pong();
             },
             close(webSocket: BunTerminalWebSocket) {
+                open.delete(webSocket);
                 if (
+                    webSocket.data.kind === "tunnel" ||
                     webSocket.data.kind === "live" ||
                     webSocket.data.kind === "bridge" ||
                     webSocket.data.kind === "exportedBot"
@@ -457,6 +525,10 @@ export function startBunHttpServer(
                 webSocket.data.handlers?.close();
             },
             error(webSocket: BunTerminalWebSocket, error: Error) {
+                if (webSocket.data.kind === "tunnel") {
+                    webSocket.close(1011, "The tunnel failed.");
+                    return;
+                }
                 if (webSocket.data.kind === "exportedBot") {
                     // The close that follows is what the export acts on.
                     webSocket.terminate();
@@ -474,6 +546,20 @@ export function startBunHttpServer(
             },
         },
     });
+    return {
+        get hostname() {
+            return server.hostname;
+        },
+        get port() {
+            return server.port;
+        },
+        stop(closeActiveConnections?: boolean) {
+            clearInterval(pings);
+            return server.stop(closeActiveConnections);
+        },
+        timeout: (request, seconds) => server.timeout(request, seconds),
+        upgrade: (request, options) => server.upgrade(request, options),
+    };
 }
 
 function socketResponse(status: number, code: string, message: string): Response {
