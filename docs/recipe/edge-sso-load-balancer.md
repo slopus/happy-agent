@@ -67,7 +67,26 @@ An edge rejection reaches the app as a `401`, a `403` that is not Happy's JSON e
 redirect, and the app asks the person to sign in again. Answer with Happy's own errors only from
 the daemon.
 
-## 3. Turn off what the edge does not need
+## 3. Deploy two nodes
+
+Deploy the team server as two machines: the node behind the load balancer, and a
+[dedicated runner](add-runner.md) on a separate machine. The node keeps the database, provider
+credentials, and sign-in configuration. The runner holds the project folders and runs everything
+that touches them: agent commands, Git, terminals, and previews. A server that the Internet can
+reach is exactly where an agent command that goes wrong, or a dependency that runs hostile code,
+must not share a machine with those secrets.
+
+The runner connects to the node over the private network, never through the load balancer and
+never over Tailcat, which this recipe turns off below:
+
+```sh
+HAPPY_RUNNER_ENDPOINT=http://NODE_PRIVATE_ADDRESS:3000 happy-agent runner
+```
+
+Follow [Add a dedicated runner](add-runner.md) for the token, the service, and moving projects
+onto the runner. Use the private `http://` endpoint above in place of the Tailcat endpoint.
+
+## 4. Turn off what the edge does not need
 
 The apps have no device-management settings. A team server turns its own features on and off in
 its machine `happy.toml`, and the apps hide a feature when the server reports it off. Behind an
@@ -78,7 +97,7 @@ SSO load balancer, we recommend:
 enabled = false        # phone pairing: phones sign in with OAuth instead
 
 [feature.tailcat]
-enabled = false        # the default; shown here to make the choice explicit
+enabled = false        # the default; keep it off on a server the Internet can reach
 
 [settings]
 happy_integration = false   # the connection to the Happy mobile app through Happy's hosted server
@@ -89,15 +108,19 @@ happy_integration = false   # the connection to the Happy mobile app through Hap
   `status: "disabled"`, and the apps hide pairing.
 - **Happy's hosted server.** With `happy_integration = false`, `GET /v0/integrations/happy`
   reports `status: "disabled"` for every member, and the apps hide it.
-- **Tailcat.** `enabled = false` keeps the API's Tailcat exposure closed. It is the operator's
-  starting choice, not a lock: an active admin bot can still turn Tailcat on at runtime, and
-  machine configuration or an admin bot can add Tailcat remote connections. The mobile connector
-  opens a separate Tailcat socket only while it is enabled and `[api] public_url` is unset, so
-  turning phone pairing off closes that path too.
+- **Tailcat.** Keep it off on any server exposed to the Internet, even though other Happy setups
+  use it. The load balancer already gives members an HTTPS path, and a Tailcat exposure is a
+  second, account-free way in that bypasses the load balancer and its single sign-on: anyone who
+  learns the address reaches the daemon directly. The daemon still checks every token, but the
+  organization's edge policy no longer applies. Tailcat is off by default, and `enabled = false`
+  makes that explicit. It is the operator's starting choice, not a lock: an active admin bot can
+  still turn Tailcat on at runtime, and machine configuration or an admin bot can add Tailcat
+  remote connections. The mobile connector opens a separate Tailcat socket only while it is
+  enabled and `[api] public_url` is unset, so turning phone pairing off closes that path too.
 
 All three are machine settings; a repository's `happy.toml` cannot change them.
 
-## 4. Verify
+## 5. Verify
 
 Replace `SERVER` with the load balancer's HTTPS origin.
 
