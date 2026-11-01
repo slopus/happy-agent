@@ -73,6 +73,7 @@ ${pem}"""
             bobId: await onboard(bob, "Bob"),
             clientFor,
             onboard,
+            tokenFor,
         };
     } catch (error) {
         await gym.dispose();

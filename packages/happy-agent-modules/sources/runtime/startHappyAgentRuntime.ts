@@ -30,6 +30,7 @@ import type { LibSQLDatabase } from "drizzle-orm/libsql";
 
 import { AbortModule } from "../abort/index.js";
 import { ActivityModule } from "../activity/index.js";
+import { StoriesModule } from "../stories/index.js";
 import { ApiModule } from "../api/index.js";
 import { ArtifactDataModule } from "../artifactData/index.js";
 import { ArtifactsModule } from "../artifacts/index.js";
@@ -738,6 +739,15 @@ export async function startHappyAgentRuntime(
             events,
             team,
         );
+        const stories = new StoriesModule(
+            config,
+            chatMedia,
+            compute.computeModule,
+            tasks,
+            bots,
+            team,
+            userSettings,
+        );
         const apiModule = new ApiModule(
             abort,
             config,
@@ -780,6 +790,7 @@ export async function startHappyAgentRuntime(
             mobileConnector,
             providerClis,
             providerRoutes,
+            stories,
         );
         api = apiModule;
 
@@ -923,6 +934,7 @@ export async function startHappyAgentRuntime(
             chatMedia,
             gemini,
             imageGeneration,
+            stories,
             compute.skillsModule,
             compute.computeModule,
             happy,

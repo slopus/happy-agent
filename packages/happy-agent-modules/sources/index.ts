@@ -620,6 +620,9 @@ export * from "./titles/index.js";
 // User input: questions the agent asks a person, and the answers it waits for.
 export * from "./userInput/index.js";
 
+// Stories: a task's or bot's result, shared for a day.
+export * from "./stories/index.js";
+
 // Observation: what the agent records about itself — logs, traces, and a readable history dump.
 export * from "./observation/index.js";
 

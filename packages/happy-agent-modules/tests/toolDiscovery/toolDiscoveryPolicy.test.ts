@@ -17,6 +17,7 @@ const eagerDirectories = [
     "compute/tools/kimi",
     "compute/tools/glm",
     "userInput",
+    "stories/tools",
 ];
 // Voice receives its whole tool arrays without tool search.
 const eagerFiles = ["live/impl/voiceSidebarTools.ts", "live/impl/liveDesktopTools.ts"];

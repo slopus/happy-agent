@@ -39,6 +39,7 @@ import {
     providerRouteIdSchema,
     providerRouteUseRequestSchema,
 } from "../providerRoutes/index.js";
+import { StoriesModule } from "../stories/index.js";
 import {
     closeWorkspaceBridgeRequestSchema,
     createSurfaceRequestSchema,
@@ -610,6 +611,7 @@ export class ApiModule implements AgentModule {
     readonly #mobileConnector: MobileConnectorModule | undefined;
     readonly #providerClis: ProviderClisModule | undefined;
     readonly #providerRoutes: ProviderRoutesModule | undefined;
+    readonly #stories: StoriesModule | undefined;
     /** The revocation signals each mobile connection already closes on. */
     readonly #mobileConnections = new WeakMap<MobileConnection, Set<AbortSignal>>();
     readonly #mobileClosers = new WeakMap<MobileConnection, () => void>();
@@ -773,6 +775,7 @@ export class ApiModule implements AgentModule {
         mobileConnector?: MobileConnectorModule,
         providerClis?: ProviderClisModule,
         providerRoutes?: ProviderRoutesModule,
+        stories?: StoriesModule,
     ) {
         this.#abort = abort;
         this.#config = config;
@@ -818,6 +821,7 @@ export class ApiModule implements AgentModule {
         this.#mobileConnector = mobileConnector;
         this.#providerClis = providerClis;
         this.#providerRoutes = providerRoutes;
+        this.#stories = stories;
     }
 
     readonly beforeStart = async (
@@ -1961,6 +1965,7 @@ export class ApiModule implements AgentModule {
             }
             if (await this.#handleBotRoute(ctx, request, response, url)) return;
             if (await this.#handleTaskRoute(ctx, request, response, url)) return;
+            if (await this.#handleStoryRoute(ctx, request, response, url)) return;
             if (await this.#handleSurfaceRoute(ctx, request, response, url)) return;
             if (await this.#handleArtifactRoute(ctx, request, response, url)) return;
             if (request.method === "GET" && url.pathname === "/v0/projects") {
@@ -3121,6 +3126,13 @@ export class ApiModule implements AgentModule {
                         event.mobileConnector.updatedAt,
                         event.owner === STANDALONE_MOBILE_OWNER ? undefined : event.owner,
                     );
+                }),
+            );
+        if (this.#stories !== undefined)
+            this.#unsubscribe.push(
+                // Seen state is each reader's own, so every reader gets their own copy.
+                this.#stories.onEvent((_eventCtx, { readerId, payload }) => {
+                    this.#journal.append("story.changed", payload, Date.now(), readerId);
                 }),
             );
         if (this.#userSettings !== undefined)
@@ -7065,6 +7077,42 @@ export class ApiModule implements AgentModule {
             throw new ApiError(404, "not_found", "The event stream was not found.");
     }
 
+    /** Stories: a 404 for anything the caller may not see, as if it did not exist. */
+    async #handleStoryRoute(
+        ctx: Context,
+        request: IncomingMessage,
+        response: ServerResponse,
+        url: URL,
+    ): Promise<boolean> {
+        const stories = this.#stories;
+        if (stories === undefined || !url.pathname.startsWith("/v0/stories")) return false;
+        if (request.method === "GET" && url.pathname === "/v0/stories") {
+            const cursor = this.#journal.cursor();
+            sendJson(response, 200, { stories: await stories.list(ctx), cursor });
+            return true;
+        }
+        const match = /^\/v0\/stories\/([a-z][a-z0-9]*)\/(seen|media)$/.exec(url.pathname);
+        if (match === null) return false;
+        const storyId = match[1] as string;
+        if (request.method === "POST" && match[2] === "seen") {
+            const story = await stories.markSeen(ctx, storyId);
+            if (story === undefined) throw notFound("The story was not found.");
+            sendJson(response, 200, { story });
+            return true;
+        }
+        if (request.method === "GET" && match[2] === "media") {
+            const media = await stories.media(ctx, storyId);
+            if (media === undefined) throw notFound("The story was not found.");
+            // A story's media is a snapshot taken once, so the same URL never names other bytes.
+            await sendStoredFile(request, response, {
+                ...media,
+                cacheControl: "private, max-age=31536000, immutable",
+            });
+            return true;
+        }
+        return false;
+    }
+
     async #handleTaskRoute(
         ctx: Context,
         request: IncomingMessage,
@@ -9633,6 +9681,7 @@ export class ApiModule implements AgentModule {
                     ? {}
                     : { providerRoutes: true }),
                 ...(this.#bridges === undefined ? {} : { workspaceBridges: true }),
+                ...(this.#stories === undefined ? {} : { storyFeed: true }),
                 ...(this.#live === undefined
                     ? {}
                     : { desktopLiveCapabilities: [...this.#live.desktopCapabilities] }),
