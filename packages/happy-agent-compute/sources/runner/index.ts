@@ -39,6 +39,7 @@ export {
     RUNNER_PROTOCOL_VERSION,
     RUNNER_STREAM_CHUNK_BYTES,
     RUNNER_STREAM_WINDOW_BYTES,
+    RUNNER_SYSTEM_PROTOCOL_VERSION,
     runnerAcceptedConnectionSchema,
     runnerComputeIdSchema,
     runnerConnectionIdSchema,
@@ -50,6 +51,7 @@ export {
     runnerProjectPolicySchema,
     runnerStreamChannelSchema,
     runnerStreamIdSchema,
+    runnerSystemSchema,
     runnerWatchBatchSchema,
     type RunnerEvent,
     type RunnerEventParams,
@@ -61,4 +63,5 @@ export {
     type RunnerDocker,
     type RunnerProjectPolicy,
     type RunnerStreamChannel,
+    type RunnerSystem,
 } from "./runnerProtocol.js";

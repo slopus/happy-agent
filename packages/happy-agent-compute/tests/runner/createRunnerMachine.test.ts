@@ -15,7 +15,7 @@ afterEach(async () => {
     for (const folder of folders.splice(0)) await rm(folder, { force: true, recursive: true });
 });
 
-describe.runIf(process.platform !== "win32")("the machines a runner builds", () => {
+describe("the machines a runner builds", () => {
     it("is the host compute for an ordinary request", async () => {
         const cwd = await folder();
         const machine = createRunnerMachine(ctx, { cwd, policy: {} });
@@ -25,25 +25,29 @@ describe.runIf(process.platform !== "win32")("the machines a runner builds", () 
         await machine.dispose(ctx);
     });
 
-    it("runs agent work in the container but keeps the product's programs on the runner", async () => {
-        const cwd = await folder();
-        const machine = createRunnerMachine(ctx, {
-            cwd,
-            policy: { protectedProjectFiles: ["happy.toml"] },
-            docker: { image: "ghcr.io/acme/dev:latest" },
-        });
+    // Containers on a runner are Linux containers driven from a POSIX shell.
+    it.runIf(process.platform !== "win32")(
+        "runs agent work in the container but keeps the product's programs on the runner",
+        async () => {
+            const cwd = await folder();
+            const machine = createRunnerMachine(ctx, {
+                cwd,
+                policy: { protectedProjectFiles: ["happy.toml"] },
+                docker: { image: "ghcr.io/acme/dev:latest" },
+            });
 
-        expect(machine.id).toBe("docker");
-        expect(machine.cwd).toBe(cwd);
-        const started = await machine.processes!.start(ctx, {
-            command: "sh",
-            args: ["-c", "echo runner > marker"],
-            cwd,
-        });
-        await expect(started.exited).resolves.toEqual({ exitCode: 0, signal: null });
-        await expect(readFile(join(cwd, "marker"), "utf8")).resolves.toBe("runner\n");
-        await machine.dispose(ctx);
-    });
+            expect(machine.id).toBe("docker");
+            expect(machine.cwd).toBe(cwd);
+            const started = await machine.processes!.start(ctx, {
+                command: "sh",
+                args: ["-c", "echo runner > marker"],
+                cwd,
+            });
+            await expect(started.exited).resolves.toEqual({ exitCode: 0, signal: null });
+            await expect(readFile(join(cwd, "marker"), "utf8")).resolves.toBe("runner\n");
+            await machine.dispose(ctx);
+        },
+    );
 });
 
 describe.runIf(process.platform !== "win32")("connections from a container machine", () => {

@@ -22,13 +22,23 @@ const ctx: Context = createRootContext().named("runner-compute-test");
 const files = computePermissions("workspace_write");
 const commands = allowEverything();
 const cleanups: Array<() => Promise<void>> = [];
+const windows = process.platform === "win32";
+/** A command for the runner's shell: POSIX sh here, Windows PowerShell on Windows. */
+const shell = (posix: string, powershell: string): string => (windows ? powershell : posix);
+const quote = (value: string): string => `'${value.replaceAll("'", "''")}'`;
+const sleep = (seconds: number): string =>
+    shell(`sleep ${String(seconds)}`, `[Threading.Thread]::Sleep(${String(seconds * 1_000)})`);
+/** Prints the shell's process ID on its own line, then sleeps until killed. */
+const pidThenSleep = shell(
+    "echo $$; exec sleep 30",
+    "[Console]::WriteLine($PID); [Threading.Thread]::Sleep(30000)",
+);
 
 afterEach(async () => {
     for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
 
-// The runner side runs POSIX commands here; the protocol itself is platform-neutral.
-describe.runIf(process.platform !== "win32")("a compute on a runner", () => {
+describe("a compute on a runner", () => {
     it("reads and writes files on the runner's machine", async () => {
         const { compute, folder } = await runnerCompute();
 
@@ -70,16 +80,23 @@ describe.runIf(process.platform !== "win32")("a compute on a runner", () => {
         const { compute } = await runnerCompute();
 
         await expect(
-            compute.shell.run({ command: "printf runner", permissions: commands }),
+            compute.shell.run({
+                command: shell("printf runner", "[Console]::Write('runner')"),
+                permissions: commands,
+            }),
         ).resolves.toMatchObject({ stdout: "runner", exitCode: 0, timedOut: false });
 
+        const echo = shell(
+            "cat",
+            `& ${quote(process.execPath)} -e 'process.stdin.pipe(process.stdout)'`,
+        );
         const sessionId = await compute.shell.startSession({
-            command: "cat",
+            command: echo,
             permissions: commands,
         });
         await waitFor(() => compute.shell.activeSessionCount?.() === 1);
         expect(compute.shell.activeSessions?.()).toEqual([
-            expect.objectContaining({ command: "cat", sessionId, status: "running" }),
+            expect.objectContaining({ command: echo, sessionId, status: "running" }),
         ]);
 
         await expect(compute.shell.writeSession(commands, sessionId, "ping\n")).resolves.toBe(true);
@@ -107,7 +124,7 @@ describe.runIf(process.platform !== "win32")("a compute on a runner", () => {
         });
 
         const sessionId = await compute.shell.startSession({
-            command: "sleep 0.1; exit 3",
+            command: shell("sleep 0.1; exit 3", "[Threading.Thread]::Sleep(100); exit 3"),
             permissions: commands,
         });
 
@@ -119,16 +136,20 @@ describe.runIf(process.platform !== "win32")("a compute on a runner", () => {
         const { compute } = await runnerCompute();
 
         await expect(
-            compute.shell.run({ command: "true", permissions: commands, secrets: ["github"] }),
+            compute.shell.run({
+                command: shell("true", "exit 0"),
+                permissions: commands,
+                secrets: ["github"],
+            }),
         ).rejects.toThrow("Attached secrets are not available to commands on a runner yet.");
     });
 });
 
-describe.runIf(process.platform !== "win32")("the runner connection", () => {
+describe("the runner connection", () => {
     it("keeps commands running across a reconnect within the lease", async () => {
         const runner = await runnerCompute();
         const sessionId = await runner.compute.shell.startSession({
-            command: "sleep 30",
+            command: sleep(30),
             permissions: commands,
         });
         await waitFor(() => runner.compute.shell.activeSessionCount?.() === 1);
@@ -153,7 +174,7 @@ describe.runIf(process.platform !== "win32")("the runner connection", () => {
             exits.push(exit);
         });
         const lostSession = await runner.compute.shell.startSession({
-            command: "echo $$; exec sleep 30",
+            command: pidThenSleep,
             permissions: commands,
         });
         const pid = await processId(runner.compute, lostSession);
@@ -168,7 +189,7 @@ describe.runIf(process.platform !== "win32")("the runner connection", () => {
         await expect(runner.compute.shell.readSession(lostSession)).resolves.toBeUndefined();
 
         const nextSession = await runner.compute.shell.startSession({
-            command: "sleep 30",
+            command: sleep(30),
             permissions: commands,
         });
         expect(nextSession).toBeGreaterThan(lostSession);
@@ -178,7 +199,7 @@ describe.runIf(process.platform !== "win32")("the runner connection", () => {
     it("releases a previous daemon process as soon as a new one connects", async () => {
         const runner = await runnerCompute();
         const sessionId = await runner.compute.shell.startSession({
-            command: "echo $$; exec sleep 30",
+            command: pidThenSleep,
             permissions: commands,
         });
         const pid = await processId(runner.compute, sessionId);
@@ -194,7 +215,7 @@ describe.runIf(process.platform !== "win32")("the runner connection", () => {
     it("releases everything at once when the daemon says goodbye", async () => {
         const runner = await runnerCompute({ leaseGraceMs: 60_000 });
         const sessionId = await runner.compute.shell.startSession({
-            command: "echo $$; exec sleep 30",
+            command: pidThenSleep,
             permissions: commands,
         });
         const pid = await processId(runner.compute, sessionId);
@@ -208,7 +229,7 @@ describe.runIf(process.platform !== "win32")("the runner connection", () => {
 
     it("reports an unknown outcome instead of replaying work cut off by a dropped link", async () => {
         const runner = await runnerCompute();
-        const running = runner.compute.shell.run({ command: "sleep 5", permissions: commands });
+        const running = runner.compute.shell.run({ command: sleep(5), permissions: commands });
         await delay(50);
 
         runner.drop();
@@ -255,7 +276,7 @@ describe.runIf(process.platform !== "win32")("the runner connection", () => {
     it("cancels a long read on the runner when the caller stops waiting", async () => {
         const { compute } = await runnerCompute();
         const sessionId = await compute.shell.startSession({
-            command: "sleep 30",
+            command: sleep(30),
             permissions: commands,
         });
         const controller = new AbortController();
@@ -333,7 +354,7 @@ async function processId(compute: Compute, sessionId: number): Promise<number> {
     let output = "";
     await waitFor(async () => {
         output += (await compute.shell.readSession(sessionId))?.stdoutDelta ?? "";
-        return /\d+\n/.test(output);
+        return /\d+\r?\n/.test(output);
     });
     return Number.parseInt(output, 10);
 }
@@ -352,7 +373,11 @@ function isRunning(pid: number): boolean {
     }
 }
 
-async function waitFor(check: () => boolean | Promise<boolean>, timeoutMs = 4_000): Promise<void> {
+/** Windows PowerShell takes far longer to start than sh, so Windows waits longer. */
+async function waitFor(
+    check: () => boolean | Promise<boolean>,
+    timeoutMs = windows ? 10_000 : 4_000,
+): Promise<void> {
     const deadline = Date.now() + timeoutMs;
     while (!(await check())) {
         if (Date.now() > deadline) throw new Error("The expected state never arrived.");

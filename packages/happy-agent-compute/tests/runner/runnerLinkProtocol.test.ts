@@ -10,9 +10,11 @@ import {
 import {
     createRunnerChannelPair,
     createRunnerCompute,
+    RunnerHost,
     RunnerLink,
     type RunnerChannel,
     type RunnerFrameHeader,
+    type RunnerSystem,
 } from "../../sources/runner/index.js";
 
 const ctx: Context = createRootContext().named("runner-link-protocol-test");
@@ -216,6 +218,75 @@ describe("connections into a container on a runner", () => {
     });
 });
 
+/**
+ * A daemon older than version 3 refuses unknown fields in `hello`, so a runner's operating system
+ * and shell travel in `ready`, and only once both sides agreed on version 3.
+ */
+describe("what a runner says about its machine", () => {
+    const system = { osVersion: "10.0.26100", shell: "C:\\Windows\\powershell.exe" };
+
+    it("learns the runner's operating system and shell on version 3", async () => {
+        const runner = fakeRunner();
+        const daemon = link();
+        const accepted = daemon.accept(runner.daemonEnd);
+        await runner.handshake(3, system);
+
+        await expect(accepted).resolves.toMatchObject({ runner: { ...identity, ...system } });
+        expect(daemon.status().runner).toEqual({ ...identity, ...system });
+    });
+
+    it("ignores them on an older version", async () => {
+        const runner = fakeRunner();
+        const daemon = link();
+        const accepted = daemon.accept(runner.daemonEnd);
+        await runner.handshake(2, system);
+
+        await accepted;
+        expect(daemon.status().runner).toEqual(identity);
+    });
+
+    it("drops a runner that sends them in hello", async () => {
+        const runner = fakeRunner();
+        const accepting = link().accept(runner.daemonEnd);
+
+        runner.send({
+            type: "hello",
+            protocol: { min: 1, max: 3 },
+            runner: { ...identity, ...system },
+        } as RunnerFrameHeader);
+
+        await expect(accepting).rejects.toMatchObject({ code: "ERUNNERUNAVAILABLE" });
+    });
+
+    it.each([
+        ["sends them in ready on version 3", 3, true],
+        ["keeps them to itself on version 2", 2, false],
+    ])("%s", async (_name, protocol, sent) => {
+        const host = new RunnerHost({
+            ctx,
+            identity: { ...identity, ...system },
+            createCompute: async () => {
+                throw new Error("No machine is built here.");
+            },
+        });
+        const daemon = fakeDaemon();
+        const served = host.serve(daemon.runnerEnd);
+
+        await waitFor(() => daemon.received.some((frame) => frame.type === "hello"));
+        expect(daemon.received[0]).toMatchObject({ type: "hello", runner: identity });
+        expect(daemon.received[0]).not.toHaveProperty("runner.osVersion");
+        daemon.send({ type: "welcome", protocol, instanceId: "daemon", leaseGraceMs: 0 });
+        await waitFor(() => daemon.received.some((frame) => frame.type === "ready"));
+        const ready = daemon.received.find((frame) => frame.type === "ready");
+        if (sent) expect(ready).toMatchObject({ system });
+        else expect(ready).not.toHaveProperty("system");
+
+        daemon.send({ type: "goodbye", reason: "The test finished." });
+        await served;
+        await host.dispose(ctx);
+    });
+});
+
 function link(): RunnerLink {
     const created = new RunnerLink(ctx, { name: "Build box", instanceId: "daemon-process" });
     links.push(created);
@@ -245,11 +316,32 @@ function fakeRunner() {
         answer: (respond: (request: { method: string; params: unknown }) => unknown) => {
             answer = respond;
         },
-        async handshake(protocol = 1) {
+        async handshake(protocol = 1, system?: RunnerSystem) {
             send({ type: "hello", protocol: { min: 1, max: protocol }, runner: identity });
             await waitFor(() => received.some((frame) => frame.type === "welcome"));
-            send({ type: "ready", epoch: "epoch-1", computes: [], streams: [] });
+            send({
+                type: "ready",
+                epoch: "epoch-1",
+                computes: [],
+                streams: [],
+                ...(system === undefined ? {} : { system }),
+            });
         },
+    };
+}
+
+/** A daemon's end of a channel, driven by hand to see exactly what a runner sends. */
+function fakeDaemon() {
+    const [daemonEnd, runnerEnd] = createRunnerChannelPair();
+    const received: RunnerFrameHeader[] = [];
+    daemonEnd.receive({
+        frame: (bytes) => received.push(decodeRunnerFrame(bytes).header),
+        close: () => undefined,
+    });
+    return {
+        runnerEnd,
+        received,
+        send: (header: RunnerFrameHeader) => daemonEnd.send(encodeRunnerFrame(header)),
     };
 }
 

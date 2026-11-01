@@ -26,6 +26,7 @@ import {
     MAX_RUNNER_STREAMS,
     MIN_RUNNER_PROTOCOL_VERSION,
     RUNNER_PROTOCOL_VERSION,
+    RUNNER_SYSTEM_PROTOCOL_VERSION,
     runnerMethods,
     type RunnerEvent,
     type RunnerEventParams,
@@ -211,7 +212,7 @@ export class RunnerHost {
                         return;
                     }
                     connection = { peer, ctx, inFlight: new Map(), released: false };
-                    owner = this.#adopt(instanceId, leaseGraceMs, connection);
+                    owner = this.#adopt(instanceId, leaseGraceMs, protocol, connection);
                 },
                 onClose: (reason) => {
                     clearTimeout(handshakeTimer);
@@ -221,10 +222,12 @@ export class RunnerHost {
                     resolve(reason);
                 },
             });
+            // The system fields wait for `ready`: a daemon older than version 3 refuses them here.
+            const { version, platform, arch, hostname, home } = this.#options.identity;
             peer.send({
                 type: "hello",
                 protocol: { min: MIN_RUNNER_PROTOCOL_VERSION, max: RUNNER_PROTOCOL_VERSION },
-                runner: this.#options.identity,
+                runner: { version, platform, arch, hostname, home },
             });
         });
     }
@@ -239,7 +242,12 @@ export class RunnerHost {
         ctx.log.info("runner:host:disposed");
     }
 
-    #adopt(instanceId: string, leaseGraceMs: number, connection: Connection): Owner {
+    #adopt(
+        instanceId: string,
+        leaseGraceMs: number,
+        protocol: number,
+        connection: Connection,
+    ): Owner {
         let owner = this.#owner;
         if (owner !== undefined && owner.instanceId !== instanceId) {
             this.#release(owner, "A new daemon process connected to the runner.");
@@ -270,11 +278,19 @@ export class RunnerHost {
         connection.ctx.log.info(
             `runner:host:connected computes=${String(owner.computes.size)} events=${String(owner.events.length)}`,
         );
+        const { osVersion, shell } = this.#options.identity;
+        const system = {
+            ...(osVersion === undefined ? {} : { osVersion }),
+            ...(shell === undefined ? {} : { shell }),
+        };
         connection.peer.send({
             type: "ready",
             epoch: owner.epoch,
             computes: [...owner.computes.keys()],
             streams: [...owner.streams.keys()],
+            ...(protocol >= RUNNER_SYSTEM_PROTOCOL_VERSION && Object.keys(system).length > 0
+                ? { system }
+                : {}),
         });
         for (const computeId of owner.computes.keys()) this.#sendSessions(owner, computeId);
         for (const retained of owner.events) {

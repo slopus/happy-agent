@@ -12,10 +12,16 @@ import { computePermissionsSchema } from "../ComputePermissions.js";
  * Version 2 changes no message. It promises that `net.connect` on a compute created with `docker`
  * connects from inside that container; a version 1 runner connects from its own network instead,
  * so a daemon refuses such a connection on a version 1 link rather than reach the wrong machine.
+ *
+ * Version 3 adds the optional `system` to `ready`: the runner's operating system release and the
+ * shell its commands run in. An older daemon refuses unknown fields in `hello`, which is sent
+ * before the version is agreed, so they wait for `ready`.
  */
-export const RUNNER_PROTOCOL_VERSION = 2;
+export const RUNNER_PROTOCOL_VERSION = 3;
 /** The first version whose `net.connect` on a Docker compute connects inside the container. */
 export const RUNNER_DOCKER_NETWORK_PROTOCOL_VERSION = 2;
+/** The first version whose `ready` says which operating system and shell the runner has. */
+export const RUNNER_SYSTEM_PROTOCOL_VERSION = 3;
 /** The oldest protocol version this package still speaks. */
 export const MIN_RUNNER_PROTOCOL_VERSION = 1;
 
@@ -113,20 +119,38 @@ export const runnerComputeIdSchema = Type.String({
     pattern: "^[A-Za-z0-9_-]+$",
 });
 
-/** What a runner says about itself when it connects. */
+/** What every runner says about itself in `hello`, whichever version it speaks. */
+const runnerHelloFields = {
+    /** The runner software's version, for display and diagnostics only. */
+    version: Type.String({ minLength: 1, maxLength: 128 }),
+    /** `process.platform` of the runner machine. */
+    platform: Type.String({ minLength: 1, maxLength: 64 }),
+    /** `process.arch` of the runner machine. */
+    arch: Type.String({ minLength: 1, maxLength: 64 }),
+    /** The machine's host name, for display only. */
+    hostname: Type.String({ maxLength: 255 }),
+    /** The runner user's home directory, where the daemon places folders that have no project. */
+    home: path,
+};
+
+/** What a runner says about its operating system from protocol version 3, in `ready`. */
+const runnerSystemFields = {
+    /** The operating system release, as an agent working on the runner's own machine is told it. */
+    osVersion: Type.Optional(Type.String({ minLength: 1, maxLength: 256 })),
+    /** The shell the runner's commands run in, such as `/bin/zsh` or Windows PowerShell's path. */
+    shell: Type.Optional(Type.String({ minLength: 1, maxLength: 4096 })),
+};
+
+/** What a runner says about its operating system and shell, sent once the version allows it. */
+export const runnerSystemSchema = Type.Object(runnerSystemFields, exact);
+export type RunnerSystem = Static<typeof runnerSystemSchema>;
+
+/**
+ * What a runner says about itself when it connects. The system fields arrive in `ready` and are
+ * absent when the runner or the agreed version is older than 3.
+ */
 export const runnerIdentitySchema = Type.Object(
-    {
-        /** The runner software's version, for display and diagnostics only. */
-        version: Type.String({ minLength: 1, maxLength: 128 }),
-        /** `process.platform` of the runner machine. */
-        platform: Type.String({ minLength: 1, maxLength: 64 }),
-        /** `process.arch` of the runner machine. */
-        arch: Type.String({ minLength: 1, maxLength: 64 }),
-        /** The machine's host name, for display only. */
-        hostname: Type.String({ maxLength: 255 }),
-        /** The runner user's home directory, where the daemon places folders that have no project. */
-        home: path,
-    },
+    { ...runnerHelloFields, ...runnerSystemFields },
     exact,
 );
 export type RunnerIdentity = Static<typeof runnerIdentitySchema>;
@@ -494,7 +518,7 @@ export const runnerFrameHeaderSchema = Type.Union([
         {
             type: Type.Literal("hello"),
             protocol: Type.Object({ min: protocolVersion, max: protocolVersion }, exact),
-            runner: runnerIdentitySchema,
+            runner: Type.Object(runnerHelloFields, exact),
         },
         exact,
     ),
@@ -522,6 +546,8 @@ export const runnerFrameHeaderSchema = Type.Union([
             computes: Type.Array(runnerComputeIdSchema, { maxItems: MAX_RUNNER_COMPUTES }),
             /** Streams the runner still holds for this daemon, including ended but unreleased ones. */
             streams: Type.Array(runnerStreamIdSchema, { maxItems: MAX_RUNNER_STREAMS }),
+            /** The runner's operating system and shell, from protocol version 3. */
+            system: Type.Optional(runnerSystemSchema),
         },
         exact,
     ),

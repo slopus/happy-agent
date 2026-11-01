@@ -210,6 +210,8 @@ jobs:
                   'HAPPY_WINDOWS_SANDBOX_NO_PROVISION=1' >> $env:GITHUB_ENV
             - name: Verify native sandbox enforcement
               run: pnpm --filter @slopus/happy-agent-supervisor test:native:windows
+            - name: Verify both halves of the runner protocol on Windows
+              run: pnpm --filter @slopus/happy-agent-compute exec vitest run tests/runner
             - name: Exercise the packaged executable
               run: |
                   $binary = 'packages/happy-agent/dist/bin/happy-agent-win32-x64.exe'

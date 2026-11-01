@@ -35,7 +35,7 @@ runner                                   daemon
   │◀── welcome {protocol, instanceId, ────│   instanceId changes every daemon start
   │             leaseGraceMs}             │
   │── ready {epoch, retained computes, ──▶│
-  │          retained streams}            │
+  │          retained streams, system?}   │   system from version 3
   │◀────────── request {id, method} ──────│   fs.*, shell.*, process.*, watch.*, net.*
   │── response {id, result | error} ─────▶│
   │◀────────── cancel {id} ───────────────│   the caller stopped waiting
@@ -134,6 +134,13 @@ connects inside the container. A version 1 runner connects from its own network 
 daemon refuses such a connection with `ENOTSUP` before sending anything, checking the version of the
 very connection that would carry the request. Ordinary machines connect on either version.
 
+Protocol version 3 adds `system` to `ready`: the runner's operating system release and the shell its
+commands run in, so an agent working on a runner is told about the runner's machine rather than
+the daemon's. `hello` cannot carry them, because it is sent before the version is agreed and an
+older daemon drops a `hello` with fields it does not know. A runner sends `system` only once the
+daemon chose version 3, and `RunnerLink` folds it into the identity its status reports; on an older
+runner or version, `osVersion` and `shell` are absent.
+
 A connection's daemon side is a half-open duplex. When both directions have finished cleanly, the
 runner is left to deliver the last bytes and end the stream itself, within thirty seconds; an error
 or an earlier destroy closes it at once.
@@ -157,4 +164,6 @@ cross the protocol; the daemon's absolute private paths mean nothing on the runn
 `tests/runner` drives a real host compute through both halves over `createRunnerChannelPair`, and
 drives the daemon's half with a hand-written misbehaving runner. The stream tests cut the
 connection mid-transfer, dropping frames in both directions, and check every byte still arrives
-exactly once.
+exactly once. They run on Windows too, where the runner's shell is Windows PowerShell and Node
+scripts stand in for the POSIX programs Windows lacks; terminals, POSIX signals, file watching, and
+containers stay on the platforms that have them.

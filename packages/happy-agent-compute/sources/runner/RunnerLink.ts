@@ -17,6 +17,7 @@ import {
     DEFAULT_RUNNER_LEASE_GRACE_MS,
     MIN_RUNNER_PROTOCOL_VERSION,
     RUNNER_PROTOCOL_VERSION,
+    RUNNER_SYSTEM_PROTOCOL_VERSION,
     runnerEvents,
     runnerMethods,
     type RunnerEvent,
@@ -251,6 +252,12 @@ export class RunnerLink {
                     }
                     if (stage === "ready" && header.type === "ready" && runner !== undefined) {
                         clearTimeout(handshakeTimer);
+                        if (
+                            protocol >= RUNNER_SYSTEM_PROTOCOL_VERSION &&
+                            header.system !== undefined
+                        ) {
+                            runner = { ...runner, ...header.system };
+                        }
                         session = this.#openSession(peer, runner, protocol);
                         stage = "open";
                         this.#install(session, header.epoch, header.computes, header.streams);

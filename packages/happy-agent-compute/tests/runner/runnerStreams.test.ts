@@ -24,13 +24,20 @@ import {
 
 const ctx: Context = createRootContext().named("runner-streams-test");
 const cleanups: Array<() => Promise<void> | void> = [];
+const windows = process.platform === "win32";
+/** A POSIX program here; on Windows, which lacks it, the same behavior as a Node script. */
+const program = (
+    command: string,
+    args: readonly string[],
+    script: string,
+): { command: string; args: string[] } =>
+    windows ? { command: process.execPath, args: ["-e", script] } : { command, args: [...args] };
 
 afterEach(async () => {
     for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
 
-// The runner side runs POSIX programs here; the protocol itself is platform-neutral.
-describe.runIf(process.platform !== "win32")("programs on a runner", () => {
+describe("programs on a runner", () => {
     it("runs Git with argv and environment changes in the runner's folder", async () => {
         const { compute } = await runner();
         const processes = compute.processes!;
@@ -59,8 +66,9 @@ describe.runIf(process.platform !== "win32")("programs on a runner", () => {
         ).rejects.toMatchObject({ code: "ENOENT" });
     });
 
-    // Terminals are Bun's, the runtime Happy Agent ships on: `pnpm test:bun` proves this one.
-    it.runIf("bun" in process.versions)("runs a terminal and resizes it", async () => {
+    // Terminals are Bun's, the runtime Happy Agent ships on: `pnpm test:bun` proves this one. It
+    // reads the size with POSIX stty.
+    it.runIf("bun" in process.versions && !windows)("runs a terminal and resizes it", async () => {
         const { compute } = await runner();
         const terminal = await compute.processes!.start(ctx, {
             command: "sh",
@@ -85,7 +93,10 @@ describe.runIf(process.platform !== "win32")("programs on a runner", () => {
         const { compute } = await runner();
         const input = Buffer.alloc(2 * 1024 * 1024);
         for (let index = 0; index < input.length; index++) input[index] = (index * 31) % 251;
-        const cat = await compute.processes!.start(ctx, { command: "cat" });
+        const cat = await compute.processes!.start(
+            ctx,
+            program("cat", [], "process.stdin.pipe(process.stdout)"),
+        );
         const output = collect(cat);
 
         await cat.write(input);
@@ -102,10 +113,7 @@ describe.runIf(process.platform !== "win32")("programs on a runner", () => {
             { length: 200_000 },
             (_, index) => `${String(index + 1)}\n`,
         ).join("");
-        const seq = await runnerSide.compute.processes!.start(ctx, {
-            command: "seq",
-            args: ["1", "200000"],
-        });
+        const seq = await runnerSide.compute.processes!.start(ctx, countTo200000);
         const chunks: Buffer[] = [];
         seq.onStdout((chunk) => {
             chunks.push(Buffer.from(chunk));
@@ -128,10 +136,7 @@ describe.runIf(process.platform !== "win32")("programs on a runner", () => {
             { length: 200_000 },
             (_, index) => `${String(index + 1)}\n`,
         ).join("");
-        const seq = await runnerSide.compute.processes!.start(ctx, {
-            command: "seq",
-            args: ["1", "200000"],
-        });
+        const seq = await runnerSide.compute.processes!.start(ctx, countTo200000);
         const chunks: Buffer[] = [];
         let reconnecting: Promise<void> | undefined;
         seq.onStdout((chunk) => {
@@ -152,7 +157,8 @@ describe.runIf(process.platform !== "win32")("programs on a runner", () => {
         expect(Buffer.concat(chunks).toString()).toBe(expected);
     });
 
-    it("keeps a terminal across a reconnect within the lease", async () => {
+    // Windows has no SIGTERM for the program to report.
+    it.runIf(!windows)("keeps a terminal across a reconnect within the lease", async () => {
         const runnerSide = await runner();
         const shell = await runnerSide.compute.processes!.start(ctx, {
             command: "sh",
@@ -176,10 +182,10 @@ describe.runIf(process.platform !== "win32")("programs on a runner", () => {
 
     it("reports programs as killed when the runner released this daemon", async () => {
         const runnerSide = await runner({ leaseGraceMs: 50 });
-        const sleeper = await runnerSide.compute.processes!.start(ctx, {
-            command: "sleep",
-            args: ["30"],
-        });
+        const sleeper = await runnerSide.compute.processes!.start(
+            ctx,
+            program("sleep", ["30"], "setTimeout(() => undefined, 30000)"),
+        );
 
         runnerSide.cut();
         await waitFor(() => runnerSide.host.computeCount() === 0);
@@ -217,7 +223,7 @@ describe.runIf(process.platform === "linux")("watching on a runner", () => {
     });
 });
 
-describe.runIf(process.platform !== "win32")("machines in containers on a runner", () => {
+describe("machines in containers on a runner", () => {
     it("asks the runner for the image and refuses to reuse the machine with another", async () => {
         const { link, folder, requests } = await runner();
 
@@ -245,7 +251,7 @@ describe.runIf(process.platform !== "win32")("machines in containers on a runner
     });
 });
 
-describe.runIf(process.platform !== "win32")("connections from a runner", () => {
+describe("connections from a runner", () => {
     it("carries bytes both ways and ends cleanly", async () => {
         const { compute } = await runner({}, { echo: true });
 
@@ -337,6 +343,13 @@ describe.runIf(process.platform !== "win32")("connections from a runner", () => 
         await expect(listener.closed).resolves.toBeUndefined();
     });
 });
+
+/** Prints 1 to 200000, one per line. */
+const countTo200000 = program(
+    "seq",
+    ["1", "200000"],
+    "process.stdout.write(Array.from({ length: 200000 }, (_, index) => `${index + 1}\\n`).join(''))",
+);
 
 /** A link and a runner, joined by a channel that can be cut with frames still in flight. */
 async function runner(options: Partial<RunnerLinkOptions> = {}, extra: { echo?: boolean } = {}) {
