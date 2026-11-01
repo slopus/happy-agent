@@ -144,9 +144,8 @@ export const agentSchema = Type.Recursive((agent) =>
         processes: Type.Object({ running: Type.Integer() }),
         status: agentStatusSchema,
         /**
-         * What the agent last wrote about where its work stands, with `set_status`: shown under
-         * the title of its sidebar row, on one line or on the two lines a single `\n` splits it
-         * into. `null` when unset; absent on older daemons.
+         * @deprecated Current daemons always return null. Older daemons and historical events
+         * may carry a status line; keep accepting it for compatibility.
          */
         statusLine: Type.Optional(Nullable(agentStatusLineSchema)),
         /** How many subagents this agent spawned over its life, and how many run now. */

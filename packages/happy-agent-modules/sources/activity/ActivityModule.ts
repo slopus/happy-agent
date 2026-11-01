@@ -6,6 +6,7 @@ import {
     type AgentModuleHooks,
     type AgentSystemRef,
 } from "@slopus/happy-agent-base";
+import { agentStatusLineSchema } from "@slopus/happy-agent-client";
 import { Type } from "@sinclair/typebox";
 import type { Context } from "@steve.kite/stdlib";
 
@@ -38,6 +39,16 @@ export class ActivityModule implements AgentModule {
 
     constructor(durableFunctions: DurableFunctionsModule) {
         this.#durableFunctions = durableFunctions;
+        // Drain status writes left by older installs without restoring the retired status line.
+        durableFunctions.register({
+            name: "stories.set-status",
+            argumentsSchema: Type.Object({
+                agentId: cuid2Schema,
+                statusLine: Type.Union([agentStatusLineSchema, Type.Null()]),
+            }),
+            resultSchema: Type.Null(),
+            executor: async () => null,
+        });
         // An agent cannot change its own metadata while accepting a message; the write follows
         // the acceptance's commit and survives a restart in between.
         durableFunctions.register({

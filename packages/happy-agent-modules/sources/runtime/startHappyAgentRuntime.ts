@@ -30,7 +30,6 @@ import type { LibSQLDatabase } from "drizzle-orm/libsql";
 
 import { AbortModule } from "../abort/index.js";
 import { ActivityModule } from "../activity/index.js";
-import { AgentStatusModule } from "../agentStatus/index.js";
 import { ApiModule } from "../api/index.js";
 import { ArtifactDataModule } from "../artifactData/index.js";
 import { ArtifactsModule } from "../artifacts/index.js";
@@ -155,7 +154,6 @@ export interface HappyAgentRuntimeModules {
     readonly live: LiveModule;
     readonly abort: AbortModule;
     readonly activity: ActivityModule;
-    readonly agentStatus: AgentStatusModule;
     readonly api: ApiModule;
     readonly artifacts: ArtifactsModule;
     readonly artifactData: ArtifactDataModule;
@@ -738,7 +736,6 @@ export async function startHappyAgentRuntime(
             events,
             team,
         );
-        const agentStatus = new AgentStatusModule(durableFunctions, bots, tasks);
         const apiModule = new ApiModule(
             abort,
             config,
@@ -788,7 +785,6 @@ export async function startHappyAgentRuntime(
             live,
             abort,
             activity,
-            agentStatus,
             api: apiModule,
             artifacts,
             artifactData,
@@ -925,7 +921,6 @@ export async function startHappyAgentRuntime(
             chatMedia,
             gemini,
             imageGeneration,
-            agentStatus,
             compute.skillsModule,
             compute.computeModule,
             happy,

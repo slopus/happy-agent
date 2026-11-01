@@ -18,15 +18,8 @@ const eagerDirectories = [
     "compute/tools/glm",
     "userInput",
 ];
-/**
- * Voice's whole tool arrays, which it receives without tool search, and set_status, which agents
- * never used while it was deferred.
- */
-const eagerFiles = [
-    "live/impl/voiceSidebarTools.ts",
-    "live/impl/liveDesktopTools.ts",
-    "agentStatus/tools/set_status.ts",
-];
+// Voice receives its whole tool arrays without tool search.
+const eagerFiles = ["live/impl/voiceSidebarTools.ts", "live/impl/liveDesktopTools.ts"];
 
 interface ToolDefinition {
     readonly file: string;

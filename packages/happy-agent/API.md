@@ -609,9 +609,10 @@ client and daemon as a one-off exception to additive compatibility. `POST /v0/ag
 user-controlled roots. Agent response parent relationships, ordinary subagents, and subtasks
 remain unchanged. Existing stored agents are not deleted or rewritten.
 
-Agent status lines are additive and do not increment the protocol version. Current daemons offer
-the `set_status` tool to task and bot agents and emit the agent's `statusLine`. Older daemons omit
-it; clients then show no status line.
+Agent status lines are deprecated. Current daemons no longer offer `set_status` and always emit
+`statusLine: null`, including for stored agents with an earlier status. The optional object-or-null
+field remains compatible with released clients and older daemons, which may emit a status or omit
+the field. Pending `stories.set-status` durable calls complete without changing agent metadata.
 
 Last activity is additive and does not increment the protocol version. Current daemons emit the
 agent's `lastActivityAt` on every full agent object and in `agent.updated` changes when it moves.
@@ -6280,17 +6281,12 @@ Fields:
   `null`. See "Questions" below.
 - `unread` — set when the agent finished work the user has not looked at: why (`reason`) and
   since when. `null` when there is nothing unread. Cleared by `POST /v0/agents/:agentId/read`.
-- `statusLine` — optional additive object: `null`, or
-  `{ "text": "Testing with a few friends", "updatedAt": 1755400000000 }`, what the agent last wrote
-  about where its work stands, with its `set_status` tool. Task and bot agents have the tool. `text` is 1–120 characters with at most one line break, a single `\n` between two
-  non-empty lines, and never a `\r`; that is the only bound `set_status` enforces. Agents aim
-  for a short phrase of about 40 characters so it fits, or two such lines deliberately set one
-  above the other, such as `"1. Ship new onboarding\n2. Submit iOS native build"`. A client
-  shows it under the title of the agent's sidebar row or session, in place of what it would show
-  otherwise, on up to two lines, truncated past them: a `\n` starts the second line, and a client
-  that shows one line puts a space in its place. It shows nothing different while it is `null`
-  or absent. Every change is an `agent.updated` event carrying `statusLine` in `changes`.
-  Archival keeps it. Daemons that predate the line break never send one.
+- `statusLine` — deprecated optional object-or-null field, always `null` in current daemon
+  projections. Older daemons and historical events may carry
+  `{ "text": "Testing with a few friends", "updatedAt": 1755400000000 }`; `text` is 1–120 characters
+  with at most one `\n` between non-empty lines and no `\r`. Clients keep accepting that earlier
+  shape. A null or absent field shows no status line. Stored status metadata no longer affects
+  `lastActivityAt`, which follows the person's last message, or `createdAt` before any message.
 - `orderKey` — an opaque owner-local sort key, as on projects and workspaces; the list order is
   manual and moved with `reorder`. It is non-null for every user-visible root, including one
   managed from another workspace, and `null` for an ordinary hidden subagent or shared-filesystem

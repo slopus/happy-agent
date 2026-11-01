@@ -1,9 +1,5 @@
 import type { AgentConfig, AgentSystemRef } from "@slopus/happy-agent-base";
-import {
-    agentStatusLineSchema,
-    type AgentRetrying,
-    type AgentWait,
-} from "@slopus/happy-agent-client";
+import { type AgentRetrying, type AgentWait } from "@slopus/happy-agent-client";
 import type { Context } from "@steve.kite/stdlib";
 import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
@@ -588,19 +584,14 @@ export function agentArchivedAt(config: AgentConfig): number | null {
 }
 
 /**
- * When a person last did something in the conversation: the later of their last message and the
- * status line's last change, else creation. Runs, tool calls, and bookkeeping never move it.
+ * When a person last wrote in the conversation, else creation. Runs, tool calls, and
+ * bookkeeping never move it.
  */
 export function agentLastActivityAt(
     metadata: Readonly<Record<string, unknown>>,
     createdAt: number,
 ): number {
-    const statusLine = metadata["statusLine"];
-    return Math.max(
-        createdAt,
-        numericMetadata(metadata[LAST_PERSON_MESSAGE_AT_METADATA_KEY]) ?? 0,
-        Value.Check(agentStatusLineSchema, statusLine) ? statusLine.updatedAt : 0,
-    );
+    return Math.max(createdAt, numericMetadata(metadata[LAST_PERSON_MESSAGE_AT_METADATA_KEY]) ?? 0);
 }
 
 export async function agentResource(
@@ -660,9 +651,7 @@ export async function agentResource(
         title: typeof metadata.title === "string" ? metadata.title : null,
         titleStatus: typeof metadata.title === "string" ? "ready" : "idle",
         status: state.working === true ? "working" : "idle",
-        statusLine: Value.Check(agentStatusLineSchema, metadata["statusLine"])
-            ? metadata["statusLine"]
-            : null,
+        statusLine: null,
         lastActivityAt: agentLastActivityAt(metadata, createdAt),
         wait: state.wait ?? null,
         retrying: state.retrying ?? null,

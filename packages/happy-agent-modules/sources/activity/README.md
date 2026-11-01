@@ -15,8 +15,9 @@ metadata, only ever moving it forward. Messages from agents, including a parent'
 ```text
 person's message accepted -> durable intent (same transaction)
     -> after commit: agent metadata lastPersonMessageAt -> agent.metadata-changed
-    -> API: agent.lastActivityAt = max(lastPersonMessageAt, statusLine.updatedAt) ?? createdAt
+    -> API: agent.lastActivityAt = lastPersonMessageAt ?? createdAt
 ```
 
-The API projects the agent's `lastActivityAt` from this key and the status line `set_status` writes,
-and emits it in `agent.updated` whenever either changes.
+The API projects the agent's `lastActivityAt` from this key and emits it in `agent.updated` when it
+changes. Status lines are retired; the module registers `stories.set-status` as a no-op so pending
+writes from older installations drain safely without restoring them.

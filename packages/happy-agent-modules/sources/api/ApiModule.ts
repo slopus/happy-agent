@@ -3864,12 +3864,10 @@ export class ApiModule implements AgentModule {
                       0,
                   )
                 : undefined;
-            // Last activity moves only with a person's message or the status line.
+            // Last activity moves only with a person's message.
             const metadata = recordValue(payload?.["metadata"]);
             const lastActivityAt =
-                metadata !== undefined &&
-                (Object.hasOwn(update, "statusLine") ||
-                    Object.hasOwn(update, LAST_PERSON_MESSAGE_AT_METADATA_KEY))
+                metadata !== undefined && Object.hasOwn(update, LAST_PERSON_MESSAGE_AT_METADATA_KEY)
                     ? agentLastActivityAt(
                           metadata,
                           (await this.#agentSystem().config(ctx, agentId))?.provenance?.createdAt ??
@@ -10824,7 +10822,6 @@ function agentMetadataChanges(
         "orderKey",
         "pendingQuestionId",
         "processes",
-        "statusLine",
         "subagents",
         "subtaskOrderKey",
         "title",

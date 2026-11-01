@@ -59,6 +59,32 @@ describe("agentResource", () => {
     } as unknown as AgentSystemRef;
     const config = { provenance: { createdAt: 1 }, metadata: { subtask: true } };
 
+    it("keeps the retired status field null and ignores its timestamp", async () => {
+        const events = { latestAgentEvent: async () => undefined } as unknown as EventsModule;
+        for (const lastPersonMessageAt of [undefined, 10]) {
+            const resource = await agentResource(
+                createRootContext(),
+                agents,
+                events,
+                "child",
+                "space",
+                {
+                    config: {
+                        ...config,
+                        metadata: {
+                            ...(lastPersonMessageAt === undefined ? {} : { lastPersonMessageAt }),
+                            statusLine: { text: "Old status", updatedAt: 100 },
+                        },
+                    },
+                },
+            );
+            expect(resource).toMatchObject({
+                statusLine: null,
+                lastActivityAt: lastPersonMessageAt ?? 1,
+            });
+        }
+    });
+
     it("labels state with the version read before it instead of a later one", async () => {
         const latestAgentEvent = vi.fn(async () => ({ cursor: "later", occurredAt: 9 }));
         const events = { latestAgentEvent } as unknown as EventsModule;

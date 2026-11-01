@@ -1,4 +1,6 @@
-import { createAgentGym, type AgentGym, type GymTurn } from "@slopus/happy-agent-gym";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { createAgentGym, runGymSql, type AgentGym, type GymTurn } from "@slopus/happy-agent-gym";
 import { afterEach, describe, expect, it } from "vitest";
 
 const running: AgentGym[] = [];
@@ -27,7 +29,7 @@ async function harness() {
         },
     });
     running.push(gym);
-    // A bot's own agent, which keeps a sidebar status.
+    // A bot's own agent.
     const target = (await gym.client.createBot({ name: "Activity" })).bot.agent.id;
     const sender = (await gym.createSession({ title: "Sender" })).id;
     let count = 0;
@@ -93,12 +95,13 @@ async function cursor(gym: AgentGym): Promise<string> {
 }
 
 describe("an agent's last activity", () => {
-    it("moves with a person's message and the status line, and with nothing else", async () => {
+    it("moves only with a person's message and survives a restart", async () => {
         const { gym, target, viaAgent, lastActivityAt, lastActivityChanges } = await harness();
 
         // Nobody has written yet, so it is when the conversation began.
         const created = (await gym.client.getAgent(target)).agent;
         expect(created.lastActivityAt).toBe(created.createdAt);
+        expect(created.statusLine).toBeNull();
 
         // A person's message moves it, announced on the agent.
         const beforeMessage = await cursor(gym);
@@ -122,27 +125,37 @@ describe("an agent's last activity", () => {
         await gym.client.saveAgentDraft(target, { draft: null });
         expect(await lastActivityAt()).toBe(afterMessage);
         expect(await lastActivityChanges(beforeBookkeeping)).toEqual([]);
+        expect(
+            gym.inference.requests.filter((request) => request.sessionId === target).length,
+        ).toBeGreaterThan(0);
+        for (const request of gym.inference.requests.filter(
+            (request) => request.sessionId === target,
+        )) {
+            expect(request.tools.map((tool) => tool.name)).not.toContain("set_status");
+            expect(JSON.stringify(request.messages)).not.toContain(
+                "Keep this conversation's sidebar status current",
+            );
+        }
 
-        // Setting the status line moves it to the status's own time.
-        await viaAgent("set_status", { text: "Plan agreed" });
-        const statusLine = await gym.waitUntil(
-            async () => (await gym.client.getAgent(target)).agent.statusLine ?? undefined,
-            "the status line",
-        );
-        expect(statusLine.updatedAt).toBeGreaterThan(afterMessage);
-        expect(await lastActivityAt()).toBe(statusLine.updatedAt);
-
-        // It survives a restart.
-        await gym.restart();
-        expect(await lastActivityAt()).toBe(statusLine.updatedAt);
-
-        // Clearing the status leaves only the person's message to count.
-        await viaAgent("set_status", { text: null });
-        await gym.waitUntil(
-            async () => (await gym.client.getAgent(target)).agent.statusLine === null || undefined,
-            "the status line to clear",
-        );
+        // A queued status write from an older install drains without changing activity.
+        const pending = JSON.stringify({
+            agentId: target,
+            statusLine: { text: "Old status", updatedAt: afterMessage + 1000 },
+        });
+        await gym.restart({
+            whileStopped: async () =>
+                await runGymSql(gym.happyHome, [
+                    `INSERT INTO durable_function_calls VALUES ('retiredstatus', 'stories.status:old', 'stories.set-status', '${pending}', '[]', ${afterMessage})`,
+                ]),
+        });
         expect(await lastActivityAt()).toBe(afterMessage);
+        expect((await gym.client.getAgent(target)).agent.statusLine).toBeNull();
+        const log = await readFile(
+            join(gym.happyHome, "agent", "observation", "agent.log"),
+            "utf8",
+        );
+        expect(log).not.toContain("Discarded a pending durable function");
+        expect(log).not.toContain("A durable function failed");
         expect(gym.errors).toEqual([]);
     }, 90_000);
 });

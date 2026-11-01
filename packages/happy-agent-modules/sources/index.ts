@@ -620,9 +620,6 @@ export * from "./titles/index.js";
 // User input: questions the agent asks a person, and the answers it waits for.
 export * from "./userInput/index.js";
 
-// Agent status: the short line a task's or bot's own agent keeps under its sidebar title.
-export * from "./agentStatus/index.js";
-
 // Observation: what the agent records about itself — logs, traces, and a readable history dump.
 export * from "./observation/index.js";
 
