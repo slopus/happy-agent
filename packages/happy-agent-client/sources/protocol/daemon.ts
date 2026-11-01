@@ -4,6 +4,7 @@ import { type Static, Type } from "@sinclair/typebox";
 
 import {
     effortSchema,
+    instanceIdSchema,
     Nullable,
     permissionModeSchema,
     serviceTierSchema,
@@ -167,6 +168,8 @@ export const healthResponseSchema = Type.Object({
     ),
     /** Always `true`; a daemon that cannot answer does not answer. */
     healthy: Type.Boolean(),
+    /** This installation's persisted identity for instance links; absent on older daemons. */
+    instanceId: Type.Optional(instanceIdSchema),
     /** `false` while the agent system is still loading. */
     ready: Type.Boolean(),
     /** `true` after this daemon process has entered its sticky draining mode. */

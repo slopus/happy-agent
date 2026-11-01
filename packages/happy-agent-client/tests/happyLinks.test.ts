@@ -351,3 +351,63 @@ function fileOf(url: string): HappyFileLink | undefined {
 function filePath(url: string): string | undefined {
     return fileOf(url)?.path;
 }
+
+describe("instance links", () => {
+    const INSTANCE = "k3x9q2m7p0a4b8c1d5e6f7g2";
+
+    it.each([
+        [
+            `happy://${INSTANCE}/artifacts/${ID}?version=2`,
+            { type: "reference", reference: { kind: "artifact", id: ID, version: 2 } },
+        ],
+        [
+            `happy://${INSTANCE}/workspaces/${WORKSPACE}/services/web`,
+            {
+                type: "reference",
+                reference: { kind: "service", id: "web", workspaceId: WORKSPACE },
+            },
+        ],
+        [
+            `happy://${INSTANCE}/agents/${AGENT}/files/src/Foo.tsx#L42-L50`,
+            {
+                type: "file",
+                file: {
+                    target: { type: "agent", agentId: AGENT },
+                    path: "src/Foo.tsx",
+                    lines: { start: 42, end: 50 },
+                },
+            },
+        ],
+    ] as const)("parses and formats %s", (url, link) => {
+        expect(parseHappyUrl(url)).toEqual({ ...link, instanceId: INSTANCE });
+        expect(formatHappyUrl({ ...link, instanceId: INSTANCE } as HappyLink)).toBe(url);
+        expect(formatHappyUrl(link as HappyLink)).toBe(url.replace(`${INSTANCE}/`, ""));
+    });
+
+    it.each([
+        `happy://${INSTANCE}`,
+        `happy://${INSTANCE}/`,
+        `happy://${INSTANCE.toUpperCase()}/artifacts/${ID}`,
+        `happy://${INSTANCE}x/artifacts/${ID}`,
+        `happy://${INSTANCE.slice(1)}/artifacts/${ID}`,
+        `happy://1${INSTANCE.slice(1)}/artifacts/${ID}`,
+        `happy://${INSTANCE}/${INSTANCE}/artifacts/${ID}`,
+        `happy://${INSTANCE}/oauth/callback`,
+        `happy://${INSTANCE}/unknown/${ID}`,
+        `happy-file://${INSTANCE}/agents/${AGENT}/Foo.tsx`,
+        "happy://oauth/callback?code=c&state=s",
+    ])("rejects %s", (url) => {
+        expect(parseHappyUrl(url)).toBeUndefined();
+    });
+
+    it("refuses to write an invalid instance ID or an overlong link", () => {
+        const link: HappyLink = { type: "reference", reference: { kind: "agent", id: ID } };
+        expect(() => formatHappyUrl({ ...link, instanceId: "Short" })).toThrow(TypeError);
+        const file: HappyLink = {
+            type: "file",
+            file: { target: { type: "agent", agentId: AGENT }, path: "a".repeat(4060) },
+            instanceId: INSTANCE,
+        };
+        expect(() => formatHappyUrl(file)).toThrow(TypeError);
+    });
+});

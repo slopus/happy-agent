@@ -116,7 +116,9 @@ across list responses and events, ignoring duplicate or older snapshots. An empt
 the roster. Capture a cursor before the initial roster read and follow updates after it to avoid
 missing a concurrent change. Refetch on state loss or daemon replacement. The list's `version`
 is optional for older daemons. `authentication: "workos"` identifies team remotes
-and includes `organizationId`; `"bearer"` identifies standalone remotes. Older daemons may support
+and includes `organizationId`; `"bearer"` identifies standalone remotes; `"oauth"` identifies a
+server connection by URL and includes its normalized `url`. Any entry may carry the remote's
+`instanceId`, used to open instance links. Older daemons may support
 roster reads without emitting this additive event. `connection(id)` creates a separate client
 for the selected remote, without merging its events or state into the parent.
 
@@ -126,6 +128,18 @@ already sorted by key. Use `reorderConnection(id, { afterId, mutationId }, { ifM
 to move one after another, or pass `afterId: null` to move it first. The response and the existing
 `connections.updated` event carry the complete ordered roster; neighbours retain their keys.
 Older daemons may omit keys and return `404` for reordering; leave the feature unavailable there.
+
+On a standalone daemon the owner adds a team server by its HTTPS URL with
+`addConnection({ url, name?, mutationId? }, { ifMatch? })` and removes it with
+`removeConnection(id, { ifMatch?, mutationId? })`. The daemon is the OAuth client:
+`startConnectionSignIn(id)` returns `{ authorizationUrl, state, expiresAt }`; open the URL in the
+system browser, match the `happy://oauth/callback` URL that comes back by its `state`, and pass it
+unchanged to `completeConnectionSignIn(id, { callbackUrl })`. `cancelConnectionSignIn(id, {
+state? })` abandons it. `listConnectionStatuses()` and `getConnectionStatus(id)` read each server's
+`ready`, `connecting`, `needs_sign_in`, or `unreachable` status, and the typed
+`connections.status.updated` event follows it. Through `connection(id)`, a remote that needs a
+sign-in answers `403` with code `remote_sign_in_required`: show that server's sign-in instead of
+signing out of the daemon. Older daemons answer these routes with `404`.
 
 Runners are read with `listRunners()`. The typed `runners.updated` event carries the complete
 `{ runners, version }` list, in ascending ID order, after any runner changes, connection status
@@ -572,7 +586,12 @@ names:
 - `parseHappyUrl(url)` returns a `HappyLink`, either `{ type: "reference", reference }` with a
   `HappyReference` `{ kind, id, version?, workspaceId? }`, or `{ type: "file", file }` with a
   `HappyFileLink` `{ target, path, lines? }`. It returns `undefined` for anything malformed,
-  including the Happy mobile app's own deep links. `isHappyUrl(url)` tells whether a URL is one
+  including the Happy mobile app's own deep links. An instance link,
+  `happy://<instanceId>/artifacts/<id>`, parses to the same value with `instanceId` set, and
+  `formatHappyUrl` writes one when `link.instanceId` is set. Open an instance link only on the
+  daemon or roster entry whose health `instanceId` matches, never on another, and open a
+  `happy://` URL arriving from outside the app only when it carries an instance ID.
+  `isHappyUrl(url)` tells whether a URL is one
   Happy owns, well-formed or not; never hand such a URL to the operating system or a browser.
 - `formatHappyUrl(link)`, `formatHappyReferenceUrl(reference)`, and
   `formatHappyFileUrl(file, scheme?)` write canonical URLs and throw a `TypeError` for anything the

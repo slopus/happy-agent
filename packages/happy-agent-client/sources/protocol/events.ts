@@ -72,7 +72,7 @@ import type { Workspace } from "./workspaces.js";
 import { storedUserSettingSchema } from "./userSettings.js";
 import { mobileConnectorSchema } from "./mobileConnector.js";
 import type { SlashCommand } from "./slashCommands.js";
-import { connectionListResponseSchema } from "./connections.js";
+import { connectionListResponseSchema, connectionStatusSchema } from "./connections.js";
 import { runnerListResponseSchema } from "./runners.js";
 import type { SkillsUpdatedPayload } from "./skills.js";
 import type { WorkspaceServiceCreatedPayload, WorkspaceServiceUpdatedPayload } from "./services.js";
@@ -568,6 +568,10 @@ export type ConfigUpdatedPayload = Record<string, never>;
 export const connectionsUpdatedPayloadSchema = Type.Required(connectionListResponseSchema);
 export type ConnectionsUpdatedPayload = Static<typeof connectionsUpdatedPayloadSchema>;
 
+/** One server connection's runtime status; reread `GET /v0/connection-statuses` after a gap. */
+export const connectionsStatusUpdatedPayloadSchema = connectionStatusSchema;
+export type ConnectionsStatusUpdatedPayload = Static<typeof connectionsStatusUpdatedPayloadSchema>;
+
 /** Complete runner list replacement; keep the greater version across snapshots and events. */
 export const runnersUpdatedPayloadSchema = runnerListResponseSchema;
 export type RunnersUpdatedPayload = Static<typeof runnersUpdatedPayloadSchema>;
@@ -691,6 +695,7 @@ export type HappyAgentEvent =
     | EventEnvelope<"message.deleted", MessageDeletedPayload>
     | EventEnvelope<"config.updated", ConfigUpdatedPayload>
     | EventEnvelope<"connections.updated", ConnectionsUpdatedPayload>
+    | EventEnvelope<"connections.status.updated", ConnectionsStatusUpdatedPayload>
     | EventEnvelope<"runners.updated", RunnersUpdatedPayload>
     | EventEnvelope<"provider.usage.updated", ProviderUsageUpdatedPayload>
     | EventEnvelope<"profile.updated", ProfileUpdatedPayload>

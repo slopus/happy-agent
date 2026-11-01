@@ -1,8 +1,17 @@
 import type { Cuid2, MessageMode } from "./protocol/common.js";
 import { Value } from "@sinclair/typebox/value";
 import {
+    type AddConnectionRequest,
+    type AddConnectionResponse,
     connectionIdSchema,
     type ConnectionListResponse,
+    type ConnectionSignInCancelRequest,
+    type ConnectionSignInCompleteRequest,
+    type ConnectionSignInCompleteResponse,
+    type ConnectionSignInStartResponse,
+    type ConnectionStatus,
+    type ConnectionStatusListResponse,
+    type RemoveConnectionResponse,
     type ReorderConnectionRequest,
     type ReorderConnectionResponse,
 } from "./protocol/connections.js";
@@ -400,6 +409,95 @@ export class HappyAgentClient {
             path: `v0/connections/${id}/reorder`,
             json: request,
             ifMatch: options.ifMatch,
+            signal: options.signal,
+        });
+    }
+
+    /** `POST /v0/connections` — adds a server connection by URL; standalone owner only. */
+    async addConnection(
+        request: AddConnectionRequest,
+        options: OptionallyVersionedRequestOptions = {},
+    ): Promise<AddConnectionResponse> {
+        return await this.#json({
+            method: "POST",
+            path: "v0/connections",
+            json: request,
+            ifMatch: options.ifMatch,
+            signal: options.signal,
+        });
+    }
+
+    /** `DELETE /v0/connections/:id` — removes a server connection the owner added. */
+    async removeConnection(
+        id: string,
+        options: OptionallyVersionedRequestOptions & { mutationId?: string } = {},
+    ): Promise<RemoveConnectionResponse> {
+        return await this.#json({
+            method: "DELETE",
+            path: `v0/connections/${connectionPathId(id)}`,
+            query: { mutationId: options.mutationId },
+            ifMatch: options.ifMatch,
+            signal: options.signal,
+        });
+    }
+
+    /** `POST /v0/connections/:id/auth/start` — open `authorizationUrl` in the system browser. */
+    async startConnectionSignIn(
+        id: string,
+        options: RequestOptions = {},
+    ): Promise<ConnectionSignInStartResponse> {
+        return await this.#json({
+            method: "POST",
+            path: `v0/connections/${connectionPathId(id)}/auth/start`,
+            json: {},
+            signal: options.signal,
+        });
+    }
+
+    /** `POST /v0/connections/:id/auth/complete` — hands over the `happy://oauth/callback` URL. */
+    async completeConnectionSignIn(
+        id: string,
+        request: ConnectionSignInCompleteRequest,
+        options: RequestOptions = {},
+    ): Promise<ConnectionSignInCompleteResponse> {
+        return await this.#json({
+            method: "POST",
+            path: `v0/connections/${connectionPathId(id)}/auth/complete`,
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /** `POST /v0/connections/:id/auth/cancel` — succeeds when nothing is pending. */
+    async cancelConnectionSignIn(
+        id: string,
+        request: ConnectionSignInCancelRequest = {},
+        options: RequestOptions = {},
+    ): Promise<void> {
+        await this.#send({
+            method: "POST",
+            path: `v0/connections/${connectionPathId(id)}/auth/cancel`,
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /** `GET /v0/connections/:id/status` — `404` for an entry that is not `oauth`. */
+    async getConnectionStatus(id: string, options: RequestOptions = {}): Promise<ConnectionStatus> {
+        return await this.#json({
+            method: "GET",
+            path: `v0/connections/${connectionPathId(id)}/status`,
+            signal: options.signal,
+        });
+    }
+
+    /** `GET /v0/connection-statuses` — every server connection by URL, in roster order. */
+    async listConnectionStatuses(
+        options: RequestOptions = {},
+    ): Promise<ConnectionStatusListResponse> {
+        return await this.#json({
+            method: "GET",
+            path: "v0/connection-statuses",
             signal: options.signal,
         });
     }
@@ -3460,4 +3558,11 @@ function requestedMode<T extends MessageMode>(mode: T): Omit<T, "account" | "pro
 
 function secretAttachmentPath(secretId: Cuid2, target: SecretAttachmentTarget): string {
     return `v0/secrets/${encodeURIComponent(secretId)}/attachments/${encodeURIComponent(target.type)}/${encodeURIComponent(target.id)}`;
+}
+
+function connectionPathId(id: string): string {
+    if (!Value.Check(connectionIdSchema, id)) {
+        throw new Error("The remote connection ID is invalid.");
+    }
+    return id;
 }

@@ -12,12 +12,19 @@
  *
  * The Happy mobile app registers `happy://` for its deep links (`happy://session/…`,
  * `happy://terminal?…`, and others). Every host here is a plural noun, which no mobile route uses,
- * so the two never collide. The grammar is strict: anything else under `happy://` is malformed and
+ * so the two never collide.
+ *
+ * An instance link, `happy://<instanceId>/artifacts/<id>`, puts an installation's 24-character
+ * health `instanceId` in front, so the link keeps naming that one installation outside Happy. The
+ * host alone tells the forms apart: no plural noun, and not `oauth`, is a 24-character instance
+ * ID. The grammar is strict: anything else under `happy://` is malformed and
  * never partly interpreted, and no client hands a Happy URL to the operating system.
  */
 
 import { type Static, Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
+
+import { instanceIdSchema } from "./protocol/common.js";
 
 /** The entity kinds a `happy://` URL can name. */
 export const HAPPY_REFERENCE_KINDS = [
@@ -98,10 +105,13 @@ export const happyFileLinkSchema = Type.Object(
 );
 export type HappyFileLink = Static<typeof happyFileLinkSchema>;
 
-/** What a `happy://` URL names: an entity or a file. */
+/**
+ * What a `happy://` URL names: an entity or a file. `instanceId` is present only for an instance
+ * link, `happy://<instanceId>/…`, which names that installation and no other.
+ */
 export type HappyLink =
-    | { type: "reference"; reference: HappyReference }
-    | { type: "file"; file: HappyFileLink };
+    | { type: "reference"; reference: HappyReference; instanceId?: string }
+    | { type: "file"; file: HappyFileLink; instanceId?: string };
 
 const HOSTS: Record<HappyReferenceKind, string> = {
     artifact: "artifacts",
@@ -126,6 +136,8 @@ const HAPPY_FILE_URL = new RegExp(
     `^happy-file://(agents|workspaces)/(${ID_PATTERN})/(${ENCODED_PATH_PATTERN})(?:${LINES_PATTERN})?$`,
 );
 const HAPPY_URL = /^happy(?:-file)?:/i;
+/** An instance link: an installation's health `instanceId` in front of a `happy://` URL. */
+const INSTANCE_URL = /^happy:\/\/([a-z][a-z0-9]{23})\/(.*)$/su;
 
 /**
  * Whether `url` uses the `happy` or `happy-file` scheme, in any letter case and whether or not it
@@ -137,11 +149,20 @@ export function isHappyUrl(url: string): boolean {
 }
 
 /**
- * Parses a `happy://` or `happy-file://` URL, and returns undefined for anything that is not exactly
- * a well-formed link.
+ * Parses a `happy://` URL, an instance link, or a `happy-file://` URL, and returns undefined for
+ * anything that is not exactly a well-formed link.
  */
 export function parseHappyUrl(url: string): HappyLink | undefined {
     if (url.length > MAX_HAPPY_URL_LENGTH) return undefined;
+    const instance = INSTANCE_URL.exec(url);
+    if (instance === null) return parseInstanceFreeUrl(url);
+    const [, instanceId = "", rest = ""] = instance;
+    // Only the `happy://` forms follow an instance ID; `happy-file://` has no instance form.
+    const link = parseInstanceFreeUrl(`${HAPPY_URL_SCHEME}://${rest}`);
+    return link === undefined ? undefined : { ...link, instanceId };
+}
+
+function parseInstanceFreeUrl(url: string): HappyLink | undefined {
     const entity = ENTITY_URL.exec(url);
     if (entity !== null) {
         const [, host, id = "", version] = entity;
@@ -178,9 +199,20 @@ export function parseHappyUrl(url: string): HappyLink | undefined {
  * a version on anything but an artifact or a service without its workspace.
  */
 export function formatHappyUrl(link: HappyLink): string {
-    return link.type === "reference"
-        ? formatHappyReferenceUrl(link.reference)
-        : formatHappyFileUrl(link.file);
+    const url =
+        link.type === "reference"
+            ? formatHappyReferenceUrl(link.reference)
+            : formatHappyFileUrl(link.file);
+    if (link.instanceId === undefined) return url;
+    if (!Value.Check(instanceIdSchema, link.instanceId)) {
+        throw new TypeError("The Happy instance ID is invalid.");
+    }
+    const prefix = `${HAPPY_URL_SCHEME}://`;
+    const instanceUrl = `${prefix}${link.instanceId}/${url.slice(prefix.length)}`;
+    if (instanceUrl.length > MAX_HAPPY_URL_LENGTH) {
+        throw new TypeError("The Happy link is too long.");
+    }
+    return instanceUrl;
 }
 
 /** The canonical URL for an entity, such as `happy://artifacts/<id>?version=2`. */

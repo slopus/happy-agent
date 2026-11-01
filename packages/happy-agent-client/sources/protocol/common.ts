@@ -23,6 +23,10 @@ export function Nullable<T extends TSchema>(schema: T) {
 export const cuid2Schema = Type.String();
 export type Cuid2 = Static<typeof cuid2Schema>;
 
+/** An installation's identity from health, used by instance links: a 24-character CUID2. */
+export const instanceIdSchema = Type.String({ pattern: "^[a-z][a-z0-9]{23}$" });
+export type InstanceId = Static<typeof instanceIdSchema>;
+
 /** A UUIDv7 position in the event journal; greater means newer. */
 export const eventCursorSchema = Type.String();
 export type EventCursor = Static<typeof eventCursorSchema>;
