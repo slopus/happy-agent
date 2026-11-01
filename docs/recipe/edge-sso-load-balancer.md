@@ -67,23 +67,35 @@ An edge rejection reaches the app as a `401`, a `403` that is not Happy's JSON e
 redirect, and the app asks the person to sign in again. Answer with Happy's own errors only from
 the daemon.
 
-## 3. Preset the server in the apps
+## 3. Turn off what the edge does not need
 
-Organizations that manage devices can preset the server and lock features with managed settings.
-Every platform uses the same keys: iOS managed app configuration, Android app restrictions, and the
-desktop's managed settings file.
+The apps have no device-management settings. A team server turns its own features on and off in
+its machine `happy.toml`, and the apps hide a feature when the server reports it off. Behind an
+SSO load balancer, we recommend:
 
-| Key                      | Type    | Effect                                                                                         |
-| ------------------------ | ------- | ---------------------------------------------------------------------------------------------- |
-| `serverUrl`              | string  | The team server's `https://` origin, added on first launch and pinned so it cannot be removed. |
-| `allowAdditionalServers` | boolean | `false` stops people from adding other servers.                                                |
-| `analyticsEnabled`       | boolean | `false` turns analytics off and locks it. `true` cannot force analytics on.                    |
-| `hostedRelayEnabled`     | boolean | Turns Happy's hosted relay on or off and locks the choice.                                     |
-| `tailcatEnabled`         | boolean | Turns Tailcat on or off and locks the choice.                                                  |
-| `phonePairingEnabled`    | boolean | Turns phone pairing on or off and locks the choice.                                            |
+```toml
+[feature.mobile_connector]
+enabled = false        # phone pairing: phones sign in with OAuth instead
 
-A key that is present is enforced and its control shows as managed by the organization; a missing
-key leaves the person's own choice. Unknown keys and values of the wrong type are ignored.
+[feature.tailcat]
+enabled = false        # the default; shown here to make the choice explicit
+
+[settings]
+happy_integration = false   # the connection to the Happy mobile app through Happy's hosted server
+```
+
+- **Phone pairing.** Paired phones authenticate with device tokens, which an SSO-enforcing edge
+  rejects, so pairing cannot work through it. With it off, `GET /v0/mobile-connector` reports
+  `status: "disabled"`, and the apps hide pairing.
+- **Happy's hosted server.** With `happy_integration = false`, `GET /v0/integrations/happy`
+  reports `status: "disabled"` for every member, and the apps hide it.
+- **Tailcat.** `enabled = false` keeps the API's Tailcat exposure closed. It is the operator's
+  starting choice, not a lock: an active admin bot can still turn Tailcat on at runtime, and
+  machine configuration or an admin bot can add Tailcat remote connections. The mobile connector
+  opens a separate Tailcat socket only while it is enabled and `[api] public_url` is unset, so
+  turning phone pairing off closes that path too.
+
+All three are machine settings; a repository's `happy.toml` cannot change them.
 
 ## 4. Verify
 
