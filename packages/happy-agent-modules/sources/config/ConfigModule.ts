@@ -44,6 +44,7 @@ import { parse, stringify, TomlDate, type TomlTable, type TomlValue } from "smol
 
 import { getManagedProjectsDirectory } from "../impl/managedProjectsDirectory.js";
 import { getManagedWorkspacesDirectory } from "../impl/managedWorkspacesDirectory.js";
+import { machinePaths } from "../impl/machinePaths.js";
 import { isUserOriginMetadata } from "../impl/messageOrigin.js";
 import {
     agentModelCatalog,
@@ -129,6 +130,7 @@ import {
     type ExecutionConfig,
 } from "./ExecutionConfig.js";
 import {
+    LOCAL_RUNNER_ID,
     MAX_RUNNERS,
     runnerConfigSchema,
     runnersConfigSchema,
@@ -2769,8 +2771,9 @@ export class ConfigModule implements AgentModule {
     }
 
     /**
-     * The runners this installation works on, and the one new folders go to. Empty when none are
-     * configured, which is when this machine still runs its own work.
+     * The runners this installation works on, and the one new folders go to. `defaultId` is absent
+     * exactly when this machine is the default and still runs its own work: when no runner is
+     * configured, or when `[runners] default = "local"` keeps it the default beside them.
      */
     get runners(): {
         readonly defaultId?: string;
@@ -2779,7 +2782,9 @@ export class ConfigModule implements AgentModule {
         const runners = this.configuration.values.runners;
         if (runners === undefined) return { entries: {} };
         return {
-            ...(runners.default === undefined ? {} : { defaultId: runners.default }),
+            ...(runners.default === undefined || runners.default === LOCAL_RUNNER_ID
+                ? {}
+                : { defaultId: runners.default }),
             entries: structuredClone(runners.entries),
         };
     }
@@ -3789,24 +3794,25 @@ export class ConfigModule implements AgentModule {
     }
 
     /**
-     * The folder projects cloned onto a runner live under, given that runner's home.
+     * The folder projects cloned onto a runner live under, given that runner's home and platform.
      *
      * The daemon's own environment describes the daemon's machine, so its overrides never move a
-     * folder on a runner.
+     * folder on a runner. The runner's platform decides its path rules, which may not be this
+     * machine's.
      */
-    projectsHomeOn(home: string): string {
-        return getManagedProjectsDirectory({}, home);
+    projectsHomeOn(home: string, platform: NodeJS.Platform): string {
+        return getManagedProjectsDirectory({}, home, platform);
     }
 
     /**
-     * A bot's folder on a runner with this home and platform, laid out the way this installation
-     * lays out its own public folder.
+     * A bot's folder on a runner with this home and platform, laid out the way that platform lays
+     * out this installation's own public folder.
      */
     botPathOn(home: string, platform: NodeJS.Platform, username: string): string {
         if (!/^[a-z][a-z0-9_]{0,63}$/.test(username)) {
             throw new Error("The bot username cannot name a folder.");
         }
-        return join(home, platform === "darwin" ? "Happy" : "happy", "Bots", username);
+        return publicFolderOn(home, platform, "Bots", username);
     }
 
     /** A task's folder on a runner with this home and platform, laid out like bot folders. */
@@ -3814,7 +3820,7 @@ export class ConfigModule implements AgentModule {
         if (!/^[a-z][a-z0-9_]{0,63}$/.test(folderName)) {
             throw new Error("The task folder name cannot name a folder.");
         }
-        return join(home, platform === "darwin" ? "Happy" : "happy", "Tasks", folderName);
+        return publicFolderOn(home, platform, "Tasks", folderName);
     }
 
     /** A Surface chat folder on a runner with this home and platform, laid out like task folders. */
@@ -3822,7 +3828,7 @@ export class ConfigModule implements AgentModule {
         if (!/^[a-z][a-z0-9]{23}$/.test(surfaceId)) {
             throw new Error("The Surface ID cannot name a folder.");
         }
-        return join(home, platform === "darwin" ? "Happy" : "happy", "Surfaces", surfaceId);
+        return publicFolderOn(home, platform, "Surfaces", surfaceId);
     }
 
     /** The folder managed workspaces live under on a runner with this home and platform. */
@@ -4444,6 +4450,19 @@ async function readConfigSource(path: string, _kind: ConfigSourceKind): Promise<
     } finally {
         await file?.close().catch(() => undefined);
     }
+}
+
+/**
+ * A folder inside the public Happy folder of a machine with this home and platform, the way
+ * {@link derivePaths} names this machine's own: `Happy` on macOS and `happy` elsewhere, joined by
+ * that platform's path rules.
+ */
+function publicFolderOn(home: string, platform: NodeJS.Platform, ...segments: string[]): string {
+    return machinePaths(platform).join(
+        home,
+        platform === "darwin" ? "Happy" : "happy",
+        ...segments,
+    );
 }
 
 function derivePaths(input: HappyAgentConfigurationInput): HappyAgentConfigurationPaths {
@@ -5858,6 +5877,11 @@ function readRunners(value: TomlValue | undefined): RunnersConfig | undefined {
                 `Runner ID "${key.slice(0, 64)}" must start with a lowercase letter and use only lowercase letters, digits, "-", and "_".`,
             );
         }
+        if (key === LOCAL_RUNNER_ID) {
+            throw new Error(
+                `Runner ID "${LOCAL_RUNNER_ID}" is reserved for this machine; choose another ID for the runner.`,
+            );
+        }
         if (!isTable(item)) throw new Error(`runners.${key} must be a TOML table.`);
         for (const field of Object.keys(item)) {
             if (field !== "name" && field !== "token") {
@@ -5886,6 +5910,10 @@ function validateRunners(
     values: Static<typeof resolvedValuesSchema>,
 ): RunnersConfig {
     const ids = Object.keys(runners.entries);
+    if (runners.default === LOCAL_RUNNER_ID) {
+        assertDistinctRunnerTokens(runners, values);
+        return runners;
+    }
     if (ids.length === 0) {
         if (runners.default !== undefined) {
             throw new Error(
@@ -5904,6 +5932,15 @@ function validateRunners(
             "runners.default must name the default runner when several are configured.",
         );
     }
+    assertDistinctRunnerTokens(runners, values);
+    return { default: runners.default ?? (ids[0] as string), entries: runners.entries };
+}
+
+/** A runner token must open nothing but its own runner's connection. */
+function assertDistinctRunnerTokens(
+    runners: RunnersConfig,
+    values: Static<typeof resolvedValuesSchema>,
+): void {
     const tokens = new Set<string>();
     if (values.api?.token !== undefined) tokens.add(values.api.token);
     for (const entry of Object.values(values.connections ?? {})) {
@@ -5917,7 +5954,6 @@ function validateRunners(
         }
         tokens.add(entry.token);
     }
-    return { default: runners.default ?? (ids[0] as string), entries: runners.entries };
 }
 
 /**
@@ -5991,9 +6027,12 @@ function readExecutionUser(value: TomlValue, path: string): string {
 
 /** The rules that span the execution users and the rest of the configuration. */
 function validateExecution(values: Static<typeof resolvedValuesSchema>): void {
-    if (Object.keys(values.runners?.entries ?? {}).length > 0) {
+    if (
+        Object.keys(values.runners?.entries ?? {}).length > 0 &&
+        values.runners?.default !== LOCAL_RUNNER_ID
+    ) {
         throw new Error(
-            "execution applies only to work on this machine, and nothing runs here once runners are configured. Choose the user each runner runs as on its own machine instead.",
+            'execution applies only to work on this machine, and nothing runs here once runners are configured unless runners.default is "local". Choose the user each runner runs as on its own machine instead.',
         );
     }
     if (process.platform === "win32") {

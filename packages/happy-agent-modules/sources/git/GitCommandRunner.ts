@@ -1,3 +1,5 @@
+import type { PlatformPath } from "node:path";
+
 import { Type, type Static } from "@sinclair/typebox";
 
 export const gitCommandResultSchema = Type.Object(
@@ -24,6 +26,12 @@ export interface GitCommandOptions {
  * `runGitCommandOrThrow`; probes can inspect a failure without losing Git's diagnostic text.
  */
 export interface GitCommandRunner {
+    /**
+     * The path rules of the machine Git runs on, when that is a runner rather than this process.
+     * Its paths are then compared by those rules alone: this machine's disk says nothing about
+     * them, and a Windows runner's Git writes `C:/x` for the folder named `C:\x`.
+     */
+    readonly paths?: PlatformPath;
     /**
      * Optional unattended read surface. Foreground hosts expose this separately so scanners never
      * inherit the write and network authority required by worktree mutations.

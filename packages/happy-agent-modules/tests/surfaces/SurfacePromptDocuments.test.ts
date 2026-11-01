@@ -55,7 +55,7 @@ async function fixture() {
                 shouldReviewPath: async () => false,
             } as unknown as ComputeModule,
             {} as ConfigModule,
-            { enabled: false } as RunnersModule,
+            { localExecution: true } as RunnersModule,
         );
     const surfaces = make();
     const db = moduleDatabase(

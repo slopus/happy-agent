@@ -1,5 +1,4 @@
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join } from "node:path";
 
 import {
     type AgentKV,
@@ -846,6 +845,7 @@ export class ProjectsModule implements AgentModule {
                     }
                     await removeManagedProjectDirectory({
                         machine,
+                        paths: this.#runners.paths(current.runnerId),
                         managedProjectsDirectory: await this.#runners.projectsHome(
                             current.runnerId,
                         ),
@@ -869,10 +869,9 @@ export class ProjectsModule implements AgentModule {
      */
     async managedDirectory(project: Project): Promise<string | undefined> {
         if (project.remoteSource === undefined) return undefined;
-        const expected = join(
-            await this.#runners.projectsHome(project.runnerId),
-            project.storageKey,
-        );
+        const expected = this.#runners
+            .paths(project.runnerId)
+            .join(await this.#runners.projectsHome(project.runnerId), project.storageKey);
         return project.repositoryRef === expected ? expected : undefined;
     }
 
@@ -903,6 +902,7 @@ export class ProjectsModule implements AgentModule {
             if (machine !== undefined) {
                 await removeManagedProjectDirectory({
                     machine,
+                    paths: this.#runners.paths(project.runnerId),
                     managedProjectsDirectory: await this.#runners.projectsHome(project.runnerId),
                     project,
                 });
@@ -1372,18 +1372,17 @@ export class ProjectsModule implements AgentModule {
     /**
      * Where a project's folder is: the runner holding it and the path there, or this machine.
      *
-     * The home project follows the runners: while any are configured it is the default runner's
+     * The home project follows the default: while a runner is the default it is that runner's
      * home directory, which is unknown until that runner first connects. With a workload user it
      * is that user's home, which is unknown until that user's runner first starts. A folder on
-     * this machine is refused once runners are configured, and a folder on a runner that is no
-     * longer configured is unavailable rather than looked for here.
+     * this machine is refused once runners are configured and this machine is not the default,
+     * and a folder on a runner that is no longer configured is unavailable rather than looked for
+     * here.
      */
     location(project: Project): { readonly runnerId?: string; readonly path: string } {
         const runners = this.#runners;
-        if (project.kind === "home" && runners.enabled) {
-            const runnerId = runners.defaultRunnerId;
-            if (runnerId === undefined)
-                throw new RunnerUnavailableError("No runner is the default.");
+        const runnerId = runners.defaultRunnerId;
+        if (project.kind === "home" && runnerId !== undefined) {
             const home = runners.home(runnerId);
             if (home === undefined) {
                 throw new RunnerUnavailableError(
@@ -1416,11 +1415,9 @@ export class ProjectsModule implements AgentModule {
      */
     compute(project: Project): ProjectCompute {
         const runners = this.#runners;
-        if (project.kind === "home" && runners.enabled) {
-            const runnerId = runners.defaultRunnerId;
-            if (runnerId !== undefined) {
-                return { type: "runner", runnerId, path: runners.home(runnerId) ?? null };
-            }
+        const homeRunner = runners.defaultRunnerId;
+        if (project.kind === "home" && homeRunner !== undefined) {
+            return { type: "runner", runnerId: homeRunner, path: runners.home(homeRunner) ?? null };
         }
         if (
             project.kind === "home" &&
@@ -1534,10 +1531,10 @@ export class ProjectsModule implements AgentModule {
 
     /**
      * Whether a folder is the Home project's: this machine's home directory — the workload user's,
-     * once one is configured — or once runners are configured, the default runner's.
+     * once one is configured — or while a runner is the default, that runner's.
      */
     #isHomeFolder(runnerId: string | undefined, path: string): boolean {
-        const homeRunner = this.#runners.enabled ? this.#runners.defaultRunnerId : undefined;
+        const homeRunner = this.#runners.defaultRunnerId;
         if (runnerId !== homeRunner) return false;
         if (runnerId === undefined && this.#runners.workloadUser !== undefined) {
             return path === this.#workloadHome();
@@ -1552,16 +1549,18 @@ export class ProjectsModule implements AgentModule {
      * working-tree root; an ordinary readable directory is valid and gets copied workspaces.
      */
     async register(ctx: Context, request: RegisterProjectRequest): Promise<Project> {
-        if (!isAbsolute(request.path)) {
+        const runnerId = this.#place(request.runnerId);
+        const paths = this.#runners.paths(runnerId);
+        if (!paths.isAbsolute(request.path)) {
             throw new ProjectRegistrationError(
                 "invalid_request",
                 "The project path must be absolute.",
             );
         }
         if (request.projectId !== undefined) clientChosenProjectId(request.projectId);
-        const runnerId = this.#place(request.runnerId);
         const path = await validateRegistrationPath(
             await this.#runners.machine(runnerId),
+            paths,
             request.path,
         );
         return await this.resolvePath(ctx, path, request.projectId, runnerId);
@@ -1710,6 +1709,7 @@ export class ProjectsModule implements AgentModule {
                     const repositoryAvatar = repositoryTopLevel
                         ? await findRepositoryAvatar(
                               await this.machine(project),
+                              this.#runners.paths(this.location(project).runnerId),
                               this.location(project).path,
                           )
                         : undefined;
@@ -1765,9 +1765,10 @@ export class ProjectsModule implements AgentModule {
             request.projectId === undefined ? createId() : clientChosenProjectId(request.projectId);
         const runnerId = this.#place(request.runnerId);
         const machine = await this.#runners.machine(runnerId);
+        const paths = this.#runners.paths(runnerId);
         const path = await this.#runners.futurePath(
             runnerId,
-            join(await this.#runners.projectsHome(runnerId), name),
+            paths.join(await this.#runners.projectsHome(runnerId), name),
         );
         const retried = await this.#retriedRemoteProject(ctx, id, path, request, creator, runnerId);
         if (retried !== undefined) {
@@ -1792,7 +1793,7 @@ export class ProjectsModule implements AgentModule {
                 "That managed project folder already exists.",
             );
         }
-        await machine.fs.mkdir(PRODUCT, dirname(path), { recursive: true });
+        await machine.fs.mkdir(PRODUCT, paths.dirname(path), { recursive: true });
         this.#creators.set(id, creator);
         try {
             const project = await this.create(ctx, {

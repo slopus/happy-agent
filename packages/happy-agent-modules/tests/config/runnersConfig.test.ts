@@ -51,6 +51,51 @@ describe("runner configuration", () => {
         expect((await load(`[runners]\ndefault = "gpu"\n${two}`)).runners.defaultId).toBe("gpu");
     });
 
+    it("keeps this machine the default when the default is local", async () => {
+        const two =
+            `[runners.build-box]\nname = "Build box"\ntoken = "${BUILD}"\n` +
+            `[runners.gpu]\nname = "GPU"\ntoken = "${GPU}"\n`;
+
+        expect((await load(`[runners]\ndefault = "local"\n${two}`)).runners).toEqual({
+            entries: {
+                "build-box": { name: "Build box", token: BUILD },
+                gpu: { name: "GPU", token: GPU },
+            },
+        });
+        expect((await load(`[runners]\ndefault = "local"\n`)).runners).toEqual({ entries: {} });
+        await expect(
+            load(
+                `[runners]\ndefault = "local"\n[runners.local]\nname = "Local"\ntoken = "${BUILD}"\n`,
+            ),
+        ).rejects.toThrow('Runner ID "local" is reserved for this machine');
+        await expect(
+            load(
+                `[runners]\ndefault = "local"\n[runners.a]\nname = "A"\ntoken = "${BUILD}"\n` +
+                    `[runners.b]\nname = "B"\ntoken = "${BUILD}"\n`,
+            ),
+        ).rejects.toThrow("runners.b.token must differ");
+    });
+
+    it("lays out folders on a runner by the runner's own platform", async () => {
+        const config = await load("");
+        const bot = "chief";
+        expect(config.projectsHomeOn("C:\\Users\\runner", "win32")).toBe(
+            "C:\\Users\\runner\\Happy\\Projects",
+        );
+        expect(config.workspacesHomeOn("C:\\Users\\runner", "win32")).toBe(
+            "C:\\Users\\runner\\happy\\workspaces",
+        );
+        expect(config.botPathOn("C:\\Users\\runner", "win32", bot)).toBe(
+            "C:\\Users\\runner\\happy\\Bots\\chief",
+        );
+        expect(config.botPathOn("/Users/runner", "darwin", bot)).toBe(
+            "/Users/runner/Happy/Bots/chief",
+        );
+        expect(config.taskPathOn("/home/runner", "linux", "release")).toBe(
+            "/home/runner/happy/Tasks/release",
+        );
+    });
+
     it("refuses a token shared with the API or another runner", async () => {
         await expect(
             load(

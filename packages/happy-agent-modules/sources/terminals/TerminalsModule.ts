@@ -382,6 +382,7 @@ export class TerminalsModule {
                         platform: () => this.#runners.platform(runnerId),
                     }),
                 root: path,
+                paths: this.#runners.paths(runnerId),
                 workspaceId: scope.workspaceId ?? scope.projectId,
             });
             this.#scopes.set(key, created);

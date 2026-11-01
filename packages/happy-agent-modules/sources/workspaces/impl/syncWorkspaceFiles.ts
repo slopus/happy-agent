@@ -1,7 +1,8 @@
-import { basename, dirname, isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
+import type { PlatformPath } from "node:path";
 
 import { computePermissions, type Compute } from "@slopus/happy-agent-compute";
 
+import { machinePaths } from "../../impl/machinePaths.js";
 import type { RunnerRunOptions, RunnerRunResult } from "../../runners/index.js";
 
 const PRODUCT = computePermissions("full_access");
@@ -16,8 +17,8 @@ const SYNC_OUTPUT_LIMIT = 64 * 1024;
  * whenever the root copy changes. Replication is one-way and best-effort: the root always wins,
  * a path that cannot be read or written right now is simply skipped until the next pass, and
  * nothing is ever deleted in a workspace because it disappeared from the root. The copying runs on
- * the machine the folders are on, with that machine's own copy program, following links in the
- * source.
+ * the machine the folders are on, with that machine's own copy program and path rules, following
+ * links in the source.
  *
  * The workspace is another party's writable space, so the destination is re-resolved before every
  * copy: a workspace that replaced a destination ancestor with a symlink pointing elsewhere gets
@@ -34,6 +35,8 @@ export async function syncWorkspaceFiles(options: {
     workspacePath: string;
 }): Promise<void> {
     const { machine } = options;
+    const paths = machinePaths(options.platform);
+    const { dirname, resolve } = paths;
     let workspaceRoot: string;
     try {
         workspaceRoot = await machine.fs.realpath(PRODUCT, options.workspacePath);
@@ -44,14 +47,14 @@ export async function syncWorkspaceFiles(options: {
         const source = resolve(options.projectPath, path);
         const destination = resolve(options.workspacePath, path);
         if (
-            !isPathLexicallyWithin(options.projectPath, source) ||
-            !isPathLexicallyWithin(options.workspacePath, destination)
+            !isPathLexicallyWithin(options.projectPath, source, paths) ||
+            !isPathLexicallyWithin(options.workspacePath, destination, paths)
         ) {
             throw new Error(`Workspace sync path "${path}" must stay inside the project.`);
         }
         try {
-            const canonicalDestination = await resolvePotentialPath(machine, destination);
-            if (!isPathLexicallyWithin(workspaceRoot, canonicalDestination)) continue;
+            const canonicalDestination = await resolvePotentialPath(machine, paths, destination);
+            if (!isPathLexicallyWithin(workspaceRoot, canonicalDestination, paths)) continue;
             let sourceMetadata;
             try {
                 sourceMetadata = await machine.fs.stat(PRODUCT, source);
@@ -84,6 +87,7 @@ async function copyFollowingLinks(
     directory: boolean,
 ): Promise<void> {
     const windows = options.platform === "win32";
+    const { basename, dirname } = machinePaths(options.platform);
     const result = await options.run(
         windows
             ? {
@@ -115,7 +119,13 @@ async function copyFollowingLinks(
     }
 }
 
-export function isPathLexicallyWithin(parent: string, target: string): boolean {
+/** Whether `target` lies inside `parent`, by the path rules of the machine both are on. */
+export function isPathLexicallyWithin(
+    parent: string,
+    target: string,
+    paths: PlatformPath = machinePaths(process.platform),
+): boolean {
+    const { isAbsolute, relative, sep } = paths;
     const fromParent = relative(parent, target);
     return (
         fromParent !== "" &&
@@ -129,7 +139,12 @@ export function isPathLexicallyWithin(parent: string, target: string): boolean {
  * Canonicalizes as much of a path as exists, following symlinks, and keeps the rest verbatim. A
  * destination is usually still missing when sync decides where it may write.
  */
-async function resolvePotentialPath(machine: Compute, target: string): Promise<string> {
+async function resolvePotentialPath(
+    machine: Compute,
+    paths: PlatformPath,
+    target: string,
+): Promise<string> {
+    const { basename, dirname, join, normalize } = paths;
     const missing: string[] = [];
     let existing = normalize(target);
     for (;;) {

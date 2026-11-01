@@ -59,7 +59,7 @@ function runners(configured: readonly string[]) {
         products,
         agents,
         module: {
-            enabled: configured.length > 0,
+            localExecution: configured.length === 0,
             has: (runnerId: string) => configured.includes(runnerId),
             userFor: async () => undefined,
             assertLocalExecution: () => {

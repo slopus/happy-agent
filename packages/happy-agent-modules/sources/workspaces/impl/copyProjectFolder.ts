@@ -1,7 +1,6 @@
-import { basename, dirname, join } from "node:path";
-
 import { computePermissions, type Compute } from "@slopus/happy-agent-compute";
 
+import { machinePaths } from "../../impl/machinePaths.js";
 import type { RunnerRunOptions, RunnerRunResult } from "../../runners/index.js";
 
 const PRODUCT = computePermissions("full_access");
@@ -29,6 +28,7 @@ export async function copyProjectFolder(options: {
     workspacePath: string;
 }): Promise<void> {
     const { machine } = options;
+    const { basename, dirname, join } = machinePaths(options.platform);
     await machine.fs.mkdir(PRODUCT, dirname(options.workspacePath), { recursive: true });
     const staging = `${options.workspacePath}.partial`;
     await machine.fs.rm(PRODUCT, staging, { force: true, recursive: true });

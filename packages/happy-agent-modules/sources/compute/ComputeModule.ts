@@ -31,6 +31,7 @@ import { createId } from "@paralleldrive/cuid2";
 import { Type, type Static } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import { detach, mapAsyncLock, type Context, type MapAsyncLock } from "@steve.kite/stdlib";
+import type { PlatformPath } from "node:path";
 import type { Duplex } from "node:stream";
 
 import type { BotSettingsModule } from "../botSettings/index.js";
@@ -38,6 +39,7 @@ import type { ChatMediaModule } from "../chatMedia/index.js";
 import type { ConfigModule } from "../config/index.js";
 import type { RunnersModule } from "../runners/index.js";
 import { FileReadLog } from "../impl/FileReadLog.js";
+import { machinePaths } from "../impl/machinePaths.js";
 import type { SecretsModule } from "../secrets/index.js";
 import type {
     ComputePermissions,
@@ -359,6 +361,16 @@ export class ComputeModule implements AgentModule {
     }
 
     /**
+     * The path rules of the machine the agent owning this context works on: a runner's when its
+     * folder is on one, which may run another platform than this daemon, otherwise this machine's.
+     */
+    paths(ctx: Context): PlatformPath {
+        const raw = agentModuleConfig(ctx, this.name);
+        const runnerId = Value.Check(agentComputeConfigSchema, raw) ? raw.runnerId : undefined;
+        return this.#runners?.paths(runnerId) ?? machinePaths(process.platform);
+    }
+
+    /**
      * Resolve the exact compute cached for this agent, or no compute when none was configured or
      * the agent is archived.
      */
@@ -481,7 +493,7 @@ export class ComputeModule implements AgentModule {
     async namedNetwork(networkId: string): Promise<ComputeConnector | undefined> {
         if (this.#closed) return undefined;
         if (networkId === HOST_NETWORK_ID) {
-            if (this.#runners?.enabled === true) return undefined;
+            if (this.#runners?.localExecution === false) return undefined;
             return await this.#machineNetwork(undefined);
         }
         if (networkId.startsWith(RUNNER_NETWORK_PREFIX)) {

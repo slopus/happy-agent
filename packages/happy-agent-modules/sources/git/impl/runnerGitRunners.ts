@@ -1,3 +1,5 @@
+import type { PlatformPath } from "node:path";
+
 import type { GitCommandRunner } from "../GitCommandRunner.js";
 import { scanGitError, STRIPPED_ENVIRONMENT, type ScanGitRunner } from "../runScanGit.js";
 import type { RunnerRunOptions, RunnerRunResult } from "../../runners/index.js";
@@ -22,6 +24,8 @@ const SAFE_CONFIGURATION = [
 /** How a runner's Git runs: one program at a time on the runner's product machine. */
 export interface RunnerGitTarget {
     readonly run: (options: RunnerRunOptions) => Promise<RunnerRunResult>;
+    /** The runner's path rules, by which every path its Git reports is compared. */
+    readonly paths: PlatformPath;
 }
 
 /**
@@ -30,6 +34,9 @@ export interface RunnerGitTarget {
  */
 export function runnerGitCommandRunner(target: RunnerGitTarget): GitCommandRunner {
     return {
+        get paths() {
+            return target.paths;
+        },
         async run(cwd, args, options = {}) {
             try {
                 const result = await target.run({

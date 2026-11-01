@@ -1,11 +1,14 @@
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { homedir, userInfo } from "node:os";
+import type { PlatformPath } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
 import {
     agentDatabase,
+    currentAgentEnvironment,
     withAgentDatabase,
     type AgentDatabase,
+    type AgentEnvironment,
     type AgentModule,
     type AgentModuleHooks,
 } from "@slopus/happy-agent-base";
@@ -32,11 +35,13 @@ import {
 
 import type { BotSettingsModule } from "../botSettings/index.js";
 import type { ConfigModule } from "../config/index.js";
+import { machinePaths } from "../impl/machinePaths.js";
 import type { BinaryWebSocket } from "../transport/index.js";
 import { LocalExecutionDisabledError } from "./LocalExecutionDisabledError.js";
 import { createRunnersVersion } from "./createRunnersVersion.js";
 import { canonicalMachinePath, futureMachinePath } from "./impl/canonicalMachinePath.js";
 import { LocalUserRunner } from "./impl/LocalUserRunner.js";
+import { runnerEnvironment } from "./impl/runnerEnvironment.js";
 import { runOnMachine } from "./impl/runOnMachine.js";
 import { sudoRunnerCommand } from "./impl/sudoRunnerCommand.js";
 import { webSocketRunnerChannel } from "./impl/webSocketRunnerChannel.js";
@@ -78,8 +83,9 @@ export interface RunnerBotIdentity {
  * A runner is a separate machine that holds project folders and runs everything that touches them,
  * while this daemon keeps the database, credentials, and inference. Runners are machine
  * configuration with fixed tokens; each one dials in through `GET /v0/runners/connect` and keeps
- * one connection open. Once any runner is configured nothing runs on this machine: every module
- * that touches a folder asks this one for the runner's machine instead of reaching the local disk.
+ * one connection open. Once any runner is configured nothing runs on this machine, unless
+ * `[runners] default = "local"` keeps it the default: every module that touches a folder asks this
+ * one for the folder's machine instead of reaching the local disk.
  */
 export class RunnersModule implements AgentModule {
     readonly name = "runners";
@@ -127,9 +133,12 @@ export class RunnersModule implements AgentModule {
         await this.getSnapshot(ctx);
     };
 
-    /** Whether any runner is configured, which is when nothing runs on this machine. */
-    get enabled(): boolean {
-        return Object.keys(this.#config.runners.entries).length > 0;
+    /**
+     * Whether work may run on this machine: no runner is configured, or `[runners] default =
+     * "local"` keeps this machine the default beside them. Otherwise nothing runs here.
+     */
+    get localExecution(): boolean {
+        return this.#config.runners.defaultId === undefined;
     }
 
     /**
@@ -196,7 +205,10 @@ export class RunnersModule implements AgentModule {
         return (botId === undefined ? undefined : execution.bots[botId]) ?? execution.user;
     }
 
-    /** The runner new folders go to when nobody chose one. */
+    /**
+     * The runner new folders, the home project, bots, tasks, and Surface chats go to when nobody
+     * chose one, or undefined when that is this machine.
+     */
     get defaultRunnerId(): string | undefined {
         return this.#config.runners.defaultId;
     }
@@ -212,8 +224,8 @@ export class RunnersModule implements AgentModule {
     }
 
     /**
-     * The runner a new folder is placed on: the one named, or the default while runners are
-     * configured, or this machine when none are. Naming a runner that is not configured is refused.
+     * The runner a new folder is placed on: the one named, or the default runner, or this machine
+     * when it is the default. Naming a runner that is not configured is refused.
      */
     place(runnerId: string | undefined): RunnerLocation {
         if (runnerId !== undefined) {
@@ -228,9 +240,9 @@ export class RunnersModule implements AgentModule {
         return fallback === undefined ? {} : { runnerId: fallback };
     }
 
-    /** Refuse work on this machine once runners are configured. */
+    /** Refuse work on this machine once runners are configured and none of them is this one. */
     assertLocalExecution(): void {
-        if (this.enabled) throw new LocalExecutionDisabledError();
+        if (!this.localExecution) throw new LocalExecutionDisabledError();
     }
 
     /** The runner whose bearer token this is, compared in constant time. */
@@ -302,12 +314,30 @@ export class RunnersModule implements AgentModule {
     }
 
     /**
+     * The path rules of a folder's machine: this machine's, or the platform a runner last
+     * reported. A Windows runner's paths are Windows paths even under a Linux daemon, so every
+     * path on a runner is joined, split, and compared with these rather than `node:path`.
+     */
+    paths(runnerId?: string): PlatformPath {
+        return machinePaths(this.platform(runnerId) ?? "linux");
+    }
+
+    /**
+     * The machine an agent working in a folder is told about: this machine when no runner is
+     * named, or the runner holding the folder, as it last reported itself.
+     */
+    environment(runnerId: string | undefined, workingDirectory: string): AgentEnvironment {
+        if (runnerId === undefined) return { ...currentAgentEnvironment(), workingDirectory };
+        return runnerEnvironment(this.platform(runnerId), workingDirectory);
+    }
+
+    /**
      * The machine Happy's own work on a folder runs on: this machine when no runner is named, or
      * the runner's. Folder management, setup commands, terminals, file watching, connections, and
      * Git all run here, written once against the compute whichever machine it is. Agent commands
      * never run here; they get machines of their own.
      *
-     * This machine is refused once runners are configured, because then nothing runs here.
+     * This machine is refused once runners are configured, unless it is still the default.
      */
     async machine(runnerId?: string): Promise<Compute> {
         if (runnerId === undefined) {
@@ -344,12 +374,12 @@ export class RunnersModule implements AgentModule {
 
     /** A path on a folder's machine as that machine names it, or as written when it is absent. */
     async canonicalPath(runnerId: string | undefined, path: string): Promise<string> {
-        return await canonicalMachinePath(await this.machine(runnerId), path);
+        return await canonicalMachinePath(await this.machine(runnerId), this.paths(runnerId), path);
     }
 
     /** Where a folder that does not exist yet will be, named the way its machine will name it. */
     async futurePath(runnerId: string | undefined, path: string): Promise<string> {
-        return await futureMachinePath(await this.machine(runnerId), path);
+        return await futureMachinePath(await this.machine(runnerId), this.paths(runnerId), path);
     }
 
     /**
@@ -361,7 +391,7 @@ export class RunnersModule implements AgentModule {
         const home =
             machine === undefined
                 ? this.#config.projectsHome
-                : this.#config.projectsHomeOn(machine.home);
+                : this.#config.projectsHomeOn(machine.home, machine.platform);
         return await this.futurePath(runnerId, home);
     }
 
@@ -508,7 +538,7 @@ export class RunnersModule implements AgentModule {
      */
     async #startWorkloadUser(ctx: Context): Promise<void> {
         const user = this.workloadUser;
-        if (user === undefined || this.enabled) return;
+        if (user === undefined || !this.localExecution) return;
         let timer: NodeJS.Timeout | undefined;
         try {
             await Promise.race([

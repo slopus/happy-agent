@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { dirname, join } from "node:path";
+import { dirname, type PlatformPath } from "node:path";
 
 import {
     type AgentBaseAcceptedMessage,
@@ -166,11 +166,13 @@ export class AgentsMdInstructions {
         }
 
         const permissions = computeModule.permissionsForContext(ctx);
-        const directories = await relevantDirectories(compute, permissions);
+        // The agent's folder may be on a runner whose paths follow another platform's rules.
+        const paths = computeModule.paths(ctx);
+        const directories = await relevantDirectories(compute, paths, permissions);
         const security = await readBoundedDocument(
             compute,
             permissions,
-            join(directories[0] ?? compute.cwd, "AGENTS_SECURITY.md"),
+            paths.join(directories[0] ?? compute.cwd, "AGENTS_SECURITY.md"),
             MAX_AGENTS_SECURITY_MD_BYTES,
         );
         const documents: AgentsMdSnapshot["documents"][number][] = [];
@@ -178,7 +180,7 @@ export class AgentsMdInstructions {
         let truncated = global?.truncated === true || security.truncated;
 
         for (const directory of directories) {
-            const path = join(directory, "AGENTS.md");
+            const path = paths.join(directory, "AGENTS.md");
             if (documents.length >= MAX_AGENTS_MD_DOCUMENTS) {
                 truncated = true;
                 break;
@@ -227,8 +229,9 @@ export class AgentsMdInstructions {
         // The specification text explains a convention, not the project's intent. With no
         // instruction document there is nothing for a reviewer to read, so say so plainly
         // instead of handing back a specification for files that do not exist.
-        if (formatBody(snapshot).length === 0) return undefined;
-        return formatInstructions(snapshot);
+        const paths = this.#compute.paths(ctx);
+        if (formatBody(snapshot, paths).length === 0) return undefined;
+        return formatInstructions(snapshot, paths);
     }
 
     readonly instructions = async (ctx: Context, scope: AgentModuleScope): Promise<string> => {
@@ -243,7 +246,7 @@ export class AgentsMdInstructions {
                 throw new Error("Stored AGENTS.md fingerprint is invalid.");
             }
         }
-        return formatInstructions(loaded.snapshot);
+        return formatInstructions(loaded.snapshot, this.#compute.paths(ctx));
     };
 
     /**
@@ -346,7 +349,7 @@ export class AgentsMdInstructions {
 
     async #loadInstructions(ctx: Context, agentId: string): Promise<LoadedInstructions> {
         const snapshot = await this.read(ctx, agentId);
-        return loadedInstructionsForSnapshot(snapshot);
+        return loadedInstructionsForSnapshot(snapshot, this.#compute.paths(ctx));
     }
 
     async #loadInstructionsForPrompt(
@@ -363,7 +366,10 @@ export class AgentsMdInstructions {
         if (!Value.Check(turnSnapshotSchema, cached) || !isSoundStoredSnapshot(cached)) {
             throw new Error("Stored AGENTS.md turn snapshot is invalid.");
         }
-        return loadedInstructionsForSnapshot(cached === null ? undefined : structuredClone(cached));
+        return loadedInstructionsForSnapshot(
+            cached === null ? undefined : structuredClone(cached),
+            this.#compute.paths(ctx),
+        );
     }
 
     /**
@@ -430,8 +436,11 @@ function isSoundStoredSnapshot(snapshot: AgentsMdSnapshot | null): boolean {
     return true;
 }
 
-function loadedInstructionsForSnapshot(snapshot: AgentsMdSnapshot | undefined): LoadedInstructions {
-    const body = formatBody(snapshot);
+function loadedInstructionsForSnapshot(
+    snapshot: AgentsMdSnapshot | undefined,
+    paths: PlatformPath,
+): LoadedInstructions {
+    const body = formatBody(snapshot, paths);
     return {
         body,
         fingerprint: body.length === 0 ? null : createFingerprint(body),
@@ -441,8 +450,10 @@ function loadedInstructionsForSnapshot(snapshot: AgentsMdSnapshot | undefined): 
 
 async function relevantDirectories(
     compute: HostCompute,
+    paths: PlatformPath,
     permissions: ComputePermissions,
 ): Promise<readonly string[]> {
+    const { dirname, join } = paths;
     const ancestors: string[] = [];
     let current = compute.cwd;
     while (true) {
@@ -601,13 +612,14 @@ function createNoticeId(): string {
     return createId();
 }
 
-function formatInstructions(snapshot: AgentsMdSnapshot | undefined): string {
-    const body = formatBody(snapshot);
+function formatInstructions(snapshot: AgentsMdSnapshot | undefined, paths: PlatformPath): string {
+    const body = formatBody(snapshot, paths);
     if (body.length === 0) return AGENTS_MD_SPEC;
     return joinWithinBudget([AGENTS_MD_SPEC, body], MAX_AGENTS_MD_OUTPUT_CHARACTERS);
 }
 
-function formatBody(snapshot: AgentsMdSnapshot | undefined): string {
+/** The documents' folders are named by `paths`, the rules of the machine they were read on. */
+function formatBody(snapshot: AgentsMdSnapshot | undefined, paths: PlatformPath): string {
     if (snapshot === undefined) return "";
     const sections: string[] = [];
     if (snapshot.global !== undefined) {
@@ -618,7 +630,7 @@ function formatBody(snapshot: AgentsMdSnapshot | undefined): string {
     if (snapshot.security !== undefined) {
         sections.push(
             formatDocument(
-                `# AGENTS_SECURITY.md rules for ${dirname(snapshot.security.path)}`,
+                `# AGENTS_SECURITY.md rules for ${paths.dirname(snapshot.security.path)}`,
                 "SECURITY_RULES",
                 snapshot.security,
             ),
@@ -627,7 +639,7 @@ function formatBody(snapshot: AgentsMdSnapshot | undefined): string {
     sections.push(
         ...snapshot.documents.map((document) =>
             formatDocument(
-                `# AGENTS.md instructions for ${dirname(document.path)}`,
+                `# AGENTS.md instructions for ${paths.dirname(document.path)}`,
                 "INSTRUCTIONS",
                 document,
             ),

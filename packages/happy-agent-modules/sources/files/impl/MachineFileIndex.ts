@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import type { PlatformPath } from "node:path";
 
 import { computePermissions, type Compute } from "@slopus/happy-agent-compute";
 
@@ -13,6 +13,13 @@ const MAX_STATS_PER_CALL = 4_096;
 /** How old an unwatched listing may be before a search lists the folder again. */
 const RELIST_AFTER_MS = 2_000;
 const SKIPPED_DIRECTORIES = new Set([".git", ".hg", ".svn", "node_modules"]);
+
+/** A folder on a machine, with that machine's path rules. */
+interface MachineFolder {
+    readonly root: string;
+    readonly runnerId: string | undefined;
+    readonly paths: PlatformPath;
+}
 
 interface Listed {
     readonly paths: readonly string[];
@@ -59,7 +66,7 @@ export class MachineFileIndex {
 
     async search(
         machine: Compute,
-        folder: { readonly root: string; readonly runnerId: string | undefined },
+        folder: MachineFolder,
         query: string,
         limit: number,
         watching: boolean,
@@ -76,11 +83,7 @@ export class MachineFileIndex {
         return rankFilePaths(matching.paths, query, limit);
     }
 
-    async #listed(
-        machine: Compute,
-        folder: { readonly root: string; readonly runnerId: string | undefined },
-        watching: boolean,
-    ): Promise<Listed> {
+    async #listed(machine: Compute, folder: MachineFolder, watching: boolean): Promise<Listed> {
         const key = listingKey(folder.runnerId, folder.root);
         let listing = this.#listings.get(key);
         if (listing !== undefined) {
@@ -122,10 +125,7 @@ export class MachineFileIndex {
         return await current.pending;
     }
 
-    async #list(
-        machine: Compute,
-        folder: { readonly root: string; readonly runnerId: string | undefined },
-    ): Promise<Listed> {
+    async #list(machine: Compute, folder: MachineFolder): Promise<Listed> {
         const listed = await this.#git
             .listWorkingTreeFiles({
                 path: folder.root,
@@ -133,12 +133,17 @@ export class MachineFileIndex {
             })
             .catch(() => undefined);
         if (listed !== undefined && listed.paths.length > 0) return listed;
-        return { paths: await walk(machine, folder.root), truncated: false };
+        return { paths: await walk(machine, folder.paths, folder.root), truncated: false };
     }
 }
 
 /** Every file under a folder outside any repository, breadth first and bounded. */
-async function walk(machine: Compute, root: string): Promise<readonly string[]> {
+async function walk(
+    machine: Compute,
+    paths: PlatformPath,
+    root: string,
+): Promise<readonly string[]> {
+    const { join } = paths;
     const files: string[] = [];
     const directories = [""];
     let visited = 0;

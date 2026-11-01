@@ -13,10 +13,10 @@ import type {
 } from "@slopus/happy-agent-client";
 import {
     agentDatabase,
-    currentAgentEnvironment,
     withAgentDatabase,
     type AgentBaseMessageOptions,
     type AgentConfig,
+    type AgentEnvironment,
     type AgentModuleHooks,
     type AgentSystemRef,
 } from "@slopus/happy-agent-base";
@@ -44,6 +44,7 @@ import {
     type WorkspaceAgentPlacement,
     type WorkspaceEvent,
 } from "../workspaces/index.js";
+import type { RunnersModule } from "../runners/index.js";
 import type { SurfacesModule } from "../surfaces/index.js";
 import { TasksModule, type TaskRecord } from "../tasks/index.js";
 import { TeamModule, type TeamUser } from "../team/index.js";
@@ -246,6 +247,7 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
     readonly #workspaces: WorkspacesModule;
     readonly #taskCatalog: TasksModule;
     readonly #surfaces: SurfacesModule;
+    readonly #runners: RunnersModule;
     readonly #sync: ReturnType<typeof createHappySyncDatabase>;
     readonly #projectSync: ReturnType<typeof createHappyProjectSyncDatabase>;
     readonly #integrationDatabase: ReturnType<typeof createHappyIntegrationDatabase>;
@@ -298,6 +300,7 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
         artifacts: ArtifactsModule,
         tasks: TasksModule,
         surfaces: SurfacesModule,
+        runners: RunnersModule,
         team?: TeamModule,
         owner?: TeamUser,
     ) {
@@ -321,6 +324,7 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
         this.#artifacts = artifacts;
         this.#taskCatalog = tasks;
         this.#surfaces = surfaces;
+        this.#runners = runners;
         const now = Date.now();
         this.#integration = {
             authorization: null,
@@ -1809,7 +1813,14 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
             await ctx.inTx(async (txCtx) => {
                 await system.create(
                     txCtx,
-                    agentConfigFor(cwd, selection, owner, draftOwner === undefined, placement),
+                    agentConfigFor(
+                        this.#runners.environment(placement.runnerId, cwd),
+                        cwd,
+                        selection,
+                        owner,
+                        draftOwner === undefined,
+                        placement,
+                    ),
                     { id: request.sessionId },
                 );
                 if (draftOwner !== undefined) {
@@ -3024,6 +3035,7 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
 }
 
 function agentConfigFor(
+    environment: AgentEnvironment,
     cwd: string,
     selection: HappySelection,
     owner: { readonly projectId: string; readonly workspaceId?: string },
@@ -3031,7 +3043,7 @@ function agentConfigFor(
     placement: WorkspaceAgentPlacement,
 ): AgentConfig {
     return {
-        environment: { ...currentAgentEnvironment(), workingDirectory: cwd },
+        environment,
         // The choices made on the creation screen are kept as an ordinary empty-text draft, so
         // they survive through the same path every later edit takes. A personal connection keeps
         // that seed in its own user's private draft instead of here.

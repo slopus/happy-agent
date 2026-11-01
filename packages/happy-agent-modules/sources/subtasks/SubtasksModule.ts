@@ -20,6 +20,7 @@ import { ComputeModule } from "../compute/index.js";
 import { DurableFunctionsModule } from "../durableFunctions/index.js";
 import { delegatedPermissionMode } from "../impl/delegatedPermissionMode.js";
 import { senderAgentExplanationFromTitle } from "../impl/messageOrigin.js";
+import type { RunnersModule } from "../runners/index.js";
 import { TasksModule } from "../tasks/index.js";
 import { WorkspacesModule } from "../workspaces/index.js";
 import {
@@ -74,12 +75,15 @@ export class SubtasksModule implements AgentModule {
     readonly #durableFunctions: DurableFunctionsModule;
     readonly #workspaces: WorkspacesModule;
     readonly #botSettings: BotSettingsModule | undefined;
+    readonly #runners: RunnersModule | undefined;
     #agents: AgentSystemRef | undefined;
 
     /**
      * @param botSettings Whether a bot keeps its subtasks in its own folder. A bot that keeps its
      * agents inside its own tree may still create subtasks that share a folder, but none in a
      * project workspace. Without it, no bot restricts where its subtasks work.
+     * @param runners The machine a subtask's workspace is on, which it is told about: a runner's
+     * when the workspace is on one. Without it, a subtask is told about its parent's machine.
      */
     constructor(
         bots: BotsModule,
@@ -90,8 +94,10 @@ export class SubtasksModule implements AgentModule {
         abort: AbortModule,
         compute: ComputeModule,
         botSettings?: BotSettingsModule,
+        runners?: RunnersModule,
     ) {
         this.#botSettings = botSettings;
+        this.#runners = runners;
         this.#bots = bots;
         this.#tasks = tasks;
         this.#abort = abort;
@@ -378,10 +384,13 @@ export class SubtasksModule implements AgentModule {
                 ...(workspace === undefined
                     ? {}
                     : {
-                          environment: {
-                              ...(parent.environment ?? currentAgentEnvironment()),
-                              workingDirectory: workspace.path,
-                          },
+                          environment:
+                              this.#runners === undefined
+                                  ? {
+                                        ...(parent.environment ?? currentAgentEnvironment()),
+                                        workingDirectory: workspace.path,
+                                    }
+                                  : this.#runners.environment(workspace.runnerId, workspace.path),
                           modules: {
                               ...parent.modules,
                               compute: {

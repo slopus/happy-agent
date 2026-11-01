@@ -1,5 +1,5 @@
 import { runGitCommandOrThrow, type GitCommandRunner } from "./GitCommandRunner.js";
-import { normalizeProjectCwd } from "./normalizeProjectCwd.js";
+import { normalizeGitPath } from "./normalizeGitPath.js";
 import { readGitWorktreeIdentity } from "./readGitWorktreeIdentity.js";
 
 export async function renameGitBranch(options: {
@@ -11,10 +11,10 @@ export async function renameGitBranch(options: {
 }): Promise<void> {
     if (options.from === options.to) return;
     const identity = await readGitWorktreeIdentity(options.git, options.workspacePath);
-    if (identity.topLevel !== normalizeProjectCwd(options.workspacePath)) {
+    if (identity.topLevel !== normalizeGitPath(options.git, options.workspacePath)) {
         throw new Error("The workspace is not the top level of its own worktree.");
     }
-    if (identity.commonDir !== normalizeProjectCwd(options.expectedCommonDir)) {
+    if (identity.commonDir !== normalizeGitPath(options.git, options.expectedCommonDir)) {
         throw new Error("The workspace belongs to an unexpected repository.");
     }
     const current = await runGitCommandOrThrow(options.git, options.workspacePath, [

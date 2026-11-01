@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { basename, dirname, join } from "node:path";
+import type { PlatformPath } from "node:path";
 
 import {
     computePermissions,
@@ -24,9 +24,11 @@ const GIT_CLONE_OUTPUT_LIMIT = 1024 * 1024;
  * Clone a remote into a folder on a runner, with the same guarantees as a clone here: the clone
  * lands in a private staging directory beside the destination, its identity and origin are
  * proven, and only then is it moved into place, so a failed clone never leaves a partial project.
+ * Every path is the runner's, composed and compared by its own path rules.
  */
 export async function cloneOnRunner(
     machine: Compute,
+    paths: PlatformPath,
     run: (options: RunnerRunOptions) => Promise<RunnerRunResult>,
     options: {
         readonly destination: string;
@@ -35,7 +37,8 @@ export async function cloneOnRunner(
     },
 ): Promise<void> {
     const fs = machine.fs;
-    const destination = validateDestination(options.destination);
+    const { basename, dirname, join, resolve } = paths;
+    const destination = validateDestination(options.destination, paths);
     const remote = remoteUrlForSource(options.source);
     const parent = dirname(destination);
     await fs.mkdir(PRODUCT, parent, { recursive: true });
@@ -96,7 +99,8 @@ export async function cloneOnRunner(
             return result.stdout.toString("utf8").trim();
         };
         const topLevel = await git(["rev-parse", "--show-toplevel"]);
-        if (topLevel !== (await fs.realpath(PRODUCT, stagingPath))) {
+        // Git on Windows writes `C:/x` for the folder the runner names `C:\x`.
+        if (resolve(topLevel) !== resolve(await fs.realpath(PRODUCT, stagingPath))) {
             throw new Error("The cloned folder is not a Git repository root.");
         }
         const origin = await git(["remote", "get-url", "origin"]);

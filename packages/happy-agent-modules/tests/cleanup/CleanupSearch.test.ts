@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readdir, lstat, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, posix } from "node:path";
 
 import { ensureAgentDatabaseConnection, type AgentConfig } from "@slopus/happy-agent-base";
 import type { Context } from "@steve.kite/stdlib";
@@ -253,8 +253,8 @@ async function fixture(options: { readonly roots?: string } = {}) {
         },
     };
     const runners = {
-        enabled: false,
         defaultRunnerId: undefined,
+        paths: () => posix,
         machineHome: () => undefined,
         machine: async () => ({ fs: nodeFs }),
     };

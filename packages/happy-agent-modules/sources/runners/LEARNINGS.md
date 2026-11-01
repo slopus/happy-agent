@@ -30,11 +30,37 @@ runners; Git commands that create worktrees and clones do run there.
 ## Everything that touches a folder runs on the runner
 
 Git, workspace checkouts, terminals, file watching, and the workspace proxy were all asked for
-explicitly, not only agent commands. Once any runner is configured nothing runs on the daemon's
+explicitly, not only agent commands. While a runner is the default nothing runs on the daemon's
 machine and nothing falls back to it: a disconnected runner is an error that names it.
 Git on a runner uses the Git authentication configured on that runner. The daemon does not
 discover or proxy GitHub tokens, so remote repository access must be configured for the user
 running Git there.
+
+## This machine can stay the default
+
+Steve asked for runners to be usable without giving up local work. `[runners] default = "local"`
+keeps local execution on: the home project, new projects, bots, tasks, and Surface chats that name
+no runner stay on this machine, and only projects registered or cloned with a `runnerId` go to a
+runner. `local` is a reserved ID rather than a separate switch, so the setting reads as which
+machine is the default. Internally a local default looks exactly like having no runners
+(`defaultRunnerId` is undefined), so call sites ask only where a folder goes, never whether runners
+exist. Without the setting nothing changed: one runner is the default automatically, and several
+need `default`.
+
+## A runner's paths follow the runner's platform
+
+A Windows runner under a Linux daemon used to have its folders named with POSIX rules
+(`C:\Users\x/happy/Bots/...`) and its agents told they ran on Linux. Every path composed or
+compared for a runner now uses `paths(runnerId)` — `path.win32` or `path.posix` from the platform
+the runner reported — and folders are laid out as a local installation on that platform would lay
+them out. Agents in runner folders get `environment(runnerId, cwd)`, so the Windows PowerShell
+guidance in the system prompt applies on Windows runners. Local paths are unchanged.
+
+The runner's operating system release and shell travel in the `ready` frame at protocol 3, not in
+`hello`: older daemons validate `hello` exactly and would refuse a runner that added fields there.
+Because `@slopus/happy-agent-compute` and `@slopus/happy-agent-client` are consumed from npm, the
+runner can only send them, and the daemon only store and show them, after both are released and
+every pin is bumped. Until then the environment names the platform and no shell.
 
 ## A runner that is away fails at once
 
@@ -61,6 +87,7 @@ runner cannot, so the operator can read the log and fix the sudo rule. Per-bot u
 bot ID, and an agent's user is unknown until `BotsModule` has bound its bots, so `userFor` refuses
 until then instead of choosing the default.
 
-`[execution]` cannot be combined with `[runners]`: with runners, no work runs on the node's machine
-at all, and that is the stronger separation. The API stays unchanged — folders are ordinary
+`[execution]` cannot be combined with a default runner: then no work runs on the node's machine at
+all, and that is the stronger separation. It can be combined with `[runners] default = "local"`,
+since local work continues there. The API stays unchanged — folders are ordinary
 folders on this machine — so a workload user that cannot start answers `503 runner_unavailable`.

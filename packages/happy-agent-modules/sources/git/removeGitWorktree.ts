@@ -1,7 +1,7 @@
 import { lstat } from "node:fs/promises";
 
 import { runGitCommandOrThrow, type GitCommandRunner } from "./GitCommandRunner.js";
-import { normalizeProjectCwd } from "./normalizeProjectCwd.js";
+import { normalizeGitPath } from "./normalizeGitPath.js";
 import { readGitCommonDir } from "./readGitCommonDir.js";
 import { readGitTopLevel } from "./readGitTopLevel.js";
 import { WORKTREE_CHECKOUT_TIMEOUT_MS } from "./worktreeCheckoutTimeout.js";
@@ -16,7 +16,7 @@ export async function removeGitWorktree(options: {
     workspacePath: string;
 }): Promise<void> {
     const commonDir = await readGitCommonDir(options.git, options.projectPath);
-    if (commonDir !== normalizeProjectCwd(options.expectedCommonDir)) {
+    if (commonDir !== normalizeGitPath(options.git, options.expectedCommonDir)) {
         throw new Error("The source repository no longer owns this workspace.");
     }
     if (options.removeDirectory) {
@@ -32,7 +32,7 @@ export async function removeGitWorktree(options: {
         }
         if (
             (await readGitTopLevel(options.git, options.workspacePath)) !==
-            normalizeProjectCwd(options.workspacePath)
+            normalizeGitPath(options.git, options.workspacePath)
         ) {
             throw new Error("The workspace is not the top level of its own worktree.");
         }

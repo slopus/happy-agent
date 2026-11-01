@@ -208,11 +208,34 @@ name = "Build box"
 token = "REPLACE_WITH_FRESH_43_CHARACTER_BASE64URL_TOKEN"
 ```
 
-Each `[runners.<id>]` names one runner, at most 32, with an ID matching `[a-z][a-z0-9_-]{0,63}`.
-Its token uses the API token format and must differ from `[api] token`, every connection token,
-and every other runner's token. `default` picks the runner for new projects that name none, the
-home project, and bot folders; it is optional with exactly one runner. Restart the daemon after
-changing runners. Removing an entry revokes that runner, which then stops everything it held.
+Each `[runners.<id>]` names one runner, at most 32, with an ID matching `[a-z][a-z0-9_-]{0,63}`
+other than `local`, which names this machine. Its token uses the API token format and must differ
+from `[api] token`, every connection token, and every other runner's token. `default` picks the
+runner for new projects that name none, the home project, and bot, task, and Surface chat folders;
+it is optional with exactly one runner. Restart the daemon after changing runners. Removing an
+entry revokes that runner, which then stops everything it held.
+
+`default = "local"` keeps this machine the default while runners are configured:
+
+```toml
+[runners]
+default = "local"
+
+[runners.mac-mini]
+name = "Mac mini"
+token = "REPLACE_WITH_FRESH_43_CHARACTER_BASE64URL_TOKEN"
+```
+
+This machine then keeps running its own work exactly as with no runners: new projects, the home
+project, and bot, task, and Surface chat folders that name no runner stay here. Only a project
+registered or cloned with a `runnerId` goes to that runner.
+[`[execution]`](#work-as-separate-linux-users) may be combined with it, for the work that stays
+here.
+
+A runner may run another operating system than the daemon, such as a Windows or macOS runner for a
+Linux node. Folders on it are named by its own path rules and laid out as that system lays out its
+own folders, and agents working there are told about the runner's operating system, not the
+daemon's, with that system's command guidance (PowerShell on Windows).
 
 The runner itself is `happy-agent runner`, given the daemon's endpoint and its token:
 
@@ -227,7 +250,7 @@ The endpoint is `tailcat:<address>[:<port>]` for a node's [Tailcat exposure](#ta
 bot folders live. The runner removes both variables from its environment once read, and agent
 commands cannot read its private directory.
 
-Once any runner is configured, the daemon runs nothing on its own machine. Projects registered
+Once a runner is the default, the daemon runs nothing on its own machine. Projects registered
 there earlier stay listed so they can be archived, and their work fails with
 `local_execution_disabled`. Work on a folder whose runner is away fails with `runner_unavailable`;
 nothing falls back to the daemon. A runner project can run its workspaces in containers on the
@@ -278,8 +301,9 @@ A runner that stops after it was connected is started again, and machines it hel
 the same folders, as after a runner restart.
 
 It is machine configuration only: a project `happy.toml` cannot set it. It cannot be combined with
-`[runners]`, since nothing runs on this machine once runners are configured; give each runner its
-own unprivileged user on its own machine instead. Restart the daemon after changing it. As on
+a default runner, since then nothing runs on this machine; give each runner its own unprivileged
+user on its own machine instead. It can be combined with `[runners] default = "local"`, which
+keeps local work here. Restart the daemon after changing it. As on
 runners, commands that select attached secrets are refused, and live Git state is not tracked for
 these folders. Docker workspaces and a bot's Docker compute
 are started by the workload user's runner, which then needs Docker access — root-equivalent on that

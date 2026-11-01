@@ -827,6 +827,7 @@ export class WorkspacesModule implements AgentModule {
                 await removeWorkspaceDirectory({
                     git: this.#git,
                     machine,
+                    paths: this.#runners.paths(workspace.runnerId),
                     keepCopiesOnArchive: false,
                     keepWorktreesOnArchive: false,
                     project,
@@ -896,7 +897,8 @@ export class WorkspacesModule implements AgentModule {
      * deciding, so it answers from what the catalog already knows rather than from the database.
      */
     pathForStorageKey(projectRef: string, storageKey: string): string {
-        return join(this.#workspaceRoot(projectRef), storageKey);
+        const { runnerId } = this.#projectFolders.get(projectRef) ?? {};
+        return this.#runners.paths(runnerId).join(this.#workspaceRoot(projectRef), storageKey);
     }
 
     /** Whether Git already holds this branch in the project's shared repository. */
@@ -1108,7 +1110,8 @@ export class WorkspacesModule implements AgentModule {
                     isBranchUnavailable: (branch) => gitBranchExists(gitRefs, branch),
                     isStorageKeyUnavailable: (storageKey) =>
                         workspaceStorageKeyExists(gitRefs, storageKey),
-                    pathForStorageKey: (storageKey) => join(workspaceRoot, storageKey),
+                    pathForStorageKey: (storageKey) =>
+                        this.#runners.paths(runnerId).join(workspaceRoot, storageKey),
                 },
             );
             if (reserved.workspace.status === "initializing") {
@@ -1312,7 +1315,9 @@ export class WorkspacesModule implements AgentModule {
      */
     async #workspaceRootFor(project: Project): Promise<string> {
         const { runnerId } = this.#projects.location(project);
-        const root = join(await this.#runners.workspacesHome(runnerId), project.storageKey);
+        const root = this.#runners
+            .paths(runnerId)
+            .join(await this.#runners.workspacesHome(runnerId), project.storageKey);
         const folder = this.#projectFolders.get(project.id);
         if (folder !== undefined) folder.root = root;
         return root;
@@ -1373,6 +1378,7 @@ export class WorkspacesModule implements AgentModule {
                 }
                 const machine = await this.#runners.machine(currentWorkspace.runnerId);
                 const rootSettings = await this.#folderSettings(
+                    currentWorkspace.runnerId,
                     machine,
                     currentProject.repositoryRef,
                 );
@@ -1387,7 +1393,11 @@ export class WorkspacesModule implements AgentModule {
             });
 
             const workspaceMachine = await this.#runners.machine(currentWorkspace.runnerId);
-            const settings = await this.#folderSettings(workspaceMachine, currentWorkspace.path);
+            const settings = await this.#folderSettings(
+                currentWorkspace.runnerId,
+                workspaceMachine,
+                currentWorkspace.path,
+            );
             for (const [index, command] of settings.setupCommands.entries()) {
                 await durableCheckpoint(
                     ctx,
@@ -1463,6 +1473,7 @@ export class WorkspacesModule implements AgentModule {
             await removeWorkspaceDirectory({
                 git: this.#git,
                 machine,
+                paths: this.#runners.paths(locked.runnerId),
                 keepCopiesOnArchive: false,
                 keepWorktreesOnArchive: false,
                 project,
@@ -1561,11 +1572,16 @@ export class WorkspacesModule implements AgentModule {
         );
     }
 
-    async #folderSettings(machine: Compute, folder: string): Promise<WorkspaceFolderSettings> {
+    async #folderSettings(
+        runnerId: string | undefined,
+        machine: Compute,
+        folder: string,
+    ): Promise<WorkspaceFolderSettings> {
         return await loadWorkspaceFolderSettings(
             folder,
             this.#config.workspaceSettings,
             async (path) => await machine.fs.readFile(PRODUCT, path),
+            this.#runners.paths(runnerId),
         );
     }
 
@@ -1601,7 +1617,11 @@ export class WorkspacesModule implements AgentModule {
         const project = await this.#project(ctx, workspace.projectRef);
         if (project === undefined) throw new Error("The workspace's project was not found.");
         const machine = await this.#runners.machine(workspace.runnerId);
-        const settings = await this.#folderSettings(machine, project.repositoryRef);
+        const settings = await this.#folderSettings(
+            workspace.runnerId,
+            machine,
+            project.repositoryRef,
+        );
         await backoff(
             ctx,
             async (retryCtx) => {
@@ -1609,6 +1629,7 @@ export class WorkspacesModule implements AgentModule {
                     await removeWorkspaceDirectory({
                         git: this.#git,
                         machine,
+                        paths: this.#runners.paths(workspace.runnerId),
                         keepCopiesOnArchive: settings.keepCopiesOnArchive,
                         keepWorktreesOnArchive: settings.keepWorktreesOnArchive,
                         project,
@@ -1721,7 +1742,7 @@ export class WorkspacesModule implements AgentModule {
         if (project.kind === "home" && workspaces.length === 0) return;
         const { runnerId } = this.#projects.location(project);
         const machine = await this.#runners.machine(runnerId);
-        const settings = await this.#folderSettings(machine, project.repositoryRef);
+        const settings = await this.#folderSettings(runnerId, machine, project.repositoryRef);
         if (project.kind !== "home") {
             await this.#recordSetupCommands(ctx, projectId, settings.setupCommands);
         }
@@ -1734,6 +1755,7 @@ export class WorkspacesModule implements AgentModule {
             projectId,
             watchWorkspaceSyncPaths({
                 machine,
+                paths: this.#runners.paths(runnerId),
                 onChange: () => {
                     this.#scheduleSync(projectId);
                 },

@@ -3,7 +3,7 @@ import { statSync } from "node:fs";
 import { Type, type Static } from "@sinclair/typebox";
 
 import { runGitCommandOrThrow, type GitCommandRunner } from "./GitCommandRunner.js";
-import { normalizeProjectCwd } from "./normalizeProjectCwd.js";
+import { normalizeGitPath } from "./normalizeGitPath.js";
 import { gitRepositoryFactsSchema, type GitRepositoryFacts } from "./types.js";
 
 export const gitRepositoryProbeSchema = Type.Object(
@@ -62,7 +62,7 @@ export async function probeGitRepository(options: {
                 : "This folder is not a Git repository.",
         };
     }
-    if (normalizeProjectCwd(topLevel) !== normalizeProjectCwd(options.path)) {
+    if (normalizeGitPath(options.git, topLevel) !== normalizeGitPath(options.git, options.path)) {
         return {
             presence: "present",
             worktreeSupport: "unsupported",

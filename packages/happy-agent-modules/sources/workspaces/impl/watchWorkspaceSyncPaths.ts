@@ -1,4 +1,4 @@
-import { resolve } from "node:path";
+import type { PlatformPath } from "node:path";
 
 import { computePermissions, type Compute } from "@slopus/happy-agent-compute";
 
@@ -19,10 +19,13 @@ const SYNC_POLL_MS = 2_000;
  */
 export function watchWorkspaceSyncPaths(options: {
     machine: Compute;
+    /** The path rules of the machine the project is on. */
+    paths: PlatformPath;
     onChange: () => void;
     projectPath: string;
     syncPaths: readonly string[];
 }): () => void {
+    const { resolve } = options.paths;
     const paths = [
         ...new Set([
             ...PROJECT_CONFIG_FILE_NAMES.map((name) => resolve(options.projectPath, name)),

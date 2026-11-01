@@ -1,9 +1,12 @@
 import { homedir } from "node:os";
-import { isAbsolute, join, resolve } from "node:path";
+import { isAbsolute, resolve } from "node:path";
+
+import { machinePaths } from "./machinePaths.js";
 
 /**
  * The folder managed workspaces live in. Once a workspace has reserved its path that path is
- * authoritative, so moving this root only affects workspaces created afterwards.
+ * authoritative, so moving this root only affects workspaces created afterwards. The home and
+ * platform may be another machine's, a runner's, whose own path rules then lay the folder out.
  */
 export function getManagedWorkspacesDirectory(
     environment: NodeJS.ProcessEnv = process.env,
@@ -17,6 +20,7 @@ export function getManagedWorkspacesDirectory(
         }
         return resolve(configuredDirectory);
     }
+    const { join } = machinePaths(platform);
     return platform === "darwin"
         ? join(homeDirectory, "Happy", "Workspaces")
         : join(homeDirectory, "happy", "workspaces");

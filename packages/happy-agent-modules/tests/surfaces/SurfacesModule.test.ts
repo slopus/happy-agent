@@ -66,7 +66,7 @@ async function fixture(teamEnabled = true) {
         { get: async () => undefined } as unknown as ArtifactsModule,
         compute as unknown as ComputeModule,
         {} as ConfigModule,
-        { enabled: false } as RunnersModule,
+        { localExecution: true } as RunnersModule,
     );
     const db = moduleDatabase([...durable.migrations, ...surfaces.migrations], "surfaces-test");
     ensureAgentDatabaseConnection(db.database);

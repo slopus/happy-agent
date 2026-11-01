@@ -1,4 +1,4 @@
-import { isAbsolute, resolve } from "node:path";
+import type { PlatformPath } from "node:path";
 
 import {
     DEFAULT_TERMINAL_COLOR_SCHEME,
@@ -29,6 +29,7 @@ export class TerminalCollection {
     readonly #onUpdated: (before: Terminal, after: Terminal) => void;
     readonly #processFactory: TerminalProcessFactory;
     readonly #root: string;
+    readonly #paths: PlatformPath;
     readonly #sessions = new Map<string, TerminalSession>();
     readonly #workspaceId: string;
     /** Set by `dispose`: this folder is gone, and nothing opens in it again. */
@@ -41,6 +42,8 @@ export class TerminalCollection {
         readonly processFactory: TerminalProcessFactory;
         readonly projectId: string;
         readonly root: string;
+        /** The path rules of the folder's machine, by which a relative working folder resolves. */
+        readonly paths: PlatformPath;
         readonly workspaceId: string;
     }) {
         this.projectId = options.projectId;
@@ -49,6 +52,7 @@ export class TerminalCollection {
         this.#onUpdated = options.onUpdated;
         this.#processFactory = options.processFactory;
         this.#root = options.root;
+        this.#paths = options.paths;
         this.#workspaceId = options.workspaceId;
     }
 
@@ -69,9 +73,9 @@ export class TerminalCollection {
         const cwd =
             input.cwd === undefined
                 ? this.#root
-                : isAbsolute(input.cwd)
+                : this.#paths.isAbsolute(input.cwd)
                   ? input.cwd
-                  : resolve(this.#root, input.cwd);
+                  : this.#paths.resolve(this.#root, input.cwd);
         const session = await TerminalSession.create({
             cols,
             colorScheme,

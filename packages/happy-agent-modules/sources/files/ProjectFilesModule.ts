@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import type { PlatformPath } from "node:path";
 
 import type { AgentModule } from "@slopus/happy-agent-base";
 import {
@@ -340,7 +340,7 @@ export class ProjectFilesModule implements AgentModule {
                 return { files: await this.#index.search(root.root, query.query, limit) };
             }
             const machine = await this.#machine(root);
-            const folder = { root: root.root, runnerId: root.runnerId };
+            const folder = { root: root.root, runnerId: root.runnerId, paths: this.#paths(root) };
             this.#watcherInstance().watchTree(root, machine);
             return {
                 files: await this.#machineIndex.search(
@@ -367,7 +367,8 @@ export class ProjectFilesModule implements AgentModule {
         const offset = parseCursor(query.cursor);
         const limit = query.limit ?? 100;
         const machine = await this.#machine(root);
-        const directory = await this.#resolveExisting(machine, root.root, path, true);
+        const paths = this.#paths(root);
+        const directory = await this.#resolveExisting(machine, paths, root.root, path, true);
         this.#watch(root, machine, path, directory);
         const names = [...(await machine.fs.readdir(PRODUCT, directory))].sort((left, right) =>
             left.localeCompare(right),
@@ -375,7 +376,7 @@ export class ProjectFilesModule implements AgentModule {
         const selected = names.slice(offset, offset + limit);
         const information = await machine.fs.lstatMany(
             PRODUCT,
-            selected.map((name) => join(directory, name)),
+            selected.map((name) => paths.join(directory, name)),
         );
         // A name that disappeared between listing and inspecting it is simply gone.
         const entries = selected.flatMap((name, index) => {
@@ -420,13 +421,14 @@ export class ProjectFilesModule implements AgentModule {
                 "The path must not contain parent-directory traversal.",
             );
         }
+        const paths = this.#paths(root);
         let relativePath = query.path;
-        if (isAbsolute(relativePath)) {
-            this.#assertWithinRoot(relativePath, root.root);
-            relativePath = relative(root.root, relativePath).split(sep).join("/");
+        if (paths.isAbsolute(relativePath)) {
+            this.#assertWithinRoot(paths, relativePath, root.root);
+            relativePath = paths.relative(root.root, relativePath).split(paths.sep).join("/");
         }
         const machine = await this.#machine(root);
-        const path = await this.#resolveExisting(machine, root.root, relativePath, false);
+        const path = await this.#resolveExisting(machine, paths, root.root, relativePath, false);
         const information = await machine.fs.lstat(PRODUCT, path);
         // Checking first is what keeps a FIFO or a device from being opened and read at all.
         if (!information.isFile)
@@ -452,15 +454,17 @@ export class ProjectFilesModule implements AgentModule {
         }
         this.#assertSize(bytes.byteLength, maximumBytes);
         // A parent folder swapped for a link during the read would have served another tree.
-        if ((await this.#resolveExisting(machine, root.root, relativePath, false)) !== path) {
+        if (
+            (await this.#resolveExisting(machine, paths, root.root, relativePath, false)) !== path
+        ) {
             throw locationChanged();
         }
-        const relativeDirectory = dirname(relativePath);
+        const relativeDirectory = paths.dirname(relativePath);
         this.#watch(
             root,
             machine,
             relativeDirectory === "." ? "" : relativeDirectory,
-            dirname(path),
+            paths.dirname(path),
         );
         if (this.#runners.native(root.runnerId)) {
             this.#watcherInstance().watchFile(root, relativePath, path, seen);
@@ -513,11 +517,12 @@ export class ProjectFilesModule implements AgentModule {
         const bytes = decodeBase64(input.content);
         this.#assertSize(bytes.byteLength);
         const machine = await this.#machine(root);
-        const target = await this.#resolveWritePath(machine, root.root, input.path);
-        this.#assertWithinRoot(target, root.root);
+        const paths = this.#paths(root);
+        const target = await this.#resolveWritePath(machine, paths, root.root, input.path);
+        this.#assertWithinRoot(paths, target, root.root);
         const result = await this.#withWriteLock(
             `${root.runnerId ?? ""}\0${target}`,
-            async () => await this.#writeCompared(machine, target, input, bytes),
+            async () => await this.#writeCompared(machine, paths, target, input, bytes),
         );
         if (this.#runners.native(root.runnerId)) {
             // Live Git state and the native index follow folders this process reads itself.
@@ -537,6 +542,7 @@ export class ProjectFilesModule implements AgentModule {
 
     async #writeCompared(
         machine: Compute,
+        paths: PlatformPath,
         target: string,
         input: FileWriteInput,
         bytes: Buffer,
@@ -566,7 +572,7 @@ export class ProjectFilesModule implements AgentModule {
                 );
             }
         }
-        await machine.fs.mkdir(PRODUCT, dirname(target), { recursive: true });
+        await machine.fs.mkdir(PRODUCT, paths.dirname(target), { recursive: true });
         // A replaced file keeps its permissions; the temporary name is unguessable, so writing it
         // cannot land on someone else's file.
         const mode =
@@ -634,7 +640,7 @@ export class ProjectFilesModule implements AgentModule {
             if (error instanceof ProjectFileError || isMachineRefusal(error)) throw error;
             throw new ProjectFileError(404, "missing", "The selected root does not exist.");
         }
-        if (canonical !== resolve(path)) {
+        if (canonical !== this.#runners.paths(runnerId).resolve(path)) {
             throw new ProjectFileError(
                 403,
                 "forbidden",
@@ -648,6 +654,11 @@ export class ProjectFilesModule implements AgentModule {
         return await this.#runners.machine(root.runnerId);
     }
 
+    /** The path rules of the root's machine, which may be a runner running another platform. */
+    #paths(root: ProjectFileRoot): PlatformPath {
+        return this.#runners.paths(root.runnerId);
+    }
+
     /** Keeps what a client just looked at current, in the way the folder's machine allows. */
     #watch(root: ProjectFileRoot, machine: Compute, relativeDirectory: string, directory: string) {
         if (this.#runners.native(root.runnerId)) {
@@ -659,13 +670,14 @@ export class ProjectFilesModule implements AgentModule {
 
     async #resolveExisting(
         machine: Compute,
+        paths: PlatformPath,
         root: string,
         path: string,
         directory: boolean,
     ): Promise<string> {
         this.#assertRelativePath(path);
-        const candidate = resolve(root, path);
-        if (!isWithin(root, candidate)) {
+        const candidate = paths.resolve(root, path);
+        if (!isWithin(paths, root, candidate)) {
             throw new ProjectFileError(403, "forbidden", "The path is outside the selected root.");
         }
         let canonical: string;
@@ -675,7 +687,7 @@ export class ProjectFilesModule implements AgentModule {
             if (isMachineRefusal(error)) throw error;
             throw new ProjectFileError(404, "missing", "The requested path was not found.");
         }
-        this.#assertWithinRoot(canonical, root);
+        this.#assertWithinRoot(paths, canonical, root);
         const information = await machine.fs.lstat(PRODUCT, canonical);
         if (directory && !information.isDirectory) {
             throw new ProjectFileError(400, "invalid", "The requested path is not a directory.");
@@ -683,9 +695,15 @@ export class ProjectFilesModule implements AgentModule {
         return canonical;
     }
 
-    async #resolveWritePath(machine: Compute, root: string, path: string): Promise<string> {
-        const candidate = resolve(root, path);
-        if (!isWithin(root, candidate)) {
+    async #resolveWritePath(
+        machine: Compute,
+        paths: PlatformPath,
+        root: string,
+        path: string,
+    ): Promise<string> {
+        const { basename, dirname, join } = paths;
+        const candidate = paths.resolve(root, path);
+        if (!isWithin(paths, root, candidate)) {
             throw new ProjectFileError(403, "forbidden", "The path is outside the selected root.");
         }
         try {
@@ -711,8 +729,8 @@ export class ProjectFilesModule implements AgentModule {
         }
     }
 
-    #assertWithinRoot(path: string, root: string): void {
-        if (!isWithin(root, path)) {
+    #assertWithinRoot(paths: PlatformPath, path: string, root: string): void {
+        if (!isWithin(paths, root, path)) {
             throw new ProjectFileError(403, "forbidden", "The path is outside the selected root.");
         }
     }
@@ -814,10 +832,10 @@ function decodeBase64(value: string): Buffer {
     return Buffer.from(value, "base64");
 }
 
-function isWithin(root: string, candidate: string): boolean {
-    const rootPath = resolve(root);
-    const candidatePath = resolve(candidate);
-    return candidatePath === rootPath || candidatePath.startsWith(`${rootPath}${sep}`);
+function isWithin(paths: PlatformPath, root: string, candidate: string): boolean {
+    const rootPath = paths.resolve(root);
+    const candidatePath = paths.resolve(candidate);
+    return candidatePath === rootPath || candidatePath.startsWith(`${rootPath}${paths.sep}`);
 }
 
 /** A refusal from the folder's machine itself, which the caller reports as it stands. */

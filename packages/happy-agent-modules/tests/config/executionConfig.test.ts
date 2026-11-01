@@ -114,6 +114,16 @@ describe("execution user configuration", () => {
         ).rejects.toThrow("execution applies only to work on this machine");
     });
 
+    it("keeps the workload user when this machine stays the default beside runners", async () => {
+        const config = await load(
+            `[execution]\nuser = "happy-work"\n` +
+                `[runners]\ndefault = "local"\n` +
+                `[runners.build-box]\nname = "Build box"\ntoken = "${RUNNER_TOKEN}"\n`,
+        );
+        expect(config.execution?.user).toBe("happy-work");
+        expect(config.runners.defaultId).toBeUndefined();
+    });
+
     it("never lets a project's happy.toml choose the user work runs as", async () => {
         const root = await mkdtemp(join(tmpdir(), "happy-agent-execution-project-"));
         roots.push(root);

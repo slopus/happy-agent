@@ -1,8 +1,9 @@
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import type { PlatformPath } from "node:path";
 
 import { Type, type Static } from "@sinclair/typebox";
 import { parseHappyAgentConfigToml } from "../../config/index.js";
+import { machinePaths } from "../../impl/machinePaths.js";
 
 /** The project configuration files a change to which re-arms sync. */
 export const PROJECT_CONFIG_FILE_NAMES: readonly string[] = ["happy.toml"];
@@ -44,16 +45,17 @@ export const DEFAULT_WORKSPACE_FOLDER_SETTINGS: WorkspaceFolderSettings = {
  * The sync list and the setup commands belong to the folder being worked in, and they are read
  * again on every pass rather than cached, so an uncommitted change to a project's configuration
  * takes effect without restarting the agent. An unreadable or invalid file yields the defaults
- * instead of failing the workspace.
+ * instead of failing the workspace. `paths` are the path rules of the machine the folder is on.
  */
 export async function loadWorkspaceFolderSettings(
     folder: string,
     defaults: WorkspaceFolderSettings = DEFAULT_WORKSPACE_FOLDER_SETTINGS,
     read: (path: string) => Promise<string> = async (path) => await readFile(path, "utf8"),
+    paths: PlatformPath = machinePaths(process.platform),
 ): Promise<WorkspaceFolderSettings> {
     let source: string;
     try {
-        source = await read(join(folder, PROJECT_CONFIG_FILE_NAMES[0] ?? "happy.toml"));
+        source = await read(paths.join(folder, PROJECT_CONFIG_FILE_NAMES[0] ?? "happy.toml"));
     } catch {
         return defaults;
     }

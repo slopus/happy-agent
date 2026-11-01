@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import type { PlatformPath } from "node:path";
 
 import { computePermissions, type Compute } from "@slopus/happy-agent-compute";
 
@@ -10,12 +10,14 @@ const PRODUCT = computePermissions("full_access");
 export async function removeManagedProjectDirectory(options: {
     /** The machine the project's folder is on. */
     machine: Compute;
+    /** That machine's path rules. */
+    paths: PlatformPath;
     /** The managed-projects directory on that machine, as the machine names it. */
     managedProjectsDirectory: string;
     project: Project;
 }): Promise<void> {
     const { machine, project } = options;
-    const expected = join(options.managedProjectsDirectory, project.storageKey);
+    const expected = options.paths.join(options.managedProjectsDirectory, project.storageKey);
     if (project.remoteSource === undefined || project.repositoryRef !== expected) return;
     let metadata;
     try {

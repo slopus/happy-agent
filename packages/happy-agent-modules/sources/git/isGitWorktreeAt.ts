@@ -1,5 +1,5 @@
 import type { GitCommandRunner } from "./GitCommandRunner.js";
-import { normalizeProjectCwd } from "./normalizeProjectCwd.js";
+import { normalizeGitPath } from "./normalizeGitPath.js";
 import { readGitWorktreeIdentity } from "./readGitWorktreeIdentity.js";
 
 export async function isGitWorktreeAt(options: {
@@ -10,8 +10,8 @@ export async function isGitWorktreeAt(options: {
     try {
         const identity = await readGitWorktreeIdentity(options.git, options.path);
         return (
-            identity.topLevel === normalizeProjectCwd(options.path) &&
-            identity.commonDir === normalizeProjectCwd(options.commonDir)
+            identity.topLevel === normalizeGitPath(options.git, options.path) &&
+            identity.commonDir === normalizeGitPath(options.git, options.commonDir)
         );
     } catch {
         return false;

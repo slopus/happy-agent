@@ -1,10 +1,12 @@
+import { posix } from "node:path";
+
 import type { Compute } from "@slopus/happy-agent-compute";
 import { describe, expect, it } from "vitest";
 
 import { MachineFileIndex } from "../../sources/files/impl/MachineFileIndex.js";
 import type { GitModule, GitWorkingTreeFiles } from "../../sources/git/index.js";
 
-const FOLDER = { root: "/runner/large-package", runnerId: "build-box" };
+const FOLDER = { root: "/runner/large-package", runnerId: "build-box", paths: posix };
 
 describe("MachineFileIndex", () => {
     it("finds a file past Git's listing cap on a runner", async () => {

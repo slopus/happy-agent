@@ -1,12 +1,10 @@
 import { AsyncResource } from "node:async_hooks";
-import { basename } from "node:path";
 
 import { createId } from "@paralleldrive/cuid2";
 import { orderKeyBetween } from "../utils/orderKeyBetween.js";
 import { botNameSchema } from "@slopus/happy-agent-client";
 import {
     cuid2Schema,
-    currentAgentEnvironment,
     withAgentDatabase,
     type AgentBaseAcceptedMessage,
     type AgentConfig,
@@ -396,17 +394,14 @@ export class BotsModule implements AgentModule {
             const agentId = input.agentId ?? (await this.#unusedIdentity(txCtx, reserved));
             const name = input.name ?? "New Bot";
             const username = await this.#chooseUsername(txCtx, input.name ?? "bot", input.username);
-            // A bot's folder goes to the default runner once runners are configured, under that
-            // runner's own home; otherwise it is in this installation's public folder.
-            const runnerId = this.#runners.enabled ? this.#runners.defaultRunnerId : undefined;
+            // A bot's folder goes to the default runner, under that runner's own home, or to
+            // this installation's public folder while this machine is the default.
+            const runnerId = this.#runners.defaultRunnerId;
             const path = this.#botPath(runnerId, username);
             const now = Date.now();
             const config: AgentConfig = {
                 provenance: { createdAt: now },
-                environment: {
-                    ...currentAgentEnvironment(),
-                    workingDirectory: path,
-                },
+                environment: this.#runners.environment(runnerId, path),
                 // A bot's conversation is the bot. It is called what the bot is called
                 // from birth, which also settles the title and keeps automatic naming
                 // from writing one over it.
@@ -743,7 +738,7 @@ export class BotsModule implements AgentModule {
         if (bot.status !== "archived") {
             throw new BotConflictError("Only an archived bot can be deleted.");
         }
-        if (basename(bot.path) !== bot.username) {
+        if (this.#runners.paths(bot.runnerId).basename(bot.path) !== bot.username) {
             throw new BotConflictError("The bot's folder does not match its username.");
         }
         const machine = await this.#runners.machine(bot.runnerId);

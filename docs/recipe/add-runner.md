@@ -10,7 +10,10 @@ secrets.
 
 Read [Runners in the configuration guide](../configuration.md#runners) for the settings, and the
 installed release's `API.md` (in the source checkout `packages/happy-agent/API.md`) for exact
-requests. The walkthrough targets a fresh Linux runner host with systemd. Execute it end to end,
+requests. The walkthrough targets a fresh Linux runner host with systemd. macOS and Windows hosts
+can run `happy-agent runner` too; the node names their folders with that platform's path rules and
+gives their agents that platform's guidance (PowerShell on Windows), but install the service with
+the host's own service manager (launchd, or a Windows service or scheduled task) instead of step 5. Execute it end to end,
 as the [recipe rules](README.md) describe; ask only for the choices below that are still missing.
 
 ## 1. Resolve the choices
@@ -54,7 +57,13 @@ token = "REPLACE_WITH_THE_GENERATED_TOKEN"
 projects that name none, for the home project, and for bot folders. Each token must differ from
 `[api] token`, every connection token, and every other runner's token.
 
-**Once any runner is configured, the node runs nothing on its own machine.** Projects registered
+To keep the node working on its own machine and use the runner only for chosen projects, set
+`default = "local"` instead. `local` is reserved for the node's own machine: the home project, new
+projects, bots, tasks, and Surface chats that name no runner stay on the node, and only projects
+registered or cloned with a `runnerId` go to the runner. That gives up the separation this recipe
+recommends, so use it only when the user asks for it.
+
+**Once a runner is the default, the node runs nothing on its own machine.** Projects registered
 on the node's own disk stay listed so they can be archived, but their agents, terminals, and files
 refuse to work there. Tell the user before restarting, and plan to register or clone those
 projects again on the runner (step 6). Apply the change by draining and restarting the node as in
@@ -177,7 +186,8 @@ image with the folder mounted at the same path; Git, terminals, and previews use
 
 ## More runners, rotation, and removal
 
-Add more runners with their own IDs and tokens and choose one per project with `runnerId`. Upgrade
+Add more runners with their own IDs and tokens and choose one per project with `runnerId`. A
+runner may run a different operating system from the node. Upgrade
 runners with the node, keeping one release across both. To rotate a token, write a new one to both
 the node's `happy.toml` and the runner's token file, then restart both. To remove a runner, delete
 its entry and restart the node: the node refuses its token and tells it to stop everything it held.

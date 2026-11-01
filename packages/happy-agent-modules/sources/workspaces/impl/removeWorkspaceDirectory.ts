@@ -1,4 +1,4 @@
-import { basename, dirname } from "node:path";
+import type { PlatformPath } from "node:path";
 
 import { computePermissions, type Compute } from "@slopus/happy-agent-compute";
 
@@ -23,6 +23,8 @@ export async function removeWorkspaceDirectory(options: {
     git: GitModule;
     /** The machine the workspace's folder is on. */
     machine: Compute;
+    /** That machine's path rules. */
+    paths: PlatformPath;
     keepCopiesOnArchive: boolean;
     keepWorktreesOnArchive: boolean;
     project: Project;
@@ -30,6 +32,7 @@ export async function removeWorkspaceDirectory(options: {
     workspace: Workspace;
 }): Promise<void> {
     const { machine, project, workspace } = options;
+    const { basename, dirname } = options.paths;
     if (
         !VALID_STORAGE_KEY.test(project.storageKey) ||
         !VALID_STORAGE_KEY.test(workspace.storageKey)

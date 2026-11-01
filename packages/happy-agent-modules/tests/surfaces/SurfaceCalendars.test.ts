@@ -46,7 +46,7 @@ async function fixture() {
             shouldReviewPath: vi.fn(async () => false),
         } as unknown as ComputeModule,
         {} as ConfigModule,
-        { enabled: false } as RunnersModule,
+        { localExecution: true } as RunnersModule,
     );
     const db = moduleDatabase([...durable.migrations, ...surfaces.migrations], "calendar-test");
     ensureAgentDatabaseConnection(db.database);

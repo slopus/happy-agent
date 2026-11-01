@@ -4620,14 +4620,14 @@ export class ApiModule implements AgentModule {
                     "A Surface chat workspace already has its one permanent agent.",
                 );
             }
-            const baseEnvironment = currentAgentEnvironment();
             const now = Date.now();
             const config: AgentConfig = {
                 provenance: { createdAt: now },
-                environment: {
-                    ...baseEnvironment,
-                    workingDirectory: ownership.root,
-                },
+                // An agent on a runner is told about the runner's machine, not this one.
+                environment:
+                    this.#runners === undefined
+                        ? { ...currentAgentEnvironment(), workingDirectory: ownership.root }
+                        : this.#runners.environment(ownership.runnerId, ownership.root),
                 metadata: {
                     ...(body.title === undefined ? {} : { title: body.title }),
                     updatedAt: now,

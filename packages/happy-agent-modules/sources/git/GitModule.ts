@@ -443,6 +443,7 @@ export class GitModule implements AgentModule {
             const cloneCtx = this.#root().named("runner-git-clone");
             await cloneOnRunner(
                 machine,
+                runners.paths(runnerId),
                 async (run) => await runners.run(cloneCtx, runnerId, run),
                 {
                     destination: options.destination,
@@ -886,6 +887,11 @@ export class GitModule implements AgentModule {
         const target = {
             run: async (options: RunnerRunOptions) =>
                 await runners.run(this.#root().named("runner-git"), runnerId, options),
+            // Read when Git runs, so a runner that first reports its platform later is still
+            // compared by its own rules.
+            get paths() {
+                return runners.paths(runnerId);
+            },
         };
         const scan = runnerScanGit(target, () => this.#config?.gitCeilingDirectories);
         const plain = runnerGitCommandRunner(target);

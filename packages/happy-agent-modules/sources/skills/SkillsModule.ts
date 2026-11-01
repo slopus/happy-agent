@@ -1,4 +1,4 @@
-import { basename, dirname, isAbsolute, join } from "node:path";
+import type { PlatformPath } from "node:path";
 
 import { createId } from "@paralleldrive/cuid2";
 import {
@@ -361,8 +361,10 @@ export class SkillsModule implements AgentModule {
         if (existing !== undefined) {
             return await ctx.span("skills.discovery.wait", () => existing);
         }
+        // The agent's folder may be on a runner whose paths follow another platform's rules.
+        const paths = this.#compute.paths(ctx);
         const pending = ctx.span("skills.discover", () =>
-            discoverSkills(compute, permissions, unavailable, configured),
+            discoverSkills(compute, paths, permissions, unavailable, configured),
         );
         if (this.#sharedScanCount >= MAX_SHARED_SKILL_SCANS) return await pending;
         const scans =
@@ -547,6 +549,7 @@ interface ConfiguredSkillRoots {
 
 async function discoverSkills(
     compute: HostCompute,
+    paths: PlatformPath,
     permissions: ComputePermissions,
     unavailable: ReadonlySet<string>,
     configured: ConfiguredSkillRoots | undefined,
@@ -554,11 +557,11 @@ async function discoverSkills(
     const byName = new Map<string, SkillEntry>();
     const budget: DiscoveryBudget = { entries: 0, files: 0 };
     assertValue(discoveryBudgetSchema, budget, "Skill discovery budget");
-    for (const root of await filesystemSkillRoots(compute, permissions, configured)) {
+    for (const root of await filesystemSkillRoots(compute, paths, permissions, configured)) {
         if (byName.size >= MAX_SKILL_COUNT || budget.entries >= MAX_SKILL_DISCOVERY_ENTRIES) {
             break;
         }
-        await discoverSkillRoot(compute, permissions, root, byName, budget, unavailable);
+        await discoverSkillRoot(compute, paths, permissions, root, byName, budget, unavailable);
     }
     return [...byName.values()].sort((left, right) => left.name.localeCompare(right.name));
 }
@@ -588,6 +591,7 @@ function skillSourcePriority(source: string): number {
 
 async function discoverSkillRoot(
     compute: HostCompute,
+    machinePaths: PlatformPath,
     permissions: ComputePermissions,
     root: DiscoveredRoot,
     byName: Map<string, SkillEntry>,
@@ -642,7 +646,7 @@ async function discoverSkillRoot(
                         !name.startsWith(".") && name !== "node_modules" && isPlainEntryName(name),
                 )
                 .slice(0, MAX_SKILL_DISCOVERY_ENTRIES - budget.entries);
-            const paths = names.map((name) => join(directory, name));
+            const paths = names.map((name) => machinePaths.join(directory, name));
             // The backend owns bounded parallelism and per-path permission checks. If a backend
             // cannot complete its batch, retain the existing best-effort individual read behavior.
             const stats = await compute.fs.lstatMany(permissions, paths).catch(() => undefined);
@@ -679,7 +683,13 @@ async function discoverSkillRoot(
                     if (root.source === "user" && unavailable.has(path)) continue;
                     budget.files += 1;
                     if (budget.files > MAX_SKILL_FILES_INSPECTED) return;
-                    const entry = await readSkillEntry(compute, permissions, path, root.source);
+                    const entry = await readSkillEntry(
+                        compute,
+                        machinePaths,
+                        permissions,
+                        path,
+                        root.source,
+                    );
                     if (entry !== undefined) addSkillEntry(byName, entry);
                 } catch {
                     // One invalid, unreadable, or concurrently removed skill does not hide others.
@@ -723,6 +733,7 @@ function isPlainEntryName(name: string): boolean {
 
 async function readSkillEntry(
     compute: HostCompute,
+    paths: PlatformPath,
     permissions: ComputePermissions,
     location: string,
     source: string,
@@ -735,7 +746,7 @@ async function readSkillEntry(
         if (bytes.byteLength > MAX_SKILL_DOCUMENT_BYTES) return undefined;
         const metadata = parseSkillFrontmatter(
             new TextDecoder().decode(bytes),
-            basename(dirname(location)),
+            paths.basename(paths.dirname(location)),
         );
         const entry = {
             description: metadata.description,
@@ -752,9 +763,11 @@ async function readSkillEntry(
 
 async function filesystemSkillRoots(
     compute: HostCompute,
+    paths: PlatformPath,
     permissions: ComputePermissions,
     configured: ConfiguredSkillRoots | undefined,
 ): Promise<readonly DiscoveredRoot[]> {
+    const { dirname, join } = paths;
     const ancestors: string[] = [];
     let current = compute.cwd;
     while (true) {
@@ -791,12 +804,16 @@ async function filesystemSkillRoots(
     if (configured !== undefined) {
         const directories = await projectSkillDirectories(
             compute,
+            paths,
             permissions,
             projectRoot,
             configured,
         );
         for (const directory of directories) {
-            const root = { path: resolveAgainst(projectRoot, directory), source: "project" };
+            const root = {
+                path: resolveAgainst(paths, projectRoot, directory),
+                source: "project",
+            };
             if (Value.Check(discoveredRootSchema, root)) roots.push(root);
         }
     }
@@ -827,6 +844,7 @@ async function filesystemSkillRoots(
  */
 async function projectSkillDirectories(
     compute: HostCompute,
+    paths: PlatformPath,
     permissions: ComputePermissions,
     projectRoot: string,
     configured: ConfiguredSkillRoots,
@@ -834,7 +852,7 @@ async function projectSkillDirectories(
     try {
         const bytes = await compute.fs.readFileBuffer(
             permissions,
-            join(projectRoot, "happy.toml"),
+            paths.join(projectRoot, "happy.toml"),
             {
                 maxBytes: MAX_PROJECT_CONFIG_BYTES,
                 noFollow: true,
@@ -847,8 +865,8 @@ async function projectSkillDirectories(
     }
 }
 
-function resolveAgainst(base: string, directory: string): string {
-    return isAbsolute(directory) ? directory : join(base, directory);
+function resolveAgainst(paths: PlatformPath, base: string, directory: string): string {
+    return paths.isAbsolute(directory) ? directory : paths.join(base, directory);
 }
 
 function fitListPage(

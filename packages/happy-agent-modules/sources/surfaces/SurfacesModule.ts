@@ -2,7 +2,6 @@ import { createId } from "@paralleldrive/cuid2";
 import {
     agentDatabase,
     cuid2Schema,
-    currentAgentEnvironment,
     type AgentKV,
     type AgentModule,
     type AgentModuleHooks,
@@ -441,7 +440,7 @@ export class SurfacesModule implements AgentModule {
                 throw new SurfaceError("conflict", "This kind of Surface has no chat.");
             if (surface.chatAgentId != null) return this.#present(tx, surface);
             if ((await this.#kv.read(tx, `chat.${id}`)) === undefined) {
-                const runnerId = this.runners.enabled ? this.runners.defaultRunnerId : undefined;
+                const runnerId = this.runners.defaultRunnerId;
                 const chat: SurfaceChat = {
                     surfaceId: id,
                     agentId: createId(),
@@ -1169,7 +1168,7 @@ export class SurfacesModule implements AgentModule {
                 tx,
                 {
                     provenance: { createdAt: now },
-                    environment: { ...currentAgentEnvironment(), workingDirectory: chat.path },
+                    environment: this.runners.environment(chat.runnerId, chat.path),
                     metadata: { title: current.name, updatedAt: now, version: 1 },
                     modules: {
                         compute: {

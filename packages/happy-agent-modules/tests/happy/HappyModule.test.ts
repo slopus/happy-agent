@@ -3,7 +3,11 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import type { AgentConfig, AgentPermissionMode } from "@slopus/happy-agent-base";
-import { ensureAgentDatabaseConnection, inTx } from "@slopus/happy-agent-base";
+import {
+    currentAgentEnvironment,
+    ensureAgentDatabaseConnection,
+    inTx,
+} from "@slopus/happy-agent-base";
 import type { Context } from "@steve.kite/stdlib";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -61,6 +65,13 @@ const SELECTION = {
 
 /** Catalogs only Happy links are named from; these tests never mention anything. */
 const referenceArtifacts = { get: async () => undefined };
+/** Every folder here is on this machine, so agents are told about this machine. */
+const testRunners = {
+    environment: (_runnerId: string | undefined, workingDirectory: string) => ({
+        ...currentAgentEnvironment(),
+        workingDirectory,
+    }),
+};
 const referenceSurfaces = { get: async () => undefined };
 const referenceTasks = {
     forAgent: async () => undefined,
@@ -430,6 +441,7 @@ async function fixture() {
                     : undefined,
         } as never,
         referenceSurfaces as never,
+        testRunners as never,
     );
     modules.push(module);
     module.beforeStart(database.context, agents as never);
@@ -1379,6 +1391,7 @@ describe("archiving a Happy session", () => {
             referenceArtifacts as never,
             referenceTasks as never,
             referenceSurfaces as never,
+            testRunners as never,
         );
         modules.push(module);
         const hooks = module.beforeStart(database.context, agents as never);
@@ -1624,6 +1637,7 @@ describe("archiving a Happy session", () => {
             referenceArtifacts as never,
             referenceTasks as never,
             referenceSurfaces as never,
+            testRunners as never,
         );
         modules.push(module);
 

@@ -6,8 +6,10 @@ provider credentials, and inference. The protocol between them lives in
 `@slopus/happy-agent-compute` (`sources/runner/README.md`); this module is the daemon's side of it.
 
 `[runners.<id>]` in machine `happy.toml` lists each runner with a name and a fixed token, and
-`[runners] default` picks the one new folders go to. The configuration module validates the
-entries; this module only reads them. There is no join step: whoever deploys a node writes the
+`[runners] default` picks the one new folders go to. `default = "local"` keeps this machine the
+default instead: folders that name no runner stay here, and only folders created with a `runnerId`
+go to a runner. `local` is reserved and cannot name a runner. The configuration module validates
+the entries; this module only reads them. There is no join step: whoever deploys a node writes the
 same token to the node and to the runner.
 
 A runner dials `GET /v0/runners/connect` with its token. The API asks `authenticate` which runner
@@ -23,17 +25,35 @@ known before it reconnects.
 
 Other modules ask this one where work runs:
 
-- `enabled` — once any runner is configured nothing runs on this machine, and
-  `assertLocalExecution()` refuses with `409 local_execution_disabled`.
-- `place(runnerId?)` — the runner a new folder goes to: the one named, or the default.
+- `localExecution` — false once a runner is the default: nothing runs on this machine then, and
+  `assertLocalExecution()` refuses with `409 local_execution_disabled`. It stays true with no
+  runners, or with runners and `default = "local"`.
+- `defaultRunnerId` / `place(runnerId?)` — the runner a new folder goes to: the one named, the
+  default runner, or none, which means this machine.
 - `machine(runnerId?)` — the machine Happy's own work on a folder runs on: this machine when no
-  runner is named (refused once runners are configured), or the runner's product machine. Folder
+  runner is named (refused while a runner is the default), or the runner's product machine. Folder
   management, setup commands, Git, terminals, file reads and watches, the workspace proxy, and
   MCP stdio servers are each written once against this compute, whichever machine it is. A
   runner's machine is created once and kept.
 - `run(ctx, runnerId, options)` — one bounded program on that machine, for Git and copying.
 - `agentMachine(ctx, …)` — one agent's machine in its workspace folder, optionally in a Docker
   container on the runner. Agent commands never run on the product machine.
+
+## Runners on other operating systems
+
+A runner may run macOS, Linux, or Windows whatever the daemon runs. `platform(runnerId?)` is the
+platform the runner last reported, and `paths(runnerId?)` the matching `node:path` rules —
+`path.win32` for a Windows runner, `path.posix` otherwise. Every path on a runner is joined, split,
+and compared with these, never with the daemon's own `node:path`, and folders are laid out the way
+that platform lays out a local installation (`Happy\Projects`, `happy\workspaces`, and so on on
+Windows). `environment(runnerId, cwd)` is the `AgentEnvironment` an agent in such a folder is given:
+the runner's platform, so its system prompt carries that platform's guidance — PowerShell for
+Windows — rather than the daemon's.
+
+Runners speaking protocol 3 also report their operating system release and shell in `ready`. The
+daemon will store and use them once it depends on a compute release that carries them; until then
+the environment names the platform (`Windows`, `macOS`, `Linux`) and leaves the shell to the
+platform's guidance.
 
 Work on a runner that is not connected, or no longer configured, fails with
 `RunnerUnavailableError`, which the API reports as `503 runner_unavailable`. Nothing falls back to

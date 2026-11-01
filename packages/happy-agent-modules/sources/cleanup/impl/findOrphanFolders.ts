@@ -1,5 +1,3 @@
-import { dirname, join, resolve, sep } from "node:path";
-
 import { computePermissions } from "@slopus/happy-agent-compute";
 
 import type { ConfigModule } from "../../config/index.js";
@@ -22,8 +20,8 @@ interface Root {
 
 /**
  * The folders under this machine's Happy bot, task, workspace, and managed-project roots, and the
- * default runner's while runners are configured, that no record names and that hold no folder a
- * record names. A folder that holds a known one is looked into rather than reported, so a
+ * default runner's while one is the default, that no record names and that hold no folder a
+ * record names. Each machine's folders are compared by its own path rules. A folder that holds a known one is looked into rather than reported, so a
  * project's workspace folder is reported on its own when the workspace is gone, and the project's
  * folder only when nothing in it is known. Surface folders belong to Surfaces and are not looked
  * through.
@@ -33,20 +31,22 @@ export async function findOrphanFolders(
     runners: RunnersModule,
     knownFolders: Iterable<string>,
 ): Promise<CleanupOrphanFolders> {
-    const known = new Set([...knownFolders].map((folder) => resolve(folder)));
-    const holdsKnown = (folder: string): boolean => {
-        const prefix = folder.endsWith(sep) ? folder : `${folder}${sep}`;
-        for (const path of known) if (path.startsWith(prefix)) return true;
-        return false;
-    };
+    const folders = [...knownFolders];
     const machines: (string | undefined)[] = [undefined];
-    if (runners.enabled && runners.defaultRunnerId !== undefined) {
+    if (runners.defaultRunnerId !== undefined) {
         machines.push(runners.defaultRunnerId);
     }
     const orphans: CleanupOrphanFolder[] = [];
     const looked: CleanupOrphanFolders["roots"][number][] = [];
     let truncated = false;
     for (const runnerId of machines) {
+        const { join, resolve, sep } = runners.paths(runnerId);
+        const known = new Set(folders.map((folder) => resolve(folder)));
+        const holdsKnown = (folder: string): boolean => {
+            const prefix = folder.endsWith(sep) ? folder : `${folder}${sep}`;
+            for (const path of known) if (path.startsWith(prefix)) return true;
+            return false;
+        };
         let roots: readonly Root[];
         try {
             roots = rootsOn(config, runners, runnerId);
@@ -98,6 +98,7 @@ function rootsOn(
 ): readonly Root[] {
     const home = runners.machineHome(runnerId);
     const on = runnerId === undefined ? {} : { runnerId };
+    const { dirname } = runners.paths(runnerId);
     if (home === undefined) {
         return [
             { root: "bots", folder: config.botsHome },
@@ -114,7 +115,7 @@ function rootsOn(
             ...on,
         },
         { root: "workspaces", folder: config.workspacesHomeOn(home.home, home.platform), ...on },
-        { root: "projects", folder: config.projectsHomeOn(home.home), ...on },
+        { root: "projects", folder: config.projectsHomeOn(home.home, home.platform), ...on },
     ];
 }
 

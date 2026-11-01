@@ -1,5 +1,3 @@
-import { resolve } from "node:path";
-
 import { sql } from "drizzle-orm";
 import {
     agentDatabaseRun,
@@ -229,7 +227,11 @@ export class McpModule implements AgentModule {
         this.#maxPageSize = options.maxPageSize ?? DEFAULT_PAGE_SIZE;
         this.#maxOutputCharacters = options.maxOutputCharacters ?? DEFAULT_OUTPUT_CHARACTERS;
         this.#unsubscribeWorkspaceEvents = workspaces.onEvent(async (ctx, event) => {
-            const workspace = workspaceKey(event.workspace.runnerId, event.workspace.path);
+            const workspace = workspaceKey(
+                this.#runners,
+                event.workspace.runnerId,
+                event.workspace.path,
+            );
             if (event.type === "workspace_created") {
                 await this.#markWorkspaceActive(ctx, workspace);
                 return;
@@ -1170,7 +1172,7 @@ export class McpModule implements AgentModule {
         const runnerId = config === undefined ? undefined : this.#compute.runnerOf(config);
         await this.#reloadLock.runInLock(ctx, async () => {
             if (this.#closed) return;
-            const normalized = workspaceKey(runnerId, workspace);
+            const normalized = workspaceKey(this.#runners, runnerId, workspace);
             if (this.#archivedWorkspaces.has(normalized)) return;
             const previous = this.#agentWorkspaces.get(agentId);
             const catalogId = workspaceCatalog(normalized);
@@ -1493,7 +1495,7 @@ export class McpModule implements AgentModule {
     /** The runner a catalog's stdio servers start on, or undefined for this machine. */
     #catalogRunner(catalogId: string): string | undefined {
         if (catalogId === GLOBAL_CATALOG) {
-            return this.#runners.enabled ? this.#runners.defaultRunnerId : undefined;
+            return this.#runners.defaultRunnerId;
         }
         return parseWorkspaceKey(catalogId.slice(WORKSPACE_CATALOG_PREFIX.length)).runnerId;
     }
@@ -1785,12 +1787,12 @@ function userInputAnswerStrings(answer: unknown): string[] {
 const WORKSPACE_CATALOG_PREFIX = "workspace:";
 
 /**
- * One workspace folder: its path on this machine, or its runner and its path there. The same path
- * on two machines is two folders.
+ * One workspace folder: its path on this machine, or its runner and its path there, each resolved
+ * by its own machine's path rules. The same path on two machines is two folders.
  */
-function workspaceKey(runnerId: string | undefined, path: string): string {
+function workspaceKey(runners: RunnersModule, runnerId: string | undefined, path: string): string {
     if (path.length === 0 || path.length > 4_096) throw new Error("Workspace path is invalid.");
-    const resolved = resolve(path);
+    const resolved = runners.paths(runnerId).resolve(path);
     return runnerId === undefined ? resolved : `runner:${runnerId}:${resolved}`;
 }
 

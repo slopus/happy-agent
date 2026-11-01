@@ -1,6 +1,6 @@
 import { execFile as execFileCallback } from "node:child_process";
 import { lstat, mkdir, mkdtemp, rename, rm } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve, type PlatformPath } from "node:path";
 import { promisify } from "node:util";
 
 import { directGitCommandRunner } from "./runGitCommand.js";
@@ -175,12 +175,15 @@ function cloneEnvironment(): NodeJS.ProcessEnv {
     return environment;
 }
 
-export function validateDestination(destination: string): string {
+export function validateDestination(
+    destination: string,
+    paths: Pick<PlatformPath, "isAbsolute" | "resolve"> = { isAbsolute, resolve },
+): string {
     if (
         destination.length === 0 ||
         destination.includes("\0") ||
-        !isAbsolute(destination) ||
-        resolve(destination) !== destination
+        !paths.isAbsolute(destination) ||
+        paths.resolve(destination) !== destination
     ) {
         throw new Error("The clone destination must be an absolute, normalized path.");
     }

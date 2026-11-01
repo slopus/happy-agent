@@ -1,6 +1,6 @@
 import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, posix, win32 } from "node:path";
 
 import { ensureAgentDatabaseConnection } from "@slopus/happy-agent-base";
 import { runnerListResponseSchema, type RunnerListResponse } from "@slopus/happy-agent-client";
@@ -94,10 +94,71 @@ describe("runners", () => {
 
     it("runs everything on this machine when no runner is configured", async () => {
         const { module } = await fixture({});
-        expect(module.enabled).toBe(false);
+        expect(module.localExecution).toBe(true);
         expect(module.place(undefined)).toEqual({});
         expect(() => module.assertLocalExecution()).not.toThrow();
         expect((await module.getSnapshot((await fixture({})).ctx)).runners).toEqual([]);
+    });
+
+    it("keeps this machine as the default while runners are configured for named folders", async () => {
+        const { module } = await fixture({ "build-box": { name: "Build box", token: TOKEN } });
+        expect(module.localExecution).toBe(true);
+        expect(module.defaultRunnerId).toBeUndefined();
+        expect(module.place(undefined)).toEqual({});
+        expect(module.place("build-box")).toEqual({ runnerId: "build-box" });
+        expect(() => module.assertLocalExecution()).not.toThrow();
+    });
+
+    it("names and describes folders on a runner by the platform it reports", async () => {
+        const { module, root } = await fixture(
+            {
+                "windows-box": { name: "Windows box", token: TOKEN },
+                "mac-box": { name: "Mac box", token: OTHER_TOKEN },
+            },
+            "windows-box",
+        );
+        const connect = async (id: string, platform: string, home: string) => {
+            const host = new RunnerHost({
+                ctx: root.named(`test-runner-${id}`),
+                identity: { version: "9.9.9", platform, arch: "arm64", hostname: id, home },
+                createCompute: async (computeCtx, request) =>
+                    createHostCompute({ ctx: computeCtx, cwd: request.cwd }),
+            });
+            cleanups.push(async () => await host.dispose(root.named(`test-runner-${id}-dispose`)));
+            const connected = waitForUpdate(module, (snapshot) =>
+                snapshot.runners.some(
+                    (runner) => runner.id === id && runner.status === "connected",
+                ),
+            );
+            const [daemonSide, runnerSide] = createRunnerChannelPair();
+            void module.accept(id, daemonSide);
+            void host.serve(runnerSide);
+            cleanups.push(() => runnerSide.close("The test is over."));
+            await connected;
+        };
+        await connect("windows-box", "win32", "C:\\Users\\runner");
+        await connect("mac-box", "darwin", "/Users/runner");
+
+        expect(module.platform("windows-box")).toBe("win32");
+        expect(module.paths("windows-box")).toBe(win32);
+        expect(module.paths("mac-box")).toBe(posix);
+        expect(
+            module.paths("windows-box").join(module.home("windows-box")!, "Happy", "Projects"),
+        ).toBe("C:\\Users\\runner\\Happy\\Projects");
+        expect(module.environment("windows-box", "C:\\Users\\runner\\rig")).toEqual({
+            osVersion: "Windows",
+            platform: "win32",
+            shell: "",
+            workingDirectory: "C:\\Users\\runner\\rig",
+        });
+        expect(module.environment("mac-box", "/Users/runner/rig")).toMatchObject({
+            osVersion: "macOS",
+            platform: "darwin",
+        });
+        expect(module.environment(undefined, "/srv/rig")).toMatchObject({
+            platform: process.platform,
+            workingDirectory: "/srv/rig",
+        });
     });
 
     it("reports a runner's connection and machine, and keeps the machine across a drop", async () => {

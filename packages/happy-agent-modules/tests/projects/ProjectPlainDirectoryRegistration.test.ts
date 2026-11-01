@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import path, { join } from "node:path";
 
 import { createId } from "@paralleldrive/cuid2";
 import { createHostCompute } from "@slopus/happy-agent-compute";
@@ -182,7 +182,7 @@ describe("plain-directory project registration", () => {
         await writeFile(join(folder, ".git"), "invalid Git metadata\n", "utf8");
         const machine = createHostCompute({ ctx: createRootContext(), cwd: root });
         try {
-            await expect(validateRegistrationPath(machine, folder)).resolves.toBe(
+            await expect(validateRegistrationPath(machine, path, folder)).resolves.toBe(
                 await realpath(folder),
             );
         } finally {

@@ -1,10 +1,8 @@
 import { AsyncResource } from "node:async_hooks";
-import { basename } from "node:path";
 
 import { createId } from "@paralleldrive/cuid2";
 import {
     cuid2Schema,
-    currentAgentEnvironment,
     type AgentBaseAcceptedMessage,
     type AgentConfig,
     type AgentKV,
@@ -665,17 +663,14 @@ export class TasksModule implements AgentModule {
                 input.name ?? "task",
                 input.folderName,
             );
-            // A task's folder goes where a bot's would: the default runner once runners are
-            // configured, otherwise this installation's public folder.
-            const runnerId = this.#runners.enabled ? this.#runners.defaultRunnerId : undefined;
+            // A task's folder goes where a bot's would: the default runner, or this
+            // installation's public folder while this machine is the default.
+            const runnerId = this.#runners.defaultRunnerId;
             const path = this.#taskPath(runnerId, folderName);
             const now = Date.now();
             const config: AgentConfig = {
                 provenance: { createdAt: now },
-                environment: {
-                    ...currentAgentEnvironment(),
-                    workingDirectory: path,
-                },
+                environment: this.#runners.environment(runnerId, path),
                 // A task's conversation is the task, so it is called what the task is called
                 // and chat naming never writes over it; an unnamed task names both itself.
                 metadata: {
@@ -869,7 +864,7 @@ export class TasksModule implements AgentModule {
         if (task.status !== "archived") {
             throw new TaskConflictError("Only an archived task can be deleted.");
         }
-        if (basename(task.path) !== task.folderName) {
+        if (this.#runners.paths(task.runnerId).basename(task.path) !== task.folderName) {
             throw new TaskConflictError("The task's folder does not match its folder name.");
         }
         const machine = await this.#runners.machine(task.runnerId);

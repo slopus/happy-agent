@@ -1,4 +1,4 @@
-import { basename, extname, join } from "node:path";
+import { basename, extname, type PlatformPath } from "node:path";
 
 import {
     computePermissions,
@@ -37,13 +37,14 @@ interface DirectoryEntry {
 /** A directory's entries with what each one is, read on the machine the folder is on. */
 async function readEntries(
     machine: Compute,
+    paths: PlatformPath,
     directory: string,
 ): Promise<readonly DirectoryEntry[]> {
     const names = await machine.fs.readdir(PRODUCT, directory);
     const bounded = names.slice(0, DISCOVERY_ENTRY_BUDGET);
     const stats = await machine.fs.lstatMany(
         PRODUCT,
-        bounded.map((name) => join(directory, name)),
+        bounded.map((name) => paths.join(directory, name)),
     );
     return bounded.map((name, index) => ({ name, stat: stats[index] }));
 }
@@ -57,8 +58,10 @@ async function readEntries(
  */
 export async function findRepositoryAvatar(
     machine: Compute,
+    paths: PlatformPath,
     root: string,
 ): Promise<Buffer | undefined> {
+    const { join } = paths;
     const deadline = Date.now() + DISCOVERY_BUDGET_MS;
     const candidates: { path: string; score: number }[] = [];
     const directories = [
@@ -73,7 +76,7 @@ export async function findRepositoryAvatar(
         if (inspected >= DISCOVERY_ENTRY_BUDGET || Date.now() >= deadline) break;
         let entries;
         try {
-            entries = await readEntries(machine, directory);
+            entries = await readEntries(machine, paths, directory);
         } catch {
             continue;
         }
@@ -90,7 +93,7 @@ export async function findRepositoryAvatar(
             if (entry.stat.isDirectory && directory === join(root, "src")) {
                 let children;
                 try {
-                    children = await readEntries(machine, join(directory, entry.name));
+                    children = await readEntries(machine, paths, join(directory, entry.name));
                 } catch {
                     continue;
                 }

@@ -28,8 +28,13 @@ async function fixture(runner: Partial<RunnersModule>) {
     const mkdir = vi.fn(async () => await folderReady);
     const created = vi.fn(async (..._args: unknown[]) => ({}));
     const runners = {
-        enabled: false,
         machineHome: () => ({ home: "/home/person", platform: "linux" }),
+        environment: (_runnerId: string | undefined, workingDirectory: string) => ({
+            osVersion: "Linux",
+            platform: "linux",
+            shell: "",
+            workingDirectory,
+        }),
         machine: async () => ({ fs: { mkdir } }),
         ...runner,
     } as unknown as RunnersModule;
@@ -108,7 +113,6 @@ describe("Surface chat preparation", () => {
 
     it("reports a runner that never connected as not ready and reserves nothing", async () => {
         const f = await fixture({
-            enabled: true,
             defaultRunnerId: "studio",
             home: () => undefined,
             displayName: () => "Studio",
