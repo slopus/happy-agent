@@ -9,6 +9,10 @@ This uses Undici's multipart parser on both runtimes so binary parts preserve th
 types before Stories validates the media. Keep the gym cases with extensionless gallery names
 and mismatched content types on both Bun and Node.
 
+Chromium recordings include codec parameters in their MP4 part types. The multipart boundary
+now compares each file's base media type case-insensitively, ignoring parameters; media and
+round bytes must still pass the existing decoder or H.264 sample-entry check.
+
 ## Media identity comes from its contents
 
 The image subtype previously became the snapshot extension, rejecting valid images under an

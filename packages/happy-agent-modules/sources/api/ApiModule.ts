@@ -10545,11 +10545,12 @@ async function readStoryUpload(request: IncomingMessage, original: boolean) {
         if (file instanceof Blob && file.size > cap)
             throw new ApiError(413, "too_large", "The story file is too large.");
     }
-    if (round instanceof Blob && round.type !== "video/mp4")
+    const mediaType = (file: Blob) => file.type.replace(/;.*/su, "").trim().toLowerCase();
+    if (round instanceof Blob && mediaType(round) !== "video/mp4")
         throw invalidRequest("A round must be an H.264 MP4 video.");
     return {
         metadata,
-        media: media instanceof Blob ? media : undefined,
+        media: media instanceof Blob ? media.slice(0, media.size, mediaType(media)) : undefined,
         round: round instanceof Blob ? new Uint8Array(await round.arrayBuffer()) : undefined,
     };
 }

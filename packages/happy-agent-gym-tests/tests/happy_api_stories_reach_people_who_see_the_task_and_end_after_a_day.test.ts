@@ -326,6 +326,28 @@ describe("stories", () => {
 });
 
 describe("story replies, reposts, and deletes", () => {
+    it("accepts codec parameters on recorded media and round parts", async () => {
+        const { gym, alice, api } = await harness();
+        await alice.saveUserSetting("stories", { value: true });
+        const form = new FormData();
+        for (const name of ["media", "round"])
+            form.set(
+                name,
+                new Blob([CLIP], { type: "Video/MP4; codecs=avc1,mp4a.40.2" }),
+                "recording",
+            );
+        const response = await api("alice", "POST", "/v0/stories", form);
+        expect(response.status, response.body.toString()).toBe(200);
+        const { story } = JSON.parse(response.body.toString());
+        expect(story.media.mimeType).toBe("video/mp4");
+        expect(story.round.mimeType).toBe("video/mp4");
+        for (const part of ["media", "round"])
+            expect(
+                (await api("alice", "GET", `/v0/stories/${story.id}/${part}`)).body.equals(CLIP),
+            ).toBe(true);
+        expect(gym.errors).toEqual([]);
+    });
+
     it("sniffs an uploaded image independently of its image subtype", async () => {
         const { gym, alice, api, feed } = await harness();
         await alice.saveUserSetting("stories", { value: true });
