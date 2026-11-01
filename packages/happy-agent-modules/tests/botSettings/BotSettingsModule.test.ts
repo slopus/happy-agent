@@ -283,6 +283,7 @@ describe("BotSettingsModule", () => {
                     'Secrets: only "deploy-token".',
                     "Reach: only the bot's own agents.",
                     'Compute: a Docker container of "node:22" with only each agent\'s folder mounted.',
+                    "Stories: off.",
                 ].join("\n"),
             );
         } finally {

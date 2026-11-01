@@ -36,6 +36,16 @@ it("creates without a name, names from the first user message, and preserves man
         agent: { title: "New Bot", canSendMessages: true },
     });
     expect(created).not.toHaveProperty("nameConfigured");
+    const configured = (
+        await gym.client.renameBot(created.id, { stories: true } as never, {
+            ifMatch: created.version,
+        })
+    ).bot;
+    expect(configured).toMatchObject({
+        name: "New Bot",
+        agent: { title: "New Bot" },
+        stories: true,
+    });
     if (created.compute.type !== "host") throw new Error("Expected a local bot folder.");
     expect((await stat(created.compute.path)).isDirectory()).toBe(true);
     await expect(gym.client.getWorkspace(created.workspaceId)).resolves.toMatchObject({
@@ -65,12 +75,15 @@ it("creates without a name, names from the first user message, and preserves man
     expect(naming[0]?.tools).toEqual([]);
     expect(JSON.stringify(naming[0]?.messages)).toContain("flag regressions");
 
-    await gym.client.renameBot(named.id, { name: "Scout" }, { ifMatch: named.version });
+    await gym.client.renameBot(named.id, { name: "Scout", stories: false } as never, {
+        ifMatch: named.version,
+    });
     await gym.restart();
     await gym.send("Now inspect this release.", { sessionId: created.agent.id });
     await expect(gym.client.getBot(created.id)).resolves.toMatchObject({
         bot: {
             name: "Scout",
+            stories: false,
             username: created.username,
             workspaceId: created.workspaceId,
             compute: created.compute,

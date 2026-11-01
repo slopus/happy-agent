@@ -1,5 +1,12 @@
 # Bot settings — learnings
 
+## Stories is an opt-in bot setting
+
+Each bot's Stories switch defaults off and lives in these settings, rather than depending on
+the last sender's personal preference. The bot's own agent checks it once when tools are
+assembled. Personal Stories settings still decide who can see the bot's stories. Bot PATCH
+uses the same edit authority as rename and publishes the normal versioned bot update.
+
 ## Settings live in a leaf module keyed by the bot's agent
 
 Secrets, compute, history, collaboration, projects, workspaces, tasks, subtasks, and scheduling all

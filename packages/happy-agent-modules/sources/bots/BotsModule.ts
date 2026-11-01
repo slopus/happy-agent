@@ -632,13 +632,26 @@ export class BotsModule implements AgentModule {
     async rename(
         ctx: Context,
         botId: string,
-        name: string,
+        name: string | undefined,
         expectedVersion: number,
+        stories?: boolean,
     ): Promise<BotRecord> {
         return await ctx.inTx(async (txCtx) => {
             const current = await this.#required(txCtx, botId);
             this.#assertVersion(current, expectedVersion);
-            return await this.#rename(txCtx, current, name);
+            let changed = false;
+            if (stories !== undefined) {
+                const settings = this.#requireBotSettings();
+                changed = (
+                    await settings.write(txCtx, current.agentId, {
+                        ...(await settings.read(txCtx, current.agentId)),
+                        stories,
+                    })
+                ).changed;
+            }
+            if (name !== undefined && (name !== current.name || !current.nameConfigured))
+                return await this.#rename(txCtx, current, name);
+            return changed ? await this.#change(txCtx, current, (bot) => bot) : current;
         });
     }
 
@@ -921,6 +934,7 @@ export class BotsModule implements AgentModule {
         settings: BotSettings,
     ): Promise<BotSettingsChange> {
         const written = await this.#requireBotSettings().write(ctx, bot.agentId, settings);
+        if (written.changed) await this.#change(ctx, bot, (current) => current);
         return { botId: bot.id, name: bot.name, ...written };
     }
 
@@ -975,6 +989,7 @@ export class BotsModule implements AgentModule {
             type: "bot_updated",
             bot: stored,
             previousBot: current,
+            stories: (await this.#botSettings?.read(ctx, current.agentId))?.stories === true,
         });
         return stored;
     }

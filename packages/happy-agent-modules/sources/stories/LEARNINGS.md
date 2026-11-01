@@ -1,5 +1,14 @@
 # Stories learnings
 
+## Task owners decide whether their agents have story tools
+
+Stories previously followed the last human sender, supported bots, and checked the setting again
+inside each tool. They now check only the task owner's setting when assembling the turn's tools;
+later messages and setting changes do not revoke tools already assembled. Each bot instead uses
+its own Stories switch, off by default, and its originals reach non-guest members with personal
+stories on while enabled. A task agent original reaches only its task owner; a person's original
+or repost reaches every non-guest team member with stories on.
+
 ## Multipart files keep their declared content type
 
 Bun 1.4.4's native multipart parser replaces file content types with filename inference. It

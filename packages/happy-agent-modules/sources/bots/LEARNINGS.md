@@ -1,5 +1,12 @@
 # Bots — learnings
 
+## The Stories switch updates the bot without renaming it
+
+Bot PATCH accepts a name, a Stories switch, or both. A stories-only edit leaves the name,
+conversation title, and automatic naming eligibility alone. The switch belongs to Bot Settings;
+its changes advance the bot version and publish the normal bot update, capturing the boolean
+inside the transaction so delayed event delivery cannot substitute a later setting.
+
 ## Managed pictures share one normalization function
 
 Bot, node, and Surface pictures use one managed-image normalization function for WebP encoding,

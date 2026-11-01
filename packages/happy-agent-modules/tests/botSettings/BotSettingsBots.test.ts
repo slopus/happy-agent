@@ -287,6 +287,21 @@ describe("bot settings through the bots catalog", () => {
             expect(update.describeAutoPermissionAction?.(toHost, ctx)).toContain(
                 'moving the bot\'s commands out of the Docker image "node:22" onto the host machine',
             );
+            const stories = { botId: worker.id, previous: DEFAULT_BOT_SETTINGS, stories: true };
+            expect(update.shouldReviewInAutoMode(stories, ctx)).toBe(true);
+            expect(update.describeAutoPermissionAction?.(stories, ctx)).toContain(
+                "enabling the bot's stories for its team",
+            );
+            expect(
+                update.shouldReviewInAutoMode(
+                    {
+                        ...stories,
+                        previous: { ...DEFAULT_BOT_SETTINGS, stories: true },
+                        stories: false,
+                    },
+                    ctx,
+                ),
+            ).toBe(false);
         } finally {
             await fixture.close();
         }

@@ -6,6 +6,8 @@ export function describeBotSettingsWidenings(
     next: BotSettings,
 ): readonly string[] {
     const widenings: string[] = [];
+    if (!previous.stories && next.stories)
+        widenings.push("enabling the bot's stories for its team");
     if (previous.allowedSecretIds !== null) {
         if (next.allowedSecretIds === null) {
             widenings.push(

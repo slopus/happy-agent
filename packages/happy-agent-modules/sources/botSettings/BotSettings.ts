@@ -43,6 +43,7 @@ export const botSettingsSchema = Type.Object(
         /** `false` confines governed agents to the bot's own agents. It never widens reach. */
         crossWorkspace: Type.Boolean(),
         compute: botComputeSettingSchema,
+        stories: Type.Optional(Type.Boolean()),
     },
     exact,
 );
@@ -53,6 +54,7 @@ export const botSettingsPatchSchema = Type.Object(
         allowedSecretIds: Type.Optional(botSettingsSchema.properties.allowedSecretIds),
         crossWorkspace: Type.Optional(Type.Boolean()),
         compute: Type.Optional(botComputeSettingSchema),
+        stories: Type.Optional(Type.Boolean()),
     },
     { ...exact, minProperties: 1 },
 );

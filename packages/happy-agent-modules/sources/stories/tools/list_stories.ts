@@ -3,7 +3,7 @@ import { Type } from "@sinclair/typebox";
 
 import type { StoriesModule } from "../StoriesModule.js";
 
-/** This task's or bot's live stories and reposts of them, with seen counts and replies. */
+/** This task's live stories and reposts of them, with seen counts and replies. */
 export function listStoriesTool(stories: StoriesModule, scope: AgentModuleScope) {
     return defineAgentTool({
         name: "list_stories",
@@ -15,8 +15,6 @@ export function listStoriesTool(stories: StoriesModule, scope: AgentModuleScope)
         returnType: Type.Unknown(),
         shouldReviewInAutoMode: () => false,
         execute: async (ctx) => {
-            if (!(await stories.canPost(ctx, scope)))
-                throw new Error("Stories are off for the person you work for.");
             return await stories.ofAgent(ctx, scope.agent.id);
         },
         toLLM: (result) => [{ type: "text", text: JSON.stringify(result) }],

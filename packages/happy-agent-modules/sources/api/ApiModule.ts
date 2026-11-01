@@ -3429,7 +3429,10 @@ export class ApiModule implements AgentModule {
             null,
         );
         if (agent === undefined) throw new Error("The bot event has no agent.");
-        const resource = botResource(event.bot, agent);
+        const resource: Record<string, unknown> = {
+            ...botResource(event.bot, agent),
+            stories: event.stories ?? false,
+        };
         const workspace = botWorkspaceResource(event.bot, agent);
         if (event.type === "bot_created") {
             this.#journal.append("bot.created", { bot: resource }, event.at);
@@ -6367,7 +6370,7 @@ export class ApiModule implements AgentModule {
                 return true;
             }
             if (request.method === "PATCH") {
-                const body = await bodyAs(request, renameBotRequestSchema, "bot rename");
+                const body = await bodyAs(request, botUpdateBodySchema, "bot update");
                 const current = await this.#requireBotMatch(ctx, request, botId);
                 const bot = await this.#botMutation(
                     ctx,
@@ -6376,7 +6379,13 @@ export class ApiModule implements AgentModule {
                         await this.#withMutationId(
                             body.mutationId,
                             async () =>
-                                await this.#bots.rename(ctx, botId, body.name, current.bot.version),
+                                await this.#bots.rename(
+                                    ctx,
+                                    botId,
+                                    body.name,
+                                    current.bot.version,
+                                    body.stories,
+                                ),
                         ),
                 );
                 sendJson(response, 200, { bot: await this.#botResource(ctx, bot) });
@@ -8437,7 +8446,10 @@ export class ApiModule implements AgentModule {
             userVisible: true,
         });
         if (agent === undefined) throw new Error("The bot has no agent.");
-        return botResource(bot, agent);
+        return {
+            ...botResource(bot, agent),
+            stories: (await this.#bots.settings(ctx, bot.id)).stories === true,
+        };
     }
 
     async #agentsForProject(
@@ -10505,6 +10517,19 @@ async function readBytes(request: IncomingMessage, maximum: number): Promise<Buf
 function storyInputError(error: unknown): never {
     throw error instanceof StoryInputError ? invalidRequest(error.message) : error;
 }
+
+const botUpdateFields = {
+    ...renameBotRequestSchema.properties,
+    stories: Type.Optional(Type.Boolean()),
+};
+const botUpdateBodySchema = Type.Union([
+    Type.Object(botUpdateFields),
+    Type.Object({
+        ...botUpdateFields,
+        name: Type.Optional(renameBotRequestSchema.properties.name),
+        stories: Type.Boolean(),
+    }),
+]);
 
 /** Bounded binary multipart upload; metadata is validated separately from the files. */
 async function readStoryUpload(request: IncomingMessage, original: boolean) {

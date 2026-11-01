@@ -22,7 +22,7 @@ const postStoryInputSchema = Type.Object(
     { additionalProperties: false },
 );
 
-/** Post one image or video story on this task's or bot's row for a day. */
+/** Post one image or video story on this conversation's row for a day. */
 export function postStoryTool(
     stories: StoriesModule,
     computeModule: ComputeModule,
@@ -33,9 +33,16 @@ export function postStoryTool(
     return defineAgentTool({
         name: "post_story",
         defer: false,
-        capabilities: ["Post an image or video story on this conversation's row for a day."],
-        description:
-            "Post a story: an image or a short H.264 .mp4 video with a few plain words, shown on this conversation's icon for 24 hours to everyone who can see it. Post when something ships or is ready to look at, such as a screenshot or a short screen recording of it working. Each call adds one story; several play in order. Don't post progress chatter.",
+        capabilities: [
+            "Post a story to this conversation's ring when you shipped something the owner can see or try, replacing your earlier story; never for progress.",
+        ],
+        description: [
+            "Post a story about something you shipped: an image or short H.264 .mp4 video at path, with an optional caption. It shows for 24 hours as a ring around this conversation's icon in the sidebar. For a task, only the owner sees it until they repost it to their team. A bot's story reaches non-guest team members with Stories on. Clicking the ring plays it.",
+            "Post only when something real shipped that the owner can see or try: a release went out, a change was merged or pushed to main, a new build is on their phone, a page is live. Never post progress, plans, test runs, rebases, or that you started or are still working. One story per thing shipped, not per step. Most turns post nothing.",
+            "Keep the ring fresh, and be aggressive about it: an old story left in the ring is noise. Every time you post, delete_story your earlier live story that the new one makes stale. At most one live story per agent. If you do not know what is live, call list_stories first.",
+            "Show, don't tell. Pick the image or video that shows the result best, final over intermediate. When nothing worth showing has been shown yet, make something first: a screenshot or short video of it working. A caption alone is not a story. Stories are watched on a phone, so prefer a sharp, vertical image: a tall crop of the part that matters reads better than a wide screenshot shrunk to fit. To show several states or steps, record one short video instead of a series of screenshots.",
+            'Write the caption for someone who is not reading the code: what changed for them, in a few plain words, such as "Your sidebar now shows Focus\'s ideas where they apply" or "New test build is on your phone". No commit hashes, versions, test counts, file or branch names, or scores like "14/14" unless the person asked for them. Never invent results.',
+        ].join("\n\n"),
         parameters: postStoryInputSchema,
         returnType: Type.Object({ id: Type.String(), expiresAt: Type.Integer() }),
         // The call's ID is the story's, so a replay posts nothing new.
@@ -45,10 +52,8 @@ export function postStoryTool(
         shouldRunInFullAccessInAutoMode: ({ path }, ctx) =>
             computeModule.shouldReviewPath(ctx, compute, path, { write: false }),
         describeAutoPermissionAction: ({ path }) =>
-            `posting ${quoteVisibleExact(path)} from this machine as a story everyone who can see this conversation sees for a day. Access: local file read (outside-workspace or symlink targets require full access)`,
+            `posting ${quoteVisibleExact(path)} from this machine as a story for a day: only the task owner until they repost it, or non-guest team members with Stories on for a bot. Access: local file read (outside-workspace or symlink targets require full access)`,
         execute: async (ctx, { path, caption }, call) => {
-            if (!(await stories.canPost(ctx, scope)))
-                throw new Error("Stories are off for the person you work for; nothing was posted.");
             const permissions = computeModule.permissionsForContext(ctx);
             const resolved = computeModule.resolvePath(compute, path);
             const name = resolved.split(/[\\/]/u).at(-1) ?? path;

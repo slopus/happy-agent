@@ -6,6 +6,7 @@ import { botRecordSchema, botTimestampSchema } from "./Bot.js";
 const envelope = {
     eventId: Type.String({ minLength: 1, maxLength: 128 }),
     at: botTimestampSchema,
+    stories: Type.Optional(Type.Boolean()),
 } as const;
 
 export const botEventSchema = Type.Union([

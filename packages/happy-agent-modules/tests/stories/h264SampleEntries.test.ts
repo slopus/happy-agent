@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { isH264Mp4 } from "../../sources/stories/storyStore.js";
 
-function box(type: string, body = Buffer.alloc(0), wide = false): Buffer {
+function box(type: string, body: Buffer = Buffer.alloc(0), wide = false): Buffer {
     const header = Buffer.alloc(wide ? 16 : 8);
     header.writeUInt32BE(wide ? 1 : 8 + body.length);
     header.write(type, 4, "latin1");

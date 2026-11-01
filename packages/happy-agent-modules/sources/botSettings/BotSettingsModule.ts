@@ -154,6 +154,7 @@ export class BotSettingsModule implements AgentModule {
                     : patch.allowedSecretIds,
             crossWorkspace: patch.crossWorkspace ?? current.crossWorkspace,
             compute: patch.compute ?? current.compute,
+            stories: patch.stories ?? current.stories ?? false,
         });
     }
 
@@ -285,6 +286,7 @@ export class BotSettingsModule implements AgentModule {
 /** One canonical shape: fixed key order and a sorted allowlist. */
 function normalize(settings: BotSettings): BotSettings {
     return {
+        ...(settings.stories ? { stories: true } : {}),
         allowedSecretIds:
             settings.allowedSecretIds === null
                 ? null

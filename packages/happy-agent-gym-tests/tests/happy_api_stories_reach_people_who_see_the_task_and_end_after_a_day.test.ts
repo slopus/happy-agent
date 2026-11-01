@@ -97,11 +97,22 @@ interface Story {
 }
 
 /** A team with a task whose agent posts exactly the tool calls a scenario asks for. */
-async function harness() {
+async function harness(onReview?: () => Promise<void>) {
     const commands = new Map<string, { callId: string; turn: GymTurn }>();
     const team = await surfaceTeamClients({
         timeoutMs: 20_000,
-        inference: (request) => {
+        inference: async (request) => {
+            if (request.instructions.includes("<outcome>")) {
+                await onReview?.();
+                return {
+                    content: [
+                        {
+                            type: "text",
+                            text: "<review><outcome>allow</outcome><risk_level>low</risk_level><user_authorization>high</user_authorization><rationale>Scripted file read review.</rationale></review>",
+                        },
+                    ],
+                };
+            }
             const command = commands.get(request.sessionId);
             if (
                 command !== undefined &&
@@ -147,13 +158,14 @@ async function harness() {
             callId,
             turn: { content: [{ type: "tool_call", name, arguments: args, callId }] },
         });
+        const beforeRequest = gym.inference.requests.length;
         await gym.send(`Please run ${name}, request ${callId}.`, {
             sessionId: agentId,
             permissionMode,
         });
         const offered = gym.inference.requests
-            .filter((request) => request.sessionId === agentId)
-            .at(-1)
+            .slice(beforeRequest)
+            .find((request) => request.sessionId === agentId)
             ?.tools.map((tool) => tool.name);
         const result = await gym.waitUntil(
             async () => gym.inference.toolResults().find((item) => item.callId === callId),
@@ -161,11 +173,18 @@ async function harness() {
         );
         return { result, offered: offered ?? [] };
     }
-    async function api(subject: string, method: string, path: string, json?: unknown) {
+    async function api(
+        subject: string,
+        method: string,
+        path: string,
+        json?: unknown,
+        ifMatch?: string,
+    ) {
         const response = await fetch(new URL(path, gym.daemon.httpUrl), {
             method,
             headers: {
                 authorization: `Bearer ${tokenFor(subject)}`,
+                ...(ifMatch === undefined ? {} : { "if-match": ifMatch }),
                 ...(json === undefined || json instanceof FormData
                     ? {}
                     : { "content-type": "application/json" }),
@@ -185,13 +204,13 @@ async function harness() {
 }
 
 async function storyEvents(client: HappyAgentClient, after: string) {
-    return (await client.getEvents({ after })).events
+    return (await client.getEvents({ after, limit: 1000 })).events
         .filter((event) => (event.type as string) === "story.changed")
         .map((event) => (event.payload as { story: Story }).story);
 }
 
 async function removedEvents(client: HappyAgentClient, after: string) {
-    return (await client.getEvents({ after })).events
+    return (await client.getEvents({ after, limit: 1000 })).events
         .filter((event) => (event.type as string) === "story.removed")
         .map((event) => (event.payload as { storyId: string }).storyId);
 }
@@ -216,7 +235,7 @@ describe("stories", () => {
         expect(gym.errors).toEqual([]);
     });
 
-    it("reach only members of the task with stories on, each with their own seen state", async () => {
+    it("reach only the task owner, then reach teammates when the owner reposts", async () => {
         const { gym, alice, bob, task, call, api, feed, clientFor, onboard } = await harness();
         const carol = clientFor("carol");
         await onboard(carol, "Carol");
@@ -253,21 +272,28 @@ describe("stories", () => {
         expect(await storyEvents(carol, before)).toEqual([]);
 
         await bob.saveUserSetting("stories", { value: true });
-        expect((await feed("bob")).map((story) => story.id)).toEqual([image!.id, clip!.id]);
-        const media = await api("bob", "GET", `/v0/stories/${image!.id}/media`);
+        expect(await feed("bob")).toEqual([]);
+        expect((await api("bob", "POST", `/v0/stories/${image!.id}/repost`, {})).status).toBe(404);
+        const reposted = await api("alice", "POST", `/v0/stories/${image!.id}/repost`, {});
+        expect(reposted.status).toBe(200);
+        const repost = JSON.parse(reposted.body.toString()).story as Story;
+        expect((await feed("bob")).map((story) => story.id)).toEqual([repost.id]);
+        expect((await feed("carol")).map((story) => story.id)).toEqual([repost.id]);
+        const media = await api("bob", "GET", `/v0/stories/${repost.id}/media`);
         expect(media.status).toBe(200);
         expect(media.body.equals(SHOT)).toBe(true);
         const bobBefore = (await bob.getEvents()).latestCursor;
-        const seen = await api("bob", "POST", `/v0/stories/${image!.id}/seen`);
+        const seen = await api("bob", "POST", `/v0/stories/${repost.id}/seen`);
         expect(JSON.parse(seen.body.toString())).toMatchObject({ story: { seen: true } });
-        expect((await feed("bob"))[0]).toMatchObject({ id: image!.id, seen: true });
-        expect((await feed("alice"))[0]).toMatchObject({ id: image!.id, seen: false });
+        expect((await feed("bob"))[0]).toMatchObject({ id: repost.id, seen: true });
+        expect((await feed("alice"))[2]).toMatchObject({ id: repost.id, seen: false });
         expect(await storyEvents(bob, bobBefore)).toEqual([
-            expect.objectContaining({ id: image!.id, seen: true }),
+            expect.objectContaining({ id: repost.id, seen: true }),
         ]);
         expect((await storyEvents(alice, before)).map((story) => [story.id, story.seen])).toEqual([
             [image!.id, false],
             [clip!.id, false],
+            [repost.id, false],
         ]);
         expect(gym.errors).toEqual([]);
     });
@@ -292,13 +318,100 @@ describe("stories", () => {
         expect(gym.errors).toEqual([]);
     });
 
-    it("from a bot reach every member with stories on", async () => {
-        const { gym, alice, bob, bot, call, feed } = await harness();
+    it("switches a bot's tools and stories through its settings, with each reader's personal gate", async () => {
+        const { gym, alice, bob, bot, call, api, feed } = await harness();
         await alice.saveUserSetting("stories", { value: true });
         await bob.saveUserSetting("stories", { value: true });
-        await call("post_story", { path: "shot.png", caption: "Released" }, bot.agent.id);
-        const [story] = await feed("bob");
-        expect(story).toMatchObject({ botId: bot.id, taskId: null, caption: "Released" });
+        for (const name of ["post_story", "list_stories", "delete_story"]) {
+            const result = await call(name, { path: "shot.png", id: "missing" }, bot.agent.id);
+            expect(result.offered).not.toEqual(expect.arrayContaining([name]));
+        }
+        expect(await feed("alice")).toEqual([]);
+        expect(await feed("bob")).toEqual([]);
+        const path = `/v0/bots/${bot.id}`;
+        expect(JSON.parse((await api("alice", "GET", path)).body.toString()).bot.stories).toBe(
+            false,
+        );
+        expect((await api("alice", "PATCH", path, {}, bot.version)).status).toBe(400);
+        expect(
+            (await api("alice", "PATCH", path, { mutationId: "empty" }, bot.version)).status,
+        ).toBe(400);
+        const before = (await alice.getEvents()).latestCursor;
+        const enabled = await api("alice", "PATCH", path, { stories: true }, bot.version);
+        expect(enabled.status, enabled.body.toString()).toBe(200);
+        const updated = JSON.parse(enabled.body.toString()).bot;
+        expect(updated).toMatchObject({
+            name: bot.name,
+            agent: { title: bot.agent.title },
+            stories: true,
+        });
+        expect((await api("alice", "PATCH", path, { stories: false }, bot.version)).status).toBe(
+            409,
+        );
+        await alice.saveUserSetting("stories", { value: false });
+        const posted = await call(
+            "post_story",
+            { path: "shot.png", caption: "Released" },
+            bot.agent.id,
+        );
+        expect(posted.offered).toEqual(
+            expect.arrayContaining(["post_story", "list_stories", "delete_story"]),
+        );
+        expect(posted.result.text).toContain("Posted the story");
+        expect(await feed("alice")).toEqual([]);
+        expect(await feed("bob")).toEqual([
+            expect.objectContaining({ botId: bot.id, taskId: null }),
+        ]);
+        await alice.saveUserSetting("stories", { value: true });
+        expect(await feed("alice")).toHaveLength(1);
+        expect(
+            (await api("alice", "PATCH", path, { stories: false }, updated.version)).status,
+        ).toBe(200);
+        expect(await feed("bob")).toEqual([]);
+        expect((await call("list_stories", {}, bot.agent.id)).offered).not.toContain(
+            "list_stories",
+        );
+        expect(
+            (await alice.getEvents({ after: before })).events
+                .filter((event) => event.type === "bot.updated")
+                .map((event) => event.payload),
+        ).toEqual([
+            expect.objectContaining({
+                botId: bot.id,
+                changes: expect.objectContaining({ stories: true }),
+            }),
+            expect.objectContaining({
+                botId: bot.id,
+                changes: expect.objectContaining({ stories: false }),
+            }),
+        ]);
+        await gym.restart();
+        expect(JSON.parse((await api("alice", "GET", path)).body.toString()).bot.stories).toBe(
+            false,
+        );
+        expect(gym.errors).toEqual([]);
+    });
+
+    it("does not recheck the owner's setting after dispatch assembles the tool", async () => {
+        let turnOff: (() => Promise<void>) | undefined;
+        let reviewed = false;
+        const { gym, alice, task, call, feed } = await harness(async () => {
+            reviewed = true;
+            await turnOff?.();
+        });
+        turnOff = async () => {
+            await alice.saveUserSetting("stories", { value: false });
+        };
+        const outside = "/tmp/reviewed-story.png";
+        await call("exec_command", { cmd: `cp shot.png ${outside}` }, task.agent.id, "full_access");
+        await alice.saveUserSetting("stories", { value: true });
+        const posted = await call("post_story", { path: outside }, task.agent.id);
+        expect(reviewed).toBe(true);
+        expect(posted.offered).toContain("post_story");
+        expect(posted.result.text).toContain("Posted the story");
+        expect(await feed("alice")).toEqual([]);
+        await alice.saveUserSetting("stories", { value: true });
+        expect(await feed("alice")).toHaveLength(1);
         expect(gym.errors).toEqual([]);
     });
 
@@ -411,13 +524,13 @@ describe("story replies, reposts, and deletes", () => {
         const { gym, alice, bob, call, api, feed } = await harness();
         for (const person of [alice, bob]) await person.saveUserSetting("stories", { value: true });
         await call("post_story", { path: "shot.png" });
-        const [story] = await feed("bob");
+        const [story] = await feed("alice");
         const form = new FormData();
         form.set("metadata", JSON.stringify(" ".repeat(16 * 1024 * 1024 + 65536)));
-        expect((await api("bob", "POST", `/v0/stories/${story!.id}/repost`, form)).status).toBe(
+        expect((await api("alice", "POST", `/v0/stories/${story!.id}/repost`, form)).status).toBe(
             413,
         );
-        expect(await feed("bob")).toHaveLength(1);
+        expect(await feed("bob")).toEqual([]);
         expect(gym.errors).toEqual([]);
     });
 
@@ -545,7 +658,7 @@ describe("story replies, reposts, and deletes", () => {
         const form = new FormData();
         form.set("metadata", JSON.stringify({ layers }));
         form.set("round", new Blob([CLIP], { type: "video/mp4" }), "selfie.mp4");
-        const response = await api("bob", "POST", path, form);
+        const response = await api("alice", "POST", path, form);
         expect(response.status).toBe(200);
         const { story } = JSON.parse(response.body.toString());
         expect(story).toMatchObject({ layers, agentId: task.agent.id, repostOf: original!.id });
@@ -553,12 +666,12 @@ describe("story replies, reposts, and deletes", () => {
             true,
         );
         expect(
-            JSON.parse((await api("bob", "POST", path, {})).body.toString()).story,
+            JSON.parse((await api("alice", "POST", path, {})).body.toString()).story,
         ).toMatchObject({ caption: null, round: null });
         const textOnly = { text: { text: "👋", x: 0, y: 1 } };
         expect(
-            JSON.parse((await api("bob", "POST", path, { layers: textOnly })).body.toString()).story
-                .layers,
+            JSON.parse((await api("alice", "POST", path, { layers: textOnly })).body.toString())
+                .story.layers,
         ).toEqual(textOnly);
         for (const invalid of [
             { text: { text: "", x: 0.5, y: 0.5 } },
@@ -568,9 +681,9 @@ describe("story replies, reposts, and deletes", () => {
             { text: { text: "Hi", x: 0.5, y: 0.5, bold: true } },
             { round: { x: 0.2, y: 0.3 } }, // No round file.
         ])
-            expect((await api("bob", "POST", path, { layers: invalid })).status).toBe(400);
+            expect((await api("alice", "POST", path, { layers: invalid })).status).toBe(400);
         await gym.restart();
-        expect((await feed("alice")).find((item) => item.id === story.id)).toMatchObject({
+        expect((await feed("bob")).find((item) => item.id === story.id)).toMatchObject({
             layers,
             agentId: task.agent.id,
         });
@@ -712,7 +825,7 @@ describe("story replies, reposts, and deletes", () => {
     it.each([false, true])(
         "send a reply to the story's agent as the person's message, readable by everyone who sees it (restart: %s)",
         async (restart) => {
-            const { gym, alice, bob, bobId, task, call, api, feed, clientFor, onboard } =
+            const { gym, alice, bob, aliceId, task, call, api, feed, clientFor, onboard } =
                 await harness();
             const carol = clientFor("carol");
             await onboard(carol, "Carol");
@@ -724,12 +837,12 @@ describe("story replies, reposts, and deletes", () => {
             const [story] = await feed("alice");
             const before = (await alice.getEvents()).latestCursor;
 
-            const replied = await api("bob", "POST", `/v0/stories/${story!.id}/replies`, {
+            const replied = await api("alice", "POST", `/v0/stories/${story!.id}/replies`, {
                 text: "Looks great",
             });
             expect(replied.status).toBe(200);
             expect(JSON.parse(replied.body.toString())).toMatchObject({
-                reply: { storyId: story!.id, userId: bobId, text: "Looks great" },
+                reply: { storyId: story!.id, userId: aliceId, text: "Looks great" },
             });
             const quote = `> Replying to your story “Ready to try” (story ${story!.id})\n\nLooks great`;
             await gym.waitUntil(
@@ -750,7 +863,7 @@ describe("story replies, reposts, and deletes", () => {
             );
             expect((await feed("alice"))[0]).toMatchObject({
                 replyCount: 1,
-                replies: [{ userId: bobId, text: "Looks great" }],
+                replies: [{ userId: aliceId, text: "Looks great" }],
             });
             const all = await api("alice", "GET", `/v0/stories/${story!.id}/replies`);
             expect(JSON.parse(all.body.toString())).toMatchObject({
@@ -759,7 +872,12 @@ describe("story replies, reposts, and deletes", () => {
             expect(await storyEvents(alice, before)).toEqual([
                 expect.objectContaining({ replyCount: 1 }),
             ]);
-            // Carol left the task, so for her the story and its replies do not exist.
+            // Even another task member cannot read or reply to the owner's original.
+            expect(
+                (await api("bob", "POST", `/v0/stories/${story!.id}/replies`, { text: "Hi" }))
+                    .status,
+            ).toBe(404);
+            expect((await api("bob", "GET", `/v0/stories/${story!.id}/replies`)).status).toBe(404);
             expect((await api("carol", "GET", `/v0/stories/${story!.id}/replies`)).status).toBe(
                 404,
             );
@@ -767,7 +885,7 @@ describe("story replies, reposts, and deletes", () => {
                 text: "Hi",
             });
             expect(outsider.status).toBe(404);
-            const empty = await api("bob", "POST", `/v0/stories/${story!.id}/replies`, {
+            const empty = await api("alice", "POST", `/v0/stories/${story!.id}/replies`, {
                 text: "",
             });
             expect(empty.status).toBe(400);
@@ -775,8 +893,8 @@ describe("story replies, reposts, and deletes", () => {
         },
     );
 
-    it("repost an agent story with a caption and round video to exactly who sees the original", async () => {
-        const { gym, alice, bob, bobId, task, call, api, feed, clientFor, onboard } =
+    it("reposts the owner's agent story to teammates, including those outside the task", async () => {
+        const { gym, alice, bob, aliceId, task, call, api, feed, clientFor, onboard } =
             await harness();
         const carol = clientFor("carol");
         await onboard(carol, "Carol");
@@ -784,10 +902,10 @@ describe("story replies, reposts, and deletes", () => {
         for (const person of [alice, bob, carol])
             await person.saveUserSetting("stories", { value: true });
         await call("post_story", { path: "shot.png", caption: "Ready to try" });
-        const [original] = await feed("bob");
+        const [original] = await feed("alice");
         const round = { data: CLIP.toString("base64") };
 
-        const reposted = await api("bob", "POST", `/v0/stories/${original!.id}/repost`, {
+        const reposted = await api("alice", "POST", `/v0/stories/${original!.id}/repost`, {
             caption: "Look at this",
             round,
         });
@@ -795,7 +913,7 @@ describe("story replies, reposts, and deletes", () => {
         const { story } = JSON.parse(reposted.body.toString()) as { story: Story & { id: string } };
         expect(story).toMatchObject({
             poster: "person",
-            userId: bobId,
+            userId: aliceId,
             repostOf: original!.id,
             taskId: task.id,
             caption: "Look at this",
@@ -805,7 +923,7 @@ describe("story replies, reposts, and deletes", () => {
         });
         expect((await feed("alice")).map((item) => [item.id, item.canDelete])).toEqual([
             [original!.id, true],
-            [story.id, false],
+            [story.id, true],
         ]);
         expect((await api("alice", "GET", `/v0/stories/${story.id}/round`)).body.equals(CLIP)).toBe(
             true,
@@ -813,7 +931,12 @@ describe("story replies, reposts, and deletes", () => {
         expect((await api("alice", "GET", `/v0/stories/${story.id}/media`)).body.equals(SHOT)).toBe(
             true,
         );
-        expect(await feed("carol")).toEqual([]);
+        expect(await feed("carol")).toEqual([
+            expect.objectContaining({ id: story.id, canDelete: false }),
+        ]);
+        expect(await feed("bob")).toEqual([
+            expect.objectContaining({ id: story.id, canDelete: false }),
+        ]);
         expect((await api("carol", "POST", `/v0/stories/${original!.id}/repost`, {})).status).toBe(
             404,
         );
@@ -835,39 +958,36 @@ describe("story replies, reposts, and deletes", () => {
         await bob.saveUserSetting("stories", { value: true });
         for (const caption of ["Kept", "By owner", "By tool"])
             await call("post_story", { path: "shot.png", caption });
-        const [kept, byOwner, byTool] = await feed("bob");
-        expect([kept!.canDelete, (await feed("alice"))[0]!.canDelete]).toEqual([false, true]);
+        const [kept, byOwner, byTool] = await feed("alice");
+        expect(kept!.canDelete).toBe(true);
+        expect(await feed("bob")).toEqual([]);
         const repost = async (id: string) =>
             (
                 JSON.parse(
-                    (await api("bob", "POST", `/v0/stories/${id}/repost`, {})).body.toString(),
+                    (await api("alice", "POST", `/v0/stories/${id}/repost`, {})).body.toString(),
                 ) as { story: Story }
             ).story;
         const own = await repost(kept!.id);
         const ofToolStory = await repost(byTool!.id);
         const before = (await alice.getEvents()).latestCursor;
 
-        expect((await api("bob", "DELETE", `/v0/stories/${kept!.id}`)).status).toBe(403);
-        expect((await api("alice", "DELETE", `/v0/stories/${own.id}`)).status).toBe(403);
-        expect((await api("bob", "DELETE", `/v0/stories/${own.id}`)).status).toBe(200);
+        expect((await api("bob", "DELETE", `/v0/stories/${kept!.id}`)).status).toBe(404);
+        expect((await api("bob", "DELETE", `/v0/stories/${own.id}`)).status).toBe(403);
+        expect((await api("alice", "DELETE", `/v0/stories/${own.id}`)).status).toBe(200);
         expect((await api("alice", "DELETE", `/v0/stories/${byOwner!.id}`)).status).toBe(200);
         const tool = await call("delete_story", { id: byTool!.id });
         expect(tool.result.text).toContain("Deleted the story.");
         expect((await call("delete_story", { id: own.id })).result.text).toContain("no live story");
 
-        expect((await feed("bob")).map((story) => story.id)).toEqual([kept!.id]);
+        expect((await feed("alice")).map((story) => story.id)).toEqual([kept!.id]);
+        expect(await feed("bob")).toEqual([]);
         expect(await removedEvents(alice, before)).toEqual([
             own.id,
             byOwner!.id,
             byTool!.id,
             ofToolStory.id,
         ]);
-        expect(await removedEvents(bob, before)).toEqual([
-            own.id,
-            byOwner!.id,
-            byTool!.id,
-            ofToolStory.id,
-        ]);
+        expect(await removedEvents(bob, before)).toEqual([own.id, ofToolStory.id]);
         for (const id of [own.id, byOwner!.id, byTool!.id, ofToolStory.id]) {
             expect((await api("alice", "GET", `/v0/stories/${id}/media`)).status).toBe(404);
             expect((await api("alice", "POST", `/v0/stories/${id}/seen`)).status).toBe(404);
@@ -886,10 +1006,10 @@ describe("story replies, reposts, and deletes", () => {
         await alice.saveUserSetting("stories", { value: true });
         await bob.saveUserSetting("stories", { value: true });
         await call("post_story", { path: "shot.png", caption: "Ready to try" });
-        const [story] = await feed("bob");
-        await api("bob", "POST", `/v0/stories/${story!.id}/seen`);
-        await api("bob", "POST", `/v0/stories/${story!.id}/replies`, { text: "Nice" });
-        await api("bob", "POST", `/v0/stories/${story!.id}/repost`, {});
+        const [story] = await feed("alice");
+        await api("alice", "POST", `/v0/stories/${story!.id}/seen`);
+        await api("alice", "POST", `/v0/stories/${story!.id}/replies`, { text: "Nice" });
+        await api("alice", "POST", `/v0/stories/${story!.id}/repost`, {});
 
         const listed = await call("list_stories", {});
         expect(listed.offered).toEqual(
@@ -917,16 +1037,17 @@ describe("story replies, reposts, and deletes", () => {
         for (const person of [alice, bob, carol])
             await person.saveUserSetting("stories", { value: true });
         await call("post_story", { path: "shot.png" });
-        const [story] = await feed("bob");
+        const [story] = await feed("alice");
         const path = `/v0/stories/${story!.id}`;
         const oversized = { round: { data: "A".repeat(22_369_628) } };
-        expect((await api("bob", "POST", `${path}/repost`, oversized)).status).toBe(400);
+        expect((await api("alice", "POST", `${path}/repost`, oversized)).status).toBe(400);
         expect(
-            (await api("bob", "POST", `${path}/repost`, { round: { data: "AAAA", x: 1 } })).status,
+            (await api("alice", "POST", `${path}/repost`, { round: { data: "AAAA", x: 1 } }))
+                .status,
         ).toBe(400);
-        expect((await api("bob", "POST", `${path}/repost`, { shout: true })).status).toBe(400);
+        expect((await api("alice", "POST", `${path}/repost`, { shout: true })).status).toBe(400);
         expect(
-            (await api("bob", "POST", `${path}/replies`, { text: "Hi", shout: true })).status,
+            (await api("alice", "POST", `${path}/replies`, { text: "Hi", shout: true })).status,
         ).toBe(400);
         // Someone who cannot see the story learns nothing about their round, valid or not.
         const notAVideo = { round: { data: Buffer.from("not a video").toString("base64") } };
@@ -940,16 +1061,20 @@ describe("story replies, reposts, and deletes", () => {
         await alice.saveUserSetting("stories", { value: true });
         await bob.saveUserSetting("stories", { value: true });
         await call("post_story", { path: "shot.png" });
-        const [story] = await feed("bob");
+        const [story] = await feed("alice");
         const { version } = (await alice.getTask(task.id)).task;
         await alice.archiveTask(task.id, { ifMatch: version });
         const requests = gym.inference.requests.length;
 
-        expect(await feed("bob")).toEqual([]);
-        const reply = await api("bob", "POST", `/v0/stories/${story!.id}/replies`, { text: "Hi" });
+        expect(await feed("alice")).toEqual([]);
+        const reply = await api("alice", "POST", `/v0/stories/${story!.id}/replies`, {
+            text: "Hi",
+        });
         expect(reply.status).toBe(404);
-        expect((await api("bob", "POST", `/v0/stories/${story!.id}/repost`, {})).status).toBe(404);
-        expect((await api("bob", "GET", `/v0/stories/${story!.id}/media`)).status).toBe(404);
+        expect((await api("alice", "POST", `/v0/stories/${story!.id}/repost`, {})).status).toBe(
+            404,
+        );
+        expect((await api("alice", "GET", `/v0/stories/${story!.id}/media`)).status).toBe(404);
         expect(JSON.stringify((await alice.getMessages(task.agent.id)).runs)).not.toContain(
             "Replying to",
         );

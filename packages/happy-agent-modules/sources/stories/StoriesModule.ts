@@ -14,11 +14,7 @@ import { ChatMediaModule } from "../chatMedia/index.js";
 import { ComputeModule } from "../compute/index.js";
 import { ConfigModule } from "../config/index.js";
 import { agentDeliveryMode } from "../impl/agentDeliveryMode.js";
-import {
-    isGuestOriginMetadata,
-    isUserOriginMetadata,
-    USER_MESSAGE_ORIGIN_METADATA,
-} from "../impl/messageOrigin.js";
+import { USER_MESSAGE_ORIGIN_METADATA } from "../impl/messageOrigin.js";
 import { STANDALONE_TASK_MEMBER, TasksModule } from "../tasks/index.js";
 import { TeamAuthenticationError, TeamModule, teamUser } from "../team/index.js";
 import { UserSettingsModule } from "../userSettings/index.js";
@@ -28,9 +24,6 @@ import { deleteStoryTool } from "./tools/delete_story.js";
 import { listStoriesTool } from "./tools/list_stories.js";
 import { postStoryTool } from "./tools/post_story.js";
 
-/** The human this agent last heard from: a user ID, `null` if unidentified, or a guest. */
-const PERSON_KEY = "person";
-const GUEST = "guest:"; // never a user ID, which has no colon
 const DAY = 24 * 60 * 60 * 1000;
 const MAX_ROUND = 16 * 1024 * 1024;
 
@@ -45,9 +38,8 @@ export type StoryEvent = {
 export class StoryInputError extends Error {}
 
 /**
- * Images and videos a task's or bot's own agent posts for 24 hours, and people's reposts of them.
- * A person sees stories only while their `stories` setting is `true`, and only for a task they are
- * a member of, or a bot. A repost is seen by exactly those who see what it reposts.
+ * Images and videos a task's agent posts for its owner for 24 hours. People's stories and
+ * reposts reach every non-guest team member with their `stories` setting on.
  */
 export class StoriesModule implements AgentModule {
     static readonly layersSchema = store.storyLayersSchema;
@@ -96,26 +88,20 @@ export class StoriesModule implements AgentModule {
                     ...manage,
                 ];
             },
-            messageAcceptedTransact: async (ctx, scope, { message, metadata }) => {
-                const guest = isGuestOriginMetadata(metadata);
-                if (message.role !== "user" || (!guest && !isUserOriginMetadata(metadata))) return;
-                const userId = metadata?.["userId"];
-                const person = guest ? GUEST : typeof userId === "string" ? userId : null;
-                await scope.kv.write(ctx, PERSON_KEY, person);
-            },
         };
     };
 
-    /** Whether it works for someone with stories on: its last human, else the task's owner. */
+    /** Check the task owner's setting once, while assembling the turn's tools. */
     async canPost(ctx: Context, scope: AgentModuleScope): Promise<boolean> {
-        const poster = await this.#poster(ctx, scope.agent.id);
-        if (poster === undefined) return false;
-        const person = await scope.kv.read(ctx, PERSON_KEY);
-        if (person === GUEST) return false;
+        const task = await this.#tasks.forAgent(ctx, scope.agent.id);
+        if (task === undefined) {
+            const bot = await this.#bots.forAgent(ctx, scope.agent.id);
+            return bot !== undefined && (await this.#bots.settings(ctx, bot.id)).stories === true;
+        }
         if (!this.#team.enabled) return await this.enabled(ctx);
-        const userId = typeof person === "string" ? person : poster.ownerUserId;
-        const user = userId === null ? undefined : await this.#team.getUser(ctx, userId);
-        if (user === undefined || user.authentication === "guest") return false;
+        const userId = task.ownerUserId;
+        const user = userId === undefined ? undefined : await this.#team.getUser(ctx, userId);
+        if (user === undefined) return false;
         return await this.enabled(this.#team.connectionContext(ctx, user));
     }
 
@@ -348,20 +334,22 @@ export class StoriesModule implements AgentModule {
 
     async #read(ctx: Context, id?: string) {
         if (!(await this.enabled(ctx))) return [];
-        const { member } = this.#reader(ctx);
+        const { member, readerId } = this.#reader(ctx);
         const visible: (StoryRecord & { seen: boolean })[] = [];
         for (const story of await store.readLiveStories(ctx, member, Date.now(), id)) {
-            if (story.agentId === null) {
+            if (story.botId && !(await this.#bots.settings(ctx, story.botId)).stories) continue;
+            if (story.agentId === null || story.repostOf !== undefined) {
                 visible.push(story);
                 continue;
             }
-            // A task's story reaches its members; a bot's, everyone who can open the bot. An
-            // archived one's stories are gone, so nothing wakes its archived agent.
-            const where = story.botId
-                ? await this.#bots.get(ctx, story.botId)
-                : (await this.#tasks.membership(ctx, story.taskId!, member)) &&
-                  (await this.#tasks.get(ctx, story.taskId!));
-            if (where?.status === "active") visible.push(story);
+            if (story.botId) {
+                if ((await this.#bots.get(ctx, story.botId))?.status === "active")
+                    visible.push(story);
+                continue;
+            }
+            const task = story.taskId && (await this.#tasks.get(ctx, story.taskId));
+            if (task && task.status === "active" && task.ownerUserId === readerId)
+                visible.push(story);
         }
         return visible;
     }
@@ -419,8 +407,7 @@ export class StoriesModule implements AgentModule {
         const task = await this.#tasks.forAgent(ctx, agentId);
         const bot = task === undefined ? await this.#bots.forAgent(ctx, agentId) : undefined;
         if (task === undefined && bot === undefined) return undefined;
-        const ownerUserId = task?.ownerUserId ?? null;
-        return { taskId: task?.id ?? null, botId: bot?.id ?? null, ownerUserId };
+        return { taskId: task?.id ?? null, botId: bot?.id ?? null };
     }
 
     #emitAfter(ctx: Context, events: readonly StoryEvent[]): void {

@@ -18,6 +18,7 @@ const updateBotSettingsInputSchema = Type.Object(
         allowedSecretIds: Type.Optional(botSettingsSchema.properties.allowedSecretIds),
         crossWorkspace: Type.Optional(Type.Boolean()),
         compute: Type.Optional(botComputeSettingSchema),
+        stories: Type.Optional(Type.Boolean()),
     },
     { additionalProperties: false },
 );
@@ -66,6 +67,7 @@ export function updateBotSettingsTool(
             "Pass previous exactly as get_bot_settings returned it, then only the fields to change:",
             "- allowedSecretIds: null lets them use any secret attached to the bot or where it works; an array of secret IDs is the complete set they may list, attach, update, and select for commands, and [] allows none. With an array they cannot create secrets.",
             "- crossWorkspace: false keeps them to the bot's own agents, with no projects, workspaces, tasks, other bots, or agents outside the bot; true leaves reach to this installation's setting.",
+            "- stories: true gives this bot's own agent story tools and shows its stories to non-guest members with personal stories on; false turns them off (the default).",
             '- compute: {"type":"host"} runs them on the machine holding the bot\'s folder; {"type":"docker","image":"..."} runs their files and commands in a container of that image with only their own folder mounted, where commands cannot select secrets. A compute change reaches new agents at once and running agents after Happy Agent restarts.',
             "A change that only narrows is applied directly; one that widens access is reviewed first.",
         ].join("\n"),
@@ -75,7 +77,7 @@ export function updateBotSettingsTool(
         transactional: true,
         requiresAutoOrFullAccess: true,
         autoPermissionInstructions:
-            "Changing a bot's settings changes what that bot and every agent working under it can reach. A change that widens secrets, reach, or compute isolation is reviewed; one that only narrows is not.",
+            "Changing a bot's settings changes what that bot and every agent working under it can reach. A change that widens secrets, reach, compute isolation, or Stories is reviewed; one that only narrows is not.",
         shouldReviewInAutoMode: (input: UpdateBotSettingsInput) => widenings(input).length > 0,
         describeAutoPermissionAction: (input: UpdateBotSettingsInput) => {
             const widened = widenings(input);
@@ -105,9 +107,10 @@ function patchOf(input: UpdateBotSettingsInput): BotSettingsPatch {
     if (input.allowedSecretIds !== undefined) patch.allowedSecretIds = input.allowedSecretIds;
     if (input.crossWorkspace !== undefined) patch.crossWorkspace = input.crossWorkspace;
     if (input.compute !== undefined) patch.compute = input.compute;
+    if (input.stories !== undefined) patch.stories = input.stories;
     if (Object.keys(patch).length === 0) {
         throw new Error(
-            "Name at least one setting to change: allowedSecretIds, crossWorkspace, or compute.",
+            "Name at least one setting to change: allowedSecretIds, crossWorkspace, compute, or stories.",
         );
     }
     return patch;

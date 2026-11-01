@@ -3,7 +3,7 @@ import { Type } from "@sinclair/typebox";
 
 import type { StoriesModule } from "../StoriesModule.js";
 
-/** Delete one of this task's or bot's live stories, with every repost of it. */
+/** Delete one of this task's live stories, with every repost of it. */
 export function deleteStoryTool(stories: StoriesModule, scope: AgentModuleScope) {
     return defineAgentTool({
         name: "delete_story",
@@ -16,8 +16,6 @@ export function deleteStoryTool(stories: StoriesModule, scope: AgentModuleScope)
         durable: true,
         shouldReviewInAutoMode: () => false,
         execute: async (ctx, { id }) => {
-            if (!(await stories.canPost(ctx, scope)))
-                throw new Error("Stories are off for the person you work for; nothing changed.");
             return { deleted: await stories.deleteOwn(ctx, scope.agent.id, id) };
         },
         toLLM: ({ deleted }) => [
