@@ -1,5 +1,12 @@
 # Stories learnings
 
+## Replacing stale stories is part of posting
+
+Deleting an old story before posting its replacement could leave the ring empty if posting
+failed. `post_story.replaces` now removes up to five of the agent's own live originals and their
+reposts in the new post's transaction. Foreign, repost, missing, and ended IDs are ignored;
+the result reports the originals actually replaced, and events publish only after commit.
+
 ## Task owners decide whether their agents have story tools
 
 Stories previously followed the last human sender, supported bots, and checked the setting again

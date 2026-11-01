@@ -952,6 +952,60 @@ describe("story replies, reposts, and deletes", () => {
         expect(gym.errors).toEqual([]);
     });
 
+    it("replaces only the agent's own live originals, removing their reposts for everyone", async () => {
+        const { gym, alice, bob, call, api, feed } = await harness();
+        for (const person of [alice, bob]) await person.saveUserSetting("stories", { value: true });
+        await call("post_story", { path: "shot.png", caption: "Old" });
+        await call("post_story", { path: "shot.png", caption: "Ended" });
+        const [old, ended] = await feed("alice");
+        const reposted = await api("alice", "POST", `/v0/stories/${old!.id}/repost`, {});
+        const repost = JSON.parse(reposted.body.toString()).story as Story;
+        const form = new FormData();
+        form.set("media", new Blob([SHOT], { type: "image/png" }), "gallery");
+        const uploaded = await api("bob", "POST", "/v0/stories", form);
+        const foreign = JSON.parse(uploaded.body.toString()).story as Story;
+        await api("alice", "DELETE", `/v0/stories/${ended!.id}`);
+        await gym.restart({
+            whileStopped: async () =>
+                await runGymSql(gym.happyHome, [
+                    "CREATE TRIGGER refuse_story BEFORE INSERT ON happy_agent_module_stories BEGIN SELECT RAISE(ABORT, 'Story insert blocked'); END",
+                ]),
+        });
+        let before = (await alice.getEvents()).latestCursor;
+        const failed = await call("post_story", { path: "clip.mp4", replaces: [old!.id] });
+        expect(failed.result.text).not.toContain("Posted the story");
+        expect((await api("alice", "GET", `/v0/stories/${old!.id}/media`)).status).toBe(200);
+        expect((await api("bob", "GET", `/v0/stories/${repost.id}/media`)).status).toBe(200);
+        expect(await removedEvents(alice, before)).toEqual([]);
+        expect(await removedEvents(bob, before)).toEqual([]);
+        await gym.restart({
+            whileStopped: async () => await runGymSql(gym.happyHome, ["DROP TRIGGER refuse_story"]),
+        });
+        before = (await alice.getEvents()).latestCursor;
+        const posted = await call("post_story", {
+            path: "clip.mp4",
+            caption: "New",
+            replaces: [old!.id, repost.id, foreign.id, ended!.id, "missing"],
+        });
+        expect(posted.result.text).toContain(`Replaced stories: ${old!.id}.`);
+        const current = await feed("alice");
+        expect(current).toEqual([
+            expect.objectContaining({ id: foreign.id }),
+            expect.objectContaining({ caption: "New" }),
+        ]);
+        expect(await feed("bob")).toEqual([expect.objectContaining({ id: foreign.id })]);
+        expect(await removedEvents(alice, before)).toEqual([old!.id, repost.id]);
+        expect(await removedEvents(bob, before)).toEqual([repost.id]);
+        expect(await storyEvents(alice, before)).toEqual([
+            expect.objectContaining({ caption: "New" }),
+        ]);
+        for (const person of ["alice", "bob"])
+            for (const id of [old!.id, repost.id])
+                expect((await api(person, "GET", `/v0/stories/${id}/media`)).status).toBe(404);
+        expect((await api("bob", "GET", `/v0/stories/${foreign.id}/media`)).status).toBe(200);
+        expect(gym.errors).toEqual([]);
+    });
+
     it("are deleted by the agent's tool, the reposter, and the task's owner, and by nobody else", async () => {
         const { gym, alice, bob, call, api, feed } = await harness();
         await alice.saveUserSetting("stories", { value: true });

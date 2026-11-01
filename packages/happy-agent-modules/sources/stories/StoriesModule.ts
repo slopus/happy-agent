@@ -112,7 +112,8 @@ export class StoriesModule implements AgentModule {
         id: string,
         caption: string | null,
         media: StoryRecord["media"],
-    ): Promise<StoryRecord> {
+        replaces: readonly string[] = [],
+    ): Promise<StoryRecord & { replaced: string[] }> {
         const poster = await this.#poster(ctx, agentId);
         if (poster === undefined) throw new Error("Only a task's or a bot's agent posts stories.");
         const { taskId, botId } = poster;
@@ -130,10 +131,13 @@ export class StoriesModule implements AgentModule {
         return await ctx.inTx(async (txCtx) => {
             // A replayed call finds what it first posted, even once ended, and announces nothing.
             const [posted] = await store.readLiveStories(txCtx, "", -1, id);
-            if (posted !== undefined) return posted;
+            if (posted !== undefined) return { ...posted, replaced: [] };
+            const replaced: string[] = [];
+            for (const old of replaces)
+                if (await this.deleteOwn(txCtx, agentId, old)) replaced.push(old);
             await store.insertStory(txCtx, story);
             await this.#changed(txCtx, id);
-            return story;
+            return { ...story, replaced };
         });
     }
 

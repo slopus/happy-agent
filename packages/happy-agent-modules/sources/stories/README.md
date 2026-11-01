@@ -20,7 +20,7 @@ const stories = new StoriesModule(config, chatMedia, compute, tasks, bots, team,
 
 ## Posting
 
-`post_story { path, caption? }` is offered only to a task's own agent when the task owner has
+`post_story { path, caption?, replaces? }` is offered only to a task's own agent when the task owner has
 stories on, checked once when assembling the turn's tools. There is no last-sender rule or
 execution-time recheck. A bot's own agent gets the same tools only when its bot's Stories switch
 is on (off by default). The file is measured before it is read: it must be a non-empty regular file within the
@@ -28,6 +28,8 @@ chat media limit, named as an image (one that decodes) or with an `.mp4` extensi
 an MP4 `ftyp` box and carry an `avc1` or `avc3` sample entry. The tool
 call's ID is the story's ID: a replayed call returns the story it first posted, even an ended one,
 without inserting or announcing anything. Media is served only while its snapshot is present.
+`replaces` names up to five own live originals to remove with their reposts in the posting
+transaction; other IDs are ignored, and the result names the replaced originals.
 
 The same agent also gets `list_stories` (its live stories and reposts of them, with seen and reply
 counts and the latest 50 replies) and `delete_story` (one of its own stories, with its reposts).
