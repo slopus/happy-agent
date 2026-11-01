@@ -459,6 +459,12 @@ artifacts, and local-to-workspace forwarding unavailable for that daemon, says s
 terms, and does not retry in a loop. Older daemons omit the authentication method's `resource`;
 clients then send none.
 
+Server connections by URL, connection statuses, the `oauth` roster entry, the roster's
+`instanceId`, health's `instanceId`, and instance links are additive and do not increment the
+protocol version. Older daemons answer the new connection routes with `404`; clients then leave
+adding servers by URL unavailable. Older daemons omit `instanceId`; clients then offer no
+instance links for them.
+
 Workspace bridges are additive and do not increment the protocol version. A daemon that serves
 them reports `capabilities.workspaceBridges: true` from health. Older daemons omit it and answer
 `GET /v0/workspaces/:workspaceId/bridges` with `404`; clients then offer no USB, Bluetooth, or
@@ -903,23 +909,27 @@ concurrent changes cannot lose the name or pair one image's ThumbHash with anoth
 
 ### Remote connections
 
-The main daemon owns a machine-configured roster of remote Happy Agent installations and their
-Tailcat connections. These are separate daemons, not Agent Base subagents: each remote owns its
+The main daemon owns a roster of remote Happy Agent installations and their connections: Tailcat
+connections from machine configuration, and HTTPS server connections added by URL. These are separate daemons, not Agent Base subagents: each remote owns its
 projects, agents, profile, event journal, and lifecycle. The same connection API serves team
 deployments and standalone secondaries. Tailcat provides encrypted connectivity, not application
 authorization. Managed connections use WorkOS or fixed bearer authentication; they do not require
 the former invitation/emoji pairing flow.
 
 Only machine configuration and tools restricted to active admin bots may add, replace, or remove
-roster entries. Tool authority is rechecked at execution. Public HTTP callers may reorder existing
-entries, but cannot add, replace, or remove them. Project configuration cannot register connections
+roster entries, with one exception: in standalone mode the installation's owner adds and removes
+server connections by URL through `POST /v0/connections` and `DELETE /v0/connections/:id`,
+described under Server connections by URL. Tool authority is rechecked at execution. Otherwise
+public HTTP callers may reorder existing entries, but cannot add, replace, or remove them. Project configuration cannot register connections
 or supply credentials. Live changes
 are persisted in generated `runtime.toml`; configured connections are restored after restart.
 Removing a connection closes its transport and active requests, but never deletes remote data.
 
 Machine configuration uses `[connections.<id>]`, with `name`, `address` (a case-sensitive Tailcat
 address blob), and optional `port` (default `24779`). Each entry has exactly one authentication
-setting: `token` for a standalone remote, or `workos_organization_id` for a team remote. IDs match
+setting: `token` for a standalone remote, or `workos_organization_id` for a team remote. An entry
+may instead have `url`, the normalized HTTPS URL of a server connection by URL; it takes no
+`address`, `port`, or credential setting, because the person signs in to it. IDs match
 `[a-z][a-z0-9_-]{0,63}`, names contain 1–256 printable characters, tokens use the standalone token
 format, and ports are integers from 1 through 65535. At most 100 entries may be configured.
 Runtime entries override global entries by ID; a runtime entry with `enabled = false` hides that
@@ -955,12 +965,25 @@ read remains available when a remote is unreachable or Cloud is disconnected. Re
             "authentication": "workos",
             "organizationId": "org_01H...",
             "orderKey": "00000000000000000002"
+        },
+        {
+            "id": "happy-example-com",
+            "name": "happy.example.com",
+            "authentication": "oauth",
+            "url": "https://happy.example.com/",
+            "instanceId": "k3x9q2m7p0a4b8c1d5e6f7g2",
+            "orderKey": "00000000000000000003"
         }
     ]
 }
 ```
 
-Tokens, raw configuration, and transport addresses are never returned. `version` is an additive,
+Tokens, raw configuration, and Tailcat addresses are never returned. An `oauth` entry is a server
+connection by URL, and its `url` is returned because it is the address the person entered, not a
+secret. Every entry kind may carry an optional `instanceId`: the remote's own health `instanceId`,
+once the main daemon has read a health response from that remote, whether its own probe or one it
+relayed. The daemon persists it, and learning or changing it advances the roster version like any
+other roster change. Clients use it to open instance links, described under Happy links. `version` is an additive,
 optional UUIDv7 for compatibility with older daemons; current daemons always include it. It names
 the complete public roster, advances monotonically only when that roster changes, and persists
 across restarts. Credential or transport changes that leave the public roster identical do not
@@ -977,8 +1000,10 @@ version. Equal or older versions are ignored, including a delayed list response 
 after a newer event. On a cursor gap or daemon replacement, clients refetch the roster and resume
 the stream using the normal snapshot/cursor rules. A restart with unchanged configuration keeps
 the same roster version; startup reconciliation incorporates offline machine-configuration edits
-before serving the roster. The event carries no health status and does not change the existing authentication
-discriminator: `workos` identifies a team remote, while `bearer` identifies a standalone remote.
+before serving the roster. The event carries no health status. The authentication discriminator says how the main daemon
+authenticates to the remote: `workos` identifies a team remote, `bearer` a standalone remote, and
+`oauth` a server connection by URL that the person signs in to. A client that does not know a
+discriminator value shows the entry as an ordinary remote.
 
 #### `POST /v0/connections/:id/reorder`
 
@@ -1006,6 +1031,215 @@ commits before memory or notifications change. The response and event expose no 
 transport addresses. Older daemons without this endpoint return `404`; callers leave reordering
 unavailable there. Older daemons may omit `orderKey`; this required field is guaranteed by the
 ordering-capable daemon after migration, not synthesized by clients for older daemons.
+
+#### Server connections by URL
+
+A server connection by URL connects a standalone daemon to a team server by its HTTPS URL, with no
+Tailcat, Happy Cloud, or WorkOS dependency. The person signs in to the server in the system
+browser, and the main daemon then carries every proxied request to it over HTTPS with the access
+token from that sign-in. The team server may sit behind a load balancer that enforces single
+sign-on, as described under Load balancers and edge authentication.
+
+The main daemon is the OAuth client. It reads the server's `GET /v0/authentication`, generates
+the PKCE verifier and `state`, exchanges the authorization code, refreshes the access token, and
+keeps the tokens. The app only opens the authorization URL in the system browser and hands back
+the `happy://oauth/callback` URL it receives. The sign-in follows the rules under Sign-in flow:
+the redirect URI is exactly `happy://oauth/callback`, `resource` is sent when the method
+advertises one, and token requests follow no redirects.
+
+The refresh token is stored in the operating system's credential store: the Keychain on macOS,
+Credential Manager on Windows, and the Secret Service on Linux. It is never written to disk in
+plaintext. Without a credential store, the daemon keeps the refresh token in memory only, and the
+connection needs a new sign-in after the daemon restarts. The access token is kept in memory.
+Tokens, the PKCE verifier, and the authorization code are never returned, logged, or included in
+an event or error.
+
+Server connections by URL exist only in standalone mode, and only the installation's owner manages
+them. In team mode every route below returns `403 forbidden`. Entries the owner adds are persisted
+in generated `runtime.toml` as `[connections.<id>]` entries with a `url`. An entry with a `url` in
+machine configuration is a server connection the owner may sign in to but not remove. In team
+mode a `url` entry is a configuration error, reported at startup like any invalid entry. Older
+daemons answer every route below with `404`; clients leave adding servers by URL unavailable there.
+
+A URL is normalized before use. It must be absolute and use `https`, or `http` with a loopback
+host (`localhost`, `127.0.0.1`, or `[::1]`) for local testing. It must have no user information,
+query, or fragment. The scheme and host are lowercased, a default port is removed, and the path
+always ends in `/`, so `https://Happy.Example.com/team` becomes `https://happy.example.com/team/`.
+API paths are resolved against it: the server's health is `<url>v0/health`. Two entries never
+share one normalized URL.
+
+##### `POST /v0/connections`
+
+Adds a server connection by URL. Accepts an optional `If-Match` with the current roster version.
+
+Request:
+
+```json
+{ "url": "https://happy.example.com", "name": "Engineering", "mutationId": "..." }
+```
+
+- `url` — required; normalized as above.
+- `name` — optional, 1–256 printable characters; defaults to the URL's host.
+- `mutationId` — optional, with the usual echo-only meaning.
+
+Before adding, the daemon reads `<url>v0/authentication` and `<url>v0/health` without a
+credential, following no redirects, with the same 30-second deadline as the proxy. Discovery must
+be a Happy response that lists an `oauth` method. The daemon reads health only to learn the
+server's protocol version and `instanceId`: with no credential, a team server answers `401`, which
+is expected here.
+
+The daemon generates the ID from the URL's host, such as `happy-example-com` for
+`happy.example.com`, matching the connection ID pattern and appending `-2`, `-3`, and so on when
+the ID is taken. The entry is appended to the end of the roster.
+
+Response — `201`:
+
+```json
+{ "connection": { ... }, "connections": [ ... ], "version": "..." }
+```
+
+`connection` is the new `oauth` entry, and `connections` the complete ordered roster. The daemon
+publishes one `connections.updated` event with the same snapshot and mutation echo after commit.
+The new connection's status is `needs_sign_in`.
+
+Errors:
+
+- `400 invalid_request` — an invalid body, or a URL that is not absolute `https` (or loopback
+  `http`) or that has user information, a query, or a fragment.
+- `400 invalid_request` — a missing or malformed `If-Match` header, when one is sent.
+- `403 forbidden` — team mode, or a caller that is not the owner.
+- `409 server_exists` — the roster already has an entry with the same normalized URL.
+- `409 conflict` — a stale `If-Match`, with `currentVersion` and the current ordered `connections`.
+- `409 conflict` — the roster already has 100 entries.
+- `422 not_a_happy_server` — the server answered, but discovery was not a Happy response. This
+  includes a redirect or an edge sign-in page.
+- `422 sign_in_unavailable` — discovery lists no `oauth` method.
+- `503 remote_unavailable` — the server could not be reached, or TLS failed.
+- `504 remote_timeout` — the server did not answer within 30 seconds.
+
+A rejected request adds nothing and publishes nothing.
+
+##### `DELETE /v0/connections/:id`
+
+Removes a server connection that the owner added. Accepts an optional `If-Match` with the current
+roster version, and an optional `mutationId` query parameter.
+
+Response — `200`: `{ "connections": [ ... ], "version": "..." }`, the complete ordered roster.
+The daemon publishes one `connections.updated` event after commit, closes the connection's open
+requests, streams, WebSockets, and tunnels, cancels a pending sign-in, and deletes its tokens,
+including the refresh token in the credential store. It never deletes data on the server.
+
+Errors:
+
+- `404 not_found` — an unknown or disabled connection.
+- `403 forbidden` — team mode, a caller that is not the owner, or an entry that is not an `oauth`
+  entry the owner added, such as one from machine configuration.
+- `400 invalid_request` — a malformed `If-Match`.
+- `409 conflict` — a stale `If-Match`, with `currentVersion` and `connections`.
+
+An app that adds a server and whose first sign-in is then cancelled or fails may remove the entry,
+so the person is left with nothing.
+
+##### `POST /v0/connections/:id/auth/start`
+
+Starts signing in to an `oauth` connection. The request body is `{}`.
+
+The daemon reads the server's `GET /v0/authentication` again, uses its first `oauth` method,
+generates a PKCE verifier and `state`, and builds the authorization URL with
+`redirect_uri=happy://oauth/callback`, `code_challenge_method=S256`, the method's `scope`, and
+`resource` when the method advertises one.
+
+Response — `200`:
+
+```json
+{
+    "authorizationUrl": "https://idp.example.com/authorize?response_type=code&...",
+    "state": "q3m8...",
+    "expiresAt": 1755400600000
+}
+```
+
+The app opens `authorizationUrl` in the system browser. When `happy://oauth/callback` opens the
+app, it matches the callback's `state` against the attempts it started and calls `auth/complete`
+for that connection. A callback whose `state` matches no attempt is dropped.
+
+An attempt lives in daemon memory for 10 minutes; a restart abandons it. Starting again replaces
+the connection's previous attempt. Attempts for different connections are independent.
+
+Errors:
+
+- `404 not_found` — an unknown or disabled connection.
+- `403 forbidden` — team mode, a caller that is not the owner, or an entry that is not `oauth`.
+- `422 sign_in_unavailable` — discovery lists no `oauth` method.
+- `422 not_a_happy_server` — discovery was not a Happy response.
+- `503 remote_unavailable` or `504 remote_timeout` — as for adding.
+
+##### `POST /v0/connections/:id/auth/complete`
+
+Finishes signing in. Request:
+
+```json
+{ "callbackUrl": "happy://oauth/callback?code=...&state=..." }
+```
+
+The app forwards the callback URL unchanged. The daemon checks that its `state` matches the
+connection's live attempt, exchanges the code at the method's `tokenUrl` with the PKCE verifier,
+stores the refresh token in the credential store, and ends the attempt. It then reads the server's
+health with the new access token.
+
+Response — `200`: `{ "status": { ... } }`, the connection's status object, normally `ready`.
+
+Errors:
+
+- `400 invalid_request` — an invalid body, or a callback URL that is not `happy://oauth/callback`
+  with a `state`.
+- `409 sign_in_expired` — no live attempt, or a `state` that does not match it. The app offers to
+  sign in again.
+- `400 sign_in_denied` — the callback carries an OAuth `error`. The message is the error's
+  `error_description` when present, and otherwise a generic English sentence. The attempt ends.
+- `502 sign_in_failed` — the token endpoint rejected the exchange, redirected, or returned no
+  usable access token. The attempt ends.
+- `404 not_found` and `403 forbidden` — as for starting.
+
+##### `POST /v0/connections/:id/auth/cancel`
+
+Abandons the connection's pending sign-in. The request body is `{}`, or `{ "state": "..." }` to
+cancel only that attempt. Response — `204`. Cancelling when no attempt matches succeeds and
+changes nothing. A cancelled attempt's callback then fails with `409 sign_in_expired`.
+
+##### Connection status
+
+Every `oauth` connection has a status object:
+
+```json
+{ "id": "happy-example-com", "status": "ready", "updatedAt": 1755400000000 }
+```
+
+- `status` — one of:
+    - `"ready"` — signed in, and the most recent request or health check reached the server.
+    - `"connecting"` — signed in, and the first health check since start or sign-in is running.
+    - `"needs_sign_in"` — the person must sign in: never signed in, the refresh token is gone
+      after a restart without a credential store, a refresh was rejected, or the server required
+      sign-in as described below and a refresh did not fix it.
+    - `"unreachable"` — signed in, but the server could not be reached, TLS failed, it timed out,
+      or its health answered `5xx`. The daemon checks health again with backoff from 1 second to
+      60 seconds, and a successful request also restores `ready`.
+- `message` — optional English text safe to display, such as why a refresh failed.
+- `updatedAt` — when the status last changed.
+
+`GET /v0/connections/:id/status` returns `200` with the object. `GET /v0/connection-statuses`
+returns `200` with `{ "statuses": [ ... ] }`, one object for each enabled `oauth` connection, in
+roster order. Status is runtime state, not a versioned resource. A change publishes
+`connections.status.updated` with the object. A client reads the statuses after bootstrap and
+after a cursor gap, then follows the event. An entry that is not `oauth` has no status:
+`GET /v0/connections/:id/status` answers `404 not_found` for it. In team mode both routes return
+`403 forbidden`.
+
+While signed in, the daemon refreshes the access token shortly before it expires, sharing one
+in-flight refresh among concurrent requests. A refresh that rotates the refresh token replaces it in
+the credential store before the new access token is used. A refresh rejected with `invalid_grant`
+deletes the refresh token and sets `needs_sign_in`. A refresh that fails for a network reason
+keeps it and sets `unreachable`.
 
 #### `/v0/connections/:id/api/*`
 
@@ -1041,6 +1275,36 @@ authentication. The proxy never substitutes the team's owner identity. The remot
 checks authentication, organization membership, and profile onboarding. Secrets are never returned
 to clients, included in URLs, or exposed in errors or logs.
 
+For an `oauth` connection, the main daemon carries the request over HTTPS to the connection's
+`url`, with the remote path resolved against it, and replaces the authorization with
+`Authorization: Bearer <access token>`. It sends the token nowhere else and follows no redirects.
+It applies the sign-in rule under Credentials on the wire and signing in again to every remote
+answer, including WebSocket upgrades:
+
+- With no access token, or with the connection in `needs_sign_in`, the request is answered
+  `403 remote_sign_in_required` without contacting the server.
+- A redirect other than `304`, a `401` that is not a Happy error, or a `403` that is not a Happy
+  error is never passed through, because the app would read it as its own daemon asking it to
+  sign in. The request is answered `403 remote_sign_in_required` instead, and the daemon refreshes
+  the access token once in the background. When the refresh fails, the status becomes
+  `needs_sign_in`. When it succeeds, the status stays `ready` and the app may send its own request
+  again. The daemon never replays it.
+- A `401` that is a Happy error is checked as the rule describes, with `GET /v0/authentication`
+  and the same token. `authenticated: false` is handled as in the previous item. Otherwise the
+  `401` passes through unchanged, so the app sees the remote's profile gate and saves its profile
+  through this proxy.
+- Every other remote answer, including a `403` that is a Happy error, passes through unchanged.
+
+`403 remote_sign_in_required` is a Happy error, so the app's own sign-in is unaffected; the app
+shows the connection's sign-in state instead. Terminal WebSocket upgrades are carried over `wss`.
+The daemon pings the remote WebSocket every 15 seconds and closes the app's WebSocket with `1011`
+after 45 seconds without a frame from the remote. An event stream from the remote that sends
+nothing for 45 seconds ends, and the app resumes it from its cursor. Workspace, agent, network,
+and artifact `CONNECT` tunnels and their WebSocket twins are carried over the remote's WebSocket
+twin when the remote's health reports `capabilities.webSocketTunnels: true`. Against an older
+remote they are answered `501 unsupported`, and the daemon never sends `CONNECT` to the remote.
+Each request is still forwarded immediately and in parallel, as above.
+
 An unknown or disabled connection is `404 not_found`. A transport failure before response headers
 is `503 remote_unavailable`; a connection/header deadline of 30 seconds is
 `504 remote_timeout`. After headers, a transport failure terminates the stream rather than
@@ -1055,7 +1319,11 @@ buffers. Reconnecting the carrier never replays an in-flight request; clients re
 the remote cursor.
 
 `HappyAgentClient.listConnections()` reads the roster. `reorderConnection(id, request, options)`
-moves one connection using the roster version as `options.ifMatch`. `client.connection(id)` creates an
+moves one connection using the roster version as `options.ifMatch`. `addConnection(request,
+options)` and `removeConnection(id, options)` add and remove server connections by URL;
+`startConnectionSignIn(id)`, `completeConnectionSignIn(id, request)`, and
+`cancelConnectionSignIn(id, request)` drive their sign-in; and `getConnectionStatus(id)` and
+`listConnectionStatuses()` read their status. `client.connection(id)` creates an
 independent client rooted at this proxy prefix, reusing only the main endpoint, bearer token, and
 fetch transport. All existing methods and attachment URLs then address the remote. The child has
 no local replica state in common with its parent; consumers create a separate reducer when needed.
@@ -1276,6 +1544,7 @@ Response — `200`:
     "ready": true,
     "status": "ready",
     "version": { "protocol": 22, "daemon": "1.2.3" },
+    "instanceId": "k3x9q2m7p0a4b8c1d5e6f7g2",
     "draining": true,
     "drainWaitingFor": [
         { "name": "api-mutations", "count": 1 },
@@ -1318,6 +1587,11 @@ Fields:
   `providerRoutes: true` advertises the routes under `/v0/provider-routes`, described under
   Provider routes. `webSocketTunnels: true` advertises the WebSocket twins of the proxy tunnels,
   described under WebSocket tunnels, and the WebSocket keepalive pings described under Keepalive.
+- `instanceId` — optional; this installation's identity, used by instance links under Happy links.
+  It is a CUID2 of exactly 24 characters matching `^[a-z][a-z0-9]{23}$`, generated once and
+  persisted with the installation's data, so it survives restarts and upgrades. It is reported
+  while starting too. Older daemons omit it, and clients then offer no instance links for that
+  daemon.
 - `ready` — `false` while starting, `true` once the agent system is loaded.
 - `status` — `"starting"` or `"ready"`; the human-readable form of `ready`.
 - `version` — one identity object. `protocol` is the wire protocol number, the client's
@@ -7319,9 +7593,10 @@ A file is linked the same way, as described under "File links". The daemon store
 message text exactly as written: links are part of `text`, not a block of their own, and no route
 rewrites them.
 
-**URLs.** Every host is a plural noun. The Happy mobile app registers `happy://` for its own deep
-links, such as `happy://session/…` and `happy://terminal?…`, and none of its routes uses these
-hosts, so the two never collide.
+**URLs.** Every host is a plural noun, or an instance ID as described under "Instance links". The
+Happy mobile app registers `happy://` for its own deep links, such as `happy://session/…` and
+`happy://terminal?…`, and none of its routes uses these hosts, so the two never collide.
+`happy://oauth/callback` is the sign-in redirect URI and is never a Happy link.
 
 | Kind        | URL                                                            | Names                                                         |
 | ----------- | -------------------------------------------------------------- | ------------------------------------------------------------- |
@@ -7351,6 +7626,47 @@ version    = %x31-39 *8DIGIT
 - Anything else under `happy://` that is not a file URL as described under "File links" is
   malformed: an unknown or singular host, a trailing `/`, any other query or fragment, or a broken
   rule above. A malformed URL is never partly interpreted.
+
+**Instance links.** A URL above names an entity on the daemon whose conversation shows it. An
+**instance link** names the installation as well, so it keeps its meaning outside Happy: in a
+browser, an email, a chat, or another app. It puts the installation's health `instanceId` in front
+of a Happy URL:
+
+```text
+instance-url    = "happy://" instance-id "/" happy-rest
+instance-id     = %x61-7A 23( %x61-7A / DIGIT )
+happy-rest      = artifact / service / other / happy-form-rest
+happy-form-rest = target "/files/" path [ "#" lines ]
+```
+
+`happy-rest` is exactly a Happy URL without its `happy://`: an entity URL under "Grammar" above,
+or the `happy-form` of a file URL, whose `target`, `path`, and `lines` are defined under "File
+links". For example:
+
+```text
+happy://k3x9q2m7p0a4b8c1d5e6f7g2/artifacts/r7k2m9q4w1e5t8y3u6i0o2p5?version=2
+happy://k3x9q2m7p0a4b8c1d5e6f7g2/agents/a1b2c3d4/files/packages/app/Foo.tsx#L42-L50
+happy://k3x9q2m7p0a4b8c1d5e6f7g2/workspaces/k2h4j5l6/services/web
+```
+
+- An instance ID is exactly 24 lowercase letters and digits, starting with a letter, and is
+  compared exactly. It never equals a plural-noun host or `oauth`, so the host alone tells the two
+  forms apart. The rest is parsed with the rules above, and anything else is malformed.
+- `happy-file://` has no instance form.
+- An instance link names that installation and no other. A client opens it only on the
+  installation whose `instanceId` matches: the daemon it is connected to, or a remote in that
+  daemon's roster whose entry carries the same `instanceId`. When no connected installation
+  matches, the client shows "This link belongs to a Happy server you're not connected to." and
+  opens nothing. It never falls back to another installation.
+- A `happy://` URL that reaches a client from outside, such as from the operating system, a
+  browser, or another app, opens only when it is an instance link. One without an instance ID is
+  not opened, because it does not say which installation it means.
+- Inside a conversation, a Happy URL without an instance ID keeps naming an entity of the
+  installation that conversation belongs to. An instance link in a conversation follows the rule
+  above.
+- A client that copies or shares a link to an entity writes its instance link, using the health
+  `instanceId` of the installation the entity belongs to. When that installation reports no
+  `instanceId`, the client offers no shareable link.
 
 **Links.** A Happy link is a CommonMark inline link, `[label](destination)` or
 `[label](<destination>)` with an optional title, whose destination uses the `happy` or
@@ -7447,9 +7763,10 @@ type HappyReference = {
     version?: number; // artifacts only
     workspaceId?: string; // services only
 };
-type HappyLink =
+type HappyLink = (
     | { type: "reference"; reference: HappyReference }
-    | { type: "file"; file: HappyFileLink }; // see "File links"
+    | { type: "file"; file: HappyFileLink } // see "File links"
+) & { instanceId?: string }; // present only for an instance link
 type HappyLinkMatch = {
     link: HappyLink | undefined; // undefined when malformed
     label: string; // the Markdown between the brackets; empty for a legacy tag
@@ -7458,9 +7775,9 @@ type HappyLinkMatch = {
     syntax: "link" | "legacyTag";
 };
 
-parseHappyUrl(url: string): HappyLink | undefined; // happy:// and happy-file://
+parseHappyUrl(url: string): HappyLink | undefined; // happy://, instance links, happy-file://
 isHappyUrl(url: string): boolean; // happy: or happy-file:, any case, well-formed or not
-formatHappyUrl(link: HappyLink): string;
+formatHappyUrl(link: HappyLink): string; // an instance link when link.instanceId is set
 formatHappyReferenceUrl(reference: HappyReference): string;
 formatHappyMarkdownLink(link: HappyLink, label?: string): string; // "[label](happy://…)"
 parseHappyLinks(markdown: string, options?: { streaming?: boolean }):
@@ -12546,6 +12863,10 @@ version rules. Snapshot-to-stream cursor and version-gap recovery rules remain u
   matching version. Clients keep the greater version across reads and events. The event is
   available through journal pull, SSE, and `HappyAgentClient.updates()`. Credentials, transport
   addresses, and health status are absent; remote agents' own events stay in the remote journal.
+- `connections.status.updated` — payload: the status object of one server connection by URL, as
+  under Connection status, published when its status or message changes. It is runtime state with
+  no version; a client rereads `GET /v0/connection-statuses` after a cursor gap. Standalone mode
+  only.
 - `profile.updated` — a profile changed. Standalone mode includes `profile` (the full profile
   object). Team mode instead includes only `userId`; it is a server-wide invalidation delivered to
   every connected organization member so clients can invalidate state for exactly that identity.
