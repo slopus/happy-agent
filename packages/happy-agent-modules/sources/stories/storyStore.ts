@@ -46,7 +46,7 @@ export const storyMigrations: readonly AgentModuleMigration[] = [
     ],
 ];
 
-/** Insert once; a replayed post keeps the story it first wrote. Ended stories are dropped. */
+/** Insert a new story, dropping ended ones. */
 export async function insertStory(ctx: Context, story: StoryRecord): Promise<void> {
     await agentDatabaseRun(
         ctx.db,
@@ -60,18 +60,12 @@ export async function insertStory(ctx: Context, story: StoryRecord): Promise<voi
     await agentDatabaseRun(
         ctx.db,
         sql`INSERT INTO happy_agent_module_stories(id, expires_at, posted_at, record)
-            VALUES (${story.id}, ${story.expiresAt}, ${story.postedAt}, ${JSON.stringify(story)})
-            ON CONFLICT(id) DO NOTHING`,
+            VALUES (${story.id}, ${story.expiresAt}, ${story.postedAt}, ${JSON.stringify(story)})`,
     );
 }
 
-/** Stories live at `now`, oldest first, each with whether `member` saw it; one when `id` is named. */
-export async function readLiveStories(
-    ctx: Context,
-    member: string,
-    now: number,
-    id?: string,
-): Promise<(StoryRecord & { seen: boolean })[]> {
+/** Stories that end after `now`, oldest first, with whether `member` saw each; one if `id` is named. */
+export async function readLiveStories(ctx: Context, member: string, now: number, id?: string) {
     const rows = await agentDatabaseRows<{ record: string; seen: string | null }>(
         ctx.db,
         sql`SELECT s.record AS record, seen.member_id AS seen FROM happy_agent_module_stories s

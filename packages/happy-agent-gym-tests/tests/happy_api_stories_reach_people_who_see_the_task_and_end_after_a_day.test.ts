@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { crc32, deflateSync } from "node:zlib";
 
@@ -84,6 +84,9 @@ async function harness() {
         await writeFile(join(folder, "shot.png"), SHOT);
         await writeFile(join(folder, "clip.mp4"), CLIP);
         await writeFile(join(folder, "clip.mov"), CLIP);
+        await writeFile(join(folder, "clip.m4v"), CLIP);
+        await writeFile(join(folder, "empty.png"), "");
+        await mkdir(join(folder, "folder.mp4"));
     }
     let count = 0;
     /** Alice asks the task's agent to call one tool; returns its result and the tools offered. */
@@ -201,6 +204,25 @@ describe("stories", () => {
             [image!.id, false],
             [clip!.id, false],
         ]);
+        expect(gym.errors).toEqual([]);
+    });
+
+    it("refuse anything but a non-empty image or .mp4 file before reading or keeping it", async () => {
+        const { gym, alice, call, feed } = await harness();
+        await alice.saveUserSetting("stories", { value: true });
+        const media = join(gym.happyHome, "agent", "media");
+        const kept = async () => (await readdir(media, { recursive: true }).catch(() => [])).length;
+        const before = await kept();
+        for (const [path, error] of [
+            ["clip.m4v", "H.264 .mp4"],
+            ["clip.mov", "H.264 .mp4"],
+            ["empty.png", "not a file a story can show"],
+            ["folder.mp4", "not a file a story can show"],
+        ] as const) {
+            expect((await call("post_story", { path })).result.text).toContain(error);
+        }
+        expect(await kept()).toBe(before);
+        expect(await feed("alice")).toEqual([]);
         expect(gym.errors).toEqual([]);
     });
 

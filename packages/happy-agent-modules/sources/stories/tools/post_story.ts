@@ -46,24 +46,26 @@ export function postStoryTool(
         describeAutoPermissionAction: ({ path }) =>
             `posting ${quoteVisibleExact(path)} from this machine as a story everyone who can see this conversation sees for a day. Access: local file read (outside-workspace or symlink targets require full access)`,
         execute: async (ctx, { path, caption }, call) => {
-            if (!(await stories.canPost(ctx, scope))) {
-                throw new Error(
-                    "Stories are off for the person you work for, so nothing was posted.",
-                );
-            }
+            if (!(await stories.canPost(ctx, scope)))
+                throw new Error("Stories are off for the person you work for; nothing was posted.");
             const permissions = computeModule.permissionsForContext(ctx);
             const resolved = computeModule.resolvePath(compute, path);
             const name = resolved.split(/[\\/]/u).at(-1) ?? path;
             const limit = chatMedia.limit(name);
-            if (limit.kind !== "image" && limit.mimeType !== "video/mp4") {
+            if (limit.kind !== "image" && !name.toLowerCase().endsWith(".mp4")) {
                 throw new Error("A story is an image or an H.264 .mp4 video.");
+            }
+            // Measure first, so a pipe, an empty file, or one too large is never read or kept.
+            const facts = await compute.fs.stat(permissions, resolved);
+            if (!facts.isFile || facts.size === 0 || facts.size > limit.maxBytes) {
+                throw new Error(`${quoteVisibleExact(path)} is not a file a story can show.`);
             }
             const { maxBytes } = limit;
             const bytes = await compute.fs.readFileBuffer(permissions, resolved, { maxBytes });
             const item = await chatMedia.snapshot(bytes, name);
             const { kind, mimeType, size, sha256 } = item;
-            if (size === 0 || (kind !== "image" && kind !== "video")) {
-                throw new Error(`${quoteVisibleExact(path)} is not an image or video to show.`);
+            if (kind !== "image" && kind !== "video") {
+                throw new Error(`${quoteVisibleExact(path)} is not an image a story can show.`);
             }
             const media = { kind, name: item.name, mimeType, size, sha256 };
             const story = await stories.post(ctx, scope.agent.id, call.id, caption ?? null, media);

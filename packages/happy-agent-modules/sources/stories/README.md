@@ -21,9 +21,13 @@ const stories = new StoriesModule(config, chatMedia, compute, tasks, bots, team,
 
 `post_story { path, caption? }` is offered only to a task's or bot's own agent, and only while
 the person it works for has stories on: the latest identified human sender in its conversation,
-recorded by this module as messages are accepted, or a standalone installation's one person. The
-call checks again before posting. The file must be an image that decodes or an `.mp4` video. The
-tool call's ID is the story's ID, so a replayed call inserts nothing new.
+recorded by this module as messages are accepted, else a task's owner (a task created by another
+agent hears only agents), or a standalone installation's one person. When the latest human was an
+exported bot's guest, the agent works for nobody and gets no tool. The call checks again before
+posting. The file is measured before it is read: it must be a non-empty regular file within the
+chat media limit, named as an image (one that decodes) or with an `.mp4` extension. The tool
+call's ID is the story's ID: a replayed call returns the story it first posted, even an ended one,
+without inserting or announcing anything. Media is served only while its snapshot is present.
 
 ## Reading
 

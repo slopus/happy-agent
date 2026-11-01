@@ -1,3 +1,5 @@
+import { stat } from "node:fs/promises";
+
 import type { AgentModule, AgentModuleHooks, AgentModuleScope } from "@slopus/happy-agent-base";
 import { afterCommit, type Context } from "@steve.kite/stdlib";
 
@@ -5,7 +7,7 @@ import { BotsModule } from "../bots/index.js";
 import { ChatMediaModule } from "../chatMedia/index.js";
 import { ComputeModule } from "../compute/index.js";
 import { ConfigModule } from "../config/index.js";
-import { isUserOriginMetadata } from "../impl/messageOrigin.js";
+import { isGuestOriginMetadata, isUserOriginMetadata } from "../impl/messageOrigin.js";
 import { STANDALONE_TASK_MEMBER, TasksModule } from "../tasks/index.js";
 import { TeamAuthenticationError, TeamModule, teamUser } from "../team/index.js";
 import { UserSettingsModule } from "../userSettings/index.js";
@@ -13,8 +15,9 @@ import { insertStory, markStorySeen, readLiveStories, storyMigrations } from "./
 import type { StoryRecord } from "./storyStore.js";
 import { postStoryTool } from "./tools/post_story.js";
 
-/** The person whose message this agent is working on, recorded as Tasks records an owner. */
+/** The human this agent last heard from: a user ID, `null` if unidentified, or a guest. */
 const PERSON_KEY = "person";
+const GUEST = "guest:"; // never a user ID, which has no colon
 
 /** `story.changed` for one reader; `readerId` is `undefined` for a standalone installation. */
 export type StoryEvent = {
@@ -64,23 +67,24 @@ export class StoriesModule implements AgentModule {
             if (compute === undefined) return [];
             return [postStoryTool(this, this.#compute, compute, this.#chatMedia, scope)];
         },
-        messageAcceptedTransact: async (ctx, scope, accepted) => {
-            if (accepted.message.role !== "user" || !isUserOriginMetadata(accepted.metadata))
-                return;
-            const userId = accepted.metadata?.["userId"];
-            const person = typeof userId === "string" ? userId : null;
-            if ((await scope.kv.read(ctx, PERSON_KEY)) !== person) {
-                await scope.kv.write(ctx, PERSON_KEY, person);
-            }
+        messageAcceptedTransact: async (ctx, scope, { message, metadata }) => {
+            const guest = isGuestOriginMetadata(metadata);
+            if (message.role !== "user" || (!guest && !isUserOriginMetadata(metadata))) return;
+            const userId = metadata?.["userId"];
+            const person = guest ? GUEST : typeof userId === "string" ? userId : null;
+            await scope.kv.write(ctx, PERSON_KEY, person);
         },
     });
 
-    /** Whether this is a task's or bot's own agent working for a person with stories on. */
+    /** Whether it works for someone with stories on: its last human, else the task's owner. */
     async canPost(ctx: Context, scope: AgentModuleScope): Promise<boolean> {
-        if ((await this.#poster(ctx, scope.agent.id)) === undefined) return false;
+        const poster = await this.#poster(ctx, scope.agent.id);
+        if (poster === undefined) return false;
+        const person = await scope.kv.read(ctx, PERSON_KEY);
+        if (person === GUEST) return false;
         if (!this.#team.enabled) return await this.#enabled(ctx);
-        const userId = await scope.kv.read(ctx, PERSON_KEY);
-        const user = typeof userId === "string" ? await this.#team.getUser(ctx, userId) : undefined;
+        const userId = typeof person === "string" ? person : poster.ownerUserId;
+        const user = userId === null ? undefined : await this.#team.getUser(ctx, userId);
         if (user === undefined || user.authentication === "guest") return false;
         return await this.#enabled(this.#team.connectionContext(ctx, user));
     }
@@ -95,10 +99,14 @@ export class StoriesModule implements AgentModule {
     ): Promise<StoryRecord> {
         const poster = await this.#poster(ctx, agentId);
         if (poster === undefined) throw new Error("Only a task's or a bot's agent posts stories.");
+        const { taskId, botId } = poster;
         const postedAt = Date.now();
         const expiresAt = postedAt + 24 * 60 * 60 * 1000;
-        const story = { id, agentId, ...poster, caption, media, postedAt, expiresAt };
-        await ctx.inTx(async (txCtx) => {
+        const story = { id, agentId, taskId, botId, caption, media, postedAt, expiresAt };
+        return await ctx.inTx(async (txCtx) => {
+            // A replayed call finds what it first posted, even once ended, and announces nothing.
+            const [posted] = await readLiveStories(txCtx, "", 0, id);
+            if (posted !== undefined) return posted;
             await insertStory(txCtx, story);
             // Each reader's copy is read in the transaction and announced once it commits.
             const events: StoryEvent[] = [];
@@ -107,11 +115,9 @@ export class StoriesModule implements AgentModule {
                 const visible = await this.get(readerCtx, id);
                 if (visible) events.push({ readerId: user?.id, payload: { story: visible } });
             }
-            afterCommit(txCtx, (eventCtx) =>
-                events.forEach((event) => this.#emit(eventCtx, event)),
-            );
+            afterCommit(txCtx, (c) => events.forEach((event) => this.#emit(c, event)));
+            return story;
         });
-        return story;
     }
 
     /** The caller's live stories, oldest first; none while their stories are off. */
@@ -133,9 +139,7 @@ export class StoriesModule implements AgentModule {
             const { readerId, member } = this.#reader(txCtx);
             await markStorySeen(txCtx, id, member);
             const story = { ...found, seen: true };
-            afterCommit(txCtx, (eventCtx) =>
-                this.#emit(eventCtx, { readerId, payload: { story } }),
-            );
+            afterCommit(txCtx, (c) => this.#emit(c, { readerId, payload: { story } }));
             return story;
         });
     }
@@ -146,6 +150,8 @@ export class StoriesModule implements AgentModule {
         if (story === undefined) return undefined;
         const { sha256, size, mimeType, name } = story.media;
         const contentPath = this.#config.chatMediaContentPath(sha256);
+        const facts = await stat(contentPath).catch(() => undefined);
+        if (facts?.isFile() !== true || facts.size !== size) return undefined;
         return { contentPath, sha256, size, mimeType, name };
     }
 
@@ -161,12 +167,10 @@ export class StoriesModule implements AgentModule {
         const visible: (StoryRecord & { seen: boolean })[] = [];
         for (const story of await readLiveStories(ctx, member, Date.now(), id)) {
             // A task's story reaches its members; a bot's, everyone who can open the bot.
-            const shown =
-                story.botId !== null
-                    ? (await this.#bots.get(ctx, story.botId)) !== undefined
-                    : story.taskId !== null &&
-                      (await this.#tasks.membership(ctx, story.taskId, member)) !== undefined;
-            if (shown) visible.push(story);
+            const where = story.botId
+                ? await this.#bots.get(ctx, story.botId)
+                : await this.#tasks.membership(ctx, story.taskId!, member);
+            if (where !== undefined) visible.push(story);
         }
         return visible;
     }
@@ -175,7 +179,8 @@ export class StoriesModule implements AgentModule {
         const task = await this.#tasks.forAgent(ctx, agentId);
         const bot = task === undefined ? await this.#bots.forAgent(ctx, agentId) : undefined;
         if (task === undefined && bot === undefined) return undefined;
-        return { taskId: task?.id ?? null, botId: bot?.id ?? null };
+        const ownerUserId = task?.ownerUserId ?? null;
+        return { taskId: task?.id ?? null, botId: bot?.id ?? null, ownerUserId };
     }
 
     #emit(ctx: Context, event: StoryEvent): void {
