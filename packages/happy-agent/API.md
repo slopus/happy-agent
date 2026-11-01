@@ -20,7 +20,9 @@ The daemon has two mutually exclusive deployment transports:
 
 Either mode may also serve the same API over Tailcat: `[feature.tailcat]` exposes the deployment
 transport, and the mobile connector's socket serves paired phones with credentials of their own.
-See Mobile connector.
+The mobile connector may instead expose a loopback HTTP listener behind an operator-managed HTTPS
+reverse proxy. This does not expose the main transport or accept its credentials. See Mobile
+connector.
 
 Clients construct request URLs against an arbitrary authority — the daemon ignores the `Host`
 header. Only the path and query string matter.
@@ -1561,6 +1563,11 @@ Field groups:
     not increment the protocol version; older daemons omit it.
 
 - `settings` — daemon behavior toggles and tunables.
+- `mobileConnector` — optional machine-level phone connectivity settings. Supporting daemons return
+  `{ "publicUrl": null, "localPort": 24782 }`. `publicUrl` is the configured canonical HTTPS origin,
+  or `null` for Tailcat. `localPort` is the read-only loopback HTTP port used behind the TLS proxy,
+  configured by `[feature.mobile_connector] public_port` (default `24782`). These fields are
+  additive; older daemons omit this object. The public URL is an address, not a credential.
 - `theme` — terminal color assignments.
 - `voice` — optional machine-level voice settings, present when the daemon supports voice:
 
@@ -1644,6 +1651,32 @@ and clients without a last composer mode start on it. Conversations that already
 own mode. A model that later stops being offered is ignored until it is offered again. The change
 emits `config.updated`. In team mode only the team owner may change it; anyone else receives
 `403 forbidden`.
+
+The optional `mobileConnector` object changes public phone connectivity:
+
+```json
+{ "mobileConnector": { "publicUrl": "https://agent.example.com" } }
+```
+
+`publicUrl` is optional: omission leaves it unchanged; `null` explicitly selects Tailcat, including
+when the machine file supplies a URL. A string is 1–2,048 characters, is trimmed, and a bare hostname (with an optional
+port) gets `https://`. Only an HTTPS origin is accepted: no user information, non-root path,
+query, fragment, whitespace, or port outside 1–65535. The returned URL uses the URL-standard
+ASCII hostname, lowercase scheme and hostname, no trailing slash, and omits the default port 443.
+Invalid input returns `400 invalid_request` before changing any field of the patch. The setting
+is saved in generated `runtime.toml`, overrides the machine file, survives restart, and emits
+`config.updated`. In team mode only the owner may change it; otherwise the entire patch is
+`403 forbidden`. No port, certificate, DNS, or reverse proxy is configured by this request.
+
+A changed URL cancels unfinished pairings and switches the connector's transport immediately;
+the next pairing advertises the new address. Paired device credentials are not revoked, but phones
+retain the endpoint they originally paired with: re-pair them to use the new endpoint. In particular,
+Tailcat phones are unreachable while the connector is configured for HTTPS, and HTTPS phones are
+unreachable after switching back to Tailcat. Restoring their original endpoint restores access with
+their existing token. An unavailable loopback port produces a failed connector snapshot, never an
+insecure or Tailcat fallback; the setting remains saved so the operator can correct the proxy/port
+and start another pairing. The local listener cannot prove the public DNS, certificate, or proxy
+works; `open` means the daemon's local transport is ready, not that the public endpoint was probed.
 
 The optional `voice` object changes the voice settings:
 
@@ -3397,7 +3430,8 @@ silently reconnect the account the person chose to replace.
 
 The mobile connector lets a phone reach this daemon directly, without a relay. The phone scans a QR
 code shown on the desktop, runs a key exchange with the daemon over a dedicated private Tailcat
-socket, and derives a long-term device token from that exchange. Both screens then show the same
+socket or a configured public HTTPS endpoint, and derives a long-term device token from that
+exchange. Both screens then show the same
 four emoji. Pairing completes only when the person at the desktop and the person on the phone have
 both confirmed that the emoji match, so a leaked QR code by itself never yields a paired device.
 A paired phone then uses this same API over that socket with its device token.
@@ -3406,7 +3440,11 @@ Happy Agent ships no phone code. A phone implements its side from this section a
 test vectors and the emoji table below are the reference it is checked against.
 
 The machine setting `[feature.mobile_connector]` has `enabled`, default `true`, and `port`, default
-`24781`. Only machine configuration can set it, never a repository's `happy.toml`.
+`24781` (the Tailcat port). It also accepts `public_url`, an HTTPS origin or bare hostname, and
+`public_port`, the loopback HTTP port behind a TLS proxy, default `24782`, in 1–65535. An omitted
+or empty machine `public_url` selects Tailcat. A runtime `public_url = ""` explicitly selects
+Tailcat over a machine URL. Only machine configuration can set these, never a repository's
+`happy.toml`. Public URL normalization is the same as `PATCH /v0/config`.
 
 In standalone mode the installation's one person owns the pairing and the paired phones. In team
 mode each locally onboarded user has their own: authentication selects the owner for every route,
@@ -3418,11 +3456,26 @@ phones are stored in the main database by the SHA-256 of their device token, nev
 
 ### The connector's socket
 
-The connector's socket is a Tailcat exposure with its own stable identity, separate from
+By default the connector's socket is a Tailcat exposure with its own stable identity, separate from
 `[feature.tailcat]`. The phone dials `server.tailcat` on the port from the QR code through a
 Tailcat client for the address from the QR code. Tailcat encrypts the traffic and authenticates the
 server. The address carries the identity's WireGuard key and pre-shared key, so it is a secret:
 phones keep it with the device token and never log it.
+
+When `publicUrl` is configured, the connector instead serves HTTP/1.1 on
+`127.0.0.1:<public_port>`, with the same mobile authentication boundary. It does not open Tailcat
+or listen on public interfaces. An operator must place a TLS-terminating reverse proxy in front
+of this listener, configure its DNS and a publicly trusted certificate, and preserve the complete
+HTTP stream. Phones connect to the advertised HTTPS origin and verify TLS using their platform's
+normal trust and hostname checks. They never downgrade to HTTP, ignore certificate errors, follow
+redirects with bearer credentials, or silently fall back to Tailcat.
+
+The proxy must support streaming responses, WebSocket upgrades, and arbitrary bidirectional bytes
+after HTTP `CONNECT`, preserving the request target and `Authorization` header. A TLS-terminating
+TCP proxy (for example HAProxy in TCP mode with TLS termination) supports the full API. Ordinary
+HTTP reverse-proxy defaults may reject `CONNECT`; such a deployment does not support workspace
+browser tunnels and is not a complete mobile endpoint. TLS terminates at the operator's trusted
+proxy, which can observe device credentials and plaintext; the loopback link is unencrypted.
 
 Behind the socket is this API: the same routes, Server-Sent Events, WebSocket upgrades, and
 `CONNECT` tunnels as on the main transports, which are the Unix socket, the team TCP listener, and
@@ -3634,7 +3687,29 @@ each according to its host. The bundle is plain encoding, not encryption:
 | `e` | the pairing's expiry in epoch milliseconds, for display only             |
 
 A reader ignores unknown keys. A bundle whose `v` is a number other than `1` asks the person to
-update the app. Anything else is not a pairing code.
+update the app unless it supports that additional version. Anything else is not a pairing code.
+
+#### Public HTTPS QR codes (version 2)
+
+An HTTPS-configured connector emits the same `happy://direct?` envelope with this new variant:
+
+```json
+{
+    "v": 2,
+    "u": "https://agent.example.com",
+    "t": "Ad3…43 characters…",
+    "n": "Steve's Mac",
+    "e": 1755400420000
+}
+```
+
+`u` is the canonical HTTPS origin described above; the phone rejects noncanonical or non-HTTPS
+values rather than correcting a scanned code. `t`, `n`, and `e` have the same meanings as version 1.
+Version 1 and its required `a` and `p` fields are unchanged; version 2 is a separate opt-in format,
+with no Tailcat address. Readers supporting version 2 must continue to accept version 1. Older
+readers show their existing update-required message, never interpret `u` as a Tailcat identity.
+After pairing, the phone stores the HTTPS origin alongside its device ID and device token and uses
+that origin for every HTTP request, event stream, WebSocket, and tunnel.
 
 The token exists only in daemon memory. It expires five minutes after the pairing started and is
 consumed by the first start that presents it, whatever happens next. The daemon never logs it.
@@ -3688,6 +3763,11 @@ MAC(role)   = HMAC-SHA256(confirmKey, role ‖ TH), role "mobile" or "daemon"
 - `t` is the token's 32 raw bytes, not its base64url text.
 - The phone uses the address and port it dialed from the QR code, and the daemon uses the ones it
   serves, so a replaced QR code changes the transcript and the emoji.
+- For HTTPS QR version 2, `address` is the exact canonical `u` string, including `https://` and any
+  nondefault explicit port, and `port` is that URL's effective port (443 when omitted). The daemon
+  freezes both values when it creates the QR code. The transcript label, HKDF labels, commitment,
+  emoji algorithm, confirmation MACs, and all handshake routes are unchanged. The loopback proxy
+  port is never used in this transcript.
 - Either side refuses a shared secret `K` of all zeros, which every low-order public key produces.
 - The daemon never sends emoji. The phone computes them itself.
 - The device token never crosses the wire. Both sides derive it, and the daemon stores only

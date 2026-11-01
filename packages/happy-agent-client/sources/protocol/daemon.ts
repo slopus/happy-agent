@@ -243,6 +243,22 @@ export const nodeConfigPatchSchema = Type.Object(
 );
 export type NodeConfigPatch = Static<typeof nodeConfigPatchSchema>;
 
+/** Optional machine-level public phone endpoint; older daemons omit this object. */
+export const mobileConnectorConfigSchema = Type.Object({
+    /** Canonical HTTPS origin, or null to use Tailcat. */
+    publicUrl: Type.Optional(Nullable(Type.String({ minLength: 1, maxLength: 2048 }))),
+    /** Read-only loopback HTTP port behind an operator-managed TLS proxy. */
+    localPort: Type.Optional(Type.Integer({ minimum: 1, maximum: 65535 })),
+});
+export type MobileConnectorConfig = Static<typeof mobileConnectorConfigSchema>;
+
+/** Omission preserves the endpoint; null explicitly selects Tailcat. */
+export const mobileConnectorConfigPatchSchema = Type.Object(
+    { publicUrl: Type.Optional(Nullable(Type.String({ minLength: 1, maxLength: 2048 }))) },
+    { additionalProperties: false },
+);
+export type MobileConnectorConfigPatch = Static<typeof mobileConnectorConfigPatchSchema>;
+
 /** Machine-level voice settings; `null` controller fields mean the default. */
 export const voiceConfigSchema = Type.Object({
     controller: Type.Object({
@@ -459,6 +475,7 @@ export const daemonConfigSchema = Type.Object({
     mcpServers: Type.Record(Type.String(), mcpServerConfigSchema),
     /** Every model the daemon knows, keyed by model ID. */
     models: Type.Record(Type.String(), modelDefinitionSchema),
+    mobileConnector: Type.Optional(mobileConnectorConfigSchema),
     network: networkConfigSchema,
     p2p: p2pConfigSchema,
     permissions: permissionsConfigSchema,
@@ -488,6 +505,7 @@ export const configPatchSchema = Type.Partial(
         defaults: Type.Partial(configDefaultsSchema),
         features: Type.Partial(configFeaturesSchema),
         network: Type.Partial(networkConfigSchema),
+        mobileConnector: mobileConnectorConfigPatchSchema,
         node: nodeConfigPatchSchema,
         p2p: Type.Partial(p2pConfigSchema),
         permissions: Type.Partial(permissionsConfigSchema),
