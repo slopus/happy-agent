@@ -17,13 +17,23 @@ export async function bindBunAgentHttpServer(
     const forwarder = createBunHttpForwarder({ hostname: http.host, port: http.port });
     let nativeHttp: BunWebSocketServer | undefined;
     let bridge: BunSocketBridge | undefined;
-    const close = async () => {
-        bridge?.close();
-        forwarder.close();
+    const close = async (gracePeriodMs = 0) => {
         try {
-            await Promise.resolve(nativeHttp?.stop(true));
+            if (gracePeriodMs > 0 && bridge !== undefined) {
+                // Stop new requests while the native HTTP server finishes active replies. The bridge
+                // bounds SSE, WebSockets and CONNECT so they cannot hold an endpoint change forever.
+                const stopping = Promise.resolve(nativeHttp?.stop(false));
+                void stopping.catch(() => undefined);
+                await bridge.drain(gracePeriodMs);
+            }
         } finally {
-            await http.close();
+            bridge?.close();
+            forwarder.close();
+            try {
+                await Promise.resolve(nativeHttp?.stop(true));
+            } finally {
+                await http.close();
+            }
         }
     };
     try {
@@ -63,6 +73,6 @@ export async function bindBunAgentHttpServer(
         host: boundHost,
         port: boundPort,
         url: `http://${boundHost.includes(":") ? `[${boundHost}]` : boundHost}:${boundPort}`,
-        close: () => (closing ??= close()),
+        close: (options) => (closing ??= close(options?.gracePeriodMs)),
     };
 }

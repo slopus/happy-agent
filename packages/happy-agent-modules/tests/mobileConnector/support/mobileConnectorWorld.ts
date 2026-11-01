@@ -23,6 +23,7 @@ import { testProfileModule } from "../../support/testProfileModule.js";
 export const FAKE_TAILCAT_ADDRESS = "tcMobileConnectorTestAddress";
 
 export interface MobileConnectorWorld {
+    readonly config: ConfigModule;
     readonly ctx: Context;
     readonly database: ModuleDatabase;
     readonly events: MobileConnectorEvent[];
@@ -38,6 +39,8 @@ export interface MobileConnectorWorld {
 export interface MobileConnectorWorldOptions {
     /** The configured socket port; one that is free right now when omitted. */
     readonly port?: number;
+    readonly publicUrl?: string;
+    readonly publicPort?: number;
     readonly enabled?: boolean;
     readonly team?: boolean;
     /** Restart over an earlier world's database and Happy home. */
@@ -74,6 +77,11 @@ export async function mobileConnectorWorld(
             "[feature.mobile_connector]",
             `enabled = ${String(options.enabled ?? true)}`,
             `port = ${String(port)}`,
+            "[api]",
+            `public_port = ${String(options.publicPort ?? port)}`,
+            ...(options.publicUrl === undefined
+                ? []
+                : [`public_url = ${JSON.stringify(options.publicUrl)}`]),
         ].join("\n"),
     );
     const executable = join(root, "fake-tailcat");
@@ -142,6 +150,7 @@ setInterval(() => undefined, 1_000);
         durable.module.stop();
     };
     return {
+        config,
         ctx: database.context,
         database,
         events,

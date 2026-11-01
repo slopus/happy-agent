@@ -32,7 +32,7 @@ export interface BoundAgentHttpServer {
     readonly host: string;
     readonly port: number;
     readonly url: string;
-    close(): Promise<void>;
+    close(options?: { readonly gracePeriodMs?: number }): Promise<void>;
 }
 
 export function resolveAgentDaemonPaths(configuration: HappyAgentConfiguration): AgentDaemonPaths {
@@ -120,8 +120,8 @@ export async function bindNodeAgentHttpServer(
         host: boundHost,
         port: boundPort,
         url: `http://${urlHost(boundHost)}:${String(boundPort)}`,
-        close: () => {
-            closing ??= closeHttpServer(server, connections);
+        close: (options) => {
+            closing ??= closeHttpServer(server, connections, options?.gracePeriodMs);
             return closing;
         },
     };
@@ -294,13 +294,26 @@ async function closeServer(
     }
 }
 
-async function closeHttpServer(server: Server, connections: Set<Socket>): Promise<void> {
-    for (const connection of connections) connection.destroy();
-    await new Promise<void>((resolve, reject) => {
-        server.close((error) => (error === undefined ? resolve() : reject(error)));
-    }).catch((error: unknown) => {
-        if (!(error instanceof Error) || !/not running/i.test(error.message)) throw error;
-    });
+async function closeHttpServer(
+    server: Server,
+    connections: Set<Socket>,
+    gracePeriodMs = 0,
+): Promise<void> {
+    const force = () => {
+        for (const connection of connections) connection.destroy();
+    };
+    const timer = gracePeriodMs > 0 ? setTimeout(force, gracePeriodMs) : undefined;
+    timer?.unref();
+    if (timer === undefined) force();
+    try {
+        await new Promise<void>((resolve, reject) => {
+            server.close((error) => (error === undefined ? resolve() : reject(error)));
+        }).catch((error: unknown) => {
+            if (!(error instanceof Error) || !/not running/i.test(error.message)) throw error;
+        });
+    } finally {
+        if (timer !== undefined) clearTimeout(timer);
+    }
 }
 
 function urlHost(host: string): string {

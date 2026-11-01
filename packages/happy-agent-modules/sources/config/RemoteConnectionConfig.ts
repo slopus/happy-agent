@@ -3,7 +3,11 @@ import { Type, type Static } from "@sinclair/typebox";
 
 export const apiTokenSchema = Type.String({ pattern: "^[A-Za-z0-9_-]{43}$" });
 export const apiConfigSchema = Type.Object(
-    { token: Type.Optional(apiTokenSchema) },
+    {
+        token: Type.Optional(apiTokenSchema),
+        public_url: Type.Optional(Type.String({ maxLength: 2048 })),
+        public_port: Type.Optional(Type.Integer({ minimum: 1, maximum: 65535 })),
+    },
     { additionalProperties: false },
 );
 

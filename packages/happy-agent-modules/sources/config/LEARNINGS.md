@@ -1,5 +1,14 @@
 # Config module learnings
 
+## Public endpoint selection is daemon configuration
+
+Public reachability was initially put under mobile connector settings. The endpoint belongs to the
+whole daemon, so machine `[api]` now owns its origin and loopback port; repository configuration
+cannot select either. Runtime changes persist under `[api]`; the API notifies the daemon's transport
+lifetime after any answer sent through the changing transport can flush. The published
+`mobileConnector.publicUrl` field remains a projection of this same value,
+not a second setting. Conflicting canonical and compatibility patches are rejected before mutation.
+
 ## Terra uses its published Codex subscription profile
 
 GPT-6.1 Terra initially copied historical Terra limits without published evidence. OpenAI's Codex

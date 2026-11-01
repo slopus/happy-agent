@@ -76,6 +76,56 @@ async function pairedPhone(target: MobileConnectorWorld) {
 }
 
 describe("MobileConnectorModule", () => {
+    it("pairs over HTTPS with the public origin and port bound into the transcript", async () => {
+        const target = await world({ publicUrl: "Agent.Example.com:8443" });
+        const exposure = vi.spyOn(target.tailcat, "openExposure");
+        const started = await target.mobile.startPairing(target.ctx);
+        expect(parseQr(started.pairing!.qr!)).toMatchObject({
+            v: 2,
+            u: "https://agent.example.com:8443",
+            p: 8443,
+        });
+        const session = await startPhonePairing(started.pairing!.qr!, phone(target));
+        expect((await target.mobile.snapshot(target.ctx)).pairing!.emoji).toEqual(session.emoji);
+        await target.mobile.confirmPairing(target.ctx, started.pairing!.id);
+        const paired = await session.confirm();
+        expect(
+            (await target.mobile.authenticate(target.ctx, `Bearer ${paired.deviceToken}`))?.kind,
+        ).toBe("device");
+        expect(exposure).not.toHaveBeenCalled();
+    });
+
+    it("switches both ways, cancels unfinished pairings, and preserves paired credentials", async () => {
+        const target = await world();
+        const paired = await pairedPhone(target);
+        const pending = await target.mobile.startPairing(target.ctx);
+        const token = parseQr(pending.pairing!.qr!).t;
+        await target.config.updateRuntimePublicApiUrl(target.ctx, "https://agent.example.com");
+        await target.mobile.replaceTransport(target.ctx, UNUSED_TRANSPORT);
+        expect((await target.mobile.snapshot(target.ctx)).pairing!.status).toBe("cancelled");
+        expect(await target.mobile.authenticate(target.ctx, `Bearer ${token}`)).toBeUndefined();
+        expect(
+            (await target.mobile.authenticate(target.ctx, `Bearer ${paired.deviceToken}`))?.kind,
+        ).toBe("device");
+        expect(parseQr((await target.mobile.startPairing(target.ctx)).pairing!.qr!).v).toBe(2);
+        await target.config.updateRuntimePublicApiUrl(target.ctx, null);
+        await target.mobile.replaceTransport(target.ctx, UNUSED_TRANSPORT);
+        expect(parseQr((await target.mobile.startPairing(target.ctx)).pairing!.qr!).v).toBe(1);
+        expect((await storedDevices(target)).length).toBe(1);
+    });
+
+    it("does not bind the daemon's public port itself", async () => {
+        const target = await world({ publicUrl: "agent.example.com" });
+        const occupied = createServer();
+        await new Promise<void>((resolve) => occupied.listen(target.port, "127.0.0.1", resolve));
+        try {
+            expect((await target.mobile.startPairing(target.ctx)).status).toBe("open");
+        } finally {
+            await new Promise<void>((resolve) => occupied.close(() => resolve()));
+        }
+        expect((await target.mobile.startPairing(target.ctx)).status).toBe("open");
+    });
+
     it("pairs a phone over its own Tailcat socket only after both people confirm", async () => {
         const target = await world();
         const initial = await target.mobile.snapshot(target.ctx);

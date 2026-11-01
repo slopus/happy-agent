@@ -108,17 +108,21 @@ export interface BunSocketBridge {
     readonly hostname: string | undefined;
     readonly port: number | undefined;
     close(): void;
+    drain(gracePeriodMs: number): Promise<void>;
 }
 
 export function startBunSocketBridge(
     bun: BunRuntime,
     options: BunSocketBridgeOptions,
 ): BunSocketBridge {
+    const connections = new Set<BunSocket>();
+    let onDrained: (() => void) | undefined;
     const listener = bun.listen({
         allowHalfOpen: true,
         ...options.publicAddress,
         socket: {
             open(socket: BunSocket) {
+                connections.add(socket);
                 socket.data = clientState();
                 socket.timeout?.(HEADER_TIMEOUT_SECONDS);
             },
@@ -139,6 +143,8 @@ export function startBunSocketBridge(
             },
             close(socket: BunSocket) {
                 closeClientState(socket);
+                connections.delete(socket);
+                if (connections.size === 0) onDrained?.();
             },
             error(socket: BunSocket) {
                 closeBridge(socket);
@@ -151,7 +157,26 @@ export function startBunSocketBridge(
     return {
         hostname: listener.hostname,
         port: listener.port,
-        close: () => listener.stop(true),
+        close: () => {
+            listener.stop(true);
+            onDrained?.();
+        },
+        drain: async (gracePeriodMs) =>
+            await new Promise<void>((resolve) => {
+                const done = () => {
+                    clearTimeout(timer);
+                    onDrained = undefined;
+                    resolve();
+                };
+                const timer = setTimeout(() => {
+                    listener.stop(true);
+                    done();
+                }, gracePeriodMs);
+                timer.unref();
+                onDrained = done;
+                listener.stop(false);
+                if (connections.size === 0) done();
+            }),
     };
 }
 

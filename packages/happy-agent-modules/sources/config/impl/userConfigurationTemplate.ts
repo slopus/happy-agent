@@ -64,6 +64,12 @@ export const HAPPY_TOML_TEMPLATE = `# Happy configuration for Happy Agent.
 # [feature.mobile_connector]
 # enabled = true
 # port = 24781
+# The daemon's public endpoint serves ordinary API clients and paired phones on one listener,
+# independently of mobile connectivity. Configure DNS and a trusted TLS proxy forwarding HTTP/1.1
+# (including streaming, WebSocket and CONNECT) to 127.0.0.1:24782 separately.
+# [api]
+# public_url = "https://agent.example.com"
+# public_port = 24782
 
 # Team deployments expose an authenticated TCP HTTP API instead of the private local socket.
 # [feature.team]

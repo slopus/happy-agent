@@ -85,6 +85,8 @@ import {
     deleteArtifactRequestSchema,
     nodeConfigPatchSchema,
     voiceConfigPatchSchema,
+    mobileConnectorConfigPatchSchema,
+    apiConfigPatchSchema,
     updateArtifactRequestSchema as publishedUpdateArtifactRequestSchema,
     providerVerificationRequestSchema,
     providerUsageRefreshRequestSchema,
@@ -187,6 +189,7 @@ import {
 import { ComputeModule, type ComputeProcessEvent } from "../compute/index.js";
 import {
     ConfigModule,
+    PublicApiConfigError,
     DefaultModelError,
     defaultModelUpdateSchema,
     VoiceSettingsError,
@@ -281,8 +284,15 @@ import {
     type MobileConnectorSnapshot,
     type MobileCredential,
 } from "../mobileConnector/index.js";
-import { isMobileTransport, mobileDevice, withMobileDevice } from "./impl/apiMobileTransport.js";
+import {
+    isMobileTransport,
+    isPublicTransport,
+    mobileDevice,
+    withMobileDevice,
+    withMobileTransport,
+} from "./impl/apiMobileTransport.js";
 import { jsonResponseBody } from "./impl/jsonResponseBody.js";
+import { finishApiResponse } from "./impl/finishApiResponse.js";
 import {
     createNodeBinaryWebSocket,
     createSseWriter,
@@ -677,6 +687,7 @@ export class ApiModule implements AgentModule {
     /** Event streams that live document frames can address, with the person who opened each. */
     readonly #eventStreams = new Map<string, { writer: SseWriter; userId: string | undefined }>();
     readonly #shutdownListeners = new Set<() => void | Promise<void>>();
+    readonly #publicEndpointListeners = new Set<() => Promise<void>>();
     readonly #drainSources = new Map<string, ApiDrainSource>();
     readonly #runningDrains = new Map<string, ApiRunningDrain>();
     /** HTTP mutations admitted before draining published its read-only boundary. */
@@ -903,6 +914,14 @@ export class ApiModule implements AgentModule {
         };
     }
 
+    /** Endpoint lifecycle changes run after any answer sent through the affected transport. */
+    onPublicEndpointChanged(listener: () => Promise<void>): () => void {
+        this.#publicEndpointListeners.add(listener);
+        return () => {
+            this.#publicEndpointListeners.delete(listener);
+        };
+    }
+
     /** Register one stable component that the daemon-level drain waits for and reports. */
     onDrain(name: string, source: ApiDrainSource): () => void {
         if (name.length === 0) throw new Error("A drain source must have a name.");
@@ -952,6 +971,7 @@ export class ApiModule implements AgentModule {
         this.#ready = false;
         for (const unsubscribe of this.#unsubscribe.splice(0)) unsubscribe();
         this.#shutdownListeners.clear();
+        this.#publicEndpointListeners.clear();
         if (this.#drainReport !== undefined) clearInterval(this.#drainReport.timer);
         this.#drainReport = undefined;
         this.#drainSources.clear();
@@ -1008,7 +1028,37 @@ export class ApiModule implements AgentModule {
         setCommonHeaders(response);
         let finishMutation: (() => void) | undefined;
         try {
-            if (isMobileTransport(ctx)) {
+            if (
+                isPublicTransport(ctx) &&
+                !(request.method === "GET" && requestUrl(request).pathname === "/v0/authentication")
+            ) {
+                const admitted = await this.#admitPublic(
+                    ctx,
+                    request.headers.authorization,
+                    request.socket,
+                );
+                if (admitted.kind !== "device" && admitted.kind !== "main") {
+                    await this.#handleMobileHandshake(ctx, admitted, request, response);
+                    return;
+                }
+                ctx = admitted.ctx;
+                const pathname = requestUrl(request).pathname;
+                if (
+                    isPublicForbiddenPath(pathname) ||
+                    (admitted.kind === "device" && isDeviceForbiddenPath(pathname))
+                ) {
+                    throw new ApiError(
+                        403,
+                        "forbidden",
+                        "This endpoint is unavailable on the public listener.",
+                    );
+                }
+                if (
+                    pathname === MOBILE_HANDSHAKE_ROUTE ||
+                    pathname.startsWith(`${MOBILE_HANDSHAKE_ROUTE}/`)
+                )
+                    throw mobileUnauthorized();
+            } else if (isMobileTransport(ctx)) {
                 // Before anything else: only a phone's own credentials reach anything here.
                 const admitted = await this.#admitMobile(
                     ctx,
@@ -1338,7 +1388,7 @@ export class ApiModule implements AgentModule {
                     throw new ApiError(
                         409,
                         "conflict",
-                        "This daemon can only change provider enablement, the default model, its display name, and voice settings at runtime.",
+                        "This daemon can only change provider enablement, the default model, its display name, voice settings, and public connectivity at runtime.",
                     );
                 }
                 if (
@@ -1374,6 +1424,37 @@ export class ApiModule implements AgentModule {
                         "Only the team owner can change this installation's name.",
                     );
                 }
+                if (
+                    (body.api !== undefined || body.mobileConnector !== undefined) &&
+                    this.#team.enabled &&
+                    teamUser(ctx)?.isOwner !== true
+                ) {
+                    throw new ApiError(
+                        403,
+                        "forbidden",
+                        "Only the team owner can change public connectivity.",
+                    );
+                }
+                // Validate the endpoint before any part of a compound patch can change state.
+                let publicUrl: string | null | undefined;
+                try {
+                    const normalize = (value: string | null | undefined) =>
+                        typeof value === "string"
+                            ? this.#config.normalizePublicApiUrl(value)
+                            : value;
+                    const canonical = normalize(body.api?.publicUrl);
+                    const compatibility = normalize(body.mobileConnector?.publicUrl);
+                    if (
+                        canonical !== undefined &&
+                        compatibility !== undefined &&
+                        canonical !== compatibility
+                    )
+                        throw invalidRequest("The public endpoint settings disagree.");
+                    publicUrl = canonical === undefined ? compatibility : canonical;
+                } catch (error: unknown) {
+                    if (error instanceof PublicApiConfigError) throw invalidRequest(error.message);
+                    throw error;
+                }
                 if (body.voice !== undefined) {
                     try {
                         // Voice applies first so a refused selection leaves every other field unchanged.
@@ -1400,15 +1481,33 @@ export class ApiModule implements AgentModule {
                         throw error;
                     }
                 }
+                const endpointChanged =
+                    publicUrl !== undefined
+                        ? await this.#config.updateRuntimePublicApiUrl(ctx, publicUrl)
+                        : false;
                 const nameChanged = await ctx.inTx(async (txCtx) => {
                     if (body.node?.name === undefined) return false;
                     const previous = await this.#node.get(txCtx);
                     await this.#node.setName(txCtx, body.node.name);
                     return previous.name !== body.node.name;
                 });
-                if ((body.providers !== undefined || body.defaults !== undefined) && !nameChanged)
+                if (
+                    (body.providers !== undefined ||
+                        body.defaults !== undefined ||
+                        endpointChanged) &&
+                    !nameChanged
+                )
                     this.#journal.append("config.updated", {});
-                sendJson(response, 200, { config: await this.#sanitizedConfig(ctx) });
+                const endpointListeners = endpointChanged ? [...this.#publicEndpointListeners] : [];
+                if (endpointChanged && (isPublicTransport(ctx) || isMobileTransport(ctx))) {
+                    response.setHeader("connection", "close");
+                    sendJson(response, 200, { config: await this.#sanitizedConfig(ctx) });
+                    await finishApiResponse(response);
+                    for (const listener of endpointListeners) await listener();
+                } else {
+                    for (const listener of endpointListeners) await listener();
+                    sendJson(response, 200, { config: await this.#sanitizedConfig(ctx) });
+                }
                 return;
             }
             if (request.method === "POST" && url.pathname === "/v0/providers/scan") {
@@ -1985,9 +2084,14 @@ export class ApiModule implements AgentModule {
         socket: Socket,
         head: Buffer,
     ): Promise<boolean> {
-        if (isMobileTransport(ctx)) {
+        if (isMobileTransport(ctx) || isPublicTransport(ctx)) {
             try {
-                ctx = await this.#admitMobileDevice(ctx, request.headers.authorization, socket);
+                ctx = await this.#admitConnection(
+                    ctx,
+                    request.headers.authorization,
+                    requestUrl(request).pathname,
+                    socket,
+                );
             } catch (error: unknown) {
                 writeSocketError(socket, this.#socketRejection(ctx, error, "Not found."));
                 return true;
@@ -2133,7 +2237,10 @@ export class ApiModule implements AgentModule {
         authorization: string | string[] | undefined,
     ): Promise<PreparedExportedBotSocket> {
         if (this.#exportedBots === undefined) return { handled: false };
-        if (isMobileTransport(ctx) && url.pathname === "/v0/exported-bots/connect") {
+        if (
+            (isMobileTransport(ctx) || isPublicTransport(ctx)) &&
+            url.pathname === "/v0/exported-bots/connect"
+        ) {
             return {
                 handled: true,
                 rejection: { code: "unauthorized", message: "Unauthorized", status: 401 },
@@ -2188,9 +2295,14 @@ export class ApiModule implements AgentModule {
     ): Promise<boolean> {
         // HTTP hands a CONNECT socket over without its error handling, and admission waits.
         socket.on("error", () => undefined);
-        if (isMobileTransport(ctx)) {
+        if (isMobileTransport(ctx) || isPublicTransport(ctx)) {
             try {
-                ctx = await this.#admitMobileDevice(ctx, request.headers.authorization, socket);
+                ctx = await this.#admitConnection(
+                    ctx,
+                    request.headers.authorization,
+                    requestUrl(request).pathname,
+                    socket,
+                );
             } catch (error: unknown) {
                 writeSocketError(socket, this.#socketRejection(ctx, error, "Not found."));
                 return true;
@@ -2359,7 +2471,8 @@ export class ApiModule implements AgentModule {
         if (pathname !== "/v0/runners/connect" || this.#runners === undefined) {
             return { handled: false };
         }
-        if (isMobileTransport(ctx)) return { handled: true, rejection: MOBILE_UNAUTHORIZED };
+        if (isMobileTransport(ctx) || isPublicTransport(ctx))
+            return { handled: true, rejection: MOBILE_UNAUTHORIZED };
         const runnerId = this.#runners.authenticate(authorization);
         if (runnerId === undefined) {
             return {
@@ -2458,6 +2571,8 @@ export class ApiModule implements AgentModule {
         pathname: string,
         authorization: string | string[] | undefined,
     ): Promise<PreparedWorkspaceProxySocket> {
+        const publicRejection = await this.publicSocketRejection(ctx, pathname, authorization);
+        if (publicRejection !== undefined) return { handled: true, rejection: publicRejection };
         const artifact = /^\/v0\/artifacts\/([^/]*)\/proxy$/.exec(pathname);
         if (artifact !== null)
             return await this.#prepareArtifactProxy(ctx, artifact[1]!, authorization);
@@ -8596,6 +8711,53 @@ export class ApiModule implements AgentModule {
         return { kind: "device", ctx: deviceCtx };
     }
 
+    /** Enforce the public boundary before a native socket adapter selects an upgrade or tunnel. */
+    async publicSocketRejection(
+        ctx: Context,
+        pathname: string,
+        authorization: string | string[] | undefined,
+    ): Promise<ApiSocketRejection | undefined> {
+        if (!isPublicTransport(ctx)) return undefined;
+        try {
+            ctx = await this.#authenticate(ctx, authorization);
+            if (
+                isPublicForbiddenPath(pathname) ||
+                (mobileDevice(ctx) !== undefined && isDeviceForbiddenPath(pathname))
+            )
+                throw new ApiError(
+                    403,
+                    "forbidden",
+                    "This endpoint is unavailable on the public listener.",
+                );
+            return undefined;
+        } catch (error: unknown) {
+            return this.#socketRejection(ctx, error, "Not found.");
+        }
+    }
+
+    /** Admit a Node connection and retain the paired phone's revocation lifetime. */
+    async #admitConnection(
+        ctx: Context,
+        authorization: string | string[] | undefined,
+        pathname: string,
+        connection: MobileConnection,
+    ): Promise<Context> {
+        if (!isPublicTransport(ctx))
+            return await this.#admitMobileDevice(ctx, authorization, connection);
+        const admitted = await this.#admitPublic(ctx, authorization, connection);
+        if (admitted.kind !== "main" && admitted.kind !== "device") throw mobileUnauthorized();
+        if (
+            isPublicForbiddenPath(pathname) ||
+            (admitted.kind === "device" && isDeviceForbiddenPath(pathname))
+        )
+            throw new ApiError(
+                403,
+                "forbidden",
+                "This endpoint is unavailable on the public listener.",
+            );
+        return admitted.ctx;
+    }
+
     /** Upgrades and tunnels on the mobile connector's socket belong to paired phones only. */
     async #admitMobileDevice(
         ctx: Context,
@@ -9540,6 +9702,14 @@ export class ApiModule implements AgentModule {
                 toolResultRetentionDays: values.settings.toolResultRetentionDays,
             },
             theme: values.theme,
+            api: {
+                publicUrl: this.#config.publicApiUrl,
+                localPort: this.#config.publicApiPort,
+            },
+            mobileConnector: {
+                publicUrl: this.#config.publicApiUrl,
+                localPort: this.#config.publicApiPort,
+            },
             ...(this.#live === undefined ? {} : { voice: this.#live.voiceSettings() }),
             workspace: values.workspace,
         };
@@ -9645,12 +9815,48 @@ export class ApiModule implements AgentModule {
         ctx: Context,
         authorization: string | string[] | undefined,
     ): Promise<Context> {
+        if (isPublicTransport(ctx)) {
+            if (mobileDevice(ctx) !== undefined) return ctx;
+            const admitted = await this.#admitPublic(ctx, authorization, undefined);
+            if (admitted.kind !== "main" && admitted.kind !== "device") throw mobileUnauthorized();
+            return admitted.ctx;
+        }
         if (isMobileTransport(ctx)) {
             // Usually admitted at the transport's entry; Bun's native upgrades arrive here first.
             return mobileDevice(ctx) === undefined
                 ? await this.#admitMobileDevice(ctx, authorization, undefined)
                 : ctx;
         }
+        return await this.#authenticateMain(ctx, authorization);
+    }
+
+    /** Verify both credential classes; never infer authority from the bearer token's shape. */
+    async #admitPublic(
+        ctx: Context,
+        authorization: string | string[] | undefined,
+        connection: MobileConnection | undefined,
+    ): Promise<
+        | { readonly kind: "main"; readonly ctx: Context }
+        | { readonly kind: "device"; readonly ctx: Context }
+        | Exclude<MobileCredential, { readonly kind: "device" }>
+    > {
+        let main: Context | undefined;
+        try {
+            main = await this.#authenticateMain(ctx, authorization);
+        } catch (error: unknown) {
+            if (!(error instanceof ApiError) || error.status !== 401) throw error;
+        }
+        const mobile = await this.#mobileConnector?.authenticate(ctx, authorization);
+        if (main !== undefined && mobile !== undefined) throw mobileUnauthorized();
+        if (main !== undefined) return { kind: "main", ctx: main };
+        if (mobile === undefined) throw mobileUnauthorized();
+        return await this.#admitMobile(withMobileTransport(ctx), authorization, connection);
+    }
+
+    async #authenticateMain(
+        ctx: Context,
+        authorization: string | string[] | undefined,
+    ): Promise<Context> {
         if (this.#team.enabled) {
             try {
                 return this.#ready
@@ -10022,6 +10228,8 @@ const runtimeConfigPatchSchema = Type.Object(
         defaults: Type.Optional(defaultModelUpdateSchema),
         node: Type.Optional(nodeConfigPatchSchema),
         voice: Type.Optional(voiceConfigPatchSchema),
+        mobileConnector: Type.Optional(mobileConnectorConfigPatchSchema),
+        api: Type.Optional(apiConfigPatchSchema),
         providers: Type.Optional(
             Type.Record(
                 Type.String(),
@@ -10081,6 +10289,12 @@ function mobileUnauthorized(): ApiError {
 /** Daemon lifecycle, debugging, and mobile connector management stay with the desktop. */
 function isDeviceForbiddenPath(pathname: string): boolean {
     return ["/v0/drain", "/v0/shutdown", "/v0/debug", "/v0/mobile-connector"].some(
+        (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
+    );
+}
+
+function isPublicForbiddenPath(pathname: string): boolean {
+    return ["/v0/drain", "/v0/shutdown", "/v0/debug"].some(
         (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
     );
 }

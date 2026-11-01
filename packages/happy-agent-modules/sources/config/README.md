@@ -95,6 +95,16 @@ private folder: `<name>.private.json` for its own stable identity key, and `<nam
 Tailcat it is machine-only, so a project's `happy.toml` cannot open, move, or close the phone
 connection socket, and port zero is invalid.
 
+`[api] public_url` optionally selects the daemon's HTTPS origin; a bare hostname gets
+`https://`, and an empty string selects Tailcat. `public_port` defaults to `24782` and names the
+loopback-only HTTP listener behind an operator-managed TLS proxy. These are machine settings,
+not repository settings. `PATCH /v0/config` with `api.publicUrl` changes the origin
+live and persists it in generated `runtime.toml`; `null` overrides a machine URL with Tailcat.
+The daemon owns this listener independently of mobile connectivity. The existing
+`mobileConnector.publicUrl` API field is a compatibility projection of the same setting.
+The listener port is file-only and takes a restart. See the mobile connector README for proxy
+requirements and pairing behavior.
+
 `[feature.team] enabled` selects the opt-in team deployment mode and defaults to `false`. It is a
 machine setting, so a project's checked-in `happy.toml` cannot enable it. Team mode has no private
 local API socket or bearer-token file. Instead, it exposes the WorkOS-authenticated API over TCP.

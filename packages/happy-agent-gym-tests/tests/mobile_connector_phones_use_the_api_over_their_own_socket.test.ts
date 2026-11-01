@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { createAgentGym, GymHttpClient, type AgentGym } from "@slopus/happy-agent-gym";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import WebSocket from "ws";
+import { surfaceTeamClients } from "./support/surfaceTeamClients.js";
 
 // The phone is written from API.md alone, independently of the daemon's own pairing code.
 import {
@@ -30,6 +31,8 @@ const TAILNET_PORT = 24_872;
 const PHONE = `http://127.0.0.1:${String(TAILNET_PORT)}`;
 const HANDSHAKE = "/v0/mobile-connector/handshake";
 const FAKE_ADDRESS = "tcGymMobileConnectorAddress";
+const PUBLIC_ORIGIN = "https://agent.example.com:8443";
+let transport: "tailcat" | "https" = "tailcat";
 
 const running = new Set<AgentGym>();
 let fakeTailcatRoot: string | undefined;
@@ -80,7 +83,7 @@ afterEach(async () => {
 
 async function mobileGym(): Promise<AgentGym> {
     const gym = await createAgentGym({
-        config: `[feature.mobile_connector]\nport = ${String(PORT)}\n`,
+        config: `[feature.mobile_connector]\nport = ${String(PORT)}\n[api]\npublic_port = ${String(TAILNET_PORT)}\n${transport === "https" ? `public_url = "${PUBLIC_ORIGIN}"\n` : ""}`,
         timeoutMs: 15_000,
     });
     running.add(gym);
@@ -259,13 +262,20 @@ function closed(target: { once(event: "close", listener: () => void): unknown })
     return new Promise<void>((resolve) => target.once("close", () => resolve()));
 }
 
-describe("phones use the Happy Agent API over the mobile connector's own socket", () => {
+describe.each(["tailcat", "https"] as const)("phones use the API over %s", (mode) => {
+    beforeEach(() => {
+        transport = mode;
+    });
     it("pairs through the real daemon and serves the paired phone the ordinary API", async () => {
         const gym = await mobileGym();
         const stream = gym.stream();
         await stream.opened();
         const paired = await pairPhone(gym);
-        expect(paired).toMatchObject({ address: FAKE_ADDRESS, port: PORT });
+        expect(paired).toMatchObject(
+            mode === "tailcat"
+                ? { address: FAKE_ADDRESS, port: PORT }
+                : { address: PUBLIC_ORIGIN, port: 8443 },
+        );
 
         const snapshot = await gym.http.ok<{ mobileConnector: MobileConnector }>(
             "GET",
@@ -353,20 +363,32 @@ describe("phones use the Happy Agent API over the mobile connector's own socket"
 
         // The main transport's own token, a missing header, and an unknown token are all refused
         // before routing, for HTTP, WebSocket upgrades, and CONNECT alike.
-        for (const credential of [gym.token, undefined, randomBytes(32).toString("base64url")]) {
+        for (const credential of [
+            ...(mode === "tailcat" ? [gym.token] : []),
+            undefined,
+            randomBytes(32).toString("base64url"),
+        ]) {
             await expect(phoneHttp("GET", "/v0/health", credential)).resolves.toEqual(unauthorized);
-            await expect(phoneHttp("GET", "/v0/authentication", credential)).resolves.toEqual(
-                unauthorized,
+            await expect(phoneHttp("GET", "/v0/authentication", credential)).resolves.toMatchObject(
+                mode === "tailcat" ? unauthorized : { status: 200, body: { authenticated: false } },
             );
             await expect(phoneHttp("GET", "/v0/no-such-route", credential)).resolves.toEqual(
                 unauthorized,
             );
         }
-        await expect(phoneWebSocket(bridgePath(gym, workspaceId), gym.token)).resolves.toBe(401);
+        if (mode === "tailcat") {
+            await expect(phoneWebSocket(bridgePath(gym, workspaceId), gym.token)).resolves.toBe(
+                401,
+            );
+            await expect(
+                phoneConnect(`/v0/workspaces/${workspaceId}/proxy`, gym.token),
+            ).resolves.toBe(401);
+        } else {
+            await expect(phoneHttp("GET", "/v0/health", gym.token)).resolves.toMatchObject({
+                status: 200,
+            });
+        }
         await expect(phoneWebSocket("/v0/runners/connect", gym.token)).resolves.toBe(401);
-        await expect(phoneConnect(`/v0/workspaces/${workspaceId}/proxy`, gym.token)).resolves.toBe(
-            401,
-        );
 
         // The main transport accepts no phone credential, and has no handshake routes.
         const asPhone = new GymHttpClient({
@@ -508,7 +530,11 @@ describe("phones use the Happy Agent API over the mobile connector's own socket"
         try {
             const gym = await mobileGym();
             const paired = await pairPhone(gym);
-            expect(paired).toMatchObject({ address: FAKE_ADDRESS, port: PORT });
+            expect(paired).toMatchObject(
+                mode === "tailcat"
+                    ? { address: FAKE_ADDRESS, port: PORT }
+                    : { address: PUBLIC_ORIGIN, port: 8443 },
+            );
 
             await gym.restart();
             await gym.waitUntil(async () => {
@@ -525,5 +551,224 @@ describe("phones use the Happy Agent API over the mobile connector's own socket"
         } finally {
             await new Promise<void>((resolve) => occupant.close(() => resolve()));
         }
+    }, 60_000);
+});
+
+describe("public phone endpoint settings", () => {
+    it("starts the daemon-owned public API even with mobile connectivity disabled", async () => {
+        const gym = await createAgentGym({
+            config: `[api]\npublic_url = "${PUBLIC_ORIGIN}"\npublic_port = ${TAILNET_PORT}\n[feature.mobile_connector]\nenabled = false\n`,
+        });
+        running.add(gym);
+        expect((await gym.client.getConfig()).config.api).toEqual({
+            publicUrl: PUBLIC_ORIGIN,
+            localPort: TAILNET_PORT,
+        });
+        await expect(phoneHttp("GET", "/v0/health", gym.token)).resolves.toMatchObject({
+            status: 200,
+        });
+        await expect(phoneHttp("GET", "/v0/authentication")).resolves.toMatchObject({
+            status: 200,
+            body: { authenticated: false, userId: null },
+        });
+        for (const path of ["/v0/drain", "/v0/shutdown", "/v0/debug", "/v0/debug/test"]) {
+            await expect(phoneHttp("POST", path, gym.token)).resolves.toMatchObject({
+                status: 403,
+            });
+        }
+        expect((await gym.client.getMobileConnector()).mobileConnector.status).toBe("disabled");
+    });
+    beforeEach(() => {
+        transport = "https";
+    });
+
+    it("finishes an authenticated public config response before removing its listener", async () => {
+        const gym = await mobileGym();
+        await expect(
+            phoneHttp("PATCH", "/v0/config", gym.token, { api: { publicUrl: null } }),
+        ).resolves.toMatchObject({
+            status: 200,
+            body: { config: { api: { publicUrl: null } } },
+        });
+        expect((await gym.client.getConfig()).config.api?.publicUrl).toBeNull();
+        await gym.http.ok("GET", "/v0/health");
+    });
+
+    it("bounds old public streams and tunnels while flushing the endpoint-removal response", async () => {
+        const gym = await mobileGym();
+        const workspaceId = await rootWorkspaceId(gym);
+        const events = await fetch(`${PHONE}/v0/events/stream`, {
+            headers: { authorization: `Bearer ${gym.token}` },
+        });
+        const reader = events.body!.getReader();
+        await reader.read();
+        const streamClosed = (async () => {
+            try {
+                while (!(await reader.read()).done) {
+                    /* Drain through the final event. */
+                }
+            } catch {
+                /* A bounded transport close may reset an event stream. */
+            }
+        })();
+        const websocket = await phoneWebSocket(bridgePath(gym, workspaceId), gym.token);
+        if (!(websocket instanceof WebSocket)) throw new Error(`Upgrade refused: ${websocket}`);
+        const socketClosed = closed(websocket);
+        const tunnel = await phoneConnect(`/v0/workspaces/${workspaceId}/proxy`, gym.token);
+        if (typeof tunnel === "number") throw new Error(`Tunnel refused: ${tunnel}`);
+        const tunnelClosed = closed(tunnel);
+        await expect(
+            phoneHttp("PATCH", "/v0/config", gym.token, { api: { publicUrl: null } }),
+        ).resolves.toMatchObject({ status: 200 });
+        await Promise.all([streamClosed, socketClosed, tunnelClosed]);
+        await gym.http.ok("GET", "/v0/health");
+    }, 15_000);
+
+    it("preserves phone credentials while switching between the single public listener and Tailcat", async () => {
+        transport = "tailcat";
+        const gym = await mobileGym();
+        const paired = await pairPhone(gym);
+        await gym.client.patchConfig({ api: { publicUrl: PUBLIC_ORIGIN } });
+        await expect(phoneHttp("GET", "/v0/health", paired.deviceToken)).resolves.toMatchObject({
+            status: 200,
+        });
+        await expect(phoneHttp("GET", "/v0/health", gym.token)).resolves.toMatchObject({
+            status: 200,
+        });
+        await gym.client.patchConfig({ api: { publicUrl: null } });
+        await expect(phoneHttp("GET", "/v0/health", paired.deviceToken)).resolves.toMatchObject({
+            status: 200,
+        });
+        await expect(phoneHttp("GET", "/v0/health", gym.token)).resolves.toMatchObject({
+            status: 401,
+        });
+    }, 60_000);
+
+    it("keeps the primary API usable when the public port is occupied and recovers after restart", async () => {
+        const occupant = createServer();
+        await new Promise<void>((resolve) => occupant.listen(TAILNET_PORT, "127.0.0.1", resolve));
+        let gym: AgentGym;
+        try {
+            gym = await mobileGym();
+            expect((await gym.client.getMobileConnector()).mobileConnector).toMatchObject({
+                status: "failed",
+            });
+            expect((await gym.client.getConfig()).config.api?.publicUrl).toBe(PUBLIC_ORIGIN);
+            await gym.http.ok("GET", "/v0/health");
+        } finally {
+            await new Promise<void>((resolve) => occupant.close(() => resolve()));
+        }
+        await gym.restart();
+        await expect(phoneHttp("GET", "/v0/health", gym.token)).resolves.toMatchObject({
+            status: 200,
+        });
+        expect((await gym.client.getMobileConnector()).mobileConnector.status).toBe("open");
+    }, 60_000);
+
+    it("admits main API streaming and upgrades but denies public administration on every socket path", async () => {
+        const gym = await mobileGym();
+        const workspaceId = await rootWorkspaceId(gym);
+        const events = await fetch(`${PHONE}/v0/events/stream`, {
+            headers: { authorization: `Bearer ${gym.token}` },
+        });
+        expect(events.status).toBe(200);
+        const reader = events.body!.getReader();
+        expect(new TextDecoder().decode((await reader.read()).value)).toContain("hello");
+        await reader.cancel();
+        const websocket = await phoneWebSocket(bridgePath(gym, workspaceId), gym.token);
+        if (!(websocket instanceof WebSocket)) throw new Error(`Upgrade refused: ${websocket}`);
+        await expect(firstJson(gym, websocket)).resolves.toMatchObject({ type: "ready" });
+        websocket.terminate();
+        const tunnel = await phoneConnect(`/v0/workspaces/${workspaceId}/proxy`, gym.token);
+        if (typeof tunnel === "number") throw new Error(`Tunnel refused: ${tunnel}`);
+        tunnel.destroy();
+        for (const path of ["/v0/drain", "/v0/shutdown", "/v0/debug", "/v0/debug/test"]) {
+            await expect(phoneWebSocket(path, gym.token)).resolves.toBe(403);
+            await expect(phoneConnect(path, gym.token)).resolves.toBe(403);
+        }
+        await expect(phoneHttp("POST", HANDSHAKE, gym.token, {})).resolves.toMatchObject({
+            status: 401,
+        });
+        await expect(phoneWebSocket("/v0/exported-bots/connect", gym.token)).resolves.toBe(401);
+    }, 60_000);
+
+    it("allows only the team owner to change connectivity and rejects the whole member patch", async () => {
+        const { gym, alice, bob } = await surfaceTeamClients({
+            config: `[api]\npublic_port = ${TAILNET_PORT}\n`,
+        });
+        running.add(gym);
+        const before = (await alice.getConfig()).config;
+        await expect(
+            bob.patchConfig({
+                api: { publicUrl: "agent.example.com" },
+                node: { name: "Must not change" },
+            }),
+        ).rejects.toMatchObject({ status: 403 });
+        expect((await alice.getConfig()).config.node).toEqual(before.node);
+        expect((await alice.getConfig()).config.mobileConnector?.publicUrl).toBeNull();
+        await alice.patchConfig({ mobileConnector: { publicUrl: "agent.example.com" } });
+        expect((await alice.getConfig()).config.mobileConnector?.publicUrl).toBe(
+            "https://agent.example.com",
+        );
+        await expect(phoneHttp("GET", "/v0/projects", gym.token)).resolves.toMatchObject({
+            status: 200,
+        });
+        const started = (await alice.startMobilePairing()).mobileConnector;
+        const session = await startPhonePairing(started.pairing!.qr!, httpPhoneTransport(PHONE));
+        await alice.confirmMobilePairing(started.pairing!.id);
+        const paired = await session.confirm();
+        await expect(phoneHttp("GET", "/v0/projects", paired.deviceToken)).resolves.toMatchObject({
+            status: 200,
+        });
+    }, 60_000);
+
+    it("normalizes, persists, resets, and rejects invalid changes before a compound patch", async () => {
+        const gym = await mobileGym();
+        expect((await gym.client.getConfig()).config.mobileConnector).toEqual({
+            publicUrl: PUBLIC_ORIGIN,
+            localPort: TAILNET_PORT,
+        });
+        const started = await startPairing(gym);
+        const token = parseQr(started.pairing.qr!).t;
+        const before = await gym.http.ok<{ config: { node: unknown } }>("GET", "/v0/config");
+        expect(
+            (
+                await gym.http.request("PATCH", "/v0/config", {
+                    mobileConnector: { publicUrl: "http://unsafe.example" },
+                    node: { name: "Must not change" },
+                })
+            ).status,
+        ).toBe(400);
+        expect(
+            (await gym.http.ok<{ config: { node: unknown } }>("GET", "/v0/config")).config.node,
+        ).toEqual(before.config.node);
+        await expect(
+            gym.client.patchConfig({
+                api: { publicUrl: "one.example" },
+                mobileConnector: { publicUrl: "two.example" },
+                node: { name: "Must not change" },
+            }),
+        ).rejects.toMatchObject({ status: 400 });
+        expect((await gym.client.getConfig()).config.node).toEqual(before.config.node);
+        expect((await gym.client.getConfig()).config.api?.publicUrl).toBe(PUBLIC_ORIGIN);
+        await gym.http.ok("PATCH", "/v0/config", {
+            api: { publicUrl: "https://agent.other.example" },
+            mobileConnector: { publicUrl: " AGENT.Other.Example:443/ " },
+        });
+        expect(
+            (await gym.http.ok<{ mobileConnector: MobileConnector }>("GET", "/v0/mobile-connector"))
+                .mobileConnector.pairing.status,
+        ).toBe("cancelled");
+        await expect(phoneHttp("POST", HANDSHAKE, token, {})).resolves.toMatchObject({
+            status: 401,
+        });
+        await gym.restart();
+        expect((await gym.client.getConfig()).config.mobileConnector?.publicUrl).toBe(
+            "https://agent.other.example",
+        );
+        await gym.http.ok("PATCH", "/v0/config", { mobileConnector: { publicUrl: null } });
+        await gym.restart();
+        expect((await gym.client.getConfig()).config.mobileConnector?.publicUrl).toBeNull();
+        expect(parseQr((await startPairing(gym)).pairing.qr!).v).toBe(1);
     }, 60_000);
 });

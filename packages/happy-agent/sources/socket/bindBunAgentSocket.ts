@@ -195,6 +195,16 @@ export function startBunHttpServer(
                 }
             }
             const url = new URL(request.url);
+            const publicRejection = await prepared.api.publicSocketRejection(
+                prepared.context("bun-public-websocket-admission"),
+                url.pathname,
+                request.headers.get("authorization") ?? undefined,
+            );
+            if (publicRejection !== undefined)
+                return Response.json(socketRejectionBody(publicRejection), {
+                    headers: { "cache-control": "no-store" },
+                    status: publicRejection.status,
+                });
             const runner = prepared.api.prepareRunnerSocket(
                 prepared.context("bun-runner-websocket-upgrade"),
                 url.pathname,

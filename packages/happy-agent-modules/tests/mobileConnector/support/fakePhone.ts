@@ -11,6 +11,8 @@ import {
     type KeyObject,
 } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { Type } from "@sinclair/typebox";
+import { Value } from "@sinclair/typebox/value";
 
 /**
  * A test-only phone written from the "Mobile connector" section of `packages/happy-agent/API.md`,
@@ -61,11 +63,27 @@ export interface PhoneQr {
     readonly t: string;
     readonly n: string;
     readonly e: number;
+    readonly u?: string;
 }
+
+const qrCommon = { t: Type.String(), n: Type.String(), e: Type.Number() };
+const phoneQrSchema = Type.Union([
+    Type.Object({ v: Type.Literal(1), a: Type.String(), p: Type.Integer(), ...qrCommon }),
+    Type.Object({ v: Type.Literal(2), u: Type.String(), ...qrCommon }),
+]);
 
 export function parseQr(text: string): PhoneQr {
     if (!text.startsWith(QR_PREFIX)) throw new Error("Not a direct pairing code.");
-    return JSON.parse(Buffer.from(text.slice(QR_PREFIX.length), "base64url").toString("utf8"));
+    const decoded: unknown = JSON.parse(
+        Buffer.from(text.slice(QR_PREFIX.length), "base64url").toString("utf8"),
+    );
+    if (!Value.Check(phoneQrSchema, decoded)) throw new Error("Unknown pairing code version.");
+    if (decoded.v === 1) return decoded;
+    const url = new URL(decoded.u);
+    if (url.protocol !== "https:" || url.origin !== decoded.u || url.port === "0")
+        throw new Error("Invalid public pairing origin.");
+    // a/p here name the transcript binding, not extra v2 wire fields.
+    return { ...decoded, a: decoded.u, p: Number(url.port || 443) };
 }
 
 export interface PhoneKey {
@@ -215,7 +233,7 @@ export async function startPhonePairing(
     },
 ): Promise<PhonePairing> {
     const qr = parseQr(qrText);
-    if (qr.v !== 1) throw new Error("Unknown pairing code version.");
+    if (qr.v !== 1 && qr.v !== 2) throw new Error("Unknown pairing code version.");
     const own = phoneKey();
     const phoneNonce = randomBytes(32);
     const committed = commitment(own.publicKey, phoneNonce);

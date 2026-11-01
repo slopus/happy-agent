@@ -1,5 +1,19 @@
 # Mobile connector learnings
 
+## Public reachability belongs to the daemon, not phone pairing
+
+The first public-endpoint implementation put its settings and listener lifetime in the mobile
+connector. Steve clarified that the daemon itself is reachable over the Internet; mobile pairing
+is only one consumer. That implementation does not satisfy the requested ownership boundary.
+The daemon must own its public endpoint independently of paired phones. In public mode its one
+listener also serves mobile connections; the connector must not start a separate mobile listener
+or forwarding listener. It retains pairing and device authentication, and consumes the daemon's
+authenticated advertisement without broadening phone-token permissions. Existing
+Tailcat pairings need their trusted route to discover an endpoint change; an HTTPS failure alone
+must never authorize a fallback. Configuration now owns `[api]` endpoint selection, the daemon
+binds the shared transport, and the connector consumes its readiness and advertisement. None of
+this authorizes exposing a running installation.
+
 ## A finished pairing must not close the socket under its own answer
 
 Closing the socket as soon as nothing needed it cut off the phone at the worst moment. A phone
@@ -23,7 +37,7 @@ the spec.
 
 The first design gave the connector its own listener and router, which served the pairing routes
 and handed device requests to the API through a registered handler, without WebSockets or
-`CONNECT`. Steve rejected that as a branch of the API. Phones now reach the one API: the daemon
+`CONNECT`. Steve rejected that as a branch of the API. In Tailcat mode phones reach the one API: the daemon
 binds an extra loopback listener with the same HTTP stack, flagged as mobile, and the exposure
 forwards there. On that transport the API asks `authenticate` about the bearer before routing,
 for every request, upgrade, and `CONNECT`, and accepts nothing else. A device acts as its owner

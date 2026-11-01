@@ -1,11 +1,12 @@
 import {
     startHappyAgentRuntime,
     withMobileTransport,
+    withPublicTransport,
     type HappyAgentRuntime,
     type PreparedHappyAgentRuntime,
     type StartHappyAgentRuntimeOptions,
 } from "@slopus/happy-agent-modules";
-import { withLogContext, type Context } from "@steve.kite/stdlib";
+import { asyncLock, withLogContext, type Context } from "@steve.kite/stdlib";
 import type { DaemonDrain, DrainRequest, DrainWaitingFor } from "@slopus/happy-agent-client";
 import { dirname } from "node:path";
 
@@ -55,7 +56,7 @@ export async function startHappyAgentDaemon(
     const { persistPid = false, ...runtimeOptions } = options;
     const startedAt = performance.now();
     let bound: BoundAgentSocket | BoundAgentHttpServer | undefined;
-    let mobileBound: BoundAgentHttpServer | undefined;
+    let externalBound: { close(): Promise<void> } | undefined;
     let preparedRuntime: Parameters<typeof bindAgentSocket>[0] | undefined;
     let unsubscribeShutdown: (() => void) | undefined;
     let closeDaemon: ((reason?: HappyAgentShutdownReason) => Promise<void>) | undefined;
@@ -117,16 +118,16 @@ export async function startHappyAgentDaemon(
                 ? { host: bound.host, port: bound.port }
                 : { socketPath: bound.socketPath },
         );
-        // Phones are optional: a computer that cannot serve them still serves everything else.
-        mobileBound = await bindMobileTransport(runtime, preparedRuntime).catch(
+        // External connectivity is optional; the primary transport remains available for repair.
+        externalBound = await bindExternalTransport(runtime, preparedRuntime).catch(
             (error: unknown) => {
-                runtime?.ctx.log.warn("The mobile connector transport could not start.", {}, error);
+                runtime?.ctx.log.warn("The external API transport could not start.", {}, error);
                 return undefined;
             },
         );
     } catch (error) {
         unsubscribeShutdown?.();
-        await mobileBound?.close().catch(() => undefined);
+        await externalBound?.close().catch(() => undefined);
         await bound?.close().catch(() => undefined);
         await runtime?.close().catch(() => undefined);
         if (pidWritten && pidPath !== undefined) {
@@ -162,7 +163,7 @@ export async function startHappyAgentDaemon(
             closing = closeHappyAgentDaemon(
                 runtime,
                 bound,
-                mobileBound,
+                externalBound,
                 unsubscribeShutdown,
                 reason,
             );
@@ -204,7 +205,7 @@ export async function startHappyAgentDaemon(
 async function closeHappyAgentDaemon(
     runtime: HappyAgentRuntime,
     bound: BoundAgentSocket | BoundAgentHttpServer | undefined,
-    mobileBound: BoundAgentHttpServer | undefined,
+    externalBound: { close(): Promise<void> } | undefined,
     unsubscribeShutdown: (() => void) | undefined,
     reason: HappyAgentShutdownReason,
 ): Promise<void> {
@@ -216,6 +217,14 @@ async function closeHappyAgentDaemon(
     const startedAt = performance.now();
     ctx.log.info(`daemon:shutdown:start pid=${String(process.pid)} reason=${reason}`);
     const failures: unknown[] = [];
+    if (externalBound !== undefined) {
+        await runShutdownStep(
+            ctx,
+            "external-transport",
+            async () => await externalBound.close(),
+            failures,
+        );
+    }
     await runShutdownStep(
         ctx,
         "graceful-runtime",
@@ -224,14 +233,6 @@ async function closeHappyAgentDaemon(
         },
         failures,
     );
-    if (mobileBound !== undefined) {
-        await runShutdownStep(
-            ctx,
-            "mobile-transport",
-            async () => await mobileBound.close(),
-            failures,
-        );
-    }
     if (bound !== undefined) {
         await runShutdownStep(ctx, "transport", async () => await bound.close(), failures);
     }
@@ -245,33 +246,78 @@ async function closeHappyAgentDaemon(
 }
 
 /**
- * Serve the same API on a loopback listener for the mobile connector's socket. Everything arriving
- * there is marked as mobile, so the API authenticates it with phone credentials only; the
- * connector exposes it over its own Tailcat identity only while phones need it.
+ * Own exactly one external-facing loopback transport. Public mode serves the main API and phones;
+ * private mode is a phone-only target for the connector's on-demand Tailcat exposure.
  */
-async function bindMobileTransport(
+async function bindExternalTransport(
     runtime: HappyAgentRuntime,
     prepared: PreparedHappyAgentRuntime | undefined,
-): Promise<BoundAgentHttpServer> {
+): Promise<{ close(): Promise<void> }> {
     if (prepared === undefined) {
-        throw new Error("The Happy Agent runtime did not prepare its mobile transport.");
+        throw new Error("The Happy Agent runtime did not prepare its external transport.");
     }
-    const mobile: PreparedHappyAgentRuntime = {
-        api: prepared.api,
-        configuration: prepared.configuration,
-        context: (name) => withMobileTransport(prepared.context(`mobile-${name}`)),
+    const ctx = runtime.ctx.named("daemon-external-transport");
+    const config = runtime.modules.config;
+    const mobile = runtime.modules.mobileConnector;
+    const lock = asyncLock({ reentry: "block" });
+    let state: { public: boolean; bound: BoundAgentHttpServer } | undefined;
+    let closed = false;
+    const reconcile = async (initial = false) =>
+        await lock.runInLock(ctx, async () => {
+            if (closed) return;
+            const publicMode = config.publicApiUrl !== null;
+            if (state !== undefined && state.public === publicMode) {
+                await mobile.replaceTransport(ctx, state.bound);
+                return;
+            }
+            if (!initial) await mobile.replaceTransport(ctx, undefined);
+            const previous = state;
+            state = undefined;
+            await previous?.bound.close({ gracePeriodMs: 2_000 });
+            if (closed) return;
+            try {
+                const transport: PreparedHappyAgentRuntime = {
+                    api: prepared.api,
+                    configuration: prepared.configuration,
+                    context: (name) =>
+                        publicMode
+                            ? withPublicTransport(prepared.context(`public-${name}`))
+                            : withMobileTransport(prepared.context(`mobile-${name}`)),
+                };
+                const bound = await bindAgentHttpServer(
+                    transport,
+                    "127.0.0.1",
+                    publicMode ? config.publicApiPort : 0,
+                );
+                if (closed) {
+                    await bound.close();
+                    return;
+                }
+                state = { public: publicMode, bound };
+                // Reopening an existing phone's Tailcat exposure must not hold up daemon startup.
+                if (initial && !publicMode) mobile.attachTransport(ctx, bound);
+                else await mobile.replaceTransport(ctx, bound);
+            } catch (error: unknown) {
+                const message = publicMode
+                    ? `The public API listener could not open on 127.0.0.1:${String(config.publicApiPort)}. Check that the port is available, then restart Happy Agent.`
+                    : "The phone connection listener could not start.";
+                ctx.log.warn(message, {}, error);
+                await mobile.replaceTransport(ctx, undefined, message);
+            }
+        });
+    const unsubscribe = runtime.api.onPublicEndpointChanged(reconcile);
+    await reconcile(true);
+    return {
+        close: async () => {
+            unsubscribe();
+            closed = true;
+            await lock.runInLock(ctx, async () => {
+                const previous = state;
+                state = undefined;
+                await previous?.bound.close();
+            });
+        },
     };
-    const bound = await bindAgentHttpServer(mobile, "127.0.0.1", 0);
-    try {
-        runtime.modules.mobileConnector.attachTransport(
-            runtime.ctx.named("mobile-connector-transport"),
-            { host: bound.host, port: bound.port },
-        );
-    } catch (error) {
-        await bound.close().catch(() => undefined);
-        throw error;
-    }
-    return bound;
 }
 
 async function runShutdownStep(

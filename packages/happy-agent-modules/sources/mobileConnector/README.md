@@ -1,7 +1,7 @@
 # Mobile connector
 
 Phones pair with this daemon by scanning a QR code and then reach it directly over a dedicated,
-private Tailcat socket. `MobileConnectorModule` depends on Config, Team, Node, Tailcat, and
+private Tailcat socket or an operator-configured HTTPS origin. `MobileConnectorModule` depends on Config, Team, Node, Tailcat, and
 Durable Functions. The API module takes it to authenticate phone credentials and serve the
 desktop and handshake routes; this module owns the pairing state machine, the device store, and
 the exposure.
@@ -20,12 +20,56 @@ phone ── server.tailcat:24781 ── Tailcat (own identity, mobile.private.j
 ```
 
 There is one API. The daemon binds the extra listener with the same HTTP stack as its main
-transport and gives it to `attachTransport`; nothing opens before that. The main transports
+transport and supplies it to the connector; nothing opens before that. The primary transports
 accept no phone credential. Only `TailcatModule.openExposure` is used to reach Tailcat.
+
+## Public HTTPS endpoint
+
+In the machine `happy.toml` (not a repository file):
+
+```toml
+[api]
+public_url = "https://agent.example.com"
+public_port = 24782
+```
+
+Configure DNS and a publicly trusted TLS certificate separately. A trusted TLS-terminating TCP
+proxy must forward decrypted bytes to `127.0.0.1:24782`, preserving HTTP streaming, WebSocket
+upgrades, Authorization, and arbitrary bidirectional bytes after CONNECT. For example, an HAProxy
+frontend in `mode tcp` with `bind :443 ssl crt /path/to/certificate.pem alpn http/1.1` can use a
+TCP backend at `127.0.0.1:24782`. Do not proxy the main daemon socket or team listener: they accept
+different credentials and administrative operations. Ordinary HTTP proxies often reject CONNECT
+and therefore cannot support the complete API. The trusted proxy sees API and phone credentials
+and plaintext; the final hop is unencrypted loopback HTTP. The daemon never manages certificates,
+changes firewall rules, or opens a public interface.
+
+The daemon binds one shared public listener using its existing HTTP stack. It starts independently
+of paired phones and remains available when the mobile connector is disabled. There is no separate
+mobile listener, forwarding listener, or mobile Tailcat exposure in this mode. Main credentials
+retain their normal authority, while phone credentials retain their owner, revocation, and route
+restrictions. Lifecycle and debug endpoints are unavailable to every public caller. A bind failure
+leaves the primary transport available for repair and reports `failed` to an enabled connector,
+without falling back to Tailcat. `open` means local readiness, not verified DNS or TLS.
+
+The HTTPS QR is version 2 with `u` holding the canonical origin; version 1 Tailcat QR codes are
+unchanged. The origin and effective HTTPS port are frozen into the pairing transcript. Phones
+must support v2 and keep normal TLS verification, refuse credential-bearing redirects, and never
+downgrade or silently fall back.
+
+Machine-file changes require a restart. `PATCH /v0/config` with
+`{ "api": { "publicUrl": "https://agent.example.com" } }` switches live and saves
+the override in `runtime.toml`; `null` selects Tailcat even over a machine URL. Switching cancels
+unfinished pairings and closes the previous transport when changing transport kind, but retains
+paired device tokens. The old `mobileConnector.publicUrl` patch writes this same setting.
+Phones can learn the canonical origin from authenticated configuration over a reachable trusted
+route and retain their original Tailcat coordinates for an explicit reset. An HTTPS failure never
+authorizes fallback. Once the old Tailcat route is closed, an offline v1 phone needs a new QR or
+other trusted provisioning to learn the new endpoint. A v2-only phone has no Tailcat route to restore.
+The public listener port remains a file-only setting. No desktop or phone settings UI is added.
 
 ## The socket opens on demand
 
-`#reconcile` opens the socket while the feature is enabled and either a pairing is active, a
+In Tailcat mode, `#reconcile` opens the socket while the feature is enabled and either a pairing is active, a
 device is paired, or a pairing ended less than three seconds ago, and closes it otherwise. The
 linger lets the answer to the request that ended a pairing, and the phone's woken status read,
 reach the phone. Device inserts and deletes schedule the same reconciliation through Durable

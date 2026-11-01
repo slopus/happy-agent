@@ -20,7 +20,7 @@ import {
 import { ConfigModule } from "../config/index.js";
 import { DurableFunctionsModule } from "../durableFunctions/index.js";
 import { NodeModule } from "../node/index.js";
-import { TailcatModule, type TailcatNamedExposure } from "../tailcat/index.js";
+import { TailcatModule } from "../tailcat/index.js";
 import { TeamAuthenticationError, TeamModule, teamUser } from "../team/index.js";
 import { createUuidV7Factory } from "../utils/createUuidV7.js";
 import { MobilePairing } from "./impl/MobilePairing.js";
@@ -64,11 +64,11 @@ const MAX_WAIT_SECONDS = 25;
 const LINGER_MS = 3_000;
 
 /**
- * Phones pair with this daemon and then reach it directly over a dedicated Tailcat socket.
+ * Phones pair with this daemon and then reach it over Tailcat or a configured HTTPS origin.
  *
- * The socket has its own Tailcat identity and forwards to the API's mobile transport, attached
- * by the daemon once it is listening. It is open only while a pairing is active or a device is
- * paired, and a restart reopens it when devices exist. Pairing is memory-only and single-use: a QR
+ * Tailcat mode uses its own identity and the daemon's private mobile transport while phones need
+ * it. Public mode consumes the daemon-owned shared listener without opening another transport.
+ * Pairing is memory-only and single-use: a QR
  * code holds a five-minute token, the phone commits to its key before seeing the daemon's, and a
  * device is persisted, by the SHA-256 of its derived token, only after both people confirm the
  * emoji. The API asks `authenticate` about every credential on that transport before anything
@@ -103,7 +103,16 @@ export class MobileConnectorModule implements AgentModule {
     #status: MobileConnectorStatus;
     #error: string | null = null;
     #transport: MobileConnectorTransport | undefined;
-    #exposure: TailcatNamedExposure | undefined;
+    #transportError: string | undefined;
+    #exposure:
+        | {
+              readonly address: string;
+              readonly port: number;
+              readonly publicUrl?: string;
+              close(): Promise<void>;
+          }
+        | undefined;
+    readonly #pairingEndpoints = new WeakMap<MobilePairing, { address: string; port: number }>();
     #linger: NodeJS.Timeout | undefined;
 
     constructor(
@@ -230,7 +239,7 @@ export class MobileConnectorModule implements AgentModule {
             if (current.snapshot().status !== "waiting") {
                 throw new MobileConnectorError("conflict", "This pairing already has the key.");
             }
-            const exposure = this.#exposure;
+            const exposure = this.#pairingEndpoints.get(current);
             if (exposure === undefined) {
                 current.end("failed", "The phone connection socket closed.");
             } else {
@@ -354,15 +363,20 @@ export class MobileConnectorModule implements AgentModule {
                 return;
             }
             pairing.showQr(
-                encodeQr({
-                    v: 1,
-                    a: exposure.address,
-                    p: exposure.port,
-                    t: token,
-                    n: name,
-                    e: pairing.expiresAt,
-                }),
+                encodeQr(
+                    exposure.publicUrl === undefined
+                        ? {
+                              v: 1,
+                              a: exposure.address,
+                              p: exposure.port,
+                              t: token,
+                              n: name,
+                              e: pairing.expiresAt,
+                          }
+                        : { v: 2, u: exposure.publicUrl, t: token, n: name, e: pairing.expiresAt },
+                ),
             );
+            this.#pairingEndpoints.set(pairing, { address: exposure.address, port: exposure.port });
         });
         this.#announce(ctx, [owner]);
         return await this.#snapshotFor(ctx, owner);
@@ -458,6 +472,33 @@ export class MobileConnectorModule implements AgentModule {
 
     // Socket lifetime.
 
+    /** Consume the daemon's transport selection; this module never binds the public listener. */
+    async replaceTransport(
+        ctx: Context,
+        transport: MobileConnectorTransport | undefined,
+        error?: string,
+    ): Promise<void> {
+        await this.#pairingLock.runInLock(ctx, async () => {
+            this.#assertOpen();
+            for (const pairing of this.#pairings.values()) {
+                if (!pairing.active) continue;
+                pairing.end("cancelled");
+                this.#release(pairing);
+            }
+            await this.#socketLock.runInLock(ctx, async () => {
+                await this.#closeSocket();
+                this.#transport =
+                    transport === undefined
+                        ? undefined
+                        : { host: transport.host, port: transport.port };
+                this.#transportError = error;
+            });
+        });
+        const moduleCtx = this.#moduleContext(ctx);
+        await this.#reconcile(moduleCtx).catch(() => undefined);
+        this.#announce(moduleCtx, this.#owners(await queryMobileDeviceOwners(moduleCtx)));
+    }
+
     async #scheduleReconcile(ctx: Context): Promise<void> {
         await this.#durable.invoke(ctx, {
             function: RECONCILE_FUNCTION,
@@ -475,7 +516,8 @@ export class MobileConnectorModule implements AgentModule {
             const wanted =
                 !this.#closed &&
                 this.#config.mobileConnectorEnabled &&
-                (deviceOwners.length > 0 ||
+                (this.#config.publicApiUrl !== null ||
+                    deviceOwners.length > 0 ||
                     this.#linger !== undefined ||
                     [...this.#pairings.values()].some((pairing) => pairing.active));
             if (!this.#config.mobileConnectorEnabled) {
@@ -507,7 +549,19 @@ export class MobileConnectorModule implements AgentModule {
     async #openSocket(ctx: Context): Promise<void> {
         const transport = this.#transport;
         if (transport === undefined) {
-            throw new Error("The phone connection socket is not ready yet.");
+            throw new Error(
+                this.#transportError ?? "The phone connection socket is not ready yet.",
+            );
+        }
+        const publicUrl = this.#config.publicApiUrl;
+        if (publicUrl !== null) {
+            this.#exposure = {
+                address: publicUrl,
+                port: Number(new URL(publicUrl).port || 443),
+                publicUrl,
+                close: async () => undefined,
+            };
+            return;
         }
         this.#exposure = await this.#tailcat.openExposure(ctx, {
             name: TAILCAT_EXPOSURE,
@@ -711,14 +765,24 @@ export class MobileConnectorModule implements AgentModule {
     }
 }
 
-function encodeQr(bundle: {
-    readonly v: 1;
-    readonly a: string;
-    readonly p: number;
-    readonly t: string;
-    readonly n: string;
-    readonly e: number;
-}): string {
+function encodeQr(
+    bundle:
+        | {
+              readonly v: 1;
+              readonly a: string;
+              readonly p: number;
+              readonly t: string;
+              readonly n: string;
+              readonly e: number;
+          }
+        | {
+              readonly v: 2;
+              readonly u: string;
+              readonly t: string;
+              readonly n: string;
+              readonly e: number;
+          },
+): string {
     return `happy://direct?${Buffer.from(JSON.stringify(bundle), "utf8").toString("base64url")}`;
 }
 

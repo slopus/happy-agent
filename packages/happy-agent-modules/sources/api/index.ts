@@ -30,7 +30,7 @@ export {
     socketRejectionBody,
 } from "./ApiModule.js";
 export { ApiArtifactData } from "./ApiArtifactData.js";
-export { withMobileTransport } from "./impl/apiMobileTransport.js";
+export { withMobileTransport, withPublicTransport } from "./impl/apiMobileTransport.js";
 export { messageResource } from "./ApiMessageProjection.js";
 export { type MessageResourceOptions } from "./ApiToolPresentation.js";
 export {

@@ -1,5 +1,19 @@
 # API module learnings
 
+## A shared public listener does not merge credential authority
+
+The public endpoint was initially treated as another phone-only transport. It now serves ordinary
+API clients and phones together, but verifies each credential class before choosing its authority.
+Phone tokens retain owner scoping and revocation across HTTP, SSE, WebSockets, and CONNECT; pairing
+credentials reach only handshake routes. Main credentials cannot authorize a handshake. Public
+admission rejects lifecycle and debug routes even for the owner and never admits runner or exported
+bridge upgrades. Bun's native upgrades and tunnels enforce the same boundary as Node's handlers.
+
+An endpoint change arriving through the public listener must receive its authenticated config
+answer before that listener closes. The API flushes that answer before notifying the daemon;
+the daemon then drains the transport with a deadline, including Bun's forwarding hops. Stalled
+readers, SSE, WebSockets, and tunnels cannot keep an obsolete endpoint alive indefinitely.
+
 ## Opaque settings support cannot advertise a membership policy
 
 An older daemon accepts arbitrary `surfaces.autoJoin` values but does not interpret them, so

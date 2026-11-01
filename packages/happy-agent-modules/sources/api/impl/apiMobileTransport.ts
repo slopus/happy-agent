@@ -11,6 +11,20 @@ const mobileTransportNamespace = createContextNamespace<boolean>(
     { detachable: false },
 );
 
+const publicTransportNamespace = createContextNamespace<boolean>(
+    "happyAgent.apiPublicTransport",
+    false,
+    { detachable: false },
+);
+
+export function withPublicTransport(ctx: Context): Context {
+    return publicTransportNamespace.set(ctx, true);
+}
+
+export function isPublicTransport(ctx: Context): boolean {
+    return publicTransportNamespace.get(ctx);
+}
+
 const mobileDeviceNamespace = createContextNamespace<ApiMobileDevice | undefined>(
     "happyAgent.apiMobileDevice",
     undefined,

@@ -17,6 +17,38 @@ import {
 const filled = (value: number) => Buffer.alloc(32, value);
 
 describe("daemon pairing crypto", () => {
+    it("binds the v2 HTTPS origin and public port using the independent phone vector", () => {
+        const phone = createDaemonPairingKey(filled(1));
+        const daemon = createDaemonPairingKey(filled(2));
+        const transcriptHash = pairingTranscriptHash({
+            token: filled(3),
+            commitment: pairingCommitment(phone.publicKey, filled(4)),
+            phonePublicKey: phone.publicKey,
+            daemonPublicKey: daemon.publicKey,
+            phoneNonce: filled(4),
+            daemonNonce: filled(5),
+            address: "https://agent.example.com:8443",
+            port: 8443,
+        });
+        const secrets = derivePairingSecrets(
+            pairingSharedSecret(daemon.privateKey, phone.publicKey),
+            transcriptHash,
+        );
+        expect(transcriptHash.toString("hex")).toBe(
+            "7970d4c0910e3587b6d066c371a2f61a84d0beb96671a071ff6a10e264af4825",
+        );
+        expect(secrets.deviceToken.toString("hex")).toBe(
+            "a175d3b4fea158aade7d1becf944f3d5eed2e62d7e73cbdcc4aec5e0a93a58a8",
+        );
+        expect(pairingMac(secrets.confirmKey, transcriptHash, "mobile").toString("hex")).toBe(
+            "33aae926bdc16f2560a9cecdf40f558bb6cf393e0ca5a1931bb0e75bd713502f",
+        );
+        expect(pairingMac(secrets.confirmKey, transcriptHash, "daemon").toString("hex")).toBe(
+            "876bd980d032036c848f77faaa191644e31504f10bd2a6713f669dac9bb8849f",
+        );
+        expect(secrets.emoji).toEqual(["🇨🇳", "✉️", "🚠", "🍼"]);
+    });
+
     it("carries Telegram's exact emoji table", () => {
         expect(callsEmojiChecksum()).toBe(
             "c22c3a00d5a68df075fecc8cb8b730a45817a246a5ca70fa3b75d248ac5b54e9",

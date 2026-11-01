@@ -8,6 +8,7 @@ import {
     type ComputeServiceExecution,
 } from "@slopus/happy-agent-compute";
 import { randomUUID } from "node:crypto";
+import { normalizePublicApiUrl } from "./PublicApiConfig.js";
 import { chmod, mkdir, open, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { delimiter, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -1562,7 +1563,10 @@ const DEFAULT_VALUES: HappyAgentConfigValues = {
     },
     feature: {
         codemode: { enabled: false, engine: "monty" },
-        mobileConnector: { enabled: true, port: DEFAULT_MOBILE_CONNECTOR_PORT },
+        mobileConnector: {
+            enabled: true,
+            port: DEFAULT_MOBILE_CONNECTOR_PORT,
+        },
         tailcat: { enabled: false, port: DEFAULT_TAILCAT_PORT },
         team: {
             authentication: "workos",
@@ -2708,9 +2712,38 @@ export class ConfigModule implements AgentModule {
         return this.configuration.values.feature.mobileConnector.enabled;
     }
 
-    /** The fixed loopback and remote service port of the mobile connector's own Tailcat socket. */
+    /** The fixed remote service port of the mobile connector's own Tailcat socket. */
     get mobileConnectorPort(): number {
         return this.configuration.values.feature.mobileConnector.port;
+    }
+
+    get publicApiUrl(): string | null {
+        const value =
+            this.#runtimeValues.api?.public_url ?? this.configuration.values.api?.public_url;
+        return value === undefined || value === "" ? null : normalizePublicApiUrl(value);
+    }
+
+    get publicApiPort(): number {
+        return this.configuration.values.api?.public_port ?? 24782;
+    }
+
+    normalizePublicApiUrl(input: string): string {
+        return normalizePublicApiUrl(input);
+    }
+
+    async updateRuntimePublicApiUrl(ctx: Context, input: string | null): Promise<boolean> {
+        const publicUrl = input === null ? null : normalizePublicApiUrl(input);
+        return await this.#runtimeLock.runInLock(ctx, async () => {
+            if (this.publicApiUrl === publicUrl) return false;
+            const next = structuredClone(this.#runtimeValues);
+            next.api = {
+                ...next.api,
+                public_url: publicUrl ?? "",
+            };
+            await writeRuntimeConfigurationFile(this.configuration.paths.runtimeConfigPath, next);
+            this.#runtimeValues = next;
+            return true;
+        });
     }
 
     /**
@@ -4492,7 +4525,11 @@ function mergeValues(...partials: readonly PartialValues[]): HappyAgentConfigVal
     let teamWorkOSConfigured = false;
     for (const partial of partials) {
         if (partial.profile !== undefined) merged.profile = { ...partial.profile };
-        if (partial.api !== undefined) merged.api = { ...merged.api, ...partial.api };
+        if (partial.api !== undefined) {
+            merged.api = { ...merged.api, ...partial.api };
+            if (merged.api.public_url)
+                merged.api.public_url = normalizePublicApiUrl(merged.api.public_url);
+        }
         if (partial.connections !== undefined)
             merged.connections = { ...merged.connections, ...partial.connections };
         if (partial.peer_messaging !== undefined) {
