@@ -211,6 +211,7 @@ import {
     type UserSettingsResponse,
 } from "./protocol/userSettings.js";
 import type { MobileConnectorResponse } from "./protocol/mobileConnector.js";
+import type { Story, StoryMetadata, StoryReply, StoryRepostRequest } from "./protocol/stories.js";
 import type {
     ArchiveProjectRequest,
     CloneProjectRequest,
@@ -344,6 +345,7 @@ interface HttpRequest {
     json?: unknown;
     /** A binary body, for the picture and artifact upload routes. */
     binary?: { contentType: string; data: BinaryData };
+    form?: FormData;
     accept?: string;
     /** A `Range` header, for artifact files. */
     range?: string | undefined;
@@ -1180,6 +1182,95 @@ export class HappyAgentClient {
         });
     }
 
+    // Stories
+
+    /** Upload a person's original story as binary multipart files. */
+    async postStory(
+        media: Blob,
+        body: StoryMetadata & { round?: Blob } = {},
+        options: RequestOptions = {},
+    ): Promise<{ story: Story }> {
+        const form = new FormData();
+        form.set("media", media, "media");
+        form.set("metadata", JSON.stringify({ caption: body.caption, layers: body.layers }));
+        if (body.round) form.set("round", body.round, "round.mp4");
+        return await this.#json({
+            method: "POST",
+            path: "v0/stories",
+            form,
+            signal: options.signal,
+        });
+    }
+
+    /** `GET /v0/stories` — live stories the caller can see, oldest first; daemons with `storyFeed`. */
+    async listStories(options: RequestOptions = {}): Promise<{ stories: Story[]; cursor: string }> {
+        return await this.#json({ method: "GET", path: "v0/stories", signal: options.signal });
+    }
+
+    /** `POST /v0/stories/:storyId/seen` — marks it seen for the caller only; idempotent. */
+    async markStorySeen(storyId: Cuid2, options: RequestOptions = {}): Promise<{ story: Story }> {
+        return await this.#json({
+            method: "POST",
+            path: `v0/stories/${encodeURIComponent(storyId)}/seen`,
+            json: {},
+            signal: options.signal,
+        });
+    }
+
+    /** The URL of `GET /v0/stories/:storyId/media`, for an element loading it with the token. */
+    storyMediaUrl(storyId: Cuid2): string {
+        return endpointUrl(this.#endpoint, `v0/stories/${encodeURIComponent(storyId)}/media`);
+    }
+
+    /** The URL of `GET /v0/stories/:storyId/round`, a repost's round video. */
+    storyRoundUrl(storyId: Cuid2): string {
+        return endpointUrl(this.#endpoint, `v0/stories/${encodeURIComponent(storyId)}/round`);
+    }
+
+    /** `GET /v0/stories/:storyId/replies` — every reply, oldest first. */
+    async listStoryReplies(
+        storyId: Cuid2,
+        options: RequestOptions = {},
+    ): Promise<{ replies: StoryReply[] }> {
+        const path = `v0/stories/${encodeURIComponent(storyId)}/replies`;
+        return await this.#json({ method: "GET", path, signal: options.signal });
+    }
+
+    /** `POST /v0/stories/:storyId/replies` — also sent to the story's agent as the caller's message. */
+    async replyToStory(
+        storyId: Cuid2,
+        text: string,
+        options: RequestOptions = {},
+    ): Promise<{ reply: StoryReply }> {
+        const path = `v0/stories/${encodeURIComponent(storyId)}/replies`;
+        return await this.#json({ method: "POST", path, json: { text }, signal: options.signal });
+    }
+
+    /** `POST /v0/stories/:storyId/repost` — an agent story, with an optional caption and round MP4. */
+    async repostStory(
+        storyId: Cuid2,
+        body: StoryMetadata & { round?: StoryRepostRequest["round"] | Blob } = {},
+        options: RequestOptions = {},
+    ): Promise<{ story: Story }> {
+        const path = `v0/stories/${encodeURIComponent(storyId)}/repost`;
+        if (body.round instanceof Blob) {
+            const form = new FormData();
+            form.set("metadata", JSON.stringify({ caption: body.caption, layers: body.layers }));
+            form.set("round", body.round, "round.mp4");
+            return await this.#json({ method: "POST", path, form, signal: options.signal });
+        }
+        return await this.#json({ method: "POST", path, json: body, signal: options.signal });
+    }
+
+    /** `DELETE /v0/stories/:storyId` — when the story's `canDelete` is true; ends its reposts too. */
+    async deleteStory(
+        storyId: Cuid2,
+        options: RequestOptions = {},
+    ): Promise<Record<string, never>> {
+        const path = `v0/stories/${encodeURIComponent(storyId)}`;
+        return await this.#json({ method: "DELETE", path, signal: options.signal });
+    }
+
     // Mobile connector
 
     /**
@@ -1524,7 +1615,7 @@ export class HappyAgentClient {
         });
     }
 
-    /** `PATCH /v0/bots/:botId` — renames the display name; the username is immutable. */
+    /** `PATCH /v0/bots/:botId` — updates the display name or Stories switch. */
     async renameBot(
         botId: Cuid2,
         request: RenameBotRequest,
@@ -3481,6 +3572,10 @@ export class HappyAgentClient {
         if (request.binary !== undefined) {
             headers["content-type"] = request.binary.contentType;
             body = request.binary.data;
+        } else if (request.form !== undefined) {
+            const encoded = new Response(request.form);
+            headers["content-type"] = encoded.headers.get("content-type")!;
+            body = await encoded.arrayBuffer();
         } else if (request.json !== undefined) {
             headers["content-type"] = "application/json; charset=utf-8";
             body = JSON.stringify(request.json);

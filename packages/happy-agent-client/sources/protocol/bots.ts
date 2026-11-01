@@ -62,6 +62,8 @@ export const botSchema = Type.Object({
     /** An opaque catalog sort key. */
     orderKey: Type.String(),
     status: Type.Union([Type.Literal("active"), Type.Literal("archived")]),
+    /** Off by default; older compatible daemons omit this field. */
+    stories: Type.Optional(Type.Boolean()),
     /** Built-in bot kind, or null for an ordinary bot. Older compatible daemons omit it. */
     systemKey: Type.Optional(Nullable(botSystemKeySchema)),
     updatedAt: timestampSchema,
@@ -97,12 +99,17 @@ export const createBotRequestSchema = Type.Object({
 export type CreateBotRequest = Static<typeof createBotRequestSchema>;
 
 /** `PATCH /v0/bots/:botId` — the immutable username is deliberately absent. */
-export const renameBotRequestSchema = Type.Object({
+const botUpdateFields = {
     mutationId: Type.Optional(mutationIdSchema),
-    name: botNameSchema,
+    name: Type.Optional(botNameSchema),
+    stories: Type.Optional(Type.Boolean()),
     /** Explicitly forbidden even though request objects tolerate future additive fields. */
     username: Type.Optional(Type.Never()),
-});
+};
+export const renameBotRequestSchema = Type.Union([
+    Type.Object({ ...botUpdateFields, name: botNameSchema }),
+    Type.Object({ ...botUpdateFields, stories: Type.Boolean() }),
+]);
 export type RenameBotRequest = Static<typeof renameBotRequestSchema>;
 
 /** `POST /v0/bots/:botId/archive` */

@@ -84,4 +84,5 @@ export * from "./protocol/terminals.js";
 export * from "./protocol/usage.js";
 export * from "./protocol/users.js";
 export * from "./protocol/userSettings.js";
+export * from "./protocol/stories.js";
 export * from "./protocol/workspaces.js";
