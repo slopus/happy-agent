@@ -52,21 +52,24 @@ export function postStoryTool(
             const resolved = computeModule.resolvePath(compute, path);
             const name = resolved.split(/[\\/]/u).at(-1) ?? path;
             const limit = chatMedia.limit(name);
-            if (limit.kind !== "image" && !name.toLowerCase().endsWith(".mp4")) {
+            if (limit.kind !== "image" && !name.toLowerCase().endsWith(".mp4"))
                 throw new Error("A story is an image or an H.264 .mp4 video.");
-            }
-            // Measure first, so a pipe, an empty file, or one too large is never read or kept.
+            // Measure, then check, then keep: a pipe or a file too large is never read.
             const facts = await compute.fs.stat(permissions, resolved);
-            if (!facts.isFile || facts.size === 0 || facts.size > limit.maxBytes) {
+            if (!facts.isFile || facts.size === 0 || facts.size > limit.maxBytes)
                 throw new Error(`${quoteVisibleExact(path)} is not a file a story can show.`);
-            }
             const { maxBytes } = limit;
             const bytes = await compute.fs.readFileBuffer(permissions, resolved, { maxBytes });
+            // An MP4 opens with its ftyp box, and an H.264 track is an avc1 or avc3 sample entry.
+            const file = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+            const avc = file.includes("avc1") || file.includes("avc3");
+            const h264 = file.toString("latin1", 4, 8) === "ftyp" && avc;
+            if (limit.kind === "video" && !h264)
+                throw new Error(`${quoteVisibleExact(path)} is not an H.264 MP4 video.`);
             const item = await chatMedia.snapshot(bytes, name);
             const { kind, mimeType, size, sha256 } = item;
-            if (kind !== "image" && kind !== "video") {
+            if (kind !== "image" && kind !== "video")
                 throw new Error(`${quoteVisibleExact(path)} is not an image a story can show.`);
-            }
             const media = { kind, name: item.name, mimeType, size, sha256 };
             const story = await stories.post(ctx, scope.agent.id, call.id, caption ?? null, media);
             return { id: story.id, expiresAt: story.expiresAt };

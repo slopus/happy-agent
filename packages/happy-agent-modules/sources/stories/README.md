@@ -25,7 +25,8 @@ recorded by this module as messages are accepted, else a task's owner (a task cr
 agent hears only agents), or a standalone installation's one person. When the latest human was an
 exported bot's guest, the agent works for nobody and gets no tool. The call checks again before
 posting. The file is measured before it is read: it must be a non-empty regular file within the
-chat media limit, named as an image (one that decodes) or with an `.mp4` extension. The tool
+chat media limit, named as an image (one that decodes) or with an `.mp4` extension; a video's bytes must open with
+an MP4 `ftyp` box and carry an `avc1` or `avc3` sample entry. The tool
 call's ID is the story's ID: a replayed call returns the story it first posted, even an ended one,
 without inserting or announcing anything. Media is served only while its snapshot is present.
 
