@@ -15,9 +15,11 @@ export function deleteStoryTool(stories: StoriesModule, scope: AgentModuleScope)
         returnType: Type.Object({ deleted: Type.Boolean() }),
         durable: true,
         shouldReviewInAutoMode: () => false,
-        execute: async (ctx, { id }) => ({
-            deleted: await stories.deleteOwn(ctx, scope.agent.id, id),
-        }),
+        execute: async (ctx, { id }) => {
+            if (!(await stories.canPost(ctx, scope)))
+                throw new Error("Stories are off for the person you work for; nothing changed.");
+            return { deleted: await stories.deleteOwn(ctx, scope.agent.id, id) };
+        },
         toLLM: ({ deleted }) => [
             {
                 type: "text",

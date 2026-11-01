@@ -406,13 +406,21 @@ const updateArtifactRequestSchema = Type.Composite([
     publishedUpdateArtifactRequestSchema,
     Type.Object({ baseVersion: Type.Optional(Type.Integer({ minimum: 1 })) }),
 ]);
-const storyReplyRequestSchema = Type.Object({
-    text: Type.String({ minLength: 1, maxLength: 2000 }),
-});
-const storyRepostRequestSchema = Type.Object({
-    caption: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
-    round: Type.Optional(Type.Object({ data: Type.String({ minLength: 1 }) })),
-});
+const storyReplyRequestSchema = Type.Object(
+    { text: Type.String({ minLength: 1, maxLength: 2000 }) },
+    { additionalProperties: false },
+);
+// A round is at most 16 MiB, so its base64 is at most 22,369,624 characters.
+const storyRoundSchema = Type.String({ minLength: 1, maxLength: 22_369_624 });
+const storyRepostRequestSchema = Type.Object(
+    {
+        caption: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
+        round: Type.Optional(
+            Type.Object({ data: storyRoundSchema }, { additionalProperties: false }),
+        ),
+    },
+    { additionalProperties: false },
+);
 
 /**
  * How many archived agents the desktop bootstrap carries. Recent history is what the desktop
@@ -7128,6 +7136,9 @@ export class ApiModule implements AgentModule {
             sendJson(response, 200, { reply });
         } else if (route === "POST repost") {
             const body = await bodyAs(request, storyRepostRequestSchema, "story repost");
+            // Decode only for someone who sees the story.
+            if ((await stories.get(ctx, storyId)) === undefined)
+                throw notFound("The story was not found.");
             const round = body.round && Buffer.from(body.round.data, "base64");
             const story = await stories
                 .repost(ctx, storyId, body.caption ?? null, round)

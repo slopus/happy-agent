@@ -47,8 +47,10 @@ as missing at once) and announces `story.removed` to everyone who saw them.
 
 ## Reading
 
-A task's story reaches its members, a bot's story every member; each reader must also have stories
-on. Anything else reads as missing, so the API answers `404`. Each post computes, inside its
+A task's story reaches its members, a bot's story every member, while the task or bot is active;
+each reader must also have stories on. Hiding an archived one's stories also keeps a reply from
+waking its archived agent. The agent's `list_stories` and `delete_story` check `canPost` again when
+they run. Anything else reads as missing, so the API answers `404`. Each post computes, inside its
 transaction, the copy every eligible reader is served, and announces them after commit; seen state
 is per reader, so `story.changed` and `story.removed` are delivered to one reader at a time.
 

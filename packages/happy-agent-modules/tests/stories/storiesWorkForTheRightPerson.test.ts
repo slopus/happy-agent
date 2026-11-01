@@ -20,7 +20,7 @@ function harness(teamEnabled: boolean, on: readonly string[]) {
     const stories = new StoriesModule(
         {} as never,
         {} as never,
-        {} as never,
+        { resolve: async () => undefined } as never,
         {
             forAgent: async (_ctx: Context, agentId: string) =>
                 agentId === "task" ? { id: "taskid", ownerUserId: "alice" } : undefined,
@@ -56,6 +56,7 @@ function harness(teamEnabled: boolean, on: readonly string[]) {
         } as unknown as AgentModuleScope;
         return {
             canPost: async () => await stories.canPost(ctx, scope),
+            tools: async () => await hooks.tools!(ctx, scope),
             hears: async (metadata: Record<string, unknown>) =>
                 await hooks.messageAcceptedTransact!(ctx, scope, {
                     message: { role: "user" },
@@ -67,6 +68,18 @@ function harness(teamEnabled: boolean, on: readonly string[]) {
 }
 
 describe("who a story-posting agent works for", () => {
+    it("is asked again when a story tool runs, so turning stories off stops the tools at once", async () => {
+        const on = ["alice"];
+        const offered = await harness(true, on).agent("task").tools();
+        expect(offered.map((tool) => tool.name)).toEqual(["delete_story", "list_stories"]);
+        on.length = 0;
+        for (const tool of offered) {
+            await expect(tool.execute(ctx, { id: "story" } as never, {} as never)).rejects.toThrow(
+                "Stories are off",
+            );
+        }
+    });
+
     it("is the task's owner while only agents have written to the task", async () => {
         const task = harness(true, ["alice"]).agent("task");
         expect(await task.canPost()).toBe(true);

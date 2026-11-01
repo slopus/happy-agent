@@ -151,12 +151,12 @@ export class StoriesModule implements AgentModule {
 
     /** The caller's repost of an agent story they see, with their caption and round video. */
     async repost(ctx: Context, id: string, caption: string | null, round?: Uint8Array) {
+        if (round && (round.byteLength > MAX_ROUND || !store.isH264Mp4(round)))
+            throw new StoryInputError("A round is an H.264 MP4 video of at most 16 MiB.");
+        const kept = round && (await this.#chatMedia.snapshot(round, "round.mp4"));
         return await ctx.inTx(async (txCtx) => {
             const [original] = await this.#read(txCtx, id);
             if (original === undefined || original.repostOf !== undefined) return undefined;
-            if (round && (round.byteLength > MAX_ROUND || !store.isH264Mp4(round)))
-                throw new StoryInputError("A round is an H.264 MP4 video of at most 16 MiB.");
-            const kept = round && (await this.#chatMedia.snapshot(round, "round.mp4"));
             const { agentId, taskId, botId, media } = original;
             const [postedAt, userId] = [Date.now(), this.#reader(txCtx).readerId ?? null];
             const from = { agentId, taskId, botId, media, repostOf: id, userId };
@@ -184,7 +184,8 @@ export class StoriesModule implements AgentModule {
                 this.#config.models,
                 story.agentId,
             );
-            const quote = `> Replying to your story “${story.caption ?? story.media.kind}” (story ${id})`;
+            const caption = (story.caption ?? story.media.kind).replace(/\s+/gu, " ");
+            const quote = `> Replying to your story “${caption}” (story ${id})`;
             const content = [{ type: "text" as const, text: `${quote}\n\n${text}` }];
             await agents.send(
                 txCtx,
@@ -293,11 +294,13 @@ export class StoriesModule implements AgentModule {
         const { member } = this.#reader(ctx);
         const visible: (StoryRecord & { seen: boolean })[] = [];
         for (const story of await store.readLiveStories(ctx, member, Date.now(), id)) {
-            // A task's story reaches its members; a bot's, everyone who can open the bot.
+            // A task's story reaches its members; a bot's, everyone who can open the bot. An
+            // archived one's stories are gone, so nothing wakes its archived agent.
             const where = story.botId
                 ? await this.#bots.get(ctx, story.botId)
-                : await this.#tasks.membership(ctx, story.taskId!, member);
-            if (where !== undefined) visible.push(story);
+                : (await this.#tasks.membership(ctx, story.taskId!, member)) &&
+                  (await this.#tasks.get(ctx, story.taskId!));
+            if (where?.status === "active") visible.push(story);
         }
         return visible;
     }

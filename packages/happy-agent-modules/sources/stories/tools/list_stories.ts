@@ -14,7 +14,11 @@ export function listStoriesTool(stories: StoriesModule, scope: AgentModuleScope)
         parameters: Type.Object({}, { additionalProperties: false }),
         returnType: Type.Unknown(),
         shouldReviewInAutoMode: () => false,
-        execute: async (ctx) => await stories.ofAgent(ctx, scope.agent.id),
+        execute: async (ctx) => {
+            if (!(await stories.canPost(ctx, scope)))
+                throw new Error("Stories are off for the person you work for.");
+            return await stories.ofAgent(ctx, scope.agent.id);
+        },
         toLLM: (result) => [{ type: "text", text: JSON.stringify(result) }],
     });
 }
