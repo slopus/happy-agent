@@ -2,6 +2,7 @@ import type { Cuid2, EventCursor, Timestamp } from "./protocol/common.js";
 import type { DaemonDrain } from "./protocol/daemon.js";
 import type { EventStreamFrame, EventStreamOptions, HappyAgentEvent } from "./protocol/events.js";
 import type { SurfaceDocumentLiveFrame } from "./protocol/surfaces.js";
+import { HappyAgentApiError } from "./HappyAgentApiError.js";
 import { EventStreamProtocolError } from "./readEventStream.js";
 
 const INITIAL_RECONNECT_DELAY_MS = 100;
@@ -42,7 +43,16 @@ export type HappyAgentUpdate =
           drain?: DaemonDrain;
       }
     | { kind: "state_lost"; cursor: EventCursor }
-    | { kind: "disconnected"; cursor?: EventCursor }
+    | {
+          kind: "disconnected";
+          cursor?: EventCursor;
+          /**
+           * Present when the daemon, or something in front of it, refused the stream in a way that
+           * means signing in again. The feed keeps retrying, so a refreshed token from the
+           * client's token function reconnects it.
+           */
+          signInRequired?: true;
+      }
     | { kind: "event"; event: HappyAgentEvent; cursor: EventCursor }
     /** A live frame for a document subscribed on the current connection; never replayed. */
     | { kind: "document"; frame: SurfaceDocumentLiveFrame };
@@ -67,11 +77,13 @@ export async function* reconnectingUpdates(
     let daemonId: Cuid2 | undefined;
     let reconnectDelayMs = INITIAL_RECONNECT_DELAY_MS;
     let replacementExpectedUntil = 0;
+    let reportedSignInRequired = false;
 
     while (!isAborted(options.signal)) {
         const attemptStartedAt = Date.now();
         let acceptedEvent = false;
         let receivedHello = false;
+        let signInRequired = false;
 
         try {
             for await (const frame of openEventStream({
@@ -95,6 +107,7 @@ export async function* reconnectingUpdates(
                     if (cursor === undefined || stateLost) cursor = frame.hello.cursor;
 
                     connection = "connected";
+                    reportedSignInRequired = false;
                     yield {
                         kind: "connected",
                         cursor,
@@ -164,18 +177,23 @@ export async function* reconnectingUpdates(
                     };
                 }
             }
-        } catch {
+        } catch (error: unknown) {
             if (isAborted(options.signal)) return;
             // A partial response, reset socket, malformed attempt, proxy error,
             // or failed fetch all recover through the same cursor-based retry.
+            signInRequired = error instanceof HappyAgentApiError && error.signInRequired;
         }
 
         if (isAborted(options.signal)) return;
-        if (connection !== "disconnected") {
+        // A refusal that means signing in is reported once, even after an ordinary disconnect.
+        if (connection !== "disconnected" || (signInRequired && !reportedSignInRequired)) {
             connection = "disconnected";
-            yield cursor === undefined
-                ? { kind: "disconnected" }
-                : { kind: "disconnected", cursor };
+            if (signInRequired) reportedSignInRequired = true;
+            yield {
+                kind: "disconnected",
+                ...(cursor === undefined ? {} : { cursor }),
+                ...(signInRequired ? { signInRequired: true as const } : {}),
+            };
         }
 
         if (

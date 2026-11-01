@@ -90,6 +90,25 @@ token URL. `refreshOAuthCredential(credential)` refreshes only at the refresh UR
 sign-in, never at one a daemon advertises later. Failures throw `HappyAgentOAuthError` with an OAuth
 or client `code`. In JWT team mode, a `401` `HappyAgentApiError` carries the same methods in
 `authentication`. Unknown method types are skipped. Older daemons return `404` for discovery.
+Happy's applications use the redirect URI `happy://oauth/callback`. When a method names a
+`resource`, the sign-in, code exchange, and refresh send it, and the credential records it in
+`resource`; persist it with the refresh token.
+
+Requests never follow redirects. A failed request's `HappyAgentApiError` says whether the daemon
+wrote it (`happyError`) and whether it means signing in again (`signInRequired`: any redirect, any
+`401`, or a `403` from something in front of the daemon). Before sending a person to sign in after
+a `401` with `happyError`, check `getAuthentication()` with the same token: a signed-in member
+without a profile must save one instead. `isHappyErrorBody`, `statusRequiresSignIn`, and
+`responseRequiresSignIn` apply the same rule to responses the client did not make, such as a
+WebSocket upgrade. The `updates()` feed reports such a refusal as `disconnected` with
+`signInRequired: true` and keeps retrying with the token function's current token.
+`streamEvents()` fails a stream that delivers nothing, heartbeats included, for 45 seconds.
+
+When health reports `capabilities.webSocketTunnels`, every proxy tunnel has a WebSocket twin for
+endpoints that do not carry `CONNECT`: `workspaceProxyWebSocketUrl`,
+`workspaceAgentProxyWebSocketUrl`, `networkProxyWebSocketUrl`, and `artifactProxyWebSocketUrl`.
+One WebSocket is one tunnel whose binary messages carry exactly the bytes that follow a `CONNECT`
+answer; an empty message ends one direction.
 
 Remote connection rosters are read with `listConnections()`. The typed `connections.updated`
 event carries the complete `{ connections, version }` snapshot: keep the greater UUIDv7 version

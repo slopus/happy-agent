@@ -40,6 +40,11 @@ export interface OAuthCredential {
     /** The refresh URL recorded at sign-in; refresh tokens go nowhere else. */
     readonly refreshUrl: string | null;
     readonly clientId: string;
+    /**
+     * The RFC 8707 resource recorded at sign-in and sent again on refresh. Absent or `null`
+     * when the method named none, including for credentials stored by older versions.
+     */
+    readonly resource?: string | null;
 }
 
 export interface OAuthRequestOptions {
@@ -59,6 +64,7 @@ export async function beginOAuthSignIn(
     const authorizationUrl = secureUrl(method.authorizationUrl);
     secureUrl(method.tokenUrl);
     if (method.refreshUrl !== undefined) secureUrl(method.refreshUrl);
+    if (method.resource !== undefined) resourceIndicator(method.resource);
     const redirect = new URL(options.redirectUri);
     if (redirect.hash !== "") {
         throw new HappyAgentOAuthError(
@@ -84,6 +90,7 @@ export async function beginOAuthSignIn(
         code_challenge: challenge,
         code_challenge_method: "S256",
         ...(method.scope === undefined ? {} : { scope: method.scope }),
+        ...(method.resource === undefined ? {} : { resource: method.resource }),
     };
     for (const [name, value] of Object.entries(parameters)) {
         authorizationUrl.searchParams.set(name, value);
@@ -133,11 +140,13 @@ export async function completeOAuthSignIn(
             redirect_uri: signIn.redirectUri,
             client_id: signIn.method.clientId,
             code_verifier: signIn.codeVerifier,
+            ...(signIn.method.resource === undefined ? {} : { resource: signIn.method.resource }),
         },
         {
             clientId: signIn.method.clientId,
             refreshToken: null,
             refreshUrl: signIn.method.refreshUrl ?? null,
+            resource: signIn.method.resource ?? null,
         },
         options,
     );
@@ -160,11 +169,13 @@ export async function refreshOAuthCredential(
             grant_type: "refresh_token",
             refresh_token: credential.refreshToken,
             client_id: credential.clientId,
+            ...(credential.resource == null ? {} : { resource: credential.resource }),
         },
         {
             clientId: credential.clientId,
             refreshToken: credential.refreshToken,
             refreshUrl: credential.refreshUrl,
+            resource: credential.resource ?? null,
         },
         options,
     );
@@ -177,6 +188,7 @@ async function requestTokens(
         readonly clientId: string;
         readonly refreshToken: string | null;
         readonly refreshUrl: string | null;
+        readonly resource: string | null;
     },
     options: OAuthRequestOptions,
 ): Promise<OAuthCredential> {
@@ -227,6 +239,7 @@ async function requestTokens(
         expiresAt: body.expires_in === undefined ? null : Date.now() + body.expires_in * 1_000,
         refreshToken: body.refresh_token ?? previous.refreshToken,
         refreshUrl: previous.refreshUrl,
+        ...(previous.resource === null ? {} : { resource: previous.resource }),
     };
 }
 
@@ -254,6 +267,22 @@ function secureUrl(value: string): URL {
         );
     }
     return url;
+}
+
+/** An RFC 8707 resource indicator: an absolute URI without a fragment. */
+function resourceIndicator(value: string): void {
+    let url: URL;
+    try {
+        url = new URL(value);
+    } catch {
+        throw new HappyAgentOAuthError("invalid_response", "The sign-in resource is not valid.");
+    }
+    if (url.hash !== "" || value.includes("#")) {
+        throw new HappyAgentOAuthError(
+            "invalid_response",
+            "The sign-in resource must not have a fragment.",
+        );
+    }
 }
 
 function randomBase64Url(bytes: number): string {

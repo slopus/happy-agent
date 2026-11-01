@@ -27,7 +27,7 @@ const METHOD: OAuthAuthenticationMethod = {
     clientId: "happy",
     scope: "happy offline_access",
 };
-const REDIRECT = "http://127.0.0.1:53682/callback";
+const REDIRECT = "happy://oauth/callback";
 
 interface Recorded {
     readonly url: string;

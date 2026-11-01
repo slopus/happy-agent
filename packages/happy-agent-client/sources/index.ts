@@ -15,6 +15,12 @@ export type {
 } from "./HappyReducerState.js";
 export { HappyAgentApiError } from "./HappyAgentApiError.js";
 export type { ApiErrorBody } from "./HappyAgentApiError.js";
+export {
+    isHappyErrorBody,
+    isRedirectStatus,
+    responseRequiresSignIn,
+    statusRequiresSignIn,
+} from "./requiresSignIn.js";
 export { EventStreamProtocolError, readEventStream } from "./readEventStream.js";
 export { readSseFrames } from "./readSseFrames.js";
 export { HappyAgentOAuthError } from "./HappyAgentOAuthError.js";

@@ -4,6 +4,7 @@ import {
     authenticationMethodSchema,
     type AuthenticationChallenge,
 } from "./protocol/authentication.js";
+import { isHappyErrorBody, isRedirectStatus, statusRequiresSignIn } from "./requiresSignIn.js";
 
 /**
  * A failed request, carrying what the daemon said about it.
@@ -33,14 +34,39 @@ export class HappyAgentApiError extends Error {
      * Only recognized methods are kept; `null` when the daemon offered none.
      */
     readonly authentication: AuthenticationChallenge | null;
+    /**
+     * Whether the daemon itself wrote this error. `false` means something in front of it, such as
+     * a load balancer, answered instead.
+     */
+    readonly happyError: boolean;
+    /**
+     * Whether this answer means signing in again: any redirect, any `401`, or a `403` that is not
+     * a Happy error. A `401` that is a Happy error may be the team profile gate; check
+     * `getAuthentication()` with the same token before sending the person to sign in.
+     */
+    readonly signInRequired: boolean;
 
-    constructor(status: number, message: string, code: string | null, body: ApiErrorBody | null) {
+    constructor(
+        status: number,
+        message: string,
+        code: string | null,
+        body: ApiErrorBody | null,
+        transport: { readonly happyError?: boolean; readonly opaqueRedirect?: boolean } = {},
+    ) {
         super(message);
         this.name = "HappyAgentApiError";
         this.status = status;
         this.code = code;
         this.body = body;
         this.authentication = status === 401 ? readChallenge(body) : null;
+        this.happyError =
+            transport.happyError ??
+            (typeof body?.error === "string" && typeof body.code === "string");
+        this.signInRequired = statusRequiresSignIn(
+            status,
+            this.happyError,
+            transport.opaqueRedirect === true,
+        );
     }
 }
 
@@ -71,13 +97,21 @@ export interface ApiErrorBody {
  * defensively rather than assumed.
  */
 export async function readApiError(response: Response): Promise<HappyAgentApiError> {
-    const body = await readErrorBody(response);
+    const opaqueRedirect = response.type === "opaqueredirect";
+    const body = opaqueRedirect ? null : await readErrorBody(response);
+    const happyError = isHappyErrorBody(response.headers.get("content-type"), body);
     const code = typeof body?.code === "string" ? body.code : null;
+    const redirected = opaqueRedirect || isRedirectStatus(response.status);
     const message =
         typeof body?.error === "string" && body.error.length > 0
             ? body.error
-            : `The Happy agent answered ${String(response.status)}.`;
-    return new HappyAgentApiError(response.status, message, code, body);
+            : redirected
+              ? "The server redirected the request. Sign in again."
+              : `The Happy agent answered ${String(response.status)}.`;
+    return new HappyAgentApiError(response.status, message, code, body, {
+        happyError,
+        opaqueRedirect,
+    });
 }
 
 async function readErrorBody(response: Response): Promise<ApiErrorBody | null> {

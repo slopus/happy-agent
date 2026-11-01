@@ -288,11 +288,15 @@ import type {
 import { endpointUrl } from "./endpointUrl.js";
 import { readApiError } from "./HappyAgentApiError.js";
 import { EventStreamProtocolError, readEventStream } from "./readEventStream.js";
+import { watchStreamIdle } from "./watchStreamIdle.js";
 import {
     reconnectingUpdates,
     type HappyAgentUpdate,
     type HappyAgentUpdatesOptions,
 } from "./updates.js";
+
+/** Three missed 15-second heartbeats: the stream is dead even if its connection looks open. */
+const EVENT_STREAM_IDLE_MS = 45_000;
 
 /** What the client needs to reach a daemon. */
 export interface HappyAgentClientOptions {
@@ -2334,6 +2338,18 @@ export class HappyAgentClient {
     }
 
     /**
+     * The URL of `GET /v0/artifacts/:artifactId/proxy/websocket`, the WebSocket twin of
+     * `artifactProxyUrl` for endpoints that do not carry `CONNECT`. Its binary messages carry the
+     * tunnel's bytes; the caller's WebSocket supplies the bearer token in `Authorization`.
+     */
+    artifactProxyWebSocketUrl(artifactId: Cuid2): string {
+        return endpointUrl(
+            this.#endpoint,
+            `v0/artifacts/${encodeURIComponent(artifactId)}/proxy/websocket`,
+        );
+    }
+
+    /**
      * `POST /v0/artifact-uploads` — one file's bytes for a later creation or update, up to
      * 256 MiB. The file's name and media type come from the path it is placed at.
      */
@@ -2479,6 +2495,18 @@ export class HappyAgentClient {
     }
 
     /**
+     * The URL of `GET /v0/workspaces/:workspaceId/proxy/websocket`, the WebSocket twin of
+     * `workspaceProxyUrl`. One WebSocket is one tunnel: its binary messages carry exactly the
+     * bytes that follow the `CONNECT` answer, and an empty message ends one direction.
+     */
+    workspaceProxyWebSocketUrl(workspaceId: Cuid2): string {
+        return endpointUrl(
+            this.#endpoint,
+            `v0/workspaces/${encodeURIComponent(workspaceId)}/proxy/websocket`,
+        );
+    }
+
+    /**
      * The URL of `CONNECT /v0/workspaces/:workspaceId/agents/:agentId/proxy`: the same tunnel,
      * opened in that agent's own network.
      */
@@ -2486,6 +2514,14 @@ export class HappyAgentClient {
         return endpointUrl(
             this.#endpoint,
             `v0/workspaces/${encodeURIComponent(workspaceId)}/agents/${encodeURIComponent(agentId)}/proxy`,
+        );
+    }
+
+    /** The URL of the WebSocket twin of `workspaceAgentProxyUrl`. */
+    workspaceAgentProxyWebSocketUrl(workspaceId: Cuid2, agentId: Cuid2): string {
+        return endpointUrl(
+            this.#endpoint,
+            `v0/workspaces/${encodeURIComponent(workspaceId)}/agents/${encodeURIComponent(agentId)}/proxy/websocket`,
         );
     }
 
@@ -2514,6 +2550,14 @@ export class HappyAgentClient {
             throw new Error("The network ID is invalid.");
         }
         return endpointUrl(this.#endpoint, `v0/networks/${networkId}/proxy`);
+    }
+
+    /** The URL of the WebSocket twin of `networkProxyUrl`. */
+    networkProxyWebSocketUrl(networkId: string): string {
+        if (!Value.Check(networkIdSchema, networkId)) {
+            throw new Error("The network ID is invalid.");
+        }
+        return endpointUrl(this.#endpoint, `v0/networks/${networkId}/proxy/websocket`);
     }
 
     // Sandboxed workspace services: creation belongs to the agent's service_start tool.
@@ -3240,7 +3284,8 @@ export class HappyAgentClient {
      * ends when the daemon closes the stream or the signal aborts. One
      * connection is one iteration: reconnecting is the caller's decision, made
      * with the last cursor it received and honored through `after` or
-     * `lastEventId`.
+     * `lastEventId`. A stream that delivers nothing, not even a heartbeat, for
+     * 45 seconds fails with `EventStreamProtocolError`.
      */
     async *streamEvents(options: EventStreamOptions = {}): AsyncGenerator<EventStreamFrame> {
         const response = await this.#send({
@@ -3254,7 +3299,13 @@ export class HappyAgentClient {
         if (response.body === null) {
             throw new EventStreamProtocolError("The event stream carried no body.");
         }
-        yield* readEventStream(response.body);
+        yield* readEventStream(
+            watchStreamIdle(
+                response.body,
+                EVENT_STREAM_IDLE_MS,
+                () => new EventStreamProtocolError("The event stream stopped sending heartbeats."),
+            ),
+        );
     }
 
     /**
@@ -3343,6 +3394,9 @@ export class HappyAgentClient {
                 method: request.method,
                 headers,
                 body,
+                // A redirect on an API request comes from something in front of the daemon and
+                // means signing in again; following it could carry the token elsewhere.
+                redirect: "manual",
                 signal: request.signal ?? null,
             },
         );

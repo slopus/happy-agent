@@ -28,6 +28,11 @@ export const oauthAuthenticationMethodSchema = Type.Object({
     clientId: Type.String({ minLength: 1, maxLength: 256 }),
     /** The space-separated scope requested during authorization. */
     scope: Type.Optional(Type.String({ minLength: 1, maxLength: 1024 })),
+    /**
+     * The RFC 8707 resource indicator sent on the authorization, token, and refresh requests;
+     * absent when the deployment configures none.
+     */
+    resource: Type.Optional(urlSchema),
 });
 export type OAuthAuthenticationMethod = Static<typeof oauthAuthenticationMethodSchema>;
 

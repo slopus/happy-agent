@@ -158,6 +158,11 @@ export const healthResponseSchema = Type.Object({
             providerClis: Type.Optional(Type.Boolean()),
             /** True when the daemon serves `/v0/provider-routes`, described under Provider routes. */
             providerRoutes: Type.Optional(Type.Boolean()),
+            /**
+             * True when every proxy tunnel has a WebSocket twin and the daemon pings its
+             * WebSockets, described under WebSocket tunnels and Keepalive.
+             */
+            webSocketTunnels: Type.Optional(Type.Boolean()),
         }),
     ),
     /** Always `true`; a daemon that cannot answer does not answer. */
