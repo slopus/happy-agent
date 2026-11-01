@@ -1,5 +1,6 @@
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { request as httpRequest } from "node:http";
 import { crc32, deflateSync } from "node:zlib";
 
 import type { HappyAgentClient } from "@slopus/happy-agent-client";
@@ -45,8 +46,42 @@ function png(width: number, height: number): Buffer {
 }
 
 const SHOT = png(6, 4);
-/** The shape the daemon checks: an ftyp box first, and an H.264 (avc1) sample entry. */
-const CLIP = Buffer.concat([Buffer.from([0, 0, 0, 16]), Buffer.from("ftypisom\0\0\0\0moov avc1")]);
+/** A 2×2 AVIF, encoded once from the same kind of generated image fixture. */
+const AVIF = Buffer.from(
+    "AAAAHGZ0eXBhdmlmAAAAAG1pZjFhdmlmbWlhZgAAANZtZXRhAAAAAAAAACFoZGxyAAAAAAAAAABwaWN0AAAAAAAAAAAAAAAAAAAAACJpbG9jAAAAAERAAAEAAQAAAAAA+gABAAAAAAAAACQAAAAjaWluZgAAAAAAAQAAABVpbmZlAgAAAAABAABhdjAxAAAAAA5waXRtAAAAAAABAAAAVmlwcnAAAAA4aXBjbwAAAAxhdjFDgSACAAAAABRpc3BlAAAAAAAAAAIAAAACAAAAEHBpeGkAAAAAAwgICAAAABZpcG1hAAAAAAAAAAEAAQOBAgMAAAAsbWRhdBIACgc4ADaQENBpMhcZQmMEwAA0AATFtc4qV1mot0eXsk+PYA==",
+    "base64",
+);
+function box(type: string, ...parts: Buffer[]): Buffer {
+    const body = Buffer.concat(parts),
+        header = Buffer.alloc(8);
+    header.writeUInt32BE(8 + body.length);
+    header.write(type, 4, "latin1");
+    return Buffer.concat([header, body]);
+}
+/** A real box hierarchy with an H.264 sample entry; no frames are decoded by the gate. */
+const CLIP = Buffer.concat([
+    box("ftyp", Buffer.from("isom\0\0\0\0isom")),
+    box(
+        "moov",
+        box(
+            "trak",
+            box(
+                "mdia",
+                box(
+                    "minf",
+                    box(
+                        "stbl",
+                        box(
+                            "stsd",
+                            Buffer.from([0, 0, 0, 0, 0, 0, 0, 1]),
+                            box("avc1", Buffer.alloc(78)),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+    ),
+]);
 
 interface Story {
     readonly id: string;
@@ -291,6 +326,79 @@ describe("stories", () => {
 });
 
 describe("story replies, reposts, and deletes", () => {
+    it("sniffs an uploaded image independently of its image subtype", async () => {
+        const { gym, alice, api, feed } = await harness();
+        await alice.saveUserSetting("stories", { value: true });
+        for (const type of ["image/x-gallery-photo", "image/jpeg"]) {
+            const form = new FormData();
+            form.set("media", new Blob([SHOT], { type }), "gallery");
+            const response = await api("alice", "POST", "/v0/stories", form);
+            expect(response.status, response.body.toString()).toBe(200);
+            expect(JSON.parse(response.body.toString()).story.media.mimeType).toBe("image/png");
+        }
+        expect(await feed("alice")).toHaveLength(2);
+        // Bun's bundled image backend lacks AVIF decoding; Node's Sharp decoder supports it.
+        if (process.versions.bun === undefined) {
+            const avif = new FormData();
+            avif.set("media", new Blob([AVIF], { type: "image/avif" }), "gallery");
+            const response = await api("alice", "POST", "/v0/stories", avif);
+            expect(response.status, response.body.toString()).toBe(200);
+            expect(JSON.parse(response.body.toString()).story.media.mimeType).toBe("image/avif");
+            expect(await feed("alice")).toHaveLength(3);
+        }
+        expect(gym.errors).toEqual([]);
+    });
+
+    it("refuses a non-multipart upload before reading its body", async () => {
+        const { gym, alice, tokenFor } = await harness();
+        await alice.saveUserSetting("stories", { value: true });
+        await new Promise<void>((resolve, reject) => {
+            const request = httpRequest(
+                new URL("/v0/stories", gym.daemon.httpUrl),
+                {
+                    method: "POST",
+                    headers: {
+                        authorization: `Bearer ${tokenFor("alice")}`,
+                        "content-type": "application/octet-stream",
+                        "content-length": "1000000",
+                    },
+                },
+                (response) => {
+                    response.resume();
+                    response.once("end", () => {
+                        request.destroy();
+                        try {
+                            expect(response.statusCode).toBe(400);
+                            resolve();
+                        } catch (error) {
+                            reject(error);
+                        }
+                    });
+                },
+            );
+            request.setTimeout(3000, () =>
+                request.destroy(new Error("The upload waited for a non-multipart body.")),
+            );
+            request.once("error", reject);
+            request.write("x"); // Start the streaming hop, but never finish the promised body.
+        });
+        expect(gym.errors).toEqual([]);
+    });
+
+    it("bounds a repost's entire multipart body to its round limit plus overhead", async () => {
+        const { gym, alice, bob, call, api, feed } = await harness();
+        for (const person of [alice, bob]) await person.saveUserSetting("stories", { value: true });
+        await call("post_story", { path: "shot.png" });
+        const [story] = await feed("bob");
+        const form = new FormData();
+        form.set("metadata", JSON.stringify(" ".repeat(16 * 1024 * 1024 + 65536)));
+        expect((await api("bob", "POST", `/v0/stories/${story!.id}/repost`, form)).status).toBe(
+            413,
+        );
+        expect(await feed("bob")).toHaveLength(1);
+        expect(gym.errors).toEqual([]);
+    });
+
     it("lets the standalone person upload and delete a story with no agent or user ID", async () => {
         const gym = await createAgentGym();
         running.add(gym);

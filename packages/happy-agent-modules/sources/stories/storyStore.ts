@@ -206,6 +206,30 @@ export type StoryReply = {
 /** An MP4 opens with its ftyp box, and an H.264 track is an avc1 or avc3 sample entry. */
 export function isH264Mp4(bytes: Uint8Array): boolean {
     const file = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-    const avc = file.includes("avc1") || file.includes("avc3");
-    return file.toString("latin1", 4, 8) === "ftyp" && avc;
+    const scan = (start: number, end: number, path: readonly string[]): boolean => {
+        for (let at = start; at + 8 <= end; ) {
+            const wide = file.readUInt32BE(at) === 1,
+                header = wide ? 16 : 8;
+            if (at + header > end) return false;
+            const size = wide
+                ? Number(file.readBigUInt64BE(at + 8))
+                : file.readUInt32BE(at) || end - at;
+            if (size < header || size > end - at) return false;
+            const kind = file.toString("latin1", at + 4, at + 8);
+            if (
+                kind === path[0] &&
+                (path.length === 1 ||
+                    scan(at + header + (kind === "stsd" ? 8 : 0), at + size, path.slice(1)))
+            )
+                return true;
+            at += size;
+        }
+        return false;
+    };
+    return (
+        file.toString("latin1", 4, 8) === "ftyp" &&
+        ["avc1", "avc3"].some((kind) =>
+            scan(0, file.length, ["moov", "trak", "mdia", "minf", "stbl", "stsd", kind]),
+        )
+    );
 }

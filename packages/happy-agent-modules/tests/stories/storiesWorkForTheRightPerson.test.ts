@@ -7,6 +7,7 @@ import {
     USER_MESSAGE_ORIGIN_METADATA,
 } from "../../sources/impl/messageOrigin.js";
 import { StoriesModule } from "../../sources/stories/index.js";
+import { TeamAuthenticationError, withTeamUser } from "../../sources/team/index.js";
 
 const ctx = createRootContext().named("stories-test");
 
@@ -33,7 +34,10 @@ function harness(teamEnabled: boolean, on: readonly string[]) {
             enabled: teamEnabled,
             getUser: async (_ctx: Context, id: string) => ({ id, authentication: "jwt" }),
             connectionContext: (_ctx: Context, user: { id: string }) => {
-                const userCtx = createRootContext().named(user.id);
+                const userCtx = withTeamUser(createRootContext().named(user.id), {
+                    ...user,
+                    authentication: "jwt",
+                } as never);
                 reader.set(userCtx, user.id);
                 return userCtx;
             },
@@ -64,10 +68,15 @@ function harness(teamEnabled: boolean, on: readonly string[]) {
                 } as never),
         };
     }
-    return { agent };
+    return { agent, stories };
 }
 
 describe("who a story-posting agent works for", () => {
+    it("requires an onboarded team reader before checking their setting", async () => {
+        await expect(harness(true, ["standalone"]).stories.enabled(ctx)).rejects.toBeInstanceOf(
+            TeamAuthenticationError,
+        );
+    });
     it("is asked again when a story tool runs, so turning stories off stops the tools at once", async () => {
         const on = ["alice"];
         const offered = await harness(true, on).agent("task").tools();

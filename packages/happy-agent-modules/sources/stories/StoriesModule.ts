@@ -196,10 +196,8 @@ export class StoriesModule implements AgentModule {
         const video = media.type === "video/mp4";
         if ((!video && !media.type.startsWith("image/")) || (video && !store.isH264Mp4(bytes)))
             throw new StoryInputError("Choose an image or an H.264 MP4 video.");
-        const name = video
-            ? "story.mp4"
-            : `story.${media.type.slice(6).replace("svg+xml", "svg").replace("x-icon", "ico")}`;
-        const item = await this.#chatMedia.snapshot(bytes, name);
+        const imageName = media.type === "image/avif" ? "story.avif" : "story.png";
+        const item = await this.#chatMedia.snapshot(bytes, video ? "story.mp4" : imageName);
         if (item.kind !== "image" && item.kind !== "video")
             throw new StoryInputError("The image could not be read.");
         const kept = round && (await this.#chatMedia.snapshot(round, "round.mp4"));
@@ -432,6 +430,7 @@ export class StoriesModule implements AgentModule {
     }
 
     async enabled(ctx: Context): Promise<boolean> {
+        this.#reader(ctx);
         if (this.#team.enabled && teamUser(ctx)?.authentication === "guest") return false;
         return (await this.#settings.get(ctx, "stories")).value === true;
     }

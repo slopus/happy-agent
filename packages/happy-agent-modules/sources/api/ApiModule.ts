@@ -5,6 +5,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { AsyncLocalStorage, AsyncResource } from "node:async_hooks";
 import type { Socket } from "node:net";
 import { dirname, join } from "node:path";
+import { Readable } from "node:stream";
 // Bun replaces bare "undici" with its native parser, which drops multipart file content types.
 import { Response as MultipartResponse } from "undici/index.js";
 import {
@@ -10507,11 +10508,12 @@ function storyInputError(error: unknown): never {
 
 /** Bounded binary multipart upload; metadata is validated separately from the files. */
 async function readStoryUpload(request: IncomingMessage, original: boolean) {
-    const bytes = await readBytes(request, 48 * 1024 * 1024 + 65536);
     const type = request.headers["content-type"] ?? "";
     if (!type.startsWith("multipart/form-data"))
         throw invalidRequest("Use multipart/form-data for a story upload.");
-    const form = await new MultipartResponse(bytes, { headers: { "content-type": type } })
+    const bytes = await readBytes(request, (original ? 48 : 16) * 1024 * 1024 + 65536);
+    const body = Readable.from([bytes]);
+    const form = await new MultipartResponse(body, { headers: { "content-type": type } })
         .formData()
         .catch(() => {
             throw invalidRequest("The story upload is invalid.");
@@ -10538,12 +10540,10 @@ async function readStoryUpload(request: IncomingMessage, original: boolean) {
         [media, 32 * 1024 * 1024],
         [round, 16 * 1024 * 1024],
     ] as const) {
-        if (file instanceof Blob && (file.size === 0 || file.size > cap))
-            throw new ApiError(
-                file.size === 0 ? 400 : 413,
-                file.size === 0 ? "invalid_request" : "too_large",
-                "The story file is empty or too large.",
-            );
+        if (file instanceof Blob && file.size === 0)
+            throw invalidRequest("The story file is empty.");
+        if (file instanceof Blob && file.size > cap)
+            throw new ApiError(413, "too_large", "The story file is too large.");
     }
     if (round instanceof Blob && round.type !== "video/mp4")
         throw invalidRequest("A round must be an H.264 MP4 video.");
