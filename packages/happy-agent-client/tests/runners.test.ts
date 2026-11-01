@@ -132,6 +132,26 @@ describe("runners", () => {
         }
     });
 
+    it("accepts the operating system version and shell a newer runner reports", () => {
+        const windowsRunner = {
+            ...connectedRunner,
+            machine: {
+                ...connectedRunner.machine,
+                platform: "win32",
+                home: "C:\\Users\\happy-runner",
+                osVersion: "10.0.26100",
+                shell: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+            },
+        };
+        expect(Value.Check(runnerSchema, windowsRunner)).toBe(true);
+        expect(
+            Value.Check(runnerSchema, {
+                ...windowsRunner,
+                machine: { ...windowsRunner.machine, osVersion: 10 },
+            }),
+        ).toBe(false);
+    });
+
     it("describes runner and Docker computes", () => {
         for (const compute of [
             { type: "runner", runnerId: "build-box", path: "/srv/projects/rig" },

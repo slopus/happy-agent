@@ -385,6 +385,12 @@ daemon answers `GET /v0/runners` with `404` and never returns a runner compute. 
 a compute `type` it does not recognize treats the folder as being on another machine and offers no
 local-path actions for it.
 
+A runner machine's optional `osVersion` and `shell`, and keeping this machine the default with
+`[runners] default = "local"`, are additive and do not increment the protocol version. Older
+daemons and older runners omit the two machine fields. A client that decides whether this machine
+still runs work reads it from the runner list: when no runner object has `default: true`, folders
+that name no runner are on this machine.
+
 Protocol 27 adds the mobile connector: `GET /v0/mobile-connector`, the pairing and device routes
 under `/v0/mobile-connector`, `mobile_connector.updated`, and the connector's socket with its
 handshake routes and credentials. Clients that offer direct phone connections require protocol 27
@@ -1346,7 +1352,8 @@ runs everything that touches them — agent file tools and commands, Git, worksp
 terminals, and the workspace proxy — while the daemon keeps the database, provider
 credentials, and inference. A runner holds no provider credentials, no Happy data, and no API
 token; it reaches the daemon only through `GET /v0/runners/connect`. Runners are optional. Once any
-runner is configured, the daemon runs nothing on its own machine.
+runner is configured, the daemon runs nothing on its own machine, unless `default = "local"` keeps
+this machine the default.
 
 Runners are machine configuration, like remote connections. Whoever deploys a node generates each
 runner's token and writes it both to the node's machine `happy.toml` and to the runner machine, so
@@ -1362,12 +1369,13 @@ name = "Build box"
 token = "REPLACE_WITH_FRESH_43_CHARACTER_BASE64URL_TOKEN"
 ```
 
-- `[runners.<id>]` — one entry per runner. IDs match `[a-z][a-z0-9_-]{0,63}`; `name` has 1–128
-  printable characters; `token` uses the standalone token format and must differ from
-  `[api] token`, every connection token, and every other runner's token. At most 32 runners.
+- `[runners.<id>]` — one entry per runner. IDs match `[a-z][a-z0-9_-]{0,63}` and are not `local`;
+  `name` has 1–128 printable characters; `token` uses the standalone token format and must differ
+  from `[api] token`, every connection token, and every other runner's token. At most 32 runners.
 - `default` — the runner used for a project registration or clone that names none, for the home
-  project, and for bot folders. Optional when exactly one runner is configured, which is then the
-  default; required when there are several. It must name a configured runner.
+  project, and for bot, task, and Surface chat folders. Optional when exactly one runner is
+  configured, which is then the default; required when there are several. It must name a
+  configured runner, or be `"local"` to keep this machine the default.
 
 An invalid entry fails configuration loading with a human-readable message. Tokens never appear
 in the API, events, errors, or logs. Removing an entry and restarting the daemon revokes that
@@ -1381,7 +1389,13 @@ drops. Nothing a daemon starts on a runner outlives the daemon process: when the
 removes the runner, or stays away longer than the runner's lease, the runner stops everything it
 held for it.
 
-While runners are configured:
+With `default = "local"`, this machine keeps running its own work exactly as with no runners: no
+runner object is the default, a project registration or clone that names no runner, the home
+project, and bot, task, and Surface chat folders stay on this machine, and nothing here fails with
+`local_execution_disabled`. Only a project registered or cloned with a `runnerId` goes to that
+runner, and everything below about work on a runner applies to it.
+
+While runners are configured and one of them is the default:
 
 - Projects, workspaces, bot folders, and the home project live on runners. The home project is the
   default runner's home directory.
@@ -1395,6 +1409,11 @@ While runners are configured:
   token itself, exactly as it does for Git on this machine. Attached secrets stay on the daemon:
   an agent command on a runner that selects attached secrets is refused, with a message saying
   secrets are not available on runners yet.
+- A runner may run another operating system than the daemon. Paths on it follow its own rules, such
+  as `C:\Users\happy\happy\workspaces\...` on a Windows runner under a Linux daemon, and folders
+  are laid out as that system lays out its own. An agent working in a folder on a runner is told
+  the runner's platform rather than the daemon's, and its operating system release and shell when
+  the runner reports them.
 - A runner project can run its workspaces in containers on the runner: with
   `defaultWorkspaceCompute` `{ "type": "docker", "image": "..." }`, every new workspace's agent
   file tools and commands run in a container of that image on the runner, with the workspace
@@ -1415,7 +1434,9 @@ While runners are configured:
         "platform": "linux",
         "arch": "x64",
         "hostname": "build-1",
-        "home": "/home/happy-runner"
+        "home": "/home/happy-runner",
+        "osVersion": "6.8.0-60-generic",
+        "shell": "/bin/bash"
     },
     "protocol": 1,
     "since": 1755300000000,
@@ -1423,11 +1444,15 @@ While runners are configured:
 }
 ```
 
-- `default` — whether this is the configured default runner.
+- `default` — whether this is the configured default runner. Every runner reports `false` while
+  `default = "local"` keeps this machine the default.
 - `status` — `"connected"` or `"disconnected"`.
 - `machine` — what the runner reported when it last connected, kept across daemon restarts, or
   `null` before it has ever connected. For display and diagnostics, except `home`, which places
-  the home project and bot folders.
+  the home project and bot folders, and `platform`, whose path rules name the runner's folders.
+  `osVersion` — the operating system release, as an agent working on that machine is told it —
+  and `shell` — the shell its commands run in — are optional; a runner too old to report them
+  omits them.
 - `protocol` — the runner protocol version in use, or `null` while disconnected.
 - `since` — Unix milliseconds of the last status change.
 - `reason` — a human-readable reason for the last disconnection, or `null`.

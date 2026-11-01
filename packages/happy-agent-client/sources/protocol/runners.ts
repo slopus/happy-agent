@@ -10,6 +10,10 @@ export const runnerMachineSchema = Type.Object({
     hostname: Type.String(),
     /** Places the home project and bot folders. */
     home: Type.String(),
+    /** The operating system release, as an agent working there is told it; older runners omit it. */
+    osVersion: Type.Optional(Type.String()),
+    /** The shell the runner's commands run in; older runners omit it. */
+    shell: Type.Optional(Type.String()),
 });
 export type RunnerMachine = Static<typeof runnerMachineSchema>;
 
