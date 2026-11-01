@@ -39,7 +39,7 @@ import {
     providerRouteIdSchema,
     providerRouteUseRequestSchema,
 } from "../providerRoutes/index.js";
-import { StoriesModule } from "../stories/index.js";
+import { StoriesModule, StoryInputError } from "../stories/index.js";
 import {
     closeWorkspaceBridgeRequestSchema,
     createSurfaceRequestSchema,
@@ -406,6 +406,13 @@ const updateArtifactRequestSchema = Type.Composite([
     publishedUpdateArtifactRequestSchema,
     Type.Object({ baseVersion: Type.Optional(Type.Integer({ minimum: 1 })) }),
 ]);
+const storyReplyRequestSchema = Type.Object({
+    text: Type.String({ minLength: 1, maxLength: 2000 }),
+});
+const storyRepostRequestSchema = Type.Object({
+    caption: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
+    round: Type.Optional(Type.Object({ data: Type.String({ minLength: 1 }) })),
+});
 
 /**
  * How many archived agents the desktop bootstrap carries. Recent history is what the desktop
@@ -3131,8 +3138,8 @@ export class ApiModule implements AgentModule {
         if (this.#stories !== undefined)
             this.#unsubscribe.push(
                 // Seen state is each reader's own, so every reader gets their own copy.
-                this.#stories.onEvent((_eventCtx, { readerId, payload }) => {
-                    this.#journal.append("story.changed", payload, Date.now(), readerId);
+                this.#stories.onEvent((_eventCtx, { readerId, type, payload }) => {
+                    this.#journal.append(type, payload, Date.now(), readerId);
                 }),
             );
         if (this.#userSettings !== undefined)
@@ -7091,26 +7098,52 @@ export class ApiModule implements AgentModule {
             sendJson(response, 200, { stories: await stories.list(ctx), cursor });
             return true;
         }
-        const match = /^\/v0\/stories\/([a-z][a-z0-9]*)\/(seen|media)$/.exec(url.pathname);
+        const match =
+            /^\/v0\/stories\/([a-z][a-z0-9]*)(?:\/(seen|media|round|replies|repost))?$/.exec(
+                url.pathname,
+            );
         if (match === null) return false;
         const storyId = match[1] as string;
-        if (request.method === "POST" && match[2] === "seen") {
+        const route = `${request.method} ${match[2] ?? ""}`;
+        if (route === "POST seen") {
             const story = await stories.markSeen(ctx, storyId);
             if (story === undefined) throw notFound("The story was not found.");
             sendJson(response, 200, { story });
-            return true;
-        }
-        if (request.method === "GET" && match[2] === "media") {
-            const media = await stories.media(ctx, storyId);
-            if (media === undefined) throw notFound("The story was not found.");
+        } else if (route === "GET media" || route === "GET round") {
+            const file = await stories.file(ctx, storyId, match[2] as "media" | "round");
+            if (file === undefined) throw notFound("The story was not found.");
             // A story's media is a snapshot taken once, so the same URL never names other bytes.
             await sendStoredFile(request, response, {
-                ...media,
+                ...file,
                 cacheControl: "private, max-age=31536000, immutable",
             });
-            return true;
-        }
-        return false;
+        } else if (route === "GET replies") {
+            const replies = await stories.replies(ctx, storyId);
+            if (replies === undefined) throw notFound("The story was not found.");
+            sendJson(response, 200, { replies });
+        } else if (route === "POST replies") {
+            const { text } = await bodyAs(request, storyReplyRequestSchema, "story reply");
+            const reply = await stories.reply(ctx, storyId, text);
+            if (reply === undefined) throw notFound("The story was not found.");
+            sendJson(response, 200, { reply });
+        } else if (route === "POST repost") {
+            const body = await bodyAs(request, storyRepostRequestSchema, "story repost");
+            const round = body.round && Buffer.from(body.round.data, "base64");
+            const story = await stories
+                .repost(ctx, storyId, body.caption ?? null, round)
+                .catch((error: unknown) => {
+                    throw error instanceof StoryInputError ? invalidRequest(error.message) : error;
+                });
+            if (story === undefined) throw notFound("The story was not found.");
+            sendJson(response, 200, { story });
+        } else if (route === "DELETE ") {
+            const deleted = await stories.delete(ctx, storyId);
+            if (deleted === undefined) throw notFound("The story was not found.");
+            if (deleted === "forbidden")
+                throw new ApiError(403, "forbidden", "Only its owner may delete this story.");
+            sendJson(response, 200, {});
+        } else return false;
+        return true;
     }
 
     async #handleTaskRoute(

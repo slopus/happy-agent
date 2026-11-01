@@ -95,6 +95,7 @@ export class ApiEventJournal {
                 event.type !== "agent.draft.updated" &&
                 event.type !== "user_settings.updated" &&
                 event.type !== "story.changed" &&
+                event.type !== "story.removed" &&
                 event.type !== "mobile_connector.updated") ||
             userId === undefined
         );

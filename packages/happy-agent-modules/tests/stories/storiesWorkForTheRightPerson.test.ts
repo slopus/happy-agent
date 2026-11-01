@@ -44,7 +44,7 @@ function harness(teamEnabled: boolean, on: readonly string[]) {
             }),
         } as never,
     );
-    const hooks = stories.beforeStart();
+    const hooks = stories.beforeStart(ctx, {} as never);
     function agent(agentId: string) {
         const kv = new Map<string, unknown>();
         const scope = {

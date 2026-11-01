@@ -5,6 +5,7 @@ import type { ChatMediaModule } from "../../chatMedia/index.js";
 import type { Compute, ComputeModule } from "../../compute/index.js";
 import { quoteVisibleExact } from "../../impl/quoteVisibleExact.js";
 import type { StoriesModule } from "../StoriesModule.js";
+import { isH264Mp4 } from "../storyStore.js";
 
 const postStoryInputSchema = Type.Object(
     {
@@ -60,11 +61,7 @@ export function postStoryTool(
                 throw new Error(`${quoteVisibleExact(path)} is not a file a story can show.`);
             const { maxBytes } = limit;
             const bytes = await compute.fs.readFileBuffer(permissions, resolved, { maxBytes });
-            // An MP4 opens with its ftyp box, and an H.264 track is an avc1 or avc3 sample entry.
-            const file = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-            const avc = file.includes("avc1") || file.includes("avc3");
-            const h264 = file.toString("latin1", 4, 8) === "ftyp" && avc;
-            if (limit.kind === "video" && !h264)
+            if (limit.kind === "video" && !isH264Mp4(bytes))
                 throw new Error(`${quoteVisibleExact(path)} is not an H.264 MP4 video.`);
             const item = await chatMedia.snapshot(bytes, name);
             const { kind, mimeType, size, sha256 } = item;
