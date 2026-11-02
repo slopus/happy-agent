@@ -22,7 +22,11 @@ import {
     type OAuthAuthenticationMethod,
 } from "./protocol/authentication.js";
 
-/** A sign-in in progress. Keep it in memory until the redirect arrives. */
+/**
+ * A sign-in in progress. Keep it in memory until the redirect arrives. It is
+ * frozen, with its own frozen copy of the method, so the endpoints checked at
+ * the start are the ones used at the end.
+ */
 export interface OAuthSignIn {
     /** Open this in the system browser. */
     readonly url: string;
@@ -75,15 +79,8 @@ export async function beginOAuthSignIn(
     if (!Value.Check(oauthAuthenticationMethodSchema, method)) {
         throw new HappyAgentOAuthError("invalid_response", "The sign-in method is not valid.");
     }
-    const authorizationUrl = secureUrl(method.authorizationUrl);
-    for (const url of [method.tokenUrl, method.refreshUrl]) {
-        if (url !== undefined && secureUrl(url).origin !== authorizationUrl.origin) {
-            throw new HappyAgentOAuthError(
-                "insecure_url",
-                "This server's sign-in settings would send your sign-in to a different site, so they can't be used.",
-            );
-        }
-    }
+    method = Object.freeze({ ...method });
+    const authorizationUrl = oneOriginAuthorizationUrl(method);
     secureUrl(options.serverUrl);
     if (method.resource !== undefined) resourceIndicator(method.resource);
     const redirect = new URL(options.redirectUri);
@@ -116,7 +113,7 @@ export async function beginOAuthSignIn(
     for (const [name, value] of Object.entries(parameters)) {
         authorizationUrl.searchParams.set(name, value);
     }
-    return {
+    return Object.freeze({
         codeVerifier,
         host: authorizationUrl.host,
         method,
@@ -124,7 +121,7 @@ export async function beginOAuthSignIn(
         serverUrl: options.serverUrl,
         state,
         url: authorizationUrl.toString(),
-    };
+    });
 }
 
 /** Finish a sign-in from the redirect it produced, exchanging the code at the method's token URL. */
@@ -133,6 +130,11 @@ export async function completeOAuthSignIn(
     callbackUrl: string | URL,
     options: OAuthRequestOptions = {},
 ): Promise<OAuthCredential> {
+    // A backstop for an attempt that was not built by `beginOAuthSignIn`: the
+    // code still goes only to the origin the person was sent to sign in at.
+    if (oneOriginAuthorizationUrl(signIn.method).origin !== new URL(signIn.url).origin) {
+        throw differentSite();
+    }
     const parameters = new URL(callbackUrl.toString()).searchParams;
     if (parameters.get("state") !== signIn.state) {
         throw new HappyAgentOAuthError(
@@ -313,6 +315,24 @@ const accessTokenAudienceSchema = Type.Object({
 
 function withSlash(path: string): string {
     return path.endsWith("/") ? path : `${path}/`;
+}
+
+/** The method's authorization URL, after checking its token and refresh URLs share its origin. */
+function oneOriginAuthorizationUrl(method: OAuthAuthenticationMethod): URL {
+    const authorizationUrl = secureUrl(method.authorizationUrl);
+    for (const url of [method.tokenUrl, method.refreshUrl]) {
+        if (url !== undefined && secureUrl(url).origin !== authorizationUrl.origin) {
+            throw differentSite();
+        }
+    }
+    return authorizationUrl;
+}
+
+function differentSite(): HappyAgentOAuthError {
+    return new HappyAgentOAuthError(
+        "insecure_url",
+        "This server's sign-in settings would send your sign-in to a different site, so they can't be used.",
+    );
 }
 
 /** Credentials only travel over https, or plain http to this machine. */

@@ -289,6 +289,32 @@ describe("binding a sign-in to its authorization server and its server", () => {
         ).resolves.toBeDefined();
     });
 
+    it("keeps the endpoints checked at the start, whatever happens to the method later", async () => {
+        const method = { ...METHOD };
+        const signIn = await beginOAuthSignIn(method, { redirectUri: REDIRECT, serverUrl: SERVER });
+        method.tokenUrl = "https://attacker.example/oauth/token";
+        expect(Object.isFrozen(signIn)).toBe(true);
+        expect(Object.isFrozen(signIn.method)).toBe(true);
+        expect(() => {
+            (signIn.method as { tokenUrl: string }).tokenUrl = "https://attacker.example/token";
+        }).toThrow(TypeError);
+        const { fetch, requests } = recordingFetch(() =>
+            json({ access_token: ACCESS_1, token_type: "Bearer" }),
+        );
+        await completeOAuthSignIn(signIn, `${REDIRECT}?code=c&state=${signIn.state}`, { fetch });
+        expect(requests.map((request) => request.url)).toEqual([METHOD.tokenUrl]);
+
+        // An attempt assembled by hand still never sends the code to another site.
+        const forged = {
+            ...signIn,
+            method: { ...signIn.method, tokenUrl: "https://attacker.example/oauth/token" },
+        };
+        await expect(
+            completeOAuthSignIn(forged, `${REDIRECT}?code=c&state=${signIn.state}`, { fetch }),
+        ).rejects.toMatchObject({ code: "insecure_url" });
+        expect(requests).toHaveLength(1);
+    });
+
     it("refuses an insecure server URL", async () => {
         await expect(
             beginOAuthSignIn(METHOD, {
