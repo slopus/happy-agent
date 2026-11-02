@@ -300,7 +300,10 @@ async function runnerCompute(
     compute: { readonly reconnectWaitMs?: number } = {},
 ) {
     const folder = await mkdtemp(join(tmpdir(), "runner-compute-"));
-    cleanups.push(async () => rm(folder, { force: true, recursive: true }));
+    // Windows releases a killed shell's hold on its working folder a moment after it exits.
+    cleanups.push(async () =>
+        rm(folder, { force: true, recursive: true, maxRetries: 10, retryDelay: 100 }),
+    );
     const host = new RunnerHost({
         ctx,
         identity: {
