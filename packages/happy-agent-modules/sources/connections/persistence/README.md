@@ -9,3 +9,7 @@ migration backfills old snapshots in ascending ID order and advances nonempty ro
 the original migration is unchanged. Reordering atomically replaces this bounded snapshot,
 preserving all neighbour keys. Configuration reconciliation retains existing keys and appends
 new connections after surviving entries.
+
+A third table keeps every ID that ever named a server connection by URL. Rows are written before
+the configuration that uses or removes the ID and are never deleted, so a removed server's ID is
+never reused.

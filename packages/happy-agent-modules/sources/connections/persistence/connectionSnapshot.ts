@@ -11,6 +11,7 @@ import { Value } from "@sinclair/typebox/value";
 import type { Context } from "@steve.kite/stdlib";
 import { sql } from "drizzle-orm";
 import { migrateConnectionOrderKeys } from "./migrateConnectionOrderKeys.js";
+import { migrateReservedServerConnectionIds } from "./reservedServerConnectionIds.js";
 
 export const connectionsMigrations: readonly AgentModuleMigration[] = [
     [
@@ -26,6 +27,7 @@ export const connectionsMigrations: readonly AgentModuleMigration[] = [
         },
     ],
     migrateConnectionOrderKeys,
+    migrateReservedServerConnectionIds,
 ];
 
 /** One bounded public projection; private configuration never enters this table. */

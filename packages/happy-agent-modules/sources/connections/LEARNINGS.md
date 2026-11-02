@@ -120,10 +120,17 @@ A security review found that `set_remote_connection` could point an existing ser
 ID at another URL. Apps keep each person's token by connection ID, and the proxy forwards
 `Happy-Remote-Authorization` to whatever URL the entry names, so the old server's token would have
 gone to the new origin. A server connection's URL is now immutable. `set_remote_connection`
-refuses a changed URL, a new URL entry, and any other kind of connection under an enabled server's
-ID. Only `add_server_connection` creates one, after checking its discovery, under an ID nothing has
-used before, since removal leaves the ID reserved. Desktop also binds its sessions to the URL, as a
-second line of defense.
+refuses a changed URL, a new URL entry, and any other kind of connection under a server's ID. Only
+`add_server_connection` creates one, after checking its discovery, under an ID nothing has used
+before. Desktop also binds its sessions to the URL, as a second line of defense.
+
+A follow-up review found two gaps. The removal marker `{ enabled = false }` forgot that the ID had
+been a server, so a Tailcat entry could take it over; and the proxy looked the ID up a second time
+before sending, so a removal plus a new entry landing between the lookups could send the person's
+token through the new entry's pool. IDs that ever named a server now live in a database table that
+nothing deletes from, and every non-removal `set` under one is refused, even after a restart. The
+proxy resolves the record once and refuses to attach the token unless that record is a `url` entry
+whose pool was built for the same URL.
 
 ## A server's edge never speaks for the local daemon
 

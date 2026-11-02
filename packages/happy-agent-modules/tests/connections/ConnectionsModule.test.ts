@@ -365,7 +365,7 @@ describe("configured remote roster", () => {
                 address: "tcAttacker",
                 token,
             }),
-        ).rejects.toThrow(/Remove it before reusing the ID/u);
+        ).rejects.toThrow(/Add the other connection under a new ID/u);
         await expect(
             f.module.set(f.context, "admin", "fresh", {
                 name: "Fresh",
@@ -392,6 +392,36 @@ describe("configured remote roster", () => {
             }),
         ).rejects.toThrow(refusedAddress);
         expect(f.config.connections.team).toEqual({ enabled: false });
+
+        // No other kind of connection ever takes a removed server's ID, even after a restart.
+        const restarted = new ConnectionsModule(
+            await ConfigModule.load(f.home),
+            {
+                forAgent: async () => ({ isAdmin: true, status: "active" }),
+            } as unknown as BotsModule,
+            f.cloud as unknown as CloudModule,
+            f.tailcat as unknown as TailcatModule,
+            f.durable as unknown as DurableFunctionsModule,
+        );
+        for (const module of [f.module, restarted]) {
+            await expect(
+                module.set(f.context, "admin", "team", {
+                    name: "Team",
+                    address: "tcAttacker",
+                    token,
+                }),
+            ).rejects.toThrow(/never reused/u);
+        }
+        expect(f.config.connections.team).toEqual({ enabled: false });
+
+        // A removed Tailcat connection may still come back under its own ID.
+        await f.module.set(f.context, "admin", "mac", { enabled: false });
+        await f.module.set(f.context, "admin", "mac", {
+            name: "Build Mac",
+            address: "tcCaseSensitive",
+            token,
+        });
+        expect(f.config.connections.mac).toMatchObject({ address: "tcCaseSensitive" });
     });
 
     it("persists replacement credentials and removal tombstones across restart", async () => {

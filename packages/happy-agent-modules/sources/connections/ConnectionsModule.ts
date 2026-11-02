@@ -63,9 +63,20 @@ import {
     queryConnectionSnapshot,
     saveConnectionSnapshot,
 } from "./persistence/connectionSnapshot.js";
+import {
+    queryReservedServerConnectionIds,
+    reserveServerConnectionId,
+} from "./persistence/reservedServerConnectionIds.js";
 
 /** How long a server connection's event stream or WebSocket may stay silent. */
 const SERVER_IDLE_MS = 45_000;
+
+/** A connection's open pool. A server pool also keeps the URL its pool was built for. */
+interface ConnectionRecord {
+    config: RemoteConnectionConfig;
+    readonly url?: string;
+    readonly pool: RemoteProxyConnection;
+}
 
 /** Machine-owned remote roster, admin tools, and authenticated per-remote HTTP pools. */
 export class ConnectionsModule implements AgentModule {
@@ -84,10 +95,7 @@ export class ConnectionsModule implements AgentModule {
     /** Connections whose endpoint changed, whose remembered identity no longer applies. */
     readonly #staleInstanceIds = new Set<string>();
     readonly #lock = asyncLock({ reentry: "block" });
-    readonly #pools = new Map<
-        string,
-        { config: RemoteConnectionConfig; pool: RemoteProxyConnection }
-    >();
+    readonly #pools = new Map<string, ConnectionRecord>();
     #closed = false;
     #ctx: Context | undefined;
 
@@ -350,7 +358,12 @@ export class ConnectionsModule implements AgentModule {
             )
                 return await this.list(ctx);
             const previousEntry = this.#config.connections[id];
-            entry = serverEntryForSet(previousEntry, entry);
+            const reserved = await ctx.inTx(async (txCtx) => {
+                if (previousEntry !== undefined && "url" in previousEntry)
+                    await reserveServerConnectionId(txCtx, id);
+                return (await queryReservedServerConnectionIds(txCtx)).has(id);
+            });
+            entry = serverEntryForSet(previousEntry, entry, reserved);
             if (previousEntry !== undefined && !sameEndpoint(previousEntry, entry)) {
                 this.#staleInstanceIds.add(id);
             }
@@ -381,15 +394,7 @@ export class ConnectionsModule implements AgentModule {
         try {
             const record = await this.#getRecord(ctx, id);
             if ("url" in record.config) {
-                exchange = await this.#forwardToServer(
-                    ctx,
-                    request,
-                    output,
-                    id,
-                    record.config.url,
-                    path,
-                    head,
-                );
+                exchange = await this.#forwardToServer(request, output, id, record, path, head);
                 status = exchange.status ?? 502;
                 return;
             }
@@ -520,7 +525,11 @@ export class ConnectionsModule implements AgentModule {
             if (current === undefined) {
                 const onHealth = (health: HealthResponse) => this.#observeHealth(id, health);
                 if ("url" in entry) {
-                    current = { config: entry, pool: this.#serverPool(id, entry.url, onHealth) };
+                    current = {
+                        config: entry,
+                        url: entry.url,
+                        pool: this.#serverPool(id, entry.url, onHealth),
+                    };
                 } else {
                     const transport = this.#tailcat.openRemote(entry.address);
                     current = {
@@ -611,7 +620,13 @@ export class ConnectionsModule implements AgentModule {
             }
             await requireServerSignIn(normalized);
             const instanceId = (await readServerHealth(normalized))?.instanceId;
-            const id = serverConnectionId(normalized, new Set(Object.keys(configured)));
+            const id = await ctx.inTx(async (txCtx) => {
+                const taken = await queryReservedServerConnectionIds(txCtx);
+                for (const key of Object.keys(configured)) taken.add(key);
+                const id = serverConnectionId(normalized, taken);
+                await reserveServerConnectionId(txCtx, id);
+                return id;
+            });
             await this.#config.updateRuntimeConnection(ctx, id, entry);
             await ctx.inTx(async (txCtx) => {
                 const previous = await queryConnectionSnapshot(txCtx);
@@ -640,16 +655,24 @@ export class ConnectionsModule implements AgentModule {
      * `Happy-Remote-Authorization`, applying the sign-in rule. Nothing is stored or replayed.
      */
     async #forwardToServer(
-        ctx: Context,
         request: IncomingMessage,
         output: ServerResponse | Duplex,
         id: string,
-        url: string,
+        record: ConnectionRecord,
         path: string,
         head: Buffer | undefined,
     ): Promise<RemoteProxyExchange> {
+        // The token goes only through the record whose URL was resolved for this request, never
+        // through whatever the ID names by the time it is sent.
+        if (!("url" in record.config) || record.url !== record.config.url) {
+            throw new RemoteConnectionError(
+                404,
+                "not_found",
+                "The remote connection was not found.",
+            );
+        }
+        const url = record.url;
         const token = remoteToken(request);
-        const record = await this.#getRecord(ctx, id);
         const tunnel = head !== undefined && request.method === "CONNECT";
         const twin = head !== undefined && /\/websocket(?:\?|$)/u.test(path);
         if (tunnel || twin) {
@@ -789,6 +812,7 @@ export class ConnectionsModule implements AgentModule {
 function serverEntryForSet(
     previous: RemoteConnectionEntry | undefined,
     entry: RemoteConnectionEntry,
+    reserved: boolean,
 ): RemoteConnectionEntry {
     const previousUrl =
         previous !== undefined && previous.enabled !== false && "url" in previous
@@ -804,7 +828,12 @@ function serverEntryForSet(
     }
     if (previousUrl !== undefined && entry.enabled !== false) {
         throw new Error(
-            "This ID names a server connection by URL. Remove it before reusing the ID for another connection.",
+            "This ID names a server connection by URL. Add the other connection under a new ID.",
+        );
+    }
+    if (reserved && entry.enabled !== false) {
+        throw new Error(
+            "This ID named a server connection by URL and is never reused. Add the connection under a new ID.",
         );
     }
     return entry;
