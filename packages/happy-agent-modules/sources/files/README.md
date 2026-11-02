@@ -58,3 +58,7 @@ lean on this machine's own disk:
   ends its watches; the next read arms them again.
 
 Live Git state stays local, so writes to a runner folder do not touch the Git module's caches.
+
+`absolutePath` names a relative path absolutely with the folder machine's own path rules, a
+runner's when the folder is on one. A caller that writes a file for an agent uses it to tell the
+agent where that file is on the machine the agent works on.

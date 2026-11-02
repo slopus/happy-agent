@@ -115,6 +115,8 @@ describe("files on a runner", () => {
             path: "docs/guide.md",
         });
         await expect(readFile(join(folder, "docs", "guide.md"), "utf8")).resolves.toBe("new");
+        // What an agent working on the runner is told the written file is called.
+        expect(files.absolutePath(root, "docs/guide.md")).toBe(join(folder, "docs", "guide.md"));
 
         const conflict = await files
             .write(root, {
@@ -132,6 +134,7 @@ describe("files on a runner", () => {
         await expect(files.read(root, { path: "../outside.txt" })).rejects.toMatchObject({
             code: "invalid",
         });
+        expect(() => files.absolutePath(root, "../outside.txt")).toThrow(ProjectFileError);
         await expect(files.read(root, { path: "missing.txt" })).rejects.toMatchObject({
             code: "missing",
         });

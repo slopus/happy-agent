@@ -43,6 +43,29 @@ failure notice under the same identity. The full content remains in local Histor
 events keep syncing. An optional relay projection must not permanently stall a session behind
 one message it cannot carry.
 
+## Phone attachments reach the agent as paths
+
+Every picture a person attached on the phone used to be decoded into an inline image block, so
+each one cost context on every later turn whether or not it mattered, and any other file was
+dropped without a word. The user decided the agent should choose whether to look. An attachment
+is now written into the agent's own folder at `.happy-uploads/<message>/<n>-<name>`, the place
+the phones' direct chats already use, and the agent reads a note after the person's words naming
+each file by absolute path. The note's wording is shared verbatim with Happy CLI
+(`formatAttachmentNote`) so every route reads the same and clients can recognize it; change it
+only together with the CLI and the phones.
+
+- The folder is the one phone file reads already resolve from catalog ownership, and the write
+  goes through `ProjectFilesModule`, so a runner folder gets the file on the runner and the path
+  is that machine's (`absolutePath`). Never derive the path from the agent's working directory or
+  write with this machine's filesystem.
+- Absolute paths, not `./` relative ones: Claude's `Read` requires an absolute `file_path`, and
+  a session may run in a subfolder of its root.
+- A picture keeps a name ending in its type's extension, because the file tools decide whether
+  something is an image by extension.
+- Fallback is decided by whether the file could be saved where the agent works, not by asking
+  which tools a model has: a session with no folder or a failed write gets the picture inline.
+  Classifying models by tool capability is what master plan 16 rules out.
+
 ## Happy links become plain text on the phone
 
 Agents mention artifacts, conversations, workspaces, projects, Surfaces, and people with Happy

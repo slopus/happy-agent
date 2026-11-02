@@ -1,9 +1,10 @@
+import { createHmac } from "node:crypto";
 import { createServer, type RequestListener, type Server, type ServerResponse } from "node:http";
 import { execFile as execFileCallback } from "node:child_process";
 import { promisify } from "node:util";
 import type { AddressInfo } from "node:net";
 import { once } from "node:events";
-import { mkdir, readFile, stat, symlink, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, stat, symlink, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import { clientFrameEvent, createAgentGym, type AgentGym } from "@slopus/happy-agent-gym";
@@ -550,6 +551,68 @@ describe("Happy integration API", () => {
             success: false,
             code: "invalid",
         });
+    }, 60_000);
+
+    it("saves a phone's picture in the agent's folder and gives the agent its path instead of the image", async () => {
+        const happy = await startProtocolHappyServer({ authorizePairing: true });
+        const gym = await createAgentGym({
+            environment: { HAPPY_AGENT_HAPPY_SERVER_URL: happy.url },
+            inference: [{ content: [{ type: "text", text: "I will look if I need to." }] }],
+            timeoutMs: 20_000,
+        });
+        gyms.add(gym);
+        await gym.client.startHappyIntegration();
+        await waitForIntegration(gym, "connected");
+        const session = await gym.waitUntil(
+            () => happy.sessions.find((item) => item.metadata.path === gym.workspacePath),
+            "the workspace session",
+        );
+        const picture = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
+        happy.attach("sessions/picture.png", picture);
+        happy.deliver(session.id, {
+            role: "session",
+            content: {
+                type: "session",
+                data: {
+                    role: "user",
+                    ev: {
+                        t: "file",
+                        ref: "sessions/picture.png",
+                        name: "Screenshot.png",
+                        mimeType: "image/png",
+                        size: picture.length,
+                    },
+                },
+            },
+        });
+        happy.deliver(session.id, {
+            role: "user",
+            content: { type: "text", text: "What is on this screenshot?" },
+            meta: {
+                model: gym.selection.modelId,
+                modelProviderId: gym.selection.providerId,
+                effort: gym.selection.effort,
+            },
+        });
+        const request = await gym.waitUntil(() => gym.inference.last, "the agent's turn");
+        const asked = JSON.stringify(request.messages.at(-1));
+        expect(asked).toContain("What is on this screenshot?");
+        expect(asked).not.toContain('"image"');
+        const note = gym.inference
+            .userTexts()
+            .find((text) => text.startsWith("The user attached 1 image."));
+        expect(note).toBeDefined();
+        const lines = note!.split("\n");
+        expect(lines[0]).toBe(
+            "The user attached 1 image. It was saved on this machine and not loaded into your context; open it with your file-reading or image-viewing tool only if you need to see it:",
+        );
+        expect(lines).toHaveLength(2);
+        const path = lines[1]!.slice("- ".length);
+        const uploads = join(await realpath(gym.workspacePath), ".happy-uploads");
+        expect(dirname(dirname(path))).toBe(uploads);
+        expect(path.endsWith("/1-Screenshot.png")).toBe(true);
+        expect(await readFile(path)).toEqual(picture);
+        expect(gym.inference.unscripted).toEqual([]);
     }, 60_000);
 
     it.each(["immediate", "in-flight"] as const)(
@@ -1255,6 +1318,8 @@ interface ProtocolHappyServer {
         shape?: (metadata: Record<string, unknown>) => Record<string, unknown>,
     ): void;
     readonly outgoing: ReadonlyMap<string, readonly unknown[]>;
+    /** Plays the phone uploading one attachment to the session's store. */
+    attach(ref: string, bytes: Uint8Array): void;
     deliver(sessionId: string, message: unknown): void;
     readonly sessions: readonly {
         id: string;
@@ -1304,6 +1369,8 @@ async function startProtocolHappyServer(options: {
         }[]
     >();
     const secret = new Uint8Array(32).fill(7);
+    /** Attachments the phone uploaded, encrypted the way Happy stores blobs, by ref. */
+    const blobs = new Map<string, Buffer>();
     const encode = (value: unknown): string => {
         const nonce = nacl.randomBytes(24);
         return Buffer.concat([
@@ -1372,6 +1439,28 @@ async function startProtocolHappyServer(options: {
                             metadataVersion: metadataVersions.get(id) ?? 0,
                         },
                     });
+                    return;
+                }
+                if (
+                    request.method === "POST" &&
+                    /^\/v1\/sessions\/[^/]+\/attachments\/request-download$/.test(url.pathname)
+                ) {
+                    const { ref } = JSON.parse(body) as { ref: string };
+                    sendJson(response, {
+                        downloadUrl: `http://${request.headers.host}/blobs/${encodeURIComponent(ref)}`,
+                    });
+                    return;
+                }
+                if (request.method === "GET" && url.pathname.startsWith("/blobs/")) {
+                    const blob = blobs.get(
+                        decodeURIComponent(url.pathname.slice("/blobs/".length)),
+                    );
+                    if (blob === undefined) {
+                        sendJson(response, { error: "not found" }, 404);
+                        return;
+                    }
+                    response.writeHead(200, { "content-type": "application/octet-stream" });
+                    response.end(blob);
                     return;
                 }
                 const messagesMatch = /^\/v3\/sessions\/([^/]+)\/messages$/.exec(url.pathname);
@@ -1551,6 +1640,19 @@ async function startProtocolHappyServer(options: {
                 socket.send(`42${JSON.stringify(["update", update])}`);
         },
         outgoing,
+        attach: (ref, bytes) => {
+            // Blobs are secretbox under a key derived from the account secret, never the secret.
+            const seed = createHmac("sha512", "Happy Blobs Master Seed").update(secret).digest();
+            const key = createHmac("sha512", seed.subarray(32))
+                .update(Buffer.from([0, ...Buffer.from("master")]))
+                .digest()
+                .subarray(0, 32);
+            const nonce = nacl.randomBytes(24);
+            blobs.set(
+                ref,
+                Buffer.concat([Buffer.from(nonce), Buffer.from(nacl.secretbox(bytes, nonce, key))]),
+            );
+        },
         deliver: (sessionId, message) => {
             const messages = incoming.get(sessionId) ?? [];
             const seq = messages.length + 1;

@@ -322,6 +322,22 @@ An attachment arrives as its own message just before the words that go with it,
 so it is held rather than delivered, and the read position does not move until
 the message that claims it has been delivered too.
 
+The agent gets attachments as paths, not as pictures in its context. Each one is written into
+the agent's folder at `.happy-uploads/<message>/<n>-<name>`, where the phones' direct chats put
+theirs, through the files module, so a folder on a runner gets the file on the runner. After the
+person's words the agent reads one note naming every saved file by its absolute path on that
+machine, in the wording Happy CLI uses:
+
+```text
+The user attached 2 images. They were saved on this machine and not loaded into your context; open them with your file-reading or image-viewing tool only if you need to see them:
+- /work/project/.happy-uploads/<message>/1-screenshot.png
+- /work/project/.happy-uploads/<message>/2-diagram.jpg
+```
+
+The noun is `file` when any attachment is not a picture. A picture that cannot be saved, because
+the session has no folder or the write fails, goes inline as before; any other file that cannot be
+saved is left out.
+
 ## Reading workspace changes from the phone
 
 The encrypted session RPC adds three read-only methods. Clients discover them through

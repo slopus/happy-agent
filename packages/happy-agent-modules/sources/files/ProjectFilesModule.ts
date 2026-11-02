@@ -540,6 +540,15 @@ export class ProjectFilesModule implements AgentModule {
         return { hash: result.hash };
     }
 
+    /**
+     * The absolute path a relative path names on the machine holding the folder, written with
+     * that machine's own path rules, for telling an agent working there where a file is.
+     */
+    absolutePath(root: ProjectFileRoot, path: string): string {
+        this.#assertRelativePath(path);
+        return this.#paths(root).resolve(root.root, path);
+    }
+
     async #writeCompared(
         machine: Compute,
         paths: PlatformPath,

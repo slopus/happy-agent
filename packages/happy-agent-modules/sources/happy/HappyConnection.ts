@@ -81,8 +81,11 @@ import { HappyMachineClient, type HappyMachineConnectionEvent } from "./HappyMac
 import { HappyPairing, HappyPairingError } from "./HappyPairing.js";
 import { HappyProjectClient } from "./HappyProjectClient.js";
 import type { HappySessionTransport } from "./HappySessionSockets.js";
+import { formatHappyAttachmentNote } from "./formatHappyAttachmentNote.js";
+import { happyUploadPath } from "./happyUploadPath.js";
 import {
     HappyMessageRefused,
+    type HappyInboundAttachment,
     type HappyInboundMessage,
     type HappyModel,
     type HappySessionSnapshot,
@@ -1564,8 +1567,11 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
             );
         }
         const messageOptions = messageOptionsFor(next);
-        const content = messageFrom(message);
         const id = createId();
+        const content = messageFrom(
+            message,
+            await this.#saveAttachments(ctx, agentId, id, message.attachments),
+        );
         const pending: HistoryPendingMessage = {
             ...(this.#connectionOwner === undefined ? {} : { userId: this.#connectionOwner.id }),
             agentId,
@@ -1611,6 +1617,44 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
             lastMode: modeForSelection(next) as never,
             initialMode: null as never,
         });
+    }
+
+    /**
+     * Saves each attachment in the agent's folder, on the machine that folder is on, and answers
+     * where, in the order they came; an attachment that could not be saved has no path.
+     *
+     * The folder is the one phone reads already use, and the files go where the phones' direct
+     * chats put theirs, so the agent can open them with its own tools when it needs to.
+     */
+    async #saveAttachments(
+        ctx: Context,
+        agentId: string,
+        messageId: string,
+        attachments: readonly HappyInboundAttachment[],
+    ): Promise<readonly (string | undefined)[]> {
+        if (attachments.length === 0) return [];
+        const root = await this.#readRoot(ctx, agentId).catch(() => undefined);
+        if (root === undefined) return attachments.map(() => undefined);
+        return await Promise.all(
+            attachments.map(async (attachment, index) => {
+                const path = happyUploadPath(
+                    messageId,
+                    index,
+                    attachment.name,
+                    attachment.mimeType,
+                );
+                try {
+                    await this.#files.write(root, {
+                        content: Buffer.from(attachment.bytes).toString("base64"),
+                        expectedHash: null,
+                        path,
+                    });
+                    return this.#files.absolutePath(root, path);
+                } catch {
+                    return undefined;
+                }
+            }),
+        );
     }
 
     /** Stops whatever the agent is doing. */
@@ -3193,14 +3237,37 @@ function isUnlinkedIntegration(integration: HappyIntegration): boolean {
     );
 }
 
-function messageFrom(message: HappyInboundMessage): SessionUserMessage {
+/**
+ * The conversation's copy of a phone message. Saved attachments are named after the person's
+ * words rather than loaded; a picture that could not be saved anywhere the agent works is shown
+ * inline instead, and any other file that could not be saved is left out, as before.
+ */
+function messageFrom(
+    message: HappyInboundMessage,
+    saved: readonly (string | undefined)[],
+): SessionUserMessage {
     const content: SessionInputBlock[] = structuredClone(message.content ?? []);
-    if (message.content === undefined && (message.text.length > 0 || message.images.length === 0)) {
+    if (message.content === undefined && message.text.length > 0) {
         content.push({ text: message.text, type: "text" });
     }
-    for (const image of message.images) {
-        content.push({ data: image.data, mimeType: image.mimeType, type: "image" });
-    }
+    const note = formatHappyAttachmentNote(
+        message.attachments.flatMap((attachment, index) => {
+            const path = saved[index];
+            return path === undefined
+                ? []
+                : [{ isImage: attachment.mimeType.startsWith("image/"), path }];
+        }),
+    );
+    if (note !== undefined) content.push({ text: note, type: "text" });
+    message.attachments.forEach((attachment, index) => {
+        if (saved[index] !== undefined || !attachment.mimeType.startsWith("image/")) return;
+        content.push({
+            data: Buffer.from(attachment.bytes).toString("base64"),
+            mimeType: attachment.mimeType,
+            type: "image",
+        });
+    });
+    if (content.length === 0) content.push({ text: message.text, type: "text" });
     return { content, role: "user" };
 }
 

@@ -33,7 +33,7 @@ import {
 import type { HappyConnectionConfiguration } from "./HappyCredentials.js";
 import {
     HappyMessageRefused,
-    type HappyInboundImage,
+    type HappyInboundAttachment,
     type HappyInboundMessage,
     type HappyModel,
     type HappySessionSnapshot,
@@ -283,7 +283,7 @@ export class HappySessionClient {
     #remoteController = new AbortController();
     readonly #completedQuestions = new Map<string, HappyResolvedCommunication>();
     readonly #questionFirstSeen = new Map<string, number>();
-    readonly #pendingAttachments = new Map<string, Promise<HappyInboundImage | undefined>>();
+    readonly #pendingAttachments = new Map<string, Promise<HappyInboundAttachment | undefined>>();
     #agentStateVersion: number | undefined;
     #avatarClient: HappySessionAvatarClient | undefined;
     #avatarSync: Promise<void> | undefined;
@@ -1118,8 +1118,8 @@ export class HappySessionClient {
         const permissionMode = incoming.selection.permissionMode;
         try {
             await this.#options.operations.submit(this.#options.context, this.#options.agentId, {
-                images: attachments.filter(
-                    (attachment): attachment is HappyInboundImage => attachment !== undefined,
+                attachments: attachments.filter(
+                    (attachment): attachment is HappyInboundAttachment => attachment !== undefined,
                 ),
                 remoteMessageId: happyRemoteMessageId(message.id),
                 selection: {
@@ -1177,14 +1177,12 @@ export class HappySessionClient {
 
     async #downloadAttachment(
         state: HappySyncSession,
-        attachment: { mimeType?: string; ref: string; size: number },
-    ): Promise<HappyInboundImage | undefined> {
-        const mimeType = attachment.mimeType ?? "image/jpeg";
-        // Happy Agent can put a picture in front of a model; it cannot do that with a spreadsheet.
-        if (!mimeType.startsWith("image/")) return undefined;
-        const decrypted = await this.#downloadAttachmentBytes(state, attachment);
-        if (decrypted === undefined) return undefined;
-        return { data: Buffer.from(decrypted).toString("base64"), mimeType };
+        attachment: { mimeType?: string; name: string; ref: string; size: number },
+    ): Promise<HappyInboundAttachment | undefined> {
+        const bytes = await this.#downloadAttachmentBytes(state, attachment);
+        if (bytes === undefined) return undefined;
+        // Older phones sent pictures without saying what they were.
+        return { bytes, mimeType: attachment.mimeType ?? "image/jpeg", name: attachment.name };
     }
 
     /**
