@@ -271,6 +271,9 @@ function assertSupportedOptions(options: ComputeRunOptions): void {
     if (options.secrets !== undefined && options.secrets.length > 0) {
         throw new Error("The just-bash backend cannot inject secret bundles.");
     }
+    if (options.environment !== undefined && Object.keys(options.environment).length > 0) {
+        throw new Error("The just-bash backend cannot give a command its own environment.");
+    }
     if (options.shell !== undefined) {
         throw new Error("The just-bash backend cannot select a custom shell.");
     }

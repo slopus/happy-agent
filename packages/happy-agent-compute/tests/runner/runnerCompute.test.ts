@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
+import { connect as connectTcp } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -66,6 +67,70 @@ describe("a compute on a runner", () => {
         await expect(compute.fs.exists(files, "notes/hello.txt")).resolves.toBe(false);
         await compute.fs.rm(files, "notes", { recursive: true });
         await expect(compute.fs.exists(files, "notes")).resolves.toBe(false);
+    });
+
+    it("gives one command its own environment on the runner, and reports it as secret", async () => {
+        const { compute } = await runnerCompute();
+        process.env["HAPPY_RUNNER_HIDDEN"] = "visible";
+        cleanups.push(async () => {
+            delete process.env["HAPPY_RUNNER_HIDDEN"];
+        });
+        const print = shell(
+            'printf "%s|%s" "$HAPPY_RUNNER_SECRET" "$HAPPY_RUNNER_HIDDEN"',
+            '[Console]::Write("$env:HAPPY_RUNNER_SECRET|$env:HAPPY_RUNNER_HIDDEN")',
+        );
+        const environment = { HAPPY_RUNNER_SECRET: "value", HAPPY_RUNNER_HIDDEN: null };
+
+        await expect(
+            compute.shell.run({ command: print, permissions: commands, environment }),
+        ).resolves.toMatchObject({ stdout: "value|", exitCode: 0 });
+        await expect(
+            compute.shell.run({ command: print, permissions: commands }),
+        ).resolves.toMatchObject({ stdout: "|visible", exitCode: 0 });
+
+        const sessionId = await compute.shell.startSession({
+            command: print,
+            permissions: commands,
+            environment,
+        });
+        expect(compute.shell.sessionUsesSecrets?.(sessionId)).toBe(true);
+        let output = "";
+        for (let attempt = 0; attempt < 200 && output !== "value|"; attempt++) {
+            output += (await compute.shell.readSession(sessionId, { waitMs: 50 }))?.stdout ?? "";
+        }
+        expect(output).toBe("value|");
+    });
+
+    it("listens on the runner's loopback at the port asked for, for its own user", async () => {
+        const { compute } = await runnerCompute();
+        const probe = await compute.network!.listen!(ctx);
+        const port = probe.port;
+        probe.close();
+        await probe.closed;
+
+        const listener = await compute.network!.listen!(ctx, { port, ownerOnly: true });
+        cleanups.push(async () => listener.close());
+        expect(listener.port).toBe(port);
+        await expect(compute.network!.listen!(ctx, { port })).rejects.toMatchObject({
+            code: "EADDRINUSE",
+        });
+        listener.onConnection((socket) => {
+            socket.on("error", () => undefined);
+            socket.resume();
+            socket.end("from the runner");
+        });
+
+        const reply = await new Promise<string>((resolve, reject) => {
+            let text = "";
+            const socket = connectTcp({ host: "127.0.0.1", port });
+            socket.setEncoding("utf8");
+            socket.on("data", (chunk: string) => {
+                text += chunk;
+            });
+            socket.once("end", () => resolve(text));
+            socket.once("error", reject);
+        });
+        expect(reply).toBe("from the runner");
     });
 
     it("keeps Node-style error codes so callers can branch on them", async () => {

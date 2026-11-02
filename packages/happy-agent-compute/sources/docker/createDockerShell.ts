@@ -191,7 +191,7 @@ export function createDockerShell(
         if (runOptions.shell !== undefined && permissionMode !== "full_access") {
             throw new Error("Custom shells are available only in Full access mode.");
         }
-        assertNoSecrets(runOptions.secrets);
+        assertNoSecrets(runOptions.secrets, runOptions.environment);
         if (runOptions.tty === true) {
             throw new Error("The Docker backend does not run commands under a pseudo-terminal.");
         }
@@ -981,8 +981,14 @@ function toRunResult(result: ComputeSessionSnapshot): ComputeRunResult {
     };
 }
 
-function assertNoSecrets(secrets: readonly string[] | undefined): void {
-    if (secrets !== undefined && secrets.length > 0) {
+function assertNoSecrets(
+    secrets: readonly string[] | undefined,
+    environment: Readonly<Record<string, string | null>> | undefined,
+): void {
+    if (
+        (secrets !== undefined && secrets.length > 0) ||
+        (environment !== undefined && Object.keys(environment).length > 0)
+    ) {
         throw new Error("The Docker backend cannot inject secret bundles.");
     }
 }

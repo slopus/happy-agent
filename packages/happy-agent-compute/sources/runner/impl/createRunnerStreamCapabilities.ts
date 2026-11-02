@@ -3,7 +3,11 @@ import { Duplex } from "node:stream";
 import { Value } from "@sinclair/typebox/value";
 import type { Context } from "@steve.kite/stdlib";
 
-import type { ComputeListener, ComputeNetwork } from "../../ComputeNetwork.js";
+import type {
+    ComputeListener,
+    ComputeListenOptions,
+    ComputeNetwork,
+} from "../../ComputeNetwork.js";
 import type {
     ComputeProcess,
     ComputeProcesses,
@@ -217,7 +221,7 @@ export function createRunnerNetwork(starter: RunnerStreamStarter): ComputeNetwor
             socket.attach(stream);
             return socket;
         },
-        listen: async () => await listenOnRunner(starter),
+        listen: async (_ctx, options = {}) => await listenOnRunner(starter, options),
     };
 }
 
@@ -225,7 +229,10 @@ export function createRunnerNetwork(starter: RunnerStreamStarter): ComputeNetwor
  * A loopback listener on the runner. The runner announces each accepted connection on the
  * listener's stream, and this side attaches it to a stream of its own before handing it on.
  */
-async function listenOnRunner(starter: RunnerStreamStarter): Promise<ComputeListener> {
+async function listenOnRunner(
+    starter: RunnerStreamStarter,
+    options: ComputeListenOptions,
+): Promise<ComputeListener> {
     const decoder = new TextDecoder();
     const held: RunnerSocket[] = [];
     let partial = "";
@@ -261,7 +268,11 @@ async function listenOnRunner(starter: RunnerStreamStarter): Promise<ComputeList
             .catch(() => socket.destroy());
     };
     let handle!: () => RunnerStream;
-    const { stream, result } = await starter.start("net.listen", {}, (getStream) => {
+    const params = {
+        ...(options.port === undefined ? {} : { port: options.port }),
+        ...(options.ownerOnly === undefined ? {} : { ownerOnly: options.ownerOnly }),
+    };
+    const { stream, result } = await starter.start("net.listen", params, (getStream) => {
         handle = getStream;
         return {
             data(_channel, chunk) {

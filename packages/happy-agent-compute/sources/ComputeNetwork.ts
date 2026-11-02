@@ -8,6 +8,21 @@ export interface ComputeConnectOptions {
     port: number;
 }
 
+/** Which loopback port to listen on, and who may connect to it. */
+export interface ComputeListenOptions {
+    /**
+     * The port, which must be free. Absent, the machine picks one. A port that is taken rejects
+     * with `EADDRINUSE`, one the machine will not grant with `EACCES`.
+     */
+    port?: number;
+    /**
+     * Admit only connections from programs running as the machine's own user, the one serving
+     * this compute. Linux checks each connection against the kernel's socket table and closes any
+     * it cannot attribute; other systems expose no such table, and every local user can connect.
+     */
+    ownerOnly?: boolean;
+}
+
 /**
  * A loopback port on the compute's machine whose connections arrive here.
  *
@@ -45,5 +60,5 @@ export interface ComputeNetwork {
      * Listen on the compute's loopback. This is how a program on a remote machine reaches back to
      * a service owned by the caller.
      */
-    listen?(ctx: Context): Promise<ComputeListener>;
+    listen?(ctx: Context, options?: ComputeListenOptions): Promise<ComputeListener>;
 }

@@ -25,7 +25,9 @@ import type {
     RunnerStream,
 } from "./RunnerLink.js";
 import {
+    RUNNER_COMMAND_ENVIRONMENT_PROTOCOL_VERSION,
     RUNNER_DOCKER_NETWORK_PROTOCOL_VERSION,
+    RUNNER_LISTEN_OPTIONS_PROTOCOL_VERSION,
     type RunnerEvent,
     type RunnerEventParams,
     type RunnerMethod,
@@ -103,6 +105,8 @@ class RunnerRemoteCompute implements RunnerComputeHooks {
     #onSessionExit: ((exit: ComputeSessionExit) => void | Promise<void>) | undefined;
     #unregister: (() => void) | undefined;
     readonly #streams = new Set<RunnerStream>();
+    /** Public IDs of running commands that were given their own environment. */
+    readonly #secretSessions = new Set<number>();
     #disposed = false;
 
     constructor(ctx: Context, options: RunnerComputeOptions) {
@@ -157,6 +161,7 @@ class RunnerRemoteCompute implements RunnerComputeHooks {
         if (event === "shell.exit") {
             const { exit } = params as RunnerEventParams<"shell.exit">;
             const sessionId = this.#publicId(exit.sessionId);
+            this.#secretSessions.delete(sessionId);
             this.#setActive(this.#active.filter((session) => session.sessionId !== sessionId));
             void this.#notifyExit({ ...exit, sessionId });
         }
@@ -188,6 +193,7 @@ class RunnerRemoteCompute implements RunnerComputeHooks {
                     if (this.#disposed) throw new Error("This runner machine has been disposed.");
                     const connection = await this.#link.connection(this.#reconnectWaitMs);
                     this.#assertConnectsInside(connection, method);
+                    this.#assertListensAsAsked(connection, method, params);
                     await this.#ensureCreated(connection);
                     let stream!: RunnerStream;
                     const own = handlers(() => stream);
@@ -255,6 +261,33 @@ class RunnerRemoteCompute implements RunnerComputeHooks {
                 "This runner is too old to connect from inside the agent's container. Update the runner's Happy Agent.",
             ),
             { code: "ENOTSUP" },
+        );
+    }
+
+    /**
+     * Refuse a listener a runner older than protocol version 4 cannot place: it would pick its
+     * own port and admit every local user, which is not the listener that was asked for.
+     */
+    #assertListensAsAsked(connection: RunnerConnection, method: string, params: object): void {
+        if (method !== "net.listen") return;
+        const { port, ownerOnly } = params as { port?: number; ownerOnly?: boolean };
+        if (port === undefined && ownerOnly === undefined) return;
+        if (connection.protocol >= RUNNER_LISTEN_OPTIONS_PROTOCOL_VERSION) return;
+        throw Object.assign(
+            new Error(
+                "This runner is too old to listen on a chosen port. Update the runner's Happy Agent.",
+            ),
+            { code: "ENOTSUP" },
+        );
+    }
+
+    /** Refuse a command's own environment on a runner older than protocol version 4. */
+    #assertTakesEnvironment(connection: RunnerConnection, params: object): void {
+        const { options } = params as { options?: { environment?: unknown } };
+        if (options?.environment === undefined) return;
+        if (connection.protocol >= RUNNER_COMMAND_ENVIRONMENT_PROTOCOL_VERSION) return;
+        throw new Error(
+            "This runner is too old to give a command attached secrets. Update the runner's Happy Agent.",
         );
     }
 
@@ -390,7 +423,7 @@ class RunnerRemoteCompute implements RunnerComputeHooks {
                     )
                 ).result.result;
             },
-            sessionUsesSecrets: () => false,
+            sessionUsesSecrets: (sessionId) => this.#secretSessions.has(sessionId),
             setActiveSessionCountListener: (listener) => {
                 this.#onActiveSessionCount = listener;
             },
@@ -398,10 +431,13 @@ class RunnerRemoteCompute implements RunnerComputeHooks {
                 this.#onSessionExit = listener;
             },
             startSession: async (options) => {
+                const runOptions = this.#runOptions(options);
                 const { sessionId } = (
-                    await this.#call("shell.startSession", { options: this.#runOptions(options) })
+                    await this.#call("shell.startSession", { options: runOptions })
                 ).result;
-                return this.#publicId(sessionId);
+                const publicId = this.#publicId(sessionId);
+                if (runOptions.environment !== undefined) this.#secretSessions.add(publicId);
+                return publicId;
             },
             writeSession: async (permissions, sessionId, data) => {
                 const route = this.#route(sessionId);
@@ -449,6 +485,8 @@ class RunnerRemoteCompute implements RunnerComputeHooks {
         if (this.#disposed) throw new Error("This runner machine has been disposed.");
         const connection = await this.#link.connection(this.#reconnectWaitMs, options.signal);
         const full = { ...params, computeId: this.#computeId } as RunnerMethodParams<Method>;
+        if (method === "shell.run" || method === "shell.startSession")
+            this.#assertTakesEnvironment(connection, full);
         await this.#ensureCreated(connection);
         try {
             return await connection.request(method, full, options);
@@ -485,6 +523,7 @@ class RunnerRemoteCompute implements RunnerComputeHooks {
     /** The runner lost this machine: everything it was running is gone, and IDs start over. */
     #lose(): void {
         const lost = this.#active;
+        this.#secretSessions.clear();
         this.#readyOn = undefined;
         this.#generation += 1;
         this.#publicByRemote = new Map();
@@ -535,6 +574,9 @@ class RunnerRemoteCompute implements RunnerComputeHooks {
                 : { maxOutputBytes: options.maxOutputBytes }),
             ...(options.shell === undefined ? {} : { shell: options.shell }),
             ...(options.tty === undefined ? {} : { tty: options.tty }),
+            ...(options.environment === undefined || Object.keys(options.environment).length === 0
+                ? {}
+                : { environment: { ...options.environment } }),
         };
     }
 

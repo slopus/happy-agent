@@ -287,6 +287,66 @@ describe("what a runner says about its machine", () => {
     });
 });
 
+/**
+ * A command's own environment and a listener's port and owner rule arrive at protocol version 4.
+ * An older runner would refuse the unknown field, or pick its own port and admit every local user,
+ * so the daemon refuses before sending anything.
+ */
+describe("features a runner needs version 4 for", () => {
+    it.each([
+        ["refuses them on a version 3 runner", 3, false],
+        ["sends them to a version 4 runner", 4, true],
+    ])("%s", async (_name, protocol, sent) => {
+        const runner = fakeRunner();
+        const daemon = link();
+        const accepted = daemon.accept(runner.daemonEnd);
+        await runner.handshake(protocol);
+        await accepted;
+        runner.answer((request) =>
+            request.method === "compute.create"
+                ? { cwd: "/work", kind: "host", supportsSessionInput: true, retained: false }
+                : request.method === "net.listen"
+                  ? { port: 5432 }
+                  : request.method === "shell.run"
+                    ? { result: { stdout: "", stderr: "", exitCode: 0, timedOut: false } }
+                    : {},
+        );
+        const compute = await createRunnerCompute(ctx, {
+            link: daemon,
+            computeId: "agent-1",
+            cwd: "/work",
+        });
+
+        const running = compute.shell.run({
+            command: "deploy",
+            permissions: computePermissions("full_access"),
+            environment: { TOKEN: "value" },
+        });
+        const listening = compute.network!.listen!(ctx, { port: 5432, ownerOnly: true });
+
+        if (sent) {
+            await running;
+            (await listening).close();
+        } else {
+            await expect(running).rejects.toThrow(/too old to give a command attached secrets/u);
+            await expect(listening).rejects.toMatchObject({ code: "ENOTSUP" });
+        }
+        const requests = runner.received.flatMap((frame) =>
+            frame.type === "request" ? [frame] : [],
+        );
+        expect(requests.find((frame) => frame.method === "shell.run")?.params).toEqual(
+            sent
+                ? expect.objectContaining({
+                      options: expect.objectContaining({ environment: { TOKEN: "value" } }),
+                  })
+                : undefined,
+        );
+        expect(requests.find((frame) => frame.method === "net.listen")?.params).toEqual(
+            sent ? expect.objectContaining({ port: 5432, ownerOnly: true }) : undefined,
+        );
+    });
+});
+
 function link(): RunnerLink {
     const created = new RunnerLink(ctx, { name: "Build box", instanceId: "daemon-process" });
     links.push(created);

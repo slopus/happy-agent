@@ -17,6 +17,13 @@ export interface ComputeRunOptions {
     maxOutputBytes?: number;
     /** IDs of the secret bundles this command's environment is built from. */
     secrets?: readonly string[];
+    /**
+     * Variables this one command gets on top of the shell's own environment, and removes where
+     * the value is `null`. The agent layer sets it from attached secrets it resolved, and only
+     * that layer: it is never taken from a model. A shell that cannot apply it refuses the command
+     * rather than run it without them.
+     */
+    environment?: Readonly<Record<string, string | null>>;
     shell?: string;
     signal?: AbortSignal;
     /** Run the command under a pseudo-terminal instead of pipes. */

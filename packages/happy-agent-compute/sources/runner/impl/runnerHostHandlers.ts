@@ -197,14 +197,24 @@ export const runnerHostHandlers: { readonly [Method in RunnerMethod]: RunnerHand
         return { result: {} };
     },
     async "shell.run"(scope, params) {
-        const result = await scope
-            .compute(params.computeId)
-            .shell.run({ ...params.options, signal: scope.signal });
-        return { result: { result: runResult(result) } };
+        try {
+            const result = await scope
+                .compute(params.computeId)
+                .shell.run({ ...params.options, signal: scope.signal });
+            return { result: { result: runResult(result) } };
+        } finally {
+            forget(params.options.environment);
+        }
     },
     async "shell.startSession"(scope, params) {
-        const sessionId = await scope.compute(params.computeId).shell.startSession(params.options);
-        return { result: { sessionId } };
+        try {
+            const sessionId = await scope
+                .compute(params.computeId)
+                .shell.startSession(params.options);
+            return { result: { sessionId } };
+        } finally {
+            forget(params.options.environment);
+        }
     },
     async "shell.readSession"(scope, params) {
         const snapshot = await scope.compute(params.computeId).shell.readSession(params.sessionId, {
@@ -289,7 +299,10 @@ export const runnerHostHandlers: { readonly [Method in RunnerMethod]: RunnerHand
         const listen = network.listen.bind(network);
         let port = 0;
         await scope.openStream(params.computeId, params.stream, async (ctx, output) => {
-            const listener = await listen(ctx);
+            const listener = await listen(ctx, {
+                ...(params.port === undefined ? {} : { port: params.port }),
+                ...(params.ownerOnly === undefined ? {} : { ownerOnly: params.ownerOnly }),
+            });
             port = listener.port;
             return runnerHostListenerStream(listener, output);
         });
@@ -339,6 +352,12 @@ function fileStat(stat: ComputeFileStat): RunnerMethodResult<"fs.stat">["stat"] 
         size: stat.size,
         mtimeMs: stat.mtimeMs,
     };
+}
+
+/** Drop a command's own environment once its process has it: it may hold attached secrets. */
+function forget(environment: Record<string, string | null> | undefined): void {
+    if (environment === undefined) return;
+    for (const name of Object.keys(environment)) delete environment[name];
 }
 
 function runResult(result: ComputeRunResult): RunnerMethodResult<"shell.run">["result"] {

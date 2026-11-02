@@ -93,6 +93,8 @@ interface HostSession {
     sessionId: number;
     stderrOffset: number;
     stdoutOffset: number;
+    /** Started with a per-command environment, which holds attached secrets. */
+    usesSecrets?: true;
     timedOut: boolean;
     timeout?: NodeJS.Timeout;
 }
@@ -144,6 +146,7 @@ export function createHostShell(options: HostShellOptions): ComputeShell {
         cwd: string,
         shell: string,
         tty: boolean | undefined,
+        environment: NodeJS.ProcessEnv | undefined,
     ): Promise<PreparedHostCommand> => {
         if (permissions.mode === "full_access") {
             return { command, shell };
@@ -152,12 +155,12 @@ export function createHostShell(options: HostShellOptions): ComputeShell {
         const canonicalHome = await resolvePotentialPath(options.homeDirectory ?? homedir());
         const privatePaths = absoluteHostPaths(
             canonicalCwd,
-            createHostPolicyPrivatePaths(options.hostPolicy, options.environment),
+            createHostPolicyPrivatePaths(options.hostPolicy, environment),
         );
         const sensitiveReadPaths = absoluteHostPaths(
             canonicalCwd,
             createSensitiveReadPaths({
-                ...(options.environment === undefined ? {} : { environment: options.environment }),
+                ...(environment === undefined ? {} : { environment }),
                 ...(options.homeDirectory === undefined
                     ? {}
                     : { homeDirectory: options.homeDirectory }),
@@ -220,7 +223,7 @@ export function createHostShell(options: HostShellOptions): ComputeShell {
                   }),
         });
         const supervisorCommand = createSupervisorCommand({
-            ...(options.environment === undefined ? {} : { environment: options.environment }),
+            ...(environment === undefined ? {} : { environment }),
             command: process.platform === "win32" ? command : withWorkingDirectory(command, cwd),
             // PowerShell needs the long path: resolving a short-name ancestor
             // otherwise requires directory listing beyond the traversal grant.
@@ -417,84 +420,11 @@ export function createHostShell(options: HostShellOptions): ComputeShell {
             const mode = permissions.mode;
             assertCanUseCustomShell(mode, runOptions.shell);
             assertSecretsUnsupported(runOptions.secrets);
-            const cwd = runCwd(runOptions.cwd);
-            const shell = runOptions.shell ?? resolveSystemShell(options.environment);
-            const toolEnvironment = await createToolEnvironment(mode, options.environment, {
-                cwd: options.cwd,
-                ...(options.hostPolicy === undefined ? {} : { hostPolicy: options.hostPolicy }),
-                ...(options.homeDirectory === undefined
-                    ? {}
-                    : { homeDirectory: options.homeDirectory }),
-            });
-            const preparedCommand = await prepareCommand(
-                permissions,
-                runOptions.command,
-                cwd,
-                shell,
-                runOptions.tty,
-            );
-            const commandEnvironment = shellEnvironment(shell, toolEnvironment);
-            const processRunOptions: ProcessRunOptions = {
-                command: preparedCommand.command,
-                cwd: preparedCommand.processCwd ?? cwd,
-                env: commandEnvironment,
-                timeoutMs: runOptions.timeoutMs ?? DEFAULT_HOST_COMMAND_TIMEOUT_MS,
-                maxOutputBytes: runOptions.maxOutputBytes ?? DEFAULT_HOST_MAX_OUTPUT_BYTES,
-                ...(runOptions.tty === undefined ? {} : { tty: runOptions.tty }),
-            };
-            if (preparedCommand.args !== undefined) {
-                processRunOptions.args = preparedCommand.args;
-            } else if (preparedCommand.shell !== undefined) {
-                processRunOptions.shell = preparedCommand.shell;
-            }
-
-            const protectedPathMonitor = await createProtectedPathMonitor(
-                preparedCommand.protectedCreatePaths ?? [],
-            );
-            let result: ProcessRunResult;
-            let cleanup: CommandCleanupResult = { protectedPathViolation: false };
-            try {
-                if (runOptions.signal !== undefined) processRunOptions.signal = runOptions.signal;
-                result = await options.processManager.run(options.ctx, processRunOptions);
-            } finally {
-                cleanup = await cleanUpCommandResources(protectedPathMonitor);
-            }
-            const protectedPathMessage =
-                cleanup.protectedPathViolation && result.exitCode === 0
-                    ? "Sandbox blocked creation of a protected project path.\n"
-                    : "";
-            return {
-                stdout: result.stdout,
-                stderr: `${result.stderr}${protectedPathMessage}${cleanup.errorMessage ?? ""}`,
-                ...(result.stdoutBytes === undefined ? {} : { stdoutBytes: result.stdoutBytes }),
-                ...(result.stderrBytes === undefined ? {} : { stderrBytes: result.stderrBytes }),
-                ...(result.stdoutOmittedBytes === undefined
-                    ? {}
-                    : { stdoutOmittedBytes: result.stdoutOmittedBytes }),
-                ...(result.stderrOmittedBytes === undefined
-                    ? {}
-                    : { stderrOmittedBytes: result.stderrOmittedBytes }),
-                exitCode:
-                    cleanup.errorMessage !== undefined ||
-                    (cleanup.protectedPathViolation && result.exitCode === 0)
-                        ? 1
-                        : result.exitCode,
-                timedOut: result.timedOut,
-            } satisfies ComputeRunResult;
-        },
-        async startSession(runOptions) {
-            // Validate before making room: a command that is never going to start must not cost the
-            // user a running one.
-            const permissions = snapshotPermissions(runOptions.permissions);
-            assertComputePermissions(permissions);
-            const mode = permissions.mode;
-            assertCanUseCustomShell(mode, runOptions.shell);
-            assertSecretsUnsupported(runOptions.secrets);
-            const releaseSessionStart = reserveSessionStart();
+            const environment = commandEnvironment(options.environment, runOptions.environment);
             try {
                 const cwd = runCwd(runOptions.cwd);
-                const shell = runOptions.shell ?? resolveSystemShell(options.environment);
-                const toolEnvironment = await createToolEnvironment(mode, options.environment, {
+                const shell = runOptions.shell ?? resolveSystemShell(environment);
+                const toolEnvironment = await createToolEnvironment(mode, environment, {
                     cwd: options.cwd,
                     ...(options.hostPolicy === undefined ? {} : { hostPolicy: options.hostPolicy }),
                     ...(options.homeDirectory === undefined
@@ -507,12 +437,96 @@ export function createHostShell(options: HostShellOptions): ComputeShell {
                     cwd,
                     shell,
                     runOptions.tty,
+                    environment,
                 );
-                const commandEnvironment = shellEnvironment(shell, toolEnvironment);
+                const processRunOptions: ProcessRunOptions = {
+                    command: preparedCommand.command,
+                    cwd: preparedCommand.processCwd ?? cwd,
+                    env: shellEnvironment(shell, toolEnvironment),
+                    timeoutMs: runOptions.timeoutMs ?? DEFAULT_HOST_COMMAND_TIMEOUT_MS,
+                    maxOutputBytes: runOptions.maxOutputBytes ?? DEFAULT_HOST_MAX_OUTPUT_BYTES,
+                    ...(runOptions.tty === undefined ? {} : { tty: runOptions.tty }),
+                };
+                if (preparedCommand.args !== undefined) {
+                    processRunOptions.args = preparedCommand.args;
+                } else if (preparedCommand.shell !== undefined) {
+                    processRunOptions.shell = preparedCommand.shell;
+                }
+
+                const protectedPathMonitor = await createProtectedPathMonitor(
+                    preparedCommand.protectedCreatePaths ?? [],
+                );
+                let result: ProcessRunResult;
+                let cleanup: CommandCleanupResult = { protectedPathViolation: false };
+                try {
+                    if (runOptions.signal !== undefined)
+                        processRunOptions.signal = runOptions.signal;
+                    result = await options.processManager.run(options.ctx, processRunOptions);
+                } finally {
+                    cleanup = await cleanUpCommandResources(protectedPathMonitor);
+                }
+                const protectedPathMessage =
+                    cleanup.protectedPathViolation && result.exitCode === 0
+                        ? "Sandbox blocked creation of a protected project path.\n"
+                        : "";
+                return {
+                    stdout: result.stdout,
+                    stderr: `${result.stderr}${protectedPathMessage}${cleanup.errorMessage ?? ""}`,
+                    ...(result.stdoutBytes === undefined
+                        ? {}
+                        : { stdoutBytes: result.stdoutBytes }),
+                    ...(result.stderrBytes === undefined
+                        ? {}
+                        : { stderrBytes: result.stderrBytes }),
+                    ...(result.stdoutOmittedBytes === undefined
+                        ? {}
+                        : { stdoutOmittedBytes: result.stdoutOmittedBytes }),
+                    ...(result.stderrOmittedBytes === undefined
+                        ? {}
+                        : { stderrOmittedBytes: result.stderrOmittedBytes }),
+                    exitCode:
+                        cleanup.errorMessage !== undefined ||
+                        (cleanup.protectedPathViolation && result.exitCode === 0)
+                            ? 1
+                            : result.exitCode,
+                    timedOut: result.timedOut,
+                } satisfies ComputeRunResult;
+            } finally {
+                scrubEnvironment(environment, options.environment);
+            }
+        },
+        async startSession(runOptions) {
+            // Validate before making room: a command that is never going to start must not cost the
+            // user a running one.
+            const permissions = snapshotPermissions(runOptions.permissions);
+            assertComputePermissions(permissions);
+            const mode = permissions.mode;
+            assertCanUseCustomShell(mode, runOptions.shell);
+            assertSecretsUnsupported(runOptions.secrets);
+            const releaseSessionStart = reserveSessionStart();
+            const environment = commandEnvironment(options.environment, runOptions.environment);
+            try {
+                const cwd = runCwd(runOptions.cwd);
+                const shell = runOptions.shell ?? resolveSystemShell(environment);
+                const toolEnvironment = await createToolEnvironment(mode, environment, {
+                    cwd: options.cwd,
+                    ...(options.hostPolicy === undefined ? {} : { hostPolicy: options.hostPolicy }),
+                    ...(options.homeDirectory === undefined
+                        ? {}
+                        : { homeDirectory: options.homeDirectory }),
+                });
+                const preparedCommand = await prepareCommand(
+                    permissions,
+                    runOptions.command,
+                    cwd,
+                    shell,
+                    runOptions.tty,
+                    environment,
+                );
                 const processStartOptions: ProcessStartOptions = {
                     command: preparedCommand.command,
                     cwd: preparedCommand.processCwd ?? cwd,
-                    env: commandEnvironment,
+                    env: shellEnvironment(shell, toolEnvironment),
                     maxOutputBytes: runOptions.maxOutputBytes ?? DEFAULT_HOST_MAX_OUTPUT_BYTES,
                     ...(runOptions.tty === undefined ? {} : { tty: runOptions.tty }),
                 };
@@ -545,6 +559,7 @@ export function createHostShell(options: HostShellOptions): ComputeShell {
                     stderrOffset: 0,
                     stdoutOffset: 0,
                     timedOut: false,
+                    ...(environment === options.environment ? {} : { usesSecrets: true as const }),
                 };
                 // Reaching the timeout backgrounds the session; it marks it timed out and never
                 // stops the command, which keeps running for the agent to come back to.
@@ -597,6 +612,7 @@ export function createHostShell(options: HostShellOptions): ComputeShell {
                 trimFinishedSessions();
                 return sessionId;
             } finally {
+                scrubEnvironment(environment, options.environment);
                 releaseSessionStart();
             }
         },
@@ -607,9 +623,8 @@ export function createHostShell(options: HostShellOptions): ComputeShell {
         setSessionExitListener(listener) {
             onSessionExit = listener;
         },
-        sessionUsesSecrets() {
-            // The host compute never injects secrets, so no session is ever secret-bearing.
-            return false;
+        sessionUsesSecrets(sessionId) {
+            return sessions.get(sessionId)?.usesSecrets === true;
         },
         supportsSessionInput: true,
         async writeSession(_permissions, sessionId, data) {
@@ -617,6 +632,38 @@ export function createHostShell(options: HostShellOptions): ComputeShell {
             return session?.process.writeStdin(options.ctx, data) ?? false;
         },
     };
+}
+
+/**
+ * The environment one command runs in: the shell's own, or a copy of it with the command's
+ * variables set and removed. The shell's own object is returned unchanged when there are none, so
+ * an ordinary command costs nothing and is never scrubbed.
+ */
+function commandEnvironment(
+    base: NodeJS.ProcessEnv | undefined,
+    overlay: Readonly<Record<string, string | null>> | undefined,
+): NodeJS.ProcessEnv | undefined {
+    if (overlay === undefined || Object.keys(overlay).length === 0) return base;
+    const environment = Object.create(null) as NodeJS.ProcessEnv;
+    // Names compare case-insensitively on Windows, where the environment is case-insensitive too.
+    const fold = (name: string) => (process.platform === "win32" ? name.toUpperCase() : name);
+    const overlaid = new Set(Object.keys(overlay).map(fold));
+    for (const [name, value] of Object.entries(base ?? process.env)) {
+        if (value !== undefined && !overlaid.has(fold(name))) environment[name] = value;
+    }
+    for (const [name, value] of Object.entries(overlay)) {
+        if (value !== null) environment[name] = value;
+    }
+    return environment;
+}
+
+/** Drop a command's own environment once its process holds a copy, so values do not linger here. */
+function scrubEnvironment(
+    environment: NodeJS.ProcessEnv | undefined,
+    base: NodeJS.ProcessEnv | undefined,
+): void {
+    if (environment === undefined || environment === base) return;
+    for (const name of Object.keys(environment)) delete environment[name];
 }
 
 interface CommandCleanupResult {

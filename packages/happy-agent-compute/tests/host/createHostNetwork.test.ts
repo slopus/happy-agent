@@ -44,6 +44,43 @@ describe("connections from the host", () => {
     });
 });
 
+describe("listening on the host's loopback", () => {
+    it("listens on the port it is asked for, and refuses one that is taken", async () => {
+        const taken = await listen(() => undefined);
+        const network = createHostNetwork();
+        await expect(network.listen!(ctx, { port: taken })).rejects.toMatchObject({
+            code: "EADDRINUSE",
+        });
+
+        const first = await network.listen!(ctx);
+        const port = first.port;
+        first.close();
+        await first.closed;
+        const listener = await network.listen!(ctx, { port });
+        cleanups.push(() => listener.close());
+        expect(listener.port).toBe(port);
+    });
+
+    it("admits a program running as its own user when only the owner may connect", async () => {
+        const listener = await createHostNetwork().listen!(ctx, { ownerOnly: true });
+        cleanups.push(() => listener.close());
+        const accepted = new Promise<Duplex>((resolve) => listener.onConnection(resolve));
+
+        const socket = await createHostNetwork().connect(ctx, {
+            host: "127.0.0.1",
+            port: listener.port,
+        });
+        cleanups.push(() => {
+            socket.destroy();
+        });
+        const server = await accepted;
+        server.resume();
+        server.end("hello");
+
+        await expect(readAll(socket)).resolves.toBe("hello");
+    });
+});
+
 async function listen(onConnection: (socket: Socket) => void | Promise<void>): Promise<number> {
     const sockets = new Set<Socket>();
     const server = createServer({ allowHalfOpen: true }, (socket) => {

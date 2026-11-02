@@ -85,7 +85,10 @@ Paths are the ones that backend understands, resolved against `cwd`.
 
 `ComputeShell.run(options)` carries the boundary in the same way, along with the command, an optional
 cwd, a timeout, an output cap, a TTY flag, and the ids of any secret bundles the environment is
-built from. A command that outruns its timeout is **not killed**. It is handed back as a background
+built from. A backend refuses secret bundle ids, which only the agent layer can resolve; that
+layer passes the resolved values as `environment`, which the host and runner backends apply to the
+one command (setting each variable, and removing the ones whose value is `null`) and Docker and
+just-bash refuse. `sessionUsesSecrets(sessionId)` says whether a session was started that way. A command that outruns its timeout is **not killed**. It is handed back as a background
 session the agent can keep reading from, write to, and stop when it decides to — the opposite of what
 most tools do, and the reason `startSession`, `readSession`, `killSession`, and `writeSession` exist.
 
@@ -111,9 +114,11 @@ machine is a runner, it has to happen there too. Three optional capabilities car
   a web app listening on a runner's or a container's loopback can be proxied from the daemon. The
   connection is half-open like TCP: ending the writable side sends a half-close while replies keep
   arriving, and the remote end's half-close ends the readable side while writes continue.
-  `network.listen(ctx)` goes the other way: a loopback port on the compute's machine whose
-  connections arrive at the caller, allowing a program on a remote machine to reach a service
-  owned by that caller.
+  `network.listen(ctx, { port?, ownerOnly? })` goes the other way: a loopback port on the
+  compute's machine whose connections arrive at the caller, allowing a program on a remote machine
+  to reach a service owned by that caller. `port` asks for a particular free port (`EADDRINUSE`
+  when taken); `ownerOnly` admits, on Linux, only programs running as the machine's own user, found
+  in the kernel's socket table.
 
 These are the product's actions, not the agent's: they take no permissions, and the agent sandbox
 does not apply to them. Callers must not hand them commands an agent chose. The host backend and

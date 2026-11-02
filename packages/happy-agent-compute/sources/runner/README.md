@@ -100,7 +100,9 @@ become one overflow batch telling the reader to rescan.
 
 A listener lets a program on the runner reach a service owned by the daemon. A program connects
 to a loopback port on the runner, and each connection arrives back at the daemon.
-`net.listen` answers with the port. Every accepted connection is announced on the listener's `out`
+`net.listen` answers with the port. From protocol version 4 it may name the `port`, which must be
+free on the runner, and `ownerOnly`, which on Linux admits only programs running as the runner's own
+user. Every accepted connection is announced on the listener's `out`
 as a JSON line `{connection}` and waits, paused, until the daemon attaches it to a stream of its own
 with `net.accept`; at most 64 wait, each for at most 30 seconds.
 
@@ -141,14 +143,22 @@ older daemon drops a `hello` with fields it does not know. A runner sends `syste
 daemon chose version 3, and `RunnerLink` folds it into the identity its status reports; on an older
 runner or version, `osVersion` and `shell` are absent.
 
+Protocol version 4 adds two optional fields. A command's options may carry `environment`: the
+variables that one command gets, and the names it loses where the value is `null`. The daemon
+resolves attached secrets into it for the one command that selected them; the runner applies it to
+that command alone and keeps no copy once the process has started, and `sessionUsesSecrets` reports
+such a session on both sides. And `net.listen` may carry `port` and `ownerOnly`, so a port bridge
+listens where the person asked and admits only the runner's own user, as the daemon does on its own
+machine. The daemon sends neither to an older runner: a command with an environment fails, and a
+listener with options fails with `ENOTSUP`, saying the runner needs updating, with nothing sent.
+
 A connection's daemon side is a half-open duplex. When both directions have finished cleanly, the
 runner is left to deliver the last bytes and end the stream itself, within thirty seconds; an error
 or an earlier destroy closes it at once.
 
-Strict services need cgroup delegation on the runner and are a later, additive protocol version;
-until then a runner compute has no `services` capability, and callers refuse service startup
-rather than falling back to an ordinary shell. Commands that select attached secrets are refused
-until the daemon can resolve them for a single command on the runner.
+A runner compute has no `services` capability, and callers refuse service startup rather than
+falling back to an ordinary shell. Commands that select attached secrets by bundle ID are refused:
+the daemon resolves the IDs and passes the values as the command's `environment` instead.
 
 ## Runner side
 

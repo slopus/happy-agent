@@ -4,6 +4,7 @@ export { type Compute, type ComputeKind } from "./Compute.js";
 export {
     type ComputeConnectOptions,
     type ComputeListener,
+    type ComputeListenOptions,
     type ComputeNetwork,
 } from "./ComputeNetwork.js";
 export {

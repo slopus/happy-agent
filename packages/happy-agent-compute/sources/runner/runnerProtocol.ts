@@ -16,12 +16,21 @@ import { computePermissionsSchema } from "../ComputePermissions.js";
  * Version 3 adds the optional `system` to `ready`: the runner's operating system release and the
  * shell its commands run in. An older daemon refuses unknown fields in `hello`, which is sent
  * before the version is agreed, so they wait for `ready`.
+ *
+ * Version 4 adds the optional `environment` to a command's options, which carries the attached
+ * secrets the daemon resolved for that one command, and the optional `port` and `ownerOnly` to
+ * `net.listen`, so a port bridge listens where the person asked and admits only the runner's own
+ * user. A daemon sends none of them to an older runner, which would refuse the unknown field.
  */
-export const RUNNER_PROTOCOL_VERSION = 3;
+export const RUNNER_PROTOCOL_VERSION = 4;
 /** The first version whose `net.connect` on a Docker compute connects inside the container. */
 export const RUNNER_DOCKER_NETWORK_PROTOCOL_VERSION = 2;
 /** The first version whose `ready` says which operating system and shell the runner has. */
 export const RUNNER_SYSTEM_PROTOCOL_VERSION = 3;
+/** The first version that takes a command's own `environment`. */
+export const RUNNER_COMMAND_ENVIRONMENT_PROTOCOL_VERSION = 4;
+/** The first version whose `net.listen` takes a `port` and `ownerOnly`. */
+export const RUNNER_LISTEN_OPTIONS_PROTOCOL_VERSION = 4;
 /** The oldest protocol version this package still speaks. */
 export const MIN_RUNNER_PROTOCOL_VERSION = 1;
 
@@ -196,6 +205,12 @@ const fileStatSchema = Type.Object(
     exact,
 );
 
+/** Environment variables a command gets, or loses where `null`. */
+const commandEnvironmentSchema = Type.Record(
+    Type.String({ minLength: 1, maxLength: 1024, pattern: "^[^=\\u0000]+$" }),
+    Type.Union([Type.String({ maxLength: 128 * 1024 }), Type.Null()]),
+    { maxProperties: 1024 },
+);
 const runOptionsSchema = Type.Object(
     {
         command: Type.String({ maxLength: 1024 * 1024 }),
@@ -205,6 +220,8 @@ const runOptionsSchema = Type.Object(
         maxOutputBytes: Type.Optional(byteCount),
         shell: Type.Optional(path),
         tty: Type.Optional(Type.Boolean()),
+        /** Variables set for this one command, or removed where `null`. Version 4 and later. */
+        environment: Type.Optional(commandEnvironmentSchema),
     },
     exact,
 );
@@ -473,7 +490,13 @@ export const runnerMethods = {
         result: empty,
     },
     "net.listen": {
-        params: onCompute({ stream }),
+        params: onCompute({
+            stream,
+            /** The loopback port to listen on; any free one when absent. Version 4 and later. */
+            port: Type.Optional(Type.Integer({ minimum: 1, maximum: 65_535 })),
+            /** Admit only the runner's own user's programs. Version 4 and later. */
+            ownerOnly: Type.Optional(Type.Boolean()),
+        }),
         result: Type.Object({ port: Type.Integer({ minimum: 1, maximum: 65_535 }) }, exact),
     },
     "net.accept": {

@@ -52,6 +52,45 @@ describe("createHostShell commands", () => {
         });
     });
 
+    it("gives one command its own variables and removals, and no other command", async () => {
+        const cwd = await makeWorkspace();
+        const compute = createHostCompute({
+            ctx,
+            cwd,
+            environment: { ...process.env, HAPPY_KEPT: "kept", HAPPY_HIDDEN: "visible" },
+        });
+        computes.push(compute);
+        const print = hostCommand(
+            'printf "%s|%s|%s" "$HAPPY_SECRET" "$HAPPY_HIDDEN" "$HAPPY_KEPT"',
+            '[Console]::Write("$env:HAPPY_SECRET|$env:HAPPY_HIDDEN|$env:HAPPY_KEPT")',
+        );
+        const environment = { HAPPY_SECRET: "value", HAPPY_HIDDEN: null };
+
+        await expect(
+            compute.shell.run({ command: print, permissions: fullAccessPermissions, environment }),
+        ).resolves.toMatchObject({ stdout: "value||kept", exitCode: 0 });
+        const sessionId = await compute.shell.startSession({
+            command: print,
+            permissions: fullAccessPermissions,
+            environment,
+        });
+        await waitFor(async () => {
+            const snapshot = await compute.shell.readSession(sessionId, { peek: true });
+            expect(snapshot).toMatchObject({ status: "completed", stdout: "value||kept" });
+        });
+        expect(compute.shell.sessionUsesSecrets?.(sessionId)).toBe(true);
+
+        const plain = await compute.shell.startSession({
+            command: print,
+            permissions: fullAccessPermissions,
+        });
+        await waitFor(async () => {
+            const snapshot = await compute.shell.readSession(plain, { peek: true });
+            expect(snapshot).toMatchObject({ status: "completed", stdout: "|visible|kept" });
+        });
+        expect(compute.shell.sessionUsesSecrets?.(plain)).toBe(false);
+    });
+
     it("backgrounds a session that reaches its timeout instead of killing it", async () => {
         const { compute } = await fullAccessCompute();
         const sessionId = await compute.shell.startSession({
