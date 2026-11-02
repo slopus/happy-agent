@@ -25,6 +25,21 @@ async function png(width: number, height: number): Promise<Buffer> {
         .toBuffer();
 }
 
+/** A PNG of pseudo-random pixels, which nothing compresses. */
+async function noisePng(width: number, height: number): Promise<Buffer> {
+    const raw = Buffer.alloc(width * height * 3);
+    let state = 0x2545f491;
+    for (let index = 0; index < raw.length; index += 1) {
+        state ^= state << 13;
+        state ^= state >>> 17;
+        state ^= state << 5;
+        raw[index] = state & 0xff;
+    }
+    return await sharp(raw, { raw: { width, height, channels: 3 } })
+        .png()
+        .toBuffer();
+}
+
 /** The text the model would actually see for one result. */
 function modelText(tool: { toLLM: (result: any) => readonly any[] }, result: unknown): string {
     return tool
@@ -131,6 +146,37 @@ describe("Claude's Read", () => {
 
         expect(result.outcome).toBe("image");
         expect(result.image.resized).toMatchObject({ width: 400, height: 2000 });
+    });
+
+    it("scales down a pasted screenshot file far larger than the image limit", async () => {
+        const { compute, tool, call } = await machine();
+        const shot = await noisePng(8000, 500);
+        expect(shot.byteLength).toBeGreaterThan(3 * 1024 * 1024);
+        compute.writeBuffer("/workspace/wide.png", shot);
+
+        const result = await tool("Read").execute(ctx, { file_path: "/workspace/wide.png" }, call);
+
+        expect(result.outcome).toBe("image");
+        expect(result.image.resized).toEqual({
+            original_width: 8000,
+            original_height: 500,
+            width: 2000,
+            height: 125,
+        });
+        expect(result.image.bytes).toBeLessThanOrEqual(3 * 1024 * 1024);
+    });
+
+    it("tells the model an image too large even when scaled, so it can make a smaller copy", async () => {
+        const { compute, tool, call } = await machine();
+        const shot = await noisePng(2000, 2000);
+        compute.writeBuffer("/workspace/noise.png", shot);
+
+        const read = tool("Read").execute(ctx, { file_path: "/workspace/noise.png" }, call);
+
+        await expect(read).rejects.toThrow(
+            `Image /workspace/noise.png is too large to show (${(shot.byteLength / (1024 * 1024)).toFixed(1)} MiB at 2000×2000; the limit is 3.0 MiB). Make a smaller copy, for example with \`sips`,
+        );
+        await expect(read).rejects.toThrow("then read the copy.");
     });
 
     it("refuses a file that is not really an image instead of sending it to the model", async () => {

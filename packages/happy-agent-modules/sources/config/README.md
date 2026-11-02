@@ -221,6 +221,20 @@ lifetime before runtime shutdown starts draining agents. The decoration is provi
 preserves each concrete provider and session identity, including vendor-specific capabilities such
 as image generation and Claude executable metadata.
 
+The same decoration gives the model images by reference. Every image inside a user, system, or
+agent message of a run or compaction request is copied to `~/.happy/cache/images/<sha256>.<ext>`
+(`imageCachePath`, owner-only) and replaced in that request by one line naming the file, its media
+type, and its size. The model opens the file with its own reading tool, which sizes the picture for
+the provider or explains why it cannot. Images in tool results stay inline, because a reading tool
+already sized them. History is unchanged, so people still see what they sent, and every later
+request replays the same text.
+
+The folder is a cache of what history holds. A request writes a missing copy again under the same
+name before it runs, and renews the modification time of each copy it names once a day.
+`pruneImageCache` runs at startup and daily on the daemon's lifetime, off any turn, and removes
+only copies untouched for 180 days. There is no size limit, so a conversation still in use never
+loses a file.
+
 A Bedrock account may name an AWS `profile`, including one backed by the standard
 `credential_process` setting in the AWS shared config. Optional `config_file` and
 `credentials_file` values select nonstandard AWS shared files. The account keeps the refreshable
