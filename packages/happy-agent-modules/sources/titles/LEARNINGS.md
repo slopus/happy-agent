@@ -35,6 +35,16 @@ path loses workspace propagation. The module resolves direct workspace placement
 agent ancestry, so a collaborator inherits the same eligible workspace as its parent. Workspace
 resolution failure must not suppress an otherwise valid session title.
 
+## A failed naming request still titles the chat
+
+Every chat on a Codex account whose WebSocket handshake OpenAI answers with `426` stayed
+"Untitled": naming runs with a zero retry budget, the provider then refused its WebSocket-to-SSE
+fallback, and the failure was only logged at debug level. The provider now treats 426 as a
+transport choice, but any provider can fail or answer nothing usable. Initial naming therefore
+falls back to the bounded first-message excerpt that tasks and bots already use, and records it as
+a generated title so the second user message can still refine it. A chat with a user message
+never stays untitled because one optional request failed.
+
 ## Placeholder names must remain distinguishable from chosen names
 
 Clients sometimes create a workspace with a temporary display name before its first chat exists.
