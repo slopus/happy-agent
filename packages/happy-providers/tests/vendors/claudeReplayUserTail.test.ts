@@ -1,6 +1,6 @@
 import { testContext } from "../testContext.js";
 
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -21,6 +21,60 @@ import { ClaudeSession } from "@/vendors/claude/ClaudeSession.js";
  * SDK against a local server and inspect what actually reaches the API.
  */
 describe("Claude replay ending on a user-role entry", () => {
+    it("sends file mentions literally without reading or attaching their contents", async () => {
+        await withServer(async (harness) => {
+            const file = join(harness.cwd, "mentioned.txt");
+            await writeFile(file, "FILE_MENTION_MUST_NOT_REACH_INFERENCE");
+            const prompt = `Explain the literal reference @${file} without opening it.`;
+            const requests = await harness.run([user(prompt)]);
+
+            expect(requests).toHaveLength(1);
+            expect(blocks(conversation(requests[0]!)[0])).toEqual([{ type: "text", text: prompt }]);
+            expect(JSON.stringify(requests)).not.toContain("FILE_MENTION_MUST_NOT_REACH_INFERENCE");
+        });
+    }, 15_000);
+
+    it("sends a user slash command literally instead of dispatching native compaction", async () => {
+        await withServer(async (harness) => {
+            const requests = await harness.run([user("/compact Keep this as literal user text.")]);
+
+            expect(requests).toHaveLength(1);
+            expect(blocks(conversation(requests[0]!)[0])).toEqual([
+                { type: "text", text: "/compact Keep this as literal user text." },
+            ]);
+        });
+    }, 15_000);
+
+    it("suppresses configured command hooks while a control session proves they are executable", async () => {
+        await withServer(async (harness) => {
+            await harness.run([user("Hooks must not run.")]);
+            expect(await harness.readHooks()).toBe("");
+
+            await harness.run([user("Control: hooks may run.")], { disableAllHooks: false });
+            expect(await harness.readHooks()).toContain("UserPromptSubmit");
+        });
+    }, 30_000);
+
+    it("continues literal inference after explicit native compaction with hooks still disabled", async () => {
+        await withServer(async (harness) => {
+            const { compaction, requests } = await harness.compactAndContinue(
+                [user("Read the notes."), readCall(), readResult()],
+                "/compact This is the next literal user prompt.",
+            );
+
+            expect(compaction.status).toBe("completed");
+            expect(requests).toHaveLength(2);
+            expect(JSON.stringify(requests[0])).toContain(
+                "Your task is to create a detailed summary",
+            );
+            expect(blocks(conversation(requests[1]!).at(-1))).toEqual([
+                { type: "text", text: expect.stringContaining("The notes say to ship on Friday.") },
+                { type: "text", text: "/compact This is the next literal user prompt." },
+            ]);
+            expect(await harness.readHooks()).toBe("");
+        });
+    }, 30_000);
+
     it("continues from a tool-result tail without a placeholder", async () => {
         await withServer(async (harness) => {
             const requests = await harness.run([user("Read the notes."), readCall(), readResult()]);
@@ -198,15 +252,29 @@ interface CapturedRequest {
 
 async function withServer(
     scenario: (harness: {
+        cwd: string;
+        readHooks: () => Promise<string>;
         compact: (messages: SessionMessage[]) => Promise<{
             compaction: Awaited<ReturnType<ClaudeSession["compact"]>>;
             requests: CapturedRequest[];
         }>;
-        run: (messages: SessionMessage[]) => Promise<CapturedRequest[]>;
+        compactAndContinue: (
+            messages: SessionMessage[],
+            prompt: string,
+        ) => Promise<{
+            compaction: Awaited<ReturnType<ClaudeSession["compact"]>>;
+            requests: CapturedRequest[];
+        }>;
+        run: (
+            messages: SessionMessage[],
+            options?: { disableAllHooks: false },
+        ) => Promise<CapturedRequest[]>;
     }) => Promise<void>,
 ): Promise<void> {
     const cwd = await mkdtemp(join(tmpdir(), "rig-claude-user-tail-"));
     const requests: CapturedRequest[] = [];
+    const hookMarker = join(cwd, "hook-calls.txt");
+    await writeFile(hookMarker, "");
     const server = createServer(async (request, response) => {
         if (
             request.method !== "POST" ||
@@ -232,7 +300,7 @@ async function withServer(
     const credential = await ClaudeAuthTokenCredential.tryLoad({ authToken: "user-tail-token" });
     if (credential === null) throw new Error("Expected a Claude test credential.");
     const sessions: ClaudeSession[] = [];
-    const session = () => {
+    const session = (options?: { disableAllHooks: false }) => {
         const created = new ClaudeSession("<SESSION_ID>", {
             instructions: "You are a careful engineer.",
             credential,
@@ -241,10 +309,40 @@ async function withServer(
                 ...process.env,
                 ANTHROPIC_BASE_URL: `http://127.0.0.1:${address.port}`,
                 CLAUDE_CODE_OVERRIDE_DATE: "2000-01-01",
+                RIG_TEST_HOOK_MARKER: hookMarker,
                 TZ: "UTC",
             },
             model: "anthropic/opus-5-5",
-            query: claudeSdkQuery,
+            query: (parameters) =>
+                claudeSdkQuery({
+                    ...parameters,
+                    options: {
+                        ...parameters.options,
+                        settings: {
+                            ...(typeof parameters.options?.settings === "object"
+                                ? parameters.options.settings
+                                : {}),
+                            ...options,
+                            // Native command hooks obey disableAllHooks; programmatic SDK callbacks
+                            // are a separate surface and are never supplied by the provider.
+                            hooks: Object.fromEntries(
+                                ["SessionStart", "UserPromptSubmit", "PreCompact"].map((event) => [
+                                    event,
+                                    [
+                                        {
+                                            hooks: [
+                                                {
+                                                    type: "command" as const,
+                                                    command: `node -e "require('node:fs').appendFileSync(process.env.RIG_TEST_HOOK_MARKER, '${event}\\n')"`,
+                                                },
+                                            ],
+                                        },
+                                    ],
+                                ]),
+                            ),
+                        },
+                    },
+                }),
             tools: [{ name: "Read", description: "Read a file." }],
         });
         sessions.push(created);
@@ -252,6 +350,8 @@ async function withServer(
     };
     try {
         await scenario({
+            cwd,
+            readHooks: () => readFile(hookMarker, "utf8"),
             compact: async (messages) => {
                 const first = requests.length;
                 const compaction = await session().compact(testContext, {
@@ -259,10 +359,29 @@ async function withServer(
                 });
                 return { compaction, requests: requests.slice(first) };
             },
-            run: async (messages) => {
+            compactAndContinue: async (messages, prompt) => {
+                const first = requests.length;
+                const active = session();
+                const compaction = await active.compact(testContext, {
+                    context: { instructions: "You are a careful engineer.", messages },
+                });
+                expect(compaction.status).toBe("completed");
+                if (compaction.status !== "completed") throw new Error("Native compaction failed.");
+                const events: SessionEvent[] = [];
+                for await (const event of active.run(testContext, {
+                    context: {
+                        ...compaction.context,
+                        messages: [...compaction.context.messages, user(prompt)],
+                    },
+                }))
+                    events.push(event);
+                expect(events.at(-1)).toMatchObject({ type: "done", state: "normal" });
+                return { compaction, requests: requests.slice(first) };
+            },
+            run: async (messages, options) => {
                 const first = requests.length;
                 const events: SessionEvent[] = [];
-                for await (const event of session().run(testContext, {
+                for await (const event of session(options).run(testContext, {
                     context: { instructions: "You are a careful engineer.", messages },
                 })) {
                     events.push(event);

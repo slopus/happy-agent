@@ -48,6 +48,13 @@ appends a durable system notice, which becomes the next prompt.
   attachments, and built-in agents.
 - `extraArgs["disable-slash-commands"]` disables ordinary slash commands. It is omitted
   only for a native `/compact` request.
+- `verbatimPrompts: true` marks ordinary user messages as caller-composed, preventing
+  CLI slash-command dispatch and file-mention expansion. Native compaction alone sets it
+  to `false` so the provider-owned `/compact` command remains executable.
+- `settings.disableAllHooks: true` disables ordinary native configured command hooks.
+  The SDK documents an exception for managed-policy hooks. Programmatic SDK hook callbacks
+  are also a separate surface that this setting does not suppress; the provider does not
+  register any.
 - `permissionMode: "dontAsk"` prevents Claude Code from owning permission interaction.
 - Native compaction alone uses `maxTurns: 1` and a closed prompt stream because `/compact`
   is a terminal SDK command; ordinary turns use the persistent prompt queue.
@@ -327,6 +334,10 @@ traffic. The complete environment is applied both to the SDK subprocess and to
 `DISABLE_AUTO_COMPACT=1` prevents Claude Code from compacting autonomously. Rig deliberately
 does not set `DISABLE_COMPACT`, so an outer-loop request can still invoke native manual
 `/compact`.
+
+The same environment forces `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`,
+`CLAUDE_CODE_ENABLE_AWAY_SUMMARY=0`, and `CLAUDE_CODE_DISABLE_ADVISOR_TOOL=1` so inherited
+settings cannot enable Claude's automatic memory, away summaries, or advisor tool.
 
 Rig abort signals immediately stop the active turn, close the prompt queue, MCP bridge, SDK
 query, and subprocess, and rotate the private SDK session ID. The next prompt therefore starts

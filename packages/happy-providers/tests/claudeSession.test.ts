@@ -1866,6 +1866,9 @@ describe("ClaudeSession", () => {
                 CLAUDE_CODE_USE_FOUNDRY: "1",
                 CLAUDE_CODE_USE_VERTEX: "1",
                 DISABLE_AUTO_COMPACT: "0",
+                CLAUDE_CODE_DISABLE_AUTO_MEMORY: "0",
+                CLAUDE_CODE_ENABLE_AWAY_SUMMARY: "1",
+                CLAUDE_CODE_DISABLE_ADVISOR_TOOL: "0",
                 OTEL_LOG_USER_PROMPTS: "1",
             },
             model: "opus[1m]",
@@ -2007,6 +2010,7 @@ describe("ClaudeSession", () => {
             resume: expect.any(String),
             settingSources: [],
             strictMcpConfig: true,
+            verbatimPrompts: true,
             tools: [],
         });
         // Anthropic has no conversational system role, so the configured notices keep their
@@ -2024,6 +2028,9 @@ describe("ClaudeSession", () => {
             CLAUDE_CODE_DISABLE_CLAUDE_MDS: "1",
             CLAUDE_CODE_MAX_RETRIES: "10",
             DISABLE_AUTO_COMPACT: "1",
+            CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
+            CLAUDE_CODE_ENABLE_AWAY_SUMMARY: "0",
+            CLAUDE_CODE_DISABLE_ADVISOR_TOOL: "1",
             ENABLE_PROMPT_CACHING_1H: "1",
         });
         expect(options?.env).not.toHaveProperty("ANTHROPIC_API_KEY");
@@ -2032,13 +2039,17 @@ describe("ClaudeSession", () => {
         expect(options?.env).not.toHaveProperty("CLAUDE_CODE_USE_BEDROCK");
         expect(options?.env).not.toHaveProperty("CLAUDE_CODE_USE_FOUNDRY");
         expect(options?.env).not.toHaveProperty("CLAUDE_CODE_USE_VERTEX");
-        expect(options?.settings).toEqual({ env: CLAUDE_SDK_PRIVACY_ENVIRONMENT });
+        expect(options?.settings).toEqual({
+            disableAllHooks: true,
+            env: CLAUDE_SDK_PRIVACY_ENVIRONMENT,
+        });
         expect(addAbortListener).toHaveBeenCalledOnce();
         expect(removeAbortListener).toHaveBeenCalledOnce();
         expect(options?.mcpServers).toHaveProperty("rig");
         expect(calls[1]?.options).toMatchObject({
             persistSession: true,
             resume: expect.any(String),
+            verbatimPrompts: true,
         });
 
         const compactionOptions = calls[2]?.options;
@@ -2046,7 +2057,20 @@ describe("ClaudeSession", () => {
             allowedTools: ["mcp__rig__Read"],
             extraArgs: {},
             tools: [],
+            verbatimPrompts: false,
         });
+        for (const call of calls) {
+            expect(call.options?.settings).toEqual({
+                disableAllHooks: true,
+                env: CLAUDE_SDK_PRIVACY_ENVIRONMENT,
+            });
+            expect(call.options?.env).toMatchObject({
+                CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
+                CLAUDE_CODE_ENABLE_AWAY_SUMMARY: "0",
+                CLAUDE_CODE_DISABLE_ADVISOR_TOOL: "1",
+                DISABLE_AUTO_COMPACT: "1",
+            });
+        }
     });
 
     it("uses exact compaction usage reported under Claude's canonical model key", async () => {

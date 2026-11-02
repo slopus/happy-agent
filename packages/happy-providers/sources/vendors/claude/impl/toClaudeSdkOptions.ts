@@ -75,6 +75,9 @@ export function toClaudeSdkOptions(options: {
             ...(toolSearchEnabled ? { ENABLE_TOOL_SEARCH: "true" } : {}),
         },
         extraArgs: options.compaction ? {} : { "disable-slash-commands": null },
+        // Ordinary prompts are caller-composed text, not CLI commands or file mentions.
+        // Native compaction must still dispatch the provider-owned /compact command.
+        verbatimPrompts: options.compaction !== true,
         includePartialMessages: true,
         permissionMode: "dontAsk",
         persistSession: false,
@@ -88,7 +91,7 @@ export function toClaudeSdkOptions(options: {
               }),
         sessionId: options.sessionId,
         settingSources: [],
-        settings: { env: CLAUDE_SDK_PRIVACY_ENVIRONMENT },
+        settings: { disableAllHooks: true, env: CLAUDE_SDK_PRIVACY_ENVIRONMENT },
         skills: [],
         strictMcpConfig: true,
         systemPrompt: createSystemPrompt(options.systemPrompt, options.context),
