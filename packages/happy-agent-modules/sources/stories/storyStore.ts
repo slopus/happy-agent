@@ -36,6 +36,8 @@ export const storyRecordSchema = Type.Object({
 });
 export type StoryRecord = Static<typeof storyRecordSchema>;
 
+// This history belongs to stories-v2, not the retired prototype's "stories" ledger.
+// Adopt the same tables from 0.4.111 previews without rewriting their ledger or rows.
 export const storyMigrations: readonly AgentModuleMigration[] = [
     [
         // Each posted story, and one row per story and person who opened it.
@@ -43,12 +45,12 @@ export const storyMigrations: readonly AgentModuleMigration[] = [
         async (_ctx, db) => {
             await agentDatabaseRun(
                 db,
-                sql`CREATE TABLE happy_agent_module_stories (id TEXT PRIMARY KEY,
+                sql`CREATE TABLE IF NOT EXISTS happy_agent_module_stories (id TEXT PRIMARY KEY,
                     expires_at INTEGER NOT NULL, posted_at INTEGER NOT NULL, record TEXT NOT NULL)`,
             );
             await agentDatabaseRun(
                 db,
-                sql`CREATE TABLE happy_agent_module_story_seen (story_id TEXT NOT NULL,
+                sql`CREATE TABLE IF NOT EXISTS happy_agent_module_story_seen (story_id TEXT NOT NULL,
                     member_id TEXT NOT NULL, PRIMARY KEY (story_id, member_id))`,
             );
         },
@@ -59,13 +61,13 @@ export const storyMigrations: readonly AgentModuleMigration[] = [
         async (_ctx, db) => {
             await agentDatabaseRun(
                 db,
-                sql`CREATE TABLE happy_agent_module_story_replies (id TEXT PRIMARY KEY,
+                sql`CREATE TABLE IF NOT EXISTS happy_agent_module_story_replies (id TEXT PRIMARY KEY,
                     story_id TEXT NOT NULL, user_id TEXT, text TEXT NOT NULL,
                     created_at INTEGER NOT NULL)`,
             );
             await agentDatabaseRun(
                 db,
-                sql`CREATE INDEX happy_agent_module_story_replies_story
+                sql`CREATE INDEX IF NOT EXISTS happy_agent_module_story_replies_story
                     ON happy_agent_module_story_replies(story_id, created_at)`,
             );
         },

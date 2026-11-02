@@ -1,5 +1,15 @@
 # Stories learnings
 
+## A rebuilt store needs its own migration namespace
+
+The retired prototype shipped `stories` migrations `001-stories` and `002-agent-stories`
+against `happy_agent_stories` tables. Reusing that owner for the minimal feed's different
+`001-stories` and `002-story-replies` made existing installations fail startup. The minimal
+feed owns `stories-v2`; it leaves the prototype ledger and tables untouched. Its initialization
+also adopts the identical `happy_agent_module_*` tables written by early 0.4.111 previews,
+preserving their stories, seen marks, and replies. Migration identities include their module
+owner: never reuse an old owner for a replacement schema, even after removing its code.
+
 ## Public request validation comes from the published client
 
 The prototype duplicated Stories request schemas in the daemon. With the client published,

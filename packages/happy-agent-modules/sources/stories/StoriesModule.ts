@@ -43,7 +43,8 @@ export class StoryInputError extends Error {}
  * reposts reach every non-guest team member with their `stories` setting on.
  */
 export class StoriesModule implements AgentModule {
-    readonly name = "stories";
+    // The retired prototype owned "stories" and a different schema. Its ledger is immutable.
+    readonly name = "stories-v2";
     readonly migrations = store.storyMigrations;
 
     readonly #config: ConfigModule;
