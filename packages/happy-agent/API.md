@@ -177,9 +177,8 @@ jwks_refresh_interval_sec = 3600
 - `name` — required; 1–64 printable characters naming the sign-in method for people.
 - `authorization_url` — required; the authorization endpoint opened in the system browser.
 - `token_url` — required; the token endpoint that exchanges an authorization code.
-- `refresh_url` — optional; the endpoint that exchanges a refresh token. It may be the token
-  endpoint or any other endpoint, including one on another origin. Without it, clients do not
-  refresh and sign in again when an access token expires.
+- `refresh_url` — optional; the endpoint that exchanges a refresh token, usually the token
+  endpoint. Without it, clients do not refresh and sign in again when an access token expires.
 - `client_id` — required; the public OAuth client identifier, 1–256 printable characters.
 - `scope` — optional; the space-separated scope requested during authorization, 1–1,024
   printable characters.
@@ -188,7 +187,8 @@ jwks_refresh_interval_sec = 3600
   characters without a fragment, usually equal to `audience`. The daemon does not compare it with
   any token claim; tokens are still verified against `audience`.
 - `issuer` — required; the exact `iss` claim value.
-- `audience` — required; a value the `aud` claim must equal or contain.
+- `audience` — required; a value the `aud` claim must equal or contain. It is the deployment's
+  public base URL, as described below.
 - `user_id_claim` — optional, default `"sub"`; the top-level claim holding the user ID. Its value
   must be a string of 1–256 printable characters.
 - `algorithms` — required, non-empty; the accepted `alg` header values. `none` is never accepted.
@@ -206,7 +206,17 @@ Every endpoint URL must be absolute and use `https`; `http` is accepted only for
 `RS256`, `RS384`, `RS512`, `PS256`, `PS384`, `PS512`, `ES256`, `ES384`, `ES512`, and `EdDSA`.
 `secret_env` accepts only `HS256`, `HS384`, and `HS512`. A mixture, a missing or invalid setting, a
 missing or short secret, or any WorkOS setting under JWT authentication fails configuration
-loading with a human-readable message. The daemon never exposes the secret, the public key, or the
+loading with a human-readable message.
+
+`token_url` and `refresh_url` must have the same origin — scheme, host, and port — as
+`authorization_url`, so an authorization code, its PKCE verifier, and a refresh token only ever
+reach the authorization server that issued them. Configuration loading fails otherwise.
+
+`audience` must be the deployment's public base URL, the `https` URL members connect to, such as
+`https://happy.acme.example`. Clients send an access token only to the server its `aud` claim
+names, so a token issued for this deployment is never handed to another server that copied this
+deployment's sign-in method. The daemon cannot check this setting; a deployment whose `audience`
+is not its public base URL cannot be signed in to. The daemon never exposes the secret, the public key, or the
 JWKS through the API, errors, or logs.
 
 A JWT is accepted only when its signature verifies with the configured key source and one of the
@@ -238,8 +248,9 @@ The daemon is not trusted with sign-in credentials. It never receives an authori
 PKCE verifier, or a refresh token, and it has no endpoint that accepts them. A client:
 
 1. Reads an `oauth` method from `GET /v0/authentication` or from a `401`.
-2. Generates a random `state` and a PKCE verifier of 43–128 characters, both kept only in the
-   client, and opens `authorizationUrl` in the system browser with the query parameters
+2. Refuses the method unless `tokenUrl` and, when present, `refreshUrl` have the same origin as
+   `authorizationUrl`. Then generates a random `state` and a PKCE verifier of 43–128 characters,
+   both kept only in the client, and opens `authorizationUrl` in the system browser with the query parameters
    `response_type=code`, `client_id`, `redirect_uri`, `state`, `code_challenge` (the base64url
    SHA-256 of the verifier), `code_challenge_method=S256`, `scope` when the method has one, and
    `resource` when the method has one.
@@ -253,12 +264,16 @@ PKCE verifier, or a refresh token, and it has no endpoint that accepts them. A c
    `resource` when the method has one.
    A successful JSON response carries `access_token` and `token_type` `Bearer`, and optionally
    `expires_in` in seconds and `refresh_token`.
-5. Uses `access_token` as its bearer token for this daemon.
+5. Reads the `aud` claim of `access_token` without verifying it, and discards the token unless
+   one `aud` value names the server the client is signing in to: an absolute URL with that
+   server's origin whose path, with a trailing `/` added when missing, equals the server URL's
+   path. The client then uses `access_token` as its bearer token for that server only.
 
 When the method advertises `refreshUrl` and the client holds a refresh token, the client may send
 `POST <refresh URL>` with `grant_type=refresh_token`, `refresh_token`, `client_id`, and the
 `resource` recorded at sign-in when there was one, in the same form encoding, and receives the
-same response. A new `refresh_token` replaces the old one; its absence keeps the old one. The
+same response, whose `access_token` is checked against the same server as in step 5. A new
+`refresh_token` replaces the old one; its absence keeps the old one. The
 client sends a refresh token only to the refresh URL, client ID, and resource recorded when that
 token was issued, never to a URL a daemon advertises afterwards. When refresh fails or is
 unavailable, the client signs in again. Clients may keep credentials only in memory; a client that
@@ -266,8 +281,9 @@ keeps a refresh token across launches stores it in the operating system's creden
 as the macOS or iOS Keychain, Android Keystore-protected storage, or Windows Credential Manager.
 Token requests follow no redirects.
 
-Because the daemon sees every access token sent to it, each deployment must use its own
-`audience`, so that a daemon cannot replay a member's token to another deployment. A daemon
+Because a server sees every access token sent to it, each deployment's `audience` is its own
+public base URL and clients check it before sending a token, so a server cannot obtain a member's
+token for another deployment. A daemon
 configured with `secret_env` can mint tokens itself; a shared secret must never be shared with any
 other deployment or service, and asymmetric keys are required whenever the daemon is not fully
 trusted.
@@ -1543,9 +1559,11 @@ Authentication. Its fields come from machine configuration unchanged:
 - `resource` — `resource`; present only when configured. Clients send it on the authorization,
   token, and refresh requests as described under Authentication.
 
-These URLs come from the daemon, which clients do not trust with credentials. Clients show the
+These URLs come from the daemon, which clients do not trust with credentials. Clients refuse a
+method whose `tokenUrl` or `refreshUrl` is on a different origin from `authorizationUrl`, show the
 authorization server's host to the person before or during sign-in, send the code only to the
-`tokenUrl` of the method they started with, and refresh only as described under Authentication.
+`tokenUrl` of the method they started with, refresh only as described under Authentication, and
+send an access token only to the server its `aud` names.
 
 ### `GET /v0/config`
 
