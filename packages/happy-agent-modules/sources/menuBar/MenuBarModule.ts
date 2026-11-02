@@ -17,8 +17,9 @@ import { resolveMenuBarApp } from "./impl/resolveMenuBarApp.js";
  * Only a released Happy Agent binary carries the app, so a daemon run from a checkout — during
  * development, or from a test — has no menu bar to start and says nothing about it.
  *
- * Both native apps read the ordinary private API. The Windows tray also lets the person stop
- * the daemon, and offers a force stop if graceful shutdown cannot finish.
+ * Both native apps read the ordinary private API and let the person stop the daemon. The Windows
+ * tray also offers a force stop if graceful shutdown cannot finish; the macOS menu can also quit
+ * the Happy desktop app.
  */
 export class MenuBarModule implements AgentModule {
     readonly name = "menuBar";

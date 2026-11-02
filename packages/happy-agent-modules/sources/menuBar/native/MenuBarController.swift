@@ -13,6 +13,12 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     private let separatorItem = NSMenuItem.separator()
     private let bodyItem = NSMenuItem()
     private let body = MenuBody()
+    private let controlsSeparatorItem = NSMenuItem.separator()
+    private let stopItem = NSMenuItem(title: "Stop Happy Agent", action: nil, keyEquivalent: "")
+    /// One "Quit" item per desktop app, each shown only while that app is running.
+    private let desktopItems = MenuBarController.desktopBundleIds.map { bundleId in
+        (bundleId: bundleId, item: NSMenuItem(title: "Quit Happy", action: nil, keyEquivalent: ""))
+    }
     private let fetchQueue = DispatchQueue(label: "com.slopus.happy.menubar.fetch")
     private let streamQueue = DispatchQueue(label: "com.slopus.happy.menubar.stream")
 
@@ -30,10 +36,13 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     private var randomness = SystemRandomNumberGenerator()
     private var openMenuTick: Timer?
     private var isMenuOpen = false
+    private var stop = StopRequest.none
 
     private static let planRefreshInterval: TimeInterval = 24 * 60 * 60
     private static let refreshCoalescingDelay: TimeInterval = 0.2
     private static let reconnectDelay: TimeInterval = 2
+    /// The Happy desktop apps, stable and Nightly, that talk to this daemon.
+    private static let desktopBundleIds = ["com.slopus.happy", "com.slopus.happy.nightly"]
 
     init(client: DaemonClient) {
         self.client = client
@@ -49,6 +58,17 @@ final class MenuBarController: NSObject, NSMenuDelegate {
             item.isEnabled = false
             menu.addItem(item)
         }
+        menu.addItem(controlsSeparatorItem)
+        for desktop in desktopItems {
+            desktop.item.target = self
+            desktop.item.action = #selector(quitDesktop(_:))
+            desktop.item.representedObject = desktop.bundleId
+            desktop.item.isHidden = true
+            menu.addItem(desktop.item)
+        }
+        stopItem.target = self
+        stopItem.action = #selector(stopDaemon)
+        menu.addItem(stopItem)
         statusItem.menu = menu
         statusItem.button?.image = StatusIcon.resting
         statusItem.button?.toolTip = "Happy Agent"
@@ -202,6 +222,46 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         if isMenuOpen { rebuildMenu() }
     }
 
+    // MARK: - Controls
+
+    /// Stops the daemon the way `happy-agent stop` does. The daemon stops this app on its way
+    /// out, so a stop that is accepted takes the icon away with it.
+    @objc private func stopDaemon() {
+        guard stop != .pending else { return }
+        stop = .pending
+        updateControls()
+        fetchQueue.async { [weak self] in
+            guard let self else { return }
+            let accepted = self.client.shutdown()
+            DispatchQueue.main.async { [weak self] in
+                guard let self, !accepted else { return }
+                self.stop = .refused
+                if self.isMenuOpen { self.rebuildMenu() } else { self.updateControls() }
+            }
+        }
+    }
+
+    /// Quits a desktop app the way Cmd+Q would, so it closes through its own quit handling.
+    @objc private func quitDesktop(_ sender: NSMenuItem) {
+        guard let bundleId = sender.representedObject as? String else { return }
+        for app in NSRunningApplication.runningApplications(withBundleIdentifier: bundleId) {
+            app.terminate()
+        }
+    }
+
+    /// Shows a Quit item for each desktop app that is running, and offers Stop only while the
+    /// daemon is answering and no stop is already under way.
+    private func updateControls() {
+        for desktop in desktopItems {
+            let app = NSRunningApplication.runningApplications(
+                withBundleIdentifier: desktop.bundleId
+            ).first
+            desktop.item.isHidden = app == nil
+            desktop.item.title = "Quit \(app?.localizedName ?? "Happy")"
+        }
+        stopItem.isEnabled = snapshot.connected && stop != .pending
+    }
+
     // MARK: - Drawing
 
     /// The H at rest when nothing is working, flashing while something is, and greyed out the way
@@ -251,7 +311,8 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
     /// Replaces the rows in place: the items stay, so an open menu keeps its scroll position.
     private func rebuildMenu() {
-        let headline = MenuContent.headline(snapshot)
+        updateControls()
+        let headline = MenuContent.headline(snapshot, stop: stop)
         headlineItem.view = headline
         let rows = MenuContent.rows(snapshot: snapshot) { [weak self] entry in
             self?.turnStart(entry)
@@ -262,13 +323,14 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         if resized { menu.itemChanged(bodyItem) }
     }
 
-    /// What is left of the screen share once the headline, its separator, and the menu's own
-    /// padding are drawn.
+    /// What is left of the screen share once the headline, the controls, their separators, and
+    /// the menu's own padding are drawn.
     private func bodyMaxHeight(below headline: NSView) -> CGFloat {
         let screen = statusItem.button?.window?.screen ?? NSScreen.main
         let available = (screen?.visibleFrame.height ?? 800) * MenuMetrics.screenShare
-        return available - headline.frame.height - MenuMetrics.separatorHeight
-            - MenuMetrics.menuPadding
+        let controls = ([stopItem] + desktopItems.map(\.item)).filter { !$0.isHidden }
+        return available - headline.frame.height - 2 * MenuMetrics.separatorHeight
+            - CGFloat(controls.count) * MenuMetrics.rowHeight - MenuMetrics.menuPadding
     }
 
     // MARK: - NSMenuDelegate
@@ -294,6 +356,9 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
     func menuDidClose(_ menu: NSMenu) {
         isMenuOpen = false
+        // Choosing Stop closes the menu before the daemon answers, so a refusal is shown the next
+        // time the menu opens and forgotten when it closes again.
+        if stop == .refused { stop = .none }
         openMenuTick?.invalidate()
         openMenuTick = nil
     }

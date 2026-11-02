@@ -22,6 +22,12 @@ final class DaemonClient {
         _ = request("POST", "/v0/usage/refresh", status: 202)
     }
 
+    /// Asks the daemon to shut down, as `happy-agent stop` does. True once it has agreed to; the
+    /// daemon stops this app on its way out.
+    func shutdown() -> Bool {
+        request("POST", "/v0/shutdown", status: 202) != nil
+    }
+
     private func request(_ method: String, _ path: String, status: Int) -> Any? {
         guard let token = try? String(contentsOfFile: tokenPath, encoding: .utf8) else {
             return nil

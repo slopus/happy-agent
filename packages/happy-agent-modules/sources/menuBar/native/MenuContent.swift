@@ -29,6 +29,13 @@ enum MenuMetrics {
     static let menuPadding: CGFloat = 12
 }
 
+/// Where a request to stop the daemon from the menu stands.
+enum StopRequest {
+    case none
+    case pending
+    case refused
+}
+
 /// Builds the menu from a snapshot: a headline, then what the plans have left, then the few tasks
 /// and bots working most recently. Every row is a read-only line drawn to the native menu's
 /// measurements.
@@ -36,8 +43,14 @@ enum MenuContent {
     /// More than this many working tasks and bots collapse into a "+N more" line.
     static let sessionLimit = 5
 
-    /// What is working, with the last day's tokens as a quiet aside on the same line.
-    static func headline(_ snapshot: DaemonSnapshot) -> MenuLineView {
+    /// What is working, with the last day's tokens as a quiet aside on the same line. While the
+    /// daemon is being stopped from the menu, or refused to stop, the headline says so instead.
+    static func headline(_ snapshot: DaemonSnapshot, stop: StopRequest) -> MenuLineView {
+        switch stop {
+        case .pending: return MenuLineView(text: "Stopping Happy Agent…", detail: nil)
+        case .refused: return MenuLineView(text: "Happy Agent could not stop", detail: nil)
+        case .none: break
+        }
         let tokens = snapshot.connected && !snapshot.day.isEmpty
         return MenuLineView(
             text: headlineText(snapshot),
