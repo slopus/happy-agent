@@ -79,7 +79,7 @@ async function settled(element: Element): Promise<Element> {
  * Runs components.js on a fake page whose host serves `code` as `/api/v1/code.js`, or serves
  * nothing there, and returns a way to draw one of its elements.
  */
-async function page(code?: string) {
+async function page(code?: string, globals: Record<string, unknown> = {}) {
     const folder = await mkdtemp(join(tmpdir(), "happy-components-"));
     folders.push(folder);
     await mkdir(join(folder, "api", "v1"), { recursive: true });
@@ -112,6 +112,7 @@ async function page(code?: string) {
             },
             URL,
             Promise,
+            ...globals,
         },
         { importModuleDynamically: constants.USE_MAIN_CONTEXT_DEFAULT_LOADER },
     );
@@ -128,6 +129,7 @@ async function page(code?: string) {
             inline?: string,
         ) {
             const element = new (defined.get(tag)!)();
+            (element as { localName: string }).localName = tag;
             for (const [name, value] of Object.entries(attributes))
                 element.setAttribute(name, value);
             if (inline === undefined) element.source = source;
@@ -393,6 +395,75 @@ describe("standard files", () => {
                 .find("happy-lines")[0]!
                 .children[0]!.children.map((row) => row.children.map((cell) => cell.text)),
         ).toEqual([["a = 1"], ["b = 2"]]);
+    });
+
+    it("tells the artifact's log what an element could not show, with what it could", async () => {
+        const posts: {
+            url: string;
+            body: { entries: { level: string; source: string; message: string }[] };
+        }[] = [];
+        const fetch = async (url: string, init?: { method?: string; body?: string }) => {
+            if (init?.method !== "POST") throw new Error(`unexpected fetch of ${url}`);
+            posts.push({ url, body: JSON.parse(init.body!) });
+            return { ok: true };
+        };
+        const { draw } = await page(undefined, { fetch, console: { warn: () => {} } });
+
+        const missing = await draw("happy-diff", { path: "src/gone.ts" }, CHANGES);
+        expect(missing.find("happy-error")[0]!.text).toBe(
+            "The diff does not change src/gone.ts. It changes src/app.ts, notes.md.",
+        );
+        const outside = await draw("happy-diff", { path: "src/app.ts", lines: "20-30" }, CHANGES);
+        expect(outside.find("happy-diff-note")[0]!.text).toBe("No changes in lines 20–30");
+        // Drawn again, the same trouble is not posted again.
+        await draw("happy-diff", { path: "src/gone.ts" }, CHANGES);
+
+        expect(posts.map((post) => post.url.replace(/^.*\/api\//, "/api/"))).toEqual([
+            "/api/v1/debug/log",
+            "/api/v1/debug/log",
+        ]);
+        expect(
+            posts.map((post) =>
+                post.body.entries.map(({ level, source, message }) => [level, source, message]),
+            ),
+        ).toEqual([
+            [
+                [
+                    "warn",
+                    "console",
+                    '<happy-diff path="src/gone.ts"> The diff does not change src/gone.ts. It changes src/app.ts, notes.md.',
+                ],
+            ],
+            [
+                [
+                    "warn",
+                    "console",
+                    '<happy-diff path="src/app.ts" lines="20-30"> No changes in lines 20–30 of src/app.ts; it changes lines 1–4, 41–45.',
+                ],
+            ],
+        ]);
+    });
+
+    it("leaves reporting to client.js on a page that loads it, with the same message", async () => {
+        let posted = 0;
+        const fetch = async () => {
+            posted++;
+            return { ok: true };
+        };
+        const warnings: unknown[][] = [];
+        const { draw } = await page(undefined, {
+            fetch,
+            console: { warn: (...args: unknown[]) => warnings.push(args) },
+            happy: { debug: { log: () => {} } },
+        });
+        const missing = await draw("happy-diff", { path: "src/gone.ts" }, CHANGES);
+        expect(missing.find("happy-error")).toHaveLength(1);
+        expect(posted).toBe(0);
+        expect(warnings).toEqual([
+            [
+                '<happy-diff path="src/gone.ts"> The diff does not change src/gone.ts. It changes src/app.ts, notes.md.',
+            ],
+        ]);
     });
 
     it("reads a diff's paths whatever prefixes git was configured to write", async () => {

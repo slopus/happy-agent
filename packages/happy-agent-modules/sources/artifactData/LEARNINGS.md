@@ -131,3 +131,15 @@ sides of a `diff --git` line name the same file unless it was renamed, so the pr
 folder before the path they share; rename and copy lines carry no prefix and are kept as written.
 Only a plain `diff -u` without matching sides falls back to dropping `a/` and `b/`. This is sturdier
 than relying on the skill's git flags alone, because agents also write diffs by other means.
+
+## Components report what they could not show to the debug log
+
+Guided reviews often shipped broken: a `<happy-diff>` given a path or line range the diff did not
+change drew a red note and only called `console.warn`. A review page does not load `client.js`, so
+nothing reached `read_artifact_logs`, and the agent that wrote the page reported success. Now an
+element that cannot show what it was given posts a `console` warning to the debug log itself when
+the page has no SDK (the SDK already forwards `console.warn` where it is loaded), each message once
+and at most 20 per page. The message names the element's `src`, `path`, and `lines`, and lists the
+paths the diff does change, or the line ranges the file does change, so the agent can fix the quote
+from the log alone. An empty log can also mean nobody has opened the page, so the skill still has
+the agent check every range itself.
