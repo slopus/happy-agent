@@ -212,6 +212,8 @@ for (let round = 0; round < 2; round++) {
             },
             handleUpgrade: async () => false,
             handleConnect: async () => false,
+            // The private socket is never the public transport, so nothing is refused here.
+            publicSocketRejection: async () => undefined,
             listenWorkspaceProxyHttp: async (path: string) => await workspaceProxy.listen(path),
             prepareWorkspaceProxySocket: async (
                 _ctx: unknown,
