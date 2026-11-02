@@ -9876,6 +9876,9 @@ export class ApiModule implements AgentModule {
             drain: this.#drain ?? null,
             shuttingDown: gracefulShutdown?.shuttingDown ?? false,
             status: this.#ready ? "ready" : "starting",
+            ...(this.#config.loadedInstanceId === undefined
+                ? {}
+                : { instanceId: this.#config.loadedInstanceId }),
             capabilities: {
                 desktopLiveControl: this.#live !== undefined,
                 webSocketTunnels: true,

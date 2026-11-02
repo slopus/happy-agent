@@ -94,3 +94,39 @@ Connections tells Cloud which organizations its enabled team remotes mint for wh
 is reconciled, changed, or closed. Cloud refreshes those cached tokens ahead of expiry so the first
 request after an idle stretch does not wait on WorkOS. Team deployments forward the caller's token
 and name none.
+
+## A server connection by URL holds no token
+
+The first design made the daemon the OAuth client: it ran PKCE, kept the refresh token in the OS
+keychain (in memory when there was none), refreshed, and reported a sign-in status. Steve rejected
+it. The sign-in belongs to the person's desktop, and on a headless server with no keychain, the
+memory fallback forgot every sign-in on restart. Now the daemon is only a proxy. The desktop's
+main process signs in and keeps the tokens in memory, and every request carries the access token
+in `Happy-Remote-Authorization`. The daemon forwards it as `Authorization` and stores nothing.
+There is no keychain module, no refresh, no sign-in route, and no status. Agents on the daemon
+cannot reach these servers, which is accepted. The token travels only in that header, never in a
+URL, including on WebSocket upgrades and CONNECT, as the customer requires.
+
+## People add servers through the Chief of Staff
+
+An HTTP route let the owner add and remove servers by URL, which bypassed the rule that only
+machine configuration and admin bots change the roster. Steve chose the Chief of Staff instead.
+`add_server_connection` checks the server's discovery before adding it, and removal is the
+ordinary `remove_remote_connection`.
+
+## A server's edge never speaks for the local daemon
+
+A server connection by URL may sit behind a load balancer that answers with a sign-in redirect, a
+bare `401`, or a non-Happy `403`. Passed through the proxy, the app would read it as its own daemon
+asking it to sign in, and drop the wrong session. The pool screens those answers and replaces
+them with a Happy `403 remote_sign_in_required`. The request is never replayed: the app refreshes
+its own token and sends it again. A Happy `401` is checked against the server's discovery with the
+same token, so the remote's profile gate still reaches the app, and a Happy `403` is an ordinary
+refusal.
+
+## Background work needs the database put back
+
+`detach(ctx)` drops the database, so the module's own context could not save an `instanceId`
+learned from a relayed health response after the request that read it had finished. The module's
+root context is built with `withAgentDatabase(detach(ctx).named(...), ctx.db)`, as peer messaging
+does.

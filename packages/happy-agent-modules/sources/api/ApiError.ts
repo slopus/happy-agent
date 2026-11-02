@@ -19,6 +19,7 @@ export const apiErrorCodeSchema = Type.Union([
     Type.Literal("range_not_satisfiable"),
     Type.Literal("remote_unavailable"),
     Type.Literal("remote_timeout"),
+    Type.Literal("remote_sign_in_required"),
     Type.Literal("invalid_invitation"),
     Type.Literal("sharing_full"),
     Type.Literal("sharing_not_enrolled"),

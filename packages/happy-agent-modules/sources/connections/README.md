@@ -36,6 +36,27 @@ keys, and emits nothing for a no-op. Notifications carry an optional explicit mu
 so background reconciliation never inherits a request's identity. Reordering never changes
 private configuration or opens, closes, or replaces a remote transport.
 
+A server connection by URL (`[connections.<id>] url`) reaches a team server over HTTPS instead of
+Tailcat, in standalone mode only. A person adds one by asking an active admin bot, such as the
+Chief of Staff: `add_server_connection { url, name? }` normalizes the URL, refuses it unless the
+server's discovery, read without a credential, is a Happy response that offers an `oauth` method,
+generates the ID from the host, and saves the entry in generated `runtime.toml`.
+`remove_remote_connection` removes it like any other entry. No HTTP route adds or removes one.
+
+The daemon holds no credential for these servers. Each request through the proxy carries the
+person's own access token in `Happy-Remote-Authorization`, which the app keeps; the pool strips
+that header from every forwarded request and sends the token to the server's own host and path
+prefix as `Authorization: Bearer`, following no redirects. A request without it is answered
+`403 remote_sign_in_required` without contacting the server, so agents on this daemon cannot use
+these servers. Every redirect, `401`, and `403` is screened with the sign-in rule: an edge answer
+becomes `403 remote_sign_in_required`, a Happy `401` whose token discovery still accepts passes
+through as the profile gate, and a Happy `403` passes through. Nothing is refreshed or replayed;
+the app refreshes and sends its request again. Event streams end after 45 silent seconds; proxied
+WebSockets are pinged between frames every 15 seconds and closed with 1011 after 45 silent
+seconds. `CONNECT` is carried over the server's WebSocket twin, or refused with `501` when its
+health does not advertise twins. Every health response a pool relays teaches the roster the
+remote's `instanceId`.
+
 `check_remote_connection_health` is also restricted to active admin bots, including an execution-time
 check. It checks the configured endpoint through the same pool with a 30-second deadline and a
 64 KiB response bound. Team health checks require a connected Cloud user with access to the target

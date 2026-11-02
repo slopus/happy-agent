@@ -3,8 +3,8 @@
 Use this recipe when an organization runs a team-mode Happy Agent behind an HTTPS load balancer or
 gateway that enforces single sign-on itself, for example an AWS Application Load Balancer, an API
 gateway, or an identity-aware proxy, and members sign in with the organization's own OAuth server.
-The outcome is a server members add in the Happy desktop and mobile apps by its HTTPS URL, with no
-dependency on Tailcat, Happy Cloud, or WorkOS.
+The outcome is a server members can reach from the Happy desktop and mobile apps by its HTTPS URL,
+with no dependency on Tailcat, Happy Cloud, or WorkOS.
 
 First complete [Set up enterprise JWT sign-in](enterprise-jwt-authentication.md): the daemon must
 run with `authentication = "jwt"`. This recipe adds only the load balancer. It does not authorize
@@ -23,8 +23,20 @@ Happy app ──HTTPS──▶ load balancer ──HTTP──▶ team daemon (fe
 The app reads `GET /v0/authentication`, signs the person in with the OAuth server in the system
 browser, and then sends the access token in the `Authorization` header on every request, event
 stream, and WebSocket. The load balancer and the daemon both verify the same token. Neither ever
-sees the authorization code, the PKCE verifier, or the refresh token, which the app keeps in the
-operating system's keychain.
+sees the authorization code, the PKCE verifier, or the refresh token. The desktop app keeps its
+tokens in memory only and signs in again after it restarts; the mobile apps keep theirs in the
+phone's keychain.
+
+## How members connect
+
+- **Desktop.** On a member's own Happy Agent, ask the Chief of Staff to add the server, giving its
+  HTTPS URL. It checks that the address is a Happy server offering single sign-on, then adds it to
+  the member's servers. The member's Happy Agent never holds a token for it. The desktop signs in,
+  and sends the token with every request it makes to the server through the member's Happy Agent.
+  Agents on the member's Happy Agent cannot reach the server; only the desktop can.
+- **Phone.** Phones never take a typed URL. In the desktop's server settings, choose to connect a
+  phone, and scan the QR code it shows with the Happy app. The phone signs in to the server itself,
+  directly.
 
 ## 1. Configure the OAuth server
 
@@ -90,7 +102,7 @@ onto the runner. Use the private `http://` endpoint above in place of the Tailca
 
 The apps have no device-management settings. A team server turns its own features on and off in
 its machine `happy.toml`, and the apps hide a feature when the server reports it off. Behind an
-SSO load balancer, we recommend:
+SSO load balancer, `happy_integration = false` is required, and we recommend the other two:
 
 ```toml
 [feature.mobile_connector]
@@ -100,14 +112,21 @@ enabled = false        # phone pairing: phones sign in with OAuth instead
 enabled = false        # the default; keep it off on a server the Internet can reach
 
 [settings]
-happy_integration = false   # the connection to the Happy mobile app through Happy's hosted server
+happy_integration = false   # required: Happy CLI connections through Happy's hosted server
 ```
 
 - **Phone pairing.** Paired phones authenticate with device tokens, which an SSO-enforcing edge
   rejects, so pairing cannot work through it. With it off, `GET /v0/mobile-connector` reports
   `status: "disabled"`, and the apps hide pairing.
-- **Happy's hosted server.** With `happy_integration = false`, `GET /v0/integrations/happy`
-  reports `status: "disabled"` for every member, and the apps hide it.
+- **Happy's hosted server (required).** This is the legacy Happy CLI connection: the daemon
+  registers as a machine with Happy's hosted server and syncs sessions to the Happy mobile app
+  through it, using Happy CLI credentials from `~/.happy` or a QR pairing. A team server behind
+  an SSO load balancer must set `happy_integration = false`. This setup is built and supported
+  only without it, and members reach the server through the load balancer instead. With it off,
+  the daemon adopts no Happy CLI credentials, opens no connection to Happy's hosted server, and
+  refuses pairing for every member. `GET /v0/integrations/happy` reports `status: "disabled"`,
+  and the apps hide it. The switch governs only this daemon; a separately installed `happy` CLI
+  on the same machine still connects on its own. Restart the daemon after changing it.
 - **Tailcat.** Keep it off on any server exposed to the Internet, even though other Happy setups
   use it. The load balancer already gives members an HTTPS path, and a Tailcat exposure is a
   second, account-free way in that bypasses the load balancer and its single sign-on: anyone who

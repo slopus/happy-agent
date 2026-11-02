@@ -202,7 +202,9 @@ describe("configured remote roster", () => {
                 } else {
                     await f.module.checkHealth(ctx, "admin", "mac");
                     expect(f.tailcat.openRemote).toHaveBeenCalledTimes(2);
-                    expect(f.tailcat.openRemote).toHaveBeenLastCalledWith(entry.address);
+                    expect(f.tailcat.openRemote).toHaveBeenLastCalledWith(
+                        "address" in entry ? entry.address : undefined,
+                    );
                 }
             } finally {
                 await f.module.close(ctx);
@@ -398,6 +400,7 @@ describe("configured remote roster", () => {
         expect(tools.map((tool) => tool.name)).toEqual([
             "list_remote_connections",
             "set_remote_connection",
+            "add_server_connection",
             "remove_remote_connection",
             "check_remote_connection_health",
         ]);

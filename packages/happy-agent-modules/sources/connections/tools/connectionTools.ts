@@ -70,3 +70,44 @@ export function removeConnectionTool(module: ConnectionsModule, agentId: string)
         toLLM: (result) => [{ type: "text", text: JSON.stringify(result) }],
     });
 }
+
+export function addServerConnectionTool(module: ConnectionsModule, agentId: string) {
+    return defineAgentTool({
+        name: "add_server_connection",
+        defer: true,
+        capabilities: ["Configure and inspect remote Happy Agent connections."],
+        searchKeywords: ["add team server", "server URL", "SSO server", "connect to a team"],
+        description:
+            "Add a team Happy server by its HTTPS address, for example when the person asks to connect to their organization's server. Checks that the address is a Happy server offering single sign-on, then adds it to the connection roster. Holds no credential: each person's app signs in to the server itself. Agents cannot use it through this daemon. Remove it with remove_remote_connection. Personal Happy Agent only. Only active admin bots may use this tool.",
+        parameters: Type.Object(
+            {
+                url: Type.String({
+                    minLength: 1,
+                    maxLength: 2048,
+                    description: "The server's https:// address, as the person gave it.",
+                }),
+                name: Type.Optional(
+                    Type.String({
+                        minLength: 1,
+                        maxLength: 256,
+                        description: "A display name; defaults to the address's host.",
+                    }),
+                ),
+            },
+            { additionalProperties: false },
+        ),
+        returnType: connectionListResponseSchema,
+        durable: true,
+        requiresAutoOrFullAccess: true,
+        shouldReviewInAutoMode: () => true,
+        shouldRunInFullAccessInAutoMode: () => true,
+        autoPermissionInstructions:
+            "Contacts the address the person gave to check it is a Happy server, and writes private machine configuration. It stores no credential.",
+        describeAutoPermissionAction: () =>
+            "checking a team server's address and adding it to this installation's connections",
+        execute: async (ctx, args) => ({
+            connections: await module.addServer(ctx, agentId, args.url, args.name),
+        }),
+        toLLM: (result) => [{ type: "text", text: JSON.stringify(result) }],
+    });
+}

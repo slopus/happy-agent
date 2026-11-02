@@ -88,3 +88,20 @@ it.each([
         }
     },
 );
+
+it("refuses to add a server connection by URL in team mode", async () => {
+    const ctx = createRootContext();
+    const module = new ConnectionsModule(
+        {
+            configuration: { values: { feature: { team: { enabled: true } } } },
+            connections: {},
+        } as never,
+        { forAgent: async () => ({ isAdmin: true, status: "active" }) } as never,
+        { refreshOrganizationsAhead: () => undefined } as never,
+        {} as never,
+        { register: () => undefined } as never,
+    );
+    await expect(module.addServer(ctx, "chief", "https://happy.example.com")).rejects.toThrow(
+        "A server connection by URL can be added only on a personal Happy Agent.",
+    );
+});

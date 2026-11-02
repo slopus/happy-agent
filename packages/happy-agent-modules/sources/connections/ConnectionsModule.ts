@@ -1,13 +1,22 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { connect as connectTcp, isIP } from "node:net";
 import type { Duplex } from "node:stream";
+import { connect as connectTls } from "node:tls";
 import { isDeepStrictEqual } from "node:util";
-import type { AgentModule, AgentModuleHooks, AgentModuleScope } from "@slopus/happy-agent-base";
+import {
+    withAgentDatabase,
+    type AgentModule,
+    type AgentModuleHooks,
+    type AgentModuleScope,
+} from "@slopus/happy-agent-base";
 import {
     connectionIdSchema,
+    isHappyErrorBody,
     reorderConnectionRequestSchema,
     resourceVersionSchema,
     type Connection,
     type ConnectionsUpdatedPayload,
+    type HealthResponse,
 } from "@slopus/happy-agent-client";
 import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
@@ -23,10 +32,25 @@ import {
 import { DurableFunctionsModule } from "../durableFunctions/index.js";
 import { TailcatModule } from "../tailcat/index.js";
 import { RemoteConnectionError } from "./RemoteConnectionError.js";
-import { RemoteProxyConnection, type RemoteProxyExchange } from "./impl/RemoteProxyConnection.js";
+import {
+    RemoteProxyConnection,
+    type RemoteProxyAnswer,
+    type RemoteProxyExchange,
+    type RemoteProxyReplacement,
+} from "./impl/RemoteProxyConnection.js";
+import { normalizeServerUrl } from "./impl/normalizeServerUrl.js";
+import { openRemoteWebSocketTunnel } from "./impl/openRemoteWebSocketTunnel.js";
+import { serverConnectionId } from "./impl/serverConnectionId.js";
+import {
+    readServerHealth,
+    remoteSignInRequired,
+    requireServerSignIn,
+    serverAcceptsToken,
+} from "./impl/serverRequests.js";
 import { logSlowRemoteRequest } from "./impl/logSlowRemoteRequest.js";
 import { connectionOrderKeyBetween } from "./impl/connectionOrderKey.js";
 import {
+    addServerConnectionTool,
     listConnectionsTool,
     setConnectionTool,
     removeConnectionTool,
@@ -40,6 +64,9 @@ import {
     saveConnectionSnapshot,
 } from "./persistence/connectionSnapshot.js";
 
+/** How long a server connection's event stream or WebSocket may stay silent. */
+const SERVER_IDLE_MS = 45_000;
+
 /** Machine-owned remote roster, admin tools, and authenticated per-remote HTTP pools. */
 export class ConnectionsModule implements AgentModule {
     readonly name = "connections";
@@ -52,6 +79,10 @@ export class ConnectionsModule implements AgentModule {
     readonly #cloud: CloudModule;
     readonly #tailcat: TailcatModule;
     readonly #durable: DurableFunctionsModule;
+    /** Whether each server connection by URL carries tunnels, from the health it last relayed. */
+    readonly #webSocketTunnels = new Map<string, boolean>();
+    /** Connections whose endpoint changed, whose remembered identity no longer applies. */
+    readonly #staleInstanceIds = new Set<string>();
     readonly #lock = asyncLock({ reentry: "block" });
     readonly #pools = new Map<
         string,
@@ -84,7 +115,8 @@ export class ConnectionsModule implements AgentModule {
     }
 
     readonly beforeStart = (ctx: Context): AgentModuleHooks => {
-        const root = detach(ctx).named("remote-connections");
+        // Identities learned in the background are saved through the module's own context.
+        const root = withAgentDatabase(detach(ctx).named("remote-connections"), ctx.db);
         this.#ctx = ctx.lifetime === undefined ? root : withLifetime(root, ctx.lifetime);
         return {
             afterStart: this.afterStart,
@@ -93,6 +125,7 @@ export class ConnectionsModule implements AgentModule {
                 return [
                     listConnectionsTool(this, scope.agent.id),
                     setConnectionTool(this, scope.agent.id),
+                    addServerConnectionTool(this, scope.agent.id),
                     removeConnectionTool(this, scope.agent.id),
                     checkConnectionHealthTool(this, scope.agent.id),
                 ];
@@ -132,6 +165,7 @@ export class ConnectionsModule implements AgentModule {
                 return previous;
             const snapshot = { connections, version: createConnectionVersion(previous?.version) };
             await this.#saveSnapshot(txCtx, snapshot);
+            afterCommit(txCtx, () => this.#staleInstanceIds.clear());
             return snapshot;
         });
     }
@@ -142,6 +176,11 @@ export class ConnectionsModule implements AgentModule {
 
     #configuredRoster(previous: readonly Connection[]): Connection[] {
         const keys = new Map(previous.map((connection) => [connection.id, connection.orderKey]));
+        const instanceIds = new Map(
+            previous.flatMap((connection) =>
+                connection.instanceId === undefined ? [] : [[connection.id, connection.instanceId]],
+            ),
+        );
         const configured = this.#config.connections;
         let lastKey =
             previous
@@ -161,19 +200,26 @@ export class ConnectionsModule implements AgentModule {
                     orderKey = connectionOrderKeyBetween(lastKey, null);
                     lastKey = orderKey;
                 }
-                return [
-                    {
-                        id,
-                        name: entry.name,
-                        orderKey,
-                        ...("token" in entry
-                            ? { authentication: "bearer" as const }
-                            : {
-                                  authentication: "workos" as const,
-                                  organizationId: entry.workos_organization_id,
-                              }),
-                    },
-                ];
+                const instanceId = this.#staleInstanceIds.has(id) ? undefined : instanceIds.get(id);
+                const connection: Connection =
+                    "token" in entry
+                        ? { id, name: entry.name, orderKey, authentication: "bearer" }
+                        : "url" in entry
+                          ? {
+                                id,
+                                name: entry.name,
+                                orderKey,
+                                authentication: "oauth",
+                                url: entry.url,
+                            }
+                          : {
+                                id,
+                                name: entry.name,
+                                orderKey,
+                                authentication: "workos",
+                                organizationId: entry.workos_organization_id,
+                            };
+                return [instanceId === undefined ? connection : { ...connection, instanceId }];
             })
             .sort((left, right) =>
                 left.orderKey < right.orderKey
@@ -303,6 +349,10 @@ export class ConnectionsModule implements AgentModule {
                 isDeepStrictEqual(this.#config.connections[id], entry)
             )
                 return await this.list(ctx);
+            const previousEntry = this.#config.connections[id];
+            if (previousEntry !== undefined && !sameEndpoint(previousEntry, entry)) {
+                this.#staleInstanceIds.add(id);
+            }
             await this.#config.updateRuntimeConnection(ctx, id, entry);
             this.#refreshTeamTokensAhead();
             await this.#reconcilePool(id, entry);
@@ -329,6 +379,19 @@ export class ConnectionsModule implements AgentModule {
         let status = 500;
         try {
             const record = await this.#getRecord(ctx, id);
+            if ("url" in record.config) {
+                exchange = await this.#forwardToServer(
+                    ctx,
+                    request,
+                    output,
+                    id,
+                    record.config.url,
+                    path,
+                    head,
+                );
+                status = exchange.status ?? 502;
+                return;
+            }
             exchange = await record.pool.forward(
                 request,
                 output,
@@ -336,7 +399,7 @@ export class ConnectionsModule implements AgentModule {
                 async (signal) => {
                     const tokenStartedAt = performance.now();
                     try {
-                        return await this.#authorize(ctx, request, record.config, signal);
+                        return await this.#authorize(ctx, request, id, record.config, signal);
                     } finally {
                         tokenMs = performance.now() - tokenStartedAt;
                     }
@@ -365,10 +428,12 @@ export class ConnectionsModule implements AgentModule {
     async #authorize(
         ctx: Context,
         request: IncomingMessage,
+        id: string,
         config: RemoteConnectionConfig,
         signal: AbortSignal,
     ): Promise<string> {
         if ("token" in config) return config.token;
+        if ("url" in config) return remoteToken(request);
         if (this.#config.configuration.values.feature.team.enabled) {
             // ApiModule has authenticated this exact request, including local onboarding.
             const authorization = request.headers.authorization;
@@ -400,6 +465,13 @@ export class ConnectionsModule implements AgentModule {
                 connectionId: id,
                 ...(await record.pool.health(async (signal) => {
                     if ("token" in record.config) return record.config.token;
+                    if ("url" in record.config) {
+                        throw new RemoteConnectionError(
+                            403,
+                            "remote_sign_in_required",
+                            "This daemon holds no sign-in for a server connection by URL; each person's app signs in to it.",
+                        );
+                    }
                     return await this.#cloud.mintForOrganization(
                         ctx,
                         record.config.workos_organization_id,
@@ -445,14 +517,20 @@ export class ConnectionsModule implements AgentModule {
                 );
             let current = this.#pools.get(id);
             if (current === undefined) {
-                const transport = this.#tailcat.openRemote(entry.address);
-                current = {
-                    config: entry,
-                    pool: new RemoteProxyConnection(
-                        () => transport.connect(entry.port ?? 24779),
-                        () => transport.close(),
-                    ),
-                };
+                const onHealth = (health: HealthResponse) => this.#observeHealth(id, health);
+                if ("url" in entry) {
+                    current = { config: entry, pool: this.#serverPool(id, entry.url, onHealth) };
+                } else {
+                    const transport = this.#tailcat.openRemote(entry.address);
+                    current = {
+                        config: entry,
+                        pool: new RemoteProxyConnection(
+                            () => transport.connect(entry.port ?? 24779),
+                            () => transport.close(),
+                            { onHealth },
+                        ),
+                    };
+                }
                 this.#pools.set(id, current);
             }
             return current;
@@ -491,6 +569,203 @@ export class ConnectionsModule implements AgentModule {
         }
         await current.pool.close();
         this.#pools.delete(id);
+        this.#webSocketTunnels.delete(id);
+    }
+
+    /** Add a server connection by URL for an admin bot. It never holds a token for it. */
+    async addServer(
+        ctx: Context,
+        agentId: string,
+        url: string,
+        name?: string,
+    ): Promise<Connection[]> {
+        await this.#requireAdmin(ctx, agentId);
+        if (this.#config.configuration.values.feature.team.enabled) {
+            throw new Error(
+                "A server connection by URL can be added only on a personal Happy Agent.",
+            );
+        }
+        const normalized = normalizeServerUrl(url);
+        if (normalized === undefined) {
+            throw new Error("Use an https:// address without a user name, query, or fragment.");
+        }
+        const entry = { name: name ?? new URL(normalized).hostname, url: normalized };
+        if (!Value.Check(this.entrySchema, entry)) throw new Error("The server name is invalid.");
+        return await this.#lock.runInLock(ctx, async () => {
+            if (this.#closed)
+                throw new RemoteConnectionError(
+                    503,
+                    "remote_unavailable",
+                    "Remote connections have stopped.",
+                );
+            const configured = this.#config.connections;
+            const existing = Object.entries(configured).find(
+                ([, candidate]) => "url" in candidate && candidate.url === normalized,
+            );
+            if (existing !== undefined) {
+                throw new Error(`That server is already connected as ${existing[0]}.`);
+            }
+            if (Object.keys(configured).length >= 100) {
+                throw new Error("At most 100 remote connections can be added.");
+            }
+            await requireServerSignIn(normalized);
+            const instanceId = (await readServerHealth(normalized))?.instanceId;
+            const id = serverConnectionId(normalized, new Set(Object.keys(configured)));
+            await this.#config.updateRuntimeConnection(ctx, id, entry);
+            await ctx.inTx(async (txCtx) => {
+                const previous = await queryConnectionSnapshot(txCtx);
+                const connections = this.#configuredRoster(previous?.connections ?? []).map(
+                    (connection) =>
+                        connection.id === id && instanceId !== undefined
+                            ? { ...connection, instanceId }
+                            : connection,
+                );
+                await this.#saveSnapshot(txCtx, {
+                    connections,
+                    version: createConnectionVersion(previous?.version),
+                });
+            });
+            await this.#durable.invoke(ctx, {
+                function: "connections-reconcile",
+                arguments: {},
+                lockKeys: ["connections"],
+            });
+            return await this.list(ctx);
+        });
+    }
+
+    /**
+     * Proxy one request to a server connection by URL with the person's own token from
+     * `Happy-Remote-Authorization`, applying the sign-in rule. Nothing is stored or replayed.
+     */
+    async #forwardToServer(
+        ctx: Context,
+        request: IncomingMessage,
+        output: ServerResponse | Duplex,
+        id: string,
+        url: string,
+        path: string,
+        head: Buffer | undefined,
+    ): Promise<RemoteProxyExchange> {
+        const token = remoteToken(request);
+        const record = await this.#getRecord(ctx, id);
+        const tunnel = head !== undefined && request.method === "CONNECT";
+        const twin = head !== undefined && /\/websocket(?:\?|$)/u.test(path);
+        if (tunnel || twin) {
+            let carries = this.#webSocketTunnels.get(id);
+            if (carries === undefined) {
+                const health = await readServerHealth(url, token);
+                if (health !== undefined) this.#observeHealth(id, health);
+                carries = health?.capabilities?.webSocketTunnels === true;
+            }
+            if (!carries) {
+                throw new RemoteConnectionError(
+                    501,
+                    "unsupported",
+                    "This server cannot carry browser previews or tunnels through its address yet.",
+                );
+            }
+        }
+        if (tunnel) {
+            return await openRemoteWebSocketTunnel({
+                url: webSocketUrl(url, `${path.split("?")[0] ?? path}/websocket`),
+                token,
+                client: output as Duplex,
+                head,
+                idleMs: SERVER_IDLE_MS,
+                screen: (answer, used) => this.#screen(url, answer, used),
+                signal: new AbortController().signal,
+            });
+        }
+        return await record.pool.forward(request, output, path, async () => token, head);
+    }
+
+    /** The sign-in rule, applied to a remote answer the client must never see as its own. */
+    async #screen(
+        url: string,
+        answer: RemoteProxyAnswer,
+        token: string,
+    ): Promise<RemoteProxyReplacement | undefined> {
+        let body: unknown;
+        try {
+            body = answer.body === undefined ? undefined : JSON.parse(answer.body.toString("utf8"));
+        } catch {
+            body = undefined;
+        }
+        const happy = isHappyErrorBody(answer.contentType, body);
+        if (answer.status === 403 && happy) return undefined;
+        if (
+            answer.status === 401 &&
+            happy &&
+            (await serverAcceptsToken(url, token).catch(() => false))
+        ) {
+            return undefined;
+        }
+        const error = remoteSignInRequired();
+        return { status: error.status, body: { error: error.message, code: error.code } };
+    }
+
+    #serverPool(
+        id: string,
+        url: string,
+        onHealth: (health: HealthResponse) => void,
+    ): RemoteProxyConnection {
+        const target = new URL(url);
+        const secure = target.protocol === "https:";
+        const host = target.hostname.replace(/^\[|\]$/gu, "");
+        const port = Number(target.port === "" ? (secure ? 443 : 80) : target.port);
+        return new RemoteProxyConnection(
+            () =>
+                secure
+                    ? connectTls({
+                          host,
+                          port,
+                          ALPNProtocols: ["http/1.1"],
+                          ...(isIP(host) === 0 ? { servername: host } : {}),
+                      })
+                    : connectTcp({ host, port }),
+            undefined,
+            {
+                target: { host: target.host, pathPrefix: target.pathname.replace(/\/$/u, "") },
+                screen: (answer, token) => this.#screen(url, answer, token),
+                idleMs: SERVER_IDLE_MS,
+                onHealth,
+            },
+        );
+    }
+
+    /** Remember a remote's identity, from any health response the daemon read or relayed. */
+    #observeHealth(id: string, health: HealthResponse): void {
+        const config = this.#pools.get(id)?.config;
+        if (config !== undefined && "url" in config) {
+            this.#webSocketTunnels.set(id, health.capabilities?.webSocketTunnels === true);
+        }
+        if (health.instanceId !== undefined) void this.#learnInstanceId(id, health.instanceId);
+    }
+
+    async #learnInstanceId(id: string, instanceId: string): Promise<void> {
+        const ctx = this.#ctx;
+        if (ctx === undefined || this.#closed) return;
+        await ctx
+            .inTx(async (txCtx) => {
+                const previous = await queryConnectionSnapshot(txCtx);
+                if (previous === undefined) return;
+                const current = previous.connections.find((connection) => connection.id === id);
+                if (current === undefined || current.instanceId === instanceId) return;
+                await this.#saveSnapshot(txCtx, {
+                    connections: previous.connections.map((connection) =>
+                        connection.id === id ? { ...connection, instanceId } : connection,
+                    ),
+                    version: createConnectionVersion(previous.version),
+                });
+            })
+            .catch((error: unknown) => {
+                ctx.log.warn(
+                    "Could not remember a remote's identity.",
+                    { connectionId: id },
+                    error,
+                );
+            });
     }
 
     async #isAdmin(ctx: Context, id: string): Promise<boolean> {
@@ -501,4 +776,27 @@ export class ConnectionsModule implements AgentModule {
         if (!(await this.#isAdmin(ctx, id)))
             throw new Error("Only an active admin bot can manage remote connections.");
     }
+}
+
+/** Whether two entries reach the same remote the same way; only the display name may differ. */
+function sameEndpoint(left: RemoteConnectionEntry, right: RemoteConnectionEntry): boolean {
+    if (left.enabled === false || right.enabled === false) return false;
+    const { name: _left, ...leftSettings } = left;
+    const { name: _right, ...rightSettings } = right;
+    return isDeepStrictEqual(leftSettings, rightSettings);
+}
+
+/** The WebSocket URL of a remote path under a server URL. */
+function webSocketUrl(serverUrl: string, path: string): string {
+    const url = new URL(path.replace(/^\/+/u, ""), serverUrl);
+    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+    return url.toString();
+}
+
+/** The person's token for a server connection by URL, from `Happy-Remote-Authorization`. */
+function remoteToken(request: IncomingMessage): string {
+    const value = request.headers["happy-remote-authorization"];
+    const match = typeof value === "string" ? /^Bearer ([^\s]+)$/u.exec(value) : null;
+    if (match?.[1] === undefined) throw remoteSignInRequired();
+    return match[1];
 }

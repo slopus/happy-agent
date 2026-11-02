@@ -7,17 +7,23 @@ import {
 } from "node:http";
 import type { Duplex } from "node:stream";
 import type { Socket } from "node:net";
-import { healthResponseSchema } from "@slopus/happy-agent-client";
+import { healthResponseSchema, type HealthResponse } from "@slopus/happy-agent-client";
 import { Value } from "@sinclair/typebox/value";
 import type { ConnectionHealth } from "../ConnectionHealth.js";
 
 import { RemoteConnectionError } from "../RemoteConnectionError.js";
+import { keepWebSocketAlive } from "./webSocketKeepalive.js";
+
+/** The most body bytes read to screen a refusal or observe a relayed health response. */
+const MAX_INSPECTED_BODY_BYTES = 64 * 1024;
 
 const HOP_HEADERS = [
     "connection",
     "keep-alive",
     "proxy-authenticate",
     "proxy-authorization",
+    // A person's token for a server connection by URL; forwarded only as `Authorization`.
+    "happy-remote-authorization",
     "te",
     "trailer",
     "transfer-encoding",
@@ -32,6 +38,46 @@ export interface RemoteProxyExchange {
     respondedAt?: number;
     /** An event stream, upgrade, or tunnel, whose total duration is its open lifetime. */
     streaming: boolean;
+}
+
+/** Where the carrier's requests go on the remote: its `Host` and the path every request is under. */
+export interface RemoteProxyTarget {
+    readonly host: string;
+    /** Prefixed to every remote path; empty, or a path such as `/team` without a trailing `/`. */
+    readonly pathPrefix: string;
+}
+
+/** A remote answer to screen before it reaches the client. */
+export interface RemoteProxyAnswer {
+    readonly status: number;
+    readonly contentType: string | undefined;
+    /** The complete body of a `401` or `403`, or undefined for a redirect or an oversized body. */
+    readonly body: Buffer | undefined;
+}
+
+/** A local answer that replaces the remote's. */
+export interface RemoteProxyReplacement {
+    readonly status: number;
+    readonly body: Record<string, unknown>;
+}
+
+export interface RemoteProxyOptions {
+    readonly target?: RemoteProxyTarget;
+    /**
+     * Screens every remote redirect, `401`, and `403`, given the token the request carried. A
+     * replacement is answered instead, and the remote's answer is discarded.
+     */
+    readonly screen?: (
+        answer: RemoteProxyAnswer,
+        token: string,
+    ) => Promise<RemoteProxyReplacement | undefined>;
+    /**
+     * An event stream silent this long ends. A WebSocket is pinged every third of it and closed
+     * with 1011 once the remote has been silent this long.
+     */
+    readonly idleMs?: number;
+    /** Receives every successful remote health response this pool relays. */
+    readonly onHealth?: (health: HealthResponse) => void;
 }
 
 /**
@@ -50,8 +96,14 @@ export class RemoteProxyConnection {
     #closed = false;
 
     readonly #closeTransport: (() => Promise<void>) | undefined;
-    constructor(connect: () => Duplex | Promise<Duplex>, closeTransport?: () => Promise<void>) {
+    readonly #options: RemoteProxyOptions;
+    constructor(
+        connect: () => Duplex | Promise<Duplex>,
+        closeTransport?: () => Promise<void>,
+        options: RemoteProxyOptions = {},
+    ) {
         this.#closeTransport = closeTransport;
+        this.#options = options;
         this.#agent = new Agent({
             keepAlive: true,
             timeout: 30_000,
@@ -109,8 +161,11 @@ export class RemoteProxyConnection {
                 const upstream = httpRequest({
                     agent: this.#agent,
                     hostname: "happy-agent.invalid",
-                    path: "/v0/health",
-                    headers: { authorization: `Bearer ${token}` },
+                    path: `${this.#options.target?.pathPrefix ?? ""}/v0/health`,
+                    headers: {
+                        authorization: `Bearer ${token}`,
+                        host: this.#options.target?.host ?? "happy-agent.invalid",
+                    },
                 });
                 const cancel = () => {
                     upstream.destroy();
@@ -209,7 +264,8 @@ export class RemoteProxyConnection {
             const upgraded = head !== undefined;
             const headers = proxyHeaders(request.headers);
             headers.authorization = `Bearer ${token}`;
-            headers.host = "happy-agent.invalid";
+            headers.host = this.#options.target?.host ?? "happy-agent.invalid";
+            const idleMs = this.#options.idleMs;
             if (upgraded && request.method !== "CONNECT") {
                 headers.connection = "upgrade";
                 headers.upgrade = request.headers.upgrade ?? "websocket";
@@ -219,7 +275,7 @@ export class RemoteProxyConnection {
                     agent: upgraded ? this.#attachments : this.#agent,
                     hostname: "happy-agent.invalid",
                     method: request.method,
-                    path,
+                    path: `${this.#options.target?.pathPrefix ?? ""}${path}`,
                     headers,
                 });
                 let finished = false;
@@ -239,31 +295,103 @@ export class RemoteProxyConnection {
                 upstream.once("error", () =>
                     finish(signal.aborted ? signal.reason : unavailable()),
                 );
-                upstream.once("response", (response) => {
-                    clearTimeout(timer);
-                    response.socket.setTimeout(0);
+                const deliver = (response: IncomingMessage, body: Buffer | undefined) => {
+                    const status = response.statusCode ?? 502;
                     responseStarted = true;
-                    exchange.status = response.statusCode ?? 502;
+                    exchange.status = status;
                     exchange.respondedAt = performance.now();
-                    exchange.streaming ||= (response.headers["content-type"] ?? "")
+                    const eventStream = (response.headers["content-type"] ?? "")
                         .toLowerCase()
                         .startsWith("text/event-stream");
-                    remote = response;
+                    exchange.streaming ||= eventStream;
+                    if (eventStream && idleMs !== undefined) {
+                        // A stream that sends nothing, not even a heartbeat, is dead; the client
+                        // resumes from its cursor.
+                        response.socket.setTimeout(idleMs, () => response.destroy());
+                    }
+                    if (
+                        body === undefined &&
+                        !upgraded &&
+                        status === 200 &&
+                        this.#options.onHealth !== undefined &&
+                        /^\/v0\/health(?:\?|$)/u.test(path)
+                    ) {
+                        this.#observeHealth(response, this.#options.onHealth);
+                    }
                     const responseHeaders = proxyHeaders(response.headers);
                     if (upgraded) {
                         const socket = destination as Duplex;
-                        socket.write(responseHead(response.statusCode ?? 502, responseHeaders));
-                        response.pipe(socket);
+                        socket.write(responseHead(status, responseHeaders));
+                        if (body === undefined) response.pipe(socket);
+                        else socket.end(body);
                     } else {
                         const output = destination as ServerResponse;
                         // Drop the local API default even when the upstream supplies no policy.
                         output.removeHeader("cache-control");
-                        output.writeHead(response.statusCode ?? 502, responseHeaders);
-                        response.pipe(output);
+                        output.writeHead(status, responseHeaders);
+                        if (body === undefined) response.pipe(output);
+                        else output.end(body);
+                    }
+                    if (body !== undefined) {
+                        finish();
+                        return;
                     }
                     response.once("error", () => finish(unavailable()));
                     response.once("aborted", () => finish(unavailable()));
                     response.once("end", () => finish());
+                };
+                const replace = (replacement: RemoteProxyReplacement) => {
+                    responseStarted = true;
+                    exchange.status = replacement.status;
+                    exchange.respondedAt = performance.now();
+                    const body = Buffer.from(JSON.stringify(replacement.body));
+                    const headers = {
+                        "cache-control": "no-store",
+                        "content-length": String(body.length),
+                        "content-type": "application/json; charset=utf-8",
+                    };
+                    if (upgraded) {
+                        (destination as Duplex).end(
+                            Buffer.concat([
+                                Buffer.from(responseHead(replacement.status, headers)),
+                                body,
+                            ]),
+                        );
+                    } else {
+                        const output = destination as ServerResponse;
+                        output.writeHead(replacement.status, headers);
+                        output.end(body);
+                    }
+                    finish();
+                };
+                upstream.once("response", (response) => {
+                    clearTimeout(timer);
+                    response.socket.setTimeout(0);
+                    remote = response;
+                    const screen = this.#options.screen;
+                    const status = response.statusCode ?? 502;
+                    if (screen === undefined || !screened(status)) {
+                        deliver(response, undefined);
+                        return;
+                    }
+                    void (async () => {
+                        const body =
+                            status === 401 || status === 403
+                                ? await readBounded(response)
+                                : undefined;
+                        if (body === undefined) response.destroy();
+                        const replacement = await screen(
+                            {
+                                status,
+                                contentType: response.headers["content-type"],
+                                body,
+                            },
+                            token,
+                        );
+                        if (finished) return;
+                        if (replacement !== undefined) replace(replacement);
+                        else deliver(response, body ?? Buffer.alloc(0));
+                    })().catch((error: unknown) => finish(error));
                 });
                 const attach = (response: IncomingMessage, socket: Socket, remoteHead: Buffer) => {
                     clearTimeout(timer);
@@ -288,12 +416,20 @@ export class RemoteProxyConnection {
                     if (head !== undefined && head.length > 0) socket.write(head);
                     socket.on("error", () => finish(unavailable()));
                     output.on("error", () => finish(unavailable()));
+                    const keepalive =
+                        idleMs !== undefined &&
+                        response.statusCode === 101 &&
+                        request.method !== "CONNECT"
+                            ? keepWebSocketAlive(output, socket, idleMs)
+                            : undefined;
                     socket.once("close", () => {
+                        keepalive?.dispose();
                         output.destroy();
                         finish();
                     });
                     socket.pipe(output);
-                    output.pipe(socket);
+                    if (keepalive === undefined) output.pipe(socket);
+                    else output.pipe(keepalive.toRemote).pipe(socket);
                 };
                 upstream.once("upgrade", attach);
                 upstream.once("connect", attach);
@@ -311,6 +447,42 @@ export class RemoteProxyConnection {
         }
         return exchange;
     }
+
+    /** Read a relayed health body alongside the client, within the inspection bound. */
+    #observeHealth(response: IncomingMessage, onHealth: (health: HealthResponse) => void): void {
+        const chunks: Buffer[] = [];
+        let size = 0;
+        response.on("data", (chunk: Buffer) => {
+            size += chunk.length;
+            if (size <= MAX_INSPECTED_BODY_BYTES) chunks.push(chunk);
+        });
+        response.once("end", () => {
+            if (size > MAX_INSPECTED_BODY_BYTES) return;
+            try {
+                const value: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+                if (Value.Check(healthResponseSchema, value)) onHealth(value);
+            } catch {
+                // The client still received the body exactly as the remote sent it.
+            }
+        });
+    }
+}
+
+/** Redirects other than `304`, `401`, and `403` are screened. */
+function screened(status: number): boolean {
+    return (status >= 300 && status < 400 && status !== 304) || status === 401 || status === 403;
+}
+
+/** The whole body, or undefined once it passes the inspection bound. */
+async function readBounded(response: IncomingMessage): Promise<Buffer | undefined> {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    for await (const chunk of response as AsyncIterable<Buffer>) {
+        size += chunk.length;
+        if (size > MAX_INSPECTED_BODY_BYTES) return undefined;
+        chunks.push(chunk);
+    }
+    return Buffer.concat(chunks);
 }
 
 function proxyHeaders(source: IncomingMessage["headers"]): OutgoingHttpHeaders {

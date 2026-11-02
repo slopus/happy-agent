@@ -7,9 +7,12 @@ export class RemoteConnectionError extends Error {
         readonly code:
             | "remote_unavailable"
             | "remote_timeout"
+            | "remote_sign_in_required"
             | "not_found"
             | "invalid_request"
             | "conflict"
+            | "forbidden"
+            | "unsupported"
             | "unauthorized",
         message: string,
         readonly current?: ConnectionsUpdatedPayload,

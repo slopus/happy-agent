@@ -360,6 +360,8 @@ export async function startHappyAgentRuntime(
 
     try {
         await ensurePrivateDirectory(paths.agentHome);
+        // Health names this installation from the start, so the identity is read first.
+        await config.instanceId();
         await config.writeRuntimeConfiguration(ctx.named("runtime-configuration"));
         try {
             await mkdir(paths.publicHome, { mode: 0o755, recursive: true });

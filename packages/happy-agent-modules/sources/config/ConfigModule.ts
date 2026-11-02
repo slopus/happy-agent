@@ -8,8 +8,9 @@ import {
     type ComputeServiceExecution,
 } from "@slopus/happy-agent-compute";
 import { randomUUID } from "node:crypto";
+import { createId } from "@paralleldrive/cuid2";
 import { normalizePublicApiUrl } from "./PublicApiConfig.js";
-import { chmod, mkdir, open, rename, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, open, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { delimiter, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
@@ -1898,6 +1899,7 @@ export class ConfigModule implements AgentModule {
     #sourceProviders: AgentProviders | undefined;
     #tailcatEnabled: boolean;
     #connections: Record<string, RemoteConnectionEntry>;
+    #instanceId: string | undefined;
     #peerMessaging: PeerMessagingConfig;
     readonly #accountUsageListeners = new Set<(usage: ProviderUsage) => void>();
     #resolvedScripted: ConfigInferenceOverride | undefined;
@@ -2805,6 +2807,27 @@ export class ConfigModule implements AgentModule {
 
     get remoteConnectionEntrySchema() {
         return remoteConnectionEntrySchema;
+    }
+
+    /**
+     * This installation's identity for instance links, read from `instance-id` in the agent home
+     * or created there once. The value survives restarts and upgrades.
+     */
+    async instanceId(): Promise<string> {
+        if (this.#instanceId !== undefined) return this.#instanceId;
+        const path = join(this.configuration.paths.agentHome, "instance-id");
+        await writeUserFileIfMissing(path, `${createId()}\n`);
+        const value = (await readFile(path, "utf8")).trim();
+        if (!/^[a-z][a-z0-9]{23}$/u.test(value)) {
+            throw new Error(`The installation identity in ${path} is invalid.`);
+        }
+        this.#instanceId = value;
+        return value;
+    }
+
+    /** The identity once `instanceId()` has read it; undefined before then. */
+    get loadedInstanceId(): string | undefined {
+        return this.#instanceId;
     }
 
     get peerMessaging(): PeerMessagingConfig {
@@ -4046,6 +4069,14 @@ export class ConfigModule implements AgentModule {
         };
         if (!Value.Check(happyAgentConfigurationSchema, configuration)) {
             throw new Error("The Happy Agent configuration is invalid.");
+        }
+        if (
+            values.feature.team.enabled &&
+            Object.values(values.connections ?? {}).some((entry) => "url" in entry)
+        ) {
+            throw new Error(
+                "A server connection by URL needs standalone mode. Remove its `url` connection to run as a team.",
+            );
         }
         return new ConfigModule(
             deepFreeze(configuration),

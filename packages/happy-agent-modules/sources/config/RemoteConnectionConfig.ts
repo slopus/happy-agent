@@ -30,6 +30,15 @@ export const remoteConnectionConfigSchema = Type.Union([
         },
         { additionalProperties: false },
     ),
+    // A server connection by URL: the person signs in, so it carries no address or credential.
+    Type.Object(
+        {
+            enabled: fields.enabled,
+            name: fields.name,
+            url: Type.String({ minLength: 1, maxLength: 2048, pattern: "^https?://" }),
+        },
+        { additionalProperties: false },
+    ),
 ]);
 export type RemoteConnectionConfig = Static<typeof remoteConnectionConfigSchema>;
 export const remoteConnectionEntrySchema = Type.Union([

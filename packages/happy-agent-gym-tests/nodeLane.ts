@@ -10,6 +10,7 @@ export const nodeLaneScenarios: readonly string[] = [
     "mobile_connector_phones_use_the_api_over_their_own_socket.test.ts",
     "happy_api_proxy_matrix.test.ts",
     "happy_api_websocket_tunnels_carry_proxy_bytes.test.ts",
+    "happy_api_server_connections_by_url.test.ts",
     "happy_api_files_git.test.ts",
     "workspace_files_transfer_fifty_mebibytes.test.ts",
     "happy_api_artifacts_serve_file_bundles.test.ts",
