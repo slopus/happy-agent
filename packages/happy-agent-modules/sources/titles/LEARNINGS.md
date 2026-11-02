@@ -44,13 +44,15 @@ naming. Names supplied by the workspace-creation agent tool are deliberate. Elig
 again by the workspaces catalog when the generated slug is applied, so a user rename that races
 naming still wins.
 
-## Short titles share the naming request and are never cut
+## Short titles share the naming request, are words only, and are never cut
 
-Kirill asked for a very short label (one word plus an emoji, such as "Onboarding 🚀") for tasks and
-bots, for compact places. It is asked in the same request as the title, so it costs no extra model
-call, and the prompt says only that it must be within 13 characters, preferably one word plus an
-emoji. Its purpose is deliberately not described. The budget, 13 UTF-16 code units (an emoji
-counts as two), comes from the desktop's 78 px label under the story ring, measured in Figtree at
-10 px in Chromium and Firefox: 14 let caps- or W/M-heavy text overflow. An answer over budget is discarded rather than shortened, and the
-excerpt fallback supplies none; clients fall back to the full name. A rename clears it, since it
-described the old name.
+Kirill asked for a very short label for tasks and bots, for compact places, and then asked that it
+be words only: an earlier "one word plus an emoji" shape (such as "Onboarding 🚀") was dropped. It
+is asked in the same request as the title, so it costs no extra model call, and the prompt says
+only: one or two words within 13 characters including spaces, words only, no emoji. Its purpose is
+deliberately not described. Emoji the model adds anyway are removed (with their variation
+selectors, skin-tone modifiers, and joiners) before the budget is checked. The budget, 13 UTF-16
+code units, comes from the desktop's 78 px label under the story ring, measured in Figtree at 10 px
+in Chromium and Firefox: 14 let caps- or W/M-heavy text overflow. An answer over budget is
+discarded rather than shortened, and the excerpt fallback supplies none; clients fall back to the
+full name. A rename clears it, since it described the old name.

@@ -13,8 +13,8 @@ export interface NamingRequestText {
 const CLOSING = "Use only what you were given; do not guess at work you cannot see.";
 
 const SHORT_RULE = [
-    `<short>: a very short title, within ${String(MAX_SHORT_TITLE_CHARS)} characters including`,
-    "spaces and emoji, preferably one word plus an emoji.",
+    `<short>: one or two words within ${String(MAX_SHORT_TITLE_CHARS)} characters including spaces,`,
+    "words only, no emoji.",
 ].join(" ");
 
 /** What each name is for, and what shape the answer takes. */

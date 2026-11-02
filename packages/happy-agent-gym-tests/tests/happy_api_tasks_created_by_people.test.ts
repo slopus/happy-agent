@@ -25,7 +25,7 @@ async function namingGym(names: string) {
 describe("tasks people create", () => {
     it("is ready at once, retries without side effects, runs, names itself, and renames", async () => {
         const gym = await namingGym(
-            "<title>Audit billing exports</title><short>Billing 🧾</short><slug>audit-billing-exports</slug>",
+            "<title>Audit billing exports</title><short>Billing</short><slug>audit-billing-exports</slug>",
         );
         const before = (await gym.client.getEvents()).latestCursor;
 
@@ -86,9 +86,9 @@ describe("tasks people create", () => {
         }, "the task's generated name");
         expect(named.folderName).toBe("task");
         // The short name comes from the same single naming request.
-        expect(named.shortName).toBe("Billing 🧾");
+        expect(named.shortName).toBe("Billing");
         expect((await gym.client.getDesktopBootstrap()).tasks).toEqual([
-            expect.objectContaining({ id: TASK_ID, shortName: "Billing 🧾" }),
+            expect.objectContaining({ id: TASK_ID, shortName: "Billing" }),
         ]);
         const naming = gym.inference.requests.filter((r) => r.sessionId.startsWith("naming:"));
         expect(naming).toHaveLength(1);
@@ -112,7 +112,7 @@ describe("tasks people create", () => {
 
     it("leaves the short name out rather than cutting one over its budget", async () => {
         const gym = await namingGym(
-            "<title>Audit billing exports</title><short>Billing exports audit 🧾</short>",
+            "<title>Audit billing exports</title><short>Billing exports audit</short>",
         );
         const { task } = await gym.client.createTask({ id: TASK_ID });
         await gym.send("Audit the billing exports for duplicate rows.", {

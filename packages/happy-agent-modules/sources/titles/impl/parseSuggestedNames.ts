@@ -44,9 +44,17 @@ function keep(answer: string | undefined, tidy: (value: string) => string): stri
     return name.length === 0 ? undefined : name;
 }
 
-/** A short title within its budget, or nothing: never shortened, unlike the other names. */
+/**
+ * A short title within its budget, or nothing: never shortened, unlike the other names. It is words
+ * only, so emoji the model added anyway are removed before the budget is applied.
+ */
 function keepShort(answer: string | undefined): string | undefined {
-    const short = answer?.replace(/^["'`]+|["'`.!?:;,]+$/gu, "").trim();
+    const short = answer
+        ?.replace(/[\p{Extended_Pictographic}\p{Emoji_Modifier}\uFE0E\uFE0F\u200D]/gu, "")
+        .replace(/\s+/gu, " ")
+        .trim()
+        .replace(/^["'`]+|["'`.!?:;,]+$/gu, "")
+        .trim();
     return short && short.length <= MAX_SHORT_TITLE_CHARS && !/\p{Cc}/u.test(short)
         ? short
         : undefined;

@@ -145,13 +145,13 @@ describe("TitlesModule naming", () => {
         });
     });
 
-    it("asks for a short title in the same request and discards one over budget, never cutting it", async () => {
+    it("asks for a short title in the same request, removes emoji, and discards one over budget, never cutting it", async () => {
         const answer = (short: string) =>
             textTurn(`<title>Release Steward</title>\n<short>${short}</short>`);
-        const test = await titles([answer("Release v2 🚀"), answer("Releases v2 🚀")]);
+        const test = await titles([answer("👩‍💻 Release 🚀 v2!"), answer("Release Steward")]);
         await expect(test.module.suggestBotName(ctx, "Watch our releases.")).resolves.toEqual({
             title: "Release Steward",
-            short: "Release v2 🚀",
+            short: "Release v2",
         });
         await expect(test.module.suggestBotName(ctx, "Watch our releases.")).resolves.toEqual({
             title: "Release Steward",
@@ -159,20 +159,21 @@ describe("TitlesModule naming", () => {
         expect(test.provider.sessions).toHaveLength(2);
         const request = JSON.stringify(test.provider.sessions[0]!.requests[0]);
         expect(request).toContain("within 13 characters");
-        expect(request).toContain("one word plus an emoji");
+        expect(request).toContain("one or two words");
+        expect(request).toContain("no emoji");
         expect(request.toLowerCase()).not.toContain("stor");
     });
 
     it("names a task's title and short title in one request", async () => {
         const test = await titles([
-            textTurn("<title>Onboarding flow changes</title><short>Onboarding 🚀</short>"),
+            textTurn("<title>Onboarding flow changes</title><short>Onboarding</short>"),
         ]);
         await expect(
             test.module.suggestNames(ctx, {
                 firstMessage: "Rework the onboarding flow.",
                 wanted: { title: true, short: true },
             }),
-        ).resolves.toEqual({ title: "Onboarding flow changes", short: "Onboarding 🚀" });
+        ).resolves.toEqual({ title: "Onboarding flow changes", short: "Onboarding" });
         expect(test.provider.sessions).toHaveLength(1);
     });
 

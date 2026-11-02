@@ -36,8 +36,8 @@ export const MAX_NAMING_TRANSCRIPT_CHARS = 12_000;
 export const MAX_CHAT_TITLE_CHARS = 80;
 export const MAX_CHAT_TITLE_WORDS = 6;
 /**
- * A short label is at most this many UTF-16 code units, emoji included. It is a strict budget:
- * an answer over it is discarded, never shortened.
+ * A short label is at most this many UTF-16 code units. It is a strict budget: an answer over it
+ * is discarded, never shortened.
  */
 export const MAX_SHORT_TITLE_CHARS = 13;
 /** A folder key and a branch segment stay short enough to read in a path. */
