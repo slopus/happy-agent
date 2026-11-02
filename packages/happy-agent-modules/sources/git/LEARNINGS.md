@@ -61,6 +61,18 @@ spends hundreds of watches per checkout instead of tens of thousands. Polling re
 fallback for a tree that cannot be watched, backs off while nothing changes, and proves "nothing
 changed" with a status and a stat of each changed path before it will run a diff.
 
+## Only a repository gets a recursive watch
+
+A long-running daemon held 127,825 of the host's 129,317 inotify watches, and every new watch then
+failed (`ENOSPC`): live Git fell back to polling and watcher tests timed out. About 112,000 of them
+covered five task folders that were not Git repositories. Live tracking armed the recursive
+working-tree watch on every tracked folder before asking whether it was a repository, and a folder
+outside a repository ignores nothing but `.git` and `node_modules`, so an agent's `.context`
+holding a Nix store (80,000 directories) or cloned references cost one watch per directory. The
+tracker now looks the folder up first. Only a repository gets the working-tree and Git directory
+watches; any other folder gets one non-recursive watch of its own entries on this machine, or
+polling on a runner, and is upgraded when `.git` appears or a later scan finds a repository.
+
 ## A working-tree watch must never be replaced or outlive its folder
 
 Two watcher failures surfaced only in the release gate. On Linux, replacing a folder's Parcel

@@ -1,12 +1,12 @@
 import { watch as watchDirectory } from "node:fs";
 import { lstat, realpath } from "node:fs/promises";
-import { homedir } from "node:os";
 import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import type { AsyncSubscription, Event } from "@parcel/watcher";
 import type { Context, RootContext } from "@steve.kite/stdlib";
 
 import type { ScanGitRunner } from "../runScanGit.js";
+import { containsHomeDirectory } from "./containsHomeDirectory.js";
 
 /** Directories no working tree needs watched, whether or not Git ignores them. */
 const ALWAYS_IGNORED = [".git", "**/node_modules"];
@@ -404,23 +404,6 @@ export class WorkingTreeWatcher {
         );
         return await this.#parcel;
     }
-}
-
-/**
- * Whether `root` is the user's home directory or one of its ancestors.
- *
- * Such a tree holds other applications' data. On macOS the native watcher stats every changed
- * path it reports, and a stat inside `~/Library/Containers`, the Photos library, Contacts or
- * Documents asks the user to grant the app access to that data, again and again while those
- * applications write. On Linux it would spend an inotify watch on every directory in the home.
- */
-async function containsHomeDirectory(root: string): Promise<boolean> {
-    const [canonicalRoot, home] = await Promise.all([
-        realpath(root).catch(() => resolve(root)),
-        realpath(homedir()).catch(() => resolve(homedir())),
-    ]);
-    const path = relative(canonicalRoot, home);
-    return path === "" || (!path.startsWith("..") && !isAbsolute(path));
 }
 
 function relativePath(root: string, path: string): string | undefined {

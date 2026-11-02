@@ -65,6 +65,12 @@ itself is never replaced, because a second subscription on an already-watched fo
 The home directory and its ancestors are never watched; their observers poll, because such a
 tree holds other applications' data.
 
+Live tracking gives the recursive watch only to a repository. A tracked folder that is not one,
+such as a task's shared folder, gets a watch of its own entries on this machine (one inotify
+watch) and is polled on a runner. Seeing `.git` appear there, or a later scan finding a repository
+(after `git init`, a clone, or a lookup that failed for a moment), upgrades it to the full
+working-tree and Git directory watches.
+
 A repository on a runner, or a workload user's, is tracked by the same code with the runner behind
 it: the scan runs there through the hardened scanner, and untracked counts and binary bytes are read
 through its filesystem. `RunnerWatches` keeps one recursive watch per folder on the runner, shared

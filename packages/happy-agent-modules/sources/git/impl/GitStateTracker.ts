@@ -13,6 +13,7 @@ import {
     type GitRepositoryChange,
     type GitRepositoryWatchOptions,
 } from "../watchGitRepositoryChanges.js";
+import { watchFolderEntries, type FolderEntriesObserver } from "./watchFolderEntries.js";
 import {
     WorkingTreeWatcher,
     type WorkingTreeChange,
@@ -54,6 +55,12 @@ export interface GitRepositoryMachine {
     watchTree(root: string, observer: WorkingTreeObserver): () => void;
     watchMetadata(options: GitRepositoryWatchOptions): () => void;
     /**
+     * Watches only a folder's own entries, so a folder that is not a repository yet notices
+     * `.git` appearing without a watch on everything below it. A machine without it polls such a
+     * folder instead.
+     */
+    watchEntries?(root: string, observer: FolderEntriesObserver): () => void;
+    /**
      * Throw when the machine is out of reach. A scan reports a failed Git command as its result,
      * so a failed scan asks this before publishing a failure that was really a lost runner.
      */
@@ -93,6 +100,13 @@ interface RepositoryTracker {
     lastActiveAt: number;
     readonly pendingWorktreePaths: Set<string>;
     reconcileAt: number | undefined;
+    /**
+     * Whether the folder is known to be a repository and has its working-tree and Git directory
+     * watches. Until then it has at most a watch of its own entries.
+     */
+    repository: boolean;
+    /** Whether the Git directory is being looked up, so lookups never overlap. */
+    resolving: boolean;
     /** A stale check requested while a scan ran, applied once that scan settles. */
     reconcileAfterScan: boolean;
     /** The wait before the next stale check, doubled each time a check finds nothing moved. */
@@ -107,6 +121,7 @@ interface RepositoryTracker {
     treeWatching: boolean;
     unclassifiedDirty: boolean;
     unwatch: (() => void) | undefined;
+    unwatchEntries: (() => void) | undefined;
     unwatchTree: (() => void) | undefined;
 }
 
@@ -160,6 +175,7 @@ export class GitStateTracker {
             files: localGitWorkingFiles,
             watchTree: (root, observer) => localTree.watch(root, observer),
             watchMetadata: (options) => registry.watch(options),
+            watchEntries: watchFolderEntries,
             assertAvailable: () => undefined,
         };
         this.#ctx.lifetime?.addEventListener("abort", () => this.dispose(), { once: true });
@@ -258,6 +274,8 @@ export class GitStateTracker {
             reconcileAfterScan: false,
             reconcileDelayMs: GIT_RECONCILE_STALE_AFTER_MS,
             reconciling: false,
+            repository: false,
+            resolving: false,
             scanController: undefined,
             scanning: false,
             snapshot: undefined,
@@ -265,13 +283,14 @@ export class GitStateTracker {
             treeWatching: false,
             unclassifiedDirty: false,
             unwatch: undefined,
+            unwatchEntries: undefined,
             unwatchTree: undefined,
         };
         this.#trackers.set(key, tracker);
         this.#evictExpired();
         if (!this.#trackers.has(key)) return;
         this.#scheduleMaintenance();
-        this.#arm(tracker);
+        this.#arm(tracker, true);
     }
 
     unwatch(entity: GitTrackedEntity): void {
@@ -451,35 +470,71 @@ export class GitStateTracker {
         if (this.#ownsTree) this.#tree.dispose();
     }
 
-    #arm(tracker: RepositoryTracker): void {
+    /**
+     * Looks the folder up as a repository and watches it accordingly.
+     *
+     * Only a repository gets the recursive working-tree watch and the Git directory watch. A folder
+     * that is not one has no Git state to keep current until `.git` appears in it, while a
+     * recursive watch of it could spend an inotify watch on every directory an agent keeps there,
+     * such as a package store or a cloned reference. It gets a watch of its own entries instead,
+     * which reports `.git` appearing, or polling where the machine cannot do that; and every scan
+     * of it looks it up again, so `git init`, a clone, or a lookup that failed for a moment upgrades
+     * it to the full watches.
+     */
+    #arm(tracker: RepositoryTracker, initial: boolean): void {
+        if (tracker.repository || tracker.resolving) return;
+        tracker.resolving = true;
         const generation = tracker.generation;
         const machine = this.#machine(tracker.entity);
+        void this.#resolveGitDirectories(machine, tracker.entity.path)
+            .then((directories) => {
+                if (this.#disposed || tracker.generation !== generation) return;
+                if (directories === undefined) {
+                    this.#watchEntries(tracker, machine);
+                    if (initial) this.markChanged(tracker.entity);
+                    return;
+                }
+                this.#watchRepository(tracker, machine, directories);
+            })
+            .catch(() => {
+                if (!this.#disposed && tracker.generation === generation && initial) {
+                    this.markChanged(tracker.entity);
+                }
+            })
+            .finally(() => {
+                if (tracker.generation === generation) tracker.resolving = false;
+            });
+    }
+
+    #watchRepository(
+        tracker: RepositoryTracker,
+        machine: GitRepositoryMachine,
+        directories: { commonDirectory: string; gitDirectory: string },
+    ): void {
+        tracker.repository = true;
+        tracker.unwatchEntries?.();
+        tracker.unwatchEntries = undefined;
+        tracker.gitDirectory = directories.gitDirectory;
         tracker.unwatchTree = machine.watchTree(tracker.entity.path, {
             onChanges: (changes) => this.#treeChanged(tracker, changes),
             onWatching: (watching) => this.#treeWatching(tracker, watching),
         });
-        void this.#resolveGitDirectories(machine, tracker.entity.path)
-            .then((directories) => {
-                if (this.#disposed || tracker.generation !== generation) {
-                    return;
-                }
-                if (directories === undefined) {
-                    this.markChanged(tracker.entity);
-                    return;
-                }
-                tracker.gitDirectory = directories.gitDirectory;
-                tracker.unwatch = machine.watchMetadata({
-                    commonDirectory: directories.commonDirectory,
-                    gitDirectory: directories.gitDirectory,
-                    onDirty: (change) => this.#watchChanged(tracker, change),
-                    path: tracker.entity.path,
-                });
-            })
-            .catch(() => {
-                if (!this.#disposed && tracker.generation === generation) {
-                    this.markChanged(tracker.entity);
-                }
-            });
+        tracker.unwatch = machine.watchMetadata({
+            commonDirectory: directories.commonDirectory,
+            gitDirectory: directories.gitDirectory,
+            onDirty: (change) => this.#watchChanged(tracker, change),
+            path: tracker.entity.path,
+        });
+    }
+
+    #watchEntries(tracker: RepositoryTracker, machine: GitRepositoryMachine): void {
+        if (tracker.unwatchEntries !== undefined || machine.watchEntries === undefined) return;
+        tracker.unwatchEntries = machine.watchEntries(tracker.entity.path, {
+            onEntry: (name) => {
+                if (name === undefined || name === ".git") this.markChanged(tracker.entity);
+            },
+            onWatching: (watching) => this.#treeWatching(tracker, watching),
+        });
     }
 
     #treeChanged(tracker: RepositoryTracker, changes: readonly WorkingTreeChange[] | null): void {
@@ -545,6 +600,7 @@ export class GitStateTracker {
         if (tracker.debounceTimer !== undefined) clearTimeout(tracker.debounceTimer);
         tracker.scanController?.abort();
         tracker.unwatch?.();
+        tracker.unwatchEntries?.();
         tracker.unwatchTree?.();
         this.#trackers.delete(tracker.key);
         for (let index = this.#pendingScans.length - 1; index >= 0; index -= 1) {
@@ -685,6 +741,8 @@ export class GitStateTracker {
                 tracker.snapshotDelivered = true;
             }
             this.#settleReconcile(tracker, unchanged);
+            // A folder that was not a repository may have become one.
+            if (!tracker.repository) this.#arm(tracker, false);
         } catch (error) {
             if (this.#disposed || tracker.generation !== generation) return;
             const delay = tracker.backoffMs;
