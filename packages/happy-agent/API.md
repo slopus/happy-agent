@@ -5902,6 +5902,12 @@ Request: `{ "path": "sources/main.ts", "content": "<base64>", "expectedHash": "<
 the file **not** exist yet (create). A mismatch answers `409` (`hash_mismatch`) with the
 file's current `hash` so the client can re-read and merge. Response — `200`: `{ "hash": "<new sha256>" }`.
 
+Clients that save message attachments write them under `.happy-uploads/<messageId>/` in the
+workspace. The daemon treats that folder as temporary: it removes a message's folder 30 days after
+anything in it was last written, and keeps `.happy-uploads/.gitignore` containing `*` so the
+folder never appears as a Git change. Clients must not store anything there that must outlive
+that period.
+
 #### `GET /v0/workspaces/:workspaceId/file-revision`
 
 Reads one file as of a git revision, for diff views. Query parameters: `path` and `revision`
