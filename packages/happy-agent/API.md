@@ -8909,6 +8909,10 @@ Fields:
 - `stories` — whether this bot has story tools and visible stories, off by default. Current daemons return a boolean; older compatible daemons may omit it. Stored in the bot's settings and included in `bot.updated`.
 - `name` — the human display name. Required, 1–256 nonblank characters, no ASCII control
   characters.
+- `shortName` — optional generated label for compact places, at most 14 UTF-16 code units
+  (JavaScript string length, emoji included). Absent until automatic naming produces one, after
+  any rename, and on older compatible daemons; clients then shorten `name` themselves. A
+  generated label over the budget is discarded, never shortened.
 - `username` — the local snake_case name and on-disk folder name, under the rules above.
 - `isAdmin` — whether the bot may create other bots through `create_bot`. The tool remains visible
   to non-admin bots, but calling it returns a tool error that explains the restriction and lists
@@ -9001,7 +9005,9 @@ For an unnamed bot, the first accepted text-bearing user-role message starts one
 naming job, using that message alone and the same cheap, bounded inference mechanism as
 workspace naming. The bot-specific prompt asks for a short entity, person, or role-like identity
 based on its likely ongoing function, not a task title. Generated names are bounded to three words
-and 40 characters. Message acceptance and the bot's real turn never wait for naming. Failure or
+and 40 characters. The same request also asks for `shortName`, a very short label of at most 14
+UTF-16 code units, preferably one word and an emoji; an answer over that budget leaves
+`shortName` absent. Message acceptance and the bot's real turn never wait for naming. Failure or
 timeout does not fail the message. A new naming job makes at most three bounded attempts, waiting
 one second before its second attempt and five seconds before its third. Pending jobs and their
 attempt budget survive daemon restarts; later messages do not start another job. If every attempt
@@ -9026,8 +9032,8 @@ Updates the bot's display name or Stories switch. Requires `If-Match`, with the 
 
 Request: `{ "name"?: "Research Buddy", "stories"?: true, "mutationId"?: "..." }`; at least one of `name` or `stories` is required (`400 invalid_request` otherwise). Omitted fields are unchanged. A stories-only change does not rename the bot or settle automatic naming.
 
-Renaming also updates the bot's conversation title and permanently cancels eligibility for
-automatic naming, even when the submitted name equals the current display name. This decision
+Renaming also updates the bot's conversation title, clears `shortName`, and permanently cancels
+eligibility for automatic naming, even when the submitted name equals the current display name. This decision
 and both names are persisted together, so a delayed naming result cannot overwrite the rename.
 
 The `username` is immutable: it is the folder on disk, chosen at creation and never changed.
@@ -10587,6 +10593,10 @@ Fields:
 - `name` — the human display name, 1–256 nonblank characters without ASCII control characters.
   The task's agent title follows it. A task created without a name is called `New Task` until it
   names itself; see `POST /v0/tasks`.
+- `shortName` — optional generated label for compact places, at most 14 UTF-16 code units
+  (JavaScript string length, emoji included). Absent until automatic naming produces one, after
+  any rename, and on older compatible daemons; clients then shorten `name` themselves. A
+  generated label over the budget is discarded, never shortened.
 - `folderName` — the immutable snake_case folder name, unique across all tasks, archived ones
   included: lowercase ASCII letters, digits, and underscores, starting with a letter, 1–64
   characters.
@@ -10699,7 +10709,9 @@ New creation emits `task.created`, `task.joined`, and `agent.created` once after
 first accepted text-bearing message starts one durable asynchronous naming job: a person's message,
 or the message from the agent that created it, which is how a `create_task` call's opening `text`
 arrives. Naming uses that message alone and the same cheap, bounded inference as workspace naming,
-and asks for a short title of the work, two to six words. Message acceptance and the task's own
+and asks for a short title of the work, two to six words, and in the same request a `shortName` of
+at most 14 UTF-16 code units, preferably one word and an emoji; an answer over that budget leaves
+`shortName` absent. The excerpt fallback supplies no `shortName`. Message acceptance and the task's own
 turn never wait for naming. Failure or timeout does not fail the message. A new naming job makes
 at most three bounded attempts, waiting one second before its second attempt and five seconds
 before its third. Pending jobs and their attempt budget survive daemon restarts; later messages
@@ -10717,8 +10729,8 @@ rename a task, as with bots; renaming is not restricted like archival.
 
 Request: `{ "name": "Fix the redirect loop", "mutationId": "..." }`
 
-Renaming also updates the task's agent title and permanently ends automatic naming for the task,
-even when the submitted name equals the current one. The `folderName` is immutable: a request
+Renaming also updates the task's agent title, clears `shortName`, and permanently ends automatic
+naming for the task, even when the submitted name equals the current one. The `folderName` is immutable: a request
 carrying `folderName` is `400 invalid_request`.
 
 Response — `200`: `{ "task": { ... }, "membership": { ... } }` with the new name, and a
@@ -10805,7 +10817,7 @@ Response — `200`: `{ "task": { ... }, "membership": { ... } }` with `archivedA
 
 ## Stories
 
-A story is one image or short video that a task's own agent posts for its owner, with a few words
+A story is one image or video that a task's own agent publishes to the people who joined the task, with a few words
 of caption, to show something that shipped. It lasts 24 hours. Clients show live stories on the
 task's existing icon and play them full screen. A bot's `stories` switch enables its story tools,
 off by default; its stories reach every non-guest member with personal stories on while enabled.
@@ -10831,11 +10843,16 @@ characters. The tool is offered to a task's own agent when its owner has persona
 or a bot's own agent when its bot's Stories switch is on; never to a subtask, project or
 workspace conversation. This is checked once when
 the turn's tools are assembled, with no recheck inside the tools. Each call adds one
-story; a task's stories play oldest first. People may also upload their own stories or
-repost an agent's story. Nobody edits a story. Optional `replaces` names at most five of the
+story; an agent may have multiple live stories, played oldest first, with no video duration limit
+(the byte limits above still apply). For a multipart update, call `post_story` once per outline part;
+do not combine the parts into one frame or replace earlier parts of the same update. People may also upload their own stories or
+repost an agent's story. Nobody edits a story. Optional `replaces` names at most twenty of the
 agent's own live originals to remove, with their reposts, in the posting transaction. Foreign,
 repost, missing, and ended IDs are ignored. The tool result includes the `replaced` IDs; removals
 emit `story.removed` after commit. `delete_story` still removes a story without posting.
+Omitting `replaces` preserves earlier frames; use it only for originals made stale by this update.
+The viewer is 9:16 (1080×1920 reference pixels); important content fits inside
+x=48–1032 and y=384–1344, clear of the top progress/poster/attribution bar and bottom caption/reply controls.
 
 **Agent tools.** Alongside `post_story`, and under the same conditions, the agent is offered
 `list_stories` `{}`, which lists its live stories and people's reposts of them, each with how many
@@ -10846,7 +10863,8 @@ off is offered none of the three.
 
 **Reposts.** A person reposts an agent story they see, with an optional caption and an optional
 round video of themselves, through `POST /v0/stories/:storyId/repost`. A repost keeps the
-original's `agentId`, `taskId`, `botId`, and `media`, and reaches every non-guest team member with
+original's `agentId`, `taskId`, `botId`, and `media`, referencing the same stored media bytes
+without downloading, re-encoding, or uploading the original again, and reaches every non-guest team member with
 stories on. It lasts 24 hours from its own `postedAt`. A repost
 cannot be reposted. A person's original story cannot be reposted either. Optional `layers` keep
 text and round positions separate from the base media (see below).
@@ -10867,8 +10885,11 @@ agent story deletes every repost of it. A deleted story leaves every list and ro
 everyone who saw it receives `story.removed`; its media, round video, seen state, and replies
 answer `404 not_found`.
 
-**Who sees a story.** An agent's original story reaches only its task owner with stories on,
-while the task is active. Archiving hides it until unarchived, if it has not ended. A person's
+**Who sees a story.** Posting always publishes: there is no owner-only or internal audience.
+A task agent's original story reaches the task's owner and every non-guest person who joined the
+task with stories on, while the task is active. Archiving hides it until unarchived, if it has not
+ended. Joining or leaving the task, archiving, and unarchiving send each affected reader
+`story.changed` for every live original they now see and `story.removed` for each they no longer see. A person's
 original story or repost reaches every non-guest team member with stories on, or the one person
 standalone. Guests cannot post or read stories. Everything else answers
 as if the story did not exist.
@@ -10935,12 +10956,28 @@ state, and replies persist across daemon restarts.
 - `replies` — the latest replies, at most two, oldest first. Each reply has `id`, `storyId`,
   `userId` (the replier, `null` in standalone mode), `text`, and `createdAt` in epoch milliseconds.
 - `canDelete` — whether the caller may delete it.
-- `layers` — optional `{ "text"?: { "text": "...", "x": 0.5, "y": 0.5 },
-"round"?: { "x": 0.2, "y": 0.2 } }`. Text is 1–200 characters, including emoji; coordinates
+- `layers` — optional `{ "text"?: { "text": "...", "x": 0.5, "y": 0.5, "scale"?: 1, "rotation"?: 0 },
+"round"?: { "x": 0.5, "y": 0.45, "scale"?: 1, "rotation"?: 0 } }`. Text is 1–200 characters, including emoji; coordinates
   are finite numbers in [0, 1], measuring the layer's **center** relative to the full media frame.
+  Optional `scale` is finite and in [0.5, 3], default 1; optional `rotation` is finite degrees
+  in [-180, 180], default 0. Rotation and scaling apply around the layer's center.
   Missing text means no text layer. A round without placement defaults to center (0.2, 0.2);
   clients adding a new text layer start at (0.5, 0.5). All layer objects reject unknown fields.
-  A round placement requires an uploaded round file.
+  Clients adding a new round layer start at (0.5, 0.45), with unscaled diameter 40% of frame width.
+  A round placement requires an uploaded round file. A repost without its own text shows the
+  original's text.
+- `mediaLayers` — optional array of stored images and videos placed above `media`, in paint
+  order, below text. Each is `{ "id", "kind", "mimeType", "size", "shape"?, "x", "y", "width",
+"aspect", "scale"?, "rotation"? }`: `kind` is `"image"` or `"video"`; `shape` is `"rect"`
+  (default) or `"round"`, clipped to a circle whose diameter is the layer width; `x` and `y`
+  are the layer's center in [0, 1] of the full frame; `width` is in (0, 1] of the frame width
+  before `scale`; `aspect` is the media's width over its height in [0.1, 10], so the box is known
+  before its bytes load; `scale` and `rotation` are as for `layers`. Fetch the bytes from
+  `GET /v0/stories/:storyId/layers/:layerId`. A repost lists the original's layers first, under
+  their own IDs, then its own. A story with a legacy `round` also lists it as the layer `round`
+  with `shape: "round"`, its `layers.round` center, scale, and rotation, `width: 0.4`, and
+  `aspect: 1`. The server never composes layers into the media or re-encodes any of them; each
+  is stored once and referenced by every story showing it. Older daemons omit the field.
 
 ### `POST /v0/stories`
 
@@ -10953,6 +10990,16 @@ No other fields or repeated parts are accepted. The binary files are never base6
 `video/mp4` and it passes that check too. `caption` is 1–200 characters; metadata rejects unknown fields.
 For both files, compare the base media type case-insensitively, ignoring parameters such as `codecs`.
 The entire multipart body is capped at 48 MiB plus 64 KiB of multipart overhead and metadata.
+
+Alternatively send `application/json`, referencing files already streamed to disk through
+`POST /v0/artifact-uploads`: `{ "media": { "uploadId": "..." }, "caption"?: "...",
+"layers"?: { ... }, "mediaLayers"?: [ { "uploadId": "...", "shape"?: "rect", "x": 0.5, "y": 0.5,
+"width": 0.4, "aspect": 1, "scale"?: 1, "rotation"?: 0 } ] }`, with at most 8 media layers and
+no other fields. The daemon reads each upload's kind from its bytes: an image that decodes (at
+most 32 MiB), or a video (at most 256 MiB) that passes the `post_story` H.264 MP4 check. Bytes are
+adopted into story storage without copying or re-encoding, and an upload may be referenced again
+until it expires. JSON `layers.round` is refused; send a circle video as a media layer with
+`shape: "round"`. An unknown, expired, or refused upload is `400 invalid_request`.
 
 Response — `200`: `{ "story": { ... } }`, with `poster: "person"`, the caller's `userId`, and
 `agentId`, `taskId`, `botId`, and `repostOf` all `null`. The story lasts 24 hours and emits
@@ -10990,9 +11037,18 @@ under the same conditions as marking it seen. A client that renders through an e
 A story's round video, served exactly as its media. `404 not_found` when the story has no round,
 and under the same conditions as marking it seen.
 
+### `GET /v0/stories/:storyId/layers/:layerId`
+
+One media layer's bytes, served exactly as the story's media, including byte ranges. A repost
+serves its original's layers under their IDs. `404 not_found` when the story has no such layer,
+and under the same conditions as marking it seen.
+
 ### `POST /v0/stories/:storyId/repost`
 
-Request: `{ "caption"?: "...", "round"?: { "data": "<base64>" }, "layers"?: { ... } }`, with no other fields.
+Request: `{ "caption"?: "...", "round"?: { "data": "<base64>" }, "layers"?: { ... },
+"mediaLayers"?: [ ... ] }`, with no other fields. `mediaLayers` are the reposter's own, referencing
+uploads exactly as in a JSON `POST /v0/stories`; they are painted above the original's layers.
+The original's media and layers are referenced, never downloaded, copied, or uploaded again.
 `caption` is 1–200 characters; `round.data` is a base64 H.264 MP4 video of at most 16 MiB (at
 most 22,369,624 characters), checked as `post_story` checks a video.
 Alternatively send `multipart/form-data` with optional `metadata` (the same JSON as person
@@ -13324,6 +13380,10 @@ Response — `200`:
     "surfaces": [
         /* the full Surface instance catalog, ascending ID */
     ],
+    "storiesEnabled": true,
+    "stories": [
+        /* exactly the stories array from GET /v0/stories for this reader */
+    ],
     "archivedAgents": [
         /* the most recently archived agents of those projects and workspaces, newest first */
     ],
@@ -13366,6 +13426,13 @@ Response — `200`:
   Todo data and revision history are loaded on demand through the Todo Surface endpoints.
   Calendar events, occurrences, and revision history are likewise loaded on demand through the
   Calendar Surface endpoints.
+- `storiesEnabled` — whether Stories is enabled for the authenticated reader, with the same
+  setting and membership checks as the Stories routes. Optional on older compatible daemons.
+- `stories` — every current story this reader may see, oldest `postedAt` first, exactly as
+  `GET /v0/stories` returns it. Included with `storiesEnabled` by daemons supporting this
+  bootstrap addition; an off flag accompanies an empty array. Optional on older compatible
+  daemons, where clients load the feed separately. Follow `story.changed` and `story.removed`
+  from the ordinary bootstrap `cursor`; no separate feed cursor or initial feed request is needed.
 - `archivedAgents` — the archived agents that would otherwise belong to the included projects'
   and workspaces' `agents` series, as full agent objects, newest `archivedAt` first with the
   agent ID as the tie-breaker. Each carries the `workspaceId` of its owner, which is the

@@ -20,6 +20,7 @@ import { profileSchema } from "./profile.js";
 import { projectSchema } from "./projects.js";
 import { taskMembershipSchema, taskSchema } from "./tasks.js";
 import { surfaceSchema } from "./surfaces.js";
+import { storySchema } from "./stories.js";
 import type { AgentUsageResponse } from "./usage.js";
 import { storedUserSettingSchema } from "./userSettings.js";
 import { workspaceSchema } from "./workspaces.js";
@@ -83,6 +84,10 @@ export const desktopBootstrapResponseSchema = Type.Object({
     tasks: Type.Optional(Type.Array(taskSchema)),
     /** The predefined catalog. Absent on older daemons without Surfaces. */
     surfaces: Type.Optional(Type.Array(surfaceSchema)),
+    /** Whether Stories is enabled for this reader. Absent on older compatible daemons. */
+    storiesEnabled: Type.Optional(Type.Boolean()),
+    /** The reader's current feed; follow story events from `cursor`. Empty while disabled. */
+    stories: Type.Optional(Type.Array(storySchema)),
     /**
      * The caller's own user settings, exactly as `GET /v0/user-settings` lists them. Absent on
      * daemons without user settings; keep those preferences on the device there.

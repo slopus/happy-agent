@@ -48,6 +48,11 @@ export const taskSchema = Type.Object({
     folderName: taskFolderNameSchema,
     id: cuid2Schema,
     name: taskNameSchema,
+    /**
+     * A generated label of at most 14 UTF-16 code units, absent until generated, after a rename,
+     * and on older compatible daemons. Clients fall back to `name`.
+     */
+    shortName: Type.Optional(taskNameSchema),
     /** The person the task belongs to; `null` in standalone mode or when nobody was identified. */
     ownerUserId: Nullable(userIdSchema),
     status: Type.Union([Type.Literal("active"), Type.Literal("archived")]),

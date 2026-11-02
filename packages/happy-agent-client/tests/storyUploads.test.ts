@@ -2,8 +2,13 @@ import { Value } from "@sinclair/typebox/value";
 import { describe, expect, it } from "vitest";
 
 import { HappyAgentClient } from "../sources/HappyAgentClient.js";
+import { desktopBootstrapResponseSchema } from "../sources/protocol/bootstrap.js";
+import { botSchema } from "../sources/protocol/bots.js";
+import { taskSchema } from "../sources/protocol/tasks.js";
 import {
+    storyCreateRequestSchema,
     storyLayersSchema,
+    storyMediaLayerSchema,
     storySchema,
     storyMetadataSchema,
     storyReplyRequestSchema,
@@ -11,6 +16,49 @@ import {
 } from "../sources/protocol/stories.js";
 
 describe("story uploads", () => {
+    it("accepts optional bounded transforms without requiring them on existing layers", () => {
+        for (const transform of [{}, { scale: 0.5, rotation: -180 }, { scale: 3, rotation: 180 }]) {
+            expect(
+                Value.Check(storyLayersSchema, {
+                    text: { text: "Ready", x: 0.5, y: 0.5, ...transform },
+                    round: { x: 0.5, y: 0.45, ...transform },
+                }),
+            ).toBe(true);
+        }
+        for (const transform of [
+            { scale: 0.49 },
+            { scale: 3.01 },
+            { scale: Infinity },
+            { scale: Number.NaN },
+            { rotation: -181 },
+            { rotation: 181 },
+            { rotation: Infinity },
+            { rotation: Number.NaN },
+        ]) {
+            expect(
+                Value.Check(storyLayersSchema, { round: { x: 0.5, y: 0.5, ...transform } }),
+            ).toBe(false);
+            expect(
+                Value.Check(storyLayersSchema, {
+                    text: { text: "Ready", x: 0.5, y: 0.5, ...transform },
+                }),
+            ).toBe(false);
+        }
+    });
+
+    it("adds the initial story feed and reader flag without requiring them from older daemons", () => {
+        expect(desktopBootstrapResponseSchema.required).not.toContain("storiesEnabled");
+        expect(desktopBootstrapResponseSchema.required).not.toContain("stories");
+        expect(Value.Check(desktopBootstrapResponseSchema.properties.storiesEnabled, true)).toBe(
+            true,
+        );
+        expect(Value.Check(desktopBootstrapResponseSchema.properties.storiesEnabled, "true")).toBe(
+            false,
+        );
+        expect(Value.Check(desktopBootstrapResponseSchema.properties.stories, [])).toBe(true);
+        expect(Value.Check(desktopBootstrapResponseSchema.properties.stories, [{}])).toBe(false);
+    });
+
     it("shares the bounded upload, repost, and reply contract with the daemon", () => {
         expect(Value.Check(storyMetadataSchema, { caption: "Ready" })).toBe(true);
         expect(Value.Check(storyRepostRequestSchema, { round: { data: "AAAA" } })).toBe(true);
@@ -74,5 +122,76 @@ describe("story uploads", () => {
         ])
             expect(Value.Check(storyLayersSchema, value)).toBe(false);
         expect(Value.Check(storySchema.properties.agentId, null)).toBe(true);
+    });
+
+    it("expresses stored media layers with their own placement, and references uploads", () => {
+        const layer = { uploadId: "u1", x: 0.5, y: 0.5, width: 0.4, aspect: 9 / 16 };
+        const round = { ...layer, shape: "round", scale: 3, rotation: -180 };
+        const body = { media: { uploadId: "u0" }, mediaLayers: [layer, round] };
+        expect(Value.Check(storyCreateRequestSchema, body)).toBe(true);
+        expect(Value.Check(storyRepostRequestSchema, { mediaLayers: [round] })).toBe(true);
+        for (const bad of [
+            { ...layer, width: 0 },
+            { ...layer, width: 1.01 },
+            { ...layer, aspect: 0.09 },
+            { ...layer, aspect: 10.1 },
+            { ...layer, shape: "star" },
+            { ...layer, scale: 4 },
+            { x: 0.5, y: 0.5, width: 0.4, aspect: 1 },
+            { ...layer, extra: true },
+        ])
+            expect(Value.Check(storyCreateRequestSchema, { ...body, mediaLayers: [bad] })).toBe(
+                false,
+            );
+        expect(
+            Value.Check(storyCreateRequestSchema, { ...body, mediaLayers: Array(9).fill(layer) }),
+        ).toBe(false);
+        expect(Value.Check(storyCreateRequestSchema, { mediaLayers: [] })).toBe(false);
+        const served = { id: "round", kind: "video", mimeType: "video/mp4", size: 3, ...round };
+        delete (served as { uploadId?: string }).uploadId;
+        expect(Value.Check(storyMediaLayerSchema, served)).toBe(true);
+        expect(Value.Check(storySchema.properties.mediaLayers, [served])).toBe(true);
+        expect(storySchema.required).not.toContain("mediaLayers");
+    });
+
+    it("streams a story file to the shared upload route and posts JSON that references it", async () => {
+        const requests: Request[] = [];
+        const client = new HappyAgentClient({
+            endpoint: "https://agent.test",
+            token: "test-token",
+            fetch: async (input, init) => {
+                requests.push(new Request(input, init));
+                return Response.json({ upload: { id: "u0" }, story: { id: "story" } });
+            },
+        });
+        const file = new Blob([new Uint8Array([0, 255, 42])], { type: "video/mp4" });
+        expect((await client.uploadStoryMedia(file)).upload.id).toBe("u0");
+        const body = { media: { uploadId: "u0" }, caption: "Ready" };
+        await client.postStory(body);
+        await client.repostStory("story", { mediaLayers: [] });
+        expect(requests.map((request) => new URL(request.url).pathname)).toEqual([
+            "/v0/artifact-uploads",
+            "/v0/stories",
+            "/v0/stories/story/repost",
+        ]);
+        expect(new Uint8Array(await requests[0]!.arrayBuffer())).toEqual(
+            new Uint8Array([0, 255, 42]),
+        );
+        expect(await requests[1]!.json()).toEqual(body);
+        expect(requests[2]!.headers.get("content-type")).toContain("application/json");
+        expect(client.storyLayerUrl("story", "round")).toBe(
+            "https://agent.test/v0/stories/story/layers/round",
+        );
+        await expect(
+            client.repostStory("story", { mediaLayers: [], round: file }),
+        ).rejects.toThrow();
+    });
+
+    it("carries an optional generated short name on tasks and bots", () => {
+        for (const schema of [taskSchema, botSchema]) {
+            expect(schema.required).not.toContain("shortName");
+            expect(Value.Check(schema.properties.shortName, "Onboarding 🚀")).toBe(true);
+            expect(Value.Check(schema.properties.shortName, "")).toBe(false);
+        }
     });
 });

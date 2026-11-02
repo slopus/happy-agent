@@ -59,6 +59,11 @@ export const botSchema = Type.Object({
     /** Whether this bot has the `admin_bot` tool role. Older compatible daemons omit it. */
     isAdmin: Type.Optional(Type.Boolean()),
     name: botNameSchema,
+    /**
+     * A generated label of at most 14 UTF-16 code units, absent until generated, after a rename,
+     * and on older compatible daemons. Clients fall back to `name`.
+     */
+    shortName: Type.Optional(botNameSchema),
     /** An opaque catalog sort key. */
     orderKey: Type.String(),
     status: Type.Union([Type.Literal("active"), Type.Literal("archived")]),

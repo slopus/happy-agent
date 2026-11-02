@@ -202,7 +202,14 @@ import {
     type UserSettingsResponse,
 } from "./protocol/userSettings.js";
 import type { MobileConnectorResponse } from "./protocol/mobileConnector.js";
-import type { Story, StoryMetadata, StoryReply, StoryRepostRequest } from "./protocol/stories.js";
+import type {
+    Story,
+    StoryCreateRequest,
+    StoryMetadata,
+    StoryReply,
+    StoryRepostRequest,
+    StoryUpload,
+} from "./protocol/stories.js";
 import type {
     ArchiveProjectRequest,
     CloneProjectRequest,
@@ -347,7 +354,7 @@ interface HttpRequest {
     /** A JSON body. */
     json?: unknown;
     /** A binary body, for the picture and artifact upload routes. */
-    binary?: { contentType: string; data: BinaryData };
+    binary?: { contentType: string; data: BinaryData | Blob };
     form?: FormData;
     accept?: string;
     /** A `Range` header, for artifact files. */
@@ -1104,12 +1111,42 @@ export class HappyAgentClient {
 
     // Stories
 
-    /** Upload a person's original story as binary multipart files. */
+    /**
+     * `POST /v0/artifact-uploads` — stream one story file to the daemon for `postStory` or
+     * `repostStory` to reference. The daemon reads whether it is an image or video from its bytes.
+     */
+    async uploadStoryMedia(
+        body: Blob,
+        options: RequestOptions = {},
+    ): Promise<{ upload: StoryUpload }> {
+        return await this.#json({
+            method: "POST",
+            path: "v0/artifact-uploads",
+            binary: { contentType: "application/octet-stream", data: body },
+            signal: options.signal,
+        });
+    }
+
+    /**
+     * Post a person's original story: JSON referencing uploads, or, for older daemons, the base
+     * media as binary multipart files.
+     */
+    async postStory(body: StoryCreateRequest, options?: RequestOptions): Promise<{ story: Story }>;
     async postStory(
         media: Blob,
-        body: StoryMetadata & { round?: Blob } = {},
+        body?: StoryMetadata & { round?: Blob },
+        options?: RequestOptions,
+    ): Promise<{ story: Story }>;
+    async postStory(
+        media: Blob | StoryCreateRequest,
+        body: (StoryMetadata & { round?: Blob }) | RequestOptions = {},
         options: RequestOptions = {},
     ): Promise<{ story: Story }> {
+        if (!(media instanceof Blob)) {
+            const { signal } = body as RequestOptions;
+            return await this.#json({ method: "POST", path: "v0/stories", json: media, signal });
+        }
+        body = body as StoryMetadata & { round?: Blob };
         const form = new FormData();
         form.set("media", media, "media");
         form.set("metadata", JSON.stringify({ caption: body.caption, layers: body.layers }));
@@ -1142,6 +1179,14 @@ export class HappyAgentClient {
         return endpointUrl(this.#endpoint, `v0/stories/${encodeURIComponent(storyId)}/media`);
     }
 
+    /** The URL of `GET /v0/stories/:storyId/layers/:layerId`, one media layer's bytes. */
+    storyLayerUrl(storyId: Cuid2, layerId: string): string {
+        return endpointUrl(
+            this.#endpoint,
+            `v0/stories/${encodeURIComponent(storyId)}/layers/${encodeURIComponent(layerId)}`,
+        );
+    }
+
     /** The URL of `GET /v0/stories/:storyId/round`, a repost's round video. */
     storyRoundUrl(storyId: Cuid2): string {
         return endpointUrl(this.#endpoint, `v0/stories/${encodeURIComponent(storyId)}/round`);
@@ -1166,14 +1211,21 @@ export class HappyAgentClient {
         return await this.#json({ method: "POST", path, json: { text }, signal: options.signal });
     }
 
-    /** `POST /v0/stories/:storyId/repost` — an agent story, with an optional caption and round MP4. */
+    /**
+     * `POST /v0/stories/:storyId/repost` — an agent story, with an optional caption, media layers
+     * referencing uploads, and a legacy round MP4.
+     */
     async repostStory(
         storyId: Cuid2,
-        body: StoryMetadata & { round?: StoryRepostRequest["round"] | Blob } = {},
+        body: Omit<StoryRepostRequest, "round"> & {
+            round?: StoryRepostRequest["round"] | Blob;
+        } = {},
         options: RequestOptions = {},
     ): Promise<{ story: Story }> {
         const path = `v0/stories/${encodeURIComponent(storyId)}/repost`;
         if (body.round instanceof Blob) {
+            if (body.mediaLayers !== undefined)
+                throw new Error("Upload a round as a media layer to repost it with media layers.");
             const form = new FormData();
             form.set("metadata", JSON.stringify({ caption: body.caption, layers: body.layers }));
             form.set("round", body.round, "round.mp4");
