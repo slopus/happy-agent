@@ -37,7 +37,7 @@ export const storyRecordSchema = Type.Object({
 export type StoryRecord = Static<typeof storyRecordSchema>;
 
 // This history belongs to stories-v2, not the retired prototype's "stories" ledger.
-// Adopt the same tables from 0.4.111 previews without rewriting their ledger or rows.
+// Adopt the same tables from 0.4.111 previews without clearing their rows.
 export const storyMigrations: readonly AgentModuleMigration[] = [
     [
         // Each posted story, and one row per story and person who opened it.
@@ -69,6 +69,26 @@ export const storyMigrations: readonly AgentModuleMigration[] = [
                 db,
                 sql`CREATE INDEX IF NOT EXISTS happy_agent_module_story_replies_story
                     ON happy_agent_module_story_replies(story_id, created_at)`,
+            );
+        },
+    ],
+    [
+        "003-remove-retired-stories",
+        async (_ctx, db) => {
+            // The abandoned prototype is not imported into the rebuilt feed. Remove its
+            // tables and retired ledger together; the current feed's module_* tables stay.
+            for (const table of [
+                "happy_agent_story_people",
+                "happy_agent_story_participation",
+                "happy_agent_story_reactions",
+                "happy_agent_story_seen",
+                "happy_agent_stories",
+            ]) {
+                await agentDatabaseRun(db, sql`DROP TABLE IF EXISTS ${sql.raw(table)}`);
+            }
+            await agentDatabaseRun(
+                db,
+                sql`DELETE FROM happy_agent_migrations WHERE module_key = 'stories'`,
             );
         },
     ],
