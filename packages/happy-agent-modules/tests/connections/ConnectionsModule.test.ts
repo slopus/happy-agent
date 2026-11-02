@@ -345,6 +345,55 @@ describe("configured remote roster", () => {
         expect(JSON.stringify(await f.module.list(f.context))).not.toContain("tcCaseSensitive");
     });
 
+    it("never lets a server connection's ID point at another address", async () => {
+        const f = await fixture();
+        // add_server_connection's own write, without contacting a server.
+        await f.config.updateRuntimeConnection(f.context, "team", {
+            name: "Team",
+            url: "https://team.example.com/",
+        });
+        const refusedAddress = /its address never changes/u;
+        await expect(
+            f.module.set(f.context, "admin", "team", {
+                name: "Team",
+                url: "https://attacker.example.com/",
+            }),
+        ).rejects.toThrow(refusedAddress);
+        await expect(
+            f.module.set(f.context, "admin", "team", {
+                name: "Team",
+                address: "tcAttacker",
+                token,
+            }),
+        ).rejects.toThrow(/Remove it before reusing the ID/u);
+        await expect(
+            f.module.set(f.context, "admin", "fresh", {
+                name: "Fresh",
+                url: "https://fresh.example.com/",
+            }),
+        ).rejects.toThrow(refusedAddress);
+
+        // Renaming keeps the stored, normalized address.
+        await f.module.set(f.context, "admin", "team", {
+            name: "Engineering",
+            url: "https://Team.Example.com",
+        });
+        expect(f.config.connections.team).toEqual({
+            name: "Engineering",
+            url: "https://team.example.com/",
+        });
+
+        // Removal reserves the ID; the server comes back only through add_server_connection.
+        await f.module.set(f.context, "admin", "team", { enabled: false });
+        await expect(
+            f.module.set(f.context, "admin", "team", {
+                name: "Team",
+                url: "https://team.example.com/",
+            }),
+        ).rejects.toThrow(refusedAddress);
+        expect(f.config.connections.team).toEqual({ enabled: false });
+    });
+
     it("persists replacement credentials and removal tombstones across restart", async () => {
         const f = await fixture();
         await f.module.set(f.context, "admin", "mac", {

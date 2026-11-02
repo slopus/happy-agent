@@ -42,6 +42,9 @@ Chief of Staff: `add_server_connection { url, name? }` normalizes the URL, refus
 server's discovery, read without a credential, is a Happy response that offers an `oauth` method,
 generates the ID from the host, and saves the entry in generated `runtime.toml`.
 `remove_remote_connection` removes it like any other entry. No HTTP route adds or removes one.
+Its address never changes: `set_remote_connection` may rename it but refuses a different URL, a
+new URL entry, or another kind of connection under its ID while it is enabled. Removal keeps the ID
+reserved, so adding the server again, or another one, yields a new ID.
 
 The daemon holds no credential for these servers. Each request through the proxy carries the
 person's own access token in `Happy-Remote-Authorization`, which the app keeps; the pool strips

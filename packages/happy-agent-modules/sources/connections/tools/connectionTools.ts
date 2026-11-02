@@ -27,7 +27,7 @@ export function setConnectionTool(module: ConnectionsModule, agentId: string) {
         capabilities: ["Configure and inspect remote Happy Agent connections."],
         searchKeywords: ["add remote agent", "configure connection", "Tailcat bearer WorkOS"],
         description:
-            "Register or replace a remote Happy Agent after deploying it. Supply its case-sensitive Tailcat address and API port, plus its fixed standalone bearer token or WorkOS organization ID. This enables authenticated clients of this installation to access the remote's entire API. Saves machine runtime configuration; never deploys or deletes a remote. Only active admin bots may use this tool.",
+            "Register or replace a remote Happy Agent after deploying it. Supply its case-sensitive Tailcat address and API port, plus its fixed standalone bearer token or WorkOS organization ID. This enables authenticated clients of this installation to access the remote's entire API. A server connection by URL is added with add_server_connection instead; this tool can only rename one, never change its address or reuse its ID while it exists. Saves machine runtime configuration; never deploys or deletes a remote. Only active admin bots may use this tool.",
         parameters: Type.Object(
             { id: connectionIdSchema, connection: module.entrySchema },
             { additionalProperties: false },

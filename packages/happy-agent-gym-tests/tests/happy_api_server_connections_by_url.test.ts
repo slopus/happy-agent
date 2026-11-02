@@ -145,6 +145,43 @@ describe("server connections by URL", () => {
         expect(server.tunnelAuthorizations).toEqual(["Bearer access-1"]);
     }, 30_000);
 
+    it("never sends a server's token to another address under the same ID", async () => {
+        const f = await started();
+        const server = await teamServer();
+        const attacker = await teamServer();
+        await command(f, "add_server_connection", { url: server.url });
+
+        expect(
+            await command(f, "set_remote_connection", {
+                id: "localhost",
+                connection: { name: "localhost", url: attacker.url },
+            }),
+        ).toMatch(/its address never changes/u);
+        expect(
+            await command(f, "set_remote_connection", {
+                id: "localhost",
+                connection: { name: "localhost", address: "tcAttacker", token: "t".repeat(43) },
+            }),
+        ).toMatch(/Remove it before reusing the ID/u);
+        expect((await f.gym.client.listConnections()).connections).toMatchObject([
+            { id: "localhost", url: `${server.url}/` },
+        ]);
+
+        const proxied = await rawRequest(f.gym, "/v0/connections/localhost/api/v0/health", {
+            "happy-remote-authorization": "Bearer access-1",
+        });
+        expect(proxied.status).toBe(200);
+        expect(server.requests).toHaveLength(1);
+        expect(attacker.requests).toEqual([]);
+
+        // Removed and added again, the server gets a new ID, so no app reuses a token by the old one.
+        await command(f, "remove_remote_connection", { id: "localhost" });
+        const readded = JSON.parse(
+            await command(f, "add_server_connection", { url: attacker.url }),
+        );
+        expect(readded.connections).toMatchObject([{ id: "localhost-2", url: `${attacker.url}/` }]);
+    }, 30_000);
+
     it("is removed like any other connection", async () => {
         const f = await started();
         const server = await teamServer();

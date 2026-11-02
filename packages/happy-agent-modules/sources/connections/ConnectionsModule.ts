@@ -350,6 +350,7 @@ export class ConnectionsModule implements AgentModule {
             )
                 return await this.list(ctx);
             const previousEntry = this.#config.connections[id];
+            entry = serverEntryForSet(previousEntry, entry);
             if (previousEntry !== undefined && !sameEndpoint(previousEntry, entry)) {
                 this.#staleInstanceIds.add(id);
             }
@@ -776,6 +777,37 @@ export class ConnectionsModule implements AgentModule {
         if (!(await this.#isAdmin(ctx, id)))
             throw new Error("Only an active admin bot can manage remote connections.");
     }
+}
+
+/**
+ * A server connection by URL keeps its address for life. Apps keep each person's token by
+ * connection ID and the proxy forwards it to the entry's URL, so pointing an existing ID at another
+ * address would send one server's token to another. Only `add_server_connection` creates one, after
+ * checking its discovery and under a fresh ID; here it may only be renamed or removed, and nothing
+ * else may take over its ID while it is enabled.
+ */
+function serverEntryForSet(
+    previous: RemoteConnectionEntry | undefined,
+    entry: RemoteConnectionEntry,
+): RemoteConnectionEntry {
+    const previousUrl =
+        previous !== undefined && previous.enabled !== false && "url" in previous
+            ? previous.url
+            : undefined;
+    if ("url" in entry) {
+        if (previousUrl === undefined || normalizeServerUrl(entry.url) !== previousUrl) {
+            throw new Error(
+                "A server connection by URL is added only with add_server_connection, and its address never changes. Remove it and add the new address instead.",
+            );
+        }
+        return { ...entry, url: previousUrl };
+    }
+    if (previousUrl !== undefined && entry.enabled !== false) {
+        throw new Error(
+            "This ID names a server connection by URL. Remove it before reusing the ID for another connection.",
+        );
+    }
+    return entry;
 }
 
 /** Whether two entries reach the same remote the same way; only the display name may differ. */

@@ -114,6 +114,17 @@ machine configuration and admin bots change the roster. Steve chose the Chief of
 `add_server_connection` checks the server's discovery before adding it, and removal is the
 ordinary `remove_remote_connection`.
 
+## A server's address is fixed for its connection ID
+
+A security review found that `set_remote_connection` could point an existing server connection's
+ID at another URL. Apps keep each person's token by connection ID, and the proxy forwards
+`Happy-Remote-Authorization` to whatever URL the entry names, so the old server's token would have
+gone to the new origin. A server connection's URL is now immutable. `set_remote_connection`
+refuses a changed URL, a new URL entry, and any other kind of connection under an enabled server's
+ID. Only `add_server_connection` creates one, after checking its discovery, under an ID nothing has
+used before, since removal leaves the ID reserved. Desktop also binds its sessions to the URL, as a
+second line of defense.
+
 ## A server's edge never speaks for the local daemon
 
 A server connection by URL may sit behind a load balancer that answers with a sign-in redirect, a
