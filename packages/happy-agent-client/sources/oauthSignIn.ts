@@ -4,9 +4,14 @@
  * These functions talk only to the authorization server a method names. The
  * daemon that advertised the method is not trusted with credentials: it never
  * sees the code, the verifier, or a refresh token, and a refresh token is only
- * ever sent to the refresh URL recorded when it was issued.
+ * ever sent to the refresh URL recorded when it was issued. The token and
+ * refresh URLs must share the authorization URL's origin, so a code goes only
+ * to the server that issued it, and an access token is returned only when its
+ * `aud` names the server being signed in to, so a server that copied another
+ * deployment's method never receives that deployment's token.
  */
 
+import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 
 import { HappyAgentOAuthError } from "./HappyAgentOAuthError.js";
@@ -27,6 +32,8 @@ export interface OAuthSignIn {
     readonly state: string;
     readonly codeVerifier: string;
     readonly method: OAuthAuthenticationMethod;
+    /** The server the token is for; its access token must name it in `aud`. */
+    readonly serverUrl: string;
 }
 
 /** Tokens from a completed sign-in or refresh. Keeping them only in memory is supported. */
@@ -45,6 +52,8 @@ export interface OAuthCredential {
      * when the method named none, including for credentials stored by older versions.
      */
     readonly resource?: string | null;
+    /** The server recorded at sign-in; every refreshed token must name it in `aud` too. */
+    readonly serverUrl: string;
 }
 
 export interface OAuthRequestOptions {
@@ -53,17 +62,29 @@ export interface OAuthRequestOptions {
     readonly signal?: AbortSignal;
 }
 
-/** Start a sign-in: generate state and PKCE, and build the authorization URL. */
+/**
+ * Start a sign-in: generate state and PKCE, and build the authorization URL.
+ *
+ * `serverUrl` is the server the person is signing in to, such as the URL from
+ * a server link; the access token is accepted only when its `aud` names it.
+ */
 export async function beginOAuthSignIn(
     method: OAuthAuthenticationMethod,
-    options: { readonly redirectUri: string },
+    options: { readonly redirectUri: string; readonly serverUrl: string },
 ): Promise<OAuthSignIn> {
     if (!Value.Check(oauthAuthenticationMethodSchema, method)) {
         throw new HappyAgentOAuthError("invalid_response", "The sign-in method is not valid.");
     }
     const authorizationUrl = secureUrl(method.authorizationUrl);
-    secureUrl(method.tokenUrl);
-    if (method.refreshUrl !== undefined) secureUrl(method.refreshUrl);
+    for (const url of [method.tokenUrl, method.refreshUrl]) {
+        if (url !== undefined && secureUrl(url).origin !== authorizationUrl.origin) {
+            throw new HappyAgentOAuthError(
+                "insecure_url",
+                "This server's sign-in settings would send your sign-in to a different site, so they can't be used.",
+            );
+        }
+    }
+    secureUrl(options.serverUrl);
     if (method.resource !== undefined) resourceIndicator(method.resource);
     const redirect = new URL(options.redirectUri);
     if (redirect.hash !== "") {
@@ -100,6 +121,7 @@ export async function beginOAuthSignIn(
         host: authorizationUrl.host,
         method,
         redirectUri: options.redirectUri,
+        serverUrl: options.serverUrl,
         state,
         url: authorizationUrl.toString(),
     };
@@ -147,6 +169,7 @@ export async function completeOAuthSignIn(
             refreshToken: null,
             refreshUrl: signIn.method.refreshUrl ?? null,
             resource: signIn.method.resource ?? null,
+            serverUrl: signIn.serverUrl,
         },
         options,
     );
@@ -176,6 +199,7 @@ export async function refreshOAuthCredential(
             refreshToken: credential.refreshToken,
             refreshUrl: credential.refreshUrl,
             resource: credential.resource ?? null,
+            serverUrl: credential.serverUrl,
         },
         options,
     );
@@ -189,6 +213,7 @@ async function requestTokens(
         readonly refreshToken: string | null;
         readonly refreshUrl: string | null;
         readonly resource: string | null;
+        readonly serverUrl: string;
     },
     options: OAuthRequestOptions,
 ): Promise<OAuthCredential> {
@@ -233,6 +258,12 @@ async function requestTokens(
             "The sign-in server returned an invalid token response.",
         );
     }
+    if (!tokenNamesServer(body.access_token, previous.serverUrl)) {
+        throw new HappyAgentOAuthError(
+            "audience_mismatch",
+            "This sign-in is for a different server.",
+        );
+    }
     return {
         accessToken: body.access_token,
         clientId: previous.clientId,
@@ -240,7 +271,48 @@ async function requestTokens(
         refreshToken: body.refresh_token ?? previous.refreshToken,
         refreshUrl: previous.refreshUrl,
         ...(previous.resource === null ? {} : { resource: previous.resource }),
+        serverUrl: previous.serverUrl,
     };
+}
+
+/**
+ * Whether a JWT access token's `aud` names the server: an absolute URL with its
+ * origin whose path, with a trailing `/` added when missing, equals the
+ * server's. The token is not verified; only a genuine token is worth stealing,
+ * and its genuine `aud` names the server it was issued for.
+ */
+function tokenNamesServer(token: string, serverUrl: string): boolean {
+    let claims: unknown;
+    try {
+        const payload = token.split(".")[1] ?? "";
+        const binary = atob(payload.replaceAll("-", "+").replaceAll("_", "/"));
+        const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+        claims = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+    } catch {
+        return false;
+    }
+    if (!Value.Check(accessTokenAudienceSchema, claims)) return false;
+    const server = new URL(serverUrl);
+    const audiences = typeof claims.aud === "string" ? [claims.aud] : claims.aud;
+    return audiences.some((audience) => {
+        let url: URL;
+        try {
+            url = new URL(audience);
+        } catch {
+            return false;
+        }
+        return (
+            url.origin === server.origin && withSlash(url.pathname) === withSlash(server.pathname)
+        );
+    });
+}
+
+const accessTokenAudienceSchema = Type.Object({
+    aud: Type.Union([Type.String(), Type.Array(Type.String())]),
+});
+
+function withSlash(path: string): string {
+    return path.endsWith("/") ? path : `${path}/`;
 }
 
 /** Credentials only travel over https, or plain http to this machine. */

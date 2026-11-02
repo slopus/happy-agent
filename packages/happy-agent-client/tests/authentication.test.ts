@@ -23,11 +23,20 @@ const METHOD: OAuthAuthenticationMethod = {
     name: "Acme SSO",
     authorizationUrl: "https://sso.acme.example/oauth/authorize?tenant=acme",
     tokenUrl: "https://sso.acme.example/oauth/token",
-    refreshUrl: "https://refresh.acme.example/oauth/refresh",
+    refreshUrl: "https://sso.acme.example/oauth/refresh",
     clientId: "happy",
     scope: "happy offline_access",
 };
 const REDIRECT = "happy://oauth/callback";
+const SERVER = "https://happy.acme.example/";
+
+/** An unsigned JWT-shaped access token; clients read `aud` without verifying it. */
+function jwt(aud: unknown): string {
+    const part = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
+    return `${part({ alg: "none" })}.${part({ sub: "user-1", aud })}.signature`;
+}
+const ACCESS_1 = jwt("https://happy.acme.example");
+const ACCESS_2 = jwt(["https://other.example", "https://happy.acme.example/"]);
 
 interface Recorded {
     readonly url: string;
@@ -132,7 +141,7 @@ describe("authentication discovery", () => {
 
 describe("OAuth sign-in", () => {
     it("builds an authorization URL with state and an S256 PKCE challenge", async () => {
-        const signIn = await beginOAuthSignIn(METHOD, { redirectUri: REDIRECT });
+        const signIn = await beginOAuthSignIn(METHOD, { redirectUri: REDIRECT, serverUrl: SERVER });
         const url = new URL(signIn.url);
 
         expect(signIn.host).toBe("sso.acme.example");
@@ -149,16 +158,16 @@ describe("OAuth sign-in", () => {
         });
         expect(signIn.codeVerifier).toMatch(/^[A-Za-z0-9_-]{43}$/);
         expect(signIn.state).toMatch(/^[A-Za-z0-9_-]{22}$/);
-        const other = await beginOAuthSignIn(METHOD, { redirectUri: REDIRECT });
+        const other = await beginOAuthSignIn(METHOD, { redirectUri: REDIRECT, serverUrl: SERVER });
         expect(other.state).not.toBe(signIn.state);
         expect(other.codeVerifier).not.toBe(signIn.codeVerifier);
     });
 
     it("exchanges the code only at the token URL and records the refresh URL", async () => {
-        const signIn = await beginOAuthSignIn(METHOD, { redirectUri: REDIRECT });
+        const signIn = await beginOAuthSignIn(METHOD, { redirectUri: REDIRECT, serverUrl: SERVER });
         const { fetch, requests } = recordingFetch(() =>
             json({
-                access_token: "access-1",
+                access_token: ACCESS_1,
                 token_type: "Bearer",
                 expires_in: 3600,
                 refresh_token: "refresh-1",
@@ -184,7 +193,7 @@ describe("OAuth sign-in", () => {
             code_verifier: signIn.codeVerifier,
         });
         expect(credential).toMatchObject({
-            accessToken: "access-1",
+            accessToken: ACCESS_1,
             clientId: "happy",
             refreshToken: "refresh-1",
             refreshUrl: METHOD.refreshUrl,
@@ -193,7 +202,7 @@ describe("OAuth sign-in", () => {
     });
 
     it("rejects a mismatched state, an authorization error, or a missing code without a request", async () => {
-        const signIn = await beginOAuthSignIn(METHOD, { redirectUri: REDIRECT });
+        const signIn = await beginOAuthSignIn(METHOD, { redirectUri: REDIRECT, serverUrl: SERVER });
         const { fetch, requests } = recordingFetch(() => json({}));
 
         for (const [callback, code] of [
@@ -210,12 +219,12 @@ describe("OAuth sign-in", () => {
     });
 
     it("reports token endpoint errors and invalid responses", async () => {
-        const signIn = await beginOAuthSignIn(METHOD, { redirectUri: REDIRECT });
+        const signIn = await beginOAuthSignIn(METHOD, { redirectUri: REDIRECT, serverUrl: SERVER });
         const callback = `${REDIRECT}?code=c&state=${signIn.state}`;
         for (const [response, code] of [
             [json({ error: "invalid_grant", error_description: "Expired." }, 400), "invalid_grant"],
             [new Response("oops", { status: 500 }), "invalid_response"],
-            [json({ access_token: "a", token_type: "mac" }), "invalid_response"],
+            [json({ access_token: ACCESS_1, token_type: "mac" }), "invalid_response"],
             [json({ token_type: "Bearer" }), "invalid_response"],
         ] as const) {
             await expect(
@@ -236,39 +245,150 @@ describe("OAuth sign-in", () => {
             await expect(
                 beginOAuthSignIn(
                     { ...METHOD, [field]: "http://sso.acme.example/x" },
-                    { redirectUri: REDIRECT },
+                    { redirectUri: REDIRECT, serverUrl: SERVER },
                 ),
             ).rejects.toBeInstanceOf(HappyAgentOAuthError);
         }
         await expect(
             beginOAuthSignIn(
-                { ...METHOD, authorizationUrl: "http://127.0.0.1:8080/authorize" },
-                { redirectUri: REDIRECT },
+                {
+                    ...METHOD,
+                    authorizationUrl: "http://127.0.0.1:8080/authorize",
+                    tokenUrl: "http://127.0.0.1:8080/token",
+                    refreshUrl: "http://127.0.0.1:8080/token",
+                },
+                { redirectUri: REDIRECT, serverUrl: SERVER },
             ),
         ).resolves.toBeDefined();
         await expect(
-            beginOAuthSignIn(METHOD, { redirectUri: `${REDIRECT}#fragment` }),
+            beginOAuthSignIn(METHOD, { redirectUri: `${REDIRECT}#fragment`, serverUrl: SERVER }),
         ).rejects.toMatchObject({ code: "insecure_url" });
+    });
+});
+
+describe("binding a sign-in to its authorization server and its server", () => {
+    it("refuses token and refresh URLs on another origin than the authorization URL", async () => {
+        for (const method of [
+            { ...METHOD, tokenUrl: "https://attacker.example/oauth/token" },
+            { ...METHOD, refreshUrl: "https://attacker.example/oauth/token" },
+            { ...METHOD, tokenUrl: "https://sso.acme.example:8443/oauth/token" },
+            { ...METHOD, tokenUrl: "https://login.sso.acme.example/oauth/token" },
+        ]) {
+            await expect(
+                beginOAuthSignIn(method, { redirectUri: REDIRECT, serverUrl: SERVER }),
+            ).rejects.toMatchObject({ code: "insecure_url" });
+        }
+        await expect(
+            beginOAuthSignIn(
+                {
+                    ...METHOD,
+                    authorizationUrl: "https://SSO.acme.example:443/oauth/authorize",
+                },
+                { redirectUri: REDIRECT, serverUrl: SERVER },
+            ),
+        ).resolves.toBeDefined();
+    });
+
+    it("refuses an insecure server URL", async () => {
+        await expect(
+            beginOAuthSignIn(METHOD, {
+                redirectUri: REDIRECT,
+                serverUrl: "http://happy.acme.example/",
+            }),
+        ).rejects.toMatchObject({ code: "insecure_url" });
+    });
+
+    it("returns an access token only when its aud names the server", async () => {
+        const accepted = [
+            "https://happy.acme.example",
+            "https://happy.acme.example/",
+            "https://HAPPY.acme.example:443/",
+            ["https://other.example/", "https://happy.acme.example"],
+        ];
+        const refused = [
+            "https://other.example/",
+            "https://happy.acme.example/team/",
+            "http://happy.acme.example/",
+            "https://happy.acme.example:8443/",
+            "happy",
+            ["https://other.example/"],
+            [],
+            undefined,
+            42,
+        ];
+        const signIn = await beginOAuthSignIn(METHOD, { redirectUri: REDIRECT, serverUrl: SERVER });
+        const callback = `${REDIRECT}?code=c&state=${signIn.state}`;
+        for (const aud of accepted) {
+            const credential = await completeOAuthSignIn(signIn, callback, {
+                fetch: async () => json({ access_token: jwt(aud), token_type: "Bearer" }),
+            });
+            expect(credential.serverUrl).toBe(SERVER);
+        }
+        for (const accessToken of [...refused.map(jwt), "opaque-token", "a.!!!.c"]) {
+            await expect(
+                completeOAuthSignIn(signIn, callback, {
+                    fetch: async () => json({ access_token: accessToken, token_type: "Bearer" }),
+                }),
+            ).rejects.toMatchObject({ code: "audience_mismatch" });
+        }
+    });
+
+    it("matches a server under a path prefix only at that path", async () => {
+        const serverUrl = "https://acme.example/happy/";
+        const signIn = await beginOAuthSignIn(METHOD, { redirectUri: REDIRECT, serverUrl });
+        const callback = `${REDIRECT}?code=c&state=${signIn.state}`;
+        for (const [aud, ok] of [
+            ["https://acme.example/happy", true],
+            ["https://acme.example/happy/", true],
+            ["https://acme.example/", false],
+            ["https://acme.example/happy/team", false],
+        ] as const) {
+            const result = completeOAuthSignIn(signIn, callback, {
+                fetch: async () => json({ access_token: jwt(aud), token_type: "Bearer" }),
+            });
+            if (ok) await expect(result).resolves.toBeDefined();
+            else await expect(result).rejects.toMatchObject({ code: "audience_mismatch" });
+        }
+    });
+
+    it("refuses a refreshed token for another server", async () => {
+        await expect(
+            refreshOAuthCredential(
+                {
+                    accessToken: ACCESS_1,
+                    clientId: "happy",
+                    expiresAt: null,
+                    refreshToken: "refresh-1",
+                    refreshUrl: "https://sso.acme.example/oauth/refresh",
+                    serverUrl: SERVER,
+                },
+                {
+                    fetch: async () =>
+                        json({ access_token: jwt("https://other.example/"), token_type: "Bearer" }),
+                },
+            ),
+        ).rejects.toMatchObject({ code: "audience_mismatch" });
     });
 });
 
 describe("OAuth refresh", () => {
     const credential: OAuthCredential = {
-        accessToken: "access-1",
+        accessToken: ACCESS_1,
         clientId: "happy",
         expiresAt: null,
         refreshToken: "refresh-1",
-        refreshUrl: "https://refresh.acme.example/oauth/refresh",
+        refreshUrl: "https://sso.acme.example/oauth/refresh",
+        serverUrl: SERVER,
     };
 
     it("refreshes only at the recorded refresh URL and rotates the refresh token", async () => {
         const { fetch, requests } = recordingFetch(() =>
-            json({ access_token: "access-2", token_type: "bearer", refresh_token: "refresh-2" }),
+            json({ access_token: ACCESS_2, token_type: "bearer", refresh_token: "refresh-2" }),
         );
 
         const refreshed = await refreshOAuthCredential(credential, { fetch });
 
-        expect(requests[0]!.url).toBe("https://refresh.acme.example/oauth/refresh");
+        expect(requests[0]!.url).toBe("https://sso.acme.example/oauth/refresh");
         expect(Object.fromEntries(requests[0]!.body)).toEqual({
             grant_type: "refresh_token",
             refresh_token: "refresh-1",
@@ -276,14 +396,14 @@ describe("OAuth refresh", () => {
         });
         expect(refreshed).toEqual({
             ...credential,
-            accessToken: "access-2",
+            accessToken: ACCESS_2,
             refreshToken: "refresh-2",
         });
     });
 
     it("keeps the previous refresh token when none is returned", async () => {
         const refreshed = await refreshOAuthCredential(credential, {
-            fetch: async () => json({ access_token: "access-2", token_type: "Bearer" }),
+            fetch: async () => json({ access_token: ACCESS_2, token_type: "Bearer" }),
         });
         expect(refreshed.refreshToken).toBe("refresh-1");
     });

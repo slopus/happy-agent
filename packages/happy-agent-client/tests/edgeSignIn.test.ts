@@ -34,6 +34,13 @@ const METHOD: OAuthAuthenticationMethod = {
     resource: RESOURCE,
 };
 const REDIRECT = "happy://oauth/callback";
+const SERVER = "https://happy.acme.example/";
+
+/** An unsigned JWT-shaped access token; clients read `aud` without verifying it. */
+function jwt(aud: unknown): string {
+    const part = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
+    return `${part({ alg: "none" })}.${part({ sub: "user-1", aud })}.signature`;
+}
 const CURSOR_1 = "01900000-0000-7000-8000-000000000001";
 
 afterEach(() => {
@@ -56,13 +63,13 @@ describe("RFC 8707 resource", () => {
     });
 
     it("is sent on authorization, code exchange, and refresh, as recorded at sign-in", async () => {
-        const signIn = await beginOAuthSignIn(METHOD, { redirectUri: REDIRECT });
+        const signIn = await beginOAuthSignIn(METHOD, { redirectUri: REDIRECT, serverUrl: SERVER });
         expect(new URL(signIn.url).searchParams.get("resource")).toBe(RESOURCE);
 
         const bodies: Record<string, string>[] = [];
         const fetch: typeof globalThis.fetch = async (_input, init) => {
             bodies.push(form(init));
-            return json({ access_token: "a", token_type: "Bearer", refresh_token: "r" });
+            return json({ access_token: jwt(RESOURCE), token_type: "Bearer", refresh_token: "r" });
         };
         const credential = await completeOAuthSignIn(
             signIn,
@@ -84,7 +91,7 @@ describe("RFC 8707 resource", () => {
 
     it("is never sent when the method names none, including for older stored credentials", async () => {
         const { resource: _resource, ...method } = METHOD;
-        const signIn = await beginOAuthSignIn(method, { redirectUri: REDIRECT });
+        const signIn = await beginOAuthSignIn(method, { redirectUri: REDIRECT, serverUrl: SERVER });
         expect(new URL(signIn.url).searchParams.has("resource")).toBe(false);
         const stored: OAuthCredential = {
             accessToken: "a",
@@ -92,12 +99,13 @@ describe("RFC 8707 resource", () => {
             expiresAt: null,
             refreshToken: "r",
             refreshUrl: METHOD.refreshUrl!,
+            serverUrl: SERVER,
         };
         let body: Record<string, string> = {};
         const refreshed = await refreshOAuthCredential(stored, {
             fetch: async (_input, init) => {
                 body = form(init);
-                return json({ access_token: "b", token_type: "Bearer" });
+                return json({ access_token: jwt(RESOURCE), token_type: "Bearer" });
             },
         });
         expect(body).not.toHaveProperty("resource");
@@ -107,7 +115,10 @@ describe("RFC 8707 resource", () => {
     it("refuses a resource that is not an absolute URI without a fragment", async () => {
         for (const resource of ["not a uri", "https://happy.acme.example/#api"]) {
             await expect(
-                beginOAuthSignIn({ ...METHOD, resource }, { redirectUri: REDIRECT }),
+                beginOAuthSignIn(
+                    { ...METHOD, resource },
+                    { redirectUri: REDIRECT, serverUrl: SERVER },
+                ),
             ).rejects.toMatchObject({ code: "invalid_response" });
         }
     });

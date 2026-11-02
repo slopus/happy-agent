@@ -83,11 +83,15 @@ these settings or schemas.
 `getAuthentication()` reports whether the client is signed in and lists sign-in methods. An `oauth`
 method uses the authorization code flow with PKCE, talking to the deployer's authorization server
 directly; the daemon never sees the code, the PKCE verifier, or a refresh token.
-`beginOAuthSignIn(method, { redirectUri })` returns the URL to open in the system browser, the
-server's `host` to show the person, and the state and verifier to keep in memory.
-`completeOAuthSignIn(signIn, callbackUrl)` checks `state` and exchanges the code at that method's
-token URL. `refreshOAuthCredential(credential)` refreshes only at the refresh URL recorded at
-sign-in, never at one a daemon advertises later. Failures throw `HappyAgentOAuthError` with an OAuth
+`beginOAuthSignIn(method, { redirectUri, serverUrl })` refuses a method whose token or refresh URL
+is on another origin than its authorization URL, and returns the URL to open in the system
+browser, the authorization server's `host` to show the person, and the state and verifier to keep
+in memory. `serverUrl` is the server being signed in to, such as a server connection's URL.
+`completeOAuthSignIn(signIn, callbackUrl)` checks `state`, exchanges the code at that method's
+token URL, and returns the token only when its `aud` names `serverUrl`, so a server that copied
+another deployment's sign-in method never receives that deployment's token.
+`refreshOAuthCredential(credential)` refreshes only at the refresh URL recorded at sign-in, never
+at one a daemon advertises later, and checks the new token's `aud` the same way. Failures throw `HappyAgentOAuthError` with an OAuth
 or client `code`. In JWT team mode, a `401` `HappyAgentApiError` carries the same methods in
 `authentication`. Unknown method types are skipped. Older daemons return `404` for discovery.
 Happy's applications use the redirect URI `happy://oauth/callback`. When a method names a
